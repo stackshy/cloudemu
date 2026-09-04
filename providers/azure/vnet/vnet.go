@@ -79,11 +79,39 @@ type Mock struct {
 	// replaces the vnet's metadata wholesale) never clobbers peerings created
 	// through the dedicated peerings sub-resource CRUD.
 	azureVNetPeerings *memstore.Store[[]driver.AzureVNetPeering]
+	// azureASGs holds the Azure-only application security groups (tag-like
+	// groupings with no cross-cloud equivalent), keyed by (resourceGroup, name).
+	azureASGs *memstore.Store[driver.AzureApplicationSecurityGroup]
+	// azurePrefixes holds the Azure-only public IP prefixes (a reserved CIDR range
+	// with no cross-cloud equivalent), keyed by (resourceGroup, name).
+	azurePrefixes *memstore.Store[driver.AzurePublicIPPrefix]
+	// azureVNGateways / azureLNGateways / azureGWConnections hold the Azure-only
+	// site-to-site VPN surface (virtual network gateways, local network gateways
+	// and connections), each keyed by (resourceGroup, name). None has a
+	// cross-cloud equivalent.
+	azureVNGateways    *memstore.Store[driver.AzureVirtualNetworkGateway]
+	azureLNGateways    *memstore.Store[driver.AzureLocalNetworkGateway]
+	azureGWConnections *memstore.Store[driver.AzureVirtualNetworkGatewayConnection]
+	// azurePrivateEndpoints / azurePrivateLinkServices hold the Azure-only
+	// Private Link surface (Microsoft.Network/privateEndpoints and
+	// privateLinkServices), each keyed by (resourceGroup, name). Neither has a
+	// cross-cloud equivalent.
+	azurePrivateEndpoints    *memstore.Store[driver.AzurePrivateEndpoint]
+	azurePrivateLinkServices *memstore.Store[driver.AzurePrivateLinkService]
 	// nicMu serializes network-interface create/update, whose private-IP
 	// allocation is a read-modify-write across the nics store (memstore is
 	// per-op safe but can't make that sequence atomic).
 	nicMu sync.RWMutex
-	opts  *config.Options
+	// prefixMu serializes public-IP-prefix create/update: the CIDR allocation is a
+	// read-modify-write across nextPrefixBlock and the azurePrefixes store that
+	// memstore cannot make atomic on its own.
+	prefixMu sync.Mutex
+	// nextPrefixBlock is the monotonic /24 block index the CIDR allocator hands out.
+	// It is intentionally not serialized: each prefix persists its own synthesized
+	// IPPrefix, so a restore preserves every allocation, and the counter only needs
+	// to be unique within a running process.
+	nextPrefixBlock uint32
+	opts            *config.Options
 }
 
 // New creates a new Azure Virtual Network mock.
@@ -106,7 +134,16 @@ func New(opts *config.Options) *Mock {
 		azureNSGMeta:        memstore.New[driver.AzureNSGMetadata](),
 		azureRouteTableMeta: memstore.New[driver.AzureRouteTableMetadata](),
 		azureVNetPeerings:   memstore.New[[]driver.AzureVNetPeering](),
-		opts:                opts,
+		azureASGs:           memstore.New[driver.AzureApplicationSecurityGroup](),
+		azurePrefixes:       memstore.New[driver.AzurePublicIPPrefix](),
+		azureVNGateways:     memstore.New[driver.AzureVirtualNetworkGateway](),
+		azureLNGateways:     memstore.New[driver.AzureLocalNetworkGateway](),
+		azureGWConnections:  memstore.New[driver.AzureVirtualNetworkGatewayConnection](),
+
+		azurePrivateEndpoints:    memstore.New[driver.AzurePrivateEndpoint](),
+		azurePrivateLinkServices: memstore.New[driver.AzurePrivateLinkService](),
+
+		opts: opts,
 	}
 }
 
@@ -160,11 +197,34 @@ func (m *Mock) CreateVPC(_ context.Context, cfg driver.VPCConfig) (*driver.VPCIn
 	return &info, nil
 }
 
-// DeleteVPC deletes the virtual network with the given ID.
+// DeleteVPC deletes the virtual network with the given ID, cascade-deleting its
+// child subnets. Real Azure removes a VNet's subnets along with it (they are
+// child resources of the VNet), so a caller that reaches the driver directly —
+// the typed Go API or the in-process library — gets the same cascade the ARM
+// wire performs, rather than leaving globally-addressable subnet rows orphaned.
+//
+// The subnet scan reads the subnets store while the delete writes the vnets
+// store — two independent memstores whose per-store locks cannot span both, so a
+// subnet created against this vnet in the same instant may survive the cascade.
+// Real Azure has the same eventual-consistency window; the emulator does not
+// model a cross-store lock, so the narrow gap is accepted.
+//
+// The subnet-in-use-by-NIC guard is not enforced here: that association is an
+// ARM-only concept the cross-cloud driver does not represent (a NIC stores an
+// opaque ARM subnet id), so it stays in the wire layer where the ARM path is
+// resolvable.
 func (m *Mock) DeleteVPC(_ context.Context, id string) error {
-	if !m.vpcs.Delete(id) {
+	if !m.vpcs.Has(id) {
 		return cerrors.Newf(cerrors.NotFound, "vnet %q not found", id)
 	}
+
+	for sid, s := range m.subnets.All() {
+		if s.VPCID == id {
+			m.subnets.Delete(sid)
+		}
+	}
+
+	m.vpcs.Delete(id)
 
 	return nil
 }
@@ -272,26 +332,34 @@ func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver
 //
 //nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
-	sg, ok := m.securityGroups.Get(groupID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", groupID)
-	}
-
-	sg.IngressRules = append(sg.IngressRules, rule)
-
-	return nil
+	return m.addSecurityGroupRule(groupID, rule, false)
 }
 
 // AddEgressRule adds an outbound security rule to the specified network security group.
 //
 //nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
-	sg, ok := m.securityGroups.Get(groupID)
-	if !ok {
+	return m.addSecurityGroupRule(groupID, rule, true)
+}
+
+// addSecurityGroupRule appends rule to the NSG's ingress or egress list
+// copy-on-write: a fresh slice is built onto a copy of the NSG under the store
+// lock, so a reader holding the prior snapshot never sees the growing slice.
+//
+//nolint:gocritic // hugeParam: rule mirrors the driver method signature.
+func (m *Mock) addSecurityGroupRule(groupID string, rule driver.SecurityRule, egress bool) error {
+	if !m.securityGroups.Update(groupID, func(sg *sgData) *sgData {
+		cp := *sg
+		if egress {
+			cp.EgressRules = append(append([]driver.SecurityRule(nil), sg.EgressRules...), rule)
+		} else {
+			cp.IngressRules = append(append([]driver.SecurityRule(nil), sg.IngressRules...), rule)
+		}
+
+		return &cp
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", groupID)
 	}
-
-	sg.EgressRules = append(sg.EgressRules, rule)
 
 	return nil
 }
@@ -300,47 +368,88 @@ func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.Secu
 //
 //nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) RemoveIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
-	sg, ok := m.securityGroups.Get(groupID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", groupID)
-	}
-
-	for i, r := range sg.IngressRules {
-		if r.Equal(&rule) {
-			sg.IngressRules = append(sg.IngressRules[:i], sg.IngressRules[i+1:]...)
-			return nil
-		}
-	}
-
-	return cerrors.Newf(cerrors.NotFound, "ingress rule not found in network security group %q", groupID)
+	return m.removeSecurityGroupRule(groupID, rule, false)
 }
 
 // RemoveEgressRule removes a matching outbound rule from the specified network security group.
 //
 //nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) RemoveEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
-	sg, ok := m.securityGroups.Get(groupID)
-	if !ok {
+	return m.removeSecurityGroupRule(groupID, rule, true)
+}
+
+// removeSecurityGroupRule removes the first ingress or egress rule matching rule
+// copy-on-write, reporting NotFound for a missing group and a direction-specific
+// NotFound when no rule matches.
+//
+//nolint:gocritic // hugeParam: rule mirrors the driver method signature.
+func (m *Mock) removeSecurityGroupRule(groupID string, rule driver.SecurityRule, egress bool) error {
+	removed := false
+
+	if !m.securityGroups.Update(groupID, func(sg *sgData) *sgData {
+		src := sg.IngressRules
+		if egress {
+			src = sg.EgressRules
+		}
+
+		next, ok := removeSecurityRule(src, &rule)
+		if !ok {
+			return sg
+		}
+
+		removed = true
+		cp := *sg
+
+		if egress {
+			cp.EgressRules = next
+		} else {
+			cp.IngressRules = next
+		}
+
+		return &cp
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", groupID)
 	}
 
-	for i, r := range sg.EgressRules {
-		if r.Equal(&rule) {
-			sg.EgressRules = append(sg.EgressRules[:i], sg.EgressRules[i+1:]...)
-			return nil
+	if !removed {
+		direction := "ingress"
+		if egress {
+			direction = "egress"
+		}
+
+		return cerrors.Newf(cerrors.NotFound, "%s rule not found in network security group %q", direction, groupID)
+	}
+
+	return nil
+}
+
+// removeSecurityRule returns a fresh slice with the first rule matching target
+// removed, and whether a match was found. The input slice is never mutated so a
+// reader holding the prior snapshot is unaffected (copy-on-write).
+func removeSecurityRule(rules []driver.SecurityRule, target *driver.SecurityRule) ([]driver.SecurityRule, bool) {
+	for i := range rules {
+		if rules[i].Equal(target) {
+			out := make([]driver.SecurityRule, 0, len(rules)-1)
+			out = append(out, rules[:i]...)
+			out = append(out, rules[i+1:]...)
+
+			return out, true
 		}
 	}
 
-	return cerrors.Newf(cerrors.NotFound, "egress rule not found in network security group %q", groupID)
+	return rules, false
 }
 
 // UpdateVPCTags merges the given tags into the virtual network's tag map.
-// The mutation runs under memstore.Update's lock; a fresh map is swapped in
-// so concurrent readers iterating the old map are unaffected.
+// The mutation runs under memstore.Update's lock and swaps in a fresh *vpcData
+// with a fresh tag map (copy-on-write): the stored pointer is never mutated in
+// place, so a reader holding a prior snapshot sees an immutable value.
 func (m *Mock) UpdateVPCTags(_ context.Context, id string, tags map[string]string) error {
 	if !m.vpcs.Update(id, func(v *vpcData) *vpcData {
-		v.Tags = mergeTagMap(v.Tags, tags)
-		return v
+		cp := *v
+		cp.Tags = mergeTagMap(v.Tags, tags)
+
+		return &cp
 	}) {
 		return cerrors.Newf(cerrors.NotFound, "virtual network %q not found", id)
 	}
@@ -351,8 +460,10 @@ func (m *Mock) UpdateVPCTags(_ context.Context, id string, tags map[string]strin
 // RemoveVPCTags removes the given tag keys from a virtual network.
 func (m *Mock) RemoveVPCTags(_ context.Context, id string, keys []string) error {
 	if !m.vpcs.Update(id, func(v *vpcData) *vpcData {
-		v.Tags = removeTagMapKeys(v.Tags, keys)
-		return v
+		cp := *v
+		cp.Tags = removeTagMapKeys(v.Tags, keys)
+
+		return &cp
 	}) {
 		return cerrors.Newf(cerrors.NotFound, "virtual network %q not found", id)
 	}
@@ -360,16 +471,20 @@ func (m *Mock) RemoveVPCTags(_ context.Context, id string, keys []string) error 
 	return nil
 }
 
-// UpdateSubnetCIDR changes a subnet's address prefix in place, implementing the
+// UpdateSubnetCIDR changes a subnet's address prefix, implementing the
 // SubnetCIDRUpdater capability (the ARM Subnets.CreateOrUpdate re-PUT path).
+// The change is applied copy-on-write onto a fresh *subnetData under the store
+// lock, never mutating the shared pointer a reader may still hold.
 func (m *Mock) UpdateSubnetCIDR(_ context.Context, id, cidr string) error {
 	if cidr == "" {
 		return cerrors.New(cerrors.InvalidArgument, "CIDR block is required")
 	}
 
 	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
-		s.CIDRBlock = cidr
-		return s
+		cp := *s
+		cp.CIDRBlock = cidr
+
+		return &cp
 	}) {
 		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
 	}
@@ -377,11 +492,13 @@ func (m *Mock) UpdateSubnetCIDR(_ context.Context, id, cidr string) error {
 	return nil
 }
 
-// UpdateSubnetTags merges tags into the subnet's tag map.
+// UpdateSubnetTags merges tags into the subnet's tag map, copy-on-write.
 func (m *Mock) UpdateSubnetTags(_ context.Context, id string, tags map[string]string) error {
 	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
-		s.Tags = mergeTagMap(s.Tags, tags)
-		return s
+		cp := *s
+		cp.Tags = mergeTagMap(s.Tags, tags)
+
+		return &cp
 	}) {
 		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
 	}
@@ -389,11 +506,13 @@ func (m *Mock) UpdateSubnetTags(_ context.Context, id string, tags map[string]st
 	return nil
 }
 
-// RemoveSubnetTags removes the given tag keys from a subnet.
+// RemoveSubnetTags removes the given tag keys from a subnet, copy-on-write.
 func (m *Mock) RemoveSubnetTags(_ context.Context, id string, keys []string) error {
 	if !m.subnets.Update(id, func(s *subnetData) *subnetData {
-		s.Tags = removeTagMapKeys(s.Tags, keys)
-		return s
+		cp := *s
+		cp.Tags = removeTagMapKeys(s.Tags, keys)
+
+		return &cp
 	}) {
 		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
 	}
@@ -401,11 +520,13 @@ func (m *Mock) RemoveSubnetTags(_ context.Context, id string, keys []string) err
 	return nil
 }
 
-// UpdateSecurityGroupTags merges tags into the NSG's tag map.
+// UpdateSecurityGroupTags merges tags into the NSG's tag map, copy-on-write.
 func (m *Mock) UpdateSecurityGroupTags(_ context.Context, id string, tags map[string]string) error {
 	if !m.securityGroups.Update(id, func(sg *sgData) *sgData {
-		sg.Tags = mergeTagMap(sg.Tags, tags)
-		return sg
+		cp := *sg
+		cp.Tags = mergeTagMap(sg.Tags, tags)
+
+		return &cp
 	}) {
 		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
 	}
@@ -413,11 +534,13 @@ func (m *Mock) UpdateSecurityGroupTags(_ context.Context, id string, tags map[st
 	return nil
 }
 
-// RemoveSecurityGroupTags removes the given tag keys from an NSG.
+// RemoveSecurityGroupTags removes the given tag keys from an NSG, copy-on-write.
 func (m *Mock) RemoveSecurityGroupTags(_ context.Context, id string, keys []string) error {
 	if !m.securityGroups.Update(id, func(sg *sgData) *sgData {
-		sg.Tags = removeTagMapKeys(sg.Tags, keys)
-		return sg
+		cp := *sg
+		cp.Tags = removeTagMapKeys(sg.Tags, keys)
+
+		return &cp
 	}) {
 		return cerrors.Newf(cerrors.NotFound, "network security group %q not found", id)
 	}

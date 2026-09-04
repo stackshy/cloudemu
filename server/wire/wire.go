@@ -57,6 +57,28 @@ func WriteJSONError(w http.ResponseWriter, status int, errType, msg string) {
 	})
 }
 
+// WriteJSONErrorQueryCompat writes a JSON error response like WriteJSONError,
+// plus the X-Amzn-Query-Error header that AWS services migrated from the
+// legacy Query protocol to AwsJson (the "awsQueryCompatible" Smithy trait)
+// emit on every error response. Real aws-sdk-go-v2 exception types read this
+// header to override their ErrorCode() back to the original Query-protocol
+// code (e.g. "AWS.SimpleQueueService.NonExistentQueue" instead of the JSON
+// shape name "QueueDoesNotExist"); tools that still match on the legacy code
+// — including terraform-provider-aws's SQS delete/create waiters — rely on
+// it, so omitting it leaves those SDK code paths unable to recognize the
+// error at all. queryCode must be "<legacy code>;Sender" or
+// "<legacy code>;Receiver", matching the header's documented format.
+func WriteJSONErrorQueryCompat(w http.ResponseWriter, status int, errType, queryCode, msg string) {
+	w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+	w.Header().Set("x-amzn-query-error", queryCode)
+	w.WriteHeader(status)
+
+	json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck // best-effort response
+		"__type":  errType,
+		"Message": msg,
+	})
+}
+
 // WriteJSONErrorFields writes a JSON error response carrying additional
 // top-level members alongside __type and Message. DynamoDB uses this for
 // ConditionalCheckFailedException, which returns the conflicting item in an

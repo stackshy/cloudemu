@@ -149,5 +149,11 @@ func ServingTLSConfig(hosts []string) (*tls.Config, error) {
 			Certificate: [][]byte{der, ca.cert.Raw},
 			PrivateKey:  key,
 		}},
+		// Pin ALPN to HTTP/1.1. The data plane serves pods/exec and pods/attach by
+		// hijacking the connection for a WebSocket upgrade (golang.org/x/net/websocket
+		// calls http.Hijacker.Hijack with no fallback). Under an auto-negotiated
+		// HTTP/2 connection that Hijack panics, so h2 must never be offered here.
+		// Watch streaming is plain chunked HTTP/1.1, so it is unaffected.
+		NextProtos: []string{"http/1.1"},
 	}, nil
 }

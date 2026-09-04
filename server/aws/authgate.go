@@ -143,6 +143,7 @@ func resolverLookup(r *http.Request, resolver iamdriver.AccessKeyResolver) sigv4
 			UserName:    info.UserName,
 			ARN:         info.UserARN,
 			AccountID:   info.AccountID,
+			UserID:      info.UserID,
 		}, true
 	}
 }

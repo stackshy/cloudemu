@@ -349,17 +349,25 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 	})
 }
 
+// writeErr maps a CloudEmu canonical error to the matching GKE HTTP status and
+// reason. The wire message is cerrors.Message(err) — the error's
+// human-readable text without the canonical code prefix (e.g. "cluster x not
+// found", not "NotFound: cluster x not found") — matching every other GCP
+// wire handler, which never leaks the internal error-taxonomy name into the
+// message an SDK surfaces to the caller.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		writeError(w, http.StatusNotFound, "NOT_FOUND", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ALREADY_EXISTS", err.Error())
+		writeError(w, http.StatusConflict, "ALREADY_EXISTS", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", msg)
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusConflict, "FAILED_PRECONDITION", err.Error())
+		writeError(w, http.StatusConflict, "FAILED_PRECONDITION", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL", msg)
 	}
 }

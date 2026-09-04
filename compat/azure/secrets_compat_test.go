@@ -26,7 +26,9 @@ func TestAzureSecretsCompat(t *testing.T) {
 	provider := cloudemu.NewAzure()
 	sess := compat.BootAzureTLS(t, azureserver.Drivers{KeyVault: provider.KeyVault})
 
-	client, err := azsecrets.NewClient(sess.Endpoint(), compat.FakeAzureCred(), &azsecrets.ClientOptions{
+	// On a bare host the vault is named by a leading path segment (/{vault}); the
+	// emulator no longer collapses an unnamed host to a single "default" vault.
+	client, err := azsecrets.NewClient(sess.Endpoint()+"/default", compat.FakeAzureCred(), &azsecrets.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Transport: sess.Transport(),
 			Retry:     policy.RetryOptions{MaxRetries: -1},

@@ -7,6 +7,7 @@
 package azure
 
 import (
+	"fmt"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -16,10 +17,12 @@ import (
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
+	containerappssrv "github.com/stackshy/cloudemu/v2/server/azure/containerapps"
 	containerinstancessrv "github.com/stackshy/cloudemu/v2/server/azure/containerinstances"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmosaccount"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmospostgresql"
+	"github.com/stackshy/cloudemu/v2/server/azure/costmanagement"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/dbfs"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/gitcredentials"
@@ -38,17 +41,22 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/disks"
 	dnssrv "github.com/stackshy/cloudemu/v2/server/azure/dns"
 	eventgridsrv "github.com/stackshy/cloudemu/v2/server/azure/eventgrid"
+	eventhubsrv "github.com/stackshy/cloudemu/v2/server/azure/eventhub"
 	"github.com/stackshy/cloudemu/v2/server/azure/functions"
 	"github.com/stackshy/cloudemu/v2/server/azure/iam"
 	"github.com/stackshy/cloudemu/v2/server/azure/images"
 	keyvaultsrv "github.com/stackshy/cloudemu/v2/server/azure/keyvault"
+	kustosrv "github.com/stackshy/cloudemu/v2/server/azure/kusto"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/azure/loadbalancer"
+	"github.com/stackshy/cloudemu/v2/server/azure/locks"
 	loganalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/server/azure/managedcassandra"
+	managedidentitysrv "github.com/stackshy/cloudemu/v2/server/azure/managedidentity"
 	"github.com/stackshy/cloudemu/v2/server/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/server/azure/mysqlflex"
 	notificationhubssrv "github.com/stackshy/cloudemu/v2/server/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/v2/server/azure/postgresflex"
+	providerssrv "github.com/stackshy/cloudemu/v2/server/azure/providers"
 	"github.com/stackshy/cloudemu/v2/server/azure/queue"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
@@ -56,10 +64,13 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/v2/server/azure/sql"
+	sqlvirtualmachinesrv "github.com/stackshy/cloudemu/v2/server/azure/sqlvirtualmachine"
 	"github.com/stackshy/cloudemu/v2/server/azure/sshpublickeys"
 	storageaccountsrv "github.com/stackshy/cloudemu/v2/server/azure/storageaccount"
 	"github.com/stackshy/cloudemu/v2/server/azure/subscriptions"
+	synapsesrv "github.com/stackshy/cloudemu/v2/server/azure/synapse"
 	tablesrv "github.com/stackshy/cloudemu/v2/server/azure/tablestorage"
+	tagssrv "github.com/stackshy/cloudemu/v2/server/azure/tags"
 	"github.com/stackshy/cloudemu/v2/server/azure/tenants"
 	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/server/azure/vnet"
@@ -126,8 +137,15 @@ type Drivers struct {
 	PostgresFlex     rdbdriver.RelationalDB
 	MySQLFlex        rdbdriver.RelationalDB
 	AKS              aksserver.Backend
-	IAM              iamdriver.IAM
-	ACR              crdriver.ContainerRegistry
+	// ManagedIdentity serves Microsoft.ManagedIdentity/userAssignedIdentities.
+	ManagedIdentity managedidentitysrv.Store
+	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
+	// the SQL-management overlay on a compute VM.
+	SQLVirtualMachine sqlvirtualmachinesrv.Store
+	// ContainerApps serves Microsoft.App managedEnvironments and containerApps.
+	ContainerApps containerappssrv.Store
+	IAM           iamdriver.IAM
+	ACR           crdriver.ContainerRegistry
 	// ContainerInstances serves the Azure Container Instances
 	// (Microsoft.ContainerInstance/containerGroups) ARM API against the
 	// containerinstances driver.
@@ -213,6 +231,11 @@ const defaultTenantID = "11111111-1111-1111-1111-111111111111"
 func New(d Drivers) http.Handler {
 	srv := server.New()
 
+	// Management locks are constructed once and shared: the same instance is
+	// registered as the CRUD handler and handed to the enforcement gate below,
+	// so the gate reads the exact store callers write to.
+	locksHandler := locks.New()
+
 	tenantID := d.TenantID
 	if tenantID == "" {
 		tenantID = defaultTenantID
@@ -225,6 +248,29 @@ func New(d Drivers) http.Handler {
 	// The global tenants list is a non-/subscriptions ARM path; register it
 	// before the permissive blob fallback so it isn't swallowed as a blob call.
 	srv.Register(tenants.New(tenantID))
+
+	// Resource-provider registration (Microsoft.Resources "providers" surface):
+	// the bare /subscriptions/{sub}/providers list, a single-namespace get, and
+	// the register / unregister actions CLIs and IaC tools call at startup. It
+	// has no driver — the emulator holds registration state in memory. Registered
+	// early so its strict path match wins; its Matches never claims the deeper
+	// /providers/{namespace}/{resourceType}/... paths owned by the service
+	// handlers, so it does not shadow them.
+	srv.Register(providerssrv.New())
+
+	// Management locks (Microsoft.Authorization/locks) attach at any scope,
+	// including a nested .../providers/{ns}/{type}/{name}/providers/Microsoft.
+	// Authorization/locks/{lock} on an individual resource. A resource-scope lock
+	// URL's leading /providers/{ns}/{type} pair is claimed by that resource type's
+	// own handler (whose azurearm.ParsePath match ignores the trailing locks
+	// segment), so the locks handler must register BEFORE the per-resource-type
+	// handlers to win first-match dispatch. Its Matches is a scope-agnostic
+	// substring test on /providers/microsoft.authorization/locks — a path no
+	// resource handler produces — so registering it early shadows nothing. Locks
+	// are a pure management-plane concept with no backing driver, so the handler
+	// is always registered (like subscriptions/tenants). This same instance
+	// backs the always-on enforcement gate wired via SetPreDispatch below.
+	srv.Register(locksHandler)
 
 	// Build the per-service handlers that own resource-group-scoped resources up
 	// front so they can be handed to the resource-group cascade below and then
@@ -272,11 +318,49 @@ func New(d Drivers) http.Handler {
 		rgPurgers = append(rgPurgers, storageHandler)
 	}
 
+	// User-assigned managed identities: a resource-group-scoped resource, so its
+	// handler joins the purge cascade. Registered further below.
+	var managedIdentityHandler *managedidentitysrv.Handler
+	if d.ManagedIdentity != nil {
+		managedIdentityHandler = managedidentitysrv.New(d.ManagedIdentity)
+		rgPurgers = append(rgPurgers, managedIdentityHandler)
+	}
+
+	// SQL virtual machines: a resource-group-scoped resource, so its handler
+	// joins the purge cascade. Deleting the group tears down the SQL-management
+	// overlay records but never the paired compute VMs. Registered further below.
+	var sqlVMHandler *sqlvirtualmachinesrv.Handler
+	if d.SQLVirtualMachine != nil {
+		sqlVMHandler = sqlvirtualmachinesrv.New(d.SQLVirtualMachine)
+		rgPurgers = append(rgPurgers, sqlVMHandler)
+	}
+
+	// Container Apps (managed environments + container apps): resource-group-scoped
+	// resources, so their handler joins the purge cascade. Registered further below.
+	var containerAppsHandler *containerappssrv.Handler
+	if d.ContainerApps != nil {
+		containerAppsHandler = containerappssrv.New(d.ContainerApps)
+		rgPurgers = append(rgPurgers, containerAppsHandler)
+	}
+
+	// Synapse workspaces are resource-group-scoped, so the (always-on,
+	// driverless) Synapse handler joins the purge cascade. Registered further below.
+	synapseHandler := synapsesrv.New()
+	rgPurgers = append(rgPurgers, synapseHandler)
+
 	// Resource groups have no driver of their own: they are containers, and the
 	// emulator tracks membership by the ids resources already carry. The
 	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
 	// the purgers cascade a group delete into its resources.
 	srv.Register(resourcegroups.New(d.ResourceDiscovery, rgPurgers...))
+
+	// Tags resource provider (Microsoft.Resources/tags/default). Self-contained
+	// (no driver): it owns the per-scope tag sets an armresources TagsClient
+	// manages at subscription or resource scope. Its path suffix
+	// /providers/Microsoft.Resources/tags/default is disjoint from the
+	// resource-group paths above and the Microsoft.ResourceGraph/generic-resources
+	// listings, so registration order is unconstrained.
+	srv.Register(tagssrv.New())
 
 	// microsoft.insights extension resources (metrics, metricDefinitions,
 	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim
@@ -316,6 +400,20 @@ func New(d Drivers) http.Handler {
 	if d.CosmosDB != nil {
 		cosmosDataPlane := cosmosdb.New(d.CosmosDB)
 		srv.Register(cosmosDataPlane)
+		// Cosmos SQL-API ARM control plane (sqlDatabases / containers /
+		// throughputSettings). Shares cosmosDataPlane's state so a control-plane
+		// database/container/throughput is visible on the data plane and vice
+		// versa. Registered BEFORE cosmosaccount so it wins the first-match over
+		// the shared databaseAccounts path for the /sqlDatabases sub-tree; the
+		// account handler still serves the account-level path and its actions.
+		srv.Register(cosmosdb.NewARM(cosmosDataPlane))
+		// Cosmos Mongo-API ARM control plane (mongodbDatabases / collections /
+		// throughputSettings). Shares cosmosDataPlane's state like the SQL plane;
+		// its mongodbDatabases sub-tree is disjoint from sqlDatabases, so order
+		// relative to the SQL handler is unconstrained. Registered before
+		// cosmosaccount so it wins the first-match over the shared databaseAccounts
+		// path for the /mongodbDatabases sub-tree.
+		srv.Register(cosmosdb.NewMongoARM(cosmosDataPlane))
 		// Cosmos-account ARM control plane (Microsoft.DocumentDB/databaseAccounts).
 		// Claims only the /providers/Microsoft.DocumentDB/databaseAccounts/
 		// management path — disjoint from the /dbs data plane above and from
@@ -405,6 +503,37 @@ func New(d Drivers) http.Handler {
 		srv.Register(servicebus.New(d.ServiceBus))
 	}
 
+	// Event Hubs claims Microsoft.EventHub/namespaces (and their eventhubs,
+	// consumergroups and authorizationRules) — a distinct ARM provider name from
+	// every other Azure handler, so registration order is unconstrained. It is a
+	// self-contained control-plane handler with no backing driver (its state is
+	// namespace-scoped ARM containers, like locks/tags), so it is always
+	// registered. The Event Hubs data plane is AMQP/Kafka only and out of scope.
+	srv.Register(eventhubsrv.New())
+
+	// Kusto (Azure Data Explorer) claims Microsoft.Kusto/clusters (and their
+	// databases) — a distinct ARM provider name from every other Azure handler,
+	// so registration order is unconstrained. It is a self-contained control-plane
+	// handler with no backing driver (its state is cluster-scoped ARM containers,
+	// like Event Hubs), so it is always registered.
+	srv.Register(kustosrv.New())
+
+	// Kusto query data plane serves the globally-unique /v1|v2/rest/{mgmt,query}
+	// paths clients POST to the cluster host. The paths collide with no other
+	// handler, so registration order is unconstrained; like the control plane it
+	// is driverless, holding the ingested tables in memory. This increment serves
+	// the control commands (.create/.show/.drop table); the KQL query evaluator
+	// arrives in a later increment.
+	srv.Register(kustosrv.NewDataPlane())
+
+	// Synapse claims Microsoft.Synapse/workspaces (and their sqlPools,
+	// bigDataPools and integrationRuntimes) — a distinct ARM provider name from
+	// every other Azure handler, so registration order is unconstrained. Like
+	// Event Hubs it is a self-contained control-plane handler with no backing
+	// driver (its state is workspace-scoped ARM containers), so it is always
+	// registered. Created above and joined to the resource-group purge cascade.
+	srv.Register(synapseHandler)
+
 	// Microsoft.Sql provider — distinct ARM provider name from compute and
 	// network so registration order is unconstrained.
 	if d.SQL != nil {
@@ -485,13 +614,55 @@ func New(d Drivers) http.Handler {
 		// Generic Microsoft.Resources listing (az resource list) at subscription
 		// and resource-group scope, backed by the same discovery engine.
 		srv.Register(resourcegraph.NewResources(d.ResourceDiscovery, d.SubscriptionID))
+		// Cost Management query matches any scope ending in
+		// /providers/Microsoft.CostManagement/query — a distinct ARM provider
+		// name from every other handler, so registration order is unconstrained.
+		// Backed by the same discovery engine, priced through services/cost.
+		srv.Register(costmanagement.New(d.ResourceDiscovery))
+	}
+
+	// Managed identities claim Microsoft.ManagedIdentity/userAssignedIdentities —
+	// a distinct ARM provider name from every other Azure handler, so
+	// registration order is unconstrained. Registered before the BlobStorage
+	// fallback.
+	if managedIdentityHandler != nil {
+		srv.Register(managedIdentityHandler)
+	}
+
+	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —
+	// a distinct ARM provider name from every other Azure handler, so registration
+	// order is unconstrained. Registered before the BlobStorage fallback.
+	if sqlVMHandler != nil {
+		srv.Register(sqlVMHandler)
+	}
+
+	// Container Apps claim Microsoft.App/{managedEnvironments,containerApps} — a
+	// distinct ARM provider name from every other Azure handler, so registration
+	// order is unconstrained. Registered before the BlobStorage fallback.
+	if containerAppsHandler != nil {
+		srv.Register(containerAppsHandler)
 	}
 
 	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
 	// at any scope — distinct from every other ARM provider name, so
 	// registration order is unconstrained.
+	//
+	// The Drivers.IAM field stays typed as the shared iamdriver.IAM (rather
+	// than iam.Driver) so the docs/coverage generator's registration check
+	// — which recognizes only services/<name>/driver package types — still
+	// links this field to the "iam" service. The handler additionally needs
+	// the Azure-only RoleAssignment surface (see iam.Driver): every real
+	// driver behind this field is *azureiam.Mock (providers/azure/iam),
+	// which implements it, so the assertion below always succeeds in
+	// practice; it fails fast at server construction, not at request time,
+	// if a future caller ever wires in some other iamdriver.IAM.
 	if d.IAM != nil {
-		srv.Register(iam.New(d.IAM))
+		drv, ok := d.IAM.(iam.Driver)
+		if !ok {
+			panic(fmt.Sprintf("azure: Drivers.IAM (%T) does not implement iam.Driver (role assignments)", d.IAM))
+		}
+
+		srv.Register(iam.New(drv))
 	}
 
 	// ACR data-plane catalog API matches /acr/v1/… — disjoint from ARM and
@@ -576,13 +747,21 @@ func New(d Drivers) http.Handler {
 		srv.Register(blobstorage.New(d.BlobStorage))
 	}
 
-	// Opt-in claims-based bearer authentication. Installed only when enabled, so
-	// the default request path is byte-for-byte unchanged. Registered on the raw
-	// server so the pre-dispatch gate runs before handler matching (and before
-	// the unmodeled-property overlay below wraps the response).
+	// Pre-dispatch chokepoint. Two hooks share the single slot, composed so both
+	// run before handler matching (and before the unmodeled-property overlay
+	// wraps the response):
+	//   - Opt-in claims-based bearer authentication (nil unless EnforceAuth), so
+	//     the default request path is byte-for-byte unchanged when it is off.
+	//   - Always-on management-lock enforcement, matching real Azure which has no
+	//     enforce toggle. It is inert until a caller creates a lock.
+	// Auth runs first for fidelity (authenticate, then evaluate locks); since
+	// neither mutates the body the order is behaviorally irrelevant.
+	var authGate preDispatch
 	if d.EnforceAuth {
-		srv.SetPreDispatch(newAuthGate(config.RealClock{}))
+		authGate = newAuthGate(config.RealClock{})
 	}
+
+	srv.SetPreDispatch(composePreDispatch(authGate, newLockGate(locksHandler)))
 
 	// When the monitoring backend can record Activity Log events, observe every
 	// served ARM request and log a management event so the Activity Log API

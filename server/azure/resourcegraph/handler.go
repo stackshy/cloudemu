@@ -19,6 +19,12 @@ const (
 	pathOperations       = "/providers/Microsoft.ResourceGraph/operations"
 )
 
+// internalTagPrefix is the marker the Azure wire handlers use for internal ARM
+// bookkeeping tags (resource name, resource group, disk name, …). These are an
+// implementation detail of how the cross-cloud driver models are mapped to ARM
+// and must never appear on a resource row a client reads.
+const internalTagPrefix = "cloudemu:"
+
 // Handler serves Azure Resource Graph ARM-JSON requests.
 type Handler struct {
 	engine         *resourcediscovery.Engine
@@ -351,12 +357,39 @@ func resourceGroupOrDefault(id string) string {
 	return rest
 }
 
+// tagsOrEmpty renders a resource's tags for the ARG row, dropping the internal
+// "cloudemu:"-prefixed tags the Azure wire handlers stamp on resources (e.g. the
+// ARM name and resource-group markers) so they never leak to a client, while
+// preserving every real user tag. A nil/all-internal map renders as {}.
 func tagsOrEmpty(tags map[string]string) map[string]string {
-	if tags == nil {
-		return map[string]string{}
+	if out := StripInternalTags(tags); out != nil {
+		return out
 	}
 
-	return tags
+	return map[string]string{}
+}
+
+// StripInternalTags returns tags with the internal "cloudemu:"-prefixed markers
+// removed, preserving every real user tag; it returns nil when nothing remains.
+// Exported so other Azure handlers that render resourcediscovery.Resource tags
+// (e.g. the resource-group exportTemplate) drop the same internal bookkeeping
+// tags Resource Graph does, rather than leaking them.
+func StripInternalTags(tags map[string]string) map[string]string {
+	var out map[string]string
+
+	for k, v := range tags {
+		if strings.HasPrefix(k, internalTagPrefix) {
+			continue
+		}
+
+		if out == nil {
+			out = make(map[string]string, len(tags))
+		}
+
+		out[k] = v
+	}
+
+	return out
 }
 
 // extractSubscription pulls /subscriptions/<id>/... out of an Azure resource
@@ -402,6 +435,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"compute/Volume":                      "microsoft.compute/disks",
 	"compute/Snapshot":                    "microsoft.compute/snapshots",
 	"compute/ScaleSet":                    "microsoft.compute/virtualmachinescalesets",
+	"compute/SqlVirtualMachine":           "microsoft.sqlvirtualmachine/sqlvirtualmachines",
 	"networking/VPC":                      "microsoft.network/virtualnetworks",
 	"networking/Subnet":                   "microsoft.network/subnets",
 	"networking/SecurityGroup":            "microsoft.network/networksecuritygroups",
@@ -429,14 +463,18 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"cache/CacheCluster":                  "microsoft.cache/redis",
 	"loadbalancer/LoadBalancer":           "microsoft.network/loadbalancers",
 	"monitoring/Alarm":                    "microsoft.insights/metricalerts",
-	"iam/User":                            "microsoft.managedidentity/userassignedidentities",
+	"iam/UserAssignedIdentity":            "microsoft.managedidentity/userassignedidentities",
 	"iam/Role":                            "microsoft.authorization/roledefinitions",
 	"networking/NatGateway":               "microsoft.network/natgateways",
+	"networking/ApplicationSecurityGroup": "microsoft.network/applicationsecuritygroups",
+	"networking/PublicIPPrefix":           "microsoft.network/publicipprefixes",
 	"networking/RouteTable":               "microsoft.network/routetables",
 	"networking/PeeringConnection":        "microsoft.network/virtualnetworks/virtualnetworkpeerings",
 	"machinelearningservices/Workspace":   "microsoft.machinelearningservices/workspaces",
 	"machinelearningservices/Endpoint":    "microsoft.machinelearningservices/workspaces/onlineendpoints",
 	"cognitiveservices/Account":           "microsoft.cognitiveservices/accounts",
+	"containerapps/ManagedEnvironment":    "microsoft.app/managedenvironments",
+	"containerapps/ContainerApp":          "microsoft.app/containerapps",
 }
 
 func portableToAzureType(service, typ string) string {

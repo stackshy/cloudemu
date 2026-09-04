@@ -125,6 +125,10 @@ func (h *Handler) describeSecret(w http.ResponseWriter, r *http.Request) {
 		if date, deleted := st.SecretDeletionDate(r.Context(), name); deleted {
 			out.DeletedDate = epochSeconds(date)
 		}
+
+		if rot, rerr := st.SecretRotationDetails(r.Context(), name); rerr == nil {
+			applyRotationInfo(&out, rot)
+		}
 	}
 
 	wire.WriteJSON(w, out)
@@ -168,7 +172,7 @@ func (h *Handler) rotateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var req secretIDRequest
+	var req rotateSecretRequest
 	if !wire.DecodeJSON(w, r, &req) {
 		return
 	}
@@ -181,13 +185,44 @@ func (h *Handler) rotateSecret(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ver, err := st.RotateSecret(r.Context(), name)
+	// RotateImmediately defaults to true, matching the real service: an absent
+	// field runs the rotation now rather than only storing the schedule.
+	rotateImmediately := true
+	if req.RotateImmediately != nil {
+		rotateImmediately = *req.RotateImmediately
+	}
+
+	ver, err := st.RotateSecret(r.Context(), name, req.RotationLambdaARN, req.RotationRules.toDriver(), rotateImmediately)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	wire.WriteJSON(w, rotateSecretResponse{ARN: info.ResourceID, Name: info.Name, VersionID: ver.VersionID})
+}
+
+// cancelRotateSecret turns off automatic rotation. The configured
+// RotationLambdaARN/RotationRules are left in place, so a later RotateSecret
+// can re-enable rotation without re-supplying them.
+func (h *Handler) cancelRotateSecret(w http.ResponseWriter, r *http.Request) {
+	st, ok := h.secrets.(secretStager)
+	if !ok {
+		writeErr(w, errNotSupported)
+		return
+	}
+
+	var req secretIDRequest
+	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	info, versionID, err := st.CancelRotateSecret(r.Context(), resolveSecretID(req.SecretID))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteJSON(w, rotateSecretResponse{ARN: info.ResourceID, Name: info.Name, VersionID: versionID})
 }
 
 func (*Handler) getRandomPassword(w http.ResponseWriter, r *http.Request) {
@@ -234,9 +269,20 @@ func (h *Handler) listSecrets(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	st, isStager := h.secrets.(secretStager)
+
 	entries := make([]secretListEntryJSON, 0, end-start)
+
 	for i := start; i < end; i++ {
-		entries = append(entries, toSecretListEntry(&filtered[i]))
+		entry := toSecretListEntry(&filtered[i])
+
+		if isStager {
+			if rot, rerr := st.SecretRotationDetails(r.Context(), filtered[i].Name); rerr == nil {
+				applyRotationInfo(&entry, rot)
+			}
+		}
+
+		entries = append(entries, entry)
 	}
 
 	wire.WriteJSON(w, listSecretsResponse{SecretList: entries, NextToken: next})
@@ -323,6 +369,15 @@ func stagesForVersion(m map[string][]string, ver *secretsdriver.SecretVersion) [
 func (h *Handler) putSecretValue(w http.ResponseWriter, r *http.Request) {
 	var req putSecretValueRequest
 	if !wire.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	// Real Secrets Manager requires exactly one of SecretString/SecretBinary —
+	// PutSecretValue exists only to add a new version's content.
+	if req.SecretString == "" && len(req.SecretBinary) == 0 {
+		wire.WriteJSONError(w, http.StatusBadRequest,
+			"InvalidParameterException", "You must provide a value for either SecretString or SecretBinary")
+
 		return
 	}
 

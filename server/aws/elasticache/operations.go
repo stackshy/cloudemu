@@ -56,6 +56,8 @@ func (h *Handler) createCacheCluster(w http.ResponseWriter, r *http.Request) {
 		SubnetGroupName:    form.Get("CacheSubnetGroupName"),
 		ParameterGroupName: form.Get("CacheParameterGroupName"),
 		Tags:               parseTags(form),
+		SnapshotName:       form.Get("SnapshotName"),
+		SnapshotArns:       awsquery.ListStrings(form, "SnapshotArns.SnapshotArn"),
 	}
 
 	info, err := h.cache.CreateCache(r.Context(), cfg)

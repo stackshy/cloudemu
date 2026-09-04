@@ -29,10 +29,11 @@ type Mock struct {
 	accessKeys       *memstore.Store[*accessKeyData]
 	instanceProfiles *memstore.Store[*driver.InstanceProfileInfo]
 
-	mu           sync.RWMutex
-	userPolicies map[string]map[string]bool // userName -> set of policy ARNs
-	rolePolicies map[string]map[string]bool // roleName -> set of policy ARNs
-	groupUsers   map[string]map[string]bool // groupName -> set of userNames
+	mu              sync.RWMutex
+	userPolicies    map[string]map[string]bool     // userName -> set of policy ARNs
+	rolePolicies    map[string]map[string]bool     // roleName -> set of policy ARNs
+	groupUsers      map[string]map[string]bool     // groupName -> set of userNames
+	roleAssignments map[string]*RoleAssignmentInfo // assignment id -> Azure RBAC role assignment
 
 	opts *config.Options
 }
@@ -100,6 +101,7 @@ func New(opts *config.Options) *Mock {
 		userPolicies:     make(map[string]map[string]bool),
 		rolePolicies:     make(map[string]map[string]bool),
 		groupUsers:       make(map[string]map[string]bool),
+		roleAssignments:  make(map[string]*RoleAssignmentInfo),
 		opts:             opts,
 	}
 }

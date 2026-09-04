@@ -3,6 +3,7 @@ package main
 import (
 	"testing"
 
+	"github.com/stackshy/cloudemu/v2/server/serveflags"
 	"github.com/stackshy/cloudemu/v2/server/serverkit"
 )
 
@@ -13,7 +14,7 @@ func TestServePersistFlagDefaults(t *testing.T) {
 	t.Setenv("CLOUDEMU_PERSIST_STRATEGY", "")
 	t.Setenv("CLOUDEMU_PERSIST_INTERVAL", "")
 
-	var c serveConfig
+	var c serveflags.CommonConfig
 	fs := newServeFlagSet(&c)
 
 	strat := fs.Lookup("persist-strategy")
@@ -39,11 +40,11 @@ func TestServePersistFlagDefaults(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if c.persistStrategy != "on-request" {
-		t.Fatalf("parsed strategy = %q, want on-request", c.persistStrategy)
+	if c.PersistStrategy != "on-request" {
+		t.Fatalf("parsed strategy = %q, want on-request", c.PersistStrategy)
 	}
 
-	if c.persistInterval.String() != "3s" {
-		t.Fatalf("parsed interval = %q, want 3s", c.persistInterval)
+	if c.PersistInterval.String() != "3s" {
+		t.Fatalf("parsed interval = %q, want 3s", c.PersistInterval)
 	}
 }

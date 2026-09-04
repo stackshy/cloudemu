@@ -31,6 +31,9 @@ type vnetResponseProps struct {
 	ProvisioningState string           `json:"provisioningState"`
 	AddressSpace      *addressSpace    `json:"addressSpace,omitempty"`
 	Subnets           []subnetResponse `json:"subnets,omitempty"`
+	// ResourceGUID is ARM's persisted resource identifier, stable for the
+	// VNet's lifetime.
+	ResourceGUID string `json:"resourceGuid,omitempty"`
 }
 
 type vnetListResponse struct {
@@ -85,16 +88,18 @@ type securityRule struct {
 }
 
 type securityRuleProps struct {
-	Description              string `json:"description,omitempty"`
-	Protocol                 string `json:"protocol,omitempty"`
-	SourceAddressPrefix      string `json:"sourceAddressPrefix,omitempty"`
-	DestinationAddressPrefix string `json:"destinationAddressPrefix,omitempty"`
-	SourcePortRange          string `json:"sourcePortRange,omitempty"`
-	DestinationPortRange     string `json:"destinationPortRange,omitempty"`
-	Access                   string `json:"access,omitempty"`
-	Priority                 int    `json:"priority,omitempty"`
-	Direction                string `json:"direction,omitempty"`
-	ProvisioningState        string `json:"provisioningState,omitempty"`
+	Description                          string     `json:"description,omitempty"`
+	Protocol                             string     `json:"protocol,omitempty"`
+	SourceAddressPrefix                  string     `json:"sourceAddressPrefix,omitempty"`
+	DestinationAddressPrefix             string     `json:"destinationAddressPrefix,omitempty"`
+	SourcePortRange                      string     `json:"sourcePortRange,omitempty"`
+	DestinationPortRange                 string     `json:"destinationPortRange,omitempty"`
+	SourceApplicationSecurityGroups      []armIDRef `json:"sourceApplicationSecurityGroups,omitempty"`
+	DestinationApplicationSecurityGroups []armIDRef `json:"destinationApplicationSecurityGroups,omitempty"`
+	Access                               string     `json:"access,omitempty"`
+	Priority                             int        `json:"priority,omitempty"`
+	Direction                            string     `json:"direction,omitempty"`
+	ProvisioningState                    string     `json:"provisioningState,omitempty"`
 }
 
 type nsgResponse struct {
@@ -117,6 +122,9 @@ type nsgResponseProps struct {
 	// publicIPConfigurationRef's NIC scan).
 	Subnets           []armIDRef `json:"subnets,omitempty"`
 	NetworkInterfaces []armIDRef `json:"networkInterfaces,omitempty"`
+	// ResourceGUID is ARM's persisted resource identifier, stable for the
+	// NSG's lifetime.
+	ResourceGUID string `json:"resourceGuid,omitempty"`
 }
 
 // securityRuleListResponse is the collection envelope for the securityRules
@@ -174,6 +182,10 @@ type publicIPReqProps struct {
 	PublicIPAllocationMethod string                  `json:"publicIPAllocationMethod,omitempty"`
 	IdleTimeoutInMinutes     int                     `json:"idleTimeoutInMinutes,omitempty"`
 	DNSSettings              *publicIPDNSSettingsReq `json:"dnsSettings,omitempty"`
+	// PublicIPPrefix is the optional prefix a public IP is drawn from. The mock
+	// only stores the reference (child-IP allocation from the prefix range is
+	// deferred); the prefix's publicIPAddresses[] back-reference is rebuilt from it.
+	PublicIPPrefix *armIDRef `json:"publicIPPrefix,omitempty"`
 }
 
 type publicIPDNSSettingsReq struct {
@@ -200,6 +212,12 @@ type publicIPRespProps struct {
 	// IPConfiguration is the back-reference to the NIC ipConfiguration a real
 	// publicIPAddresses GET reports once a NIC attaches the address.
 	IPConfiguration *armIDRef `json:"ipConfiguration,omitempty"`
+	// PublicIPPrefix echoes the prefix this public IP was created from, when one
+	// was supplied on the create.
+	PublicIPPrefix *armIDRef `json:"publicIPPrefix,omitempty"`
+	// ResourceGUID is ARM's persisted resource identifier, stable for the
+	// address's lifetime.
+	ResourceGUID string `json:"resourceGuid,omitempty"`
 }
 
 type publicIPDNSSettings struct {

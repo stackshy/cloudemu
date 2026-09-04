@@ -7,7 +7,9 @@ package storageaccount_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -130,7 +132,7 @@ func TestSDKStorageAccountList(t *testing.T) {
 	ctx := context.Background()
 	client := newAccountsClient(t)
 
-	for _, name := range []string{"acctA", "acctB"} {
+	for _, name := range []string{"accta", "acctb"} {
 		poller, err := client.BeginCreate(ctx, "rg-1", name, armstorage.AccountCreateParameters{
 			Location: to.Ptr("eastus"),
 			Kind:     to.Ptr(armstorage.KindBlockBlobStorage),
@@ -166,7 +168,7 @@ func TestSDKStorageAccountList(t *testing.T) {
 		}
 		return out, nil
 	})
-	assert.ElementsMatch(t, []string{"acctA", "acctB"}, subNames, "subscription-scoped list must return both accounts")
+	assert.ElementsMatch(t, []string{"accta", "acctb"}, subNames, "subscription-scoped list must return both accounts")
 
 	// Resource-group-scoped list.
 	rgPager := client.NewListByResourceGroupPager("rg-1", nil)
@@ -181,5 +183,33 @@ func TestSDKStorageAccountList(t *testing.T) {
 		}
 		return out, nil
 	})
-	assert.ElementsMatch(t, []string{"acctA", "acctB"}, rgNames, "resource-group-scoped list must return both accounts")
+	assert.ElementsMatch(t, []string{"accta", "acctb"}, rgNames, "resource-group-scoped list must return both accounts")
+}
+
+// Storage account create-or-update is a long-running operation in the ARM SDK:
+// armstorage AccountsClient.BeginCreate's generated create accepts only 200
+// (synchronous terminal) or 202 (async) and rejects 201. So the handler must
+// answer 200 on both create and re-apply — this guards against a well-meaning
+// "return 201 on create" change that would break the real SDK poller.
+func TestSDKStorageAccountCreateReturns200LROContract(t *testing.T) {
+	srv := azureserver.New(azureserver.Drivers{BlobStorage: cloudemu.NewAzure().BlobStorage})
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	url := ts.URL + "/subscriptions/sub-1/resourceGroups/rg-1/providers/" +
+		"Microsoft.Storage/storageAccounts/acctstatus?api-version=2023-01-01"
+	body := `{"location":"westus2","kind":"StorageV2","sku":{"name":"Standard_LRS"}}`
+
+	put := func() int {
+		req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url, strings.NewReader(body))
+		require.NoError(t, err)
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := ts.Client().Do(req)
+		require.NoError(t, err)
+		defer resp.Body.Close()
+		return resp.StatusCode
+	}
+
+	assert.Equal(t, http.StatusOK, put(), "create must be 200 (LRO sync-terminal), never 201")
+	assert.Equal(t, http.StatusOK, put(), "re-apply stays 200")
 }

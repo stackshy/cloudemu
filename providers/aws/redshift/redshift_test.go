@@ -336,6 +336,97 @@ func TestInstanceOpsRejected(t *testing.T) {
 	}
 }
 
+// TestDeleteClusterSubnetGroupInUseGuard proves a subnet group referenced by a
+// live cluster cannot be deleted, and that deleting the cluster releases it.
+func TestDeleteClusterSubnetGroupInUseGuard(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateClusterSubnetGroup(ctx, "sng", "desc", []string{"subnet-1"}); err != nil {
+		t.Fatalf("create subnet group: %v", err)
+	}
+
+	if _, err := m.CreateCluster(ctx, rdbdriver.ClusterConfig{
+		ID: "cl1", MasterUsername: "admin", SubnetGroupName: "sng",
+	}); err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+
+	// In use → rejected; the group survives.
+	if err := m.DeleteClusterSubnetGroup(ctx, "sng"); err == nil {
+		t.Fatal("expected in-use subnet group delete to be rejected")
+	}
+
+	if sngs, err := m.DescribeClusterSubnetGroups(ctx, []string{"sng"}); err != nil || len(sngs) != 1 {
+		t.Fatalf("subnet group should still exist: %+v, err %v", sngs, err)
+	}
+
+	if err := m.DeleteCluster(ctx, "cl1"); err != nil {
+		t.Fatalf("delete cluster: %v", err)
+	}
+
+	// Released → delete succeeds.
+	if err := m.DeleteClusterSubnetGroup(ctx, "sng"); err != nil {
+		t.Fatalf("delete released subnet group: %v", err)
+	}
+}
+
+// TestDeleteClusterParameterGroupInUseGuard proves a parameter group referenced
+// by a live cluster cannot be deleted, and that deleting the cluster frees it.
+func TestDeleteClusterParameterGroupInUseGuard(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateClusterParameterGroup(ctx, "pg", "redshift-1.0", "desc"); err != nil {
+		t.Fatalf("create parameter group: %v", err)
+	}
+
+	if _, err := m.CreateCluster(ctx, rdbdriver.ClusterConfig{
+		ID: "cl1", MasterUsername: "admin", DBClusterParameterGroupName: "pg",
+	}); err != nil {
+		t.Fatalf("create cluster: %v", err)
+	}
+
+	if err := m.DeleteClusterParameterGroup(ctx, "pg"); err == nil {
+		t.Fatal("expected in-use parameter group delete to be rejected")
+	}
+
+	if pgs, err := m.DescribeClusterParameterGroups(ctx, []string{"pg"}); err != nil || len(pgs) != 1 {
+		t.Fatalf("parameter group should still exist: %+v, err %v", pgs, err)
+	}
+
+	if err := m.DeleteCluster(ctx, "cl1"); err != nil {
+		t.Fatalf("delete cluster: %v", err)
+	}
+
+	if err := m.DeleteClusterParameterGroup(ctx, "pg"); err != nil {
+		t.Fatalf("delete released parameter group: %v", err)
+	}
+}
+
+// TestDeleteUnreferencedGroupsSucceed proves the in-use guard never blocks a
+// group nothing references.
+func TestDeleteUnreferencedGroupsSucceed(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.CreateClusterSubnetGroup(ctx, "sng", "desc", []string{"subnet-1"}); err != nil {
+		t.Fatalf("create subnet group: %v", err)
+	}
+
+	if _, err := m.CreateClusterParameterGroup(ctx, "pg", "redshift-1.0", "desc"); err != nil {
+		t.Fatalf("create parameter group: %v", err)
+	}
+
+	if err := m.DeleteClusterSubnetGroup(ctx, "sng"); err != nil {
+		t.Fatalf("delete unreferenced subnet group: %v", err)
+	}
+
+	if err := m.DeleteClusterParameterGroup(ctx, "pg"); err != nil {
+		t.Fatalf("delete unreferenced parameter group: %v", err)
+	}
+}
+
 // requireNoError fails the test immediately if err is non-nil.
 func requireNoError(t *testing.T, err error) {
 	t.Helper()

@@ -19,17 +19,36 @@
 //
 // RoleDefinitions back through the shared iamdriver.IAM (each Azure role
 // definition is stored as a driver Role with AssumeRolePolicyDoc holding the
-// ARM properties JSON). RoleAssignments live in an in-handler store —
-// Azure's RoleAssignment shape (principal + role + scope) does not map onto
-// the AWS-shaped driver interface.
+// ARM properties JSON). RoleAssignments back through the Azure IAM mock's
+// RoleAssignment* methods (see Driver below) — Azure's RoleAssignment shape
+// (principal + role + scope) does not map onto the AWS-shaped driver
+// interface, so those methods live on the concrete mock instead.
 package iam
 
 import (
+	"context"
 	"net/http"
 	"strings"
 
+	azureiam "github.com/stackshy/cloudemu/v2/providers/azure/iam"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
+
+// Driver is what this handler needs from its backing IAM mock: the
+// AWS-shaped RoleDefinition surface (iamdriver.IAM, shared across all three
+// clouds) plus the Azure-specific RoleAssignment surface that has no
+// AWS-shaped equivalent. The only production implementation is
+// *azureiam.Mock (providers/azure/iam), which persists role assignments
+// alongside every other IAM state so they survive a snapshot/restore.
+type Driver interface {
+	iamdriver.IAM
+
+	CreateRoleAssignment(ctx context.Context, cfg azureiam.RoleAssignmentConfig) (*azureiam.RoleAssignmentInfo, error)
+	GetRoleAssignment(ctx context.Context, id string) (*azureiam.RoleAssignmentInfo, error)
+	DeleteRoleAssignment(ctx context.Context, id string) (*azureiam.RoleAssignmentInfo, error)
+	ListRoleAssignments(ctx context.Context) ([]azureiam.RoleAssignmentInfo, error)
+	RoleAssignmentsForRoleDefinition(ctx context.Context, roleDefinitionGUID string) ([]azureiam.RoleAssignmentInfo, error)
+}
 
 const (
 	// providerSegment is the lower-case marker we search for in URLs.
@@ -48,20 +67,18 @@ const (
 
 // Handler serves Microsoft.Authorization ARM RBAC requests.
 type Handler struct {
-	iam             iamdriver.IAM
-	assignments     *assignmentStore
+	iam             Driver
 	denyAssignments *denyAssignmentStore
 	builtins        map[string]roleDefinitionProperties
 }
 
-// New returns a handler backed by drv for role definitions, with an empty
-// in-memory store for role assignments, an empty deny-assignment store, and
-// the well-known built-in role definitions seeded so RoleAssignments can
-// reference them by their fixed GUIDs.
-func New(drv iamdriver.IAM) *Handler {
+// New returns a handler backed by drv for both role definitions and role
+// assignments, with an empty deny-assignment store and the well-known
+// built-in role definitions seeded so RoleAssignments can reference them by
+// their fixed GUIDs.
+func New(drv Driver) *Handler {
 	return &Handler{
 		iam:             drv,
-		assignments:     newAssignmentStore(),
 		denyAssignments: newDenyAssignmentStore(),
 		builtins:        builtInRoleDefinitions(),
 	}

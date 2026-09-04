@@ -19,20 +19,6 @@ Azure's `secrets` service · portable interface `driver.Secrets` · [Azure index
 
 Discovered by type assertion; only some providers implement these.
 
-### GCPSecrets
-
-GCPSecrets is the GCP Secret Manager-specific surface kept off the shared
-
-| Operation | Description |
-| --- | --- |
-| `DestroySecretVersion` | DestroySecretVersion moves a version to DESTROYED, wipes its payload, and |
-| `DisableSecretVersion` | DisableSecretVersion moves a version to DISABLED. It fails on a DESTROYED |
-| `EnableSecretVersion` | EnableSecretVersion moves a version to ENABLED. It is idempotent on an |
-| `GetSecretIAMPolicy` | GetSecretIAMPolicy returns the secret's stored IAM policy (an empty |
-| `PatchSecret` | PatchSecret applies a partial update (labels, annotations, topics, version |
-| `SetSecretIAMPolicy` | SetSecretIAMPolicy stores the secret's IAM policy and returns it with a |
-| `TestSecretIAMPermissions` | TestSecretIAMPermissions returns the subset of permissions the caller |
-
 ### KeyVaultCertificates
 
 KeyVaultCertificates is the Azure Key Vault-specific certificate data-plane

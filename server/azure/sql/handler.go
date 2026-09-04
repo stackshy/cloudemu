@@ -39,6 +39,11 @@ const (
 	subFailoverGroups = "failoverGroups"
 	subAdministrators = "administrators"
 
+	// subTDE is the transparentDataEncryption sub-resource of a database; the
+	// trailing "/current" name segment is dropped by the 4-segment ParsePath, so
+	// it surfaces as rp.SubResourceAction under a database path.
+	subTDE = "transparentDataEncryption"
+
 	subMIStart    = "start"
 	subMIStop     = "stop"
 	subMIFailover = "failover"
@@ -165,6 +170,13 @@ func (h *Handler) serveDatabaseRoute(w http.ResponseWriter, r *http.Request, rp 
 
 		h.listDatabases(w, r, rp, db)
 
+		return
+	}
+
+	// .../databases/{d}/transparentDataEncryption[/current]: a database
+	// sub-resource, not a database verb.
+	if rp.SubResourceAction == subTDE {
+		h.serveTDE(w, r, rp)
 		return
 	}
 

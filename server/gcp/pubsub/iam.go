@@ -1,10 +1,6 @@
 package pubsub
 
-import (
-	"encoding/base64"
-	"net/http"
-	"strconv"
-)
+import "net/http"
 
 // ---------- IAM ----------
 //
@@ -12,6 +8,13 @@ import (
 // surface (getIamPolicy/setIamPolicy/testIamPermissions), which
 // google_pubsub_topic_iam_* / google_pubsub_subscription_iam_* Terraform
 // resources depend on. Policies are stored per-resource and round-trip verbatim.
+//
+// setIamPolicy enforces the same etag optimistic-concurrency contract real
+// Pub/Sub does: a request that carries an etag must match the resource's
+// current one or the write is rejected (409 ABORTED) instead of silently
+// clobbering a concurrent change; an empty etag is an unconditional write.
+// reasonAborted mirrors server/gcp/iam's service-account-level policy conflict.
+const reasonAborted = "ABORTED"
 
 func (h *Handler) serveIam(w http.ResponseWriter, r *http.Request, resType, name, action string) {
 	switch action {
@@ -37,7 +40,7 @@ func (h *Handler) getIamPolicy(w http.ResponseWriter, r *http.Request, resType, 
 	h.mu.RUnlock()
 
 	if pol == nil {
-		pol = &iamPolicy{Version: 1, Etag: h.nextEtag()}
+		pol = &iamPolicy{Version: 1, Etag: policyEtag(nil)}
 	}
 
 	writeJSON(w, http.StatusOK, pol)
@@ -59,10 +62,27 @@ func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, resType, 
 		pol.Version = 1
 	}
 
-	pol.Etag = h.nextEtag()
-
+	// The etag precondition check and the write happen atomically under one
+	// h.mu.Lock() (read-compare-write in a single critical section), so
+	// concurrent setIamPolicy calls that all read the same starting etag
+	// can't all "win" the way a separate getIamPolicy-then-setIamPolicy pair
+	// here would allow (a lost update) — mirrors providers/gcp/gcs's
+	// CompareAndSetBucketIAMPolicy for bucket IAM (#1014).
 	h.mu.Lock()
+
+	currentEtag := policyEtag(h.loadPolicy(resType, name))
+	if req.Policy.Etag != "" && req.Policy.Etag != currentEtag {
+		h.mu.Unlock()
+		writeError(w, http.StatusConflict, reasonAborted,
+			"there were concurrent policy changes; please retry the whole "+
+				"read-modify-write with the new etag")
+
+		return
+	}
+
+	pol.Etag = nextIAMEtag(currentEtag)
 	h.storePolicy(resType, name, &pol)
+
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, pol)
@@ -127,8 +147,4 @@ func (h *Handler) storePolicy(resType, name string, pol *iamPolicy) {
 			s.iam = pol
 		}
 	}
-}
-
-func (h *Handler) nextEtag() string {
-	return base64.StdEncoding.EncodeToString([]byte("etag-" + strconv.FormatUint(h.ackCounter.Add(1), 10)))
 }

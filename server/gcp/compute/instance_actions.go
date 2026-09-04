@@ -1,6 +1,7 @@
 package compute
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -119,7 +120,9 @@ func (h *Handler) setMachineType(w http.ResponseWriter, r *http.Request, rp gcpr
 	h.applyMutation(w, r, rp, inst.ID, "setMachineType", nil, nil, machineTypeShort(body.MachineType))
 }
 
-// attachDisk handles POST .../instances/{name}/attachDisk.
+// attachDisk handles POST .../instances/{name}/attachDisk. It flips the backing
+// driver volume to in-use (recording autoDelete) and records the attachment in
+// the instance's disks[], so the disk store and the instance view stay in sync.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) attachDisk(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
@@ -134,13 +137,30 @@ func (h *Handler) attachDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	disks := append(decodeDisks(inst.Tags), disk)
+	existing := decodeDisks(inst.Tags)
+
+	attacher, ok := h.compute.(instanceDiskAttacher)
+	if !ok {
+		writeNotImplemented(w, "instance attachDisk")
+		return
+	}
+
+	if err := h.resolveAndAttachDisk(
+		r.Context(), inst.ID, rp.ResourceName, len(existing), &disk, rp, hostFromRequest(r), attacher,
+	); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	disks := append(existing, disk)
 
 	h.applyMutation(w, r, rp, inst.ID, "attachDisk",
 		map[string]string{keyDisks: encodeJSON(disks)}, nil, "")
 }
 
-// detachDisk handles POST .../instances/{name}/detachDisk?deviceName=...
+// detachDisk handles POST .../instances/{name}/detachDisk?deviceName=... It flips
+// the backing driver volume back to available (clearing its attachment) and
+// removes the disk from the instance's disks[].
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) detachDisk(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
@@ -156,16 +176,150 @@ func (h *Handler) detachDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	kept := make([]attachedDisk, 0)
+	current := decodeDisks(inst.Tags)
+	kept := make([]attachedDisk, 0, len(current))
 
-	for _, d := range decodeDisks(inst.Tags) {
-		if d.DeviceName != device {
-			kept = append(kept, d)
+	var detached *attachedDisk
+
+	for i := range current {
+		if current[i].DeviceName == device {
+			detached = &current[i]
+			continue
 		}
+
+		kept = append(kept, current[i])
+	}
+
+	if detached == nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "no attached disk with deviceName "+device)
+		return
+	}
+
+	if err := h.detachDriverVolume(r.Context(), inst.ID, detached, rp.ScopeName); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
 	}
 
 	h.applyMutation(w, r, rp, inst.ID, "detachDisk",
 		map[string]string{keyDisks: encodeJSON(kept)}, nil, "")
+}
+
+// detachDriverVolume flips the driver volume backing a detached disks[] entry
+// back to available. The disk is resolved by its recorded source (or, lacking
+// one, its device name); a volume that cannot be resolved is a no-op so a
+// disks[]-only entry never blocks the detach.
+func (h *Handler) detachDriverVolume(
+	ctx context.Context, instanceID string, d *attachedDisk, zone string,
+) error {
+	name := lastSegment(d.Source)
+	if name == "" {
+		name = d.DeviceName
+	}
+
+	vol, err := findDiskByName(ctx, h.compute, name, zone)
+	if err != nil {
+		return nil //nolint:nilerr // a disks[]-only entry with no backing volume needs no driver detach.
+	}
+
+	return h.compute.DetachVolume(ctx, vol.ID, instanceID, d.DeviceName)
+}
+
+// addAccessConfig handles POST .../instances/{name}/addAccessConfig?
+// networkInterface=nic0, appending an external-IP accessConfig to the
+// instance's network interface. CloudEmu models a single nic0, so
+// networkInterface is accepted (and validated when non-empty) but not used to
+// select among multiple NICs. Server-side defaults (type/name/networkTier,
+// and a synthesized ephemeral natIP when the caller left it empty) are filled
+// the same way instances.insert fills them, so a client that adds an
+// accessConfig with no natIP gets one back on the next Get.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) addAccessConfig(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	var body accessConfig
+	if !gcprest.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	inst, err := findInZone(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	existing := decodeAccessConfigs(inst.Tags)
+	updated := append(existing, fillAccessConfigDefaults(&body, rp.ResourceName, len(existing)))
+
+	h.applyMutation(w, r, rp, inst.ID, "addAccessConfig",
+		map[string]string{keyAccessConfigs: encodeJSON(updated)}, nil, "")
+}
+
+// deleteAccessConfig handles POST .../instances/{name}/deleteAccessConfig?
+// accessConfig={name}&networkInterface=nic0, removing the named external-IP
+// accessConfig from the instance's network interface. Once removed, a natIP
+// that named a reserved google_compute_address reads back RESERVED again (the
+// address's IN_USE status is derived live from every instance's accessConfigs,
+// not stored on the address).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) deleteAccessConfig(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	name := r.URL.Query().Get("accessConfig")
+	if name == "" {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "accessConfig is required")
+		return
+	}
+
+	inst, err := findInZone(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	current := decodeAccessConfigs(inst.Tags)
+	kept := make([]accessConfig, 0, len(current))
+
+	found := false
+
+	for i := range current {
+		if current[i].Name == name {
+			found = true
+			continue
+		}
+
+		kept = append(kept, current[i])
+	}
+
+	if !found {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "no accessConfig named "+name)
+		return
+	}
+
+	h.applyMutation(w, r, rp, inst.ID, "deleteAccessConfig",
+		map[string]string{keyAccessConfigs: encodeJSON(kept)}, nil, "")
+}
+
+// setDeletionProtection handles POST .../instances/{name}/
+// setDeletionProtection?deletionProtection=true|false, toggling whether
+// instances.delete refuses to remove the instance.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) setDeletionProtection(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	inst, err := findInZone(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	set := map[string]string{}
+
+	var remove []string
+
+	if r.URL.Query().Get("deletionProtection") == tagValueTrue {
+		set[keyDeletionProtection] = tagValueTrue
+	} else {
+		remove = append(remove, keyDeletionProtection)
+	}
+
+	h.applyMutation(w, r, rp, inst.ID, "setDeletionProtection", set, remove, "")
 }
 
 // applyMutation runs a GCP-specific instance mutation through the mutator

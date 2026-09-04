@@ -205,12 +205,21 @@ func TestDescribeSubnetsPaginatesAllOnce(t *testing.T) {
 		want[aws.ToString(mkSubnet(ctx, t, c, vpcID, cidr, "us-east-1a").SubnetId)] = 0
 	}
 
+	// Scoped to just the 3 subnets created above by id: the account/region's
+	// seeded default VPC also has default subnets, which an unfiltered describe
+	// would otherwise page through too.
+	ids := make([]string, 0, len(want))
+	for id := range want {
+		ids = append(ids, id)
+	}
+
 	seen := map[string]int{}
 
 	var token *string
 
 	for {
 		out, err := c.DescribeSubnets(ctx, &ec2.DescribeSubnetsInput{
+			SubnetIds:  ids,
 			MaxResults: aws.Int32(1),
 			NextToken:  token,
 		})

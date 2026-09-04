@@ -611,3 +611,68 @@ func TestAsyncSettleSyncExecutionAndHistory(t *testing.T) {
 		t.Fatalf("settled history len = %d, want 4 ending ExecutionSucceeded", len(hist))
 	}
 }
+
+// TestListStateMachinesOrderedNewestFirst pins that ListStateMachines returns
+// state machines most-recently-created first (real Step Functions order),
+// not alphabetically by name/ARN. Names are chosen so the two orders disagree.
+func TestListStateMachinesOrderedNewestFirst(t *testing.T) {
+	fc := config.NewFakeClock(time.Unix(0, 0))
+	m := sfn.New(config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"),
+		config.WithAccountID("000000000000")))
+	ctx := context.Background()
+
+	for _, n := range []string{"zzz-first", "aaa-second", "mmm-third"} {
+		createSM(t, m, n)
+		fc.Advance(time.Second)
+	}
+
+	got, err := m.ListStateMachines(ctx)
+	if err != nil {
+		t.Fatalf("ListStateMachines: %v", err)
+	}
+
+	want := []string{"mmm-third", "aaa-second", "zzz-first"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d state machines, want %d", len(got), len(want))
+	}
+
+	for i, w := range want {
+		if got[i].Name != w {
+			t.Fatalf("position %d = %q, want %q", i, got[i].Name, w)
+		}
+	}
+}
+
+// TestListExecutionsOrderedNewestFirst pins that ListExecutions returns
+// executions most-recently-started first (real Step Functions order), not
+// alphabetically by execution name/ARN.
+func TestListExecutionsOrderedNewestFirst(t *testing.T) {
+	fc := config.NewFakeClock(time.Unix(0, 0))
+	m := sfn.New(config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"),
+		config.WithAccountID("000000000000")))
+	ctx := context.Background()
+	arn := createSM(t, m, "sm")
+
+	for _, n := range []string{"zzz-first", "aaa-second", "mmm-third"} {
+		if _, err := m.StartExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Name: n, Input: "{}"}); err != nil {
+			t.Fatalf("StartExecution(%s): %v", n, err)
+		}
+		fc.Advance(time.Second)
+	}
+
+	got, err := m.ListExecutions(ctx, arn, "")
+	if err != nil {
+		t.Fatalf("ListExecutions: %v", err)
+	}
+
+	want := []string{"mmm-third", "aaa-second", "zzz-first"}
+	if len(got) != len(want) {
+		t.Fatalf("got %d executions, want %d", len(got), len(want))
+	}
+
+	for i, w := range want {
+		if got[i].Name != w {
+			t.Fatalf("position %d = %q, want %q", i, got[i].Name, w)
+		}
+	}
+}

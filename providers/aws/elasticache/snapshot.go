@@ -130,6 +130,147 @@ func paramGroupName(engine string) string {
 	return "default." + engine
 }
 
+// CopySnapshot deep-copies an existing snapshot to a new name. Real ElastiCache
+// lowercases both names, rejects a missing source with SnapshotNotFoundFault, and
+// a duplicate target with SnapshotAlreadyExistsFault. The copy is a wholly
+// independent record: the driver.Snapshot value is copied by value (it holds no
+// slice/map fields), stamped with a fresh name/ARN/create-time and Source
+// "copied", so later mutation of either snapshot cannot corrupt the other.
+func (m *Mock) CopySnapshot(ctx context.Context, cfg cachedriver.CopySnapshotConfig) (*cachedriver.Snapshot, error) {
+	source := strings.ToLower(cfg.SourceSnapshotName)
+	target := strings.ToLower(cfg.TargetSnapshotName)
+
+	if target == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, "TargetSnapshotName is required")
+	}
+
+	src, ok := m.snapshots.Get(source)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound,
+			"SnapshotNotFoundFault: snapshot %q not found", source)
+	}
+
+	region := regionctx.RegionOr(ctx, m.opts.Region)
+
+	dst := src
+	dst.Name = target
+	dst.Source = "copied"
+	dst.Status = statusAvailable
+	dst.CreatedAt = m.opts.Clock.Now().UTC()
+	dst.ARN = m.snapshotARN(arnRegion(src.ARN, region), target)
+
+	// SetIfAbsent is the atomic create-if-new guard: a concurrent copy to the same
+	// target loses the race and reports the duplicate, never silently overwrites.
+	if !m.snapshots.SetIfAbsent(target, dst) {
+		return nil, cerrors.Newf(cerrors.AlreadyExists,
+			"SnapshotAlreadyExistsFault: snapshot %q already exists", target)
+	}
+
+	return &dst, nil
+}
+
+// DeleteSnapshot removes a snapshot and returns its last state marked
+// "deleting", as real ElastiCache does (the delete is asynchronous there). A
+// missing snapshot reports SnapshotNotFoundFault.
+func (m *Mock) DeleteSnapshot(_ context.Context, name string) (*cachedriver.Snapshot, error) {
+	key := strings.ToLower(name)
+
+	snap, ok := m.snapshots.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound,
+			"SnapshotNotFoundFault: snapshot %q not found", key)
+	}
+
+	// Gate the response on the delete winning: if a concurrent caller removed the
+	// snapshot between the Get and here, report the not-found it now is.
+	if !m.snapshots.Delete(key) {
+		return nil, cerrors.Newf(cerrors.NotFound,
+			"SnapshotNotFoundFault: snapshot %q not found", key)
+	}
+
+	snap.Status = "deleting"
+
+	return &snap, nil
+}
+
+// restoreSeed seeds the config fields of a cache cluster or replication group
+// restore from the named snapshot, filling only the fields the request left
+// unset (an explicit request value always wins). A blank name is not a restore
+// (nil, nil); a named-but-missing snapshot reports SnapshotNotFoundFault.
+func (m *Mock) restoreSeed(name string) (*cachedriver.Snapshot, error) {
+	key := strings.ToLower(name)
+	if key == "" {
+		return nil, nil
+	}
+
+	snap, ok := m.snapshots.Get(key)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound,
+			"SnapshotNotFoundFault: snapshot %q not found", key)
+	}
+
+	return &snap, nil
+}
+
+// seedCacheRestore fills a CreateCacheCluster config from its SnapshotName, so a
+// restore reproduces the source cluster's shape unless the request overrides a
+// field. It is a no-op when the request names no snapshot.
+func (m *Mock) seedCacheRestore(cfg *cachedriver.CacheConfig) error {
+	snap, err := m.restoreSeed(cfg.SnapshotName)
+	if err != nil || snap == nil {
+		return err
+	}
+
+	if cfg.Engine == "" {
+		cfg.Engine = snap.Engine
+	}
+
+	if cfg.NodeType == "" {
+		cfg.NodeType = snap.NodeType
+	}
+
+	if cfg.EngineVersion == "" {
+		cfg.EngineVersion = snap.EngineVersion
+	}
+
+	if cfg.NumCacheNodes == 0 {
+		cfg.NumCacheNodes = snap.NumCacheNodes
+	}
+
+	if cfg.Port == 0 {
+		cfg.Port = snap.Port
+	}
+
+	return nil
+}
+
+// seedReplicationGroupRestore fills a CreateReplicationGroup config from its
+// SnapshotName, mirroring seedCacheRestore for the replication-group surface.
+func (m *Mock) seedReplicationGroupRestore(cfg *cachedriver.ReplicationGroupConfig) error {
+	snap, err := m.restoreSeed(cfg.SnapshotName)
+	if err != nil || snap == nil {
+		return err
+	}
+
+	if cfg.Engine == "" {
+		cfg.Engine = snap.Engine
+	}
+
+	if cfg.NodeType == "" {
+		cfg.NodeType = snap.NodeType
+	}
+
+	if cfg.EngineVersion == "" {
+		cfg.EngineVersion = snap.EngineVersion
+	}
+
+	if cfg.NumCacheNodes == 0 {
+		cfg.NumCacheNodes = snap.NumCacheNodes
+	}
+
+	return nil
+}
+
 // DescribeSnapshots returns all snapshots, narrowed by the non-empty filter
 // fields. An explicit SnapshotName that matches nothing reports
 // SnapshotNotFoundFault, as real ElastiCache does.

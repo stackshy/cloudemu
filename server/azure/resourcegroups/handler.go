@@ -168,8 +168,10 @@ func (h *Handler) serveGroup(w http.ResponseWriter, r *http.Request, sub, name s
 		h.put(w, r, sub, name)
 	case http.MethodPatch:
 		h.patch(w, r, sub, name)
-	case http.MethodGet, http.MethodHead:
+	case http.MethodGet:
 		h.get(w, sub, name)
+	case http.MethodHead:
+		h.checkExistence(w, sub, name)
 	case http.MethodDelete:
 		h.remove(w, r, sub, name)
 	default:
@@ -260,6 +262,24 @@ func (h *Handler) get(w http.ResponseWriter, sub, name string) {
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, group)
+}
+
+// checkExistence answers a HEAD request (armresources'
+// ResourceGroupsClient.CheckExistence): real ARM replies 204 with no body
+// when the group exists and 404 with no body otherwise — the SDK's response
+// handler only accepts those two codes and errors on any other status,
+// including a 200 carrying a JSON body.
+func (h *Handler) checkExistence(w http.ResponseWriter, sub, name string) {
+	h.mu.RLock()
+	_, ok := h.groups[sub][strings.ToLower(name)]
+	h.mu.RUnlock()
+
+	if !ok {
+		w.WriteHeader(http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) list(w http.ResponseWriter, sub string) {
@@ -464,8 +484,10 @@ func exportResourceEntry(r *resourcediscovery.Resource) map[string]any {
 		entry["properties"] = r.Properties
 	}
 
-	if len(r.Tags) > 0 {
-		entry["tags"] = r.Tags
+	// Drop the internal "cloudemu:" ARM-bookkeeping tags so the exported template
+	// carries only real user tags, matching what Resource Graph renders.
+	if tags := resourcegraph.StripInternalTags(r.Tags); len(tags) > 0 {
+		entry["tags"] = tags
 	}
 
 	return entry

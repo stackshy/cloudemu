@@ -14,6 +14,12 @@ const (
 	spotStatusCanceled = "canceled"
 	spotTypeOneTime    = "one-time"
 	timeFormat         = "2006-01-02T15:04:05Z"
+	// maxSpotInstances bounds a spot request's instance count so a
+	// request-controlled cfg.Count can never size an unbounded allocation,
+	// either the results slice below or the one RunInstances performs. It
+	// mirrors the per-call ceiling RunInstances enforces on its own count
+	// parameter, so a request already valid there is never rejected here.
+	maxSpotInstances = 1000
 )
 
 // RequestSpotInstances creates spot instance requests and immediately fulfills them.
@@ -24,6 +30,10 @@ func (m *Mock) RequestSpotInstances(
 ) ([]driver.SpotInstanceRequest, error) {
 	if cfg.Count <= 0 {
 		return nil, cerrors.New(cerrors.InvalidArgument, "count must be greater than 0")
+	}
+
+	if cfg.Count > maxSpotInstances {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "count %d exceeds the maximum of %d per call", cfg.Count, maxSpotInstances)
 	}
 
 	if cfg.MaxPrice <= 0 {

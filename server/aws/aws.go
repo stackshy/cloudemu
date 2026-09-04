@@ -10,6 +10,7 @@ import (
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/quota"
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
@@ -23,6 +24,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
 	configservicesrv "github.com/stackshy/cloudemu/v2/server/aws/configservice"
+	costexplorersrv "github.com/stackshy/cloudemu/v2/server/aws/costexplorer"
 	"github.com/stackshy/cloudemu/v2/server/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/server/aws/ec2"
 	"github.com/stackshy/cloudemu/v2/server/aws/ecr"
@@ -31,6 +33,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/eks"
 	"github.com/stackshy/cloudemu/v2/server/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
+	emrsrv "github.com/stackshy/cloudemu/v2/server/aws/emr"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
 	guarddutysrv "github.com/stackshy/cloudemu/v2/server/aws/guardduty"
@@ -51,7 +54,9 @@ import (
 	route53resolversrv "github.com/stackshy/cloudemu/v2/server/aws/route53resolver"
 	"github.com/stackshy/cloudemu/v2/server/aws/s3"
 	sagemakersrv "github.com/stackshy/cloudemu/v2/server/aws/sagemaker"
+	savingsplanssrv "github.com/stackshy/cloudemu/v2/server/aws/savingsplans"
 	secretsmanagersrv "github.com/stackshy/cloudemu/v2/server/aws/secretsmanager"
+	servicequotassrv "github.com/stackshy/cloudemu/v2/server/aws/servicequotas"
 	sesv2srv "github.com/stackshy/cloudemu/v2/server/aws/sesv2"
 	sfnsrv "github.com/stackshy/cloudemu/v2/server/aws/sfn"
 	"github.com/stackshy/cloudemu/v2/server/aws/sns"
@@ -71,6 +76,7 @@ import (
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	configservicedriver "github.com/stackshy/cloudemu/v2/services/configservice/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+	"github.com/stackshy/cloudemu/v2/services/cost"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
@@ -228,6 +234,21 @@ type Drivers struct {
 	// AccountID and Region — so it is gated on this bool. Enable it so SDK code
 	// paths that call sts:GetCallerIdentity or sts:AssumeRole on init succeed.
 	STS bool
+	// EMR serves the Amazon EMR JSON 1.1 protocol (X-Amz-Target prefix
+	// "ElasticMapReduce.") for the cluster/step lifecycle. Cluster state lives
+	// only in the wire server, so the handler owns its own in-memory store — no
+	// backing driver — and it is gated on this bool. AccountID/Region shape the
+	// cluster ARNs; Clock drives the lifecycle timeline.
+	EMR bool
+	// SavingsPlans serves the AWS Savings Plans REST-JSON API (path-based
+	// operation dispatch, api 2019-06-28) for the plan purchase/describe
+	// lifecycle. Plan state lives only in the wire server, so the handler owns
+	// its own in-memory store — no backing driver — and it is gated on this
+	// bool. AccountID shapes the (global) plan ARNs; Region tags plans; Clock
+	// drives the queued/active timeline. The handler's store also implements
+	// services/cost.Commitments, feeding purchased commitments to the billing
+	// amortization engine.
+	SavingsPlans bool
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with azureserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -238,8 +259,19 @@ type Drivers struct {
 	// Leave nil to omit both handlers. AccountID and Region are needed for
 	// Resource Explorer to construct view/index ARNs.
 	ResourceDiscovery *resourcediscovery.Engine
-	AccountID         string
-	Region            string
+	// ServiceQuotas serves the AWS Service Quotas JSON 1.1 protocol (X-Amz-Target
+	// prefix "ServiceQuotasV20190624.") against a provider-agnostic quota registry
+	// (features/quota). It reports quota values and increase-request history only;
+	// it does not enforce quotas against live resource usage. Leave nil to omit the
+	// handler.
+	ServiceQuotas *quota.Registry
+	// CostExplorer is the inventory the Cost Explorer JSON 1.1 handler prices
+	// (X-Amz-Target prefix "AWSInsightsIndexService."). A *resourcediscovery.Engine
+	// satisfies it; leave nil to omit the handler. The handler has no cost model
+	// of its own — it prices this inventory with services/cost + services/pricing.
+	CostExplorer cost.Inventory
+	AccountID    string
+	Region       string
 	// EnforceAuth turns on SigV4 request authentication: each incoming request's
 	// signature is verified against a registered IAM access key (resolved via the
 	// IAM driver) and bad/missing signatures are rejected with 403. Off by
@@ -317,8 +349,12 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		SNS:                 p.SNS,
 		SFN:                 p.SFN,
 		STS:                 true,
+		EMR:                 true,
+		SavingsPlans:        true,
 		K8sAPI:              nil, // injected by the caller when a shared cluster is desired
 		ResourceDiscovery:   p.ResourceDiscovery,
+		CostExplorer:        p.ResourceDiscovery,
+		ServiceQuotas:       quota.NewAWSDefaults(p.Clock),
 		AccountID:           p.AccountID,
 		Region:              p.Region,
 		EnforceAuth:         p.EnforceAuth,
@@ -456,6 +492,35 @@ func New(d Drivers) *server.Server {
 	// the other JSON 1.1 services, so registration order is unconstrained.
 	if d.WAFv2 != nil {
 		srv.Register(wafv2srv.New(d.WAFv2))
+	}
+
+	// Cost Explorer matches the X-Amz-Target prefix "AWSInsightsIndexService." —
+	// disjoint from the other JSON 1.1 services, so registration order is free.
+	if d.CostExplorer != nil {
+		srv.Register(costexplorersrv.New(d.CostExplorer))
+	}
+
+	// Service Quotas matches the X-Amz-Target prefix "ServiceQuotasV20190624." —
+	// disjoint from the other JSON 1.1 services, so registration order is free.
+	if d.ServiceQuotas != nil {
+		srv.Register(servicequotassrv.New(d.ServiceQuotas, d.AccountID, d.Region))
+	}
+
+	// EMR matches the X-Amz-Target prefix "ElasticMapReduce." — disjoint from the
+	// other JSON 1.1 services, so registration order is free. It carries its own
+	// in-memory cluster/step store (no backing driver).
+	if d.EMR {
+		srv.Register(emrsrv.New(d.AccountID, d.Region, d.Clock))
+	}
+
+	// Savings Plans is a REST-JSON service dispatched on POST /{OperationName}
+	// (e.g. /DescribeSavingsPlans). Its exact-path set is disjoint from every
+	// bucket path, but it must register before S3's permissive REST fallback so
+	// its operation paths aren't swallowed. The handler carries its own in-memory
+	// plan store (no backing driver); its store also feeds purchased commitments
+	// to the billing engine via cost.Commitments.
+	if d.SavingsPlans {
+		srv.Register(savingsplanssrv.New(d.AccountID, d.Region, d.Clock))
 	}
 
 	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
@@ -618,7 +683,12 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.EC2 != nil || d.VPC != nil {
-		srv.Register(ec2.New(d.EC2, d.VPC, d.AccountID))
+		// Clock/Region drive the EC2 handler's wire-only Reserved Instance surface
+		// (deterministic queued/active/retired timeline; region-tagged commitments
+		// and offering catalog). Its purchased reservations also implement
+		// cost.Commitments — union them with the Savings Plans source via
+		// cost.Combine for the CE reservation coverage/utilization consumer.
+		srv.Register(ec2.New(d.EC2, d.VPC, d.AccountID, ec2.WithClock(d.Clock), ec2.WithRegion(d.Region)))
 	}
 
 	if d.Lambda != nil {

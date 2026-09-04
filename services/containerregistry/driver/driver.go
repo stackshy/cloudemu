@@ -27,6 +27,18 @@ type Repository struct {
 	ScanOnPush bool
 }
 
+// ImmutableTagsReservedTag is the reserved Repository.Tags key GCP Artifact
+// Registry uses to persist dockerConfig.immutableTags: the shared Repository
+// struct has no dedicated field for it (ImageTagMutability above is AWS ECR's
+// own, differently-shaped mechanism), so the GCP provider folds the flag into
+// Tags under this key and reads it back to enforce immutableTags on
+// packages.tags write operations. AWS ECR / Azure ACR do not use this key.
+const ImmutableTagsReservedTag = "cloudemu:gcpArImmutableTags"
+
+// ImmutableTagsReservedValue is the Tags value that marks
+// ImmutableTagsReservedTag as enabled.
+const ImmutableTagsReservedValue = "true"
+
 // RepositoryConfig describes a repository to create.
 type RepositoryConfig struct {
 	Name               string
@@ -89,6 +101,21 @@ type LifecyclePolicy struct {
 	// without drift). Optional; providers that model policies purely structurally
 	// leave it empty and callers fall back to serializing Rules.
 	Document string
+}
+
+// LifecyclePreviewResult describes one image a lifecycle policy evaluation
+// would expire, with enough detail to render AWS ECR's
+// GetLifecyclePolicyPreview response (imageDigest/imageTags/imagePushedAt/
+// appliedRulePriority). AWS-specific — Azure ACR and GCP Artifact Registry
+// have no lifecycle-preview API — so it is not part of the ContainerRegistry
+// interface below; the AWS provider exposes a PreviewLifecyclePolicy method
+// that the ECR wire handler reaches via type assertion (see
+// providers/aws/ecr and server/aws/ecr).
+type LifecyclePreviewResult struct {
+	Digest              string
+	Tags                []string
+	PushedAt            string
+	AppliedRulePriority int
 }
 
 // ScanResult represents an image vulnerability scan result.

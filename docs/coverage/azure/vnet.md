@@ -69,6 +69,36 @@ Azure's `networking` service · portable interface `driver.Networking` · [Azure
 
 Discovered by type assertion; only some providers implement these.
 
+### AzureApplicationSecurityGroups
+
+AzureApplicationSecurityGroups is the Azure-only application-security-group
+
+| Operation | Description |
+| --- | --- |
+| `DeleteAzureApplicationSecurityGroup` | DeleteAzureApplicationSecurityGroup removes the ASG, reporting whether it |
+| `GetAzureApplicationSecurityGroup` | GetAzureApplicationSecurityGroup returns the ASG identified by |
+| `ListAzureApplicationSecurityGroups` | ListAzureApplicationSecurityGroups returns the ASGs in a resource group, or |
+| `PutAzureApplicationSecurityGroup` | PutAzureApplicationSecurityGroup creates or replaces an ASG in place (a |
+
+### AzureNetworkGateways
+
+AzureNetworkGateways is the Azure-only site-to-site VPN surface. Each resource
+
+| Operation | Description |
+| --- | --- |
+| `DeleteAzureLocalNetworkGateway` | DeleteAzureLocalNetworkGateway removes the local gateway, reporting whether it existed. |
+| `DeleteAzureVirtualNetworkGateway` | DeleteAzureVirtualNetworkGateway removes the gateway, reporting whether it existed. |
+| `DeleteAzureVirtualNetworkGatewayConnection` | DeleteAzureVirtualNetworkGatewayConnection removes the connection, reporting whether it existed. |
+| `GetAzureLocalNetworkGateway` | GetAzureLocalNetworkGateway returns the local gateway identified by (resourceGroup, name). |
+| `GetAzureVirtualNetworkGateway` | GetAzureVirtualNetworkGateway returns the gateway identified by (resourceGroup, name). |
+| `GetAzureVirtualNetworkGatewayConnection` | GetAzureVirtualNetworkGatewayConnection returns the connection identified by (resourceGroup, name). |
+| `ListAzureLocalNetworkGateways` | ListAzureLocalNetworkGateways returns the local gateways in a resource group, |
+| `ListAzureVirtualNetworkGatewayConnections` | ListAzureVirtualNetworkGatewayConnections returns the connections in a resource |
+| `ListAzureVirtualNetworkGateways` | ListAzureVirtualNetworkGateways returns the gateways in a resource group, or |
+| `PutAzureLocalNetworkGateway` | PutAzureLocalNetworkGateway creates or replaces a local network gateway in place. |
+| `PutAzureVirtualNetworkGateway` | PutAzureVirtualNetworkGateway creates or replaces a virtual network gateway |
+| `PutAzureVirtualNetworkGatewayConnection` | PutAzureVirtualNetworkGatewayConnection creates or replaces a connection in place. |
+
 ### AzureNetworkInterfaces
 
 AzureNetworkInterfaces is the Azure-specific network-interface surface,
@@ -105,206 +135,43 @@ AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
 | `UpsertAzureNSGRule` | UpsertAzureNSGRule creates or replaces a single custom security rule by |
 | `UpsertAzureVNetPeering` | UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings |
 
-### ClientVPN
+### AzureNetworkTagReplacer
 
-ClientVPN is an OPTIONAL AWS capability (type-asserted).
-
-| Operation | Description |
-| --- | --- |
-| `AssociateClientVPNTargetNetwork` |  |
-| `AuthorizeClientVPNIngress` |  |
-| `CreateClientVPNEndpoint` |  |
-| `CreateClientVPNRoute` |  |
-| `DeleteClientVPNEndpoint` |  |
-| `DeleteClientVPNRoute` |  |
-| `DescribeClientVPNAuthorizationRules` |  |
-| `DescribeClientVPNEndpoints` |  |
-| `DescribeClientVPNRoutes` |  |
-| `DescribeClientVPNTargetNetworks` |  |
-| `DisassociateClientVPNTargetNetwork` |  |
-| `RevokeClientVPNIngress` |  |
-
-### DHCPOptionSets
-
-DHCPOptionSets is an OPTIONAL AWS capability (type-asserted).
+AzureNetworkTagReplacer replaces the entire stored tag collection on the core
 
 | Operation | Description |
 | --- | --- |
-| `AssociateDHCPOptions` |  |
-| `CreateDHCPOptions` |  |
-| `DeleteDHCPOptions` |  |
-| `DescribeDHCPOptions` |  |
+| `ReplaceAddressTags` | ReplaceAddressTags sets the public IP address's tags, keyed by its |
+| `ReplaceNATGatewayTags` | ReplaceNATGatewayTags sets the NAT gateway's tags, keyed by its driver id. |
+| `ReplaceNetworkInterfaceTags` | ReplaceNetworkInterfaceTags sets the network interface's tags, keyed by the |
+| `ReplaceSecurityGroupTags` | ReplaceSecurityGroupTags sets the network security group's tags, keyed by |
+| `ReplaceVPCTags` | ReplaceVPCTags sets the virtual network's tags, keyed by its driver id. |
 
-### EgressOnlyInternetGateways
+### AzurePrivateLink
 
-EgressOnlyInternetGateways is an OPTIONAL AWS capability (type-asserted).
-
-| Operation | Description |
-| --- | --- |
-| `CreateEgressOnlyInternetGateway` |  |
-| `DeleteEgressOnlyInternetGateway` |  |
-| `DescribeEgressOnlyInternetGateways` |  |
-
-### IPAM
-
-IPAM is an OPTIONAL AWS capability (type-asserted on the vpc driver).
+AzurePrivateLink is the Azure-only Private Link surface. Each resource type is
 
 | Operation | Description |
 | --- | --- |
-| `AllocateIpamPoolCidr` |  |
-| `CreateIpam` |  |
-| `CreateIpamPool` |  |
-| `CreateIpamScope` |  |
-| `DeleteIpam` |  |
-| `DeleteIpamPool` |  |
-| `DeleteIpamScope` |  |
-| `DeprovisionIpamPoolCidr` |  |
-| `DescribeIpamPools` |  |
-| `DescribeIpamScopes` |  |
-| `DescribeIpams` |  |
-| `GetIpamPoolAllocations` |  |
-| `GetIpamPoolCidrs` |  |
-| `ModifyIpam` |  |
-| `ModifyIpamPool` |  |
-| `ModifyIpamPoolAllocation` |  |
-| `ModifyIpamScope` |  |
-| `ProvisionIpamPoolCidr` |  |
-| `ReleaseIpamPoolAllocation` |  |
+| `DeleteAzurePrivateEndpoint` | DeleteAzurePrivateEndpoint removes the endpoint, reporting whether it existed. |
+| `DeleteAzurePrivateLinkService` | DeleteAzurePrivateLinkService removes the service, reporting whether it existed. |
+| `GetAzurePrivateEndpoint` | GetAzurePrivateEndpoint returns the endpoint identified by (resourceGroup, name). |
+| `GetAzurePrivateLinkService` | GetAzurePrivateLinkService returns the service identified by (resourceGroup, name). |
+| `ListAzurePrivateEndpoints` | ListAzurePrivateEndpoints returns the endpoints in a resource group, or all |
+| `ListAzurePrivateLinkServices` | ListAzurePrivateLinkServices returns the services in a resource group, or all |
+| `PutAzurePrivateEndpoint` | PutAzurePrivateEndpoint creates or replaces a private endpoint in place (a |
+| `PutAzurePrivateLinkService` | PutAzurePrivateLinkService creates or replaces a private link service in place. |
 
-### IPAMByoasn
+### AzurePublicIPPrefixes
 
-IPAMByoasn is an OPTIONAL AWS capability for bring-your-own ASN.
+AzurePublicIPPrefixes is the Azure-only public-IP-prefix surface. Keyed by
 
 | Operation | Description |
 | --- | --- |
-| `AssociateIpamByoasn` |  |
-| `DeprovisionIpamByoasn` |  |
-| `DescribeIpamByoasn` |  |
-| `DisassociateIpamByoasn` |  |
-| `ProvisionIpamByoasn` |  |
-
-### IPAMByoip
-
-IPAMByoip is an OPTIONAL AWS capability for bring-your-own public IP CIDRs
-
-| Operation | Description |
-| --- | --- |
-| `AdvertiseByoipCidr` |  |
-| `DeprovisionByoipCidr` |  |
-| `DescribeByoipCidrs` |  |
-| `MoveByoipCidrToIpam` |  |
-| `ProvisionByoipCidr` |  |
-| `WithdrawByoipCidr` |  |
-
-### IPAMDiscovery
-
-IPAMDiscovery is an OPTIONAL AWS capability for IPAM resource discovery.
-
-| Operation | Description |
-| --- | --- |
-| `AssociateIpamResourceDiscovery` |  |
-| `CreateIpamResourceDiscovery` |  |
-| `DeleteIpamResourceDiscovery` |  |
-| `DescribeIpamResourceDiscoveries` |  |
-| `DescribeIpamResourceDiscoveryAssociations` |  |
-| `DisassociateIpamResourceDiscovery` |  |
-| `GetIpamDiscoveredAccounts` |  |
-| `GetIpamDiscoveredPublicAddresses` |  |
-| `GetIpamDiscoveredResourceCidrs` |  |
-| `ModifyIpamResourceDiscovery` |  |
-
-### IPAMExternalToken
-
-IPAMExternalToken is an OPTIONAL AWS capability for external-resource
-
-| Operation | Description |
-| --- | --- |
-| `CreateIpamExternalResourceVerificationToken` |  |
-| `DeleteIpamExternalResourceVerificationToken` |  |
-| `DescribeIpamExternalResourceVerificationTokens` |  |
-
-### IPAMMetrics
-
-IPAMMetrics is an OPTIONAL capability that exposes the AWS/IPAM CloudWatch
-
-| Operation | Description |
-| --- | --- |
-| `IpamMetrics` |  |
-
-### IPAMPolicy
-
-IPAMPolicy is an OPTIONAL AWS capability for IPAM policies and the
-
-| Operation | Description |
-| --- | --- |
-| `CreateIpamPolicy` |  |
-| `DeleteIpamPolicy` |  |
-| `DescribeIpamPolicies` |  |
-| `DisableIpamOrganizationAdminAccount` |  |
-| `DisableIpamPolicy` |  |
-| `EnableIpamOrganizationAdminAccount` |  |
-| `EnableIpamPolicy` |  |
-| `GetEnabledIpamPolicy` |  |
-| `GetIpamPolicyAllocationRules` |  |
-| `GetIpamPolicyOrganizationTargets` |  |
-| `ModifyIpamPolicyAllocationRules` |  |
-
-### IPAMPrefixListResolver
-
-IPAMPrefixListResolver is an OPTIONAL AWS capability for IPAM prefix-list
-
-| Operation | Description |
-| --- | --- |
-| `CreateIpamPrefixListResolver` |  |
-| `CreateIpamPrefixListResolverTarget` |  |
-| `DeleteIpamPrefixListResolver` |  |
-| `DeleteIpamPrefixListResolverTarget` |  |
-| `DescribeIpamPrefixListResolverTargets` |  |
-| `DescribeIpamPrefixListResolvers` |  |
-| `GetIpamPrefixListResolverRules` |  |
-| `GetIpamPrefixListResolverVersionEntries` |  |
-| `GetIpamPrefixListResolverVersions` |  |
-| `ModifyIpamPrefixListResolver` |  |
-| `ModifyIpamPrefixListResolverTarget` |  |
-
-### IPAMResources
-
-IPAMResources is an OPTIONAL AWS capability exposing IPAM's view of the
-
-| Operation | Description |
-| --- | --- |
-| `GetIpamAddressHistory` |  |
-| `GetIpamResourceCidrs` |  |
-| `ModifyIpamResourceCidr` |  |
-
-### NetworkACLAssociator
-
-NetworkACLAssociator is an OPTIONAL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `ReplaceNetworkACLAssociation` |  |
-
-### NetworkInsights
-
-NetworkInsights is an OPTIONAL AWS capability (type-asserted). It covers both
-
-| Operation | Description |
-| --- | --- |
-| `CreateNetworkInsightsAccessScope` |  |
-| `CreateNetworkInsightsPath` |  |
-| `DeleteNetworkInsightsAccessScope` |  |
-| `DeleteNetworkInsightsAccessScopeAnalysis` |  |
-| `DeleteNetworkInsightsAnalysis` |  |
-| `DeleteNetworkInsightsPath` |  |
-| `DescribeNetworkInsightsAccessScopeAnalyses` |  |
-| `DescribeNetworkInsightsAccessScopes` |  |
-| `DescribeNetworkInsightsAnalyses` |  |
-| `DescribeNetworkInsightsPaths` |  |
-| `GetNetworkInsightsAccessScopeAnalysisFindings` |  |
-| `GetNetworkInsightsAccessScopeContent` |  |
-| `StartNetworkInsightsAccessScopeAnalysis` |  |
-| `StartNetworkInsightsAnalysis` |  |
+| `DeleteAzurePublicIPPrefix` | DeleteAzurePublicIPPrefix removes the prefix, reporting whether it existed. |
+| `GetAzurePublicIPPrefix` | GetAzurePublicIPPrefix returns the prefix identified by (resourceGroup, name). |
+| `ListAzurePublicIPPrefixes` | ListAzurePublicIPPrefixes returns the prefixes in a resource group, or all |
+| `PutAzurePublicIPPrefix` | PutAzurePublicIPPrefix creates or replaces a prefix in place (a repeat |
 
 ### NetworkInterfaceAttacher
 
@@ -314,61 +181,6 @@ NetworkInterfaceAttacher is the AWS-specific ENI attach surface
 | --- | --- |
 | `AttachNetworkInterface` |  |
 
-### NetworkInterfaceCreator
-
-NetworkInterfaceCreator is the AWS-specific ENI-creation surface. It's kept
-
-| Operation | Description |
-| --- | --- |
-| `CreateNetworkInterface` |  |
-
-### NetworkInterfaceModifier
-
-NetworkInterfaceModifier is the AWS-specific ENI attribute-modify surface
-
-| Operation | Description |
-| --- | --- |
-| `ModifyNetworkInterfaceAttribute` |  |
-
-### NetworkInterfaces
-
-NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `DeleteNetworkInterface` |  |
-| `DescribeNetworkInterfaces` |  |
-| `DetachNetworkInterface` |  |
-
-### NetworkResourceTagger
-
-NetworkResourceTagger is an OPTIONAL AWS capability (type-asserted).
-
-| Operation | Description |
-| --- | --- |
-| `RemoveResourceTags` |  |
-| `UpdateResourceTags` |  |
-
-### PrefixLists
-
-PrefixLists is an OPTIONAL AWS capability (type-asserted).
-
-| Operation | Description |
-| --- | --- |
-| `CreateManagedPrefixList` |  |
-| `DeleteManagedPrefixList` |  |
-| `DescribeManagedPrefixLists` |  |
-| `GetManagedPrefixListEntries` |  |
-| `ModifyManagedPrefixList` |  |
-
-### SubnetAttributes
-
-SubnetAttributes is an OPTIONAL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `ModifySubnetAttribute` |  |
-
 ### SubnetCIDRUpdater
 
 SubnetCIDRUpdater is an OPTIONAL capability, discovered by type assertion. It
@@ -376,104 +188,6 @@ SubnetCIDRUpdater is an OPTIONAL capability, discovered by type assertion. It
 | Operation | Description |
 | --- | --- |
 | `UpdateSubnetCIDR` |  |
-
-### TrafficMirroring
-
-TrafficMirroring is an OPTIONAL AWS capability (type-asserted).
-
-| Operation | Description |
-| --- | --- |
-| `CreateTrafficMirrorFilter` |  |
-| `CreateTrafficMirrorFilterRule` |  |
-| `CreateTrafficMirrorSession` |  |
-| `CreateTrafficMirrorTarget` |  |
-| `DeleteTrafficMirrorFilter` |  |
-| `DeleteTrafficMirrorFilterRule` |  |
-| `DeleteTrafficMirrorSession` |  |
-| `DeleteTrafficMirrorTarget` |  |
-| `DescribeTrafficMirrorFilterRules` |  |
-| `DescribeTrafficMirrorFilters` |  |
-| `DescribeTrafficMirrorSessions` |  |
-| `DescribeTrafficMirrorTargets` |  |
-| `ModifyTrafficMirrorFilterNetworkServices` |  |
-| `ModifyTrafficMirrorFilterRule` |  |
-| `ModifyTrafficMirrorSession` |  |
-
-### TransitGateways
-
-TransitGateways is an OPTIONAL AWS capability (type-asserted).
-
-| Operation | Description |
-| --- | --- |
-| `AssociateTransitGatewayRouteTable` |  |
-| `CreateTransitGateway` |  |
-| `CreateTransitGatewayRoute` |  |
-| `CreateTransitGatewayRouteTable` |  |
-| `CreateTransitGatewayVPCAttachment` |  |
-| `DeleteTransitGateway` |  |
-| `DeleteTransitGatewayRoute` |  |
-| `DeleteTransitGatewayRouteTable` |  |
-| `DeleteTransitGatewayVPCAttachment` |  |
-| `DescribeTransitGatewayRouteTables` |  |
-| `DescribeTransitGatewayVPCAttachments` |  |
-| `DescribeTransitGateways` |  |
-| `DisableTransitGatewayRouteTablePropagation` |  |
-| `EnableTransitGatewayRouteTablePropagation` |  |
-| `SearchTransitGatewayRoutes` |  |
-
-### VPCAttributes
-
-VPCAttributes is an OPTIONAL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `ModifyVPCAttribute` |  |
-
-### VPCBlockPublicAccess
-
-VPCBlockPublicAccess is an OPTIONAL AWS capability (type-asserted).
-
-| Operation | Description |
-| --- | --- |
-| `CreateVPCBlockPublicAccessExclusion` |  |
-| `DeleteVPCBlockPublicAccessExclusion` |  |
-| `DescribeVPCBlockPublicAccessExclusions` |  |
-| `DescribeVPCBlockPublicAccessOptions` |  |
-| `ModifyVPCBlockPublicAccessExclusion` |  |
-| `ModifyVPCBlockPublicAccessOptions` |  |
-
-### VPCEndpointServices
-
-VPCEndpointServices is an OPTIONAL AWS capability (type-asserted).
-
-| Operation | Description |
-| --- | --- |
-| `CreateVPCEndpointServiceConfiguration` |  |
-| `DeleteVPCEndpointServiceConfiguration` |  |
-| `DescribeVPCEndpointServiceConfigurations` |  |
-| `DescribeVPCEndpointServicePermissions` |  |
-| `ModifyVPCEndpointServicePermissions` |  |
-
-### VPNConnections
-
-VPNConnections is an OPTIONAL AWS capability (type-asserted).
-
-| Operation | Description |
-| --- | --- |
-| `AttachVPNGateway` |  |
-| `CreateCustomerGateway` |  |
-| `CreateVPNConnection` |  |
-| `CreateVPNConnectionRoute` |  |
-| `CreateVPNGateway` |  |
-| `DeleteCustomerGateway` |  |
-| `DeleteVPNConnection` |  |
-| `DeleteVPNConnectionRoute` |  |
-| `DeleteVPNGateway` |  |
-| `DescribeCustomerGateways` |  |
-| `DescribeVPNConnections` |  |
-| `DescribeVPNGateways` |  |
-| `DetachVPNGateway` |  |
-| `ModifyVPNConnection` |  |
 
 ## Not in scope
 

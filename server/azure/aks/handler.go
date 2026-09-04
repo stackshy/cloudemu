@@ -24,6 +24,8 @@
 //	POST   .../managedClusters/{name}/listClusterUserCredential                                                    — Stub kubeconfig
 //	POST   .../managedClusters/{name}/listClusterMonitoringUserCredential                                          — Stub kubeconfig
 //	POST   .../managedClusters/{name}/rotateClusterCertificates                                                    — Cert rotation no-op
+//	POST   .../managedClusters/{name}/start                                                                        — Start cluster
+//	POST   .../managedClusters/{name}/stop                                                                         — Stop cluster
 //
 // The Kubernetes data plane (Deployments / Services / Pods) is intentionally
 // NOT served — that lands in Wave 2. The kubeconfig blobs we return point
@@ -56,6 +58,9 @@ type Backend interface {
 	ListClusters(ctx context.Context) ([]aks.ManagedCluster, error)
 	RotateClusterCertificates(ctx context.Context, rg, name string) error
 
+	StartCluster(ctx context.Context, rg, name string) (*aks.ManagedCluster, error)
+	StopCluster(ctx context.Context, rg, name string) (*aks.ManagedCluster, error)
+
 	CreateOrUpdateAgentPool(ctx context.Context, rg, cluster string, in aks.AgentPoolInput) (*aks.AgentPool, error)
 	GetAgentPool(ctx context.Context, rg, cluster, pool string) (*aks.AgentPool, error)
 	DeleteAgentPool(ctx context.Context, rg, cluster, pool string) error
@@ -81,7 +86,8 @@ func New(be Backend) *Handler {
 	return &Handler{be: be}
 }
 
-// Matches returns true for ARM Microsoft.ContainerService managedClusters paths.
+// Matches returns true for ARM Microsoft.ContainerService managedClusters
+// paths, plus the locations/operationStatuses paths start/stop cluster poll.
 // AKS uses a mix of "managedClusters" and "managedclusters" in URL templates
 // across SDK operations, so the match is case-insensitive on the resource type.
 func (*Handler) Matches(r *http.Request) bool {
@@ -92,6 +98,11 @@ func (*Handler) Matches(r *http.Request) bool {
 
 	if !strings.EqualFold(rp.Provider, providerName) {
 		return false
+	}
+
+	if strings.EqualFold(rp.ResourceType, resourceTypeLocations) &&
+		strings.EqualFold(rp.SubResource, subOperationStatuses) {
+		return true
 	}
 
 	return strings.EqualFold(rp.ResourceType, resourceTypeManagedClusters)
@@ -105,26 +116,42 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// LRO status poll for start/stop: .../locations/{loc}/operationStatuses/{id}.
+	if strings.EqualFold(rp.ResourceType, resourceTypeLocations) {
+		h.operationStatus(w, r)
+		return
+	}
+
 	// Subscription-scoped or RG-scoped collection: no resourceName.
 	if rp.ResourceName == "" {
 		h.serveClusterCollection(w, r, &rp)
 		return
 	}
 
-	// Sub-resource routing.
+	h.serveClusterSubResource(w, r, &rp)
+}
+
+// serveClusterSubResource routes every named-cluster path: the cluster
+// resource itself (empty sub-resource) and each of its POST actions / nested
+// collections.
+func (h *Handler) serveClusterSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	switch {
 	case strings.EqualFold(rp.SubResource, "agentPools"):
-		h.serveAgentPoolRoute(w, r, &rp)
+		h.serveAgentPoolRoute(w, r, rp)
 	case strings.EqualFold(rp.SubResource, "maintenanceConfigurations"):
-		h.serveMaintenanceRoute(w, r, &rp)
+		h.serveMaintenanceRoute(w, r, rp)
 	case strings.EqualFold(rp.SubResource, "listClusterAdminCredential"),
 		strings.EqualFold(rp.SubResource, "listClusterUserCredential"),
 		strings.EqualFold(rp.SubResource, "listClusterMonitoringUserCredential"):
-		h.serveListCredentials(w, r, &rp)
+		h.serveListCredentials(w, r, rp)
 	case strings.EqualFold(rp.SubResource, "rotateClusterCertificates"):
-		h.serveRotateCertificates(w, r, &rp)
+		h.serveRotateCertificates(w, r, rp)
+	case strings.EqualFold(rp.SubResource, clusterActionStart):
+		postClusterAction(w, r, rp, h.be.StartCluster)
+	case strings.EqualFold(rp.SubResource, clusterActionStop):
+		postClusterAction(w, r, rp, h.be.StopCluster)
 	case rp.SubResource == "":
-		h.serveCluster(w, r, &rp)
+		h.serveCluster(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
 			"AKS sub-resource not implemented: "+rp.SubResource)

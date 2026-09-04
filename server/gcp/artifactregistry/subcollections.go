@@ -34,16 +34,7 @@ func (h *Handler) servePackages(w http.ResponseWriter, r *http.Request, rt *rout
 	case versionsSeg:
 		h.serveVersions(w, r, rt)
 	case tagsSeg:
-		if !requireGet(w, r, "tags") {
-			return
-		}
-
-		if rt.pkgSubID != "" {
-			h.getTag(w, r, rt)
-			return
-		}
-
-		h.listTags(w, r, rt)
+		h.serveTags(w, r, rt)
 	case "":
 		h.servePackage(w, r, rt)
 	default:

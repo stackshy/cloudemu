@@ -231,9 +231,13 @@ aws.SQS.CreateQueue(ctx, driver.QueueConfig{
 
 ## 7. Cost Tracking
 
-The `cost.Tracker` provides simulated cost estimation for cloud operations. It ships with default per-operation rates based on approximate real cloud pricing.
+CloudEmu models cost two ways: a **per-operation tracker** (metered API usage) and a **resource-inventory estimate** (what the standing estate would cost per month). Both live in `services/cost`, backed by the rate tables in `services/pricing`.
 
-### Default Rates (Subset)
+### Per-operation tracker (`cost.Tracker`)
+
+The `cost.Tracker` provides simulated cost estimation for metered cloud operations. It ships with default per-operation rates based on approximate real cloud pricing.
+
+#### Default Rates (Subset)
 
 | Operation | Rate |
 |-----------|------|
@@ -247,7 +251,7 @@ The `cost.Tracker` provides simulated cost estimation for cloud operations. It s
 | `monitoring:PutMetricData` | $0.00001 |
 | `loadbalancer:CreateLoadBalancer` | $0.0225/hour |
 
-### API
+#### API
 
 ```go
 tracker := cost.New()
@@ -268,6 +272,20 @@ tracker.SetRate("compute", "RunInstances", 0.0464)  // m5.xlarge pricing
 // Reset
 tracker.Reset()
 ```
+
+### Inventory estimate (line-item + commitment model)
+
+Alongside the tracker, `services/cost` builds a **bill from the standing estate** rather than from metered calls. `cost.Estimate(ctx, inv)` walks a provider's resource inventory and emits a `cost.Line` per resource (service, resource type, SKU/size, region, monthly rate), and `cost.ServiceMonthly(...)` rolls the lines up by service — the per-resource rates come from `services/pricing.Monthly(provider, service, resourceType, sku, region, props)`. On top of that, `cost.Commitment` (with the `Commitments` registry) models reservations / savings plans and computes `Coverage` and `Utilization` over a time window, mirroring the reporting shape real cost tools return.
+
+### Billing / FinOps SDK-compat handlers
+
+The same cost model is exposed through provider-native billing APIs, so real FinOps SDKs and CLIs work against the emulator:
+
+| Provider | Handlers | Native surface |
+|----------|----------|----------------|
+| AWS | `server/aws/costexplorer`, `server/aws/savingsplans`, `server/aws/servicequotas` | Cost Explorer (GetCostAndUsage, …), Savings Plans, Service Quotas |
+| Azure | `server/azure/costmanagement` | Cost Management (query/usage) |
+| GCP | `server/gcp/cloudbilling` | Cloud Billing (billing accounts, project billing info) |
 
 ---
 
@@ -551,3 +569,51 @@ _ = persist.RestoreAll(ctx, &loaded, map[string]persist.Services{"aws": fresh.Sn
 (no large object bodies). On the standalone server the same capability is exposed
 as `cloudemu serve --persist`, the `cloudemu snapshot save`/`load` commands, and the
 `GET`/`POST /_cloudemu/snapshot` endpoint. Full guide: [persistence.md](persistence.md).
+
+---
+
+## 13. VCR record / replay (`features/vcr`)
+
+`features/vcr` records the wire traffic flowing through the standalone server into a
+**cassette** and replays it later, so a captured session can be re-served with no
+backend at all. It wraps each provider handler as HTTP middleware:
+
+- **Record** (`vcr.ModeRecord`) — proxies to the real in-memory handler and appends
+  each request/response pair to the cassette, flushed to disk on shutdown.
+- **Replay** (`vcr.ModeReplay`) — serves matching recorded responses. In **strict**
+  mode (the default) a request with no recorded match returns `501` rather than
+  falling through, so a replay is a faithful reproduction of exactly what was taped.
+
+Drive it from the server with `--vcr record|replay`, `--vcr-cassette <path>`, and
+`--vcr-strict` (see [standalone-server.md](standalone-server.md#flags)). In Go,
+`vcr.New(vcr.Options{Mode, CassettePath, Strict, Clock})` returns a `*VCR` whose
+`Wrap(next, provider)` produces the middleware and `Flush()` writes the cassette.
+
+---
+
+## 14. State fork & rewind — time travel (`features/timetravel`)
+
+`features/timetravel` is a named-snapshot registry layered over the persistence
+capture/restore functions, giving the running emulator **git-like state history**:
+
+| Operation | Effect |
+|-----------|--------|
+| `Save(name)` | capture current whole-emulator state under a name |
+| `Rewind(name)` | restore a saved state, discarding everything since |
+| `Fork(from, to)` | copy a saved state to a new name (branch off a checkpoint) |
+| `Delete(name)` / `List()` | drop a saved state / enumerate them |
+
+The standalone server exposes these over the admin control plane as
+`POST /_cloudemu/snapshot/{name}` (save), `DELETE …/{name}`,
+`POST …/{name}/rewind`, and `POST …/{from}/fork/{to}` — see
+[persistence.md](persistence.md#admin-endpoint-_cloudemusnapshot) and
+[standalone-server.md](standalone-server.md#named-snapshots-snapshot-save--load--list--delete).
+
+---
+
+## 15. Service quotas (`features/quota`)
+
+`features/quota` is a per-service quota registry: it holds default and overridden
+limits per `(serviceCode, quotaCode)`, records quota-increase requests
+(`RequestIncrease` returns a tracked `ChangeRequest`), and keeps their history.
+It backs the AWS **Service Quotas** SDK-compat handler (`server/aws/servicequotas`).

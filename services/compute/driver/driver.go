@@ -61,6 +61,36 @@ type InstanceConfig struct {
 	// address from the referenced subnetwork's CIDR before launch. Ignored by
 	// AWS/Azure.
 	PrivateIP string
+	// BlockDeviceMappings are the client-supplied boot/data disk requests carried
+	// on create (AWS RunInstances BlockDeviceMapping.N, GCP disks[] with
+	// initializeParams, Azure storageProfile.osDisk + dataDisks). The provider
+	// materializes a real backing volume resource for each one, attached to the
+	// launched instance. Provider-neutral and additive: a caller that leaves it
+	// nil (as Azure/GCP do today) keeps the pre-existing behavior — the AWS
+	// provider then synthesizes a single default root volume.
+	BlockDeviceMappings []BlockDeviceMapping
+}
+
+// BlockDeviceMapping is one client-supplied block/boot disk request on instance
+// create. It is provider-neutral: AWS maps it from RunInstances
+// BlockDeviceMapping.N, and it is the shared carrier the GCP boot-disk / Azure
+// OS-disk work builds on. The provider materializes a real volume resource per
+// mapping, attached to the launched instance at DeviceName.
+type BlockDeviceMapping struct {
+	// DeviceName is the device the volume attaches at (e.g. "/dev/sda1").
+	DeviceName string
+	// Boot marks the instance's root/boot device. Exactly one mapping is the
+	// boot device; the provider synthesizes a default root when none is Boot.
+	Boot bool
+	// AutoDelete requests that the volume be deleted when the instance is
+	// terminated/deleted (AWS DeleteOnTermination, GCP autoDelete, Azure
+	// deleteOption=="Delete"). It is carried onto the materialized volume's
+	// VolumeInfo.DeleteOnTermination.
+	AutoDelete bool
+	// Size is the volume size in GiB (0 = provider default).
+	Size int
+	// Type is the volume/disk type (e.g. "gp3"; empty = provider default).
+	Type string
 }
 
 // AzureNICRef identifies a Network Interface (Microsoft.Network/networkInterfaces)
@@ -414,6 +444,14 @@ type VolumeInfo struct {
 	Device           string
 	CreatedAt        string
 	Tags             map[string]string
+	// DeleteOnTermination is the attachment-scoped auto-delete flag: when the
+	// volume is attached and this is true, terminating the owning instance
+	// deletes the volume rather than detaching it (AWS root volume defaults
+	// true; GCP autoDelete; Azure deleteOption=="Delete"). It has meaning only
+	// while AttachedTo is set and is cleared on detach. Zero value (false)
+	// preserves the pre-existing detach-on-terminate behavior for providers that
+	// do not yet set it.
+	DeleteOnTermination bool
 	// IOPS is the provisioned IOPS (io2/gp3, Premium/Ultra disks), when set.
 	IOPS int
 	// Throughput is the provisioned throughput in MB/s, when set.
@@ -481,6 +519,18 @@ type ImageConfig struct {
 	Name        string
 	Description string
 	Tags        map[string]string
+	// OSDiskID is the source OS managed-disk ID an image is created from
+	// directly (Azure managed-image-from-disk), an alternative to InstanceID /
+	// VM capture. Exactly one of InstanceID or OSDiskID is set.
+	OSDiskID string
+	// OSType is the guest OS family ("Linux"/"Windows") recorded on the image's
+	// OS disk when it is built from a disk (VM capture derives it from the VM).
+	OSType string
+	// OSState is the image OS state ("Generalized"/"Specialized") for a
+	// disk-sourced image.
+	OSState string
+	// DiskSizeGB is the source OS disk size captured onto a disk-sourced image.
+	DiskSizeGB int
 }
 
 // ImageInfo describes a machine image.
@@ -512,6 +562,17 @@ type ImageInfo struct {
 	// LaunchPermissions holds the launchPermission attribute set by
 	// ModifyImageAttribute (AMI sharing). Empty means private.
 	LaunchPermissions []ImageLaunchPermission
+	// OSDiskID is the source OS managed-disk ID an Azure image was created from
+	// directly (managed-image-from-disk). Empty for VM-captured images. The
+	// json tags on these Azure-only fields keep VM-captured images byte-stable
+	// in snapshots (zero values are omitted).
+	OSDiskID string `json:"osDiskId,omitempty"`
+	// OSType is the guest OS family recorded on a disk-sourced image's OS disk.
+	OSType string `json:"osType,omitempty"`
+	// OSState is the OS state ("Generalized"/"Specialized") of a disk-sourced image.
+	OSState string `json:"osState,omitempty"`
+	// DiskSizeGB is the OS disk size captured onto a disk-sourced image.
+	DiskSizeGB int `json:"diskSizeGB,omitempty"`
 }
 
 // ImageLaunchPermission is one launchPermission grant on an AMI: either a Group
@@ -737,6 +798,22 @@ type AzureDiskUpdater interface {
 	UpdateVolume(ctx context.Context, id string, cfg VolumeConfig) (*VolumeInfo, error)
 }
 
+// AzureDiskDeleteOptioner is an optional Azure-only capability that records a
+// disk attachment's ARM deleteOption on the attached volume, mapped onto the
+// shared VolumeInfo.DeleteOnTermination (deleteOption "Delete" ⟷ true). The
+// Azure VM wire handler sets it after attaching each OS / data disk a VM's
+// storageProfile references, so VM delete can cascade per real Azure's
+// deleteOption: a "Delete" disk is deleted with the VM, a "Detach" disk survives
+// (returned to Unattached). deleteOption is attachment-scoped, so DetachVolume
+// clears the flag. Only the Azure VM mock implements it; the wire handler
+// type-asserts for it, so AWS/GCP are unaffected.
+type AzureDiskDeleteOptioner interface {
+	// SetDiskDeleteOnTermination records whether the volume is deleted (true) or
+	// detached (false) when the VM it is attached to is deleted. Returns NotFound
+	// when volumeID is unknown.
+	SetDiskDeleteOnTermination(ctx context.Context, volumeID string, deleteOnTermination bool) error
+}
+
 // AzureDiskAccessor is an optional Azure-only capability for the managed-disk
 // beginGetAccess / endGetAccess actions (DisksClient.BeginGrantAccess /
 // BeginRevokeAccess): a time-bounded SAS URI is issued for exporting or
@@ -862,6 +939,14 @@ type SnapshotAttributeModifier interface {
 // Discovered by type assertion.
 type ImageCopier interface {
 	CopyImage(ctx context.Context, input CopyImageInput) (*ImageInfo, error)
+}
+
+// ImageTagUpdater is an optional capability for replacing the tag set of an
+// existing image in place, backing the Azure Microsoft.Compute/images PATCH
+// (ImageUpdate) tag update. Providers that model managed images implement it;
+// the Azure images wire handler discovers it by type assertion.
+type ImageTagUpdater interface {
+	UpdateImageTags(ctx context.Context, id string, tags map[string]string) (*ImageInfo, error)
 }
 
 // PlacementGroupConfig describes an EC2 placement group to create.

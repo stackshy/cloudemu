@@ -56,6 +56,16 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	// Pre-flight the disks that reference an existing disk by source, BEFORE any
+	// instance/disk is created: real GCP creates NO instance when a referenced
+	// disk source is missing or already attached, so a retry with the same name
+	// still succeeds. Validating up front (rather than rolling back after) keeps
+	// the store free of orphaned instances or half-materialized disks.
+	if err := h.validateDiskSources(r.Context(), req.Disks, rp.ScopeName); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
 	subnet := firstSubnet(req.NetworkInterfaces)
 
 	cfg := computedriver.InstanceConfig{
@@ -78,10 +88,214 @@ func (h *Handler) insertInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
+	// Materialize the boot disk (and any additional disks in the request) as real
+	// Disk resources attached to the instance, so disks.get/list return them and
+	// instances.delete can honor each disk's autoDelete flag.
+	if err := h.materializeInsertDisks(r.Context(), instances[0].ID, &req, rp, hostFromRequest(r)); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
 	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"instances", req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// instanceDiskAttacher is a GCP-local capability the GCE Mock implements: it
+// attaches an existing disk (by driver volume ID) to an instance, flipping the
+// driver volume to in-use and recording the attachment-scoped auto-delete flag
+// (autoDelete ⟷ VolumeInfo.DeleteOnTermination). The same path backs both
+// instances.insert boot/data disks and instances.attachDisk, so the disk store
+// and the instance's disks[] view stay consistent.
+type instanceDiskAttacher interface {
+	AttachDiskGCP(instanceID, volumeID, device string, autoDelete bool) error
+}
+
+// driverVolumeInUse is the driver VolumeInfo.State value for an attached disk.
+const driverVolumeInUse = "in-use"
+
+// validateDiskSources pre-flights the source-referenced disks[] entries before
+// the instance is created: a source that names a missing disk fails with 404,
+// and one that names an already-attached disk fails with a precondition error —
+// in both cases leaving no instance or disk behind, matching real GCP. Entries
+// with initializeParams create a fresh disk during materialization and need no
+// pre-flight. Skipped when the driver is not a GCE mock (materialization is a
+// no-op there anyway).
+func (h *Handler) validateDiskSources(ctx context.Context, disks []attachedDisk, zone string) error {
+	if _, ok := h.compute.(instanceDiskAttacher); !ok {
+		return nil
+	}
+
+	for i := range disks {
+		if disks[i].InitializeParams != nil || disks[i].Source == "" {
+			continue
+		}
+
+		vol, err := findDiskByName(ctx, h.compute, lastSegment(disks[i].Source), zone)
+		if err != nil {
+			return err
+		}
+
+		if vol.State == driverVolumeInUse {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"disk %q is already attached to another instance", lastSegment(disks[i].Source))
+		}
+	}
+
+	return nil
+}
+
+// materializeInsertDisks turns each entry in the instance's disks[] into a real
+// Disk resource attached to the just-created instance. A disk with
+// initializeParams is created fresh; a disk with only a source references an
+// existing disk. Each is attached carrying its autoDelete flag, and the disks[]
+// tag is rewritten with resolved deviceName/source so a read and disks.get agree.
+// When the driver does not expose the GCP disk capabilities (a non-GCE Compute),
+// materialization is skipped and the raw disks[] round-trips as before.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) materializeInsertDisks(
+	ctx context.Context, instanceID string, req *instanceRequest, rp gcprest.ResourcePath, host string,
+) error {
+	if len(req.Disks) == 0 {
+		return nil
+	}
+
+	attacher, ok := h.compute.(instanceDiskAttacher)
+	mutator, mok := h.compute.(instanceMutator)
+
+	if !ok || !mok {
+		return nil
+	}
+
+	for i := range req.Disks {
+		if err := h.resolveAndAttachDisk(ctx, instanceID, req.Name, i, &req.Disks[i], rp, host, attacher); err != nil {
+			return err
+		}
+	}
+
+	return mutator.MutateInstanceGCP(instanceID, map[string]string{keyDisks: encodeJSON(req.Disks)}, nil, "")
+}
+
+// resolveAndAttachDisk materializes/looks-up the Disk resource backing a single
+// disks[] entry and attaches it to the instance, then fills the entry's resolved
+// deviceName/source so the instance response and disks.get line up. It is shared
+// by instances.insert and instances.attachDisk.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) resolveAndAttachDisk(
+	ctx context.Context, instanceID, instanceName string, index int, d *attachedDisk,
+	rp gcprest.ResourcePath, host string, attacher instanceDiskAttacher,
+) error {
+	if d.DeviceName == "" {
+		d.DeviceName = deviceNameFor(d.Boot, instanceName, index)
+	}
+
+	diskName := insertDiskName(d, instanceName, index)
+
+	volID, err := h.diskVolumeID(ctx, diskName, d, rp)
+	if err != nil {
+		return err
+	}
+
+	if err := attacher.AttachDiskGCP(instanceID, volID, d.DeviceName, d.AutoDelete); err != nil {
+		return err
+	}
+
+	d.Source = gcprest.SelfLink(host, rp.Project, gcprest.ScopeZones, rp.ScopeName, "disks", diskName)
+
+	return nil
+}
+
+// diskVolumeID resolves the driver volume ID for a disks[] entry: an existing
+// disk named by source is looked up, otherwise a fresh disk is created from the
+// entry's initializeParams (size/type/sourceImage).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) diskVolumeID(
+	ctx context.Context, diskName string, d *attachedDisk, rp gcprest.ResourcePath,
+) (string, error) {
+	if d.InitializeParams == nil && d.Source != "" {
+		vol, err := findDiskByName(ctx, h.compute, lastSegment(d.Source), rp.ScopeName)
+		if err != nil {
+			return "", err
+		}
+
+		return vol.ID, nil
+	}
+
+	cfg := computedriver.VolumeConfig{
+		Size:             initializeDiskSize(d),
+		VolumeType:       initializeDiskType(d),
+		AvailabilityZone: rp.ScopeName,
+		Tags:             mergeDiskTags(nil, diskName, initializeSourceImage(d)),
+	}
+
+	vol, err := h.compute.CreateVolume(ctx, cfg)
+	if err != nil {
+		return "", err
+	}
+
+	return vol.ID, nil
+}
+
+// insertDiskName resolves the Disk resource name for a disks[] entry: an
+// explicit initializeParams.diskName, else the source disk's name, else the
+// instance name for the boot disk (GCP's default), else an indexed data-disk
+// name.
+func insertDiskName(d *attachedDisk, instanceName string, index int) string {
+	if d.InitializeParams != nil && d.InitializeParams.DiskName != "" {
+		return d.InitializeParams.DiskName
+	}
+
+	if d.Source != "" {
+		return lastSegment(d.Source)
+	}
+
+	if d.Boot {
+		return instanceName
+	}
+
+	return instanceName + "-disk-" + strconv.Itoa(index)
+}
+
+// initializeDiskSize parses the requested disk size (GiB), defaulting to GCP's
+// 10 GiB when the request names none.
+func initializeDiskSize(d *attachedDisk) int {
+	const defaultSizeGb = 10
+
+	if d.InitializeParams != nil && d.InitializeParams.DiskSizeGb != "" {
+		if n, err := strconv.Atoi(d.InitializeParams.DiskSizeGb); err == nil && n > 0 {
+			return n
+		}
+	}
+
+	if d.DiskSizeGb != "" {
+		if n, err := strconv.Atoi(d.DiskSizeGb); err == nil && n > 0 {
+			return n
+		}
+	}
+
+	return defaultSizeGb
+}
+
+// initializeDiskType resolves the disk type (e.g. "pd-ssd") from initializeParams.
+func initializeDiskType(d *attachedDisk) string {
+	if d.InitializeParams != nil && d.InitializeParams.DiskType != "" {
+		return lastSegment(d.InitializeParams.DiskType)
+	}
+
+	return lastSegment(d.Type)
+}
+
+// initializeSourceImage resolves the source image a fresh disk is created from.
+func initializeSourceImage(d *attachedDisk) string {
+	if d.InitializeParams != nil {
+		return d.InitializeParams.SourceImage
+	}
+
+	return ""
 }
 
 // getInstance handles GET .../instances/{name}.
@@ -94,7 +308,7 @@ func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, toInstanceResponse(inst, rp.Project, hostFromRequest(r)))
+	gcprest.WriteJSON(w, http.StatusOK, h.toInstanceResponse(r.Context(), inst, rp.Project, hostFromRequest(r)))
 }
 
 // listInstances handles GET .../instances. Scopes to the requested zone and
@@ -118,7 +332,7 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rp gcpre
 			continue
 		}
 
-		resp := toInstanceResponse(&instances[i], rp.Project, host)
+		resp := h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host)
 		if pred(&resp) {
 			out = append(out, resp)
 		}
@@ -158,7 +372,7 @@ func (h *Handler) aggregatedListInstances(w http.ResponseWriter, r *http.Request
 	items := make(map[string]instancesScopedList)
 
 	for i := range instances {
-		resp := toInstanceResponse(&instances[i], rp.Project, host)
+		resp := h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host)
 		if !pred(&resp) {
 			continue
 		}
@@ -184,6 +398,17 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 	inst, err := findInZone(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	// Real GCP refuses to delete an instance with deletionProtection set,
+	// returning 400 until the caller clears it (setDeletionProtection or a
+	// fresh instances.update).
+	if deletionProtection(inst.Tags) {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
+			"The instance '"+rp.ResourceName+"' has deletionProtection field set to true,"+
+				" please set it to false before performing this operation.")
+
 		return
 	}
 
@@ -346,7 +571,17 @@ func insertTags(req *instanceRequest, zone string) map[string]string {
 		out[keyServiceAccts] = encodeJSON(req.ServiceAccounts)
 	}
 
+	if req.DeletionProtection {
+		out[keyDeletionProtection] = tagValueTrue
+	}
+
 	return out
+}
+
+// deletionProtection reports whether the instance was created (or later set,
+// via setDeletionProtection) with deletionProtection enabled.
+func deletionProtection(tags map[string]string) bool {
+	return tags[keyDeletionProtection] == tagValueTrue
 }
 
 // accessConfig field defaults GCP stamps on an external-IP mapping.
@@ -371,31 +606,45 @@ func accessConfigsFor(nics []networkInterface, instanceName string) []accessConf
 		out := make([]accessConfig, 0, len(nics[i].AccessConfigs))
 
 		for j := range nics[i].AccessConfigs {
-			ac := nics[i].AccessConfigs[j]
-
-			if ac.Type == "" {
-				ac.Type = accessConfigOneToOneNAT
-			}
-
-			if ac.Name == "" {
-				ac.Name = accessConfigDefaultName
-			}
-
-			if ac.NetworkTier == "" {
-				ac.NetworkTier = accessConfigNetworkTier
-			}
-
-			if ac.NatIP == "" {
-				ac.NatIP = ephemeralExternalIP(instanceName, j)
-			}
-
-			out = append(out, ac)
+			out = append(out, fillAccessConfigDefaults(&nics[i].AccessConfigs[j], instanceName, j))
 		}
 
 		return out
 	}
 
 	return nil
+}
+
+// fillAccessConfigDefaults stamps GCP's server-side defaults onto an
+// accessConfig the caller may have left partially filled: type, name, and
+// network tier default to GCP's standard external-IP values, and a missing
+// natIP is synthesized as an ephemeral external IP (mirroring GCP auto-
+// assigning one) seeded on instanceName+index so repeated reads are stable.
+// An explicit natIP — a reserved google_compute_address — is preserved so that
+// address reads back IN_USE while this instance holds it. Shared by
+// instances.insert (accessConfigsFor) and instances.addAccessConfig. Takes ac
+// by pointer only to avoid copying the (small but not tiny) struct; it never
+// mutates through the caller's copy, since the filled-in value is returned.
+func fillAccessConfigDefaults(ac *accessConfig, instanceName string, index int) accessConfig {
+	filled := *ac
+
+	if filled.Type == "" {
+		filled.Type = accessConfigOneToOneNAT
+	}
+
+	if filled.Name == "" {
+		filled.Name = accessConfigDefaultName
+	}
+
+	if filled.NetworkTier == "" {
+		filled.NetworkTier = accessConfigNetworkTier
+	}
+
+	if filled.NatIP == "" {
+		filled.NatIP = ephemeralExternalIP(instanceName, index)
+	}
+
+	return filled
 }
 
 // findInZone looks up an instance by GCP name, scoped to zone. An instance with

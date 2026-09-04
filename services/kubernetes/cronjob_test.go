@@ -25,6 +25,9 @@ func newCronFixture(t *testing.T) (*ClusterState, *config.FakeClock) {
 	api := NewAPIServer()
 	clock := config.NewFakeClock(cronBase())
 	api.SetClock(clock)
+	// CronJob firing is opt-in time-driven behavior (TickCronJobs self-gates on
+	// progression), so enable it before registering the cluster under test.
+	api.SetLifecycleProgression(true)
 
 	_, state := api.RegisterCluster()
 
@@ -211,6 +214,107 @@ func jobExists(state *ClusterState, name string) bool {
 	_, ok := st.items[objKey("default", name)]
 
 	return ok
+}
+
+// TestTickCronJobs_NoOpWithoutProgression asserts the self-gate: with the opt-in
+// progression flag off, a due CronJob never fires (defense-in-depth mirroring
+// Tick, so a caller other than the gated serve ticker still can't fire it).
+func TestTickCronJobs_NoOpWithoutProgression(t *testing.T) {
+	api := NewAPIServer()
+	clock := config.NewFakeClock(cronBase())
+	api.SetClock(clock)
+	// Progression deliberately NOT enabled.
+	_, state := api.RegisterCluster()
+
+	putCronJob(t, state, "backup", "*/5 * * * *", "", 0)
+
+	clock.Advance(10 * time.Minute) // well past a due boundary
+	state.TickCronJobs()
+
+	if got := countJobs(state); got != 0 {
+		t.Fatalf("without progression: %d jobs, want 0 (self-gate)", got)
+	}
+}
+
+// TestCronJob_SuccessfulHistoryPruned fires a CronJob repeatedly and asserts the
+// finished (successful) Jobs self-trim to successfulJobsHistoryLimit (default 3).
+func TestCronJob_SuccessfulHistoryPruned(t *testing.T) {
+	state, clock := newCronFixture(t)
+	putCronJob(t, state, "backup", "*/1 * * * *", "", 0)
+
+	// Fire five successive one-minute slots; each fired Job runs to Complete.
+	for range 5 {
+		clock.Advance(time.Minute)
+		state.TickCronJobs()
+	}
+
+	if got := countJobsByCondition(state, "Complete"); got != 3 {
+		t.Fatalf("successful history: got %d Complete jobs, want 3 (pruned)", got)
+	}
+
+	if got := countJobs(state); got != 3 {
+		t.Fatalf("total jobs after prune: got %d, want 3", got)
+	}
+}
+
+// TestCronJob_FailedHistoryPruned injects several failed Jobs, then fires the
+// CronJob once so the post-fire sweep trims them to failedJobsHistoryLimit
+// (default 1).
+func TestCronJob_FailedHistoryPruned(t *testing.T) {
+	state, clock := newCronFixture(t)
+	cj := putCronJob(t, state, "report", "*/5 * * * *", "", 0)
+
+	for _, name := range []string{"report-f1", "report-f2", "report-f3"} {
+		putFinishedJob(t, state, cj, name, "Failed")
+	}
+
+	clock.Advance(4*time.Minute + 30*time.Second) // reach 00:05:00 and fire
+	state.TickCronJobs()
+
+	if got := countJobsByCondition(state, "Failed"); got != 1 {
+		t.Fatalf("failed history: got %d Failed jobs, want 1 (pruned)", got)
+	}
+}
+
+// putFinishedJob injects a terminal (Complete/Failed) Job owned by cj.
+func putFinishedJob(t *testing.T, s *ClusterState, cj *unstructured.Unstructured, name, condType string) {
+	t.Helper()
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	store := s.reg.getStore(apiGroupBatch, "v1", "jobs")
+
+	job := &unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "batch/v1",
+		"kind":       "Job",
+		"metadata":   map[string]any{"name": name, "namespace": "default"},
+		"status": map[string]any{
+			"conditions": []any{map[string]any{"type": condType, "status": "True"}},
+		},
+	}}
+	job.SetUID(types.UID(newUID()))
+	job.SetCreationTimestamp(s.now())
+	job.SetOwnerReferences([]metav1.OwnerReference{ownerRefOf(cj)})
+	s.stampRegistryRVLocked(job)
+	store.items[objKey("default", name)] = job
+}
+
+func countJobsByCondition(state *ClusterState, condType string) int {
+	state.mu.RLock()
+	defer state.mu.RUnlock()
+
+	st := state.reg.getStore(apiGroupBatch, "v1", "jobs")
+
+	n := 0
+
+	for _, job := range st.items {
+		if jobHasCondition(job, condType) {
+			n++
+		}
+	}
+
+	return n
 }
 
 // --- cron parser unit tests -------------------------------------------------

@@ -62,6 +62,19 @@ type gcsObject struct {
 	ContentDisposition string
 	ContentLanguage    string
 	StorageClass       string
+	// TemporaryHold / EventBasedHold are the object's WORM holds. While either is
+	// set the object cannot be deleted or overwritten regardless of retention.
+	TemporaryHold  bool
+	EventBasedHold bool
+	// RetentionRef is the RFC3339 instant from which the bucket retention period
+	// is measured for this object. It starts at Created and is reset to "now" when
+	// an eventBasedHold is released, restarting the retention clock. Empty falls
+	// back to Created.
+	RetentionRef string
+	// Deleted is the RFC3339 instant this generation became noncurrent (archived
+	// on overwrite, or archived by a live delete on a versioning-enabled bucket).
+	// Empty for the live generation.
+	Deleted string
 }
 
 type gcsMultipartUpload struct {
@@ -89,13 +102,34 @@ type bucketMeta struct {
 	tags       map[string]string
 
 	// mu guards the GCS-specific mutable fields below (location/storageClass,
-	// metageneration/updated, iamPolicy, and the archived version history).
+	// metageneration/updated, iamPolicy, lifecycle, and the archived version
+	// history).
 	mu             sync.Mutex
 	location       string
 	storageClass   string
 	metageneration int64
 	updated        string
 	iamPolicy      []byte
+	// ublaEnabled / ublaLockedTime / publicAccessPrevention hold the bucket's
+	// iamConfiguration (Uniform Bucket-Level Access + Public Access Prevention).
+	// ublaLockedTime is stamped when UBLA is enabled and cleared when disabled,
+	// mirroring the 90-day lock window real GCS reports.
+	ublaEnabled            bool
+	ublaLockedTime         string
+	publicAccessPrevention string
+	// retentionPeriod / retentionEffectiveTime / retentionLocked hold the bucket
+	// retention policy (WORM). A period > 0 means objects cannot be deleted or
+	// overwritten until (now - object.RetentionRef) >= period. retentionLocked
+	// makes the policy permanent: it can then only be increased, never shortened
+	// or removed.
+	retentionPeriod        int64
+	retentionEffectiveTime string
+	retentionLocked        bool
+	// gcsLifecycleRaw is the bucket's lifecycle configuration stored verbatim as
+	// GCS JSON ({"rule":[...]}), preserving every rule condition the wire layer
+	// received. It is the authoritative source for EvaluateLifecycle and
+	// ApplyLifecycleGCS; lifecycle (the portable subset) mirrors its age rules.
+	gcsLifecycleRaw []byte
 	// versions holds archived (non-current) object generations keyed by object
 	// key, oldest-first, populated on overwrite when versioning is enabled.
 	versions map[string][]*gcsObject
@@ -114,6 +148,9 @@ type Mock struct {
 	// notifGen is the source of unique, monotonically increasing notification
 	// config ids (numeric strings, as real GCS mints).
 	notifGen atomic.Int64
+	// hmacKeys holds project-scoped service-account HMAC keys keyed by access id
+	// (Projects.hmacKeys). Lazily created in New so the store is always non-nil.
+	hmacKeys *memstore.Store[*hmacKeyRecord]
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -141,8 +178,9 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 // New creates a new GCS mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		buckets: memstore.New[*bucketMeta](),
-		opts:    opts,
+		buckets:  memstore.New[*bucketMeta](),
+		opts:     opts,
+		hmacKeys: memstore.New[*hmacKeyRecord](),
 	}
 }
 
@@ -203,7 +241,9 @@ func toInfo(o *gcsObject, cloneMeta bool) driver.ObjectInfo {
 		MD5: o.MD5, CRC32C: o.CRC32C,
 		CacheControl: o.CacheControl, ContentEncoding: o.ContentEncoding,
 		ContentDisposition: o.ContentDisposition, ContentLanguage: o.ContentLanguage,
-		StorageClass: o.StorageClass,
+		StorageClass:  o.StorageClass,
+		TemporaryHold: o.TemporaryHold, EventBasedHold: o.EventBasedHold,
+		Deleted: o.Deleted,
 	}
 }
 
@@ -289,6 +329,14 @@ func (m *Mock) putObject(
 		return nil, err
 	}
 
+	// An overwrite of a retained-or-held live object is blocked (WORM) — real GCS
+	// refuses to replace it until retention elapses and every hold is released.
+	if exists {
+		if err := objectImmutable(m, bkt, current); err != nil {
+			return nil, err
+		}
+	}
+
 	dataCopy := make([]byte, len(data))
 	copy(dataCopy, data)
 
@@ -310,11 +358,11 @@ func (m *Mock) putObject(
 		stored = nil
 	}
 
-	archiveVersion(bkt, key, current, exists)
+	now := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
+
+	archiveVersion(bkt, key, current, exists, now)
 
 	md5b64, crc32cb64 := checksums(data)
-
-	now := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
 
 	obj := &gcsObject{
 		Key:                key,
@@ -324,6 +372,7 @@ func (m *Mock) putObject(
 		ETag:               fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified:       now,
 		Created:            now,
+		RetentionRef:       now,
 		Metadata:           metaCopy,
 		Generation:         m.gen.Add(1),
 		Metageneration:     1,
@@ -342,6 +391,7 @@ func (m *Mock) putObject(
 	m.emitMetric(ctx, "network/received_bytes_count", float64(len(data)), dims)
 
 	info := toInfo(obj, true)
+	info.RetentionExpiration = retentionExpiration(bkt, obj)
 
 	return &info, nil
 }
@@ -404,10 +454,15 @@ func checkMetagenerationConditions(pre driver.GCSPrecondition, metagen int64, ex
 
 // archiveVersion retains the current object generation when versioning is
 // enabled, so a versions=true listing can still surface it after an overwrite.
-func archiveVersion(bkt *bucketMeta, key string, current *gcsObject, exists bool) {
+// deletedAt stamps the generation's GCS timeDeleted — the instant it became
+// noncurrent — the same way real GCS reports when a version was superseded or
+// explicitly deleted.
+func archiveVersion(bkt *bucketMeta, key string, current *gcsObject, exists bool, deletedAt string) {
 	if !exists || !bkt.versioning {
 		return
 	}
+
+	current.Deleted = deletedAt
 
 	bkt.mu.Lock()
 	defer bkt.mu.Unlock()
@@ -509,10 +564,16 @@ func (m *Mock) deleteObject(ctx context.Context, bucket, key string, generation 
 		return cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
 	}
 
+	// A retained-or-held live object cannot be deleted (WORM).
+	if err := objectImmutable(m, bkt, current); err != nil {
+		return err
+	}
+
 	// Versioning-enabled live delete archives the current generation (it becomes
 	// noncurrent) — real GCS retains it, listable via versions=true.
 	if bkt.versioning {
-		archiveVersion(bkt, key, current, true)
+		now := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
+		archiveVersion(bkt, key, current, true, now)
 		bkt.objects.Delete(key)
 		m.emitMetric(ctx, "api/request_count", 1, map[string]string{"bucket_name": bucket})
 
@@ -542,6 +603,10 @@ func (m *Mock) deleteGeneration(
 	ctx context.Context, bkt *bucketMeta, bucket, key string, gen int64, current *gcsObject, liveExists bool,
 ) error {
 	if liveExists && current.Generation == gen {
+		if err := objectImmutable(m, bkt, current); err != nil {
+			return err
+		}
+
 		bkt.objects.Delete(key)
 		m.purgeIfGone(ctx, bkt, bucket, key)
 		m.emitMetric(ctx, "api/request_count", 1, map[string]string{"bucket_name": bucket})
@@ -555,6 +620,11 @@ func (m *Mock) deleteGeneration(
 	for i, v := range versions {
 		if v.Generation != gen {
 			continue
+		}
+
+		if err := m.immutableLocked(bkt, v); err != nil {
+			bkt.mu.Unlock()
+			return err
 		}
 
 		bkt.versions[key] = append(versions[:i], versions[i+1:]...)
@@ -614,7 +684,10 @@ func (m *Mock) GetObjectGCS(ctx context.Context, bucket, key string, generation 
 	m.emitMetric(ctx, "api/request_count", 1, dims)
 	m.emitMetric(ctx, "network/sent_bytes_count", float64(obj.Size), dims)
 
-	return &driver.Object{Info: toInfo(obj, true), Data: dataCopy}, nil
+	info := toInfo(obj, true)
+	info.RetentionExpiration = retentionExpiration(bkt, obj)
+
+	return &driver.Object{Info: info, Data: dataCopy}, nil
 }
 
 // HeadObjectGCS returns an object's info, selecting a specific generation when
@@ -631,6 +704,7 @@ func (m *Mock) HeadObjectGCS(_ context.Context, bucket, key string, generation *
 	}
 
 	info := toInfo(obj, true)
+	info.RetentionExpiration = retentionExpiration(bkt, obj)
 
 	return &info, nil
 }
@@ -799,6 +873,13 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 		return cerrors.Newf(cerrors.NotFound, "destination bucket %q not found", dstBucket)
 	}
 
+	// Overwriting a retained-or-held destination object is blocked (WORM).
+	if dstCur, dstOK := dstBkt.objects.Get(dstKey); dstOK {
+		if err := objectImmutable(m, dstBkt, dstCur); err != nil {
+			return err
+		}
+	}
+
 	dataCopy := make([]byte, len(srcObj.Data))
 	copy(dataCopy, srcObj.Data)
 
@@ -820,14 +901,14 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 		stored = nil
 	}
 
-	dstCurrent, dstExists := dstBkt.objects.Get(dstKey)
-	archiveVersion(dstBkt, dstKey, dstCurrent, dstExists)
-
 	copyNow := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
+
+	dstCurrent, dstExists := dstBkt.objects.Get(dstKey)
+	archiveVersion(dstBkt, dstKey, dstCurrent, dstExists, copyNow)
 
 	dstBkt.objects.Set(dstKey, &gcsObject{
 		Key: dstKey, Data: stored, Size: srcObj.Size, ContentType: srcObj.ContentType,
-		ETag: srcObj.ETag, LastModified: copyNow, Created: copyNow,
+		ETag: srcObj.ETag, LastModified: copyNow, Created: copyNow, RetentionRef: copyNow,
 		Metadata: meta, Generation: m.gen.Add(1), Metageneration: 1,
 		MD5: srcObj.MD5, CRC32C: srcObj.CRC32C,
 		CacheControl: srcObj.CacheControl, ContentEncoding: srcObj.ContentEncoding,
@@ -872,91 +953,6 @@ func (m *Mock) GeneratePresignedURL(_ context.Context, req driver.PresignedURLRe
 	)
 
 	return &driver.PresignedURL{URL: url, Method: req.Method, ExpiresAt: expiresAt}, nil
-}
-
-func (m *Mock) PutLifecycleConfig(_ context.Context, bucket string, cfg driver.LifecycleConfig) error {
-	bkt, ok := m.buckets.Get(bucket)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
-	}
-
-	cfgCopy := driver.LifecycleConfig{Rules: make([]driver.LifecycleRule, len(cfg.Rules))}
-	copy(cfgCopy.Rules, cfg.Rules)
-	bkt.lifecycle = &cfgCopy
-
-	return nil
-}
-
-func (m *Mock) GetLifecycleConfig(_ context.Context, bucket string) (*driver.LifecycleConfig, error) {
-	bkt, ok := m.buckets.Get(bucket)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
-	}
-
-	if bkt.lifecycle == nil {
-		return nil, cerrors.Newf(cerrors.NotFound, "no lifecycle configuration for bucket %q", bucket)
-	}
-
-	return bkt.lifecycle, nil
-}
-
-func (m *Mock) EvaluateLifecycle(_ context.Context, bucket string) ([]string, error) {
-	bkt, ok := m.buckets.Get(bucket)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
-	}
-
-	if bkt.lifecycle == nil {
-		return nil, nil
-	}
-
-	now := m.opts.Clock.Now().UTC()
-	expired := collectExpiredGCSKeys(bkt, now)
-	sort.Strings(expired)
-
-	return expired, nil
-}
-
-func collectExpiredGCSKeys(bkt *bucketMeta, now time.Time) []string {
-	var result []string
-
-	for _, key := range bkt.objects.Keys() {
-		obj, objOk := bkt.objects.Get(key)
-		if !objOk {
-			continue
-		}
-
-		if gcsObjectExpired(obj, bkt.lifecycle, now) {
-			result = append(result, key)
-		}
-	}
-
-	return result
-}
-
-func gcsObjectExpired(obj *gcsObject, cfg *driver.LifecycleConfig, now time.Time) bool {
-	modified, err := time.Parse(gcsTimeFormat, obj.LastModified)
-	if err != nil {
-		return false
-	}
-
-	age := now.Sub(modified)
-
-	for _, rule := range cfg.Rules {
-		if !rule.Enabled {
-			continue
-		}
-
-		if rule.Prefix != "" && !strings.HasPrefix(obj.Key, rule.Prefix) {
-			continue
-		}
-
-		if rule.ExpirationDays > 0 && age >= time.Duration(rule.ExpirationDays)*gcsHoursPerDay*time.Hour {
-			return true
-		}
-	}
-
-	return false
 }
 
 func (m *Mock) CreateMultipartUpload(
@@ -1084,9 +1080,18 @@ func (m *Mock) CompleteMultipartUpload(
 	md5b64, crc32cb64 := checksums(data)
 
 	current, exists := bkt.objects.Get(key)
-	archiveVersion(bkt, key, current, exists)
+
+	// Completing a multipart upload over a retained-or-held object is an
+	// overwrite, which WORM blocks.
+	if exists {
+		if err := objectImmutable(m, bkt, current); err != nil {
+			return err
+		}
+	}
 
 	completeNow := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
+
+	archiveVersion(bkt, key, current, exists, completeNow)
 
 	bkt.objects.Set(key, &gcsObject{
 		Key:            key,
@@ -1096,6 +1101,7 @@ func (m *Mock) CompleteMultipartUpload(
 		ETag:           fmt.Sprintf("%x", sha256.Sum256(data)),
 		LastModified:   completeNow,
 		Created:        completeNow,
+		RetentionRef:   completeNow,
 		Metadata:       make(map[string]string),
 		Generation:     m.gen.Add(1),
 		Metageneration: 1,
@@ -1440,9 +1446,25 @@ func (m *Mock) UpdateObjectGCS(
 	applyStringUpdate(&next.ContentDisposition, upd.ContentDisposition)
 	applyStringUpdate(&next.ContentLanguage, upd.ContentLanguage)
 
+	if upd.TemporaryHold != nil {
+		next.TemporaryHold = *upd.TemporaryHold
+	}
+
+	// Releasing an event-based hold (true→false) restarts the retention clock:
+	// the object's retention reference resets to now, so the full retention period
+	// must elapse again before it can be deleted or overwritten.
+	if upd.EventBasedHold != nil {
+		if cur.EventBasedHold && !*upd.EventBasedHold {
+			next.RetentionRef = next.LastModified
+		}
+
+		next.EventBasedHold = *upd.EventBasedHold
+	}
+
 	bkt.objects.Set(key, &next)
 
 	info := toInfo(&next, true)
+	info.RetentionExpiration = retentionExpiration(bkt, &next)
 
 	return &info, nil
 }
@@ -1648,19 +1670,32 @@ func (m *Mock) TouchBucket(_ context.Context, bucket string) error {
 	return nil
 }
 
-// SetBucketIAMPolicy persists the bucket's IAM policy document verbatim.
-func (m *Mock) SetBucketIAMPolicy(_ context.Context, bucket string, policyJSON []byte) error {
+// CompareAndSetBucketIAMPolicy atomically checks expectedEtag against the
+// bucket's current stored IAM policy etag and, only on a match (or an empty
+// expectedEtag, an unconditional write), replaces the policy — see
+// driver.GCSExtensions for why the check and the write must share one lock.
+func (m *Mock) CompareAndSetBucketIAMPolicy(_ context.Context, bucket, expectedEtag string, policyJSON []byte) ([]byte, error) {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
+		return nil, cerrors.Newf(cerrors.NotFound, "bucket %q not found", bucket)
 	}
 
 	bkt.mu.Lock()
 	defer bkt.mu.Unlock()
 
-	bkt.iamPolicy = append([]byte(nil), policyJSON...)
+	currentEtag := bucketIAMPolicyEtag(bkt.iamPolicy)
+	if expectedEtag != "" && expectedEtag != currentEtag {
+		return nil, &driver.GCSPreconditionError{Message: "conditionNotMet: bucket IAM policy etag mismatch"}
+	}
 
-	return nil
+	stamped, err := withIAMEtag(policyJSON, nextIAMEtag(currentEtag))
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, "invalid IAM policy document: %v", err)
+	}
+
+	bkt.iamPolicy = stamped
+
+	return append([]byte(nil), bkt.iamPolicy...), nil
 }
 
 // BucketIAMPolicy returns the bucket's IAM policy document, or NotFound when

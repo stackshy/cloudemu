@@ -36,14 +36,15 @@ type releaseAddressResponseXML struct {
 }
 
 type addressXML struct {
-	PublicIP                string `xml:"publicIp"`
-	AllocationID            string `xml:"allocationId"`
-	AssociationID           string `xml:"associationId,omitempty"`
-	InstanceID              string `xml:"instanceId,omitempty"`
-	NetworkInterfaceID      string `xml:"networkInterfaceId,omitempty"`
-	NetworkInterfaceOwnerID string `xml:"networkInterfaceOwnerId,omitempty"`
-	PrivateIPAddress        string `xml:"privateIpAddress,omitempty"`
-	Domain                  string `xml:"domain"`
+	PublicIP                string    `xml:"publicIp"`
+	AllocationID            string    `xml:"allocationId"`
+	AssociationID           string    `xml:"associationId,omitempty"`
+	InstanceID              string    `xml:"instanceId,omitempty"`
+	NetworkInterfaceID      string    `xml:"networkInterfaceId,omitempty"`
+	NetworkInterfaceOwnerID string    `xml:"networkInterfaceOwnerId,omitempty"`
+	PrivateIPAddress        string    `xml:"privateIpAddress,omitempty"`
+	Domain                  string    `xml:"domain"`
+	Tags                    []tagItem `xml:"tagSet>item,omitempty"`
 }
 
 type describeAddressesResponseXML struct {
@@ -51,6 +52,24 @@ type describeAddressesResponseXML struct {
 	Xmlns      string       `xml:"xmlns,attr"`
 	RequestID  string       `xml:"requestId"`
 	AddressSet []addressXML `xml:"addressesSet>item"`
+}
+
+// addressAttributeXML mirrors real EC2's per-address entry in
+// DescribeAddressesAttributeResponse. CloudEmu does not model reverse-DNS
+// (PTR record) state, so PtrRecord is always omitted — matching a real
+// address that has never had one set.
+type addressAttributeXML struct {
+	AllocationID string `xml:"allocationId"`
+	PublicIP     string `xml:"publicIp"`
+	PtrRecord    string `xml:"ptrRecord,omitempty"`
+}
+
+type describeAddressesAttributeResponseXML struct {
+	XMLName   xml.Name              `xml:"DescribeAddressesAttributeResponse"`
+	Xmlns     string                `xml:"xmlns,attr"`
+	RequestID string                `xml:"requestId"`
+	Addresses []addressAttributeXML `xml:"addressSet>item"`
+	NextToken string                `xml:"nextToken,omitempty"`
 }
 
 // domainVPC is the only domain modern accounts allocate in — EC2-Classic was
@@ -134,6 +153,7 @@ func (h *Handler) describeAddresses(w http.ResponseWriter, r *http.Request) {
 			NetworkInterfaceID: eips[i].NetworkInterfaceID,
 			PrivateIPAddress:   eips[i].PrivateIP,
 			Domain:             domainVPC,
+			Tags:               toTagItems(eips[i].Tags),
 		}
 
 		// networkInterfaceOwnerId only surfaces for an ENI-bound EIP; it is the
@@ -148,6 +168,37 @@ func (h *Handler) describeAddresses(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, describeAddressesResponseXML{
 		Xmlns: awsquery.Namespace, RequestID: awsquery.RequestID, AddressSet: out,
+	})
+}
+
+// describeAddressesAttribute answers Attribute=domain-name (the only
+// attribute real EC2 currently supports) for a set of allocations, reporting
+// each address's reverse-DNS (PTR record) configuration. CloudEmu does not
+// model PTR records, so every address is reported with none set — the same
+// shape a real, never-configured address has. Terraform's aws_eip resource
+// calls this on every read, so leaving the action unhandled ("unknown
+// action") breaks that resource outright.
+func (h *Handler) describeAddressesAttribute(w http.ResponseWriter, r *http.Request) {
+	ids := awsquery.ListStrings(r.Form, "AllocationId")
+
+	eips, err := h.vpc.DescribeAddresses(r.Context(), ids)
+	if err != nil {
+		writeVPCErr(w, err)
+		return
+	}
+
+	out := make([]addressAttributeXML, 0, len(eips))
+	for i := range eips {
+		out = append(out, addressAttributeXML{
+			AllocationID: eips[i].AllocationID,
+			PublicIP:     eips[i].PublicIP,
+		})
+	}
+
+	awsquery.WriteXMLResponse(w, describeAddressesAttributeResponseXML{
+		Xmlns:     awsquery.Namespace,
+		RequestID: awsquery.RequestID,
+		Addresses: out,
 	})
 }
 
@@ -268,12 +319,12 @@ func (h *Handler) associateAddress(w http.ResponseWriter, r *http.Request) {
 // unknown allocation -> InvalidAllocationID.NotFound.
 func writeAssociateAddressErr(w http.ResponseWriter, err error) {
 	if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "network interface") {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkInterfaceID.NotFound", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkInterfaceID.NotFound", cerrors.Message(err))
 		return
 	}
 
 	if cerrors.IsAlreadyExists(err) {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "Resource.AlreadyAssociated", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "Resource.AlreadyAssociated", cerrors.Message(err))
 		return
 	}
 

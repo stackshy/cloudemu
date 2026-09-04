@@ -13,8 +13,9 @@ func TestService_ClusterIPAllocatedSequentially(t *testing.T) {
 	base, cleanup := newFixture(t)
 	t.Cleanup(cleanup)
 
-	// First three Services with empty ClusterIP — should get 10.96.0.1, .2, .3.
-	wantIPs := []string{"10.96.0.1", "10.96.0.2", "10.96.0.3"}
+	// The seeded kube-dns Service pins .10 and bumps the allocator past it, so the
+	// first three client Services get contiguous IPs starting at .11.
+	wantIPs := []string{"10.96.0.11", "10.96.0.12", "10.96.0.13"}
 
 	for i, want := range wantIPs {
 		body := mustJSON(t, &corev1.Service{
@@ -261,7 +262,8 @@ func TestService_LifecycleAndAllNamespacesList(t *testing.T) {
 	var list corev1.ServiceList
 	mustDecode(t, resp.Body, &list)
 
-	if len(list.Items) != 2 {
+	// 2 created Services + the seeded kube-dns Service = 3.
+	if len(list.Items) != 3 {
 		t.Fatalf("all-ns list: got %d items", len(list.Items))
 	}
 

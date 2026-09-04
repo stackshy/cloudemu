@@ -357,6 +357,94 @@ func TestSDKListStreamsPaginates(t *testing.T) {
 	}
 }
 
+// TestSDKUpdateShardCountResolvesIdentity verifies UpdateShardCount always
+// returns both StreamName and StreamARN, resolved from the stream, regardless
+// of which identifier the caller passed — matching real Kinesis, which never
+// leaves either field empty in the response.
+func TestSDKUpdateShardCountResolvesIdentity(t *testing.T) {
+	ctx := context.Background()
+	c := newKinesisClient(t)
+
+	mustCreate(t, c, "resize", 2)
+
+	// Called by StreamName only: StreamARN in the response must still resolve.
+	out, err := c.UpdateShardCount(ctx, &awskinesis.UpdateShardCountInput{
+		StreamName:       aws.String("resize"),
+		TargetShardCount: aws.Int32(4),
+		ScalingType:      kinesistypes.ScalingTypeUniformScaling,
+	})
+	if err != nil {
+		t.Fatalf("UpdateShardCount: %v", err)
+	}
+
+	if aws.ToString(out.StreamName) != "resize" {
+		t.Fatalf("StreamName = %q, want %q", aws.ToString(out.StreamName), "resize")
+	}
+
+	if aws.ToString(out.StreamARN) == "" {
+		t.Fatal("StreamARN empty when UpdateShardCount was called by StreamName")
+	}
+
+	// Called by StreamARN only: StreamName in the response must still resolve.
+	arn := aws.ToString(out.StreamARN)
+
+	out2, err := c.UpdateShardCount(ctx, &awskinesis.UpdateShardCountInput{
+		StreamARN:        aws.String(arn),
+		TargetShardCount: aws.Int32(6),
+		ScalingType:      kinesistypes.ScalingTypeUniformScaling,
+	})
+	if err != nil {
+		t.Fatalf("UpdateShardCount by ARN: %v", err)
+	}
+
+	if aws.ToString(out2.StreamName) != "resize" {
+		t.Fatalf("StreamName = %q, want %q when called by ARN", aws.ToString(out2.StreamName), "resize")
+	}
+
+	if aws.ToString(out2.StreamARN) != arn {
+		t.Fatalf("StreamARN = %q, want %q", aws.ToString(out2.StreamARN), arn)
+	}
+}
+
+// TestSDKEnhancedMonitoringResolvesIdentity verifies Enable/DisableEnhancedMonitoring
+// always return both StreamName and StreamARN, resolved from the stream.
+func TestSDKEnhancedMonitoringResolvesIdentity(t *testing.T) {
+	ctx := context.Background()
+	c := newKinesisClient(t)
+
+	mustCreate(t, c, "monitored", 1)
+
+	out, err := c.EnableEnhancedMonitoring(ctx, &awskinesis.EnableEnhancedMonitoringInput{
+		StreamName:        aws.String("monitored"),
+		ShardLevelMetrics: []kinesistypes.MetricsName{kinesistypes.MetricsNameIncomingBytes},
+	})
+	if err != nil {
+		t.Fatalf("EnableEnhancedMonitoring: %v", err)
+	}
+
+	if aws.ToString(out.StreamName) != "monitored" {
+		t.Fatalf("StreamName = %q, want %q", aws.ToString(out.StreamName), "monitored")
+	}
+
+	if aws.ToString(out.StreamARN) == "" {
+		t.Fatal("StreamARN empty when EnableEnhancedMonitoring was called by StreamName")
+	}
+
+	arn := aws.ToString(out.StreamARN)
+
+	disableOut, err := c.DisableEnhancedMonitoring(ctx, &awskinesis.DisableEnhancedMonitoringInput{
+		StreamARN:         aws.String(arn),
+		ShardLevelMetrics: []kinesistypes.MetricsName{kinesistypes.MetricsNameIncomingBytes},
+	})
+	if err != nil {
+		t.Fatalf("DisableEnhancedMonitoring: %v", err)
+	}
+
+	if aws.ToString(disableOut.StreamName) != "monitored" {
+		t.Fatalf("StreamName = %q, want %q when called by ARN", aws.ToString(disableOut.StreamName), "monitored")
+	}
+}
+
 func TestSDKGetRecordsMalformedIterator(t *testing.T) {
 	ctx := context.Background()
 	c := newKinesisClient(t)

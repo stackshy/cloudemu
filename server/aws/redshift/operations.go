@@ -165,8 +165,37 @@ func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request) {
 	last := clusters[0]
 	last.State = rdbdriver.StateDeleting
 
+	// Unless SkipFinalClusterSnapshot is set, real Redshift takes a final manual
+	// snapshot before removing the cluster and requires a
+	// FinalClusterSnapshotIdentifier to name it (InvalidParameterCombination
+	// otherwise). The snapshot is visible in DescribeClusterSnapshots afterwards.
+	var finalID string
+
+	if !formBool(r.Form.Get("SkipFinalClusterSnapshot")) {
+		finalID = r.Form.Get("FinalClusterSnapshotIdentifier")
+		if finalID == "" {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterCombination",
+				"FinalClusterSnapshotIdentifier is required unless SkipFinalClusterSnapshot is true")
+
+			return
+		}
+
+		if _, err := h.db.CreateClusterSnapshot(r.Context(),
+			rdbdriver.ClusterSnapshotConfig{ID: finalID, ClusterID: id}); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
 	if err := h.db.DeleteCluster(r.Context(), id); err != nil {
+		// DeleteCluster can still fail (engine deprovision, race); roll the final
+		// snapshot back so a rejected delete leaves no phantom snapshot behind.
+		if finalID != "" {
+			_ = h.db.DeleteClusterSnapshot(r.Context(), finalID)
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 

@@ -17,7 +17,7 @@ import (
 // --admin flag threads through to serverkit's control plane.
 func TestAdminReset(t *testing.T) {
 	cfg := testConfig(t, allEnginesOff())
-	cfg.admin = true
+	cfg.Admin = true
 
 	awsURL, stop := startAWS(t, cfg, mustOptions(t, &cfg))
 	defer stop()
@@ -45,9 +45,9 @@ func TestPersistRoundTrip(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.json")
 
 	cfg := testConfig(t, allEnginesOff())
-	cfg.admin = true
-	cfg.persist = true
-	cfg.stateFile = stateFile
+	cfg.Admin = true
+	cfg.Persist = true
+	cfg.StateFile = stateFile
 
 	awsURL, stop := startAWS(t, cfg, mustOptions(t, &cfg))
 	seedBucket(t, awsURL, "persist-me")
@@ -59,9 +59,9 @@ func TestPersistRoundTrip(t *testing.T) {
 
 	// A fresh app on the same state file (new ports) must restore the bucket.
 	cfg2 := testConfig(t, allEnginesOff())
-	cfg2.admin = true
-	cfg2.persist = true
-	cfg2.stateFile = stateFile
+	cfg2.Admin = true
+	cfg2.Persist = true
+	cfg2.StateFile = stateFile
 
 	awsURL2, stop2 := startAWS(t, cfg2, mustOptions(t, &cfg2))
 	defer stop2()
@@ -82,8 +82,8 @@ func TestInitDir(t *testing.T) {
 	}
 
 	cfg := testConfig(t, allEnginesOff())
-	cfg.admin = true
-	cfg.initDir = dir
+	cfg.Admin = true
+	cfg.InitDir = dir
 
 	awsURL, stop := startAWS(t, cfg, mustOptions(t, &cfg))
 	defer stop()
@@ -93,7 +93,8 @@ func TestInitDir(t *testing.T) {
 	}
 }
 
-// mustOptions builds the identity+engine options for a config or fails the test.
+// mustOptions builds the engine options for a config or fails the test. The
+// identity options are added by ToServerkitConfig inside newAppFromOptions.
 func mustOptions(t *testing.T, cfg *appConfig) []config.Option {
 	t.Helper()
 

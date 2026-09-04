@@ -581,6 +581,63 @@ func TestSDKLBDuplicatePoolNameRejected(t *testing.T) {
 	}
 }
 
+// HIGH: a standalone backendAddressPools DELETE must be rejected with 409
+// when a loadBalancingRule on the same load balancer still references the
+// pool — the pool, the rule, and the parent must all survive the rejected
+// attempt.
+func TestSDKLBBackendPoolDeleteInUseRejected(t *testing.T) {
+	c := newLBSubClients(t)
+	ctx := context.Background()
+	const lbName = "lb-pool-inuse"
+
+	poller, err := c.lb.BeginCreateOrUpdate(ctx, testRG, lbName, armnetwork.LoadBalancer{
+		Location: to.Ptr("eastus"),
+		Properties: &armnetwork.LoadBalancerPropertiesFormat{
+			FrontendIPConfigurations: []*armnetwork.FrontendIPConfiguration{{Name: to.Ptr("fe-1")}},
+			BackendAddressPools:      []*armnetwork.BackendAddressPool{{Name: to.Ptr("pool-a")}},
+			LoadBalancingRules: []*armnetwork.LoadBalancingRule{{
+				Name: to.Ptr("rule-1"),
+				Properties: &armnetwork.LoadBalancingRulePropertiesFormat{
+					Protocol:                to.Ptr(armnetwork.TransportProtocolTCP),
+					FrontendPort:            to.Ptr(int32(80)),
+					BackendPort:             to.Ptr(int32(80)),
+					FrontendIPConfiguration: &armnetwork.SubResource{ID: to.Ptr(lbChildID2(lbName, "frontendIPConfigurations", "fe-1"))},
+					BackendAddressPool:      &armnetwork.SubResource{ID: to.Ptr(lbChildID2(lbName, "backendAddressPools", "pool-a"))},
+				},
+			}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("seed BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("seed poll: %v", err)
+	}
+
+	_, err = c.pools.BeginDelete(ctx, testRG, lbName, "pool-a", nil)
+	if err == nil {
+		t.Fatal("BeginDelete pool-a still referenced by rule-1: want error, got nil")
+	}
+
+	if status := respStatus(t, err); status != http.StatusConflict {
+		t.Fatalf("in-use pool delete status = %d, want 409", status)
+	}
+
+	got, err := c.lb.Get(ctx, testRG, lbName, nil)
+	if err != nil {
+		t.Fatalf("Get after rejected delete: %v, want the parent to still exist", err)
+	}
+
+	if len(got.Properties.BackendAddressPools) != 1 || *got.Properties.BackendAddressPools[0].Name != "pool-a" {
+		t.Fatalf("pools after rejected delete = %+v, want pool-a untouched", got.Properties.BackendAddressPools)
+	}
+
+	if len(got.Properties.LoadBalancingRules) != 1 || *got.Properties.LoadBalancingRules[0].Name != "rule-1" {
+		t.Fatalf("rules after rejected pool delete = %+v, want rule-1 untouched", got.Properties.LoadBalancingRules)
+	}
+}
+
 // lbChildID2 builds a child resource id under lbName (distinct helper name
 // from lb_e2e_test.go's lbChildID, which hardcodes "lb-full").
 func lbChildID2(lbName, child, name string) string {

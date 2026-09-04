@@ -134,7 +134,9 @@ type AzureLoadBalancers interface {
 	UpsertAzureLBBackendPool(ctx context.Context, rg, name, poolName string) (*AzureLoadBalancer, error)
 	// DeleteAzureLBBackendPool removes a single backend pool by name, leaving
 	// every other child untouched. Returns NotFound if the parent load
-	// balancer or the pool itself does not exist.
+	// balancer or the pool itself does not exist, and FailedPrecondition if a
+	// load balancing rule or outbound rule on the load balancer still
+	// references the pool.
 	DeleteAzureLBBackendPool(ctx context.Context, rg, name, poolName string) error
 
 	// UpsertAzureLBNatRule creates or replaces a single inbound NAT rule by

@@ -11,6 +11,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
+	crdriver "github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
 )
 
 // TestGAPICCreateTriggerWait is the review's #3 check for eventarc: the finding
@@ -24,6 +25,13 @@ func TestGAPICCreateTriggerWait(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	ctx := context.Background()
+
+	// The trigger below routes to Cloud Run service "svc": DriversFrom wires
+	// the CloudRun driver, so create the service the destination validation
+	// resolves against.
+	if _, err := cloud.CloudRun.CreateService(ctx, crdriver.ServiceConfig{Name: "svc", Location: "us-central1"}); err != nil {
+		t.Fatalf("CloudRun.CreateService: %v", err)
+	}
 
 	client, err := eventarc.NewRESTClient(ctx,
 		option.WithEndpoint(ts.URL),

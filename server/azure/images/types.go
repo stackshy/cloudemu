@@ -9,7 +9,21 @@ type imageRequest struct {
 }
 
 type imageRequestProps struct {
-	SourceVirtualMachine *resourceRef `json:"sourceVirtualMachine,omitempty"`
+	SourceVirtualMachine *resourceRef                `json:"sourceVirtualMachine,omitempty"`
+	StorageProfile       *imageRequestStorageProfile `json:"storageProfile,omitempty"`
+}
+
+// imageRequestStorageProfile carries the source OS disk for a managed image
+// created directly from a disk (no VM capture).
+type imageRequestStorageProfile struct {
+	OSDisk *imageRequestOSDisk `json:"osDisk,omitempty"`
+}
+
+type imageRequestOSDisk struct {
+	OSType      string       `json:"osType,omitempty"`
+	OSState     string       `json:"osState,omitempty"`
+	ManagedDisk *resourceRef `json:"managedDisk,omitempty"`
+	DiskSizeGB  int          `json:"diskSizeGB,omitempty"`
 }
 
 type resourceRef struct {
@@ -38,10 +52,11 @@ type imageStorageProfile struct {
 }
 
 type imageOSDisk struct {
-	OSType             string `json:"osType,omitempty"`
-	OSState            string `json:"osState,omitempty"`
-	DiskSizeGB         int    `json:"diskSizeGB,omitempty"`
-	StorageAccountType string `json:"storageAccountType,omitempty"`
+	OSType             string       `json:"osType,omitempty"`
+	OSState            string       `json:"osState,omitempty"`
+	ManagedDisk        *resourceRef `json:"managedDisk,omitempty"`
+	DiskSizeGB         int          `json:"diskSizeGB,omitempty"`
+	StorageAccountType string       `json:"storageAccountType,omitempty"`
 }
 
 type imageListResponse struct {

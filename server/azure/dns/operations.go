@@ -176,9 +176,22 @@ func (h *Handler) createOrUpdateRecordSet(w http.ResponseWriter, r *http.Request
 		SOA:    soaConfigFromProps(body.Properties),
 	}
 
-	info, created, err := h.upsertRecord(r, &cfg)
+	ifMatch := r.Header.Get(headerIfMatch)
+	ifNoneMatch := r.Header.Get(headerIfNoneMatch)
+
+	info, created, err := h.upsertRecord(r, &cfg, ifMatch, ifNoneMatch)
 	if err != nil {
+		if cerrors.IsFailedPrecondition(err) {
+			// A record-set ETag precondition (If-Match/If-None-Match) failure is
+			// HTTP 412, not the 409 azurearm.WriteCErr maps FailedPrecondition to
+			// for other ARM resources — real Azure DNS, and the armdns SDK's
+			// poller, expect 412 specifically for a stale/mismatched etag.
+			azurearm.WriteError(w, http.StatusPreconditionFailed, "PreconditionFailed", err.Error())
+			return
+		}
+
 		azurearm.WriteCErr(w, err)
+
 		return
 	}
 
@@ -193,11 +206,20 @@ func (h *Handler) createOrUpdateRecordSet(w http.ResponseWriter, r *http.Request
 	azurearm.WriteJSON(w, status, toRecordSetJSON(rp, rp.ResourceName, info))
 }
 
-// upsertRecord updates the record if it already exists, otherwise creates it —
-// Azure's RecordSets.CreateOrUpdate is upsert semantics. The bool reports
-// whether the record set was newly created (true) or updated in place (false),
-// so the caller can pick the 201/200 status Azure returns.
-func (h *Handler) upsertRecord(r *http.Request, cfg *dnsdriver.RecordConfig) (*dnsdriver.RecordInfo, bool, error) {
+// upsertRecord performs Azure's RecordSets.CreateOrUpdate: an upsert honoring
+// any If-Match/If-None-Match precondition the request carries. When the driver
+// exposes UpsertRecordAtomic (the production Azure dns.Mock always does), the
+// whole existence-check + precondition-check + write runs as one atomic
+// operation under the driver's own lock. Otherwise it falls back to a plain
+// two-call upsert with no precondition support, for a minimal driver double
+// that hasn't implemented the atomic capability.
+func (h *Handler) upsertRecord(
+	r *http.Request, cfg *dnsdriver.RecordConfig, ifMatch, ifNoneMatch string,
+) (*dnsdriver.RecordInfo, bool, error) {
+	if au, ok := h.dns.(atomicRecordUpserter); ok {
+		return au.UpsertRecordAtomic(r.Context(), *cfg, ifMatch, ifNoneMatch)
+	}
+
 	if _, err := h.dns.GetRecord(r.Context(), cfg.ZoneID, cfg.Name, cfg.Type); err == nil {
 		info, uerr := h.dns.UpdateRecord(r.Context(), *cfg)
 		return info, false, uerr
@@ -347,9 +369,17 @@ func (h *Handler) deleteRecordSet(w http.ResponseWriter, r *http.Request, rp *az
 		return
 	}
 
-	derr := h.dns.DeleteRecord(r.Context(), zoneID, rp.SubResourceName, recordType)
+	derr := h.deleteRecord(r, zoneID, rp.SubResourceName, recordType)
 	if derr != nil && !cerrors.IsNotFound(derr) {
+		if cerrors.IsFailedPrecondition(derr) {
+			// See createOrUpdateRecordSet: an etag precondition failure is 412,
+			// not the 409 azurearm.WriteCErr maps FailedPrecondition to.
+			azurearm.WriteError(w, http.StatusPreconditionFailed, "PreconditionFailed", derr.Error())
+			return
+		}
+
 		azurearm.WriteCErr(w, derr)
+
 		return
 	}
 
@@ -361,6 +391,20 @@ func (h *Handler) deleteRecordSet(w http.ResponseWriter, r *http.Request, rp *az
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// deleteRecord performs Azure's RecordSets.Delete, honoring the request's
+// If-Match precondition when the driver exposes DeleteRecordAtomic (the
+// production Azure dns.Mock always does). It falls back to the plain
+// unconditional DeleteRecord, ignoring If-Match, for a driver that doesn't.
+func (h *Handler) deleteRecord(r *http.Request, zoneID, name, recordType string) error {
+	ifMatch := r.Header.Get(headerIfMatch)
+
+	if cd, ok := h.dns.(conditionalRecordDeleter); ok {
+		return cd.DeleteRecordAtomic(r.Context(), zoneID, name, recordType, ifMatch)
+	}
+
+	return h.dns.DeleteRecord(r.Context(), zoneID, name, recordType)
 }
 
 // listRecordSets backs RecordSets.ListByDnsZone / ListAllByDnsZone: every

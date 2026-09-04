@@ -200,10 +200,46 @@ type AzureRegistryManager interface {
 	ListReplications(ctx context.Context, rg, registry string) ([]AzureReplication, error)
 }
 
+// AzureChangeableAttributes mirrors ACR's Repository/Tag/ManifestWriteableProperties
+// (the data-plane "changeableAttributes" lock bits). Each field is a pointer so
+// a partial PATCH (UpdateRepositoryProperties / UpdateTagProperties /
+// UpdateManifestProperties) can leave an attribute unspecified: nil means
+// "leave unchanged" on an update. A Get call always returns every field
+// resolved (never nil).
+type AzureChangeableAttributes struct {
+	DeleteEnabled *bool
+	WriteEnabled  *bool
+	ListEnabled   *bool
+	ReadEnabled   *bool
+}
+
 // AzureRepositoryWriter is the Azure-specific ACR data-plane surface for
-// mutating a single tag or repository. DeleteTag removes one tag while leaving
-// the underlying manifest and any other tags intact (unlike DeleteImage, which
-// removes the whole manifest). The wire handler reaches it by type assertion.
+// mutating a single tag, manifest, or repository. DeleteTag removes one tag
+// while leaving the underlying manifest and any other tags intact (unlike
+// DeleteImage, which removes the whole manifest).
+//
+// The Get/Update*Attributes methods back ACR's changeableAttributes lock: a
+// repository, tag, or manifest with deleteEnabled=false rejects deletion,
+// writeEnabled=false rejects a push/re-tag that would overwrite it, and
+// listEnabled=false hides it from catalog/tag/manifest listings while leaving
+// it directly readable. The wire handler reaches all of this by type
+// assertion, mirroring the AzureNetworkInterfaces pattern in the networking
+// driver.
 type AzureRepositoryWriter interface {
 	DeleteTag(ctx context.Context, repository, tag string) error
+
+	GetRepositoryAttributes(ctx context.Context, repository string) (AzureChangeableAttributes, error)
+	UpdateRepositoryAttributes(
+		ctx context.Context, repository string, attrs AzureChangeableAttributes,
+	) (AzureChangeableAttributes, error)
+
+	GetTagAttributes(ctx context.Context, repository, tag string) (AzureChangeableAttributes, error)
+	UpdateTagAttributes(
+		ctx context.Context, repository, tag string, attrs AzureChangeableAttributes,
+	) (AzureChangeableAttributes, error)
+
+	GetManifestAttributes(ctx context.Context, repository, digest string) (AzureChangeableAttributes, error)
+	UpdateManifestAttributes(
+		ctx context.Context, repository, digest string, attrs AzureChangeableAttributes,
+	) (AzureChangeableAttributes, error)
 }

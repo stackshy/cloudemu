@@ -15,6 +15,10 @@ import (
 type mfaDeviceManager interface {
 	CreateVirtualMFADevice(ctx context.Context, name, path string) (*iamdriver.VirtualMFADeviceInfo, error)
 	ListMFADevices(ctx context.Context, userName string) ([]iamdriver.MFADeviceInfo, error)
+	EnableMFADevice(ctx context.Context, userName, serialNumber, authCode1, authCode2 string) error
+	DeactivateMFADevice(ctx context.Context, userName, serialNumber string) error
+	DeleteVirtualMFADevice(ctx context.Context, serialNumber string) error
+	ListVirtualMFADevices(ctx context.Context, assignmentStatus string) ([]iamdriver.VirtualMFADeviceMetadata, error)
 }
 
 // The seed and QR-code payloads are blob fields the SDK base64-decodes on the
@@ -108,6 +112,139 @@ func (h *Handler) listMFADevices(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, listMFADevicesResponse{
 		Xmlns:    Namespace,
 		Result:   listMFADevicesResult{MFADevices: out, IsTruncated: false},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+type enableMFADeviceResponse struct {
+	XMLName  xml.Name         `xml:"EnableMFADeviceResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+func (h *Handler) enableMFADevice(w http.ResponseWriter, r *http.Request) {
+	mgr, ok := h.iam.(mfaDeviceManager)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction", "MFA devices not supported")
+		return
+	}
+
+	err := mgr.EnableMFADevice(r.Context(),
+		r.Form.Get("UserName"), r.Form.Get("SerialNumber"), r.Form.Get("AuthenticationCode1"), r.Form.Get("AuthenticationCode2"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, enableMFADeviceResponse{
+		Xmlns:    Namespace,
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+type deactivateMFADeviceResponse struct {
+	XMLName  xml.Name         `xml:"DeactivateMFADeviceResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+func (h *Handler) deactivateMFADevice(w http.ResponseWriter, r *http.Request) {
+	mgr, ok := h.iam.(mfaDeviceManager)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction", "MFA devices not supported")
+		return
+	}
+
+	if err := mgr.DeactivateMFADevice(r.Context(), r.Form.Get("UserName"), r.Form.Get("SerialNumber")); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, deactivateMFADeviceResponse{
+		Xmlns:    Namespace,
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+type deleteVirtualMFADeviceResponse struct {
+	XMLName  xml.Name         `xml:"DeleteVirtualMFADeviceResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+func (h *Handler) deleteVirtualMFADevice(w http.ResponseWriter, r *http.Request) {
+	mgr, ok := h.iam.(mfaDeviceManager)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction", "MFA devices not supported")
+		return
+	}
+
+	if err := mgr.DeleteVirtualMFADevice(r.Context(), r.Form.Get("SerialNumber")); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, deleteVirtualMFADeviceResponse{
+		Xmlns:    Namespace,
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// virtualMFADeviceMetadataXML is the list-shape AWS uses for
+// ListVirtualMFADevices: unlike virtualMFADeviceXML it carries no seed/QR
+// payload and instead reports the assigned user (omitted for an unassigned
+// device).
+type virtualMFADeviceMetadataXML struct {
+	SerialNumber string   `xml:"SerialNumber"`
+	EnableDate   string   `xml:"EnableDate,omitempty"`
+	User         *userXML `xml:"User,omitempty"`
+}
+
+type virtualMFADevicesListXML struct {
+	Member []virtualMFADeviceMetadataXML `xml:"member,omitempty"`
+}
+
+type listVirtualMFADevicesResponse struct {
+	XMLName  xml.Name                    `xml:"ListVirtualMFADevicesResponse"`
+	Xmlns    string                      `xml:"xmlns,attr"`
+	Result   listVirtualMFADevicesResult `xml:"ListVirtualMFADevicesResult"`
+	Metadata responseMetadata            `xml:"ResponseMetadata"`
+}
+
+type listVirtualMFADevicesResult struct {
+	VirtualMFADevices virtualMFADevicesListXML `xml:"VirtualMFADevices"`
+	IsTruncated       bool                     `xml:"IsTruncated"`
+}
+
+func (h *Handler) listVirtualMFADevices(w http.ResponseWriter, r *http.Request) {
+	mgr, ok := h.iam.(mfaDeviceManager)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction", "MFA devices not supported")
+		return
+	}
+
+	devices, err := mgr.ListVirtualMFADevices(r.Context(), r.Form.Get("AssignmentStatus"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := virtualMFADevicesListXML{Member: make([]virtualMFADeviceMetadataXML, 0, len(devices))}
+
+	for i := range devices {
+		meta := virtualMFADeviceMetadataXML{SerialNumber: devices[i].SerialNumber, EnableDate: devices[i].EnableDate}
+
+		if devices[i].AssignedUser != nil {
+			u := toUserXML(devices[i].AssignedUser)
+			meta.User = &u
+		}
+
+		out.Member = append(out.Member, meta)
+	}
+
+	awsquery.WriteXMLResponse(w, listVirtualMFADevicesResponse{
+		Xmlns:    Namespace,
+		Result:   listVirtualMFADevicesResult{VirtualMFADevices: out, IsTruncated: false},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

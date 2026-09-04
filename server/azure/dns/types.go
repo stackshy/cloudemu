@@ -47,6 +47,12 @@ const (
 	// servers (ns1-NN...).
 	nameServerShardCount = 99
 
+	// headerIfMatch and headerIfNoneMatch are the conditional-request headers
+	// the armdns SDK sets from RecordSetsClientCreateOrUpdateOptions.IfMatch /
+	// IfNoneMatch, carrying a record set's optimistic-concurrency precondition.
+	headerIfMatch     = "If-Match"
+	headerIfNoneMatch = "If-None-Match"
+
 	// SOA record defaults Azure stamps on the auto-created apex SOA. host and
 	// email are stored per-zone (host = the zone's first name server); the
 	// timing fields are fixed platform defaults.
@@ -479,11 +485,21 @@ func toRecordSetJSON(rp *azurearm.ResourcePath, zone string, rec *dnsdriver.Reco
 	props := toRecordSetProperties(rec)
 	props.Fqdn = recordFqdn(rec.Name, zone)
 
+	// A record set written since this pass always carries a driver-minted ETag
+	// that rotates on every create/update. Records restored from a snapshot
+	// taken before ETag support existed leave it empty; fall back to the old
+	// deterministic hash so they still read back a stable (if non-rotating)
+	// etag rather than an empty one.
+	etag := rec.ETag
+	if etag == "" {
+		etag = azurearm.ETag(id)
+	}
+
 	return recordSetJSON{
 		ID:         id,
 		Name:       rec.Name,
 		Type:       recordSetTypePrefix + rec.Type,
-		Etag:       azurearm.ETag(id),
+		Etag:       etag,
 		Properties: props,
 	}
 }

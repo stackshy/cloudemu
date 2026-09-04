@@ -82,24 +82,41 @@ type monitoringRequest struct {
 
 func (h *Handler) enableMonitoring(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *monitoringRequest) (any, error) {
-		before, after, err := h.kinesis.EnableEnhancedMonitoring(ctx, req.StreamName, req.StreamARN, req.ShardLevelMetrics)
-		if err != nil {
-			return nil, err
-		}
-
-		return monitoringResponse(req.StreamName, req.StreamARN, before, after), nil
+		return h.setMonitoring(ctx, req, true)
 	})
 }
 
 func (h *Handler) disableMonitoring(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, ctx context.Context, req *monitoringRequest) (any, error) {
-		before, after, err := h.kinesis.DisableEnhancedMonitoring(ctx, req.StreamName, req.StreamARN, req.ShardLevelMetrics)
-		if err != nil {
-			return nil, err
-		}
-
-		return monitoringResponse(req.StreamName, req.StreamARN, before, after), nil
+		return h.setMonitoring(ctx, req, false)
 	})
+}
+
+// setMonitoring enables/disables shard-level metrics and builds the response,
+// resolving both StreamName and StreamARN from the stream itself so either
+// field is populated regardless of which identifier the request supplied.
+func (h *Handler) setMonitoring(ctx context.Context, req *monitoringRequest, enable bool) (any, error) {
+	var (
+		before, after []string
+		err           error
+	)
+
+	if enable {
+		before, after, err = h.kinesis.EnableEnhancedMonitoring(ctx, req.StreamName, req.StreamARN, req.ShardLevelMetrics)
+	} else {
+		before, after, err = h.kinesis.DisableEnhancedMonitoring(ctx, req.StreamName, req.StreamARN, req.ShardLevelMetrics)
+	}
+
+	if err != nil {
+		return nil, err
+	}
+
+	name, arn, err := h.resolveStreamIdentity(ctx, req.StreamName, req.StreamARN)
+	if err != nil {
+		return nil, err
+	}
+
+	return monitoringResponse(name, arn, before, after), nil
 }
 
 func monitoringResponse(name, arn string, before, after []string) map[string]any {

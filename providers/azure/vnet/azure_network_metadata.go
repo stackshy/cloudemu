@@ -11,9 +11,19 @@ import (
 var _ driver.AzureNetworkMetadata = (*Mock)(nil)
 
 // PutAzureVNetMetadata stores the Azure-only virtual-network fields (region and
-// full address-prefix list) for the VPC with the given driver id.
+// full address-prefix list) for the VPC with the given driver id. ResourceGUID
+// is assigned on first write and preserved across every later PUT (a repeat
+// ARM CreateOrUpdate is a full replace of the other fields, but the identity
+// GUID must survive), matching how network interfaces preserve theirs.
 func (m *Mock) PutAzureVNetMetadata(_ context.Context, id string, meta driver.AzureVNetMetadata) error {
+	if existing, ok := m.azureVNetMeta.Get(id); ok && existing.ResourceGUID != "" {
+		meta.ResourceGUID = existing.ResourceGUID
+	} else {
+		meta.ResourceGUID = generateGUID()
+	}
+
 	m.azureVNetMeta.Set(id, cloneVNetMeta(meta))
+
 	return nil
 }
 
@@ -35,8 +45,17 @@ func (m *Mock) DeleteAzureVNetMetadata(_ context.Context, id string) {
 
 // PutAzureNSGMetadata stores the Azure-only security-group fields (region and
 // custom security rules) for the security group with the given driver id.
+// ResourceGUID is assigned on first write and preserved across every later
+// PUT, matching PutAzureVNetMetadata.
 func (m *Mock) PutAzureNSGMetadata(_ context.Context, id string, meta driver.AzureNSGMetadata) error {
+	if existing, ok := m.azureNSGMeta.Get(id); ok && existing.ResourceGUID != "" {
+		meta.ResourceGUID = existing.ResourceGUID
+	} else {
+		meta.ResourceGUID = generateGUID()
+	}
+
 	m.azureNSGMeta.Set(id, cloneNSGMeta(meta))
+
 	return nil
 }
 
@@ -172,7 +191,7 @@ func cloneRouteTableMeta(meta driver.AzureRouteTableMetadata) driver.AzureRouteT
 // cloneVNetMeta deep-copies the address-prefix slice so stored and returned
 // values never alias a caller's slice.
 func cloneVNetMeta(meta driver.AzureVNetMetadata) driver.AzureVNetMetadata {
-	out := driver.AzureVNetMetadata{Location: meta.Location}
+	out := driver.AzureVNetMetadata{Location: meta.Location, ResourceGUID: meta.ResourceGUID}
 	if len(meta.AddressPrefixes) > 0 {
 		out.AddressPrefixes = append([]string(nil), meta.AddressPrefixes...)
 	}
@@ -180,12 +199,19 @@ func cloneVNetMeta(meta driver.AzureVNetMetadata) driver.AzureVNetMetadata {
 	return out
 }
 
-// cloneNSGMeta deep-copies the rule slice so stored and returned values never
-// alias a caller's slice.
+// cloneNSGMeta deep-copies the rule slice — and each rule's application-security-group
+// reference slices — so stored and returned values never alias a caller's slice.
 func cloneNSGMeta(meta driver.AzureNSGMetadata) driver.AzureNSGMetadata {
-	out := driver.AzureNSGMetadata{Location: meta.Location}
+	out := driver.AzureNSGMetadata{Location: meta.Location, ResourceGUID: meta.ResourceGUID}
+
 	if len(meta.SecurityRules) > 0 {
-		out.SecurityRules = append([]driver.AzureNSGRule(nil), meta.SecurityRules...)
+		rules := append([]driver.AzureNSGRule(nil), meta.SecurityRules...)
+		for i := range rules {
+			rules[i].SourceASGs = append([]string(nil), rules[i].SourceASGs...)
+			rules[i].DestinationASGs = append([]string(nil), rules[i].DestinationASGs...)
+		}
+
+		out.SecurityRules = rules
 	}
 
 	return out

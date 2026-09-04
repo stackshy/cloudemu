@@ -71,9 +71,9 @@ func (s *ClusterState) serveMetricsTopLevel(w http.ResponseWriter, parts []strin
 	case len(parts) == 1 && parts[0] == metricsResourcePods:
 		s.servePodMetricsList(w, "")
 	case len(parts) == 1 && parts[0] == metricsResourceNodes:
-		serveNodeMetricsList(w, s.now())
+		s.serveNodeMetricsList(w)
 	case len(parts) == 2 && parts[0] == metricsResourceNodes:
-		serveNodeMetricsItem(w, parts[1], s.now())
+		s.serveNodeMetricsItem(w, parts[1])
 	default:
 		return false
 	}
@@ -204,31 +204,56 @@ func podMetricsObject(pod *corev1.Pod, now metav1.Time) map[string]any {
 	}
 }
 
-func serveNodeMetricsList(w http.ResponseWriter, now metav1.Time) {
+func (s *ClusterState) serveNodeMetricsList(w http.ResponseWriter) {
+	s.mu.RLock()
+	now := s.now()
+
+	nodes := s.nodesLocked()
+	items := make([]map[string]any, 0, len(nodes))
+
+	for i := range nodes {
+		items = append(items, nodeMetricsObject(nodes[i].name, now))
+	}
+	s.mu.RUnlock()
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"apiVersion": metricsAPIVersion,
 		"kind":       "NodeMetricsList",
-		"items":      []map[string]any{nodeMetricsObject(now)},
+		"items":      items,
 	})
 }
 
-func serveNodeMetricsItem(w http.ResponseWriter, name string, now metav1.Time) {
-	if name != nodeName {
+func (s *ClusterState) serveNodeMetricsItem(w http.ResponseWriter, name string) {
+	s.mu.RLock()
+	now := s.now()
+
+	nodes := s.nodesLocked()
+	found := false
+
+	for i := range nodes {
+		if nodes[i].name == name {
+			found = true
+
+			break
+		}
+	}
+	s.mu.RUnlock()
+
+	if !found {
 		writeNotFound(w, "k8s api: node not found: "+name)
 
 		return
 	}
 
-	writeJSON(w, http.StatusOK, nodeMetricsObject(now))
+	writeJSON(w, http.StatusOK, nodeMetricsObject(name, now))
 }
 
-// nodeMetricsObject synthesizes fixed usage for the single synthetic Node
-// every emulated Pod is scheduled onto.
-func nodeMetricsObject(now metav1.Time) map[string]any {
+// nodeMetricsObject synthesizes fixed usage for one synthetic Node.
+func nodeMetricsObject(name string, now metav1.Time) map[string]any {
 	return map[string]any{
 		"apiVersion": metricsAPIVersion,
 		"kind":       "NodeMetrics",
-		"metadata":   map[string]any{"name": nodeName},
+		"metadata":   map[string]any{"name": name},
 		"timestamp":  now,
 		"window":     metricsWindow,
 		"usage":      map[string]any{"cpu": nodeMetricCPUUsage, "memory": nodeMetricMemUsage},

@@ -195,7 +195,8 @@ func TestEndpoints_AllNamespacesList(t *testing.T) {
 	var list corev1.EndpointsList
 	mustDecode(t, resp.Body, &list)
 
-	if len(list.Items) != 2 {
-		t.Fatalf("got %d, want 2 endpoints across namespaces", len(list.Items))
+	// 2 created Services' endpoints + the seeded kube-dns Service's endpoints = 3.
+	if len(list.Items) != 3 {
+		t.Fatalf("got %d, want 3 endpoints across namespaces", len(list.Items))
 	}
 }

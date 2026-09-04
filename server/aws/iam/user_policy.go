@@ -88,7 +88,7 @@ func (h *Handler) getUserPolicy(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, getUserPolicyResponse{
 		Xmlns: Namespace,
 		Result: getUserPolicyResult{
-			UserName: userName, PolicyName: policyName, PolicyDocument: doc,
+			UserName: userName, PolicyName: policyName, PolicyDocument: encodePolicyDocument(doc),
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})

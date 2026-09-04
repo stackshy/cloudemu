@@ -46,6 +46,7 @@ var clusterStateRuntimeFields = map[string]struct{}{
 	"mu":                   {}, // lock — never serialized
 	"clock":                {}, // config re-injected via newClusterState
 	"lifecycleProgression": {}, // config re-injected via newClusterState
+	"nodeCount":            {}, // config re-injected via newClusterState; Node objects persist in the registry store
 	"admissionEnabled":     {}, // config re-injected via newClusterState
 	"admissionClient":      {}, // runtime *http.Client, reconstructed
 	"eventIndex":           {}, // derived — rebuilt from the restored Event store
@@ -76,6 +77,7 @@ var apiServerRuntimeFields = map[string]struct{}{
 	"admissionEnabled":     {}, // config re-injected before restore
 	"admissionClient":      {}, // runtime *http.Client
 	"lifecycleProgression": {}, // config re-injected before restore
+	"nodeCount":            {}, // config re-injected before restore
 }
 
 // TestSnapshotFieldGuard is the permanent completeness guard for #868: every

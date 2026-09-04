@@ -333,8 +333,6 @@ func (m *Mock) mintCertKey(vault, name string, v *certVersion, key *rsa.PrivateK
 
 // GetCertificate returns one certificate version. Empty version returns the
 // current version.
-//
-//nolint:dupl // parallel certificate/secret version accessor; the shared shape is intentional
 func (m *Mock) GetCertificate(_ context.Context, vault, name, version string) (*driver.KVCertificate, error) {
 	cd := liveCert(m.vault(vault).certs, name)
 	if cd == nil {

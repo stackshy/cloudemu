@@ -1,6 +1,7 @@
 package kubernetes
 
 import (
+	"sort"
 	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -34,6 +35,13 @@ const (
 func (s *ClusterState) TickCronJobs() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+
+	// Defense-in-depth self-gate (mirrors Tick's at lifecycle.go): CronJob firing
+	// is opt-in time-driven behavior, so it stays a no-op unless progression is on
+	// — even if a caller other than the gated serve ticker reaches this.
+	if !s.lifecycleProgression {
+		return
+	}
 
 	cronStore := s.reg.getStore(apiGroupBatch, "v1", "cronjobs")
 	jobStore := s.reg.getStore(apiGroupBatch, "v1", "jobs")
@@ -178,22 +186,7 @@ func activeJobsFor(cj *unstructured.Unstructured, jobStore *registryStore) []*un
 
 // jobTerminal reports whether a Job has finished (Complete or Failed True).
 func jobTerminal(job *unstructured.Unstructured) bool {
-	conds, _, _ := unstructured.NestedSlice(job.Object, "status", "conditions")
-	for _, raw := range conds {
-		cond, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-
-		ctype, _, _ := unstructured.NestedString(cond, "type")
-		cstatus, _, _ := unstructured.NestedString(cond, "status")
-
-		if cstatus == "True" && (ctype == "Complete" || ctype == "Failed") {
-			return true
-		}
-	}
-
-	return false
+	return jobHasCondition(job, "Complete") || jobHasCondition(job, "Failed")
 }
 
 // deleteJobLocked removes a Job and cascade-collects its Pods (Replace policy).
@@ -234,4 +227,101 @@ func (s *ClusterState) fireCronJobLocked(cj *unstructured.Unstructured, jobStore
 		"Created job "+jobName)
 
 	setLastScheduleTime(cj, fireTime)
+
+	// Trim finished Jobs beyond the history limits so `kubectl get jobs` self-
+	// trims and a long-lived `serve` doesn't accumulate Jobs unbounded.
+	s.pruneJobHistoryLocked(cj, jobStore)
+}
+
+// Default CronJob history limits (batch/v1 CronJobSpec), applied when the field
+// is unset — how many finished Jobs the controller keeps per CronJob.
+const (
+	defaultSuccessfulJobsHistoryLimit = 3
+	defaultFailedJobsHistoryLimit     = 1
+)
+
+// pruneJobHistoryLocked deletes the CronJob's finished Jobs beyond its
+// successfulJobsHistoryLimit / failedJobsHistoryLimit (defaults 3 / 1), keeping
+// the most recent of each. Active Jobs are never touched. Callers hold s.mu.
+func (s *ClusterState) pruneJobHistoryLocked(cj *unstructured.Unstructured, jobStore *registryStore) {
+	uid := cj.GetUID()
+
+	var succeeded, failed []*unstructured.Unstructured
+
+	for _, job := range jobStore.items {
+		if !ownedBy(job.GetOwnerReferences(), uid) {
+			continue
+		}
+
+		switch {
+		case jobHasCondition(job, "Complete"):
+			succeeded = append(succeeded, job)
+		case jobHasCondition(job, "Failed"):
+			failed = append(failed, job)
+		}
+	}
+
+	s.trimFinishedJobsLocked(succeeded, jobHistoryLimit(cj, "successfulJobsHistoryLimit",
+		defaultSuccessfulJobsHistoryLimit), jobStore)
+	s.trimFinishedJobsLocked(failed, jobHistoryLimit(cj, "failedJobsHistoryLimit",
+		defaultFailedJobsHistoryLimit), jobStore)
+}
+
+// trimFinishedJobsLocked deletes all but the `limit` most-recent Jobs from a set
+// of finished Jobs, sorting oldest-first (creationTimestamp, then name) for a
+// deterministic choice of which to drop. Callers hold s.mu.
+func (s *ClusterState) trimFinishedJobsLocked(jobs []*unstructured.Unstructured, limit int, jobStore *registryStore) {
+	if len(jobs) <= limit {
+		return
+	}
+
+	sort.Slice(jobs, func(i, j int) bool {
+		ti := jobs[i].GetCreationTimestamp().Time
+		tj := jobs[j].GetCreationTimestamp().Time
+
+		if !ti.Equal(tj) {
+			return ti.Before(tj)
+		}
+
+		return jobs[i].GetName() < jobs[j].GetName()
+	})
+
+	for _, job := range jobs[:len(jobs)-limit] {
+		s.deleteJobLocked(job, jobStore)
+	}
+}
+
+// jobHistoryLimit reads a CronJob history-limit field, falling back to def when
+// unset (a negative value clamps to 0 — keep none).
+func jobHistoryLimit(cj *unstructured.Unstructured, field string, def int) int {
+	n, found, _ := unstructured.NestedInt64(cj.Object, "spec", field)
+	if !found {
+		return def
+	}
+
+	if n < 0 {
+		return 0
+	}
+
+	return int(n)
+}
+
+// jobHasCondition reports whether a Job carries the named condition set True.
+func jobHasCondition(job *unstructured.Unstructured, condType string) bool {
+	conds, _, _ := unstructured.NestedSlice(job.Object, "status", "conditions")
+	for _, raw := range conds {
+		cond, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		ctype, _, _ := unstructured.NestedString(cond, "type")
+		cstatus, _, _ := unstructured.NestedString(cond, "status")
+
+		if ctype == condType && cstatus == "True" {
+			return true
+		}
+	}
+
+	return false
 }

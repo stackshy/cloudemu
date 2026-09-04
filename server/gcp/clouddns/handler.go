@@ -56,6 +56,17 @@ type Handler struct {
 	// index within this per-zone log. Guarded by mu.
 	mu      sync.Mutex
 	changes map[string][]changeJSON
+
+	// applyMu serializes changes.create's validate-then-apply span and
+	// managedZones.delete's empty-check-then-delete span, both against
+	// concurrent callers and against each other. The dns driver has no
+	// multi-key transaction primitive, so Changes.create's atomic
+	// all-or-nothing semantics — and delete's refusal on a non-empty zone —
+	// only hold if no other wire-layer mutation can land in the window between
+	// a handler's validation read and its apply. Distinct from mu, which only
+	// guards the change-log slice: holding this lock across a call that
+	// (via recordChange) also takes mu would self-deadlock.
+	applyMu sync.Mutex
 }
 
 // New returns a Cloud DNS handler backed by d.

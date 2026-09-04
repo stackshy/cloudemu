@@ -4,7 +4,9 @@
 
 Does a **real cloud SDK** call for each operation succeed against CloudEmu's wire server? Every cell below is backed by a live round-trip through the official SDK — not a hand-maintained checkbox.
 
-Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `—` not offered by that provider.
+Legend: ✅ verified via a real SDK · `·` supported but not yet compat-tested · `—` not offered by that provider.
+
+Each service's summary breaks the verified counts out per SDK/language. Only languages with compat tests today appear; more rows land as their suites are added.
 
 ## cache
 
@@ -28,7 +30,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | Set | · | · | · |
 | UpdateCache | ✅ | ✅ | ✅ |
 
-**cache verified via Go SDK:** AWS 5/17 · Azure 5/17 · GCP 5/17.
+**cache verified per language:**
+- Go: AWS 5/17 · Azure 5/17 · GCP 5/17
 
 ## cloudformation
 
@@ -44,7 +47,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | ListStacks | ✅ |
 | UpdateStack | ✅ |
 
-**cloudformation verified via Go SDK:** AWS 9/9.
+**cloudformation verified per language:**
+- Go: AWS 9/9
 
 ## compute
 
@@ -88,7 +92,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | TerminateInstances | ✅ | ✅ | ✅ |
 | UpdateAutoScalingGroup | · | · | · |
 
-**compute verified via Go SDK:** AWS 28/37 · Azure 6/37 · GCP 15/37.
+**compute verified per language:**
+- Go: AWS 28/37 · Azure 6/37 · GCP 15/37
 
 ## containerregistry
 
@@ -110,7 +115,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | StartImageScan | ✅ | · | · |
 | TagImage | · | · | · |
 
-**containerregistry verified via Go SDK:** AWS 12/15 · Azure 4/15 · GCP 5/15.
+**containerregistry verified per language:**
+- Go: AWS 12/15 · Azure 4/15 · GCP 5/15
 
 ## database
 
@@ -141,7 +147,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | UpdateStreamConfig | · | · | · |
 | UpdateTTL | · | · | · |
 
-**database verified via Go SDK:** AWS 13/24 · Azure 7/24 · GCP 4/24.
+**database verified per language:**
+- Go: AWS 13/24 · Azure 7/24 · GCP 4/24
 
 ## dns
 
@@ -164,7 +171,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | UpdateRecord | ✅ | ✅ | ✅ |
 | UpdateZone | ✅ | ✅ | · |
 
-**dns verified via Go SDK:** AWS 14/16 · Azure 10/16 · GCP 8/16.
+**dns verified per language:**
+- Go: AWS 14/16 · Azure 10/16 · GCP 8/16
 
 ## eventbus
 
@@ -187,7 +195,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | RemoveTargets | ✅ | · | · |
 | UpdateEventBus | · | · | · |
 
-**eventbus verified via Go SDK:** AWS 14/16 · Azure 4/16 · GCP 4/16.
+**eventbus verified per language:**
+- Go: AWS 14/16 · Azure 4/16 · GCP 4/16
 
 ## iam
 
@@ -234,7 +243,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | RemoveUserFromGroup | ✅ | · | · |
 | SetDefaultPolicyVersion | ✅ | · | · |
 
-**iam verified via Go SDK:** AWS 39/40 · Azure 4/40 · GCP 11/40.
+**iam verified per language:**
+- Go: AWS 39/40 · Azure 4/40 · GCP 11/40
 
 ## loadbalancer
 
@@ -260,7 +270,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | RegisterTargets | ✅ | · | · |
 | SetTargetHealth | · | · | · |
 
-**loadbalancer verified via Go SDK:** AWS 17/19 · Azure 3/19 · GCP 6/19.
+**loadbalancer verified per language:**
+- Go: AWS 17/19 · Azure 3/19 · GCP 6/19
 
 ## logging
 
@@ -284,7 +295,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | PutSubscriptionFilter | · | · | · |
 | UpdateLogGroup | ✅ | ✅ | · |
 
-**logging verified via Go SDK:** AWS 11/17 · Azure 5/17 · GCP 4/17.
+**logging verified per language:**
+- Go: AWS 11/17 · Azure 5/17 · GCP 4/17
 
 ## messagequeue
 
@@ -305,7 +317,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | SendMessageBatch | ✅ | · | · |
 | SetQueueAttributes | ✅ | · | · |
 
-**messagequeue verified via Go SDK:** AWS 12/14 · Azure 7/14 · GCP 7/14.
+**messagequeue verified per language:**
+- Go: AWS 12/14 · Azure 7/14 · GCP 7/14
 
 ## monitoring
 
@@ -324,7 +337,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | PutMetricData | ✅ | · | · |
 | SetAlarmState | · | · | · |
 
-**monitoring verified via Go SDK:** AWS 6/12 · Azure 0/12 · GCP 3/12.
+**monitoring verified per language:**
+- Go: AWS 6/12 · Azure 0/12 · GCP 3/12
 
 ## networking
 
@@ -388,7 +402,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | UpdateSubnetTags | · | · | · |
 | UpdateVPCTags | · | · | · |
 
-**networking verified via Go SDK:** AWS 38/57 · Azure 11/57 · GCP 9/57.
+**networking verified per language:**
+- Go: AWS 38/57 · Azure 11/57 · GCP 9/57
 
 ## notification
 
@@ -404,7 +419,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | Unsubscribe | ✅ | · | · |
 | UpdateTopic | ✅ | ✅ | · |
 
-**notification verified via Go SDK:** AWS 9/9 · Azure 5/9 · GCP 1/9.
+**notification verified per language:**
+- Go: AWS 9/9 · Azure 5/9 · GCP 1/9
 
 ## secrets
 
@@ -418,7 +434,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | ListSecrets | ✅ | ✅ | ✅ |
 | PutSecretValue | ✅ | ✅ | ✅ |
 
-**secrets verified via Go SDK:** AWS 7/7 · Azure 7/7 · GCP 7/7.
+**secrets verified per language:**
+- Go: AWS 7/7 · Azure 7/7 · GCP 7/7
 
 ## serverless
 
@@ -452,7 +469,8 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | UpdateEventSourceMapping | ✅ | · | · |
 | UpdateFunction | ✅ | · | ✅ |
 
-**serverless verified via Go SDK:** AWS 18/27 · Azure 4/27 · GCP 6/27.
+**serverless verified per language:**
+- Go: AWS 18/27 · Azure 4/27 · GCP 6/27
 
 ## storage
 
@@ -494,5 +512,6 @@ Legend: ✅ verified via Go SDK · `·` supported but not yet compat-tested · `
 | SetBucketVersioning | · | · | · |
 | UploadPart | · | · | · |
 
-**storage verified via Go SDK:** AWS 9/35 · Azure 8/35 · GCP 8/35.
+**storage verified per language:**
+- Go: AWS 9/35 · Azure 8/35 · GCP 8/35
 

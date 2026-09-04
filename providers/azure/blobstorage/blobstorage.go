@@ -49,9 +49,23 @@ type blobObject struct {
 	Tags         map[string]string
 	// BlobType is "BlockBlob" (default, empty) or "AppendBlob".
 	BlobType string
+	// VersionID is this blob's version identifier when account-level versioning
+	// is enabled — a timestamp id minted on the write that produced it. Empty on
+	// an account that never had versioning enabled. On a live (base) blob it is
+	// the current version's id; on a copy held in the container's versions store
+	// it identifies that historical version.
+	VersionID string
 	// AccessTier is the blob access tier (Hot/Cool/Cold/Archive), set by Set Blob
 	// Tier; empty when unset.
 	AccessTier string
+	// DeletedTime is when this blob was soft-deleted (blob time format, UTC),
+	// stamped when it moves into the container's soft-deleted store. Empty on a
+	// live blob.
+	DeletedTime string
+	// deletedRetentionDays is the account retention window (days) captured at
+	// soft-delete time, used to count down RemainingRetentionDays independent of a
+	// later policy change. Zero on a live blob.
+	deletedRetentionDays int
 	// Content* are additional system properties settable via Set Blob Properties.
 	ContentEncoding    string
 	ContentLanguage    string
@@ -70,6 +84,11 @@ type blobObject struct {
 	mu sync.Mutex
 	// appendBlocks counts committed Append Block operations (append blobs only).
 	appendBlocks int
+	// pages tracks which 512-byte pages of a page blob currently hold written
+	// (non-cleared) data, keyed by zero-based page index. nil for non-page blobs.
+	// Get Page Ranges coalesces the set into contiguous byte ranges; Put Page adds
+	// indices and Clear Page removes them. Guarded by mu alongside Data.
+	pages map[int64]bool
 
 	// Lease Blob state. leaseState is one of leaseStateAvailable (""),
 	// leaseStateLeased, leaseStateBreaking, or leaseStateBroken; a "leased" or
@@ -84,6 +103,15 @@ type blobObject struct {
 	// Acquire/Renew, used to detect "blob modified since lease" on a Renew of
 	// an expired-but-unreleased lease.
 	leaseModTimeAtAcquire string
+
+	// Immutable-storage (WORM) state, guarded by mu. immutabilityMode is one of
+	// driver.BlobImmutabilityUnlocked/Locked (empty when no time-based policy is
+	// set); immutabilityExpiry is its retain-until instant. legalHold, when true,
+	// protects the blob independent of any policy. While the blob has an unexpired
+	// policy OR a legal hold, delete and overwrite are blocked.
+	immutabilityMode   string
+	immutabilityExpiry time.Time
+	legalHold          bool
 }
 
 type blobMultipartUpload struct {
@@ -123,9 +151,26 @@ type containerMeta struct {
 	// Snapshots live at the container level so they survive a base-blob
 	// overwrite, matching real Azure snapshot lifetime.
 	snapshots *memstore.Store[*blobObject]
-	// mu guards snapshotSeq (and any future container-scoped counters).
+	// versions holds immutable blob versions keyed by versionKey(blob, id) when
+	// account-level versioning is enabled. Like snapshots they live at the
+	// container level so a version survives a base-blob overwrite or delete,
+	// matching real Azure version lifetime.
+	versions *memstore.Store[*blobObject]
+	// softDeleted holds soft-deleted blobs keyed by blob name when the account
+	// delete-retention policy is enabled. A Delete Blob moves the live blob here
+	// (retaining its bytes) instead of removing it; Undelete Blob moves it back,
+	// and the retention window purges it lazily.
+	softDeleted *memstore.Store[*blobObject]
+	// mu guards snapshotSeq/versionSeq (and any future container-scoped counters).
+	// It ALSO serializes every objects↔softDeleted transition (soft delete and
+	// Undelete) so a blob is atomically moved between the two stores: without one
+	// lock spanning both writes, a racing Delete and Undelete on the same blob can
+	// interleave their independent per-store writes and leave the blob in NEITHER
+	// store (permanent data loss). Held only across the two-store mutation, never
+	// while emitting metrics/events.
 	mu          sync.Mutex
 	snapshotSeq int
+	versionSeq  int
 }
 
 // blockStaging buffers the uncommitted blocks staged for one blob before a
@@ -162,6 +207,11 @@ type Mock struct {
 	// blobEventSeq backs the monotonically increasing sequencer stamped on each
 	// emitted blob event (Event Grid's per-blob ordering token).
 	blobEventSeq atomic.Uint64
+	// functionSink, when wired, receives a just-written blob's content on every
+	// create/update so any Azure Function with a blobTrigger binding on the
+	// blob's container can be invoked. nil in library/typed use, where blob
+	// writes simply skip trigger delivery. See function_trigger.go.
+	functionSink BlobFunctionTriggerSink
 }
 
 // Compile-time check that Mock satisfies the optional BucketAttributes
@@ -314,13 +364,15 @@ func (m *Mock) CreateBucket(_ context.Context, name string) error {
 	}
 
 	m.containers.Set(name, &containerMeta{
-		Name:       name,
-		Region:     m.opts.Region,
-		CreatedAt:  m.opts.Clock.Now().UTC().Format(blobTimeFormat),
-		objects:    memstore.New[*blobObject](),
-		multiparts: memstore.New[*blobMultipartUpload](),
-		staging:    memstore.New[*blockStaging](),
-		snapshots:  memstore.New[*blobObject](),
+		Name:        name,
+		Region:      m.opts.Region,
+		CreatedAt:   m.opts.Clock.Now().UTC().Format(blobTimeFormat),
+		objects:     memstore.New[*blobObject](),
+		multiparts:  memstore.New[*blobMultipartUpload](),
+		staging:     memstore.New[*blockStaging](),
+		snapshots:   memstore.New[*blobObject](),
+		versions:    memstore.New[*blobObject](),
+		softDeleted: memstore.New[*blobObject](),
 	})
 
 	return nil
@@ -399,6 +451,11 @@ func (m *Mock) putBlockBlobInternal(
 		return nil, cerrors.Newf(cerrors.NotFound, "container %q not found", bucket)
 	}
 
+	// Immutable storage (WORM): overwriting a protected blob is blocked.
+	if err := m.enforceImmutable(ctr, key); err != nil {
+		return nil, err
+	}
+
 	size := int64(len(data))
 	meta := maps.Clone(metadata)
 
@@ -431,10 +488,12 @@ func (m *Mock) putBlockBlobInternal(
 	}
 
 	m.carryOverLease(ctr, key, obj)
+	m.recordVersion(ctr, obj)
 	ctr.objects.Set(key, obj)
 
 	m.emitMetric(bucket, map[string]float64{"Transactions": 1, "Ingress": float64(size)})
 	m.emitBlobCreated(ctx, obj, bucket)
+	m.dispatchFunctionTrigger(ctx, obj, bucket)
 
 	info := objectInfo(obj)
 
@@ -483,7 +542,7 @@ func objectInfo(obj *blobObject) driver.ObjectInfo {
 	return driver.ObjectInfo{
 		Key: obj.Key, Size: obj.Size, ContentType: obj.ContentType,
 		ETag: obj.ETag, LastModified: obj.LastModified, Metadata: maps.Clone(obj.Metadata),
-		BlobType: obj.BlobType, AccessTier: obj.AccessTier,
+		BlobType: obj.BlobType, AccessTier: obj.AccessTier, VersionID: obj.VersionID,
 		CacheControl: obj.CacheControl, ContentEncoding: obj.ContentEncoding,
 		ContentDisposition: obj.ContentDisposition, ContentLanguage: obj.ContentLanguage,
 	}
@@ -521,6 +580,24 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	obj, ok := ctr.objects.Get(key)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "blob %q not found in container %q", key, bucket)
+	}
+
+	// Immutable storage (WORM): an unexpired immutability policy or an active
+	// legal hold blocks the delete before any soft-delete/purge runs.
+	if err := m.enforceImmutable(ctr, key); err != nil {
+		return err
+	}
+
+	// When soft delete is in effect, a Delete Blob retains the blob (bytes and
+	// all) in the container's soft-deleted store rather than removing it, so
+	// Undelete can restore it within the retention window. The active byte purge
+	// below is skipped precisely because the bytes must survive.
+	if retentionDays, soft := m.softDeleteActive(); soft {
+		m.softDeleteObject(ctr, key, obj, retentionDays)
+		m.emitMetric(bucket, map[string]float64{"Transactions": 1})
+		m.emitBlobDeleted(ctx, obj, bucket)
+
+		return nil
 	}
 
 	ctr.objects.Delete(key)
@@ -702,6 +779,11 @@ func (m *Mock) copyBlobInternal(
 		return nil, cerrors.Newf(cerrors.NotFound, "destination container %q not found", dstBucket)
 	}
 
+	// Immutable storage (WORM): overwriting a protected destination blob is blocked.
+	if err := m.enforceImmutable(dstCtr, dstKey); err != nil {
+		return nil, err
+	}
+
 	meta := maps.Clone(srcObj.Metadata)
 	if replaceMeta {
 		meta = maps.Clone(overrideMeta)
@@ -728,10 +810,12 @@ func (m *Mock) copyBlobInternal(
 	}
 
 	m.carryOverLease(dstCtr, dstKey, dstObj)
+	m.recordVersion(dstCtr, dstObj)
 	dstCtr.objects.Set(dstKey, dstObj)
 
 	m.emitMetric(dstBucket, map[string]float64{"Transactions": 1})
 	m.emitBlobCreatedAPI(ctx, dstObj, dstBucket, blobEventAPICopyBlob)
+	m.dispatchFunctionTrigger(ctx, dstObj, dstBucket)
 
 	info := objectInfo(dstObj)
 
@@ -987,6 +1071,7 @@ func (m *Mock) CompleteMultipartUpload(
 		obj.Data = data
 	}
 
+	m.recordVersion(ctr, obj)
 	ctr.objects.Set(key, obj)
 
 	ctr.multiparts.Delete(uploadID)

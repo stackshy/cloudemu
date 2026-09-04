@@ -164,7 +164,7 @@ func (m *Mock) DeleteItemConditional(
 		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", table)
 	}
 
-	if err := validateKeyMapNotEmpty(td.config.PartitionKey, td.config.SortKey, key); err != nil {
+	if err := validateKeySchema(td.config, key); err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}
@@ -209,7 +209,7 @@ func (m *Mock) UpdateItemConditional(
 		return nil, nil, cerrors.Newf(cerrors.NotFound, "table %s not found", input.Table)
 	}
 
-	if verr := validateKeyMapNotEmpty(td.config.PartitionKey, td.config.SortKey, input.Key); verr != nil {
+	if verr := validateKeySchema(td.config, input.Key); verr != nil {
 		m.mu.Unlock()
 		return nil, nil, verr
 	}
@@ -397,7 +397,7 @@ func validateTransactOp(td *tableData, op *driver.TransactOp) error {
 		return validateItemSize(op.Item)
 	}
 
-	return validateKeyMapNotEmpty(td.config.PartitionKey, td.config.SortKey, op.Key)
+	return validateKeySchema(td.config, op.Key)
 }
 
 // opKeySource returns the attributes that identify an operation's target item:

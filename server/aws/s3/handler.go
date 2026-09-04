@@ -64,6 +64,11 @@ type Handler struct {
 	// properties (Cache-Control, Content-Encoding, …) and storage class; the
 	// handler then records them on PutObject and reflects them on read.
 	sysProps driver.SystemPropsBucket
+	// objectLock is set when the driver enforces S3 Object Lock (per-version
+	// retention + legal hold); the handler then honors the ?retention/?legal-hold
+	// sub-resources, the object-lock request headers, x-amz-bucket-object-lock-
+	// enabled on create, and WORM protection on delete/overwrite.
+	objectLock driver.ObjectLockBucket
 }
 
 // New returns an S3 handler backed by b.
@@ -91,6 +96,10 @@ func New(b driver.Bucket) *Handler {
 
 	if sp, ok := b.(driver.SystemPropsBucket); ok {
 		h.sysProps = sp
+	}
+
+	if ol, ok := b.(driver.ObjectLockBucket); ok {
+		h.objectLock = ol
 	}
 
 	return h
@@ -401,6 +410,15 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket st
 		return
 	}
 
+	// x-amz-bucket-object-lock-enabled: true enables S3 Object Lock (and, as real
+	// S3 requires, versioning) on the new bucket so retention/legal hold can be set.
+	if h.objectLock != nil && strings.EqualFold(r.Header.Get("X-Amz-Bucket-Object-Lock-Enabled"), "true") {
+		if err := h.objectLock.EnableObjectLock(r.Context(), bucket); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
 	w.Header().Set("Location", "/"+bucket)
 	w.WriteHeader(http.StatusOK)
 }
@@ -562,34 +580,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 }
 
 func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, key string) {
-	q := r.URL.Query()
-
-	switch {
-	case q.Has("attributes"):
-		// GET /{bucket}/{key}?attributes => GetObjectAttributes. Without this it
-		// falls through to getObject and the SDK decodes an object body as the
-		// attributes response, reading zero-valued attributes.
-		h.getObjectAttributes(w, r, bucket, key)
-		return
-	case q.Has("tagging"):
-		h.objectTaggingOp(w, r, bucket, key)
-		return
-	case q.Has("uploads"):
-		// POST /{bucket}/{key}?uploads => CreateMultipartUpload. Any other method
-		// is rejected rather than falling through to a plain object PUT/GET/DELETE.
-		if r.Method == http.MethodPost {
-			h.createMultipartUpload(w, r, bucket, key)
-			return
-		}
-		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?uploads")
-		return
-	case q.Has("uploadId"):
-		h.multipartUploadOp(w, r, bucket, key, q.Get("uploadId"))
-		return
-	case q.Has("acl"):
-		// GET returns a canned ACL; a PUT/DELETE is a no-op so it does NOT fall
-		// through to putObject and overwrite the object with the ACL body.
-		h.aclOp(w, r)
+	if h.objectSubresourceOp(w, r, bucket, key) {
 		return
 	}
 
@@ -609,6 +600,46 @@ func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, key s
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
+}
+
+// objectSubresourceOp dispatches the object-level sub-resource operations
+// selected by a query key (?attributes, ?tagging, ?retention, ?legal-hold,
+// ?uploads, ?uploadId, ?acl). It returns true when it handled the request; false
+// lets objectOp fall through to the plain method switch (GET/PUT/HEAD/DELETE).
+func (h *Handler) objectSubresourceOp(w http.ResponseWriter, r *http.Request, bucket, key string) bool {
+	q := r.URL.Query()
+
+	switch {
+	case q.Has("attributes"):
+		// GET /{bucket}/{key}?attributes => GetObjectAttributes. Without this it
+		// falls through to getObject and the SDK decodes an object body as the
+		// attributes response, reading zero-valued attributes.
+		h.getObjectAttributes(w, r, bucket, key)
+	case q.Has("tagging"):
+		h.objectTaggingOp(w, r, bucket, key)
+	case q.Has("retention"):
+		h.objectRetentionOp(w, r, bucket, key)
+	case q.Has("legal-hold"):
+		h.objectLegalHoldOp(w, r, bucket, key)
+	case q.Has("uploads"):
+		// POST /{bucket}/{key}?uploads => CreateMultipartUpload. Any other method
+		// is rejected rather than falling through to a plain object PUT/GET/DELETE.
+		if r.Method == http.MethodPost {
+			h.createMultipartUpload(w, r, bucket, key)
+		} else {
+			writeError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed on ?uploads")
+		}
+	case q.Has("uploadId"):
+		h.multipartUploadOp(w, r, bucket, key, q.Get("uploadId"))
+	case q.Has("acl"):
+		// GET returns a canned ACL; a PUT/DELETE is a no-op so it does NOT fall
+		// through to putObject and overwrite the object with the ACL body.
+		h.aclOp(w, r)
+	default:
+		return false
+	}
+
+	return true
 }
 
 func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
@@ -639,6 +670,12 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	// x-amz-tagging sets the object's tag set at upload time; apply it so
 	// GetObjectTagging returns it (real S3 stores it atomically with the object).
 	if !h.applyPutTagging(w, r, bucket, key) {
+		return
+	}
+
+	// x-amz-object-lock-mode / -retain-until-date / -legal-hold stamp Object Lock
+	// on the just-written version (real S3 stores it atomically with the object).
+	if !h.applyPutObjectLock(w, r, bucket, key, versionID) {
 		return
 	}
 
@@ -772,6 +809,7 @@ func (h *Handler) getObject(w http.ResponseWriter, r *http.Request, bucket, key 
 	}
 
 	writeObjectHeaders(w, &obj.Info, int64(len(obj.Data)))
+	h.writeObjectLockHeaders(w, r, bucket, key, versionID)
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(obj.Data) //nolint:gosec // writing raw object bytes, not HTML
@@ -912,6 +950,7 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, key
 	}
 
 	writeObjectHeaders(w, info, info.Size)
+	h.writeObjectLockHeaders(w, r, bucket, key, versionID)
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -1134,7 +1173,9 @@ func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, k
 	if h.versioned != nil {
 		// Versioned driver: a top-level delete (no versionId) appends a delete
 		// marker on an Enabled bucket; ?versionId permanently removes a version.
-		vid, marker, err := h.versioned.DeleteObjectVersion(r.Context(), bucket, key, versionID)
+		// When Object Lock is enforced, a protected version is refused (403
+		// AccessDenied); x-amz-bypass-governance-retention lifts a GOVERNANCE block.
+		vid, marker, err := h.deleteVersion(r, bucket, key, versionID)
 		if err != nil && (!cerrors.IsNotFound(err) || bucketMissing(err)) {
 			writeErr(w, err)
 			return
@@ -1158,6 +1199,29 @@ func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, k
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// bypassGovernanceHeader is the S3 header a caller sends to remove a
+// GOVERNANCE-mode object-lock protection (never COMPLIANCE, never a legal hold).
+//
+//nolint:gosec // G101 false positive: an HTTP header name, not a credential
+const bypassGovernanceHeader = "X-Amz-Bypass-Governance-Retention"
+
+// bypassGovernance reports whether the request asks to bypass GOVERNANCE
+// retention (x-amz-bypass-governance-retention: true).
+func bypassGovernance(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get(bypassGovernanceHeader), "true")
+}
+
+// deleteVersion removes a version through the object-lock-aware path when the
+// driver enforces Object Lock (honoring x-amz-bypass-governance-retention),
+// falling back to the plain versioned delete otherwise.
+func (h *Handler) deleteVersion(r *http.Request, bucket, key, versionID string) (vid string, marker bool, err error) {
+	if h.objectLock != nil {
+		return h.objectLock.DeleteObjectVersionWithBypass(r.Context(), bucket, key, versionID, bypassGovernance(r))
+	}
+
+	return h.versioned.DeleteObjectVersion(r.Context(), bucket, key, versionID)
 }
 
 // maxDeleteBody caps a DeleteObjects request body. Real S3 allows up to 1000
@@ -1209,14 +1273,21 @@ func (h *Handler) deleteObjects(w http.ResponseWriter, r *http.Request, bucket s
 	}
 
 	result := deleteResultXML{Xmlns: xmlns}
+	bypass := bypassGovernance(r)
 
 	for _, obj := range req.Objects {
-		vid, marker, derr := h.deleteOneObject(r.Context(), bucket, obj.Key, obj.VersionID)
+		vid, marker, derr := h.deleteOneObject(r.Context(), bucket, obj.Key, obj.VersionID, bypass)
 		switch {
 		case derr != nil && bucketMissing(derr):
 			// A missing bucket aborts the whole batch, as in real S3.
 			writeErr(w, derr)
 			return
+		case derr != nil && cerrors.IsPermissionDenied(derr):
+			// Object Lock refused this key; report the AccessDenied per-key and
+			// continue the batch, as real S3 does.
+			result.Errors = append(result.Errors, deleteErrorXML{
+				Key: obj.Key, Code: "AccessDenied", Message: cerrors.Message(derr),
+			})
 		case derr != nil:
 			result.Errors = append(result.Errors, deleteErrorXML{
 				Key: obj.Key, Code: "InternalError", Message: cerrors.Message(derr),
@@ -1279,11 +1350,17 @@ func (h *Handler) aclOp(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteOneObject deletes a single key for the batch path, honoring versioning
-// and treating a missing key as success (idempotent).
-func (h *Handler) deleteOneObject(ctx context.Context, bucket, key, versionID string) (vid string, marker bool, err error) {
-	if h.versioned != nil {
+// and Object Lock (bypass lifts a GOVERNANCE block) and treating a missing key
+// as success (idempotent).
+func (h *Handler) deleteOneObject(
+	ctx context.Context, bucket, key, versionID string, bypass bool,
+) (vid string, marker bool, err error) {
+	switch {
+	case h.objectLock != nil:
+		vid, marker, err = h.objectLock.DeleteObjectVersionWithBypass(ctx, bucket, key, versionID, bypass)
+	case h.versioned != nil:
 		vid, marker, err = h.versioned.DeleteObjectVersion(ctx, bucket, key, versionID)
-	} else {
+	default:
 		err = h.bucket.DeleteObject(ctx, bucket, key)
 	}
 
@@ -2075,8 +2152,17 @@ func (h *Handler) putBucketVersioning(w http.ResponseWriter, r *http.Request, bu
 	} else {
 		err = h.bucket.SetBucketVersioning(r.Context(), bucket, body.Status == "Enabled")
 	}
+
 	if err != nil {
+		// Suspending versioning on an Object-Lock-enabled bucket is rejected by
+		// real S3 with 409 InvalidBucketState.
+		if cerrors.IsFailedPrecondition(err) {
+			writeError(w, http.StatusConflict, "InvalidBucketState", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 
@@ -2409,6 +2495,9 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "BucketAlreadyOwnedByYou", msg)
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "InvalidArgument", msg)
+	case cerrors.IsPermissionDenied(err):
+		// Object Lock (WORM) protection blocks a delete/overwrite/retention change.
+		writeError(w, http.StatusForbidden, "AccessDenied", msg)
 	case cerrors.IsFailedPrecondition(err):
 		// Deleting a non-empty bucket is a client error in real S3, not a
 		// server fault — and a 5xx would trigger SDK retry backoff.

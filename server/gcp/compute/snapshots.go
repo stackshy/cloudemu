@@ -36,6 +36,7 @@ type snapshotResponse struct {
 	Status            string            `json:"status"`
 	SelfLink          string            `json:"selfLink"`
 	Labels            map[string]string `json:"labels,omitempty"`
+	LabelFingerprint  string            `json:"labelFingerprint,omitempty"`
 	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
 }
 
@@ -146,6 +147,35 @@ func (h *Handler) deleteSnapshot(w http.ResponseWriter, r *http.Request, rp gcpr
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
+// setSnapshotLabels handles POST .../global/snapshots/{snapshot}/setLabels,
+// replacing the snapshot's user labels under labelFingerprint optimistic-
+// concurrency.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) setSnapshotLabels(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	var body setLabelsRequest
+	if !gcprest.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	snap, err := findSnapshotByName(r.Context(), h.compute, rp.ResourceName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	labeler, ok := h.compute.(resourceLabelMutator)
+	if !ok {
+		writeNotImplemented(w, "snapshot setLabels")
+		return
+	}
+
+	h.applyResourceSetLabels(w, r, rp, body, snap.Tags, resourceSnapshots,
+		func(set map[string]string, remove []string) error {
+			return labeler.SetSnapshotLabelsGCP(snap.ID, set, remove)
+		})
+}
+
 func findSnapshotByName(ctx context.Context, c computedriver.Compute, name string) (*computedriver.SnapshotInfo, error) {
 	snaps, err := c.DescribeSnapshots(ctx, nil)
 	if err != nil {
@@ -209,6 +239,7 @@ func toSnapshotResponse(snap *computedriver.SnapshotInfo, rp gcprest.ResourcePat
 		Status:            "READY",
 		SelfLink:          gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "snapshots", name),
 		Labels:            userLabels(snap.Tags),
+		LabelFingerprint:  labelFingerprintFor(userLabels(snap.Tags)),
 		CreationTimestamp: snap.CreatedAt,
 	}
 

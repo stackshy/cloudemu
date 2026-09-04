@@ -110,6 +110,31 @@ func (s *Store[V]) Update(key string, fn func(V) V) bool {
 	return true
 }
 
+// UpdateOrDelete atomically applies fn to the value at key under the store
+// lock, so the decision and the resulting mutation cannot be split by a
+// concurrent writer. fn returns the replacement value and a keep flag: when keep
+// is false the key is removed, otherwise the returned value is stored. Returns
+// false if the key does not exist (fn is not called). This is the compare-and-
+// act primitive for "delete this entry only if it still satisfies a predicate",
+// where a plain Get-then-Delete would race.
+func (s *Store[V]) UpdateOrDelete(key string, fn func(V) (V, bool)) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	v, ok := s.items[key]
+	if !ok {
+		return false
+	}
+
+	if nv, keep := fn(v); keep {
+		s.items[key] = nv
+	} else {
+		delete(s.items, key)
+	}
+
+	return true
+}
+
 // SetIfAbsent stores a value only if the key does not already exist. Returns true if set.
 func (s *Store[V]) SetIfAbsent(key string, value V) bool {
 	s.mu.Lock()

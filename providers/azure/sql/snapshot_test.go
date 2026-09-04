@@ -25,6 +25,11 @@ func TestSnapshotRoundTripSQL(t *testing.T) {
 		t.Fatalf("create firewall rule: %v", err)
 	}
 
+	// A database auto-materializes a TDE record; both must survive the round-trip.
+	if _, err := src.CreateDatabase(ctx, rdsdriver.DatabaseConfig{Server: "srv1", Name: "appdb"}); err != nil {
+		t.Fatalf("create database: %v", err)
+	}
+
 	data, err := src.Snapshot(ctx, true)
 	requireNoError(t, err)
 
@@ -43,4 +48,8 @@ func TestSnapshotRoundTripSQL(t *testing.T) {
 	rules, err := dst.ListFirewallRules(ctx, "srv1")
 	requireNoError(t, err)
 	assertEqual(t, 1, len(rules))
+
+	tde, err := dst.GetTransparentDataEncryption(ctx, "srv1", "appdb")
+	requireNoError(t, err)
+	assertEqual(t, rdsdriver.TDEStateEnabled, tde.State)
 }

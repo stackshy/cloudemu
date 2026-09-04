@@ -40,7 +40,7 @@ func (m *Mock) CreateKey(ctx context.Context, in driver.CreateKeyInput) (*driver
 		origin = driver.OriginAWSKMS
 	}
 
-	id := newKeyID()
+	id := newKeyID(in.MultiRegion)
 	now := m.now()
 
 	kd := &keyData{

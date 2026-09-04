@@ -34,6 +34,51 @@ type secretListEntryJSON struct {
 	KmsKeyID string `json:"KmsKeyId,omitempty"`
 
 	VersionIDsToStages map[string][]string `json:"VersionIdsToStages,omitempty"`
+
+	// Rotation* mirror RotateSecret/CancelRotateSecret's configuration, echoed
+	// on both DescribeSecret and ListSecrets (real Secrets Manager exposes them
+	// on both).
+	RotationEnabled   bool               `json:"RotationEnabled,omitempty"`
+	RotationLambdaARN string             `json:"RotationLambdaARN,omitempty"`
+	RotationRules     *rotationRulesJSON `json:"RotationRules,omitempty"`
+	LastRotatedDate   float64            `json:"LastRotatedDate,omitempty"`
+	NextRotationDate  float64            `json:"NextRotationDate,omitempty"`
+}
+
+// rotationRulesJSON is the RotateSecret/DescribeSecret RotationRules shape.
+type rotationRulesJSON struct {
+	AutomaticallyAfterDays int64  `json:"AutomaticallyAfterDays,omitempty"`
+	Duration               string `json:"Duration,omitempty"`
+	ScheduleExpression     string `json:"ScheduleExpression,omitempty"`
+}
+
+// toDriver converts the wire rules to the driver's rotation-rules type. The
+// zero value round-trips to the driver's zero value, which RotateSecret reads
+// as "no rules supplied in this request".
+func (r rotationRulesJSON) toDriver() secretsdriver.SecretRotationRules {
+	return secretsdriver.SecretRotationRules{
+		AutomaticallyAfterDays: r.AutomaticallyAfterDays,
+		Duration:               r.Duration,
+		ScheduleExpression:     r.ScheduleExpression,
+	}
+}
+
+// applyRotationInfo copies a secret's rotation configuration onto a
+// DescribeSecret/ListSecrets entry.
+func applyRotationInfo(entry *secretListEntryJSON, info *secretsdriver.SecretRotationInfo) {
+	entry.RotationEnabled = info.Enabled
+	entry.RotationLambdaARN = info.LambdaARN
+
+	if info.Rules != (secretsdriver.SecretRotationRules{}) {
+		entry.RotationRules = &rotationRulesJSON{
+			AutomaticallyAfterDays: info.Rules.AutomaticallyAfterDays,
+			Duration:               info.Rules.Duration,
+			ScheduleExpression:     info.Rules.ScheduleExpression,
+		}
+	}
+
+	entry.LastRotatedDate = epochSeconds(info.LastRotatedDate)
+	entry.NextRotationDate = epochSeconds(info.NextRotationDate)
 }
 
 type versionJSON struct {
@@ -134,6 +179,17 @@ type tagResourceRequest struct {
 type untagResourceRequest struct {
 	SecretID string   `json:"SecretId"`
 	TagKeys  []string `json:"TagKeys"`
+}
+
+type rotateSecretRequest struct {
+	SecretID           string            `json:"SecretId"`
+	ClientRequestToken string            `json:"ClientRequestToken"`
+	RotationLambdaARN  string            `json:"RotationLambdaARN"`
+	RotationRules      rotationRulesJSON `json:"RotationRules"`
+	// RotateImmediately is a pointer so an absent field (nil, defaults to true)
+	// is distinguishable from an explicit false, which configures rotation
+	// without running it now.
+	RotateImmediately *bool `json:"RotateImmediately"`
 }
 
 type updateSecretResponse struct {

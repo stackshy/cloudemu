@@ -259,7 +259,10 @@ func TestDatabaseLifecycle(t *testing.T) {
 	}
 
 	// Drop the table underneath the SDK; collection ops now surface NotFound.
-	if err := h.fs.DeleteTable(ctx, "users"); err != nil {
+	// The handler namespaces the driver table by project and database
+	// ("{project}\x00{database}\x00{collection}"), so drop that exact key — the
+	// SDK's REST client targets the default database.
+	if err := h.fs.DeleteTable(ctx, dbProject+"\x00(default)\x00users"); err != nil {
 		t.Fatalf("DeleteTable: %v", err)
 	}
 

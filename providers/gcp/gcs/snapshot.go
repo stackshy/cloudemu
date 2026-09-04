@@ -21,26 +21,34 @@ type gcsSnapshot struct {
 	Buckets  map[string]*bucketSnapshot `json:"buckets,omitempty"`
 	Gen      int64                      `json:"gen,omitempty"`
 	NotifGen int64                      `json:"notifGen,omitempty"`
+	HMACKeys map[string]*hmacKeyRecord  `json:"hmacKeys,omitempty"`
 }
 
 type bucketSnapshot struct {
-	Name           string                                  `json:"name"`
-	Region         string                                  `json:"region,omitempty"`
-	CreatedAt      string                                  `json:"createdAt,omitempty"`
-	Versioning     bool                                    `json:"versioning,omitempty"`
-	Lifecycle      *driver.LifecycleConfig                 `json:"lifecycle,omitempty"`
-	Policy         *driver.BucketPolicy                    `json:"policy,omitempty"`
-	CORS           *driver.CORSConfig                      `json:"cors,omitempty"`
-	Encryption     *driver.EncryptionConfig                `json:"encryption,omitempty"`
-	Tags           map[string]string                       `json:"tags,omitempty"`
-	Location       string                                  `json:"location,omitempty"`
-	StorageClass   string                                  `json:"storageClass,omitempty"`
-	Metageneration int64                                   `json:"metageneration,omitempty"`
-	Updated        string                                  `json:"updated,omitempty"`
-	IAMPolicy      []byte                                  `json:"iamPolicy,omitempty"`
-	Objects        map[string]*objectSnapshot              `json:"objects,omitempty"`
-	Versions       map[string][]*objectSnapshot            `json:"versions,omitempty"`
-	Notifications  map[string]driver.GCSNotificationConfig `json:"notifications,omitempty"`
+	Name                   string                                  `json:"name"`
+	Region                 string                                  `json:"region,omitempty"`
+	CreatedAt              string                                  `json:"createdAt,omitempty"`
+	Versioning             bool                                    `json:"versioning,omitempty"`
+	Lifecycle              *driver.LifecycleConfig                 `json:"lifecycle,omitempty"`
+	LifecycleRaw           []byte                                  `json:"lifecycleRaw,omitempty"`
+	Policy                 *driver.BucketPolicy                    `json:"policy,omitempty"`
+	CORS                   *driver.CORSConfig                      `json:"cors,omitempty"`
+	Encryption             *driver.EncryptionConfig                `json:"encryption,omitempty"`
+	Tags                   map[string]string                       `json:"tags,omitempty"`
+	Location               string                                  `json:"location,omitempty"`
+	StorageClass           string                                  `json:"storageClass,omitempty"`
+	Metageneration         int64                                   `json:"metageneration,omitempty"`
+	Updated                string                                  `json:"updated,omitempty"`
+	IAMPolicy              []byte                                  `json:"iamPolicy,omitempty"`
+	UBLAEnabled            bool                                    `json:"ublaEnabled,omitempty"`
+	UBLALockedTime         string                                  `json:"ublaLockedTime,omitempty"`
+	PublicAccessPrevention string                                  `json:"publicAccessPrevention,omitempty"`
+	RetentionPeriod        int64                                   `json:"retentionPeriod,omitempty"`
+	RetentionEffectiveTime string                                  `json:"retentionEffectiveTime,omitempty"`
+	RetentionLocked        bool                                    `json:"retentionLocked,omitempty"`
+	Objects                map[string]*objectSnapshot              `json:"objects,omitempty"`
+	Versions               map[string][]*objectSnapshot            `json:"versions,omitempty"`
+	Notifications          map[string]driver.GCSNotificationConfig `json:"notifications,omitempty"`
 }
 
 // objectSnapshot mirrors gcsObject (all exported already), but Data is dropped
@@ -65,6 +73,9 @@ type objectSnapshot struct {
 	ContentDisposition string            `json:"contentDisposition,omitempty"`
 	ContentLanguage    string            `json:"contentLanguage,omitempty"`
 	StorageClass       string            `json:"storageClass,omitempty"`
+	TemporaryHold      bool              `json:"temporaryHold,omitempty"`
+	EventBasedHold     bool              `json:"eventBasedHold,omitempty"`
+	RetentionRef       string            `json:"retentionRef,omitempty"`
 }
 
 // Snapshot captures every bucket's state as JSON. When includeAssets is false
@@ -80,17 +91,31 @@ func (m *Mock) Snapshot(_ context.Context, includeAssets bool) (json.RawMessage,
 		snap.Buckets[name] = snapshotBucket(bkt, includeAssets)
 	}
 
+	if keys := m.hmacKeys.All(); len(keys) > 0 {
+		snap.HMACKeys = make(map[string]*hmacKeyRecord, len(keys))
+
+		for id, rec := range keys {
+			cp := *rec
+			snap.HMACKeys[id] = &cp
+		}
+	}
+
 	return json.Marshal(snap)
 }
 
 func snapshotBucket(bkt *bucketMeta, includeAssets bool) *bucketSnapshot {
 	bs := &bucketSnapshot{
 		Name: bkt.Name, Region: bkt.Region, CreatedAt: bkt.CreatedAt,
-		Versioning: bkt.versioning, Lifecycle: bkt.lifecycle, Policy: bkt.policy,
+		Versioning: bkt.versioning, Lifecycle: bkt.lifecycle, LifecycleRaw: bkt.gcsLifecycleRaw, Policy: bkt.policy,
 		CORS: bkt.corsConfig, Encryption: bkt.encryption, Tags: bkt.tags,
 		Location: bkt.location, StorageClass: bkt.storageClass,
 		Metageneration: bkt.metageneration, Updated: bkt.updated, IAMPolicy: bkt.iamPolicy,
-		Objects: make(map[string]*objectSnapshot, bkt.objects.Len()),
+		UBLAEnabled: bkt.ublaEnabled, UBLALockedTime: bkt.ublaLockedTime,
+		PublicAccessPrevention: bkt.publicAccessPrevention,
+		RetentionPeriod:        bkt.retentionPeriod,
+		RetentionEffectiveTime: bkt.retentionEffectiveTime,
+		RetentionLocked:        bkt.retentionLocked,
+		Objects:                make(map[string]*objectSnapshot, bkt.objects.Len()),
 	}
 
 	for key, obj := range bkt.objects.All() {
@@ -142,6 +167,8 @@ func objectToSnapshot(obj *gcsObject, includeAssets bool) *objectSnapshot {
 		MD5: obj.MD5, CRC32C: obj.CRC32C, CacheControl: obj.CacheControl,
 		ContentEncoding: obj.ContentEncoding, ContentDisposition: obj.ContentDisposition,
 		ContentLanguage: obj.ContentLanguage, StorageClass: obj.StorageClass,
+		TemporaryHold: obj.TemporaryHold, EventBasedHold: obj.EventBasedHold,
+		RetentionRef: obj.RetentionRef,
 	}
 }
 
@@ -170,6 +197,11 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.buckets.Set(name, restoreBucket(bs))
 	}
 
+	for id, rec := range snap.HMACKeys {
+		cp := *rec
+		m.hmacKeys.Set(id, &cp)
+	}
+
 	return nil
 }
 
@@ -184,12 +216,17 @@ func restoreBucket(bs *bucketSnapshot) *bucketMeta {
 		objects:    memstore.New[*gcsObject](),
 		multiparts: memstore.New[*gcsMultipartUpload](),
 		versioning: bs.Versioning,
-		lifecycle:  bs.Lifecycle, policy: bs.Policy, corsConfig: bs.CORS,
+		lifecycle:  bs.Lifecycle, gcsLifecycleRaw: bs.LifecycleRaw, policy: bs.Policy, corsConfig: bs.CORS,
 		encryption: bs.Encryption, tags: bs.Tags,
 		location: bs.Location, storageClass: bs.StorageClass,
 		metageneration: metagen, updated: bs.Updated, iamPolicy: bs.IAMPolicy,
-		versions:      restoreVersions(bs.Versions),
-		notifications: bs.Notifications,
+		ublaEnabled: bs.UBLAEnabled, ublaLockedTime: bs.UBLALockedTime,
+		publicAccessPrevention: bs.PublicAccessPrevention,
+		retentionPeriod:        bs.RetentionPeriod,
+		retentionEffectiveTime: bs.RetentionEffectiveTime,
+		retentionLocked:        bs.RetentionLocked,
+		versions:               restoreVersions(bs.Versions),
+		notifications:          bs.Notifications,
 	}
 
 	for key, os := range bs.Objects {
@@ -227,5 +264,7 @@ func snapshotToObject(os *objectSnapshot) *gcsObject {
 		MD5: os.MD5, CRC32C: os.CRC32C, CacheControl: os.CacheControl,
 		ContentEncoding: os.ContentEncoding, ContentDisposition: os.ContentDisposition,
 		ContentLanguage: os.ContentLanguage, StorageClass: os.StorageClass,
+		TemporaryHold: os.TemporaryHold, EventBasedHold: os.EventBasedHold,
+		RetentionRef: os.RetentionRef,
 	}
 }

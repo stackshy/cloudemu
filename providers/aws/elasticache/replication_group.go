@@ -10,6 +10,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	cacheengine "github.com/stackshy/cloudemu/v2/services/cache/cacheengine"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
@@ -29,6 +30,12 @@ func (m *Mock) CreateReplicationGroup(
 	if m.replicationGroups.Has(cfg.ID) {
 		return nil, cerrors.Newf(cerrors.AlreadyExists,
 			"ReplicationGroupAlreadyExists: replication group %q already exists", cfg.ID)
+	}
+
+	// A restore (SnapshotName set) seeds the unset config fields from the
+	// snapshot before defaults are applied.
+	if err := m.seedReplicationGroupRestore(&cfg); err != nil {
+		return nil, err
 	}
 
 	engine := cfg.Engine
@@ -85,7 +92,15 @@ func (m *Mock) CreateReplicationGroup(
 
 	m.replicationGroups.Set(cfg.ID, rg)
 
-	return &rg, nil
+	// Under AsyncSettle a fresh group reports creating until the window elapses
+	// (CreateReplicationGroup → creating → available); a no-op when settle is off.
+	m.rgSettle.Begin(cfg.ID, statusCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultCacheSettle))
+
+	result := rg
+	result.Status = m.settleRGStatus(cfg.ID, result.Status)
+
+	return &result, nil
 }
 
 // maxReplicationGroupNodes bounds the member-cluster count a replication group
@@ -103,7 +118,9 @@ func memberClusters(id string, nodes int) []string {
 	}
 
 	// Defensive clamp: the count originates from caller input (NumCacheNodes), so
-	// bound it before it sizes the allocation regardless of the call path.
+	// bound it with an explicit comparison immediately before the allocation it
+	// sizes, regardless of the call path. Valid provisions stay far under the
+	// ceiling, so this is a no-op for them.
 	if nodes > maxReplicationGroupNodes {
 		nodes = maxReplicationGroupNodes
 	}
@@ -172,7 +189,12 @@ func (m *Mock) DescribeReplicationGroups(
 	_ context.Context, ids []string,
 ) ([]cachedriver.ReplicationGroup, error) {
 	if len(ids) == 0 {
-		return m.replicationGroups.SortedValues(), nil
+		all := m.replicationGroups.SortedValues()
+		for i := range all {
+			all[i].Status = m.settleRGStatus(all[i].ID, all[i].Status)
+		}
+
+		return all, nil
 	}
 
 	out := make([]cachedriver.ReplicationGroup, 0, len(ids))
@@ -184,6 +206,7 @@ func (m *Mock) DescribeReplicationGroups(
 				"ReplicationGroupNotFoundFault: replication group %q not found", id)
 		}
 
+		rg.Status = m.settleRGStatus(id, rg.Status)
 		out = append(out, rg)
 	}
 
@@ -207,7 +230,15 @@ func (m *Mock) ModifyReplicationGroup(
 
 	m.replicationGroups.Set(id, rg)
 
-	return &rg, nil
+	// Under AsyncSettle a modified group briefly reports modifying before settling
+	// back to available; a no-op when settle is off.
+	m.rgSettle.Begin(id, statusModifying, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultCacheModifySettle))
+
+	result := rg
+	result.Status = m.settleRGStatus(id, result.Status)
+
+	return &result, nil
 }
 
 // DeleteReplicationGroup deletes a replication group. When
@@ -236,6 +267,7 @@ func (m *Mock) DeleteReplicationGroup(
 	if opts.RetainPrimaryCluster {
 		m.retainPrimaryCluster(&rg)
 		m.replicationGroups.Delete(id)
+		m.rgSettle.Clear(id)
 
 		return nil
 	}
@@ -246,6 +278,7 @@ func (m *Mock) DeleteReplicationGroup(
 	}
 
 	m.replicationGroups.Delete(id)
+	m.rgSettle.Clear(id)
 
 	return nil
 }

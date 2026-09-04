@@ -102,6 +102,12 @@ type LayerConfig struct {
 	Description        string
 	Content            []byte
 	CompatibleRuntimes []string
+	// CompatibleArchitectures is the list of instruction-set architectures
+	// ("x86_64", "arm64") the layer supports.
+	CompatibleArchitectures []string
+	// LicenseInfo is the layer's software license (an SPDX identifier, a
+	// license URL, or the full license text).
+	LicenseInfo string
 }
 
 // LayerVersion represents a published layer version.
@@ -112,8 +118,30 @@ type LayerVersion struct {
 	ContentSHA256      string
 	ContentSize        int64
 	CompatibleRuntimes []string
-	CreatedAt          string
-	ARN                string
+	// CompatibleArchitectures is the list of instruction-set architectures
+	// ("x86_64", "arm64") the layer supports.
+	CompatibleArchitectures []string
+	// LicenseInfo is the layer's software license.
+	LicenseInfo string
+	CreatedAt   string
+	ARN         string
+}
+
+// LayerPermissionStatement is one statement of a layer version's resource-based
+// policy, added via AddLayerVersionPermission. It grants another account (or an
+// organization, or all accounts) permission to use a published layer version.
+// Layer version permissions are an AWS Lambda-only concept (no Azure Functions
+// or GCP Cloud Functions equivalent), so — like PermissionStatement — the data
+// struct lives on the shared driver package but the methods that manage it are
+// exposed through an AWS-only optional interface (type-asserted by the AWS
+// Lambda server handler) rather than the portable Serverless interface.
+type LayerPermissionStatement struct {
+	StatementID string
+	Action      string
+	Principal   string
+	// OrganizationID, when set with Principal "*", scopes the grant to accounts
+	// within this AWS Organization instead of every AWS account.
+	OrganizationID string
 }
 
 // ConcurrencyConfig configures function concurrency.
@@ -122,11 +150,37 @@ type ConcurrencyConfig struct {
 	ReservedConcurrentExecutions int
 }
 
-// ProvisionedConcurrencyConfig configures provisioned concurrency.
+// ProvisionedConcurrencyConfig is a function's provisioned-concurrency
+// configuration (AWS Lambda PutProvisionedConcurrencyConfig), scoped to a
+// published version or alias via Qualifier ($LATEST/unqualified is rejected —
+// provisioned concurrency can only be attached to an immutable qualifier). It
+// has no Azure Functions or GCP Cloud Functions equivalent, so it is kept off
+// the portable Serverless interface and applied/read through an AWS-only
+// optional interface, the same way EventInvokeConfig is.
 type ProvisionedConcurrencyConfig struct {
 	FunctionName string
-	Qualifier    string // version or alias
-	Provisioned  int
+	// Qualifier is the published version number or alias name the config is
+	// attached to.
+	Qualifier string
+	// FunctionArn is the qualified function ARN echoed back in the response.
+	FunctionArn string
+	// RequestedProvisionedConcurrentExecutions is the amount requested by Put.
+	RequestedProvisionedConcurrentExecutions int
+	// AvailableProvisionedConcurrentExecutions is the amount currently usable.
+	// The emulator allocates synchronously, so it always equals Requested once
+	// Status is READY.
+	AvailableProvisionedConcurrentExecutions int
+	// AllocatedProvisionedConcurrentExecutions is the amount actually
+	// allocated. The emulator allocates synchronously, so it always equals
+	// Requested once Status is READY.
+	AllocatedProvisionedConcurrentExecutions int
+	// Status is the allocation status: "IN_PROGRESS", "READY" or "FAILED". The
+	// emulator has no real cold-start pool, so it settles to READY immediately.
+	Status string
+	// StatusReason explains a non-READY Status.
+	StatusReason string
+	// LastModified is the ISO 8601 timestamp of the last Put.
+	LastModified string
 }
 
 // VPCConfig is a function's networking configuration (AWS Lambda VpcConfig).
@@ -148,6 +202,49 @@ type DeadLetterConfig struct {
 // "Active" or "PassThrough" (the create-time default).
 type TracingConfig struct {
 	Mode string
+}
+
+// Destination is one async-invoke destination target (AWS Lambda Destination):
+// an SQS queue, SNS topic, Lambda function, or EventBridge event bus ARN that a
+// finished asynchronous invocation is routed to.
+type Destination struct {
+	Destination string // target ARN
+}
+
+// DestinationConfig routes the result of an asynchronous invocation (AWS Lambda
+// DestinationConfig): OnSuccess receives successful invocations, OnFailure
+// receives invocations that failed after exhausting their retries. Either may be
+// nil (no destination configured for that outcome).
+type DestinationConfig struct {
+	OnSuccess *Destination
+	OnFailure *Destination
+}
+
+// EventInvokeConfig is a function's asynchronous-invocation configuration (AWS
+// Lambda PutFunctionEventInvokeConfig), scoped to a version or alias via
+// Qualifier. It has no Azure Functions or GCP Cloud Functions equivalent, so it
+// is kept off the portable Serverless interface and applied/read through an
+// AWS-only optional interface, the same way Function URLs and DeadLetterConfig
+// are.
+type EventInvokeConfig struct {
+	FunctionName string
+	// Qualifier scopes the config to a published version or alias; empty (or
+	// "$LATEST") is the unqualified function config.
+	Qualifier string
+	// FunctionArn is the qualified function ARN echoed back in the response.
+	FunctionArn string
+	// MaximumRetryAttempts is the number of times Lambda retries a failed
+	// asynchronous invocation (0-2) before routing the event to the DLQ /
+	// OnFailure destination. Nil means the AWS default of 2.
+	MaximumRetryAttempts *int
+	// MaximumEventAgeInSeconds is how long (60-21600) Lambda keeps an
+	// unprocessed asynchronous event before discarding it. Nil means unset.
+	MaximumEventAgeInSeconds *int
+	// DestinationConfig routes the finished invocation's outcome to an
+	// OnSuccess / OnFailure target. Nil means no destinations configured.
+	DestinationConfig *DestinationConfig
+	// LastModified is the RFC3339 timestamp of the last Put/Update.
+	LastModified string
 }
 
 // EphemeralStorage is a function's /tmp size in MB (AWS Lambda EphemeralStorage).

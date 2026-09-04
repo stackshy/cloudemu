@@ -34,12 +34,16 @@ import (
 )
 
 const (
-	providerName    = "Microsoft.Storage"
-	resourceType    = "storageAccounts"
-	defaultLocation = "eastus"
+	providerName        = "Microsoft.Storage"
+	resourceType        = "storageAccounts"
+	checkNameActionType = "checkNameAvailability"
+	defaultLocation     = "eastus"
 
 	skuStandardPrefix = "Standard"
 	skuPremiumPrefix  = "Premium"
+
+	minAccountNameLen = 3
+	maxAccountNameLen = 24
 )
 
 // attrBackend is the optional storage-account attribute capability. The Azure
@@ -87,17 +91,22 @@ func New(b storagedriver.Bucket) *Handler {
 	return h
 }
 
-// Matches claims only the ARM management path for storage accounts. It never
-// claims the blob data-plane path (blob.core.windows.net-style URLs never start
-// with /subscriptions/), so blob routing is undisturbed.
+// Matches claims the ARM management path for storage accounts plus the
+// subscription-scoped checkNameAvailability action. It never claims the blob
+// data-plane path (blob.core.windows.net-style URLs never start with
+// /subscriptions/), so blob routing is undisturbed.
 func (*Handler) Matches(r *http.Request) bool {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		return false
 	}
 
-	return strings.EqualFold(rp.Provider, providerName) &&
-		strings.EqualFold(rp.ResourceType, resourceType)
+	if !strings.EqualFold(rp.Provider, providerName) {
+		return false
+	}
+
+	return strings.EqualFold(rp.ResourceType, resourceType) ||
+		strings.EqualFold(rp.ResourceType, checkNameActionType)
 }
 
 // ServeHTTP routes the request based on path shape and method.
@@ -108,29 +117,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// An empty resource name is a collection path — a subscription- or
-	// resource-group-scoped list (…/storageAccounts). Route it to the list
-	// handler rather than rejecting it, so a management-plane inventory sees
-	// accounts created by PUT (matching real Azure and the disks/vnet handlers).
-	if rp.ResourceName == "" {
-		h.serveCollection(w, r, &rp)
-		return
-	}
-
-	// GET/PUT .../storageAccounts/{name}/blobServices/default —
-	// BlobServicesClient GetServiceProperties/SetServiceProperties. This is a
-	// distinct sub-resource from the account itself: it must never fall through
-	// to createOrUpdate, which would silently wipe the account's SKU/properties
-	// on every "enable versioning" call.
-	if strings.EqualFold(rp.SubResource, "blobServices") {
-		h.serveBlobService(w, r, &rp)
-		return
-	}
-
-	// POST .../storageAccounts/{name}/{action} — key management (listKeys,
-	// regenerateKey). These carry a sub-resource action segment.
-	if r.Method == http.MethodPost && rp.SubResource != "" {
-		h.serveAction(w, r, &rp)
+	if h.serveNonAccountRoute(w, r, &rp) {
 		return
 	}
 
@@ -146,6 +133,67 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
+}
+
+// serveNonAccountRoute handles the request shapes that are not a plain
+// create/get/update/delete on the account resource itself: the
+// checkNameAvailability action, the account collection (list), the
+// blobServices/default sub-resource, and the listKeys/regenerateKey POST
+// actions. Reports whether it handled the request (the caller must not fall
+// through to the account-resource switch when true).
+func (h *Handler) serveNonAccountRoute(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) bool {
+	// POST /subscriptions/{sub}/providers/Microsoft.Storage/checkNameAvailability
+	// — AccountsClient.CheckNameAvailability. Subscription-scoped, no resource
+	// group or account name in the path.
+	if strings.EqualFold(rp.ResourceType, checkNameActionType) {
+		h.checkNameAvailability(w, r)
+		return true
+	}
+
+	// An empty resource name is a collection path — a subscription- or
+	// resource-group-scoped list (…/storageAccounts). Route it to the list
+	// handler rather than rejecting it, so a management-plane inventory sees
+	// accounts created by PUT (matching real Azure and the disks/vnet handlers).
+	if rp.ResourceName == "" {
+		h.serveCollection(w, r, rp)
+		return true
+	}
+
+	// GET/PUT .../storageAccounts/{name}/blobServices/default —
+	// BlobServicesClient GetServiceProperties/SetServiceProperties.
+	if strings.EqualFold(rp.SubResource, "blobServices") {
+		h.serveBlobServiceRoute(w, r, rp)
+		return true
+	}
+
+	// POST .../storageAccounts/{name}/{action} — key management (listKeys,
+	// regenerateKey). These carry a sub-resource action segment.
+	if r.Method == http.MethodPost && rp.SubResource != "" {
+		h.serveAction(w, r, rp)
+		return true
+	}
+
+	return false
+}
+
+// serveBlobServiceRoute serves .../storageAccounts/{name}/blobServices/default,
+// the BlobServicesClient GetServiceProperties/SetServiceProperties
+// sub-resource — a distinct resource from the account itself that must never
+// fall through to createOrUpdate, which would silently wipe the account's
+// SKU/properties on every "enable versioning" call. A path that continues
+// past .../default (e.g. .../blobServices/default/containers/{name}, the ARM
+// BlobContainers sub-resource) is not this resource and must not be silently
+// treated as a blob-service-properties write — that would fake success on an
+// unimplemented resource instead of reporting it as missing.
+func (h *Handler) serveBlobServiceRoute(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	if rp.SubResourceAction != "" {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+			"the sub-resource '"+rp.SubResourceAction+"' is not supported")
+
+		return
+	}
+
+	h.serveBlobService(w, r, rp)
 }
 
 // serveAction routes the POST action sub-resources (listKeys, regenerateKey).
@@ -203,6 +251,68 @@ func (h *Handler) regenerateKey(w http.ResponseWriter, r *http.Request, rp *azur
 	azurearm.WriteJSON(w, http.StatusOK, toARMKeyList(keys))
 }
 
+// checkNameAvailability serves POST
+// .../providers/Microsoft.Storage/checkNameAvailability (AccountsClient.
+// CheckNameAvailability): real Azure validates the name's charset/length and,
+// only when that passes, checks it against every storage account name already
+// taken anywhere in Azure. The emulator is single-estate, so "taken" means an
+// account of that name already exists here.
+func (h *Handler) checkNameAvailability(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return
+	}
+
+	var body armCheckNameAvailabilityReq
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	if msg, ok := accountNameError(body.Name); !ok {
+		azurearm.WriteJSON(w, http.StatusOK, armCheckNameAvailabilityResult{
+			NameAvailable: false, Reason: "AccountNameInvalid", Message: msg,
+		})
+
+		return
+	}
+
+	if h.bucketExists(r.Context(), body.Name) {
+		azurearm.WriteJSON(w, http.StatusOK, armCheckNameAvailabilityResult{
+			NameAvailable: false, Reason: "AlreadyExists",
+			Message: "The storage account named " + body.Name + " is already taken.",
+		})
+
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, armCheckNameAvailabilityResult{NameAvailable: true})
+}
+
+// accountNameError reports whether name satisfies real Azure's storage
+// account naming rule (3-24 characters, lower-case letters and numbers only),
+// returning ok=false and the exact real-Azure AccountNameInvalid message
+// otherwise.
+func accountNameError(name string) (msg string, ok bool) {
+	if len(name) < minAccountNameLen || len(name) > maxAccountNameLen || !isLowerAlnum(name) {
+		return name + " is not a valid storage account name. Storage account name must be between 3 and 24 " +
+			"characters in length and use numbers and lower-case letters only.", false
+	}
+
+	return "", true
+}
+
+// isLowerAlnum reports whether s consists only of lower-case ASCII letters and
+// digits — the character set real Azure enforces for a storage account name.
+func isLowerAlnum(s string) bool {
+	for _, c := range s {
+		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
+			return false
+		}
+	}
+
+	return true
+}
+
 // toARMKeyList maps driver keys to the ARM StorageAccountListKeysResult shape.
 func toARMKeyList(keys []storagedriver.AccountKey) armKeyList {
 	out := armKeyList{Keys: make([]armKey, 0, len(keys))}
@@ -257,6 +367,11 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 
 	name := rp.ResourceName
 
+	if msg, ok := accountNameError(name); !ok {
+		azurearm.WriteError(w, http.StatusBadRequest, "AccountNameInvalid", msg)
+		return
+	}
+
 	// Upsert: an existing account (bucket) re-applies its cost attributes rather
 	// than erroring, matching real Azure's create-or-update semantics.
 	if err := h.bucket.CreateBucket(r.Context(), name); err != nil && !cerrors.IsAlreadyExists(err) {
@@ -289,6 +404,11 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		h.encryption.SetAccountEncryption(name, encryption)
 	}
 
+	// Storage account create-or-update is a long-running operation in the ARM
+	// SDK: armstorage AccountsClient.BeginCreate accepts only 200 (synchronous
+	// terminal) or 202 (async) as the initial status and rejects 201. So this
+	// path answers 200 with the terminal resource on both create and update —
+	// do not "fix" it to 201, which would break the real SDK poller.
 	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), rp))
 }
 

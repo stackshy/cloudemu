@@ -2,6 +2,7 @@
 package eventbridge
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -55,8 +56,15 @@ type SQSDeliverer interface {
 // LambdaInvoker asynchronously invokes a Lambda function target by ARN with the
 // event envelope. The Lambda mock satisfies this, enabling EventBridge -> Lambda
 // (ASYNC) delivery.
+//
+// FunctionExists is consulted separately from InvokeExternal because
+// InvokeExternal treats an unknown function as a no-op success for its other
+// callers (S3 notifications, DynamoDB Streams, SQS event-source mappings), so
+// it cannot itself distinguish "target deleted" (a real EventBridge dispatch
+// failure, eligible for the target's DLQ) from "handler ran fine".
 type LambdaInvoker interface {
 	InvokeExternal(ctx context.Context, functionARN string, payload []byte) error
+	FunctionExists(ctx context.Context, functionARN string) bool
 }
 
 // SNSPublisher publishes the event envelope to an SNS topic target by ARN. The
@@ -165,12 +173,13 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 	}
 
 	info := driver.EventBusInfo{
-		Name:      cfg.Name,
-		Scope:     cfg.Scope,
-		ARN:       busARN,
-		State:     activeBusState,
-		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:      tags,
+		Name:        cfg.Name,
+		Scope:       cfg.Scope,
+		ARN:         busARN,
+		State:       activeBusState,
+		CreatedAt:   m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:        tags,
+		Description: cfg.Description,
 	}
 
 	bd := &busData{
@@ -256,10 +265,17 @@ func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule,
 	// typo'd pattern (e.g. a non-array leaf) would store "successfully" and then
 	// silently match nothing, so targets never fire — the worst failure mode for
 	// an event-driven app.
-	if cfg.EventPattern != "" {
-		if err := eventmatch.ValidatePattern(cfg.EventPattern); err != nil {
+	pattern := cfg.EventPattern
+	if pattern != "" {
+		if err := eventmatch.ValidatePattern(pattern); err != nil {
 			return nil, errors.New(errors.InvalidArgument, err.Error())
 		}
+		// Real EventBridge normalizes the stored pattern to compact JSON (no
+		// insignificant whitespace), so DescribeRule/ListRules echo it back
+		// reformatted rather than verbatim. compactPattern falls back to the
+		// original string on error, but ValidatePattern above already proved
+		// it's well-formed JSON.
+		pattern = compactPattern(pattern)
 	}
 
 	state := cfg.State
@@ -271,7 +287,7 @@ func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule,
 		Name:               cfg.Name,
 		EventBus:           busName,
 		Description:        cfg.Description,
-		EventPattern:       cfg.EventPattern,
+		EventPattern:       pattern,
 		ScheduleExpression: cfg.ScheduleExpression,
 		RoleARN:            cfg.RoleARN,
 		State:              state,
@@ -529,6 +545,9 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 // replaced by the target's Input (constant), InputPath (selected subtree), or
 // InputTransformer (templated) when one is configured — matching how real
 // EventBridge shapes each target's payload independently.
+//
+// A target whose dispatch fails is routed to its configured DeadLetterConfig
+// queue (see deliverToTarget), matching real EventBridge's DLQ behavior.
 func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, event *driver.Event) {
 	// Decouple delivery from the caller's cancellation/deadline (real EventBridge
 	// delivery is asynchronous) while carrying forward the re-entrant delivery
@@ -538,41 +557,123 @@ func (m *Mock) deliverToTargets(ctx context.Context, matched []driver.Rule, even
 
 	envelope := m.eventEnvelope(event)
 
+	busName := event.EventBus
+	if busName == "" {
+		busName = defaultBusName
+	}
+
 	for i := range matched {
 		reserved := m.reservedVars(&matched[i], event, envelope)
 
-		for _, t := range matched[i].Targets {
+		for j := range matched[i].Targets {
+			t := &matched[i].Targets[j]
 			if t.ARN == "" {
 				continue
 			}
 
-			m.dispatchTarget(dctx, t.ARN, targetBody(&t, envelope, reserved))
+			m.deliverToTarget(dctx, &matched[i], t, busName, envelope, reserved)
 		}
 	}
 }
 
+// deliverToTarget dispatches one target and, on failure, routes the original
+// event to the target's dead-letter queue when one is configured.
+func (m *Mock) deliverToTarget(
+	ctx context.Context, rule *driver.Rule, t *driver.Target, busName string, envelope []byte, reserved map[string]json.RawMessage,
+) {
+	if m.dispatchTarget(ctx, t.ARN, targetBody(t, envelope, reserved)) {
+		return
+	}
+
+	dims := map[string]string{"RuleName": rule.Name, "EventBusName": busName}
+	m.emitMetric("FailedInvocations", 1, dims)
+
+	dlqARN := deadLetterARN(t.DeadLetterConfig)
+	if dlqARN == "" || m.sqs == nil {
+		return
+	}
+
+	// The DLQ message body is the original event that failed to be delivered
+	// (matching real EventBridge, which puts the source event — not the
+	// target-specific transformed payload — on the dead-letter queue).
+	if m.sqs.DeliverExternal(ctx, dlqARN, string(envelope)) == nil {
+		m.emitMetric("InvocationsSentToDlq", 1, dims)
+	}
+}
+
 // dispatchTarget routes a rendered payload to a single target by the service in
-// its ARN. Unknown/unsupported target services are silently ignored (matching
-// EventBridge accepting the target but this emulator not modeling that sink).
-func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) {
+// its ARN, reporting whether dispatch succeeded. Unknown/unsupported target
+// services and a service whose deliverer was never wired report success
+// (matching EventBridge accepting the target but this emulator not modeling
+// that sink — an emulator limitation, not a real delivery failure eligible for
+// the target's DLQ).
+func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) bool {
 	switch {
 	case strings.Contains(arn, ":sqs:"):
-		if m.sqs != nil {
-			_ = m.sqs.DeliverExternal(ctx, arn, body)
+		if m.sqs == nil {
+			return true
 		}
+
+		return m.sqs.DeliverExternal(ctx, arn, body) == nil
 	case strings.Contains(arn, ":lambda:"):
-		if m.lambda != nil {
-			_ = m.lambda.InvokeExternal(ctx, arn, []byte(body))
-		}
+		return m.dispatchLambda(ctx, arn, body)
 	case strings.Contains(arn, ":sns:"):
-		if m.sns != nil {
-			_ = m.sns.PublishExternal(ctx, arn, body)
+		if m.sns == nil {
+			return true
 		}
+
+		return m.sns.PublishExternal(ctx, arn, body) == nil
 	case strings.Contains(arn, ":states:"):
-		if m.sfn != nil {
-			_ = m.sfn.StartExternal(ctx, arn, body)
+		if m.sfn == nil {
+			return true
 		}
+
+		return m.sfn.StartExternal(ctx, arn, body) == nil
+	default:
+		return true
 	}
+}
+
+// dispatchLambda dispatches a Lambda target, reporting success/failure. Unlike
+// the other target services, a stale Lambda target (its function deleted after
+// PutTargets) is checked explicitly with FunctionExists before invoking: a
+// nil m.lambda (backend not wired) reports success — an emulator-coverage
+// limitation, not a real failure — but a wired backend whose target function
+// is gone is a genuine dispatch failure, eligible for the target's DLQ, that
+// InvokeExternal's own no-op-for-unknown-function contract cannot surface
+// (that contract is deliberate for InvokeExternal's other callers).
+func (m *Mock) dispatchLambda(ctx context.Context, arn, body string) bool {
+	if m.lambda == nil {
+		return true
+	}
+
+	if !m.lambda.FunctionExists(ctx, arn) {
+		return false
+	}
+
+	return m.lambda.InvokeExternal(ctx, arn, []byte(body)) == nil
+}
+
+// deadLetterConfigJSON is the raw shape of a Target's DeadLetterConfig JSON
+// block (`{"Arn": "..."}`), matching the EventBridge PutTargets request/response
+// shape.
+type deadLetterConfigJSON struct {
+	Arn string `json:"Arn"`
+}
+
+// deadLetterARN extracts the DLQ ARN from a target's raw DeadLetterConfig JSON,
+// returning "" when the target has none configured or the JSON is malformed.
+func deadLetterARN(raw string) string {
+	if raw == "" {
+		return ""
+	}
+
+	var cfg deadLetterConfigJSON
+	if err := json.Unmarshal([]byte(raw), &cfg); err != nil {
+		return ""
+	}
+
+	return cfg.Arn
 }
 
 // reservedVars builds the predefined <aws.events.*> transformer variables for a
@@ -600,9 +701,12 @@ func (m *Mock) reservedVars(rule *driver.Rule, event *driver.Event, envelope []b
 }
 
 // ruleARN builds the EventBridge rule ARN, matching the wire handler's format.
+// Real EventBridge omits the bus segment for a rule on the default bus
+// ("arn:...:rule/<rule>") and includes it only for a custom-bus rule
+// ("arn:...:rule/<bus>/<rule>") — see the PutRule API's sample response.
 func (m *Mock) ruleARN(bus, rule string) string {
-	if bus == "" {
-		bus = defaultBusName
+	if bus == "" || bus == defaultBusName {
+		return "arn:aws:events:" + m.opts.Region + ":" + m.opts.AccountID + ":rule/" + rule
 	}
 
 	return "arn:aws:events:" + m.opts.Region + ":" + m.opts.AccountID + ":rule/" + bus + "/" + rule
@@ -717,6 +821,20 @@ func generateEventID(event *driver.Event, now time.Time, index int) string {
 	hash := sha256.Sum256([]byte(data))
 
 	return fmt.Sprintf("%x", hash[:16])
+}
+
+// compactPattern strips insignificant whitespace from an event pattern JSON
+// string, matching real EventBridge's normalization of the stored pattern
+// (DescribeRule/ListRules echo it back compacted, not verbatim). Key order is
+// preserved — json.Compact only removes whitespace, it does not re-encode or
+// reorder. Falls back to the original string if it isn't valid JSON.
+func compactPattern(pattern string) string {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, []byte(pattern)); err != nil {
+		return pattern
+	}
+
+	return buf.String()
 }
 
 // matchesPattern reports whether an event satisfies an EventBridge event

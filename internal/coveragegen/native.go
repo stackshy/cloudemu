@@ -338,6 +338,14 @@ func displayName(pkg string) string {
 		return "STS"
 	case "lro":
 		return "LRO"
+	case "costexplorer":
+		return "CostExplorer"
+	case "servicequotas":
+		return "ServiceQuotas"
+	case "emr":
+		return "EMR"
+	case "savingsplans":
+		return "SavingsPlans"
 	}
 
 	if pkg == "" {

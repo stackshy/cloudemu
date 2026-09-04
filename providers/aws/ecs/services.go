@@ -25,6 +25,11 @@ const (
 
 	deployControllerECS = "ECS"
 
+	// azRebalancingDisabled is the default availabilityZoneRebalancing value a
+	// service is created with when the caller doesn't specify one, matching
+	// real ECS.
+	azRebalancingDisabled = "DISABLED"
+
 	// serviceStoppedReason is the StopTask reason used when the scheduler drains a
 	// superseded deployment or a deleted service.
 	serviceStoppedReason = "Service scheduler stopped task."
@@ -130,6 +135,11 @@ func serviceFromInput(
 		controller = deployControllerECS
 	}
 
+	azRebalancing := in.AvailabilityZoneRebalancing
+	if azRebalancing == "" {
+		azRebalancing = azRebalancingDisabled
+	}
+
 	return &driver.Service{
 		ARN:                           arn("service/" + cluster + "/" + in.ServiceName),
 		Name:                          in.ServiceName,
@@ -146,6 +156,7 @@ func serviceFromInput(
 		PropagateTags:                 in.PropagateTags,
 		EnableExecuteCommand:          in.EnableExecuteCommand,
 		HealthCheckGracePeriodSeconds: in.HealthCheckGracePeriodSeconds,
+		AvailabilityZoneRebalancing:   azRebalancing,
 		CreatedAt:                     now,
 		// Clone reference-typed fields so the stored record never aliases the
 		// caller's input slices/pointers (a caller mutating what it passed must
@@ -277,8 +288,146 @@ func (m *Mock) drainService(ctx context.Context, svc *driver.Service) {
 		}
 
 		m.deregisterTaskTargets(ctx, svc, t)
-		_, _ = m.StopTask(ctx, cluster, t.ARN, serviceStoppedReason)
+		// reconcile=false: this drain already owns and re-converges the whole
+		// service state itself (the caller launches the replacement tasks), so
+		// StopTask's own reconciliation would race it — see stopTask.
+		_, _ = m.stopTask(ctx, cluster, t.ARN, serviceStoppedReason, false)
 	}
+}
+
+// serviceNameFromGroup extracts the service name from a task's Group field
+// ("service:<name>"), the inverse of serviceGroup. It reports false for a task
+// with no owning service (an empty group, or one from RunTask/StartTask that
+// never carries the "service:" prefix).
+func serviceNameFromGroup(group string) (string, bool) {
+	const prefix = "service:"
+
+	if !strings.HasPrefix(group, prefix) {
+		return "", false
+	}
+
+	return strings.TrimPrefix(group, prefix), true
+}
+
+// primaryDeploymentID returns the id of the service's PRIMARY deployment, or
+// "" if none is recorded. An ACTIVE service always carries exactly one (see
+// convergeNewService/redeployService), so this only misses defensively.
+func primaryDeploymentID(deployments []driver.Deployment) string {
+	for i := range deployments {
+		if deployments[i].Status == deploymentPrimary {
+			return deployments[i].ID
+		}
+	}
+
+	return ""
+}
+
+// liveServiceTaskCounts recomputes a service's running/pending task counts by
+// scanning the task store directly, rather than trusting bookkeeping fields
+// that a concurrent StopTask/RunTask could have raced. Mirrors the same
+// group+cluster scoping drainService uses to find a service's tasks.
+func (m *Mock) liveServiceTaskCounts(cluster, group string) (running, pending int) {
+	for _, t := range m.tasks.All() {
+		if t.Group != group || clusterNameFromARN(t.ClusterARN) != cluster {
+			continue
+		}
+
+		switch t.LastStatus {
+		case statusRunning:
+			running++
+		case statusPending:
+			pending++
+		}
+	}
+
+	return running, pending
+}
+
+// launchServiceReplacements launches up to n replacement tasks for svc under
+// its existing PRIMARY deployment (no new deployment is minted for a
+// replacement, matching real ECS). A task definition that's since been
+// deregistered leaves the service short rather than erroring, same as a real
+// scheduler that can't resolve its target definition.
+func (m *Mock) launchServiceReplacements(ctx context.Context, svc *driver.Service, n int) {
+	td, ok := m.resolveTaskDef(svc.TaskDefinition)
+	if !ok {
+		return
+	}
+
+	spec := m.serviceTaskSpec(svc, td, primaryDeploymentID(svc.Deployments))
+
+	for range n {
+		t, _ := m.launchTask(ctx, &spec, true)
+		if t == nil {
+			continue
+		}
+
+		if t.LastStatus == statusRunning {
+			m.registerTaskTargets(ctx, svc, td, t)
+		}
+	}
+}
+
+// reconcileServiceAfterStop re-converges the stopped task's owning service (if
+// any): it recomputes the service's live running/pending counts from the task
+// store and, if short of desiredCount, launches replacement task(s) under the
+// existing PRIMARY deployment — mirroring real ECS's scheduler, which notices a
+// service-owned task died on its next reconciliation pass, reflects the drop
+// immediately, and launches a replacement to converge back. No new deployment
+// is minted; a single dead task doesn't roll a fresh one, matching real ECS.
+//
+// A task with no owning service (Group doesn't start with "service:") is a
+// no-op, as is a service that's been deleted or is mid-delete (Status is no
+// longer ACTIVE) — DeleteService/drainService already own tearing that down.
+//
+// The whole read-decide-launch-commit sequence below runs under the service's
+// reconcileLock key: two concurrent StopTask calls on different tasks of the
+// same service must not both read the pre-replacement counts, both compute
+// the full shortfall, and both launch replacements — that would over-provision
+// the service above desiredCount with nothing to ever scale it back down. The
+// lock is per-service (keyed by cluster+name), so unrelated services still
+// reconcile concurrently, and it is acquired here — before stopTaskLocked's
+// placeMu has any chance to be re-taken by a replacement launch, and before
+// m.services's own per-call lock — making it the outermost lock in this path.
+func (m *Mock) reconcileServiceAfterStop(ctx context.Context, task *driver.Task) {
+	name, ok := serviceNameFromGroup(task.Group)
+	if !ok {
+		return
+	}
+
+	cluster := clusterNameFromARN(task.ClusterARN)
+	key := serviceKey(cluster, name)
+
+	unlock := m.reconcileLock.lock(key)
+	defer unlock()
+
+	svc, ok := m.services.Get(key)
+	if !ok || svc.Status != statusActive {
+		return
+	}
+
+	m.deregisterTaskTargets(ctx, svc, task)
+
+	running, pending := m.liveServiceTaskCounts(cluster, task.Group)
+	if shortfall := svc.DesiredCount - (running + pending); shortfall > 0 {
+		m.launchServiceReplacements(ctx, svc, shortfall)
+	}
+
+	m.services.Update(key, func(s *driver.Service) *driver.Service {
+		updated := cloneService(s)
+		updated.RunningCount, updated.PendingCount = m.liveServiceTaskCounts(cluster, task.Group)
+
+		for i := range updated.Deployments {
+			if updated.Deployments[i].Status == deploymentPrimary {
+				updated.Deployments[i].RunningCount = updated.RunningCount
+				updated.Deployments[i].PendingCount = updated.PendingCount
+				updated.Deployments[i].RolloutState = rolloutState(updated.RunningCount, updated.DesiredCount)
+				updated.Deployments[i].UpdatedAt = m.now()
+			}
+		}
+
+		return &updated
+	})
 }
 
 // deploymentID mints an ECS service deployment id ("ecs-svc/<id>"). Service
@@ -443,6 +592,10 @@ func applyServiceScalars(svc *driver.Service, in *driver.UpdateServiceInput) {
 
 	if in.HealthCheckGracePeriodSeconds != nil {
 		svc.HealthCheckGracePeriodSeconds = in.HealthCheckGracePeriodSeconds
+	}
+
+	if in.AvailabilityZoneRebalancing != "" {
+		svc.AvailabilityZoneRebalancing = in.AvailabilityZoneRebalancing
 	}
 }
 

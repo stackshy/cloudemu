@@ -5,6 +5,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	"github.com/stackshy/cloudemu/v2/services/scope"
+	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
 // createOrUpdateVault handles PUT — Vaults.BeginCreateOrUpdate. The LRO
@@ -87,6 +88,54 @@ func (h *VaultARMHandler) deleteVault(w http.ResponseWriter, r *http.Request, rp
 	}
 
 	w.WriteHeader(http.StatusOK)
+}
+
+// updateVault handles PATCH — Vaults.Update. Unlike PUT (a full replace), PATCH
+// merges: only fields present in the request body change, everything else on
+// the stored vault is left as-is. Real ARM answers 200 with the merged
+// resource; a vault that does not exist, or exists under a different resource
+// group, 404s the same way GET/DELETE do.
+func (h *VaultARMHandler) updateVault(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body vaultJSON
+	if !azurearm.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	existing, err := h.vaults.GetVault(r.Context(), rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if !existing.Scope.Matches(scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}) {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+			"vault "+rp.ResourceName+" not found in resource group "+rp.ResourceGroup)
+		return
+	}
+
+	cfg := secretsdriver.KVVaultConfig{
+		Name:       existing.Name,
+		Location:   existing.Location,
+		Scope:      existing.Scope,
+		Tags:       existing.Tags,
+		Properties: existing.Properties,
+	}
+
+	if body.Tags != nil {
+		cfg.Tags = body.Tags
+	}
+
+	if body.Properties != nil {
+		cfg.Properties = mergeVaultProperties(&existing.Properties, body.Properties)
+	}
+
+	info, err := h.vaults.CreateOrUpdateVault(r.Context(), cfg)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toVaultJSON(rp, info))
 }
 
 // listVaults handles GET on the collection — Vaults.ListByResourceGroup /

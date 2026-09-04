@@ -3,7 +3,7 @@
 
 provider-native `aks` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (16)
+## Operations (18)
 
 | Operation | Description |
 | --- | --- |
@@ -22,6 +22,8 @@ provider-native `aks` wire service (Azure-only) · no portable driver · [Azure 
 | `ListClustersByResourceGroup` |  |
 | `ListMaintenanceConfigs` |  |
 | `RotateClusterCertificates` |  |
+| `StartCluster` |  |
+| `StopCluster` |  |
 | `UpdateClusterTags` |  |
 
 ## Not in scope

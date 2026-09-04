@@ -65,7 +65,7 @@ type natGatewayListResponse struct {
 
 // routeNATGateway dispatches Microsoft.Network/natGateways requests.
 //
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; the per-resource routers are the same method switch over a distinct type by design
 func (h *Handler) routeNATGateway(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	if rp.ResourceName == "" {
 		h.listNATGateways(w, r, rp)
@@ -75,6 +75,8 @@ func (h *Handler) routeNATGateway(w http.ResponseWriter, r *http.Request, rp azu
 	switch r.Method {
 	case http.MethodPut:
 		h.createNATGateway(w, r, rp)
+	case http.MethodPatch:
+		h.patchNATGateway(w, r, rp)
 	case http.MethodGet:
 		h.getNATGateway(w, r, rp)
 	case http.MethodDelete:
@@ -105,7 +107,7 @@ func (h *Handler) createNATGateway(w http.ResponseWriter, r *http.Request, rp az
 		ConnectivityType: "public",
 	}
 
-	allocationID, err := h.resolveNATGatewayAllocation(r.Context(), req.Properties.PublicIPAddresses)
+	allocationID, err := h.resolveNATGatewayAllocation(r.Context(), rp, req.Properties.PublicIPAddresses)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -149,8 +151,14 @@ func (h *Handler) createNATGateway(w http.ResponseWriter, r *http.Request, rp az
 // body's properties.publicIpAddresses to the driver Elastic IP allocation id
 // CreateNATGateway expects. Real Azure supports multiple public IPs per NAT
 // gateway; this mock binds only the first, matching the cross-cloud driver
-// model's single AllocationID.
-func (h *Handler) resolveNATGatewayAllocation(ctx context.Context, publicIPAddresses []armIDRef) (string, error) {
+// model's single AllocationID. It rejects a public IP already claimed by a NIC
+// or another NAT gateway (a static public IP binds to one owner), excluding this
+// NAT gateway on an idempotent re-PUT.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) resolveNATGatewayAllocation(
+	ctx context.Context, rp azurearm.ResourcePath, publicIPAddresses []armIDRef,
+) (string, error) {
 	if len(publicIPAddresses) == 0 {
 		return "", nil
 	}
@@ -165,6 +173,13 @@ func (h *Handler) resolveNATGatewayAllocation(ctx context.Context, publicIPAddre
 	pip, err := findPublicIPByName(ctx, h.net, pipRP.ResourceGroup, pipRP.ResourceName)
 	if err != nil {
 		return "", err
+	}
+
+	if kind, owner, claimed := h.publicIPClaimant(
+		ctx, pipID, pip.AllocationID, claimKindNAT, rp.ResourceGroup, rp.ResourceName,
+	); claimed {
+		return "", cerrors.Newf(cerrors.FailedPrecondition,
+			"public IP %q is already associated with %s %q", pipID, kind, owner)
 	}
 
 	return pip.AllocationID, nil
@@ -206,6 +221,17 @@ func (h *Handler) deleteNATGateway(w http.ResponseWriter, r *http.Request, rp az
 	info, err := findNATGatewayByName(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	// Real ARM refuses to delete a NAT gateway still associated with any subnet;
+	// the subnet's natGateway reference must be dropped first.
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeNATGateway, rp.ResourceName)
+
+	if refs := h.natGatewaySubnetRefs(r.Context(), rp, id); len(refs) > 0 {
+		azurearm.WriteError(w, http.StatusBadRequest, "InUseNatGatewayCannotBeDeleted",
+			inUseMessage("Nat gateway", rp.ResourceName, refs))
+
 		return
 	}
 

@@ -76,10 +76,19 @@ func TestFullServerLROOperationPolling(t *testing.T) {
 		t.Fatalf("unknown op poll: code=%d body=%s (want 404)", code, body)
 	}
 
-	// eventarc.
-	do(t, ts, http.MethodPost,
+	// eventarc: the trigger below routes to Cloud Run service "s", which
+	// destination validation resolves against, so create it first.
+	if code, _ := do(t, ts, http.MethodPost,
+		"/v2/projects/demo/locations/us-central1/services?serviceId=s", `{}`); code != http.StatusOK {
+		t.Fatalf("Cloud Run service create: %d", code)
+	}
+
+	if code, body := do(t, ts, http.MethodPost,
 		"/v1/projects/demo/locations/us-central1/triggers?triggerId=t1",
-		`{"eventFilters":[{"attribute":"type","value":"x"}],"destination":{"cloudRun":{"service":"s","region":"us-central1"}}}`)
+		`{"eventFilters":[{"attribute":"type","value":"google.cloud.storage.object.v1.finalized"}],`+
+			`"destination":{"cloudRun":{"service":"s","region":"us-central1"}}}`); code != http.StatusOK {
+		t.Fatalf("eventarc create: code=%d body=%s", code, body)
+	}
 
 	if code, body := do(t, ts, http.MethodGet,
 		"/v1/projects/demo/locations/us-central1/operations/op-t1", ""); code != http.StatusOK || !strings.Contains(body, `"done":true`) {

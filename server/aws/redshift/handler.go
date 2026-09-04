@@ -219,7 +219,7 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsInvalidArgument(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", msg)
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidClusterState", msg)
+		awsquery.WriteXMLError(w, http.StatusBadRequest, invalidStateCode(err), msg)
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
@@ -240,6 +240,23 @@ func notFoundCode(err error) string {
 		return "ClusterNotFound"
 	default:
 		return "ResourceNotFoundFault"
+	}
+}
+
+// invalidStateCode picks the AWS-shaped fault code for a failed-precondition
+// error by its message: an in-use subnet or parameter group has its own fault
+// code, everything else is a generic invalid cluster state (wrong-state reboot,
+// pause/resume, start/stop).
+func invalidStateCode(err error) string {
+	msg := err.Error()
+
+	switch {
+	case strings.Contains(msg, "subnet group"):
+		return "ClusterSubnetGroupInUseFault"
+	case strings.Contains(msg, "parameter group"):
+		return "InvalidClusterParameterGroupStateFault"
+	default:
+		return "InvalidClusterState"
 	}
 }
 

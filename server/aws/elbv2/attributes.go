@@ -172,6 +172,68 @@ func (h *Handler) modifyTargetGroupAttributes(w http.ResponseWriter, r *http.Req
 	})
 }
 
+type describeListenerAttributesResponse struct {
+	XMLName  xml.Name           `xml:"DescribeListenerAttributesResponse"`
+	Xmlns    string             `xml:"xmlns,attr"`
+	Result   lbAttributesResult `xml:"DescribeListenerAttributesResult"`
+	Metadata responseMetadata   `xml:"ResponseMetadata"`
+}
+
+type modifyListenerAttributesResponse struct {
+	XMLName  xml.Name           `xml:"ModifyListenerAttributesResponse"`
+	Xmlns    string             `xml:"xmlns,attr"`
+	Result   lbAttributesResult `xml:"ModifyListenerAttributesResult"`
+	Metadata responseMetadata   `xml:"ResponseMetadata"`
+}
+
+// describeListenerAttributes returns the listener's attribute set (ELBv2
+// defaults, derived from its load balancer's type, overlaid with any prior
+// modifications).
+func (h *Handler) describeListenerAttributes(w http.ResponseWriter, r *http.Request) {
+	store, ok := h.lb.(lbdriver.ListenerAttributeStore)
+	if !ok {
+		writeUnsupported(w, "DescribeListenerAttributes")
+		return
+	}
+
+	attrs, err := store.GetListenerAttributes(r.Context(), r.Form.Get("ListenerArn"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, describeListenerAttributesResponse{
+		Xmlns:    Namespace,
+		Result:   lbAttributesResult{Attributes: attributeMapToXML(attrs)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// modifyListenerAttributes merges the supplied attributes into the listener's
+// set and echoes the merged result, matching ELBv2's partial-update semantics.
+//
+//nolint:dupl // structurally mirrors modifyTargetGroupAttributes by design.
+func (h *Handler) modifyListenerAttributes(w http.ResponseWriter, r *http.Request) {
+	store, ok := h.lb.(lbdriver.ListenerAttributeStore)
+	if !ok {
+		writeUnsupported(w, "ModifyListenerAttributes")
+		return
+	}
+
+	merged, err := store.ModifyListenerAttributes(
+		r.Context(), r.Form.Get("ListenerArn"), parseAttributeMembers(r))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyListenerAttributesResponse{
+		Xmlns:    Namespace,
+		Result:   lbAttributesResult{Attributes: attributeMapToXML(merged)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
 // attributeMapToXML renders a flat attribute map as ELBv2 Key/Value members.
 func attributeMapToXML(attrs map[string]string) []lbAttributeXML {
 	out := make([]lbAttributeXML, 0, len(attrs))

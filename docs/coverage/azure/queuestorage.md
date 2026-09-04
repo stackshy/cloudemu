@@ -38,6 +38,17 @@ AzureQueueStorage is the Azure-specific Queue Storage data-plane surface,
 | `SetQueueMetadata` | SetQueueMetadata replaces the queue's user metadata. |
 | `UpdateMessage` | UpdateMessage updates a message's content (when body is non-nil) and its |
 
+### AzureSessionQueue
+
+AzureSessionQueue is the optional Azure Service Bus session surface, discovered
+
+| Operation | Description |
+| --- | --- |
+| `GetSessionState` | GetSessionState and SetSessionState read and write a session's opaque state. |
+| `ReceiveSession` | ReceiveSession returns up to maxMessages currently-visible messages for a |
+| `RenewSessionLock` | RenewSessionLock extends the session lock held by lockOwner. |
+| `SetSessionState` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

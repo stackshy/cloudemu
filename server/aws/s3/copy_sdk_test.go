@@ -3,8 +3,11 @@ package s3_test
 import (
 	"bytes"
 	"context"
+	"crypto/md5" //nolint:gosec // S3 ETags are defined as MD5 digests, not a security primitive
+	"encoding/hex"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 	"time"
 
@@ -391,6 +394,124 @@ func TestSDKCopyObjectSelfCopy(t *testing.T) {
 		Metadata:          map[string]string{"changed": "yes"},
 	}); err != nil {
 		t.Fatalf("self-copy with REPLACE: %v", err)
+	}
+}
+
+// TestSDKCopyObjectRecomputesMultipartSourceETag verifies real S3 semantics:
+// CopyObject's destination is always a fresh single-PUT object, so its ETag is
+// the plain 32-hex-char MD5 of the copied bytes — even when the source was
+// uploaded via multipart and therefore carries a "...-N" ETag. Without the
+// fix, cloudemu propagated the source's multipart ETag onto the destination,
+// which is observable to any tool comparing ETags after a copy.
+func TestSDKCopyObjectRecomputesMultipartSourceETag(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	const bucket = "mp-copy-etag"
+	const srcKey = "src"
+	const dstKey = "dst"
+
+	mustCreateBucket(t, client, bucket)
+
+	created, err := client.CreateMultipartUpload(ctx, &awss3.CreateMultipartUploadInput{
+		Bucket: aws.String(bucket), Key: aws.String(srcKey),
+	})
+	if err != nil {
+		t.Fatalf("CreateMultipartUpload: %v", err)
+	}
+
+	uploadID := aws.ToString(created.UploadId)
+
+	part1 := bytes.Repeat([]byte("A"), 8)
+	part2 := bytes.Repeat([]byte("B"), 8)
+	full := append(append([]byte{}, part1...), part2...)
+
+	up1, err := client.UploadPart(ctx, &awss3.UploadPartInput{
+		Bucket: aws.String(bucket), Key: aws.String(srcKey), UploadId: aws.String(uploadID),
+		PartNumber: aws.Int32(1), Body: bytes.NewReader(part1),
+	})
+	if err != nil {
+		t.Fatalf("UploadPart 1: %v", err)
+	}
+
+	up2, err := client.UploadPart(ctx, &awss3.UploadPartInput{
+		Bucket: aws.String(bucket), Key: aws.String(srcKey), UploadId: aws.String(uploadID),
+		PartNumber: aws.Int32(2), Body: bytes.NewReader(part2),
+	})
+	if err != nil {
+		t.Fatalf("UploadPart 2: %v", err)
+	}
+
+	completed, err := client.CompleteMultipartUpload(ctx, &awss3.CompleteMultipartUploadInput{
+		Bucket: aws.String(bucket), Key: aws.String(srcKey), UploadId: aws.String(uploadID),
+		MultipartUpload: &types.CompletedMultipartUpload{Parts: []types.CompletedPart{
+			{ETag: up1.ETag, PartNumber: aws.Int32(1)},
+			{ETag: up2.ETag, PartNumber: aws.Int32(2)},
+		}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteMultipartUpload: %v", err)
+	}
+
+	srcETag := strings.Trim(aws.ToString(completed.ETag), `"`)
+	if !strings.HasSuffix(srcETag, "-2") {
+		t.Fatalf("source ETag = %q, want a multipart ETag ending in -2", srcETag)
+	}
+
+	sum := md5.Sum(full) //nolint:gosec // S3 ETag is MD5 by spec, not a security control
+	wantDstETag := hex.EncodeToString(sum[:])
+
+	copyOut, err := client.CopyObject(ctx, &awss3.CopyObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String(dstKey),
+		CopySource: aws.String(bucket + "/" + srcKey),
+	})
+	if err != nil {
+		t.Fatalf("CopyObject: %v", err)
+	}
+
+	gotDstETag := strings.Trim(aws.ToString(copyOut.CopyObjectResult.ETag), `"`)
+	if gotDstETag != wantDstETag {
+		t.Fatalf("CopyObject dst ETag = %q, want plain MD5 %q (source multipart ETag was %q)",
+			gotDstETag, wantDstETag, srcETag)
+	}
+
+	if strings.Contains(gotDstETag, "-") {
+		t.Fatalf("CopyObject dst ETag = %q still carries a multipart suffix", gotDstETag)
+	}
+
+	head, err := client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String(dstKey)})
+	if err != nil {
+		t.Fatalf("HeadObject dst: %v", err)
+	}
+
+	if got := strings.Trim(aws.ToString(head.ETag), `"`); got != wantDstETag {
+		t.Fatalf("HeadObject dst ETag = %q, want %q", got, wantDstETag)
+	}
+
+	// A copy of a normally-uploaded (non-multipart) object is unchanged: its
+	// ETag was already a plain MD5, so recomputing it yields the same value.
+	putObject(t, client, bucket, "plain-src", "hello world", "", nil)
+
+	plainHead, err := client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String("plain-src")})
+	if err != nil {
+		t.Fatalf("HeadObject plain-src: %v", err)
+	}
+
+	if _, err := client.CopyObject(ctx, &awss3.CopyObjectInput{
+		Bucket: aws.String(bucket), Key: aws.String("plain-dst"),
+		CopySource: aws.String(bucket + "/plain-src"),
+	}); err != nil {
+		t.Fatalf("CopyObject plain: %v", err)
+	}
+
+	plainDstHead, err := client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(bucket), Key: aws.String("plain-dst")})
+	if err != nil {
+		t.Fatalf("HeadObject plain-dst: %v", err)
+	}
+
+	if aws.ToString(plainDstHead.ETag) != aws.ToString(plainHead.ETag) {
+		t.Fatalf("plain copy dst ETag = %q, want unchanged source ETag %q",
+			aws.ToString(plainDstHead.ETag), aws.ToString(plainHead.ETag))
 	}
 }
 

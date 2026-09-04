@@ -26,6 +26,9 @@ const (
 	defaultRootRuleName = "RootManageSharedAccessKey"
 	// listPageSize is how many entities a list returns before emitting a nextLink.
 	listPageSize = 100
+	// skipParam is the query parameter a paged list request carries to resume at
+	// an offset, mirroring the $skip nextLink real Azure returns.
+	skipParam = "$skip"
 )
 
 const (

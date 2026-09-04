@@ -15,6 +15,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |
 | [CloudWatchLogs](./cloudwatchlogs.md) | `logging` | 17 |
 | [Config](./config.md) | `configservice` | 102 |
+| [CostExplorer](./costexplorer.md) | — (provider-native) | 4 |
 | [DynamoDB](./dynamodb.md) | `database` | 24 |
 | [EC2](./ec2.md) | `compute` | 37 |
 | [ECR](./ecr.md) | `containerregistry` | 15 |
@@ -22,6 +23,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [EFS](./efs.md) | `efs` | 27 |
 | [EKS](./eks.md) | — (provider-native) | 29 |
 | [ELB](./elb.md) | `loadbalancer` | 19 |
+| [EMR](./emr.md) | — (provider-native) | 13 |
 | [ElastiCache](./elasticache.md) | `cache` | 17 |
 | [EventBridge](./eventbridge.md) | `eventbus` | 16 |
 | [Glue](./glue.md) | `glue` | 299 |
@@ -49,7 +51,9 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [SSM](./ssm.md) | `parameterstore` | 9 |
 | [STS](./sts.md) | — (provider-native) | 8 |
 | [SageMaker](./sagemaker.md) | `sagemaker` | 121 |
+| [SavingsPlans](./savingsplans.md) | — (provider-native) | 9 |
 | [SecretsManager](./secretsmanager.md) | `secrets` | 7 |
+| [ServiceQuotas](./servicequotas.md) | — (provider-native) | 6 |
 | [VPC](./vpc.md) | `networking` | 57 |
 | [VPCLattice](./vpclattice.md) | `vpclattice` | 73 |
 | [WAFv2](./wafv2.md) | `wafv2` | 39 |

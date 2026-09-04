@@ -17,11 +17,17 @@ type Principal struct {
 	UserName    string
 	ARN         string
 	AccountID   string
+	// UserID is the caller's unique id (an IAM user's "AIDA..." value), when
+	// known. Empty for a temporary STS credential, whose identity the STS
+	// handler tracks separately.
+	UserID string
 }
 
 type principalKey struct{}
 
 // WithPrincipal returns a copy of ctx carrying p.
+//
+//nolint:gocritic // hugeParam: Principal is passed by value to keep this small, stable public signature.
 func WithPrincipal(ctx context.Context, p Principal) context.Context {
 	return context.WithValue(ctx, principalKey{}, p)
 }

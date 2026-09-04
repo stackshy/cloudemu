@@ -59,6 +59,12 @@ AzureRepositoryWriter is the Azure-specific ACR data-plane surface for
 | Operation | Description |
 | --- | --- |
 | `DeleteTag` |  |
+| `GetManifestAttributes` |  |
+| `GetRepositoryAttributes` |  |
+| `GetTagAttributes` |  |
+| `UpdateManifestAttributes` |  |
+| `UpdateRepositoryAttributes` |  |
+| `UpdateTagAttributes` |  |
 
 ## Not in scope
 

@@ -26,6 +26,40 @@ type TopicConfig struct {
 	// by GetTopicAttributes; FIFO publish ordering/dedup is not yet enforced.
 	FifoTopic                 bool
 	ContentBasedDeduplication bool
+	// ContentBasedDeduplicationSet reports that ContentBasedDeduplication was
+	// supplied explicitly on an UpdateTopic (SetTopicAttributes) call, so the AWS
+	// provider can distinguish an explicit false (applied) from a config with no
+	// opinion on the field (left unchanged). CreateTopic doesn't need it: a create
+	// always applies the field as given.
+	ContentBasedDeduplicationSet bool
+
+	// SignatureVersion ("1" or "2"), TracingConfig ("Active" or "PassThrough"),
+	// and ArchivePolicy (AWS SNS only) are persisted and echoed by
+	// GetTopicAttributes; a create/update omitting one leaves it unchanged
+	// (mirrors DeliveryPolicy/KmsMasterKeyID — empty means "no opinion").
+	SignatureVersion string
+	TracingConfig    string
+	ArchivePolicy    string
+
+	// The delivery-status feedback family (AWS SNS only) configures success/
+	// failure CloudWatch Logs sampling per delivery protocol. Each is persisted
+	// verbatim and echoed by GetTopicAttributes only when set; SampleRate is
+	// the literal "0"-"100" string SNS accepts, not validated further.
+	ApplicationSuccessFeedbackRoleArn    string
+	ApplicationFailureFeedbackRoleArn    string
+	ApplicationSuccessFeedbackSampleRate string
+	HTTPSuccessFeedbackRoleArn           string
+	HTTPFailureFeedbackRoleArn           string
+	HTTPSuccessFeedbackSampleRate        string
+	LambdaSuccessFeedbackRoleArn         string
+	LambdaFailureFeedbackRoleArn         string
+	LambdaSuccessFeedbackSampleRate      string
+	SQSSuccessFeedbackRoleArn            string
+	SQSFailureFeedbackRoleArn            string
+	SQSSuccessFeedbackSampleRate         string
+	FirehoseSuccessFeedbackRoleArn       string
+	FirehoseFailureFeedbackRoleArn       string
+	FirehoseSuccessFeedbackSampleRate    string
 
 	// Scope records where the resource lives (Azure subscription/resource
 	// group, GCP project). Zero for AWS and unscoped portable callers.
@@ -61,8 +95,32 @@ type TopicInfo struct {
 	// enforced.
 	FifoTopic                 bool
 	ContentBasedDeduplication bool
-	Tags                      map[string]string
-	Scope                     scope.Scope
+
+	// SignatureVersion, TracingConfig, ArchivePolicy, and the delivery-status
+	// feedback family mirror the TopicConfig fields of the same name — see
+	// there for what each means. Empty means unset; GetTopicAttributes omits an
+	// unset attribute rather than echoing "".
+	SignatureVersion                     string
+	TracingConfig                        string
+	ArchivePolicy                        string
+	ApplicationSuccessFeedbackRoleArn    string
+	ApplicationFailureFeedbackRoleArn    string
+	ApplicationSuccessFeedbackSampleRate string
+	HTTPSuccessFeedbackRoleArn           string
+	HTTPFailureFeedbackRoleArn           string
+	HTTPSuccessFeedbackSampleRate        string
+	LambdaSuccessFeedbackRoleArn         string
+	LambdaFailureFeedbackRoleArn         string
+	LambdaSuccessFeedbackSampleRate      string
+	SQSSuccessFeedbackRoleArn            string
+	SQSFailureFeedbackRoleArn            string
+	SQSSuccessFeedbackSampleRate         string
+	FirehoseSuccessFeedbackRoleArn       string
+	FirehoseFailureFeedbackRoleArn       string
+	FirehoseSuccessFeedbackSampleRate    string
+
+	Tags  map[string]string
+	Scope scope.Scope
 	// Region is the geographic location the resource was created in (Azure
 	// location). Empty for AWS and unscoped portable callers.
 	Region string

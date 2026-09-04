@@ -119,7 +119,7 @@ func (h *Handler) deleteSnapshot(w http.ResponseWriter, r *http.Request) {
 		// A snapshot referenced by a registered AMI cannot be deleted until the
 		// AMI is deregistered; real EC2 answers InvalidSnapshot.InUse.
 		if cerrors.IsFailedPrecondition(err) {
-			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSnapshot.InUse", err.Error())
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSnapshot.InUse", cerrors.Message(err))
 			return
 		}
 

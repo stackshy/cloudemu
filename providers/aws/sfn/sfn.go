@@ -6,9 +6,8 @@
 // and records the per-state event list GetExecutionHistory returns. Execution is
 // synchronous; the settle overlay keeps RUNNING observable under AsyncSettle.
 // ctx is threaded end-to-end so the Task->Lambda seam carries recursionguard
-// depth. Pass, Choice, Wait, Succeed, Fail and Task (Lambda, with Retry/Catch)
-// are supported; Parallel and Map parse but fail loudly at run time until their
-// handlers land.
+// depth. Pass, Choice, Wait, Succeed, Fail, Task (Lambda, with Retry/Catch),
+// Parallel and Map are all supported.
 package sfn
 
 import (

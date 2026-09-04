@@ -117,9 +117,11 @@ func decodeEventPattern(pattern string) []eventFilterJSON {
 
 // destinationTarget folds a trigger destination into the single driver Target
 // the rule stores. The destination is serialized into the target's Input so it
-// round-trips faithfully; the ARN carries a human-readable summary.
+// round-trips faithfully; the ARN carries a human-readable summary. A dest
+// with every sub-field empty (no cloudRun/cloudFunction/workflow) is rejected
+// the same as a nil one — it names nowhere to route to.
 func destinationTarget(dest *destinationJSON) (ebdriver.Target, bool) {
-	if dest == nil {
+	if dest == nil || destinationSummary(dest) == "" {
 		return ebdriver.Target{}, false
 	}
 

@@ -29,6 +29,12 @@ type VPCInfo struct {
 	// InstanceTenancy is the default tenancy of instances launched into the VPC
 	// ("default" or "dedicated"). An AWS concept; Azure and GCP leave it empty.
 	InstanceTenancy string
+	// IsDefault marks the account/region's auto-created default VPC (AWS only;
+	// Azure and GCP have no equivalent concept and leave it false). Real EC2
+	// gives every region one on account creation, with `default = true` visible
+	// via DescribeVpcs and matched by tools like Terraform's
+	// `data "aws_vpc" "default"`.
+	IsDefault bool
 }
 
 // SubnetConfig describes a subnet to create.
@@ -59,6 +65,10 @@ type SubnetInfo struct {
 	// endpoints). Populated by the provider on Create/Describe; DescribeSubnets
 	// returns it as availableIpAddressCount, which IaC tools read for drift.
 	AvailableIPAddressCount int
+	// IsDefault marks a subnet auto-created in the account/region's default VPC
+	// (AWS only). Real EC2 reports this as defaultForAz on DescribeSubnets, and
+	// RunInstances with no SubnetId lands in a subnet where this is true.
+	IsDefault bool
 }
 
 // SecurityGroupConfig describes a security group to create.
@@ -324,6 +334,11 @@ type ElasticIP struct {
 	IdleTimeoutMinutes int
 	DNSDomainNameLabel string
 	DNSFQDN            string
+	// ResourceGUID is the Azure-only persisted identifier ARM reports as
+	// properties.resourceGuid on a publicIPAddresses resource — stable for the
+	// address's lifetime, regenerated only on release + re-allocation. Empty
+	// for AWS and GCP.
+	ResourceGUID string
 }
 
 // AssociateAddressInput carries the target of an AssociateAddress call. Exactly
@@ -409,6 +424,11 @@ type AzureIPConfig struct {
 	// backendIPConfigurations by reverse-lookup against this field, so both
 	// sides of the association resolve consistently from one stored reference.
 	LBBackendPoolIDs []string
+	// ASGIDs are the ARM resource ids of the application security groups this
+	// ipConfiguration is a member of (properties.applicationSecurityGroups). Kept
+	// verbatim so a NIC GET round-trips the caller's references; empty when none
+	// were submitted, so an unassociated ipConfiguration is byte-unchanged.
+	ASGIDs []string
 }
 
 // AzureNICConfig is the create-or-update payload for an Azure network interface.

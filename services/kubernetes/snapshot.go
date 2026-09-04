@@ -201,7 +201,7 @@ func (s *APIServer) restoreClusterLocked(cs *clusterSnapshot) (*ClusterState, er
 		return nil, err
 	}
 
-	st := newClusterState(s.clock, s.admissionEnabled, s.admissionClient, s.lifecycleProgression)
+	st := newClusterState(s.clock, s.admissionEnabled, s.admissionClient, s.lifecycleProgression, s.nodeCount)
 
 	// Wholesale-replace the typed maps: the snapshot is the source of truth, so
 	// the fresh seed (including its throwaway UIDs) is discarded entirely.

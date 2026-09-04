@@ -3,7 +3,7 @@
 
 GCP's `cloudrun` service · portable interface `driver.CloudRun` · [GCP index](./README.md)
 
-## Operations (16)
+## Operations (18)
 
 | Operation | Description |
 | --- | --- |
@@ -16,10 +16,12 @@ GCP's `cloudrun` service · portable interface `driver.CloudRun` · [GCP index](
 | `GetJob` | GetJob returns a job by name. name may be the bare job id or a fully |
 | `GetRevision` | GetRevision returns a revision by name (bare revision id or a fully |
 | `GetService` | GetService returns a service by name (bare service id or a fully |
+| `Invoke` | Invoke executes the named service (bare id or fully qualified name) |
 | `ListExecutions` | ListExecutions returns every stored execution of the named job. |
 | `ListJobs` | ListJobs returns every stored job. |
 | `ListRevisions` | ListRevisions returns every stored revision of the named service. |
 | `ListServices` | ListServices returns every stored service. |
+| `RegisterHandler` | RegisterHandler plugs a Go handler in for the named service (bare id), |
 | `RunJob` | RunJob creates and runs one Execution of the named job, blocking until |
 | `UpdateJob` | UpdateJob applies an in-place update to an existing job, bumping its |
 | `UpdateService` | UpdateService applies an in-place update, materializing a new Revision |

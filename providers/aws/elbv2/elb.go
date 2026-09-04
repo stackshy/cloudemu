@@ -4,8 +4,10 @@ package elbv2
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -23,7 +25,9 @@ var (
 	_ driver.RuleModifier              = (*Mock)(nil)
 	_ driver.LBNetworkModifier         = (*Mock)(nil)
 	_ driver.ListenerGetter            = (*Mock)(nil)
+	_ driver.RuleGetter                = (*Mock)(nil)
 	_ driver.TargetGroupAttributeStore = (*Mock)(nil)
+	_ driver.ListenerAttributeStore    = (*Mock)(nil)
 )
 
 // defaultIdleTimeoutSec is the default idle timeout for load balancers in seconds.
@@ -36,9 +40,17 @@ const (
 	lbStateActive       = "active"
 )
 
-// targetStateInitial is the health state a target holds between registration and
-// its first successful health check.
-const targetStateInitial = "initial"
+// Target health states the mock manages automatically. "initial" is the state
+// a target holds between registration and its first successful health check;
+// "healthy" is what it settles to; "draining" is what a deregistered target
+// holds until its deregistration delay elapses and it is removed. "unhealthy"
+// and any other value are caller-set via SetTargetHealth and never assigned by
+// the automatic register/deregister lifecycle.
+const (
+	targetStateInitial  = "initial"
+	targetStateHealthy  = "healthy"
+	targetStateDraining = "draining"
+)
 
 // targetKey is the identity of a registered target within a target group.
 // AWS lets the same instance ID or IP be registered multiple times with
@@ -55,6 +67,13 @@ func keyFor(t driver.Target) targetKey {
 	return targetKey{id: t.ID, port: t.Port}
 }
 
+// settleKey builds the composite key a target's settle windows are stored
+// under: a target's identity is only unique within its target group, so the
+// key must combine both.
+func settleKey(targetGroupARN string, k targetKey) string {
+	return targetGroupARN + "|" + k.id + "|" + strconv.Itoa(k.port)
+}
+
 // Mock is an in-memory mock implementation of the AWS ELB service.
 type Mock struct {
 	lbs       *memstore.Store[driver.LBInfo]
@@ -67,11 +86,31 @@ type Mock struct {
 	healthMu sync.RWMutex
 	health   map[string]map[targetKey]*driver.TargetHealth // tgARN -> (id,port) -> health
 
+	// healthSettle overlays each target's initial->healthy transition and
+	// drainSettle overlays draining->removed, both keyed by settleKey. Neither
+	// is snapshotted (see snapshot.go): a restored target reports its stored
+	// (final) state immediately, matching the lbSettle convention above.
+	healthSettle *settle.Set
+	drainSettle  *settle.Set
+
+	// healthArmed marks (by settleKey) every target whose healthSettle window
+	// has been started. Real ELBv2 only begins health checking once a target
+	// group is referenced by a listener, so the window must not start at
+	// RegisterTargets time — a target sitting on an unattached target group for
+	// an arbitrary time must not burn its health-check clock. Instead
+	// observeTargetHealth arms it lazily, the first time it observes the group
+	// as referenced, and this set makes that a one-time transition: once armed,
+	// later calls only read the window, never restart it. Guarded by healthMu.
+	healthArmed map[string]struct{}
+
 	attrsMu sync.RWMutex
 	attrs   map[string]driver.LBAttributes // lbARN -> attributes
 
 	tgAttrsMu sync.RWMutex
 	tgAttrs   map[string]map[string]string // tgARN -> attribute overrides
+
+	listenerAttrsMu sync.RWMutex
+	listenerAttrs   map[string]map[string]string // listenerARN -> attribute overrides
 
 	// subnetResolver derives a load balancer's VpcId from its subnets. Real
 	// ELBv2 infers VpcId rather than taking it as input; without the resolver
@@ -82,15 +121,19 @@ type Mock struct {
 // New creates a new ELB mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		lbs:       memstore.New[driver.LBInfo](),
-		lbSettle:  memstore.New[settle.Window](),
-		tgs:       memstore.New[driver.TargetGroupInfo](),
-		listeners: memstore.New[driver.ListenerInfo](),
-		rules:     memstore.New[driver.RuleInfo](),
-		opts:      opts,
-		health:    make(map[string]map[targetKey]*driver.TargetHealth),
-		attrs:     make(map[string]driver.LBAttributes),
-		tgAttrs:   make(map[string]map[string]string),
+		lbs:           memstore.New[driver.LBInfo](),
+		lbSettle:      memstore.New[settle.Window](),
+		tgs:           memstore.New[driver.TargetGroupInfo](),
+		listeners:     memstore.New[driver.ListenerInfo](),
+		rules:         memstore.New[driver.RuleInfo](),
+		opts:          opts,
+		health:        make(map[string]map[targetKey]*driver.TargetHealth),
+		healthSettle:  settle.NewSet(),
+		drainSettle:   settle.NewSet(),
+		healthArmed:   make(map[string]struct{}),
+		attrs:         make(map[string]driver.LBAttributes),
+		tgAttrs:       make(map[string]map[string]string),
+		listenerAttrs: make(map[string]map[string]string),
 	}
 }
 
@@ -146,6 +189,7 @@ func (m *Mock) CreateLoadBalancer(ctx context.Context, cfg driver.LBConfig) (*dr
 		IPAddressType:         ipType,
 		CanonicalHostedZoneID: canonicalHostedZoneID(m.opts.Region),
 		VPCID:                 m.resolveVPCID(ctx, cfg.Subnets),
+		SubnetAZs:             m.resolveAZs(ctx, cfg.Subnets),
 		CreatedTime:           now,
 		Tags:                  tags,
 	}
@@ -239,6 +283,10 @@ func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
 		}
 
 		m.listeners.Delete(key)
+
+		m.listenerAttrsMu.Lock()
+		delete(m.listenerAttrs, listenerARN)
+		m.listenerAttrsMu.Unlock()
 	}
 
 	// Drop the stored load-balancer attributes so a recreated ARN does not
@@ -345,12 +393,29 @@ const (
 	defaultHCMatcher       = "200"
 	defaultHCPort          = "traffic-port"
 	defaultHCPath          = "/"
+	protocolHTTP           = "HTTP"
 )
 
 // isHTTPProtocol reports whether p is an HTTP-family protocol (which carries a
 // path and an HTTP matcher on its health check).
 func isHTTPProtocol(p string) bool {
-	return p == "HTTP" || p == "HTTPS"
+	return p == protocolHTTP || p == "HTTPS"
+}
+
+// defaultHealthCheckProtocol reports the HealthCheckProtocol ELBv2 defaults to
+// for a target group of the given protocol. Per the CreateTargetGroup API
+// reference, this is NOT the target group's own protocol mirrored back: an
+// Application Load Balancer target group (HTTP or HTTPS) always defaults to
+// HTTP, and a Network or Gateway Load Balancer target group (TCP, TLS, UDP,
+// TCP_UDP, GENEVE, QUIC, TCP_QUIC) always defaults to TCP — the GENEVE, TLS,
+// UDP, TCP_UDP, QUIC, and TCP_QUIC protocols are not themselves supported as a
+// health check protocol.
+func defaultHealthCheckProtocol(tgProtocol string) string {
+	if isHTTPProtocol(tgProtocol) {
+		return protocolHTTP
+	}
+
+	return "TCP"
 }
 
 // defaultHealthCheck fills a target group's health-check settings, applying the
@@ -361,7 +426,7 @@ func defaultHealthCheck(cfg driver.TargetGroupConfig) driver.HealthCheck {
 	hc := cfg.HealthCheck
 
 	if hc.Protocol == "" {
-		hc.Protocol = cfg.Protocol
+		hc.Protocol = defaultHealthCheckProtocol(cfg.Protocol)
 	}
 
 	if hc.Port == "" {
@@ -417,8 +482,16 @@ func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
 
 	m.tgs.Delete(arn)
 
-	// Clean up health data.
+	// Clean up health data and any in-flight settle windows for its targets, so
+	// a target group name that gets recreated does not inherit a stale window.
 	m.healthMu.Lock()
+	for k := range m.health[arn] {
+		sk := settleKey(arn, k)
+		m.healthSettle.Clear(sk)
+		m.drainSettle.Clear(sk)
+		delete(m.healthArmed, sk)
+	}
+
 	delete(m.health, arn)
 	m.healthMu.Unlock()
 
@@ -575,6 +648,7 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 		DefaultActions: cloneActions(cfg.DefaultActions),
 		SslPolicy:      cfg.SslPolicy,
 		Certificates:   cloneCertificates(cfg.Certificates),
+		Tags:           copyStringMap(cfg.Tags),
 	}
 
 	m.listeners.Set(arn, li)
@@ -650,11 +724,29 @@ func cloneActions(actions []driver.RuleAction) []driver.RuleAction {
 	return append([]driver.RuleAction(nil), actions...)
 }
 
-// DeleteListener deletes a listener by ARN.
+// DeleteListener deletes a listener by ARN and, with it, the rules under that
+// listener. Rules are children of the listener in real ELBv2, so deleting the
+// listener removes them; leaving them behind would leak them for the life of
+// the process (their parent listener is gone, so nothing ever reaches them) and
+// DescribeRules on the deleted listener already returns ListenerNotFound. This
+// mirrors the LB→listener→rule cascade in DeleteLoadBalancer.
 func (m *Mock) DeleteListener(_ context.Context, arn string) error {
 	if !m.listeners.Delete(arn) {
 		return errors.Newf(errors.NotFound, "listener %q not found", arn)
 	}
+
+	// Cascade to the listener's rules. Range over a snapshot and delete each key
+	// through the store's own write-locked Delete so the mutation stays atomic
+	// per key (no Get-then-separate-Delete race).
+	for rkey, r := range m.rules.All() {
+		if r.ListenerARN == arn {
+			m.rules.Delete(rkey)
+		}
+	}
+
+	m.listenerAttrsMu.Lock()
+	delete(m.listenerAttrs, arn)
+	m.listenerAttrsMu.Unlock()
 
 	return nil
 }
@@ -683,6 +775,8 @@ func (m *Mock) DescribeListeners(_ context.Context, lbARN string) ([]driver.List
 }
 
 // CreateRule creates a new listener rule.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.RuleInfo, error) {
 	if _, ok := m.listeners.Get(cfg.ListenerARN); !ok {
 		return nil, errors.Newf(errors.NotFound, "listener %q not found", cfg.ListenerARN)
@@ -721,6 +815,7 @@ func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.Rul
 		Conditions:  conditions,
 		Actions:     actions,
 		IsDefault:   false,
+		Tags:        copyStringMap(cfg.Tags),
 	}
 
 	m.rules.Set(arn, rule)
@@ -753,6 +848,18 @@ func (m *Mock) DeleteRule(_ context.Context, ruleARN string) error {
 	}
 
 	return nil
+}
+
+// GetRule returns a single listener rule by ARN.
+func (m *Mock) GetRule(_ context.Context, ruleARN string) (*driver.RuleInfo, error) {
+	r, ok := m.rules.Get(ruleARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "rule %q not found", ruleARN)
+	}
+
+	result := r
+
+	return &result, nil
 }
 
 // DescribeRules returns all rules for the specified listener.
@@ -991,13 +1098,14 @@ func (m *Mock) SetSecurityGroups(_ context.Context, lbARN string, securityGroups
 
 // SetSubnets replaces the subnets a load balancer is attached to and returns
 // the resulting subnet list.
-func (m *Mock) SetSubnets(_ context.Context, lbARN string, subnets []string) ([]string, error) {
+func (m *Mock) SetSubnets(ctx context.Context, lbARN string, subnets []string) ([]string, error) {
 	lb, ok := m.lbs.Get(lbARN)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", lbARN)
 	}
 
 	lb.Subnets = append([]string(nil), subnets...)
+	lb.SubnetAZs = m.resolveAZs(ctx, subnets)
 	m.lbs.Set(lbARN, lb)
 
 	return lb.Subnets, nil
@@ -1162,7 +1270,102 @@ func mergedTargetGroupAttributes(overrides map[string]string) map[string]string 
 	return out
 }
 
+// defaultListenerAttributes returns the attribute defaults ELBv2 reports for a
+// freshly created listener before any ModifyListenerAttributes call. Per the
+// ListenerAttribute API reference, tcp.idle_timeout.seconds (default 350) only
+// applies to Network and Gateway Load Balancer listeners; an Application Load
+// Balancer listener has no attribute with a documented default, so it starts
+// with an empty set.
+func defaultListenerAttributes(lbType string) map[string]string {
+	if lbType == "network" || lbType == "gateway" {
+		return map[string]string{"tcp.idle_timeout.seconds": "350"}
+	}
+
+	return map[string]string{}
+}
+
+// GetListenerAttributes returns the full attribute set for a listener: the
+// ELBv2 defaults (derived from its load balancer's type) overlaid with any
+// stored overrides.
+func (m *Mock) GetListenerAttributes(_ context.Context, listenerARN string) (map[string]string, error) {
+	li, ok := m.listeners.Get(listenerARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "listener %q not found", listenerARN)
+	}
+
+	m.listenerAttrsMu.RLock()
+	defer m.listenerAttrsMu.RUnlock()
+
+	return mergedListenerAttributes(m.lbType(li.LBARN), m.listenerAttrs[listenerARN]), nil
+}
+
+// ModifyListenerAttributes merges updates into the listener's stored overrides
+// and returns the resulting full attribute set.
+func (m *Mock) ModifyListenerAttributes(
+	_ context.Context, listenerARN string, updates map[string]string,
+) (map[string]string, error) {
+	li, ok := m.listeners.Get(listenerARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "listener %q not found", listenerARN)
+	}
+
+	m.listenerAttrsMu.Lock()
+	defer m.listenerAttrsMu.Unlock()
+
+	overrides := m.listenerAttrs[listenerARN]
+	if overrides == nil {
+		overrides = make(map[string]string, len(updates))
+	}
+
+	for k, v := range updates {
+		overrides[k] = v
+	}
+
+	m.listenerAttrs[listenerARN] = overrides
+
+	return mergedListenerAttributes(m.lbType(li.LBARN), overrides), nil
+}
+
+// lbType returns the Type ("application", "network", "gateway") of the load
+// balancer at arn, or "" if it cannot be resolved.
+func (m *Mock) lbType(lbARN string) string {
+	lb, ok := m.lbs.Get(lbARN)
+	if !ok {
+		return ""
+	}
+
+	return lb.Type
+}
+
+// mergedListenerAttributes returns a fresh map of the type-derived defaults
+// overlaid with overrides, so the caller never aliases stored state.
+func mergedListenerAttributes(lbType string, overrides map[string]string) map[string]string {
+	defaults := defaultListenerAttributes(lbType)
+
+	out := make(map[string]string, len(defaults)+len(overrides))
+	for k, v := range defaults {
+		out[k] = v
+	}
+
+	for k, v := range overrides {
+		out[k] = v
+	}
+
+	return out
+}
+
 // RegisterTargets registers targets with a target group.
+//
+// A freshly registered target starts "initial". It does NOT start its
+// initial->healthy settle window here: real ELBv2 only begins health checking
+// once the target group is referenced by a listener, so a target sitting on
+// an unattached target group for an arbitrary time must not burn its
+// health-check clock. observeTargetHealth arms the window lazily, the first
+// time DescribeTargetHealth observes the group as referenced. Re-registering a
+// target that is currently draining (a rolling deploy scaling an instance
+// back in before its drain window elapsed) cancels the drain and restarts
+// registration — including the arm bit — matching real ELBv2: RegisterTargets
+// on an in-service target resets its health tracking.
 func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets []driver.Target) error {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {
 		return errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
@@ -1178,7 +1381,10 @@ func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets
 	}
 
 	for _, t := range targets {
-		tgHealth[keyFor(t)] = &driver.TargetHealth{
+		key := keyFor(t)
+		sk := settleKey(targetGroupARN, key)
+
+		tgHealth[key] = &driver.TargetHealth{
 			Target: driver.Target{
 				ID:   t.ID,
 				Port: t.Port,
@@ -1187,12 +1393,23 @@ func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets
 			Reason:      "Elb.RegistrationInProgress",
 			Description: "Target registration is in progress",
 		}
+
+		m.drainSettle.Clear(sk)
+		m.healthSettle.Clear(sk)
+		delete(m.healthArmed, sk)
 	}
 
 	return nil
 }
 
 // DeregisterTargets removes targets from a target group.
+//
+// A deregistered target does not vanish immediately: real ELBv2 holds it
+// "draining" (Target.DeregistrationInProgress) for its deregistration delay so
+// in-flight connections finish, then removes it. beginDraining starts that
+// window; when async settling is off the window elapses instantly, so the
+// target disappears from this call's Describe onward — the historical
+// synchronous behavior.
 func (m *Mock) DeregisterTargets(_ context.Context, targetGroupARN string, targets []driver.Target) error {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {
 		return errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
@@ -1206,10 +1423,12 @@ func (m *Mock) DeregisterTargets(_ context.Context, targetGroupARN string, targe
 		return nil
 	}
 
+	now := m.opts.Clock.Now()
+
 	for _, t := range targets {
 		key := keyFor(t)
 		if _, ok := tgHealth[key]; ok {
-			delete(tgHealth, key)
+			m.beginDraining(tgHealth, targetGroupARN, key, now)
 			continue
 		}
 
@@ -1222,18 +1441,20 @@ func (m *Mock) DeregisterTargets(_ context.Context, targetGroupARN string, targe
 		// target is a no-op ("If the specified target does not exist, the
 		// action returns successfully").
 		if t.Port == 0 {
-			deleteSolePortMatch(tgHealth, t.ID)
+			if match, ok := solePortMatch(tgHealth, t.ID); ok {
+				m.beginDraining(tgHealth, targetGroupARN, match, now)
+			}
 		}
 	}
 
 	return nil
 }
 
-// deleteSolePortMatch removes the single entry registered under id, when
-// exactly one exists. Two or more entries for the same id (different port
-// overrides) are left untouched — disambiguating them requires the caller to
-// specify the port, matching real ELBv2 semantics.
-func deleteSolePortMatch(tgHealth map[targetKey]*driver.TargetHealth, id string) {
+// solePortMatch reports the single entry registered under id, when exactly one
+// exists. Two or more entries for the same id (different port overrides) are
+// left untouched — disambiguating them requires the caller to specify the
+// port, matching real ELBv2 semantics.
+func solePortMatch(tgHealth map[targetKey]*driver.TargetHealth, id string) (targetKey, bool) {
 	var match targetKey
 
 	count := 0
@@ -1247,20 +1468,47 @@ func deleteSolePortMatch(tgHealth map[targetKey]*driver.TargetHealth, id string)
 		count++
 
 		if count > 1 {
-			return
+			return targetKey{}, false
 		}
 	}
 
-	if count == 1 {
-		delete(tgHealth, match)
+	return match, count == 1
+}
+
+// beginDraining transitions a registered target to "draining" and starts its
+// deregistration-delay settle window. When that window is inactive (async
+// settling off), the target is removed immediately instead — the caller must
+// hold healthMu.
+func (m *Mock) beginDraining(
+	tgHealth map[targetKey]*driver.TargetHealth, targetGroupARN string, key targetKey, now time.Time,
+) {
+	sk := settleKey(targetGroupARN, key)
+	m.healthSettle.Clear(sk)
+	delete(m.healthArmed, sk)
+
+	drainDur := m.opts.SettleDuration(settle.DefaultTargetDrainSettle)
+	if drainDur <= 0 {
+		delete(tgHealth, key)
+		m.drainSettle.Clear(sk)
+
+		return
 	}
+
+	th := tgHealth[key]
+	th.State = targetStateDraining
+	th.Reason = "Target.DeregistrationInProgress"
+	th.Description = "Target deregistration is in progress"
+
+	m.drainSettle.Begin(sk, targetStateDraining, now, drainDur)
 }
 
 // DescribeTargetHealth returns the health status of all targets in a target
-// group. A freshly registered target reports "initial" on its first describe
-// and then advances to "healthy", mirroring real ELBv2's registration
-// transition so target-health waiters make progress instead of hanging on a
-// permanently "initial" state.
+// group. The stored State field is a marker: "initial" and "draining" mean the
+// target is under the mock's automatic register/deregister lifecycle and its
+// reported state is computed from the relevant settle window; any other value
+// (e.g. set via SetTargetHealth) passes through unchanged. A target whose
+// deregistration-delay window has elapsed is removed here, lazily, on the next
+// read.
 func (m *Mock) DescribeTargetHealth(_ context.Context, targetGroupARN string) ([]driver.TargetHealth, error) {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {
 		return nil, errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
@@ -1275,39 +1523,84 @@ func (m *Mock) DescribeTargetHealth(_ context.Context, targetGroupARN string) ([
 	}
 
 	// A target group not forwarded to by any listener (default action or rule)
-	// on a load balancer reports every target as "unused" / Target.NotInUse and
-	// does not advance — real ELBv2 only begins health checks once a listener
-	// routes to the group. An explicitly set state (e.g. ECS SetTargetHealth) is
-	// left untouched; only the automatic initial->healthy progression is gated.
+	// on a load balancer reports every registering target as "unused" /
+	// Target.NotInUse and does not advance — real ELBv2 only begins health
+	// checks once a listener routes to the group. An explicitly set state
+	// (e.g. ECS SetTargetHealth) is left untouched; only the automatic
+	// initial->healthy progression is gated.
 	referenced := m.targetGroupReferenced(targetGroupARN)
+	now := m.opts.Clock.Now()
 
 	results := make([]driver.TargetHealth, 0, len(tgHealth))
-	for _, th := range tgHealth {
-		if !referenced && th.State == targetStateInitial {
-			unused := *th
-			unused.State = "unused"
-			unused.Reason = "Target.NotInUse"
-			unused.Description = "Target group is not configured to receive traffic from the load balancer"
-			results = append(results, unused)
 
+	for k, th := range tgHealth {
+		observed, keep := m.observeTargetHealth(targetGroupARN, k, th, referenced, now)
+		if !keep {
+			delete(tgHealth, k)
 			continue
 		}
 
-		results = append(results, *th)
-
-		// Advance after the state is captured so the caller sees "initial"
-		// once and "healthy" on the next poll.
-		if th.State == targetStateInitial {
-			th.State = "healthy"
-			th.Reason = ""
-			th.Description = ""
-		}
+		results = append(results, observed)
 	}
 
 	return results, nil
 }
 
-// SetTargetHealth sets the health state of a specific target in a target group.
+// observeTargetHealth computes the health entry to report for one target
+// without mutating the stored record, and reports keep=false once a fully
+// elapsed drain window means the target has been removed from service.
+func (m *Mock) observeTargetHealth(
+	targetGroupARN string, k targetKey, th *driver.TargetHealth, referenced bool, now time.Time,
+) (driver.TargetHealth, bool) {
+	sk := settleKey(targetGroupARN, k)
+
+	switch th.State {
+	case targetStateDraining:
+		if m.drainSettle.State(sk, now, "") == "" {
+			m.drainSettle.Clear(sk)
+			return driver.TargetHealth{}, false
+		}
+
+		return *th, true
+
+	case targetStateInitial:
+		if !referenced {
+			unused := *th
+			unused.State = "unused"
+			unused.Reason = "Target.NotInUse"
+			unused.Description = "Target group is not configured to receive traffic from the load balancer"
+
+			return unused, true
+		}
+
+		// Arm the settle window the first time the group is observed as
+		// referenced — never before, and never again once armed. This is what
+		// keeps a target on a not-yet-attached target group from burning its
+		// health-check clock while it waits.
+		if _, armed := m.healthArmed[sk]; !armed {
+			m.healthSettle.Begin(sk, targetStateInitial, now, m.opts.SettleDuration(settle.DefaultTargetHealthSettle))
+			m.healthArmed[sk] = struct{}{}
+		}
+
+		observed := *th
+		observed.State = m.healthSettle.State(sk, now, targetStateHealthy)
+
+		if observed.State == targetStateHealthy {
+			observed.Reason = ""
+			observed.Description = ""
+		}
+
+		return observed, true
+
+	default:
+		return *th, true
+	}
+}
+
+// SetTargetHealth sets the health state of a specific target in a target
+// group, taking it out of the automatic register/deregister lifecycle: its
+// state no longer advances via the initial->healthy or draining->removed
+// settle windows until the target is re-registered or deregistered again.
 func (m *Mock) SetTargetHealth(_ context.Context, targetGroupARN, targetID, state string) error {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {
 		return errors.Newf(errors.NotFound, "target group %q not found", targetGroupARN)
@@ -1334,6 +1627,11 @@ func (m *Mock) SetTargetHealth(_ context.Context, targetGroupARN, targetID, stat
 		th.State = state
 		th.Reason = ""
 		found = true
+
+		sk := settleKey(targetGroupARN, k)
+		m.healthSettle.Clear(sk)
+		m.drainSettle.Clear(sk)
+		delete(m.healthArmed, sk)
 	}
 
 	if !found {

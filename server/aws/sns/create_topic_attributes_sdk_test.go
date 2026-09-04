@@ -68,3 +68,61 @@ func TestSDKSNSCreateTopicFifoFlags(t *testing.T) {
 		t.Fatalf("ContentBasedDeduplication = %q, want true", attrs["ContentBasedDeduplication"])
 	}
 }
+
+// TestSDKSNSCreateTopicFifoNameRequiresSuffix guards real SNS's documented
+// naming rule (API_CreateTopic.html: "For a FIFO topic, the name must end with
+// the .fifo suffix") — FifoTopic=true with a non-.fifo name must be rejected.
+func TestSDKSNSCreateTopicFifoNameRequiresSuffix(t *testing.T) {
+	sns := newSDKClient(t)
+	ctx := context.Background()
+
+	_, err := sns.CreateTopic(ctx, &awssns.CreateTopicInput{
+		Name:       aws.String("not-fifo-named"),
+		Attributes: map[string]string{"FifoTopic": "true"},
+	})
+	if err == nil {
+		t.Fatal("CreateTopic(FifoTopic=true, non-.fifo name) succeeded, want InvalidParameter")
+	}
+}
+
+// TestSDKSNSSetTopicAttributesContentBasedDeduplication is a regression guard:
+// SetTopicAttributes previously only forwarded DisplayName/Policy, silently
+// dropping ContentBasedDeduplication (and DeliveryPolicy/KmsMasterKeyId), which
+// caused aws_sns_topic's content_based_deduplication to perpetually diff under
+// Terraform since the value never persisted.
+func TestSDKSNSSetTopicAttributesContentBasedDeduplication(t *testing.T) {
+	sns := newSDKClient(t)
+	ctx := context.Background()
+
+	topic, err := sns.CreateTopic(ctx, &awssns.CreateTopicInput{
+		Name:       aws.String("cbd.fifo"),
+		Attributes: map[string]string{"FifoTopic": "true"},
+	})
+	if err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+
+	if _, err := sns.SetTopicAttributes(ctx, &awssns.SetTopicAttributesInput{
+		TopicArn:       topic.TopicArn,
+		AttributeName:  aws.String("ContentBasedDeduplication"),
+		AttributeValue: aws.String("true"),
+	}); err != nil {
+		t.Fatalf("SetTopicAttributes(ContentBasedDeduplication): %v", err)
+	}
+
+	if got := topicAttributes(t, sns, aws.ToString(topic.TopicArn))["ContentBasedDeduplication"]; got != "true" {
+		t.Fatalf("ContentBasedDeduplication after SetTopicAttributes = %q, want true", got)
+	}
+
+	if _, err := sns.SetTopicAttributes(ctx, &awssns.SetTopicAttributesInput{
+		TopicArn:       topic.TopicArn,
+		AttributeName:  aws.String("DeliveryPolicy"),
+		AttributeValue: aws.String(`{"http":{"defaultHealthyRetryPolicy":{"numRetries":5}}}`),
+	}); err != nil {
+		t.Fatalf("SetTopicAttributes(DeliveryPolicy): %v", err)
+	}
+
+	if got := topicAttributes(t, sns, aws.ToString(topic.TopicArn))["DeliveryPolicy"]; got == "" {
+		t.Fatal("DeliveryPolicy after SetTopicAttributes is empty, want it persisted")
+	}
+}

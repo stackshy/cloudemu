@@ -29,8 +29,9 @@ func (h *Handler) createEventBus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	info, err := h.bus.CreateEventBus(r.Context(), ebdriver.EventBusConfig{
-		Name: req.Name,
-		Tags: tagsToMap(req.Tags),
+		Name:        req.Name,
+		Tags:        tagsToMap(req.Tags),
+		Description: req.Description,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -58,6 +59,7 @@ func (h *Handler) describeEventBus(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, describeEventBusResponse{
 		Arn:          info.ARN,
 		Name:         info.Name,
+		Description:  info.Description,
 		CreationTime: epochSeconds(info.CreatedAt),
 		Policy:       info.Policy,
 	})
@@ -84,6 +86,7 @@ func (h *Handler) listEventBuses(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, eventBusEntry{
 			Arn:          infos[i].ARN,
 			Name:         infos[i].Name,
+			Description:  infos[i].Description,
 			CreationTime: epochSeconds(infos[i].CreatedAt),
 		})
 	}
@@ -134,7 +137,7 @@ func (h *Handler) putRule(w http.ResponseWriter, r *http.Request) {
 
 	rule, err := h.bus.PutRule(r.Context(), &ebdriver.RuleConfig{
 		Name:               req.Name,
-		EventBus:           req.EventBusName,
+		EventBus:           busNameOrDefault(req.EventBusName),
 		Description:        req.Description,
 		EventPattern:       req.EventPattern,
 		ScheduleExpression: req.ScheduleExpression,
@@ -350,6 +353,7 @@ func (h *Handler) putEvents(w http.ResponseWriter, r *http.Request) {
 			Detail:     e.Detail,
 			EventBus:   busNameOrDefault(e.EventBusName),
 			Resources:  e.Resources,
+			Time:       entryTime(e.Time),
 		})
 	}
 

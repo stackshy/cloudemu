@@ -3,6 +3,7 @@ package secretsmanager_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -168,6 +169,7 @@ func TestSDKRotateSecret(t *testing.T) {
 
 	rot, err := client.RotateSecret(ctx, &awssm.RotateSecretInput{
 		SecretId: aws.String("torotate"), RotateImmediately: aws.Bool(true),
+		RotationLambdaARN: aws.String("arn:aws:lambda:us-east-1:123456789012:function:rotate"),
 	})
 	if err != nil {
 		t.Fatalf("RotateSecret: %v", err)
@@ -179,6 +181,176 @@ func TestSDKRotateSecret(t *testing.T) {
 
 	if aws.ToString(rot.VersionId) == aws.ToString(created.VersionId) {
 		t.Fatal("RotateSecret did not advance the version")
+	}
+}
+
+// TestSDKRotateSecretConfig guards RotateSecret storing RotationLambdaARN and
+// RotationRules and DescribeSecret echoing RotationEnabled/LastRotatedDate.
+func TestSDKRotateSecretConfig(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("rotconfig"), SecretString: aws.String("v"),
+	}); err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	lambdaARN := "arn:aws:lambda:us-east-1:123456789012:function:rotate"
+
+	if _, err := client.RotateSecret(ctx, &awssm.RotateSecretInput{
+		SecretId:          aws.String("rotconfig"),
+		RotationLambdaARN: aws.String(lambdaARN),
+		RotationRules:     &smtypes.RotationRulesType{AutomaticallyAfterDays: aws.Int64(30)},
+		RotateImmediately: aws.Bool(true),
+	}); err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+
+	desc, err := client.DescribeSecret(ctx, &awssm.DescribeSecretInput{SecretId: aws.String("rotconfig")})
+	if err != nil {
+		t.Fatalf("DescribeSecret: %v", err)
+	}
+
+	if !aws.ToBool(desc.RotationEnabled) {
+		t.Fatal("RotationEnabled = false, want true after RotateSecret")
+	}
+
+	if aws.ToString(desc.RotationLambdaARN) != lambdaARN {
+		t.Fatalf("RotationLambdaARN = %q, want %q", aws.ToString(desc.RotationLambdaARN), lambdaARN)
+	}
+
+	if desc.RotationRules == nil || aws.ToInt64(desc.RotationRules.AutomaticallyAfterDays) != 30 {
+		t.Fatalf("RotationRules = %+v, want AutomaticallyAfterDays=30", desc.RotationRules)
+	}
+
+	if desc.LastRotatedDate == nil {
+		t.Fatal("LastRotatedDate is nil after an immediate rotation")
+	}
+
+	if desc.NextRotationDate == nil {
+		t.Fatal("NextRotationDate is nil with AutomaticallyAfterDays set")
+	}
+}
+
+// TestSDKRotateSecretRequiresLambdaARN guards a real-user e2e finding:
+// RotateSecret on a secret that has never had a rotation Lambda configured,
+// and whose call doesn't supply one either, is rejected — real Secrets
+// Manager refuses to advance the version with nothing to actually generate a
+// new value. Supplying the ARN in the same call (first-time configure) still
+// works.
+func TestSDKRotateSecretRequiresLambdaARN(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("rotnolambda"), SecretString: aws.String("v"),
+	}); err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	_, err := client.RotateSecret(ctx, &awssm.RotateSecretInput{
+		SecretId: aws.String("rotnolambda"), RotateImmediately: aws.Bool(true),
+	})
+
+	var invalid *smtypes.InvalidRequestException
+	if !errors.As(err, &invalid) {
+		t.Fatalf("RotateSecret with no lambda ever configured: got %v, want InvalidRequestException", err)
+	}
+
+	// Supplying RotationLambdaARN in the same call configures it and succeeds.
+	if _, err := client.RotateSecret(ctx, &awssm.RotateSecretInput{
+		SecretId:          aws.String("rotnolambda"),
+		RotationLambdaARN: aws.String("arn:aws:lambda:us-east-1:123456789012:function:rotate"),
+		RotateImmediately: aws.Bool(true),
+	}); err != nil {
+		t.Fatalf("RotateSecret with RotationLambdaARN supplied: %v", err)
+	}
+}
+
+// TestSDKRotateSecretDeferred guards RotateImmediately=false configuring
+// rotation without advancing the version.
+func TestSDKRotateSecretDeferred(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	created, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("rotdeferred"), SecretString: aws.String("v"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	rot, err := client.RotateSecret(ctx, &awssm.RotateSecretInput{
+		SecretId:          aws.String("rotdeferred"),
+		RotationLambdaARN: aws.String("arn:aws:lambda:us-east-1:123456789012:function:rotate"),
+		RotateImmediately: aws.Bool(false),
+	})
+	if err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+
+	if aws.ToString(rot.VersionId) != aws.ToString(created.VersionId) {
+		t.Fatal("RotateImmediately=false must not advance the version")
+	}
+
+	desc, err := client.DescribeSecret(ctx, &awssm.DescribeSecretInput{SecretId: aws.String("rotdeferred")})
+	if err != nil {
+		t.Fatalf("DescribeSecret: %v", err)
+	}
+
+	if !aws.ToBool(desc.RotationEnabled) {
+		t.Fatal("RotationEnabled = false, want true after a configure-only RotateSecret")
+	}
+
+	if desc.LastRotatedDate != nil {
+		t.Fatal("LastRotatedDate must stay unset when no rotation actually ran")
+	}
+}
+
+// TestSDKCancelRotateSecret guards CancelRotateSecret disabling rotation while
+// keeping the configured lambda ARN, and rejecting an unknown secret.
+func TestSDKCancelRotateSecret(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("rotcancel"), SecretString: aws.String("v"),
+	}); err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	lambdaARN := "arn:aws:lambda:us-east-1:123456789012:function:rotate"
+
+	if _, err := client.RotateSecret(ctx, &awssm.RotateSecretInput{
+		SecretId: aws.String("rotcancel"), RotationLambdaARN: aws.String(lambdaARN), RotateImmediately: aws.Bool(true),
+	}); err != nil {
+		t.Fatalf("RotateSecret: %v", err)
+	}
+
+	if _, err := client.CancelRotateSecret(ctx, &awssm.CancelRotateSecretInput{
+		SecretId: aws.String("rotcancel"),
+	}); err != nil {
+		t.Fatalf("CancelRotateSecret: %v", err)
+	}
+
+	desc, err := client.DescribeSecret(ctx, &awssm.DescribeSecretInput{SecretId: aws.String("rotcancel")})
+	if err != nil {
+		t.Fatalf("DescribeSecret: %v", err)
+	}
+
+	if aws.ToBool(desc.RotationEnabled) {
+		t.Fatal("RotationEnabled = true after CancelRotateSecret, want false")
+	}
+
+	if aws.ToString(desc.RotationLambdaARN) != lambdaARN {
+		t.Fatal("CancelRotateSecret must not clear the configured RotationLambdaARN")
+	}
+
+	if _, err := client.CancelRotateSecret(ctx, &awssm.CancelRotateSecretInput{
+		SecretId: aws.String("does-not-exist"),
+	}); err == nil {
+		t.Fatal("CancelRotateSecret on an unknown secret: want error, got nil")
 	}
 }
 

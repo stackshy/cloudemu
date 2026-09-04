@@ -46,6 +46,7 @@ func (h *Handler) createService(w http.ResponseWriter, r *http.Request) {
 		LoadBalancers                 []wireLoadBalancer                 `json:"loadBalancers"`
 		ServiceRegistries             []wireServiceRegistry              `json:"serviceRegistries"`
 		Tags                          []wireTag                          `json:"tags"`
+		AvailabilityZoneRebalancing   string                             `json:"availabilityZoneRebalancing"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -71,6 +72,7 @@ func (h *Handler) createService(w http.ResponseWriter, r *http.Request) {
 		LoadBalancers:                 toLoadBalancers(req.LoadBalancers),
 		ServiceRegistries:             toServiceRegistries(req.ServiceRegistries),
 		Tags:                          toTags(req.Tags),
+		AvailabilityZoneRebalancing:   req.AvailabilityZoneRebalancing,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -97,6 +99,7 @@ func (h *Handler) updateService(w http.ResponseWriter, r *http.Request) {
 		CapacityProviderStrategy      []wireCapacityProviderStrategyItem `json:"capacityProviderStrategy"`
 		LoadBalancers                 []wireLoadBalancer                 `json:"loadBalancers"`
 		ServiceRegistries             []wireServiceRegistry              `json:"serviceRegistries"`
+		AvailabilityZoneRebalancing   string                             `json:"availabilityZoneRebalancing"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -118,6 +121,7 @@ func (h *Handler) updateService(w http.ResponseWriter, r *http.Request) {
 		CapacityProviderStrategy:      toCapacityProviderStrategy(req.CapacityProviderStrategy),
 		LoadBalancers:                 toLoadBalancers(req.LoadBalancers),
 		ServiceRegistries:             toServiceRegistries(req.ServiceRegistries),
+		AvailabilityZoneRebalancing:   req.AvailabilityZoneRebalancing,
 	})
 	if err != nil {
 		writeErr(w, err)

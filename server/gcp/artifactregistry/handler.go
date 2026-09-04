@@ -17,7 +17,11 @@
 //	GET    .../repositories/{id}/packages                 — List packages (paged)
 //	GET    .../repositories/{id}/packages/{pkg}           — Get package
 //	GET    .../repositories/{id}/packages/{pkg}/versions  — List versions (paged)
+//	DELETE .../repositories/{id}/packages/{pkg}/versions/{v} — Delete version
 //	GET    .../repositories/{id}/packages/{pkg}/tags      — List tags (paged)
+//	POST   .../packages/{pkg}/tags?tagId={id}             — Create tag
+//	PATCH  .../packages/{pkg}/tags/{id}                   — Patch tag (blocked by immutableTags)
+//	DELETE .../packages/{pkg}/tags/{id}                   — Delete tag (blocked by immutableTags)
 //	GET    .../repositories/{id}/files                    — List files (paged)
 //
 // The driver has no location dimension, so {l} is accepted and echoed but not
@@ -176,9 +180,25 @@ func splitVerb(seg string) (resource, verb string) {
 
 // Matches claims artifactregistry v1 repository paths. Disjoint from the IAM
 // handler (which matches serviceAccounts|roles at the same prefix).
-func (*Handler) Matches(r *http.Request) bool {
-	_, ok := parseRoute(r.URL.Path)
-	return ok
+//
+// An /operations/{op} path is claimed only when this handler has no shared
+// LRO registry (a standalone package server, which must answer its own polls).
+// In an assembled server h.ops is the same *lro.Registry the shared poller
+// consults, and that poller is registered ahead of this handler, so it always
+// wins first-match-wins routing for every verb (GET/cancel/DELETE) on every
+// operation name, known or not — this handler never needs to (and, per this
+// guard, no longer does) answer for operations it didn't create.
+func (h *Handler) Matches(r *http.Request) bool {
+	rt, ok := parseRoute(r.URL.Path)
+	if !ok {
+		return false
+	}
+
+	if rt.operation != "" && h.ops != nil {
+		return false
+	}
+
+	return true
 }
 
 // ServeHTTP dispatches on method and path shape.

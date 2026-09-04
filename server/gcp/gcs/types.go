@@ -7,6 +7,7 @@ type bucketResource struct {
 	Kind             string            `json:"kind"`
 	ID               string            `json:"id"`
 	Name             string            `json:"name"`
+	ProjectNumber    string            `json:"projectNumber,omitempty"`
 	SelfLink         string            `json:"selfLink,omitempty"`
 	Location         string            `json:"location,omitempty"`
 	LocationType     string            `json:"locationType,omitempty"`
@@ -15,6 +16,7 @@ type bucketResource struct {
 	Labels           map[string]string `json:"labels,omitempty"`
 	Lifecycle        *bucketLifecycle  `json:"lifecycle,omitempty"`
 	IamConfiguration *iamConfiguration `json:"iamConfiguration,omitempty"`
+	RetentionPolicy  *retentionPolicy  `json:"retentionPolicy,omitempty"`
 	Metageneration   string            `json:"metageneration,omitempty"`
 	Etag             string            `json:"etag,omitempty"`
 	TimeCreated      string            `json:"timeCreated,omitempty"`
@@ -39,8 +41,22 @@ type lifecycleAction struct {
 	StorageClass string `json:"storageClass,omitempty"`
 }
 
+// lifecycleCondition carries the full set of GCS lifecycle rule conditions
+// (https://cloud.google.com/storage/docs/lifecycle#conditions). Age and the
+// day-count conditions are pointers so an explicit 0 round-trips distinctly
+// from an absent condition.
 type lifecycleCondition struct {
-	Age int `json:"age,omitempty"`
+	Age                     *int     `json:"age,omitempty"`
+	CreatedBefore           string   `json:"createdBefore,omitempty"`
+	CustomTimeBefore        string   `json:"customTimeBefore,omitempty"`
+	DaysSinceCustomTime     *int     `json:"daysSinceCustomTime,omitempty"`
+	DaysSinceNoncurrentTime *int     `json:"daysSinceNoncurrentTime,omitempty"`
+	NoncurrentTimeBefore    string   `json:"noncurrentTimeBefore,omitempty"`
+	IsLive                  *bool    `json:"isLive,omitempty"`
+	MatchesStorageClass     []string `json:"matchesStorageClass,omitempty"`
+	NumNewerVersions        *int     `json:"numNewerVersions,omitempty"`
+	MatchesPrefix           []string `json:"matchesPrefix,omitempty"`
+	MatchesSuffix           []string `json:"matchesSuffix,omitempty"`
 }
 
 type iamConfiguration struct {
@@ -48,8 +64,20 @@ type iamConfiguration struct {
 	PublicAccessPrevention   string                    `json:"publicAccessPrevention,omitempty"`
 }
 
+// retentionPolicy is the bucket retentionPolicy sub-resource (WORM). GCS encodes
+// retentionPeriod as a string-typed int64 (seconds); effectiveTime is RFC3339;
+// isLocked reports whether the policy has been made permanent.
+type retentionPolicy struct {
+	RetentionPeriod string `json:"retentionPeriod,omitempty"`
+	EffectiveTime   string `json:"effectiveTime,omitempty"`
+	IsLocked        bool   `json:"isLocked,omitempty"`
+}
+
 type uniformBucketLevelAccess struct {
 	Enabled bool `json:"enabled"`
+	// LockedTime is when UBLA becomes permanent; GCS stamps it ~90 days out when
+	// UBLA is enabled and omits it when disabled.
+	LockedTime string `json:"lockedTime,omitempty"`
 }
 
 type bucketsListResponse struct {
@@ -58,27 +86,31 @@ type bucketsListResponse struct {
 }
 
 type objectResource struct {
-	Kind               string            `json:"kind"`
-	ID                 string            `json:"id"`
-	Name               string            `json:"name"`
-	Bucket             string            `json:"bucket"`
-	Generation         string            `json:"generation"`
-	Metageneration     string            `json:"metageneration"`
-	ContentType        string            `json:"contentType,omitempty"`
-	Size               string            `json:"size"`
-	MD5Hash            string            `json:"md5Hash,omitempty"`
-	CRC32C             string            `json:"crc32c,omitempty"`
-	ETag               string            `json:"etag,omitempty"`
-	StorageClass       string            `json:"storageClass,omitempty"`
-	CacheControl       string            `json:"cacheControl,omitempty"`
-	ContentEncoding    string            `json:"contentEncoding,omitempty"`
-	ContentDisposition string            `json:"contentDisposition,omitempty"`
-	ContentLanguage    string            `json:"contentLanguage,omitempty"`
-	TimeCreated        string            `json:"timeCreated,omitempty"`
-	Updated            string            `json:"updated,omitempty"`
-	Metadata           map[string]string `json:"metadata,omitempty"`
-	SelfLink           string            `json:"selfLink,omitempty"`
-	MediaLink          string            `json:"mediaLink,omitempty"`
+	Kind                    string            `json:"kind"`
+	ID                      string            `json:"id"`
+	Name                    string            `json:"name"`
+	Bucket                  string            `json:"bucket"`
+	Generation              string            `json:"generation"`
+	Metageneration          string            `json:"metageneration"`
+	ContentType             string            `json:"contentType,omitempty"`
+	Size                    string            `json:"size"`
+	MD5Hash                 string            `json:"md5Hash,omitempty"`
+	CRC32C                  string            `json:"crc32c,omitempty"`
+	ETag                    string            `json:"etag,omitempty"`
+	StorageClass            string            `json:"storageClass,omitempty"`
+	CacheControl            string            `json:"cacheControl,omitempty"`
+	ContentEncoding         string            `json:"contentEncoding,omitempty"`
+	ContentDisposition      string            `json:"contentDisposition,omitempty"`
+	ContentLanguage         string            `json:"contentLanguage,omitempty"`
+	TimeCreated             string            `json:"timeCreated,omitempty"`
+	Updated                 string            `json:"updated,omitempty"`
+	TimeDeleted             string            `json:"timeDeleted,omitempty"`
+	Metadata                map[string]string `json:"metadata,omitempty"`
+	TemporaryHold           bool              `json:"temporaryHold,omitempty"`
+	EventBasedHold          bool              `json:"eventBasedHold,omitempty"`
+	RetentionExpirationTime string            `json:"retentionExpirationTime,omitempty"`
+	SelfLink                string            `json:"selfLink,omitempty"`
+	MediaLink               string            `json:"mediaLink,omitempty"`
 }
 
 type objectsListResponse struct {
@@ -98,6 +130,8 @@ type objectPatchBody struct {
 	ContentDisposition *string            `json:"contentDisposition"`
 	ContentLanguage    *string            `json:"contentLanguage"`
 	Metadata           map[string]*string `json:"metadata"`
+	TemporaryHold      *bool              `json:"temporaryHold"`
+	EventBasedHold     *bool              `json:"eventBasedHold"`
 }
 
 // composeRequest is the Objects: compose request body.

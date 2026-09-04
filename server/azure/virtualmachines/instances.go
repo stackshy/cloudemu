@@ -3,12 +3,14 @@ package virtualmachines
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"net/http"
 	"sort"
 	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -23,9 +25,24 @@ const armNameTag = "cloudemu:azureName"
 // volume, and an attached volume's driver Device (the LUN we pass to
 // AttachVolume) can be echoed back on GET/LIST/CreateOrUpdate/Update.
 const (
-	diskARMNameTag = "cloudemu:azureDiskName"
-	diskRGTag      = "cloudemu:azureRG"
+	diskARMNameTag      = "cloudemu:azureDiskName"
+	diskRGTag           = "cloudemu:azureRG"
+	diskCreateOptionTag = "cloudemu:createOption"
 )
+
+// osDiskDevice is the driver Device marker a materialized OS disk is attached
+// at, distinguishing it from data disks (which attach at a numeric LUN). It is
+// non-numeric so parseLUN excludes the OS disk from data-disk reconciliation and
+// from the storageProfile.dataDisks response.
+const osDiskDevice = "osdisk"
+
+// createOptionAttach references an existing managed disk rather than
+// provisioning a new one.
+const createOptionAttach = "Attach"
+
+// deleteOptionDelete is the ARM deleteOption that cascades a disk's deletion
+// with its VM (the alternative, "Detach", is the default and leaves the disk).
+const deleteOptionDelete = "Delete"
 
 // URL schemes for building absolute self-referential URLs (async operation
 // status, boot-diagnostics serial log) against the incoming request.
@@ -120,10 +137,17 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
+	// Materialize the VM's OS managed disk as a real Microsoft.Compute/disks
+	// resource so the disks API returns it, attached to the VM.
+	if err := h.materializeOSDisk(r.Context(), rp, instances[0].ID, req.Properties.StorageProfile); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
 	// storageProfile.dataDisks is the VM's complete desired data-disk state on
-	// PUT (real Azure's full-replace semantics): attach every referenced
-	// managed disk not yet attached.
-	if err := h.applyDataDisks(r.Context(), instances[0].ID, dataDisksOf(req.Properties.StorageProfile), true); err != nil {
+	// PUT (real Azure's full-replace semantics): materialize+attach every
+	// implicit disk and attach every referenced managed disk not yet attached.
+	if err := h.applyDataDisks(r.Context(), rp, instances[0].ID, dataDisksOf(req.Properties.StorageProfile), true); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -198,10 +222,17 @@ func (h *Handler) updateExisting(
 		existing = updated
 	}
 
+	// A re-PUT ensures the OS disk exists (idempotent: a no-op when already
+	// materialized, aside from refreshing its deleteOption).
+	if err := h.materializeOSDisk(r.Context(), rp, existing.ID, req.Properties.StorageProfile); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
 	// storageProfile.dataDisks is the VM's complete desired data-disk state on
-	// PUT: attach newly-referenced managed disks and detach any previously
+	// PUT: materialize+attach newly-referenced disks and detach any previously
 	// attached disk whose LUN is no longer present in the request.
-	if err := h.applyDataDisks(r.Context(), existing.ID, dataDisksOf(req.Properties.StorageProfile), true); err != nil {
+	if err := h.applyDataDisks(r.Context(), rp, existing.ID, dataDisksOf(req.Properties.StorageProfile), true); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -257,7 +288,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	// nil for an omitted array and a non-nil (possibly empty) slice for a present
 	// one, so presence is a sufficient declarative-vs-merge discriminator.
 	if err = h.applyDataDisks(
-		r.Context(), inst.ID, dataDisksOf(req.Properties.StorageProfile), dataDisksPresent(req.Properties.StorageProfile),
+		r.Context(), rp, inst.ID, dataDisksOf(req.Properties.StorageProfile), dataDisksPresent(req.Properties.StorageProfile),
 	); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -300,8 +331,13 @@ func dataDisksPresent(s *storageProfile) bool {
 // CreateOrUpdate always uses full-replace; PATCH Update uses full-replace when
 // the request supplies a dataDisks array and merge-patch when it omits one.
 // Both modes attach any entry whose managedDisk.id resolves to a disk not yet
-// attached at that LUN.
-func (h *Handler) applyDataDisks(ctx context.Context, instanceID string, disks []dataDisk, declarative bool) error {
+// attached at that LUN, and materialize a brand-new managed disk for any entry
+// whose createOption is implicit (Empty/FromImage/Copy/Restore).
+//
+//nolint:gocritic // rp is a request-scoped value threaded through the disk apply chain.
+func (h *Handler) applyDataDisks(
+	ctx context.Context, rp azurearm.ResourcePath, instanceID string, disks []dataDisk, declarative bool,
+) error {
 	vols, err := h.compute.DescribeVolumes(ctx, nil)
 	if err != nil {
 		return err
@@ -313,7 +349,7 @@ func (h *Handler) applyDataDisks(ctx context.Context, instanceID string, disks [
 	for i := range disks {
 		seen[disks[i].Lun] = true
 
-		if err := h.applyDataDisk(ctx, instanceID, &disks[i], vols, attached); err != nil {
+		if err := h.applyDataDisk(ctx, rp, instanceID, &disks[i], vols, attached); err != nil {
 			return err
 		}
 	}
@@ -326,12 +362,14 @@ func (h *Handler) applyDataDisks(ctx context.Context, instanceID string, disks [
 }
 
 // applyDataDisk applies one storageProfile.dataDisks entry: detaches the disk
-// currently attached at d.Lun when d.ToBeDetached is set, otherwise attaches
-// the managed disk resolveAttachDiskID resolves d to — a no-op when that disk
-// is already attached at d.Lun, or when d falls into one of
-// resolveAttachDiskID's DEFERRED createOption cases and resolves to "".
+// currently attached at d.Lun when d.ToBeDetached is set, otherwise attaches the
+// disk d references (createOption Attach) or materializes+attaches a brand-new
+// managed disk (createOption Empty/FromImage/Copy/Restore).
+//
+//nolint:gocritic // rp is a request-scoped value threaded through the disk apply chain.
 func (h *Handler) applyDataDisk(
-	ctx context.Context, instanceID string, d *dataDisk, vols []computedriver.VolumeInfo, attached map[int]string,
+	ctx context.Context, rp azurearm.ResourcePath, instanceID string,
+	d *dataDisk, vols []computedriver.VolumeInfo, attached map[int]string,
 ) error {
 	if d.ToBeDetached {
 		volID, ok := attached[d.Lun]
@@ -348,20 +386,74 @@ func (h *Handler) applyDataDisk(
 		return nil
 	}
 
-	return h.attachDataDisk(ctx, instanceID, d, vols, attached)
+	if isImplicitCreateOption(d.CreateOption) {
+		return h.attachImplicitDataDisk(ctx, rp, instanceID, d, attached)
+	}
+
+	return h.attachExistingDataDisk(ctx, instanceID, d, vols, attached)
 }
 
-// attachDataDisk attaches the managed disk resolveAttachDiskID resolves d to.
-// Real Azure's dataDisks are keyed by lun: re-declaring a lun with a
-// different managedDisk.id implicitly detaches whatever disk currently
-// occupies it (clearing that disk's managedBy/diskState) before attaching the
-// new one, rather than mapping two disks onto one lun. When attached[d.Lun]
-// already holds a different volume, we detach it first and update the attached
-// bookkeeping so the rest of this reconciliation pass (and detachUnlistedDisks)
-// sees the new occupant, not the stale one. A no-op when the resolved disk is
-// already attached at d.Lun, or when d falls into one of resolveAttachDiskID's
-// DEFERRED createOption cases and resolves to "".
-func (h *Handler) attachDataDisk(
+// isImplicitCreateOption reports whether a dataDisk/osDisk createOption
+// provisions a brand-new managed disk (as opposed to Attach, which references an
+// existing one). An empty/unknown createOption is not implicit, so such an entry
+// is skipped rather than materialized.
+func isImplicitCreateOption(opt string) bool {
+	switch strings.ToLower(opt) {
+	case "empty", "fromimage", "copy", "restore":
+		return true
+	default:
+		return false
+	}
+}
+
+// attachImplicitDataDisk materializes a brand-new managed disk for an implicit
+// createOption (Empty/FromImage/Copy/Restore) and attaches it at d.Lun. It is
+// idempotent: when a disk is already attached at d.Lun (e.g. a re-PUT re-sending
+// the same implicit entry) it re-materializes nothing and only refreshes the
+// attachment's deleteOption, so a repeated PUT does not pile up phantom disks.
+//
+//nolint:gocritic // rp is a request-scoped value threaded through the disk apply chain.
+func (h *Handler) attachImplicitDataDisk(
+	ctx context.Context, rp azurearm.ResourcePath, instanceID string, d *dataDisk, attached map[int]string,
+) error {
+	if volID, ok := attached[d.Lun]; ok {
+		return h.applyDiskDeleteOption(ctx, volID, d.DeleteOption)
+	}
+
+	name := d.Name
+	if name == "" {
+		name = fmt.Sprintf("%s_datadisk_%d", rp.ResourceName, d.Lun)
+	}
+
+	vol, err := h.compute.CreateVolume(ctx, computedriver.VolumeConfig{
+		Size:       d.DiskSizeGB,
+		VolumeType: managedDiskStorageType(d.ManagedDisk),
+		Tags:       diskMaterializeTags(name, rp.ResourceGroup, d.CreateOption),
+	})
+	if err != nil {
+		return err
+	}
+
+	if err := h.compute.AttachVolume(ctx, vol.ID, instanceID, strconv.Itoa(d.Lun)); err != nil {
+		return err
+	}
+
+	attached[d.Lun] = vol.ID
+
+	return h.applyDiskDeleteOption(ctx, vol.ID, d.DeleteOption)
+}
+
+// attachExistingDataDisk attaches the pre-existing managed disk d references
+// (createOption Attach). Real Azure's dataDisks are keyed by lun: re-declaring a
+// lun with a different managedDisk.id implicitly detaches whatever disk
+// currently occupies it (clearing that disk's managedBy/diskState) before
+// attaching the new one, rather than mapping two disks onto one lun. When
+// attached[d.Lun] already holds a different volume, we detach it first and
+// update the attached bookkeeping so the rest of this reconciliation pass (and
+// detachUnlistedDisks) sees the new occupant, not the stale one. A no-op when d
+// resolves to "" (an empty/unknown createOption). The attachment's deleteOption
+// is recorded on the disk either way, so a re-declared attachment stays in sync.
+func (h *Handler) attachExistingDataDisk(
 	ctx context.Context, instanceID string, d *dataDisk, vols []computedriver.VolumeInfo, attached map[int]string,
 ) error {
 	volID, err := resolveAttachDiskID(d, vols)
@@ -369,8 +461,12 @@ func (h *Handler) attachDataDisk(
 		return err
 	}
 
-	if volID == "" || attached[d.Lun] == volID {
+	if volID == "" {
 		return nil
+	}
+
+	if attached[d.Lun] == volID {
+		return h.applyDiskDeleteOption(ctx, volID, d.DeleteOption)
 	}
 
 	if prevVolID, ok := attached[d.Lun]; ok && prevVolID != volID {
@@ -385,31 +481,136 @@ func (h *Handler) attachDataDisk(
 
 	attached[d.Lun] = volID
 
-	return nil
+	return h.applyDiskDeleteOption(ctx, volID, d.DeleteOption)
 }
 
-// detachAttachedVolumes detaches every volume the instance currently holds,
-// clearing each disk's managedBy/diskState (returning it to Unattached). Used on
-// VM delete so surviving managed disks (deleteOption=Detach) don't dangle at the
-// deleted VM. It reuses the driver's DetachVolume — the same call applyDataDisks
-// uses — rather than duplicating detach bookkeeping.
-func (h *Handler) detachAttachedVolumes(ctx context.Context, instanceID string) error {
+// applyDiskDeleteOption records an attachment's ARM deleteOption on the disk so
+// VM delete can cascade (Delete → delete the disk, Detach → keep it). It maps
+// deleteOption onto the shared VolumeInfo.DeleteOnTermination via the optional
+// AzureDiskDeleteOptioner capability; a driver without it is a no-op.
+func (h *Handler) applyDiskDeleteOption(ctx context.Context, volID, deleteOption string) error {
+	optioner, ok := h.compute.(computedriver.AzureDiskDeleteOptioner)
+	if !ok {
+		return nil
+	}
+
+	return optioner.SetDiskDeleteOnTermination(ctx, volID, strings.EqualFold(deleteOption, deleteOptionDelete))
+}
+
+// managedDiskStorageType returns the storageAccountType (disk SKU) an ARM
+// managedDisk block requests, or "" when unset (CreateVolume then defaults it).
+func managedDiskStorageType(m *managedDiskParameters) string {
+	if m == nil {
+		return ""
+	}
+
+	return m.StorageAccountType
+}
+
+// diskMaterializeTags builds the cloudemu-internal tag set that lets the disks
+// wire handler render a materialized OS/data disk as a Microsoft.Compute/disks
+// resource: its ARM name, resource group, and createOption.
+func diskMaterializeTags(name, resourceGroup, createOption string) map[string]string {
+	tags := map[string]string{diskARMNameTag: name}
+
+	if resourceGroup != "" {
+		tags[diskRGTag] = resourceGroup
+	}
+
+	if createOption != "" {
+		tags[diskCreateOptionTag] = createOption
+	}
+
+	return tags
+}
+
+// materializeOSDisk creates and attaches the VM's OS managed disk as a real
+// Microsoft.Compute/disks resource from storageProfile.osDisk, so the disks API
+// returns it. createOption Attach references an existing disk; Empty/FromImage
+// (or an unset createOption, treated as FromImage) provisions a new one. It is
+// idempotent: a re-PUT that finds the OS disk already attached only refreshes
+// the attachment's deleteOption. A request with no osDisk is a no-op.
+//
+//nolint:gocritic // rp is a request-scoped value.
+func (h *Handler) materializeOSDisk(
+	ctx context.Context, rp azurearm.ResourcePath, instanceID string, sp *storageProfile,
+) error {
+	if sp == nil || sp.OSDisk == nil {
+		return nil
+	}
+
+	od := sp.OSDisk
+
 	vols, err := h.compute.DescribeVolumes(ctx, nil)
 	if err != nil {
 		return err
 	}
 
-	for i := range vols {
-		if vols[i].AttachedTo != instanceID {
-			continue
+	if volID, ok := osDiskOf(vols, instanceID); ok {
+		return h.applyDiskDeleteOption(ctx, volID, od.DeleteOption)
+	}
+
+	volID, err := h.resolveOrCreateOSDisk(ctx, rp, od, vols)
+	if err != nil || volID == "" {
+		return err
+	}
+
+	if err := h.compute.AttachVolume(ctx, volID, instanceID, osDiskDevice); err != nil {
+		return err
+	}
+
+	return h.applyDiskDeleteOption(ctx, volID, od.DeleteOption)
+}
+
+// resolveOrCreateOSDisk resolves the volume backing the OS disk: an Attach
+// createOption references an existing managed disk by managedDisk.id, while any
+// other createOption (defaulting to FromImage) provisions a brand-new disk named
+// {vmName}_osdisk when the request supplies no name.
+//
+//nolint:gocritic // rp is a request-scoped value.
+func (h *Handler) resolveOrCreateOSDisk(
+	ctx context.Context, rp azurearm.ResourcePath, od *osDisk, vols []computedriver.VolumeInfo,
+) (string, error) {
+	if strings.EqualFold(od.CreateOption, createOptionAttach) {
+		if od.ManagedDisk == nil || od.ManagedDisk.ID == "" {
+			return "", cerrors.New(cerrors.InvalidArgument, "osDisk createOption Attach requires managedDisk.id")
 		}
 
-		if err := h.compute.DetachVolume(ctx, vols[i].ID, "", ""); err != nil {
-			return err
+		return resolveManagedDiskVolID(od.ManagedDisk.ID, vols)
+	}
+
+	name := od.Name
+	if name == "" {
+		name = rp.ResourceName + "_osdisk"
+	}
+
+	createOption := od.CreateOption
+	if createOption == "" {
+		createOption = "FromImage"
+	}
+
+	vol, err := h.compute.CreateVolume(ctx, computedriver.VolumeConfig{
+		Size:       od.DiskSizeGB,
+		VolumeType: managedDiskStorageType(od.ManagedDisk),
+		Tags:       diskMaterializeTags(name, rp.ResourceGroup, createOption),
+	})
+	if err != nil {
+		return "", err
+	}
+
+	return vol.ID, nil
+}
+
+// osDiskOf returns the id of the OS disk currently attached to instanceID (the
+// volume attached at the osDiskDevice marker), reporting false when none is.
+func osDiskOf(vols []computedriver.VolumeInfo, instanceID string) (string, bool) {
+	for i := range vols {
+		if vols[i].AttachedTo == instanceID && vols[i].Device == osDiskDevice {
+			return vols[i].ID, true
 		}
 	}
 
-	return nil
+	return "", false
 }
 
 // detachUnlistedDisks detaches every attached disk whose LUN is absent from
@@ -462,14 +663,11 @@ func parseLUN(device string) (int, bool) {
 
 // resolveAttachDiskID resolves the volume ID a dataDisk entry's managedDisk.id
 // references. Only createOption "Attach" references an existing managed disk;
-// Empty/FromImage/Copy/Restore implicitly provision a brand-new disk from the
-// VM's storageProfile, which cloudemu does not yet create (DEFERRED — create
-// the managed disk first via PUT .../disks/{name}, then reference it here with
-// createOption "Attach"). Such entries resolve to "" and are silently skipped
-// rather than erroring, so a request that also sets an unsupported implicit
-// disk alongside a supported Attach entry still succeeds for the latter.
+// implicit createOptions (Empty/FromImage/Copy/Restore) are materialized
+// elsewhere (attachImplicitDataDisk), so this resolves them to "" and they are
+// skipped here rather than erroring.
 func resolveAttachDiskID(d *dataDisk, vols []computedriver.VolumeInfo) (string, error) {
-	if !strings.EqualFold(d.CreateOption, "Attach") {
+	if !strings.EqualFold(d.CreateOption, createOptionAttach) {
 		return "", nil
 	}
 
@@ -478,9 +676,16 @@ func resolveAttachDiskID(d *dataDisk, vols []computedriver.VolumeInfo) (string, 
 			"dataDisk lun %d: createOption Attach requires managedDisk.id", d.Lun)
 	}
 
-	pp, ok := azurearm.ParsePath(d.ManagedDisk.ID)
+	return resolveManagedDiskVolID(d.ManagedDisk.ID, vols)
+}
+
+// resolveManagedDiskVolID finds the driver volume backing an ARM managed-disk id
+// (matched by its azureDiskName / azureRG tags). Returns NotFound when no volume
+// carries that name, InvalidArgument when the id is malformed.
+func resolveManagedDiskVolID(managedDiskID string, vols []computedriver.VolumeInfo) (string, error) {
+	pp, ok := azurearm.ParsePath(managedDiskID)
 	if !ok || pp.ResourceName == "" {
-		return "", cerrors.Newf(cerrors.InvalidArgument, "malformed managed disk id %q", d.ManagedDisk.ID)
+		return "", cerrors.Newf(cerrors.InvalidArgument, "malformed managed disk id %q", managedDiskID)
 	}
 
 	for i := range vols {
@@ -570,6 +775,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 	out := make([]vmResponse, 0, len(instances))
 
 	for i := range instances {
+		// A deleted VM's record lingers in the shared compute driver (see
+		// findByName), but real Azure LIST never reports a deleted resource.
+		if instances[i].State == stateTerminated {
+			continue
+		}
+
 		if rp.ResourceGroup != "" && !strings.EqualFold(instances[i].ResourceGroup, rp.ResourceGroup) {
 			continue
 		}
@@ -613,15 +824,10 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 		return
 	}
 
-	// A deleted VM's attached data disks default to deleteOption=Detach: the disk
-	// survives but must be released. Detach every volume the VM held first so each
-	// disk's managedBy/diskState is cleared (returned to Unattached) rather than
-	// left dangling at the now-deleted VM, matching real Azure.
-	if err := h.detachAttachedVolumes(r.Context(), inst.ID); err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
+	// TerminateInstances cascades the VM's attached managed disks per each
+	// attachment's deleteOption (recorded as VolumeInfo.DeleteOnTermination):
+	// a "Delete" disk is deleted with the VM, a "Detach" disk is released
+	// (returned to Unattached) rather than left dangling — matching real Azure.
 	if err := h.compute.TerminateInstances(r.Context(), []string{inst.ID}); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -637,11 +843,11 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 // an exact match. Resource-group comparison is case-insensitive, matching ARM.
 // The subscription is unused (the emulator is single-estate).
 //
-// Each VM's attached data disks are detached first — the same release the
-// single-VM delete() path does — so a cascade-deleted VM clears its disks'
-// managedBy/diskState (deleteOption=Detach) rather than leaving them dangling at
-// the now-deleted VM. Detach is best-effort: a single failure is recorded but
-// does not stop the remaining teardown.
+// Each VM's attached managed disks cascade per their deleteOption inside
+// TerminateInstances — the same release the single-VM delete() path relies on —
+// so a cascade-deleted VM deletes its "Delete" disks and releases its "Detach"
+// disks (returned to Unattached) rather than leaving them dangling at the
+// now-deleted VM.
 func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
 	var firstErr error
 
@@ -656,9 +862,9 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup strin
 	return firstErr
 }
 
-// purgeInstances detaches and terminates every virtual machine under the given
-// resource group — the VM half of the cascade. Detach is best-effort per VM so
-// one failure does not stop the rest.
+// purgeInstances terminates every virtual machine under the given resource
+// group — the VM half of the cascade. TerminateInstances cascades each VM's
+// attached disks per their deleteOption.
 func (h *Handler) purgeInstances(ctx context.Context, resourceGroup string) error {
 	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
 	if err != nil {
@@ -677,19 +883,7 @@ func (h *Handler) purgeInstances(ctx context.Context, resourceGroup string) erro
 		return nil
 	}
 
-	var firstErr error
-
-	for _, id := range ids {
-		if derr := h.detachAttachedVolumes(ctx, id); derr != nil && firstErr == nil {
-			firstErr = derr
-		}
-	}
-
-	if terr := h.compute.TerminateInstances(ctx, ids); terr != nil && firstErr == nil {
-		firstErr = terr
-	}
-
-	return firstErr
+	return h.compute.TerminateInstances(ctx, ids)
 }
 
 // purgeScaleSets deletes every virtual machine scale set under the given
@@ -783,6 +977,57 @@ func (h *Handler) powerAction(
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) restart(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	h.lifecycleAction(w, r, rp, h.compute.RebootInstances)
+}
+
+// redeploy handles POST virtualMachines/{name}/redeploy. Real Azure powers the
+// VM off, relocates it to a fresh host, and powers it back on; the net
+// observable effect is a brief power cycle that leaves the VM running with
+// provisioningState Succeeded and no data loss. We model that by power-cycling
+// the VM back to the running state, reusing the existing lifecycle plumbing so
+// the same running metrics are emitted.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) redeploy(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	h.powerCycleToRunning(w, r, rp)
+}
+
+// reimage handles POST virtualMachines/{name}/reimage. Real Azure reinstalls
+// the OS by resetting the OS disk to its original image and leaves the VM
+// running. We model the observable power/state transition (VM ends running,
+// provisioningState Succeeded); OS-disk-reset fidelity is deferred to the Azure
+// OS-disk PR, which is the work that first materializes the OS disk as a
+// tracked resource for the emulator to reset.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) reimage(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	h.powerCycleToRunning(w, r, rp)
+}
+
+// powerCycleToRunning is the shared body for redeploy/reimage: it takes the VM
+// through a power cycle that ends in the running state. A running VM is
+// rebooted (running→restarting→running); a stopped/deallocated one is started.
+// Returns 202 + async polling header so real Azure SDK pollers terminate.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) powerCycleToRunning(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	inst, err := findByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if powerCode(inst) == stateRunning {
+		err = h.compute.RebootInstances(r.Context(), []string{inst.ID})
+	} else {
+		err = h.compute.StartInstances(r.Context(), []string{inst.ID})
+	}
+
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	writeAcceptedAsync(w, r, rp.Subscription, rp.SubResource+"-"+rp.ResourceName)
 }
 
 // generalize handles POST virtualMachines/{name}/generalize. It marks the VM
@@ -986,6 +1231,13 @@ func writeAcceptedAsync(w http.ResponseWriter, r *http.Request, subscription, op
 // findByName looks up a VM by its ARM resource name within a resource group.
 // An empty resourceGroup matches across all groups (subscription-scoped lookup).
 // Returns NotFound when no matching instance exists.
+//
+// A terminated instance never matches: the shared compute driver keeps a
+// terminated instance's record around (AWS EC2's DescribeInstances keeps
+// reporting a terminated instance for a while, which the driver models), but
+// real Azure ARM deletes the resource outright — a GET/PATCH/power-action/PUT
+// against a deleted VM's name gets a 404 ResourceNotFound, and a re-PUT of the
+// same name provisions a brand-new VM rather than resurrecting the old one.
 func findByName(ctx context.Context, c computedriver.Compute, resourceGroup, name string) (*computedriver.Instance, error) {
 	instances, err := c.DescribeInstances(ctx, nil, nil)
 	if err != nil {
@@ -993,6 +1245,10 @@ func findByName(ctx context.Context, c computedriver.Compute, resourceGroup, nam
 	}
 
 	for i := range instances {
+		if instances[i].State == stateTerminated {
+			continue
+		}
+
 		// ARM resource names and resource-group names are case-insensitive, so a
 		// GET/LIST with differently-cased segments must still resolve the VM.
 		if !strings.EqualFold(tagOr(instances[i].Tags, armNameTag, ""), name) {
@@ -1195,7 +1451,7 @@ func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vm
 		Zones:    inst.Zones,
 		Identity: fromDriverIdentity(inst.Identity),
 		Properties: vmResponseProps{
-			VMID:              inst.ID,
+			VMID:              vmGUID(inst.ID),
 			ProvisioningState: provisioningState,
 			HardwareProfile:   &hardwareProfile{VMSize: inst.InstanceType},
 			StorageProfile:    osDiskProfile(inst.OSType),
@@ -1238,6 +1494,15 @@ func defaultIfEmpty(v, fallback string) string {
 	}
 
 	return v
+}
+
+// vmGUID derives a stable GUID-shaped properties.vmId from the driver instance
+// id, mirroring the GUID Azure always assigns a VM (real ARM never returns the
+// emulator's internal "vm-XXXXXXXX" id shape here). Deterministic per instance
+// id so it stays stable across GET/LIST/PATCH, matching diskUniqueID's
+// analogous treatment of Microsoft.Compute/disks' properties.uniqueId.
+func vmGUID(instanceID string) string {
+	return idgen.SyntheticGUID("vmid/" + instanceID)
 }
 
 func stripInternalTags(in map[string]string) map[string]string {

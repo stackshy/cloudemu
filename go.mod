@@ -7,12 +7,15 @@ require (
 	cloud.google.com/go/compute v1.60.0
 	cloud.google.com/go/eventarc v1.18.0
 	cloud.google.com/go/firestore v1.22.0
+	cloud.google.com/go/iam v1.7.0
 	cloud.google.com/go/storage v1.62.1
+	github.com/Azure/azure-kusto-go v0.16.1
 	github.com/Azure/azure-sdk-for-go/sdk/ai/azopenai v0.7.2
 	github.com/Azure/azure-sdk-for-go/sdk/azcore v1.22.0
 	github.com/Azure/azure-sdk-for-go/sdk/containers/azcontainerregistry v0.2.3
 	github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos v1.4.2
 	github.com/Azure/azure-sdk-for-go/sdk/data/aztables v1.4.1
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2 v2.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v3 v3.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3 v3.0.0-beta.3
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cognitiveservices/armcognitiveservices v1.8.0
@@ -21,11 +24,15 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v6 v6.6.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cosmos/armcosmos/v3 v3.4.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/cosmosforpostgresql/armcosmosforpostgresql v1.1.0
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/costmanagement/armcostmanagement v1.1.1
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/databricks/armdatabricks v1.1.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/dns/armdns v1.2.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/eventgrid/armeventgrid/v2 v2.3.0
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/eventhub/armeventhub v1.0.0
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/kusto/armkusto v1.3.1
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/machinelearning/armmachinelearning/v4 v4.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/monitor/armmonitor v0.13.0
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/msi/armmsi v1.3.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/mysql/armmysqlflexibleservers v1.2.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/network/armnetwork v1.1.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/notificationhubs/armnotificationhubs v1.2.0
@@ -33,16 +40,19 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/postgresql/armpostgresqlflexibleservers v1.1.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/redis/armredis/v3 v3.3.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resourcegraph/armresourcegraph v0.9.0
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armlocks v1.2.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources v1.2.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/search/armsearch v1.4.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/servicebus/armservicebus/v2 v2.0.0-beta.3
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/sql/armsql v1.2.0
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/sqlvirtualmachine/armsqlvirtualmachine v1.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/storage/armstorage v1.8.1
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/synapse/armsynapse v0.8.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azkeys v1.5.0
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/azsecrets v1.5.0
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azblob v1.6.4
 	github.com/Azure/azure-sdk-for-go/sdk/storage/azqueue v1.0.1
-	github.com/aws/aws-sdk-go-v2 v1.43.7
+	github.com/aws/aws-sdk-go-v2 v1.43.8
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.16
 	github.com/aws/aws-sdk-go-v2/config v1.32.14
 	github.com/aws/aws-sdk-go-v2/credentials v1.19.14
@@ -57,6 +67,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/cloudwatch v1.56.2
 	github.com/aws/aws-sdk-go-v2/service/cloudwatchlogs v1.79.0
 	github.com/aws/aws-sdk-go-v2/service/configservice v1.68.4
+	github.com/aws/aws-sdk-go-v2/service/costexplorer v1.63.6
 	github.com/aws/aws-sdk-go-v2/service/docdb v1.48.15
 	github.com/aws/aws-sdk-go-v2/service/dynamodb v1.57.1
 	github.com/aws/aws-sdk-go-v2/service/dynamodbstreams v1.36.7
@@ -67,6 +78,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/eks v1.83.0
 	github.com/aws/aws-sdk-go-v2/service/elasticache v1.55.0
 	github.com/aws/aws-sdk-go-v2/service/elasticloadbalancingv2 v1.56.0
+	github.com/aws/aws-sdk-go-v2/service/emr v1.64.8
 	github.com/aws/aws-sdk-go-v2/service/eventbridge v1.47.0
 	github.com/aws/aws-sdk-go-v2/service/glue v1.152.0
 	github.com/aws/aws-sdk-go-v2/service/guardduty v1.79.3
@@ -90,7 +102,9 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sagemaker v1.254.0
 	github.com/aws/aws-sdk-go-v2/service/sagemakerfeaturestoreruntime v1.35.7
 	github.com/aws/aws-sdk-go-v2/service/sagemakerruntime v1.41.0
+	github.com/aws/aws-sdk-go-v2/service/savingsplans v1.32.4
 	github.com/aws/aws-sdk-go-v2/service/secretsmanager v1.42.5
+	github.com/aws/aws-sdk-go-v2/service/servicequotas v1.30.0
 	github.com/aws/aws-sdk-go-v2/service/sesv2 v1.66.4
 	github.com/aws/aws-sdk-go-v2/service/sfn v1.45.4
 	github.com/aws/aws-sdk-go-v2/service/sns v1.41.0
@@ -99,12 +113,13 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10
 	github.com/aws/aws-sdk-go-v2/service/vpclattice v1.25.5
 	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.77.3
-	github.com/aws/smithy-go v1.27.8
+	github.com/aws/smithy-go v1.27.10
 	github.com/databricks/databricks-sdk-go v0.144.0
 	github.com/fxamacker/cbor/v2 v2.9.1
 	github.com/google/gnostic-models v0.6.8
 	github.com/stretchr/testify v1.11.1
 	golang.org/x/crypto v0.54.0
+	golang.org/x/net v0.57.0
 	google.golang.org/api v0.291.0
 	google.golang.org/grpc v1.82.1
 	google.golang.org/protobuf v1.36.11
@@ -120,18 +135,19 @@ require (
 	cloud.google.com/go/auth v0.22.0 // indirect
 	cloud.google.com/go/auth/oauth2adapt v0.2.8 // indirect
 	cloud.google.com/go/compute/metadata v0.9.0 // indirect
-	cloud.google.com/go/iam v1.7.0 // indirect
 	cloud.google.com/go/longrunning v0.9.0 // indirect
 	cloud.google.com/go/monitoring v1.27.0 // indirect
 	github.com/Azure/azure-sdk-for-go v68.0.0+incompatible // indirect
+	github.com/Azure/azure-sdk-for-go/sdk/azidentity v1.14.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 // indirect
 	github.com/Azure/azure-sdk-for-go/sdk/security/keyvault/internal v1.2.0 // indirect
+	github.com/AzureAD/microsoft-authentication-library-for-go v1.7.2 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/detectors/gcp v1.32.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.55.0 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.55.0 // indirect
 	github.com/aws/aws-sdk-go-v2/feature/ec2/imds v1.18.21 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.38 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.38 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.39 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.39 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/ini v1.8.6 // indirect
 	github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36 // indirect
 	github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.14 // indirect
@@ -156,6 +172,7 @@ require (
 	github.com/go-openapi/jsonreference v0.20.2 // indirect
 	github.com/go-openapi/swag v0.23.0 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
+	github.com/golang-jwt/jwt/v5 v5.3.1 // indirect
 	github.com/golang/protobuf v1.5.4 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/google/go-querystring v1.1.0 // indirect
@@ -167,6 +184,7 @@ require (
 	github.com/jmespath/go-jmespath v0.4.0 // indirect
 	github.com/josharian/intern v1.0.0 // indirect
 	github.com/json-iterator/go v1.1.12 // indirect
+	github.com/kylelemons/godebug v1.1.0 // indirect
 	github.com/mailru/easyjson v0.7.7 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
@@ -175,6 +193,8 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/planetscale/vtprotobuf v0.6.1-0.20240319094008-0393e58bdf10 // indirect
 	github.com/pmezard/go-difflib v1.0.1-0.20181226105442-5d4384ee4fb2 // indirect
+	github.com/samber/lo v1.38.1 // indirect
+	github.com/shopspring/decimal v1.3.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
 	github.com/spiffe/go-spiffe/v2 v2.6.0 // indirect
 	github.com/x448/float16 v0.8.4 // indirect
@@ -189,7 +209,6 @@ require (
 	go.opentelemetry.io/otel/trace v1.44.0 // indirect
 	golang.org/x/exp v0.0.0-20240222234643-814bf88cf225 // indirect
 	golang.org/x/mod v0.37.0 // indirect
-	golang.org/x/net v0.57.0 // indirect
 	golang.org/x/oauth2 v0.36.0 // indirect
 	golang.org/x/sync v0.22.0 // indirect
 	golang.org/x/sys v0.47.0 // indirect

@@ -165,8 +165,8 @@ func (m *Mock) EnableKeyRotation(_ context.Context, keyID string, rotationPeriod
 	}
 
 	return m.mutateKey(keyID, func(kd *keyData) error {
-		if kd.meta.KeySpec != driver.SpecSymmetricDefault {
-			return errors.New(errors.InvalidArgument, "only symmetric keys support rotation")
+		if kd.meta.KeySpec != driver.SpecSymmetricDefault || kd.meta.Origin == driver.OriginExternal {
+			return driver.ErrUnsupportedOperation
 		}
 
 		kd.rotationEnabled = true
@@ -230,12 +230,8 @@ func (m *Mock) ListKeyRotations(_ context.Context, keyID string) ([]driver.Rotat
 // RotateKeyOnDemand rotates the key material now and records the rotation.
 func (m *Mock) RotateKeyOnDemand(_ context.Context, keyID string) error {
 	return m.mutateKey(keyID, func(kd *keyData) error {
-		if kd.meta.KeySpec != driver.SpecSymmetricDefault {
-			return errors.New(errors.InvalidArgument, "only symmetric keys support on-demand rotation")
-		}
-
-		if kd.meta.Origin == driver.OriginExternal {
-			return errors.New(errors.InvalidArgument, "keys with imported material cannot be rotated")
+		if kd.meta.KeySpec != driver.SpecSymmetricDefault || kd.meta.Origin == driver.OriginExternal {
+			return driver.ErrUnsupportedOperation
 		}
 
 		mat, err := generateMaterial(kd.meta.KeySpec)

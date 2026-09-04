@@ -36,13 +36,18 @@ AWS's `database` service · portable interface `driver.Database` · [AWS index](
 
 Discovered by type assertion; only some providers implement these.
 
-### TableAttributes
+### Backuper
 
-TableAttributes is an OPTIONAL capability, discovered by type assertion (like
+Backuper is an OPTIONAL capability, discovered by type assertion (like the
 
 | Operation | Description |
 | --- | --- |
-| `TableAttributes` |  |
+| `CreateBackup` | CreateBackup snapshots the table's schema and items under a new BackupArn. |
+| `DeleteBackup` | DeleteBackup removes the backup identified by backupArn, returning its |
+| `DescribeBackup` | DescribeBackup returns the backup identified by backupArn. |
+| `ListBackups` | ListBackups returns every backup, or only those of tableName when it is |
+| `RestoreTableFromBackup` | RestoreTableFromBackup creates targetTable from the backup's schema and |
+| `RestoreTableToPointInTime` | RestoreTableToPointInTime creates targetTable from sourceTable. The |
 
 ## Not in scope
 

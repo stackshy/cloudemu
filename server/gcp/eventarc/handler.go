@@ -30,6 +30,13 @@
 // (Firestore, IAM, Secret Manager, GKE, …), so registration order among them is
 // unconstrained. Registered before the GCS fallback.
 //
+// Create and Patch validate a trigger the way real Eventarc does at admission
+// time: eventFilters must include a "type" filter naming a known event type
+// (an audit-log trigger additionally needs "serviceName" and "methodName"),
+// and — when a Cloud Functions / Cloud Run resolver is wired — the
+// destination must name a resource that actually exists rather than a dead
+// route. See validate.go.
+//
 // Coverage (v1 REST):
 //
 //	POST   /v1/projects/{p}/locations/{l}/triggers?triggerId={id}   — Create (LRO, done inline)
@@ -68,6 +75,15 @@ type Handler struct {
 	// polls the returned operation name gets the typed response (and unknown
 	// names 404). Nil in a standalone package server.
 	ops *lro.Registry
+
+	// functions and cloudRun resolve a trigger's destination to an existing
+	// Cloud Function / Cloud Run service so Create/Patch can reject a trigger
+	// that routes to a resource that doesn't exist. Nil (the default) skips
+	// that half of destination validation gracefully — a standalone package
+	// server that doesn't wire the peer service keeps accepting any
+	// destination, as before.
+	functions FunctionResolver
+	cloudRun  CloudRunResolver
 }
 
 // New returns an Eventarc handler backed by b.
@@ -78,6 +94,15 @@ func New(b ebdriver.EventBus) *Handler {
 // SetOperationRegistry wires the shared LRO poller so created operations are
 // resolvable (with their response) through the full server's operations host.
 func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
+
+// SetFunctionResolver wires the Cloud Functions backend so a trigger whose
+// destination names a Cloud Function is validated against it at Create/Patch
+// time. The cloudfunctions driver satisfies this via GetFunction.
+func (h *Handler) SetFunctionResolver(r FunctionResolver) { h.functions = r }
+
+// SetCloudRunResolver is the Cloud Run analog of SetFunctionResolver. The
+// cloudrun driver satisfies this via GetService.
+func (h *Handler) SetCloudRunResolver(r CloudRunResolver) { h.cloudRun = r }
 
 type route struct {
 	project   string
@@ -123,9 +148,25 @@ func parseRoute(urlPath string) (route, bool) {
 
 // Matches claims Eventarc v1 trigger paths. Disjoint from the other
 // /v1/projects/ GCP handlers, so registration order is unconstrained.
-func (*Handler) Matches(r *http.Request) bool {
-	_, ok := parseRoute(r.URL.Path)
-	return ok
+//
+// An /operations/{op} path is claimed only when this handler has no shared
+// LRO registry (a standalone package server, which must answer its own polls).
+// In an assembled server h.ops is the same *lro.Registry the shared poller
+// consults, and that poller is registered ahead of this handler, so it always
+// wins first-match-wins routing for every verb (GET/cancel/DELETE) on every
+// operation name, known or not — this handler never needs to (and, per this
+// guard, no longer does) answer for operations it didn't create.
+func (h *Handler) Matches(r *http.Request) bool {
+	rt, ok := parseRoute(r.URL.Path)
+	if !ok {
+		return false
+	}
+
+	if rt.operation != "" && h.ops != nil {
+		return false
+	}
+
+	return true
 }
 
 // ServeHTTP dispatches on method and path shape.

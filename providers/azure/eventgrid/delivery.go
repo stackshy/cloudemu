@@ -17,16 +17,17 @@ import (
 // ARM EventSubscriptionDestination.endpointType values this mock delivers to.
 // WebHook POSTs the event envelope over HTTP; ServiceBusQueue/ServiceBusTopic
 // enqueue it into the peer Service Bus queue/topic; AzureFunction invokes the
-// peer Functions app with it. EventHub, StorageQueue, and HybridConnection
-// destinations are still parsed and round-trip on the subscription resource
-// (the raw ARM properties JSON is echoed verbatim regardless of type) but are
-// not delivered to: they have no peer mock in this codebase and are left as a
-// follow-up (see PR notes).
+// peer Functions app with it; StorageQueue enqueues into the peer Azure Queue
+// Storage queue. EventHub and HybridConnection destinations are still parsed
+// and round-trip on the subscription resource (the raw ARM properties JSON is
+// echoed verbatim regardless of type) but are not delivered to: they have no
+// peer mock in this codebase and are left as a follow-up (see PR notes).
 const (
 	endpointTypeWebHook         = "WebHook"
 	endpointTypeServiceBusQueue = "ServiceBusQueue"
 	endpointTypeServiceBusTopic = "ServiceBusTopic"
 	endpointTypeAzureFunction   = "AzureFunction"
+	endpointTypeStorageQueue    = "StorageQueue"
 )
 
 // defaultDataVersion is the dataVersion Event Grid stamps on a delivered event
@@ -61,7 +62,8 @@ const webhookDeliveryTimeout = 10 * time.Second
 type subscriptionDestination struct {
 	EndpointType string
 	EndpointURL  string // WebHook
-	ResourceID   string // ServiceBusQueue/Topic, EventHub, AzureFunction, StorageQueue, HybridConnection
+	ResourceID   string // ServiceBusQueue/Topic, EventHub, AzureFunction; storage account for StorageQueue
+	QueueName    string // StorageQueue: the queue name under ResourceID's storage account
 }
 
 // parseSubscriptionDestination extracts the "destination" object from a raw
@@ -77,6 +79,7 @@ func parseSubscriptionDestination(rawProperties string) subscriptionDestination 
 			Properties   struct {
 				EndpointURL string `json:"endpointUrl"`
 				ResourceID  string `json:"resourceId"`
+				QueueName   string `json:"queueName"`
 			} `json:"properties"`
 		} `json:"destination"`
 	}
@@ -89,6 +92,7 @@ func parseSubscriptionDestination(rawProperties string) subscriptionDestination 
 		EndpointType: body.Destination.EndpointType,
 		EndpointURL:  body.Destination.Properties.EndpointURL,
 		ResourceID:   body.Destination.Properties.ResourceID,
+		QueueName:    body.Destination.Properties.QueueName,
 	}
 }
 
@@ -108,19 +112,20 @@ type deliveryEvent struct {
 
 // deliverToTargets delivers event to every matched subscription's destination,
 // dispatched by the destination's endpointType: WebHook (HTTP POST),
-// ServiceBusQueue/ServiceBusTopic (enqueue into the peer Service Bus), and
-// AzureFunction (invoke the peer Functions app). All destinations receive the
-// same rendered EventGridEvent envelope. Delivery is synchronous (mirroring how
-// AWS EventBridge's deliverToTargets runs in-line in this codebase) but
-// decoupled from the caller's context so a client that cancels its publish
-// request doesn't abort in-flight deliveries. The caller ctx's re-entrant
-// delivery depth is carried forward so a self-referential chain (a WebHook that
-// points back at this emulator, or a Function that re-publishes) stays bounded —
-// the cap is enforced in postWebhook / functions.InvokeExternal, mirroring
-// lambda.InvokeExternal. EventHub, StorageQueue, and HybridConnection
-// destinations are parsed and round-trip on the subscription resource but are
-// not delivered to (no peer mock; see PR notes). Filters are already applied by
-// matchedRuleData, so every rd here is a filter-matched subscription.
+// ServiceBusQueue/ServiceBusTopic (enqueue into the peer Service Bus),
+// AzureFunction (invoke the peer Functions app), and StorageQueue (enqueue into
+// the peer Azure Queue Storage queue). All destinations receive the same
+// rendered EventGridEvent envelope. Delivery is synchronous (mirroring how AWS
+// EventBridge's deliverToTargets runs in-line in this codebase) but decoupled
+// from the caller's context so a client that cancels its publish request
+// doesn't abort in-flight deliveries. The caller ctx's re-entrant delivery
+// depth is carried forward so a self-referential chain (a WebHook that points
+// back at this emulator, or a Function that re-publishes) stays bounded — the
+// cap is enforced in postWebhook / functions.InvokeExternal, mirroring
+// lambda.InvokeExternal. EventHub and HybridConnection destinations are parsed
+// and round-trip on the subscription resource but are not delivered to (no
+// peer mock; see PR notes). Filters are already applied by matchedRuleData, so
+// every rd here is a filter-matched subscription.
 func (m *Mock) deliverToTargets(ctx context.Context, matched []*ruleData, event *driver.Event, topicARN string) {
 	if len(matched) == 0 {
 		return
@@ -162,29 +167,58 @@ func (m *Mock) deliverToTargets(ctx context.Context, matched []*ruleData, event 
 // dispatchDestination routes one rendered envelope to a single subscription
 // destination by its endpointType. A nil peer (the injector was never wired) or
 // an unresolvable resource id is skipped gracefully — never a panic — matching
-// how EventBridge's dispatchTarget silently ignores an unwired sink.
+// how EventBridge's dispatchTarget silently ignores an unwired sink. Each
+// endpointType's dispatch is split into its own small method to keep this
+// switch's cyclomatic complexity low.
 func (m *Mock) dispatchDestination(ctx context.Context, dest subscriptionDestination, body []byte) {
 	switch dest.EndpointType {
 	case endpointTypeWebHook:
-		if dest.EndpointURL != "" {
-			m.postWebhook(ctx, dest.EndpointURL, body)
-		}
+		m.dispatchWebHook(ctx, dest, body)
 	case endpointTypeServiceBusQueue, endpointTypeServiceBusTopic:
-		if m.serviceBus == nil {
-			return
-		}
-
-		if name := resourceLeafName(dest.ResourceID); name != "" {
-			_ = m.serviceBus.DeliverExternal(ctx, name, string(body))
-		}
+		m.dispatchServiceBus(ctx, dest, body)
 	case endpointTypeAzureFunction:
-		if m.functions == nil {
-			return
-		}
+		m.dispatchAzureFunction(ctx, dest, body)
+	case endpointTypeStorageQueue:
+		m.dispatchStorageQueue(ctx, dest, body)
+	}
+}
 
-		if app := functionAppName(dest.ResourceID); app != "" {
-			_ = m.functions.InvokeExternal(ctx, app, body)
-		}
+func (m *Mock) dispatchWebHook(ctx context.Context, dest subscriptionDestination, body []byte) {
+	if dest.EndpointURL != "" {
+		m.postWebhook(ctx, dest.EndpointURL, body)
+	}
+}
+
+func (m *Mock) dispatchServiceBus(ctx context.Context, dest subscriptionDestination, body []byte) {
+	if m.serviceBus == nil {
+		return
+	}
+
+	if name := resourceLeafName(dest.ResourceID); name != "" {
+		_ = m.serviceBus.DeliverExternal(ctx, name, string(body))
+	}
+}
+
+func (m *Mock) dispatchAzureFunction(ctx context.Context, dest subscriptionDestination, body []byte) {
+	if m.functions == nil {
+		return
+	}
+
+	if app := functionAppName(dest.ResourceID); app != "" {
+		_ = m.functions.InvokeExternal(ctx, app, body)
+	}
+}
+
+// dispatchStorageQueue delivers to a StorageQueue destination, resolved by
+// dest.QueueName (the queue's own name) rather than dest.ResourceID (which
+// addresses the containing storage account, not the queue).
+func (m *Mock) dispatchStorageQueue(ctx context.Context, dest subscriptionDestination, body []byte) {
+	if m.storageQueue == nil {
+		return
+	}
+
+	if dest.QueueName != "" {
+		_ = m.storageQueue.DeliverExternal(ctx, dest.QueueName, string(body))
 	}
 }
 

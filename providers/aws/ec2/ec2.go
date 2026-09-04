@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -67,6 +68,12 @@ const (
 	// imageRootDeviceSize is the default root EBS volume size (GiB) recorded in
 	// an AMI's block device mapping when created from a running instance.
 	imageRootDeviceSize = 8
+	// defaultRootDeviceName is the device the root EBS volume attaches at when a
+	// launch supplies no block device mapping for it.
+	defaultRootDeviceName = "/dev/sda1"
+	// defaultVolumeType is the EBS volume type used for a launch-materialized
+	// volume that names none (matching the CreateVolume default).
+	defaultVolumeType = "gp3"
 	// rsaKeyBits is the modulus size for generated RSA key pairs.
 	rsaKeyBits = 2048
 	// keyTypeRSA / keyTypeEd25519 are the two key-pair algorithms the mock
@@ -617,9 +624,11 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 	// One reservation groups every instance launched by this call (AWS r-xxxx).
 	reservationID := idgen.GenerateID(reservationPrefix)
 
-	// Resolve the target subnet once so both the VPC id and the CIDR-scoped
-	// private-IP allocation reuse a single lookup.
-	vpcID, subnetCIDR := m.resolveSubnet(ctx, cfg.SubnetID)
+	// Resolve the target subnet once so the resolved subnet id, the VPC id, and
+	// the CIDR-scoped private-IP allocation all reuse a single lookup. An empty
+	// cfg.SubnetID resolves to the account/region's default subnet, matching
+	// real EC2.
+	subnetID, vpcID, subnetCIDR := m.resolveSubnet(ctx, cfg.SubnetID)
 
 	// Resolve the IamInstanceProfile reference once for the whole batch; every
 	// instance launched by this call shares the same profile association. A
@@ -650,8 +659,8 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 
 		inst := &instanceData{
 			ID: id, ImageID: cfg.ImageID, InstanceType: cfg.InstanceType,
-			State: compute.StatePending, PrivateIP: m.allocatePrivateIP(cfg.SubnetID, subnetCIDR),
-			SubnetID: cfg.SubnetID, VPCID: vpcID,
+			State: compute.StatePending, PrivateIP: m.allocatePrivateIP(subnetID, subnetCIDR),
+			SubnetID: subnetID, VPCID: vpcID,
 			SecurityGroups: sg, Tags: tags,
 			LaunchTime:         m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 			sourceDestCheck:    true,
@@ -712,11 +721,77 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 		// interface. vpcID is non-empty only when the subnet resolved, which is
 		// exactly when the networking mock can place the interface.
 		if vpcID != "" {
-			m.materializePrimaryENI(ctx, id, cfg.SubnetID, sg)
+			m.materializePrimaryENI(ctx, id, subnetID, sg)
 		}
+
+		// Materialize the instance's root EBS volume (and any client-supplied
+		// data volumes) as real volume resources attached to it, so
+		// DescribeVolumes / DescribeInstances report the backing disks real EC2
+		// creates at launch, and TerminateInstances can honor DeleteOnTermination.
+		m.materializeInstanceVolumes(cfg, id)
 	}
 
 	return results, nil
+}
+
+// materializeInstanceVolumes creates the backing EBS volume resources for a
+// just-launched instance: one per client-supplied BlockDeviceMapping (attached
+// at its device with its DeleteOnTermination), plus a synthesized default root
+// volume (/dev/sda1, 8 GiB, gp3, DeleteOnTermination=true) when the launch names
+// no boot mapping — matching real EC2, where every instance has a root volume.
+//
+//nolint:gocritic // hugeParam: cfg mirrors the launchInstances signature.
+func (m *Mock) materializeInstanceVolumes(cfg driver.InstanceConfig, instanceID string) {
+	az := m.opts.Region + "a"
+	now := m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z")
+
+	bootCreated := false
+
+	for _, bdm := range cfg.BlockDeviceMappings {
+		device := bdm.DeviceName
+		size := bdm.Size
+
+		if bdm.Boot {
+			bootCreated = true
+
+			if device == "" {
+				device = defaultRootDeviceName
+			}
+		}
+
+		if size == 0 {
+			size = imageRootDeviceSize
+		}
+
+		volType := bdm.Type
+		if volType == "" {
+			volType = defaultVolumeType
+		}
+
+		m.createAttachedVolume(instanceID, device, volType, size, bdm.AutoDelete, az, now)
+	}
+
+	if !bootCreated {
+		m.createAttachedVolume(instanceID, defaultRootDeviceName, defaultVolumeType, imageRootDeviceSize, true, az, now)
+	}
+}
+
+// createAttachedVolume stores a new EBS volume already in-use and attached to
+// instanceID at device, carrying the attachment-scoped DeleteOnTermination flag.
+func (m *Mock) createAttachedVolume(instanceID, device, volType string, size int, deleteOnTermination bool, az, now string) {
+	id := fmt.Sprintf("vol-%012d", m.volCounter.Add(1))
+
+	m.volumes.Set(id, &driver.VolumeInfo{
+		ID:                  id,
+		Size:                size,
+		VolumeType:          volType,
+		State:               stateInUse,
+		AvailabilityZone:    az,
+		AttachedTo:          instanceID,
+		Device:              device,
+		CreatedAt:           now,
+		DeleteOnTermination: deleteOnTermination,
+	})
 }
 
 // renderInstancesByID renders the current state of the given instance ids fresh
@@ -735,20 +810,32 @@ func (m *Mock) renderInstancesByID(ids []string) []driver.Instance {
 	return out
 }
 
-// resolveSubnet returns the VPC that owns subnetID and the subnet's CIDR block
-// in a single resolver lookup. Both are "" when there is no subnet, no resolver,
-// or the subnet can't be found.
-func (m *Mock) resolveSubnet(ctx context.Context, subnetID string) (vpcID, cidr string) {
-	if subnetID == "" || m.subnetResolver == nil {
-		return "", ""
+// resolveSubnet returns the subnet a launch actually lands in, the VPC that
+// owns it, and its CIDR block, in a single resolver lookup. When subnetID is
+// "" it resolves to the account/region's default subnet, matching real EC2
+// (an instance launched with no SubnetId lands in the default VPC's default
+// subnet, not with a blank subnet/VPC). resolvedSubnetID, vpcID and cidr are
+// all "" when there is no resolver, no subnet/default subnet found.
+func (m *Mock) resolveSubnet(ctx context.Context, subnetID string) (resolvedSubnetID, vpcID, cidr string) {
+	if m.subnetResolver == nil {
+		return subnetID, "", ""
+	}
+
+	if subnetID == "" {
+		def, ok := m.defaultSubnet(ctx)
+		if !ok {
+			return "", "", ""
+		}
+
+		return def.ID, def.VPCID, def.CIDRBlock
 	}
 
 	subs, err := m.subnetResolver.DescribeSubnets(ctx, []string{subnetID})
 	if err != nil || len(subs) == 0 {
-		return "", ""
+		return subnetID, "", ""
 	}
 
-	return subs[0].VPCID, subs[0].CIDRBlock
+	return subnetID, subs[0].VPCID, subs[0].CIDRBlock
 }
 
 // materializePrimaryENI asks the networking mock to create the instance's eth0
@@ -847,6 +934,34 @@ func (m *Mock) rollbackInstances(ctx context.Context, created []*instanceData) {
 		// Drop any backing profile association so a rolled-back launch leaves no
 		// orphaned association behind.
 		m.deleteAssociationsForInstance(inst.ID)
+		// Delete the root/data EBS volumes materialized for this instance, so a
+		// rolled-back launch leaves no volume stuck in-use against a gone instance.
+		m.deleteInstanceVolumes(inst.ID)
+	}
+}
+
+// deleteInstanceVolumes removes every EBS volume attached to instanceID. It
+// backs rollback of a partially-launched batch: the just-materialized root/data
+// volumes must be torn down along with the instance record. The check-and-delete
+// runs under the store lock (UpdateOrDelete) so it cannot race a concurrent
+// attach/detach on the same volume.
+func (m *Mock) deleteInstanceVolumes(instanceID string) {
+	for _, volID := range m.volumes.Keys() {
+		var deleted bool
+
+		m.volumes.UpdateOrDelete(volID, func(v *driver.VolumeInfo) (*driver.VolumeInfo, bool) {
+			if v.AttachedTo != instanceID {
+				return v, true
+			}
+
+			deleted = true
+
+			return v, false
+		})
+
+		if deleted {
+			m.volSettle.Delete(volID)
+		}
 	}
 }
 
@@ -1278,7 +1393,7 @@ const (
 // SourceDestCheck) that real EC2 permits on a running instance and that are not
 // part of the portable Compute driver. Unlike ModifyInstance it does not
 // require the instance to be stopped.
-func (m *Mock) SetInstanceAttribute(_ context.Context, instanceID, name, value string) error {
+func (m *Mock) SetInstanceAttribute(ctx context.Context, instanceID, name, value string) error {
 	inst, ok := m.instances.Get(instanceID)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
@@ -1291,7 +1406,15 @@ func (m *Mock) SetInstanceAttribute(_ context.Context, instanceID, name, value s
 	case attrDisableAPITermination:
 		inst.disableAPITermination = parseBool(value)
 	case attrSourceDestCheck:
-		inst.sourceDestCheck = parseBool(value)
+		sourceDestCheck := parseBool(value)
+		inst.sourceDestCheck = sourceDestCheck
+
+		// The networking mock's primary-ENI copy of this flag is what
+		// DescribeInstances/DescribeNetworkInterfaces actually report; keep
+		// it in step so the two describe paths never disagree.
+		if m.networking != nil {
+			_ = m.networking.SetPrimaryNetworkInterfaceSourceDestCheck(ctx, instanceID, sourceDestCheck)
+		}
 	case attrEbsOptimized:
 		inst.ebsOptimized = parseBool(value)
 	case attrDisableAPIStop:
@@ -1553,7 +1676,7 @@ func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device stri
 
 	if state := inst.readState(); state != compute.StateRunning && state != compute.StateStopped {
 		return cerrors.Newf(cerrors.FailedPrecondition,
-			"IncorrectInstanceState: instance %q is in state %q; a volume can only attach to a running or stopped instance",
+			"instance %q is in state %q; a volume can only attach to a running or stopped instance",
 			instanceID, state)
 	}
 
@@ -1572,7 +1695,7 @@ func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device stri
 	found := m.volumes.Update(volumeID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
 		if v.State == stateInUse {
 			attachErr = cerrors.Newf(cerrors.FailedPrecondition,
-				"VolumeInUse: volume %q is attached to instance %q", volumeID, v.AttachedTo)
+				"volume %q is already attached to instance %q", volumeID, v.AttachedTo)
 
 			return v
 		}
@@ -1581,7 +1704,7 @@ func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device stri
 		// (real EC2 InvalidVolume.ZoneMismatch); an explicit cross-AZ volume mismatches.
 		if v.AvailabilityZone != "" && v.AvailabilityZone != instZone {
 			attachErr = cerrors.Newf(cerrors.FailedPrecondition,
-				"ZoneMismatch: volume %q is in availability zone %q but instance %q is in %q",
+				"volume %q is in availability zone %q but instance %q is in %q",
 				volumeID, v.AvailabilityZone, instanceID, instZone)
 
 			return v
@@ -1617,7 +1740,7 @@ func (m *Mock) DetachVolume(_ context.Context, volumeID, instanceID, device stri
 
 		if (instanceID != "" && instanceID != v.AttachedTo) || (device != "" && device != v.Device) {
 			detachErr = cerrors.Newf(cerrors.NotFound,
-				"InvalidAttachment.NotFound: volume %q is not attached to instance %q as device %q",
+				"volume %q is not attached to instance %q as device %q",
 				volumeID, instanceID, device)
 
 			return v
@@ -1627,6 +1750,7 @@ func (m *Mock) DetachVolume(_ context.Context, volumeID, instanceID, device stri
 		cp.State = stateAvailable
 		cp.AttachedTo = ""
 		cp.Device = ""
+		cp.DeleteOnTermination = false
 
 		return &cp
 	})
@@ -1637,12 +1761,12 @@ func (m *Mock) DetachVolume(_ context.Context, volumeID, instanceID, device stri
 	return detachErr
 }
 
-// detachTerminatedVolumes returns every EBS volume attached to a now-terminated
-// instance to the `available` state (attachment cleared). Real EC2 detaches
-// volumes with DeleteOnTermination=false back to available on terminate; user-
-// attached volumes carry that default, so all of them detach here. Each volume
-// is updated with a copy-on-write fresh pointer under the store lock so a
-// concurrent DescribeVolumes/AttachVolume never races.
+// detachTerminatedVolumes settles every EBS volume attached to a now-terminated
+// instance, matching real EC2's terminate cascade: a volume with
+// DeleteOnTermination=true (the root volume's default) is DELETED, and one with
+// DeleteOnTermination=false is returned to `available` with its attachment
+// cleared. The detach path updates a copy-on-write fresh pointer under the store
+// lock so a concurrent DescribeVolumes/AttachVolume never races.
 func (m *Mock) detachTerminatedVolumes(instanceIDs []string) {
 	terminated := make(map[string]bool, len(instanceIDs))
 	for _, id := range instanceIDs {
@@ -1650,18 +1774,36 @@ func (m *Mock) detachTerminatedVolumes(instanceIDs []string) {
 	}
 
 	for _, volID := range m.volumes.Keys() {
-		m.volumes.Update(volID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
+		var deleted bool
+
+		// The delete-vs-detach decision and the mutation must happen under one
+		// lock so a concurrent DetachVolume that clears the attachment first is
+		// observed here and the volume is NOT wrongly deleted. UpdateOrDelete
+		// re-reads the attachment at mutation time: a volume no longer attached to
+		// a terminating instance (e.g. just detached) survives unchanged.
+		m.volumes.UpdateOrDelete(volID, func(v *driver.VolumeInfo) (*driver.VolumeInfo, bool) {
 			if v.AttachedTo == "" || !terminated[v.AttachedTo] {
-				return v
+				return v, true
+			}
+
+			if v.DeleteOnTermination {
+				deleted = true
+
+				return v, false
 			}
 
 			cp := *v
 			cp.State = stateAvailable
 			cp.AttachedTo = ""
 			cp.Device = ""
+			cp.DeleteOnTermination = false
 
-			return &cp
+			return &cp, true
 		})
+
+		if deleted {
+			m.volSettle.Delete(volID)
+		}
 	}
 }
 
@@ -1819,49 +1961,78 @@ func containsPermission[T comparable](set []T, want T) bool {
 }
 
 // CreateImage creates a machine image from an instance.
-func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
-	if _, ok := m.instances.Get(cfg.InstanceID); !ok {
+//
+// CreateImage creates an AMI from an instance. It is the base (portable) path:
+// it snapshots each of the instance's attached EBS volumes and references those
+// snapshots from the image's block device mapping, but never reboots the source
+// instance and applies no client block-device overrides. The AWS wire layer's
+// NoReboot / BlockDeviceMapping.N fidelity comes in through CreateImageWithOptions.
+//
+//nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
+func (m *Mock) CreateImage(ctx context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
+	return m.createImage(ctx, &cfg, true, nil, nil, nil)
+}
+
+// CreateImageWithOptions is the AWS EC2 CreateImage capability the wire layer
+// reaches through server/aws/ec2's awsImageCreator interface. It honors the
+// NoReboot flag (a running source instance is rebooted as part of image
+// creation unless NoReboot is true, matching real EC2's default) and client
+// BlockDeviceMapping overrides: an override for an attached volume's device
+// replaces its size/type/snapshot and, only when the client actually sent it
+// (device listed in dotSetDevices), its DeleteOnTermination; a mapping for a new
+// device is added; and a device listed in noDevices (BlockDeviceMapping.N.NoDevice)
+// is suppressed.
+//
+//nolint:gocritic // hugeParam: cfg param type is fixed by server/aws/ec2's awsImageCreator interface.
+func (m *Mock) CreateImageWithOptions(
+	ctx context.Context, cfg driver.ImageConfig, noReboot bool,
+	overrides []driver.ImageBlockDeviceMapping, noDevices, dotSetDevices []string,
+) (*driver.ImageInfo, error) {
+	return m.createImage(ctx, &cfg, noReboot, overrides, noDevices, dotSetDevices)
+}
+
+// createImage is the shared CreateImage engine behind both the base and the
+// AWS-wire (option-carrying) entry points.
+func (m *Mock) createImage(
+	ctx context.Context, cfg *driver.ImageConfig, noReboot bool,
+	overrides []driver.ImageBlockDeviceMapping, noDevices, dotSetDevices []string,
+) (*driver.ImageInfo, error) {
+	inst, ok := m.instances.Get(cfg.InstanceID)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "instance %q not found", cfg.InstanceID)
+	}
+
+	// Real EC2 reboots a running instance before snapshotting so its filesystem
+	// is flushed, unless NoReboot is set. A stopped instance is never rebooted.
+	if !noReboot && inst.readState() == compute.StateRunning {
+		if err := m.transitionInstances(ctx, []string{cfg.InstanceID}, rebootTransition); err != nil {
+			return nil, err
+		}
 	}
 
 	id := fmt.Sprintf("ami-%012d", m.amiCounter.Add(1))
 	now := m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z")
 
-	// A real CreateImage snapshots the instance's root volume and references
-	// that snapshot from the AMI's block device mapping.
-	snapID := fmt.Sprintf("snap-%012d", m.snapCounter.Add(1))
-	m.snapshots.Set(snapID, &driver.SnapshotInfo{
-		ID:          snapID,
-		State:       "completed",
-		Description: "Created by CreateImage for " + id,
-		Size:        imageRootDeviceSize,
-		CreatedAt:   now,
-		OwnerID:     m.opts.AccountID,
-		Progress:    "100%",
-	})
+	bdms := applyImageBDMOverrides(
+		m.snapshotAttachedVolumes(cfg.InstanceID, id, now), overrides, noDevices, dotSetDevices,
+	)
 
 	img := &driver.ImageInfo{
-		ID:                 id,
-		Name:               cfg.Name,
-		State:              stateAvailable,
-		Description:        cfg.Description,
-		CreatedAt:          now,
-		Tags:               copyTags(cfg.Tags),
-		OwnerID:            m.opts.AccountID,
-		Architecture:       "x86_64",
-		RootDeviceType:     "ebs",
-		RootDeviceName:     "/dev/sda1",
-		VirtualizationType: "hvm",
-		Hypervisor:         "xen",
-		ImageType:          "machine",
-		PlatformDetails:    "Linux/UNIX",
-		BlockDeviceMappings: []driver.ImageBlockDeviceMapping{{
-			DeviceName:          "/dev/sda1",
-			SnapshotID:          snapID,
-			VolumeSize:          imageRootDeviceSize,
-			VolumeType:          "gp2",
-			DeleteOnTermination: true,
-		}},
+		ID:                  id,
+		Name:                cfg.Name,
+		State:               stateAvailable,
+		Description:         cfg.Description,
+		CreatedAt:           now,
+		Tags:                copyTags(cfg.Tags),
+		OwnerID:             m.opts.AccountID,
+		Architecture:        "x86_64",
+		RootDeviceType:      "ebs",
+		RootDeviceName:      imageRootDeviceName(bdms),
+		VirtualizationType:  "hvm",
+		Hypervisor:          "xen",
+		ImageType:           "machine",
+		PlatformDetails:     "Linux/UNIX",
+		BlockDeviceMappings: bdms,
 	}
 
 	m.images.Set(id, img)
@@ -1869,6 +2040,159 @@ func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.I
 	result := *img
 
 	return &result, nil
+}
+
+// snapshotAttachedVolumes snapshots every EBS volume attached to instanceID and
+// returns one block device mapping per snapshot, ordered by device name for
+// determinism. An instance with no materialized volumes still yields a single
+// snapshot-backed root mapping so DescribeImages reports a realistic AMI.
+func (m *Mock) snapshotAttachedVolumes(instanceID, amiID, now string) []driver.ImageBlockDeviceMapping {
+	attached := make([]*driver.VolumeInfo, 0)
+
+	for _, volID := range m.volumes.Keys() {
+		if v, ok := m.volumes.Get(volID); ok && v.AttachedTo == instanceID {
+			attached = append(attached, v)
+		}
+	}
+
+	sort.Slice(attached, func(i, j int) bool { return attached[i].Device < attached[j].Device })
+
+	bdms := make([]driver.ImageBlockDeviceMapping, 0, len(attached))
+
+	for _, v := range attached {
+		snapID := m.snapshotForImage(v.ID, amiID, v.Size, v.Encrypted, now)
+		bdms = append(bdms, driver.ImageBlockDeviceMapping{
+			DeviceName:          v.Device,
+			SnapshotID:          snapID,
+			VolumeSize:          v.Size,
+			VolumeType:          v.VolumeType,
+			DeleteOnTermination: v.DeleteOnTermination,
+		})
+	}
+
+	if len(bdms) == 0 {
+		snapID := m.snapshotForImage("", amiID, imageRootDeviceSize, false, now)
+		bdms = append(bdms, driver.ImageBlockDeviceMapping{
+			DeviceName:          defaultRootDeviceName,
+			SnapshotID:          snapID,
+			VolumeSize:          imageRootDeviceSize,
+			VolumeType:          defaultVolumeType,
+			DeleteOnTermination: true,
+		})
+	}
+
+	return bdms
+}
+
+// snapshotForImage stores a completed snapshot of volumeID for the AMI being
+// created and returns its id.
+func (m *Mock) snapshotForImage(volumeID, amiID string, size int, encrypted bool, now string) string {
+	snapID := fmt.Sprintf("snap-%012d", m.snapCounter.Add(1))
+	m.snapshots.Set(snapID, &driver.SnapshotInfo{
+		ID:          snapID,
+		VolumeID:    volumeID,
+		State:       "completed",
+		Description: "Created by CreateImage for " + amiID,
+		Size:        size,
+		CreatedAt:   now,
+		OwnerID:     m.opts.AccountID,
+		Progress:    "100%",
+		Encrypted:   encrypted,
+	})
+
+	return snapID
+}
+
+// applyImageBDMOverrides folds the client-supplied CreateImage block device
+// mappings onto the snapshot-derived base: a NoDevice entry suppresses its
+// device, an override for an existing device replaces its non-zero size / set
+// type / snapshot (and, only for a device in dotSet, its DeleteOnTermination),
+// and a mapping for a new device is appended. A device absent from dotSet keeps
+// the source volume's DeleteOnTermination, so a partial size-only override does
+// not silently clear it.
+func applyImageBDMOverrides(
+	base, overrides []driver.ImageBlockDeviceMapping, noDevices, dotSetDevices []string,
+) []driver.ImageBlockDeviceMapping {
+	suppressed := make(map[string]bool, len(noDevices))
+	for _, d := range noDevices {
+		suppressed[d] = true
+	}
+
+	dotSet := make(map[string]bool, len(dotSetDevices))
+	for _, d := range dotSetDevices {
+		dotSet[d] = true
+	}
+
+	result := make([]driver.ImageBlockDeviceMapping, 0, len(base)+len(overrides))
+	idx := make(map[string]int, len(base))
+
+	for _, b := range base {
+		if suppressed[b.DeviceName] {
+			continue
+		}
+
+		idx[b.DeviceName] = len(result)
+		result = append(result, b)
+	}
+
+	for _, o := range overrides {
+		if suppressed[o.DeviceName] {
+			continue
+		}
+
+		if i, ok := idx[o.DeviceName]; ok {
+			mergeImageBDMOverride(&result[i], o, dotSet[o.DeviceName])
+			continue
+		}
+
+		if o.VolumeType == "" {
+			o.VolumeType = defaultVolumeType
+		}
+
+		idx[o.DeviceName] = len(result)
+		result = append(result, o)
+	}
+
+	return result
+}
+
+// mergeImageBDMOverride applies a client override onto an existing mapping,
+// keeping the backing snapshot and any attribute the client left unset.
+// DeleteOnTermination is overwritten only when the client actually sent it
+// (dotSet), so an override that omits it preserves the source volume's value.
+func mergeImageBDMOverride(dst *driver.ImageBlockDeviceMapping, o driver.ImageBlockDeviceMapping, dotSet bool) {
+	if o.VolumeSize > 0 {
+		dst.VolumeSize = o.VolumeSize
+	}
+
+	if o.VolumeType != "" {
+		dst.VolumeType = o.VolumeType
+	}
+
+	if o.SnapshotID != "" {
+		dst.SnapshotID = o.SnapshotID
+	}
+
+	if dotSet {
+		dst.DeleteOnTermination = o.DeleteOnTermination
+	}
+}
+
+// imageRootDeviceName picks the AMI's root device: the conventional
+// defaultRootDeviceName when present, otherwise the first (device-sorted)
+// mapping, falling back to the default when there are none.
+func imageRootDeviceName(bdms []driver.ImageBlockDeviceMapping) string {
+	for _, b := range bdms {
+		if b.DeviceName == defaultRootDeviceName {
+			return b.DeviceName
+		}
+	}
+
+	if len(bdms) > 0 {
+		return bdms[0].DeviceName
+	}
+
+	return defaultRootDeviceName
 }
 
 // DeregisterImage deregisters a machine image.

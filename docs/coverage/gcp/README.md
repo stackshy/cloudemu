@@ -12,9 +12,10 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [CloudFunctions](./cloudfunctions.md) | `serverless` | 27 |
 | [CloudLogging](./cloudlogging.md) | `logging` | 17 |
 | [CloudMonitoring](./cloudmonitoring.md) | `monitoring` | 12 |
-| [CloudRun](./cloudrun.md) | `cloudrun` | 16 |
+| [CloudRun](./cloudrun.md) | `cloudrun` | 18 |
 | [CloudSQL](./cloudsql.md) | — (provider-native) | 21 |
 | [Cloudasset](./cloudasset.md) | — (provider-native) | 11 |
+| [Cloudbilling](./cloudbilling.md) | — (provider-native) | 14 |
 | [Eventarc](./eventarc.md) | `eventbus` | 16 |
 | [FCM](./fcm.md) | `notification` | 9 |
 | [Firestore](./firestore.md) | `database` | 24 |

@@ -233,10 +233,6 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 
 	key := recordKey(cfg.ZoneID, cfg.Name, cfg.Type, cfg.SetID)
 
-	if m.records.Has(key) {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "resource record set %q already exists in zone %q", cfg.Name, cfg.ZoneID)
-	}
-
 	values := make([]string, len(cfg.Values))
 	copy(values, cfg.Values)
 
@@ -257,7 +253,13 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		SetID:  cfg.SetID,
 	}
 
-	m.records.Set(key, rec)
+	// SetIfAbsent makes the existence-check-then-create a single atomic
+	// operation under the store's lock, so two concurrent CreateRecord calls
+	// racing on the same key can never both succeed (a Has-then-Set pair
+	// would let both callers observe "absent" before either writes).
+	if !m.records.SetIfAbsent(key, rec) {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "resource record set %q already exists in zone %q", cfg.Name, cfg.ZoneID)
+	}
 
 	// Update zone record count.
 	m.zones.Update(cfg.ZoneID, func(z driver.ZoneInfo) driver.ZoneInfo {
@@ -372,10 +374,6 @@ func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 
 	key := recordKey(cfg.ZoneID, cfg.Name, cfg.Type, cfg.SetID)
 
-	if _, ok := m.records.Get(key); !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "resource record set %q of type %q not found in zone %q", cfg.Name, cfg.Type, cfg.ZoneID)
-	}
-
 	values := make([]string, len(cfg.Values))
 	copy(values, cfg.Values)
 
@@ -396,7 +394,12 @@ func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		SetID:  cfg.SetID,
 	}
 
-	m.records.Set(key, rec)
+	// Update replaces the value only if the key still exists, all under the
+	// store's lock — a Get-then-Set pair could let a concurrent DeleteRecord
+	// land in between, silently resurrecting a record the caller just deleted.
+	if !m.records.Update(key, func(driver.RecordInfo) driver.RecordInfo { return rec }) {
+		return nil, cerrors.Newf(cerrors.NotFound, "resource record set %q of type %q not found in zone %q", cfg.Name, cfg.Type, cfg.ZoneID)
+	}
 
 	result := rec
 

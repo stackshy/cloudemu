@@ -61,6 +61,8 @@ const (
 	primaryDeviceIndex = 0
 	// internalDNSSuffix is the private-DNS suffix EC2 uses in us-east-1.
 	internalDNSSuffix = ".ec2.internal"
+	// rootDeviceDefault is the root device name used when an AMI reports none.
+	rootDeviceDefault = "/dev/sda1"
 )
 
 // runInstances handles Action=RunInstances.
@@ -83,6 +85,7 @@ func (h *Handler) runInstances(w http.ResponseWriter, r *http.Request) {
 	}
 
 	applyRunInstancesForm(&cfg, form)
+	cfg.BlockDeviceMappings = h.parseRunBlockDeviceMappings(r.Context(), form, cfg.ImageID)
 
 	instances, err := h.compute.RunInstances(r.Context(), cfg, count)
 	if err != nil {
@@ -187,6 +190,75 @@ func applyRunInstancesForm(cfg *computedriver.InstanceConfig, form url.Values) {
 	if tags := mergeTagSpecs(awsquery.TagSpecs(form), "instance"); len(tags) > 0 {
 		cfg.Tags = tags
 	}
+}
+
+// parseRunBlockDeviceMappings reads the RunInstances BlockDeviceMapping.N.*
+// groups into provider-neutral mappings and guarantees exactly one boot mapping
+// so the provider materializes a root volume. The boot mapping is the one whose
+// device name matches the AMI's root device (defaulting to /dev/sda1); a launch
+// that names no such mapping gets a synthesized boot mapping. DeleteOnTermination
+// defaults to true for launch-time mappings, matching real EC2.
+func (h *Handler) parseRunBlockDeviceMappings(
+	ctx context.Context, form url.Values, imageID string,
+) []computedriver.BlockDeviceMapping {
+	rootDevice := h.rootDeviceName(ctx, imageID)
+
+	out := make([]computedriver.BlockDeviceMapping, 0)
+	bootSeen := false
+
+	for _, i := range awsquery.CollectIndices(form, "BlockDeviceMapping") {
+		base := "BlockDeviceMapping." + strconv.Itoa(i)
+
+		// A mapping without an Ebs block (e.g. a NoDevice / ephemeral entry) does
+		// not create an EBS volume; skip it.
+		device := form.Get(base + ".DeviceName")
+		if device == "" {
+			continue
+		}
+
+		size, _ := strconv.Atoi(form.Get(base + ".Ebs.VolumeSize"))
+
+		deleteOnTermination := true
+		if v := form.Get(base + ".Ebs.DeleteOnTermination"); v != "" {
+			deleteOnTermination = v == formTrue
+		}
+
+		boot := device == rootDevice
+		bootSeen = bootSeen || boot
+
+		out = append(out, computedriver.BlockDeviceMapping{
+			DeviceName: device,
+			Boot:       boot,
+			AutoDelete: deleteOnTermination,
+			Size:       size,
+			Type:       form.Get(base + ".Ebs.VolumeType"),
+		})
+	}
+
+	if !bootSeen {
+		out = append(out, computedriver.BlockDeviceMapping{
+			DeviceName: rootDevice,
+			Boot:       true,
+			AutoDelete: true,
+		})
+	}
+
+	return out
+}
+
+// rootDeviceName resolves the root device name of the launch AMI, falling back
+// to /dev/sda1 when the image is unknown or reports none.
+func (h *Handler) rootDeviceName(ctx context.Context, imageID string) string {
+	if imageID == "" || h.compute == nil {
+		return rootDeviceDefault
+	}
+
+	imgs, err := h.compute.DescribeImages(ctx, []string{imageID})
+	if err != nil || len(imgs) == 0 || imgs[0].RootDeviceName == "" {
+		return rootDeviceDefault
+	}
+
+	return imgs[0].RootDeviceName
 }
 
 // reservationIDFor returns the instance's reservation id, falling back to a
@@ -389,7 +461,7 @@ func (h *Handler) terminateInstances(w http.ResponseWriter, r *http.Request) {
 		// Termination protection surfaces as OperationNotPermitted, not the
 		// generic instance-state error.
 		if cerrors.IsPermissionDenied(err) {
-			awsquery.WriteXMLError(w, http.StatusBadRequest, "OperationNotPermitted", err.Error())
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "OperationNotPermitted", cerrors.Message(err))
 			return
 		}
 
@@ -449,6 +521,13 @@ func (h *Handler) applyInstanceAttributes(r *http.Request, id string) error {
 		attrDisableAPIStop, attrInstanceInitiatedShutdownBehavior,
 	} {
 		if v := r.Form.Get(attrForm(name) + ".Value"); v != "" {
+			// UserData.Value arrives base64-encoded, same as RunInstances' UserData
+			// param; decode it so the mock always stores the raw content and
+			// DescribeInstanceAttribute's re-encode round-trips correctly.
+			if name == attrUserData {
+				v = decodeUserData(v)
+			}
+
 			if err := attributer.SetInstanceAttribute(r.Context(), id, name, v); err != nil {
 				return err
 			}
@@ -526,7 +605,11 @@ func setInstanceAttributeField(resp *describeInstanceAttributeResponse, attr, va
 	case attrInstanceType:
 		resp.InstanceType = &attributeValueXML{Value: val}
 	case attrUserData:
-		resp.UserData = &attributeValueXML{Value: val}
+		// Real EC2 returns UserData base64-encoded; the mock stores it decoded
+		// (matching RunInstances' UserData param), so re-encode at the wire
+		// boundary. An empty val leaves Value "" and omitempty drops the
+		// nested <value> element entirely (see attributeValueXML).
+		resp.UserData = &attributeValueXML{Value: encodeUserData(val)}
 	}
 }
 
@@ -611,6 +694,18 @@ func decodeUserData(s string) string {
 	}
 
 	return s
+}
+
+// encodeUserData base64-encodes decoded UserData for the wire, the inverse of
+// decodeUserData. An empty string stays empty rather than becoming the
+// (non-empty) base64 encoding of zero bytes, so an unset UserData still reports
+// as empty over the wire.
+func encodeUserData(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	return base64.StdEncoding.EncodeToString([]byte(s))
 }
 
 // instanceCount returns how many instances RunInstances should launch.
@@ -837,6 +932,16 @@ func instanceXMLFor(
 	}
 
 	xi.NetworkInterfaces = instanceENIs(inst, xi.Groups, enis)
+	// Real EC2 mirrors the primary interface's source/dest-check flag at the
+	// top level of the Instance element too; aws-sdk-go-v2 and
+	// terraform-provider-aws read that top-level field, not the nested
+	// networkInterfaceSet entry. instanceENIs orders eth0 (device index 0)
+	// first, so [0] is always the primary interface when one exists.
+	xi.SourceDestCheck = true
+	if len(xi.NetworkInterfaces) > 0 {
+		xi.SourceDestCheck = xi.NetworkInterfaces[0].SourceDestCheck
+	}
+
 	xi.BlockDeviceMappings = instanceBlockDevices(vols)
 
 	for k, v := range inst.Tags {
@@ -920,6 +1025,7 @@ func instanceENIs(inst *computedriver.Instance, groups []groupItem, enis []netdr
 			MacAddress:         eni.MacAddress,
 			PrivateIP:          eni.PrivateIP,
 			Status:             eni.Status,
+			SourceDestCheck:    eni.SourceDestCheck,
 			Groups:             itemGroups,
 			Attachment: instanceENIAttachmentXML{
 				AttachmentID: eni.AttachmentID,
@@ -941,11 +1047,12 @@ func synthesizedPrimaryENI(inst *computedriver.Instance, groups []groupItem) *in
 	}
 
 	return &instanceENIXML{
-		SubnetID:   inst.SubnetID,
-		VPCID:      inst.VPCID,
-		PrivateIP:  inst.PrivateIP,
-		Groups:     groups,
-		Attachment: instanceENIAttachmentXML{DeviceIndex: primaryDeviceIndex, Status: eniAttachedStatus},
+		SubnetID:        inst.SubnetID,
+		VPCID:           inst.VPCID,
+		PrivateIP:       inst.PrivateIP,
+		SourceDestCheck: true,
+		Groups:          groups,
+		Attachment:      instanceENIAttachmentXML{DeviceIndex: primaryDeviceIndex, Status: eniAttachedStatus},
 	}
 }
 
@@ -970,7 +1077,7 @@ func instanceBlockDevices(vols []computedriver.VolumeInfo) []instanceBlockDevice
 				VolumeID:            v.ID,
 				Status:              eniAttachedStatus,
 				AttachTime:          v.CreatedAt,
-				DeleteOnTermination: false,
+				DeleteOnTermination: v.DeleteOnTermination,
 			},
 		})
 	}

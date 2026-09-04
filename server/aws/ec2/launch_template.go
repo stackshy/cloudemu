@@ -300,11 +300,15 @@ func (h *Handler) getLaunchTemplateData(w http.ResponseWriter, r *http.Request) 
 // InstanceConfig. prefix is "LaunchTemplateData".
 func parseLaunchTemplateData(form url.Values, prefix string) computedriver.InstanceConfig {
 	return computedriver.InstanceConfig{
-		ImageID:        form.Get(prefix + ".ImageId"),
-		InstanceType:   form.Get(prefix + ".InstanceType"),
-		KeyName:        form.Get(prefix + ".KeyName"),
-		SubnetID:       form.Get(prefix + ".SubnetId"),
-		UserData:       form.Get(prefix + ".UserData"),
+		ImageID:      form.Get(prefix + ".ImageId"),
+		InstanceType: form.Get(prefix + ".InstanceType"),
+		KeyName:      form.Get(prefix + ".KeyName"),
+		SubnetID:     form.Get(prefix + ".SubnetId"),
+		// UserData arrives base64-encoded, same as RunInstances' UserData param;
+		// decode it so a template-launched instance stores the same raw content
+		// an explicit RunInstances call would, and GetLaunchTemplateData/
+		// DescribeLaunchTemplateVersions can re-encode it consistently.
+		UserData:       decodeUserData(form.Get(prefix + ".UserData")),
 		SecurityGroups: awsquery.ListStrings(form, prefix+".SecurityGroupId"),
 	}
 }
@@ -342,7 +346,7 @@ func toLaunchTemplateDataXML(cfg computedriver.InstanceConfig) launchTemplateDat
 		InstanceType:     cfg.InstanceType,
 		KeyName:          cfg.KeyName,
 		SubnetID:         cfg.SubnetID,
-		UserData:         cfg.UserData,
+		UserData:         encodeUserData(cfg.UserData),
 		SecurityGroupIDs: cfg.SecurityGroups,
 		TagSpec:          toTagItems(cfg.Tags),
 	}
@@ -354,7 +358,7 @@ func toLaunchTemplateDataXML(cfg computedriver.InstanceConfig) launchTemplateDat
 func writeLaunchTemplateErr(w http.ResponseWriter, err error) {
 	if cerrors.IsAlreadyExists(err) {
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			"InvalidLaunchTemplateName.AlreadyExistsException", err.Error())
+			"InvalidLaunchTemplateName.AlreadyExistsException", cerrors.Message(err))
 
 		return
 	}

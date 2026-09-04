@@ -5,15 +5,21 @@
     "providers": {
       "aws": {
         "native": "ElastiCache",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Cache",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Memorystore",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -72,15 +78,21 @@
     "providers": {
       "aws": {
         "native": "ElastiCache",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Cache",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Memorystore",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -139,15 +151,21 @@
     "providers": {
       "aws": {
         "native": "ElastiCache",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Cache",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Memorystore",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -222,15 +240,21 @@
     "providers": {
       "aws": {
         "native": "ElastiCache",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Cache",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Memorystore",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -273,15 +297,21 @@
     "providers": {
       "aws": {
         "native": "ElastiCache",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Cache",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Memorystore",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -292,7 +322,9 @@
     "providers": {
       "aws": {
         "native": "CloudFormation",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -303,7 +335,9 @@
     "providers": {
       "aws": {
         "native": "CloudFormation",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -314,7 +348,9 @@
     "providers": {
       "aws": {
         "native": "CloudFormation",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -325,7 +361,9 @@
     "providers": {
       "aws": {
         "native": "CloudFormation",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -336,7 +374,9 @@
     "providers": {
       "aws": {
         "native": "CloudFormation",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -347,7 +387,9 @@
     "providers": {
       "aws": {
         "native": "CloudFormation",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -358,7 +400,9 @@
     "providers": {
       "aws": {
         "native": "CloudFormation",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -369,7 +413,9 @@
     "providers": {
       "aws": {
         "native": "CloudFormation",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -380,7 +426,9 @@
     "providers": {
       "aws": {
         "native": "CloudFormation",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -391,7 +439,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -408,7 +458,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -441,14 +493,18 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -459,7 +515,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -476,7 +534,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -493,14 +553,18 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -511,14 +575,18 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -545,7 +613,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -562,7 +632,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -595,14 +667,18 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -613,14 +689,18 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -631,14 +711,18 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -649,14 +733,18 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -667,15 +755,21 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -686,7 +780,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -703,14 +799,18 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -721,7 +821,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -738,14 +840,18 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -756,7 +862,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -805,7 +913,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -838,7 +948,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -855,7 +967,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -888,15 +1002,21 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -907,7 +1027,9 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines"
@@ -924,15 +1046,21 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -959,15 +1087,21 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -978,15 +1112,21 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -997,15 +1137,21 @@
     "providers": {
       "aws": {
         "native": "EC2",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VirtualMachines",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCE",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1032,14 +1178,18 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR"
       },
       "gcp": {
         "native": "ArtifactRegistry",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1050,7 +1200,9 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR"
@@ -1083,15 +1235,21 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "ArtifactRegistry",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1118,7 +1276,9 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR"
@@ -1135,7 +1295,9 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR"
@@ -1152,7 +1314,9 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR"
@@ -1169,15 +1333,21 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "ArtifactRegistry",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1188,15 +1358,21 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "ArtifactRegistry",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1207,15 +1383,21 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "ArtifactRegistry",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1226,7 +1408,9 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR"
@@ -1243,7 +1427,9 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR"
@@ -1260,7 +1446,9 @@
     "providers": {
       "aws": {
         "native": "ECR",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "ACR"
@@ -1293,7 +1481,9 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB"
@@ -1310,7 +1500,9 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB"
@@ -1343,11 +1535,15 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Firestore"
@@ -1377,15 +1573,21 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Firestore",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1396,11 +1598,15 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Firestore"
@@ -1446,11 +1652,15 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Firestore"
@@ -1464,15 +1674,21 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Firestore",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1515,7 +1731,9 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB"
@@ -1548,15 +1766,21 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Firestore",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1567,7 +1791,9 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB"
@@ -1584,15 +1810,21 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Firestore",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1619,7 +1851,9 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB"
@@ -1652,7 +1886,9 @@
     "providers": {
       "aws": {
         "native": "DynamoDB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "CosmosDB"
@@ -1701,7 +1937,9 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS"
@@ -1718,15 +1956,21 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudDNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1737,15 +1981,21 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudDNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1756,7 +2006,9 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS"
@@ -1773,15 +2025,21 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudDNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1792,15 +2050,21 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudDNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1811,7 +2075,9 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS"
@@ -1831,7 +2097,9 @@
       },
       "azure": {
         "native": "DNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudDNS"
@@ -1845,15 +2113,21 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudDNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1864,7 +2138,9 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS"
@@ -1881,15 +2157,21 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudDNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1900,15 +2182,21 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudDNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1935,7 +2223,9 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS"
@@ -1952,15 +2242,21 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudDNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -1971,11 +2267,15 @@
     "providers": {
       "aws": {
         "native": "Route53",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "DNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudDNS"
@@ -1989,11 +2289,15 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Eventarc"
@@ -2007,11 +2311,15 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Eventarc"
@@ -2025,14 +2333,18 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid"
       },
       "gcp": {
         "native": "Eventarc",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2043,7 +2355,9 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid"
@@ -2060,7 +2374,9 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid"
@@ -2077,11 +2393,15 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Eventarc"
@@ -2111,14 +2431,18 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid"
       },
       "gcp": {
         "native": "Eventarc",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2129,11 +2453,15 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "Eventarc"
@@ -2147,14 +2475,18 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid"
       },
       "gcp": {
         "native": "Eventarc",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2165,7 +2497,9 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid"
@@ -2182,7 +2516,9 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid"
@@ -2199,14 +2535,18 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid"
       },
       "gcp": {
         "native": "Eventarc",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2217,7 +2557,9 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid"
@@ -2234,7 +2576,9 @@
     "providers": {
       "aws": {
         "native": "EventBridge",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "EventGrid"
@@ -2267,7 +2611,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2284,7 +2630,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2301,7 +2649,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2318,7 +2668,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2351,14 +2703,18 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
       },
       "gcp": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2369,7 +2725,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2386,7 +2744,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2403,7 +2763,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2420,7 +2782,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2437,15 +2801,21 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2456,14 +2826,18 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
       },
       "gcp": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2474,14 +2848,18 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
       },
       "gcp": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2492,7 +2870,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2509,7 +2889,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2526,7 +2908,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2543,7 +2927,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2560,15 +2946,21 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2579,14 +2971,18 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
       },
       "gcp": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2597,7 +2993,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2614,7 +3012,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2631,7 +3031,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2648,7 +3050,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2665,7 +3069,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2682,7 +3088,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2699,15 +3107,21 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2718,14 +3132,18 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
       },
       "gcp": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2736,14 +3154,18 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
       },
       "gcp": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2754,7 +3176,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2771,7 +3195,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2788,7 +3214,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2805,7 +3233,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2822,7 +3252,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2839,7 +3271,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2856,7 +3290,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2873,15 +3309,21 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2892,14 +3334,18 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
       },
       "gcp": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2910,7 +3356,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2927,7 +3375,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2944,7 +3394,9 @@
     "providers": {
       "aws": {
         "native": "IAM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "IAM"
@@ -2961,7 +3413,9 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
@@ -2978,15 +3432,21 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "LB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -2997,7 +3457,9 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
@@ -3014,14 +3476,18 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
       },
       "gcp": {
         "native": "LB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3032,7 +3498,9 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
@@ -3049,15 +3517,21 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "LB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3068,7 +3542,9 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
@@ -3085,14 +3561,18 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
       },
       "gcp": {
         "native": "LB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3103,7 +3583,9 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
@@ -3120,7 +3602,9 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
@@ -3137,15 +3621,21 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "LB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3156,7 +3646,9 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
@@ -3173,14 +3665,18 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
       },
       "gcp": {
         "native": "LB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3191,7 +3687,9 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
@@ -3208,7 +3706,9 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
@@ -3241,7 +3741,9 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
@@ -3258,7 +3760,9 @@
     "providers": {
       "aws": {
         "native": "ELB",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LB"
@@ -3291,11 +3795,15 @@
     "providers": {
       "aws": {
         "native": "CloudWatchLogs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LogAnalytics",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudLogging"
@@ -3309,7 +3817,9 @@
     "providers": {
       "aws": {
         "native": "CloudWatchLogs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LogAnalytics"
@@ -3326,15 +3836,21 @@
     "providers": {
       "aws": {
         "native": "CloudWatchLogs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LogAnalytics",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudLogging",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3345,7 +3861,9 @@
     "providers": {
       "aws": {
         "native": "CloudWatchLogs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LogAnalytics"
@@ -3426,7 +3944,9 @@
     "providers": {
       "aws": {
         "native": "CloudWatchLogs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LogAnalytics"
@@ -3443,14 +3963,18 @@
     "providers": {
       "aws": {
         "native": "CloudWatchLogs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LogAnalytics"
       },
       "gcp": {
         "native": "CloudLogging",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3461,11 +3985,15 @@
     "providers": {
       "aws": {
         "native": "CloudWatchLogs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LogAnalytics",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudLogging"
@@ -3479,15 +4007,21 @@
     "providers": {
       "aws": {
         "native": "CloudWatchLogs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LogAnalytics",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudLogging",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3498,7 +4032,9 @@
     "providers": {
       "aws": {
         "native": "CloudWatchLogs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LogAnalytics"
@@ -3515,14 +4051,18 @@
     "providers": {
       "aws": {
         "native": "CloudWatchLogs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LogAnalytics"
       },
       "gcp": {
         "native": "CloudLogging",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3565,11 +4105,15 @@
     "providers": {
       "aws": {
         "native": "CloudWatchLogs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "LogAnalytics",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudLogging"
@@ -3583,7 +4127,9 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage"
@@ -3600,15 +4146,21 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "PubSub",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3619,15 +4171,21 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "PubSub",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3638,7 +4196,9 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage"
@@ -3655,15 +4215,21 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "PubSub",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3674,7 +4240,9 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage"
@@ -3697,7 +4265,9 @@
       },
       "gcp": {
         "native": "PubSub",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3708,15 +4278,21 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "PubSub",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3727,11 +4303,15 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "PubSub"
@@ -3745,15 +4325,21 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "PubSub",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3780,15 +4366,21 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "PubSub",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3799,7 +4391,9 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage"
@@ -3816,7 +4410,9 @@
     "providers": {
       "aws": {
         "native": "SQS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "QueueStorage"
@@ -3833,14 +4429,18 @@
     "providers": {
       "aws": {
         "native": "CloudWatch",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Monitor"
       },
       "gcp": {
         "native": "CloudMonitoring",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3867,14 +4467,18 @@
     "providers": {
       "aws": {
         "native": "CloudWatch",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Monitor"
       },
       "gcp": {
         "native": "CloudMonitoring",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3901,14 +4505,18 @@
     "providers": {
       "aws": {
         "native": "CloudWatch",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Monitor"
       },
       "gcp": {
         "native": "CloudMonitoring",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -3935,7 +4543,9 @@
     "providers": {
       "aws": {
         "native": "CloudWatch",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Monitor"
@@ -3968,7 +4578,9 @@
     "providers": {
       "aws": {
         "native": "CloudWatch",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Monitor"
@@ -4001,7 +4613,9 @@
     "providers": {
       "aws": {
         "native": "CloudWatch",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Monitor"
@@ -4050,7 +4664,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4067,7 +4683,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4084,7 +4702,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4101,11 +4721,15 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "VPC"
@@ -4135,7 +4759,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4152,7 +4778,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4185,7 +4813,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4202,7 +4832,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4219,7 +4851,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4236,7 +4870,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4253,7 +4889,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4270,7 +4908,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4287,15 +4927,21 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -4306,15 +4952,21 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -4325,15 +4977,21 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -4376,7 +5034,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4393,7 +5053,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4410,7 +5072,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4443,7 +5107,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4460,7 +5126,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4477,15 +5145,21 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -4496,15 +5170,21 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -4515,15 +5195,21 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -4550,11 +5236,15 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "VPC"
@@ -4584,7 +5274,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4601,7 +5293,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4618,7 +5312,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4635,7 +5331,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4652,7 +5350,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4669,15 +5369,21 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -4688,15 +5394,21 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -4723,15 +5435,21 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -4742,7 +5460,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4775,7 +5495,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4840,7 +5562,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4857,7 +5581,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4874,7 +5600,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -4891,7 +5619,9 @@
     "providers": {
       "aws": {
         "native": "VPC",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "VNet"
@@ -5004,11 +5734,15 @@
     "providers": {
       "aws": {
         "native": "SNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "NotificationHubs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "FCM"
@@ -5022,11 +5756,15 @@
     "providers": {
       "aws": {
         "native": "SNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "NotificationHubs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "FCM"
@@ -5040,11 +5778,15 @@
     "providers": {
       "aws": {
         "native": "SNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "NotificationHubs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "FCM"
@@ -5058,7 +5800,9 @@
     "providers": {
       "aws": {
         "native": "SNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "NotificationHubs"
@@ -5075,11 +5819,15 @@
     "providers": {
       "aws": {
         "native": "SNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "NotificationHubs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "FCM"
@@ -5093,14 +5841,18 @@
     "providers": {
       "aws": {
         "native": "SNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "NotificationHubs"
       },
       "gcp": {
         "native": "FCM",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5111,7 +5863,9 @@
     "providers": {
       "aws": {
         "native": "SNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "NotificationHubs"
@@ -5128,7 +5882,9 @@
     "providers": {
       "aws": {
         "native": "SNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "NotificationHubs"
@@ -5145,11 +5901,15 @@
     "providers": {
       "aws": {
         "native": "SNS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "NotificationHubs",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "FCM"
@@ -5163,15 +5923,21 @@
     "providers": {
       "aws": {
         "native": "SecretsManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "KeyVault",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "SecretManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5182,15 +5948,21 @@
     "providers": {
       "aws": {
         "native": "SecretsManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "KeyVault",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "SecretManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5201,15 +5973,21 @@
     "providers": {
       "aws": {
         "native": "SecretsManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "KeyVault",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "SecretManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5220,15 +5998,21 @@
     "providers": {
       "aws": {
         "native": "SecretsManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "KeyVault",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "SecretManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5239,15 +6023,21 @@
     "providers": {
       "aws": {
         "native": "SecretsManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "KeyVault",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "SecretManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5258,15 +6048,21 @@
     "providers": {
       "aws": {
         "native": "SecretsManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "KeyVault",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "SecretManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5277,15 +6073,21 @@
     "providers": {
       "aws": {
         "native": "SecretsManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "KeyVault",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "SecretManager",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5296,7 +6098,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5313,7 +6117,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5330,15 +6136,21 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudFunctions",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5349,7 +6161,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5366,7 +6180,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5383,15 +6199,21 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudFunctions",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5434,7 +6256,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5451,7 +6275,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5468,15 +6294,21 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudFunctions",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5519,14 +6351,18 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
       },
       "gcp": {
         "native": "CloudFunctions",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5537,7 +6373,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5554,7 +6392,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5571,15 +6411,21 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "CloudFunctions",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5622,7 +6468,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5655,7 +6503,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5704,7 +6554,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5721,7 +6573,9 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
@@ -5738,14 +6592,18 @@
     "providers": {
       "aws": {
         "native": "Lambda",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "Functions"
       },
       "gcp": {
         "native": "CloudFunctions",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5788,7 +6646,9 @@
     "providers": {
       "aws": {
         "native": "S3",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "BlobStorage"
@@ -5805,15 +6665,21 @@
     "providers": {
       "aws": {
         "native": "S3",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "BlobStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5840,15 +6706,21 @@
     "providers": {
       "aws": {
         "native": "S3",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "BlobStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -5907,15 +6779,21 @@
     "providers": {
       "aws": {
         "native": "S3",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "BlobStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -6070,15 +6948,21 @@
     "providers": {
       "aws": {
         "native": "S3",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "BlobStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -6105,15 +6989,21 @@
     "providers": {
       "aws": {
         "native": "S3",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "BlobStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -6124,15 +7014,21 @@
     "providers": {
       "aws": {
         "native": "S3",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "BlobStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -6159,15 +7055,21 @@
     "providers": {
       "aws": {
         "native": "S3",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "BlobStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"
@@ -6274,15 +7176,21 @@
     "providers": {
       "aws": {
         "native": "S3",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "azure": {
         "native": "BlobStorage",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       },
       "gcp": {
         "native": "GCS",
-        "sdkGo": "pass"
+        "clients": {
+          "sdkGo": "pass"
+        }
       }
     },
     "status": "green"

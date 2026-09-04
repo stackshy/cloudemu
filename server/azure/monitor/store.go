@@ -74,6 +74,27 @@ func (s *resourceStore) delete(subscription, resourceGroup, kind, name string) b
 	return true
 }
 
+// allOfKind returns every stored resource of one kind across ALL subscriptions
+// and resource groups, keyed by its full resourceKey. Referential-integrity
+// checks (e.g. is an action group still referenced by any metricAlert or
+// activityLogAlert) must consider the whole store, not one scope: a metric
+// alert can name an action group id from a different resource group than its
+// own, exactly like the actual scope segments in an ARM resource id.
+func (s *resourceStore) allOfKind(kind string) map[resourceKey]*armResource {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	out := make(map[resourceKey]*armResource)
+
+	for k, v := range s.m {
+		if k.kind == kind {
+			out[k] = v
+		}
+	}
+
+	return out
+}
+
 // all returns the stored resources of one kind scoped to one subscription,
 // keyed by name. When resourceGroup is non-empty the result is further scoped
 // to that resource group (a "list by resource group" request); an empty

@@ -243,27 +243,18 @@ func TestSDKELBUnusedHealthUntilAttached(t *testing.T) {
 		t.Fatalf("CreateListener: %v", err)
 	}
 
-	// First poll after attach reports initial, next reports healthy.
-	first, err := client.DescribeTargetHealth(ctx, &elb.DescribeTargetHealthInput{
+	// Outside AsyncSettle the target reports healthy immediately once attached
+	// (the synchronous default); see TestAsyncSettleWireELBv2TargetHealth for
+	// the timed initial->healthy progression.
+	after, err := client.DescribeTargetHealth(ctx, &elb.DescribeTargetHealthInput{
 		TargetGroupArn: aws.String(tgARN),
 	})
 	if err != nil {
-		t.Fatalf("DescribeTargetHealth (attached, first): %v", err)
+		t.Fatalf("DescribeTargetHealth (attached): %v", err)
 	}
 
-	if s := first.TargetHealthDescriptions[0].TargetHealth.State; s != elbtypes.TargetHealthStateEnumInitial {
-		t.Fatalf("first attached state = %q, want initial", s)
-	}
-
-	second, err := client.DescribeTargetHealth(ctx, &elb.DescribeTargetHealthInput{
-		TargetGroupArn: aws.String(tgARN),
-	})
-	if err != nil {
-		t.Fatalf("DescribeTargetHealth (attached, second): %v", err)
-	}
-
-	if s := second.TargetHealthDescriptions[0].TargetHealth.State; s != elbtypes.TargetHealthStateEnumHealthy {
-		t.Fatalf("second attached state = %q, want healthy", s)
+	if s := after.TargetHealthDescriptions[0].TargetHealth.State; s != elbtypes.TargetHealthStateEnumHealthy {
+		t.Fatalf("attached state = %q, want healthy", s)
 	}
 }
 

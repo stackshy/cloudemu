@@ -30,6 +30,13 @@ type secretSnapshot struct {
 	// ResourcePolicy is the JSON resource-based policy attached to the secret,
 	// preserved across snapshot/restore.
 	ResourcePolicy string `json:"resourcePolicy,omitempty"`
+	// Rotation* preserve the RotateSecret/CancelRotateSecret configuration
+	// across snapshot/restore.
+	RotationEnabled      bool                       `json:"rotationEnabled,omitempty"`
+	RotationLambdaARN    string                     `json:"rotationLambdaARN,omitempty"`
+	RotationRules        driver.SecretRotationRules `json:"rotationRules,omitempty"`
+	RotationConfiguredAt time.Time                  `json:"rotationConfiguredAt,omitempty"`
+	LastRotatedDate      time.Time                  `json:"lastRotatedDate,omitempty"`
 }
 
 // Snapshot captures every secret's full state as JSON. includeAssets is unused —
@@ -41,12 +48,17 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	for name, sd := range m.secrets.All() {
 		sd.mu.RLock()
 		snap.Secrets[name] = &secretSnapshot{
-			Info:           sd.info,
-			Versions:       sd.versions,
-			Stages:         sd.stages,
-			DeletedAt:      sd.deletedAt,
-			RecoveryWindow: sd.recoveryWindow,
-			ResourcePolicy: sd.resourcePolicy,
+			Info:                 sd.info,
+			Versions:             sd.versions,
+			Stages:               sd.stages,
+			DeletedAt:            sd.deletedAt,
+			RecoveryWindow:       sd.recoveryWindow,
+			ResourcePolicy:       sd.resourcePolicy,
+			RotationEnabled:      sd.rotationEnabled,
+			RotationLambdaARN:    sd.rotationLambdaARN,
+			RotationRules:        sd.rotationRules,
+			RotationConfiguredAt: sd.rotationConfiguredAt,
+			LastRotatedDate:      sd.lastRotatedDate,
 		}
 		sd.mu.RUnlock()
 	}
@@ -64,12 +76,17 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 	for name, ss := range snap.Secrets {
 		m.secrets.Set(name, &secretData{
-			info:           ss.Info,
-			versions:       ss.Versions,
-			stages:         ss.Stages,
-			deletedAt:      ss.DeletedAt,
-			recoveryWindow: ss.RecoveryWindow,
-			resourcePolicy: ss.ResourcePolicy,
+			info:                 ss.Info,
+			versions:             ss.Versions,
+			stages:               ss.Stages,
+			deletedAt:            ss.DeletedAt,
+			recoveryWindow:       ss.RecoveryWindow,
+			resourcePolicy:       ss.ResourcePolicy,
+			rotationEnabled:      ss.RotationEnabled,
+			rotationLambdaARN:    ss.RotationLambdaARN,
+			rotationRules:        ss.RotationRules,
+			rotationConfiguredAt: ss.RotationConfiguredAt,
+			lastRotatedDate:      ss.LastRotatedDate,
 		})
 	}
 

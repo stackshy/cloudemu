@@ -204,6 +204,13 @@ func (m *Mock) DeleteUser(_ context.Context, name string) error {
 		}
 	}
 
+	for _, d := range m.mfaDevices.All() {
+		if d.UserName == name {
+			return errors.Newf(errors.FailedPrecondition,
+				"cannot delete user %q: an MFA device is still enabled (deactivate it first)", name)
+		}
+	}
+
 	m.users.Delete(name)
 	delete(m.userPolicies, name)
 	delete(m.userInlinePolicies, name)
@@ -387,9 +394,11 @@ func (m *Mock) CreatePolicy(_ context.Context, cfg driver.PolicyConfig) (*driver
 
 // DeletePolicy deletes the IAM policy with the given ARN. Like real IAM it
 // refuses (DeleteConflict) while the policy is still attached to any user or
-// role — the caller must detach it everywhere first.
+// role, or while non-default versions still exist — the caller must detach it
+// everywhere and delete non-default versions (DeletePolicyVersion) first.
 func (m *Mock) DeletePolicy(_ context.Context, arn string) error {
-	if !m.policies.Has(arn) {
+	p, ok := m.policies.Get(arn)
+	if !ok {
 		return errors.Newf(errors.NotFound, "policy %q not found", arn)
 	}
 
@@ -399,6 +408,11 @@ func (m *Mock) DeletePolicy(_ context.Context, arn string) error {
 	if m.policyAttachmentCountLocked(arn) > 0 {
 		return errors.Newf(errors.FailedPrecondition,
 			"cannot delete policy %q: still attached to one or more users or roles (detach it first)", arn)
+	}
+
+	if len(p.versions) > 1 {
+		return errors.Newf(errors.FailedPrecondition,
+			"cannot delete policy %q: non-default versions still exist (delete them with DeletePolicyVersion first)", arn)
 	}
 
 	m.policies.Delete(arn)
@@ -1317,9 +1331,10 @@ func (m *Mock) AccessKeyByID(_ context.Context, id string) (driver.AccessKeyAuth
 		return driver.AccessKeyAuth{}, false
 	}
 
-	var userARN string
+	var userARN, userID string
 	if u, found := m.users.Get(ak.UserName); found {
 		userARN = u.ARN
+		userID = u.ID
 	}
 
 	return driver.AccessKeyAuth{
@@ -1327,6 +1342,7 @@ func (m *Mock) AccessKeyByID(_ context.Context, id string) (driver.AccessKeyAuth
 		SecretAccessKey: ak.SecretAccessKey,
 		UserName:        ak.UserName,
 		UserARN:         userARN,
+		UserID:          userID,
 		AccountID:       m.opts.AccountID,
 	}, true
 }

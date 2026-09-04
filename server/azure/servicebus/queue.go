@@ -78,6 +78,7 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, sp sbPath,
 			DeadLetterOnExpiration:     req.Properties.DeadLetteringOnExpiration,
 			RequiresDuplicateDetection: req.Properties.RequiresDuplicateDetection,
 			DuplicateDetectionWindow:   dupDetectionWindow(req.Properties.DuplicateDetectionHistoryTimeWindow),
+			RequiresSession:            req.Properties.RequiresSession,
 		})
 		if err != nil && !cerrors.IsAlreadyExists(err) {
 			h.mu.Unlock()

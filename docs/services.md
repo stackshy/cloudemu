@@ -9,29 +9,29 @@ This document lists every service and operation available in CloudEmu across all
 | # | Service Category | AWS | Azure | GCP |
 |---|-----------------|-----|-------|-----|
 | 1 | Storage | `s3` | `blobstorage` | `gcs` |
-| 2 | Compute | `ec2` | `virtualmachines` | `compute` |
+| 2 | Compute | `ec2` | `virtualmachines` (+ VM Scale Sets / VMSS instance orchestration) | `compute` |
 | 3 | Database | `dynamodb` | `cosmosdb` | `firestore` |
 | 4 | Serverless | `lambda` | `functions` | `cloudfunctions` |
-| 5 | Networking | `vpc` (+ AWS-specific: Transit Gateway, VPN, DHCP options, prefix lists, egress-only IGW, endpoint services, Client VPN, Traffic Mirroring, Network Insights, VPC Block Public Access) | `vnet` | `vpc` |
+| 5 | Networking | `vpc` (+ AWS-specific: Transit Gateway, VPN, DHCP options, prefix lists, egress-only IGW, endpoint services, Client VPN, Traffic Mirroring, Network Insights, VPC Block Public Access) | `vnet` (+ Azure-specific: Public IP Prefixes, Application Security Groups, Private Link (private endpoints + services), VPN & local network gateways + connections) | `vpc` |
 | 5a | Network Firewall | `network-firewall` | — | — |
-| 6 | Monitoring | `cloudwatch` | `monitor` | `monitoring` |
+| 6 | Monitoring | `cloudwatch` | `monitor` (+ VM guest memory metrics) | `monitoring` |
 | 7 | IAM | `iam` | `iam` | `iam` |
 | 8 | DNS | `route53` | `dns` | `clouddns` |
 | 9 | Load Balancer | `elb` | `loadbalancer` | `loadbalancer` |
-| 10 | Message Queue | `sqs` | `servicebus` | `pubsub` |
+| 10 | Message Queue | `sqs` | `servicebus` (+ sessions) | `pubsub` |
 | 11 | Cache | `elasticache` | `cache` | `memorystore` |
 | 12 | Secrets | `secretsmanager` | `keyvault` | `secretmanager` |
 | 13 | Logging | `cloudwatchlogs` | `loganalytics` | `cloudlogging` |
 | 14 | Notification | `sns` | `notificationhubs` | `fcm` |
 | 15 | Container Registry | `ecr` | `acr` | `artifactregistry` |
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
-| 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `sql`, `postgresflex`, `mysqlflex` | `cloudsql`, `alloydb` |
+| 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `sql` (+ Transparent Data Encryption), `postgresflex`, `mysqlflex` | `cloudsql`, `alloydb` |
 | 17a | In-memory Database (Redis/Valkey) | `memorydb` | — | — |
 | 17b | Wide-column (Cassandra) | `keyspaces` | `managedcassandra` | — |
 | 17c | Wide-column (Bigtable) | — | — | `bigtable` |
 | 17d | Distributed PostgreSQL (Citus) | — | `cosmospostgresql` | — |
 | 18 | Kubernetes | `eks` + shared `services/kubernetes/` | `aks` + shared `services/kubernetes/` | `gke` + shared `services/kubernetes/` |
-| 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` | `cloudasset` |
+| 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` (incl. SqlVirtualMachine discovery) | `cloudasset` |
 | 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | — | — |
 | 21 | Databricks | — | `databricks` | — |
 | 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `ai` (CognitiveServices + MachineLearningServices) | `vertexai` |
@@ -52,6 +52,14 @@ This document lists every service and operation available in CloudEmu across all
 | 37 | Data Integration (ETL / Data Catalog) | `glue` | — | — |
 | 38 | Threat Detection | `guardduty` | — | — |
 | 39 | Streaming (Managed Kafka) | `kafka` | — | — |
+| 40 | Billing / FinOps | `costexplorer`, `savingsplans`, `servicequotas` | `costmanagement` | `cloudbilling` |
+| 41 | Big Data (Hadoop / Spark) | `emr` | — | — |
+| 42 | Event Streaming | — | `eventhub` | — |
+| 43 | Serverless Containers | — | `containerapps` (+ ACI `containerinstances`) | — |
+| 44 | Analytics (Data Warehouse) | — | `synapse` | — |
+| 45 | Analytics (Data Explorer / Kusto) | — | `kusto` | — |
+| 46 | Managed Identity | — | `managedidentity` | — |
+| 47 | Resource Governance | — | `locks`, `tags`, `providers` | — |
 
 ---
 
@@ -1831,7 +1839,7 @@ It behaves like a tiny always-converged cluster (minikube-like) rather than a ba
 
 **Core (`core/v1`)**: Namespace, ConfigMap, Secret (StringData merged into Data), ServiceAccount (`default` auto-created per namespace), Pod (driven **Running** with a synthetic Pod IP — a directly-created Pod with a terminal phase is preserved), Service (ClusterIP from 10.96.0.0/12, immutable on update), Endpoints (get/list/watch only — auto-managed per Service), PersistentVolumeClaim (→ Bound), PersistentVolume (→ Available), Node, Event, ResourceQuota, LimitRange.
 
-**Workload controllers (`apps/v1`)**: Deployment, ReplicaSet, StatefulSet (stable `-0..-N` names + one Bound PVC per `volumeClaimTemplate`), DaemonSet (one Pod per node whose labels satisfy the template `nodeSelector` — zero Pods when it doesn't match the synthetic node). A **Deployment interposes a ReplicaSet** per pod-template revision (Deployment→RS→Pod, matching real topology), and a template change creates a new ReplicaSet and deletes the old one outright — an instantaneous swap (no `revisionHistoryLimit`, no `kubectl rollout undo`, no surge/unavailable pacing). All materialize Running Pods owned via `ownerReferences`; deleting a controller cascade-deletes the chain and drains Endpoints. Deployments/StatefulSets expose **`/scale`** and **`/status`** subresources. CronJob scheduling is driven explicitly via `TickCronJobs()` (no background timer), which performs real due-evaluation against the cluster clock: it parses the standard 5-field `spec.schedule` (`*`, `*/n`, lists, `a-b` ranges) and materializes a Job only when a scheduled time falls in `(status.lastScheduleTime, now]` — advancing `lastScheduleTime` to the fired slot so re-ticking the same instant never double-creates — and honors `concurrencyPolicy` (`Forbid`/`Replace`/`Allow`) and `startingDeadlineSeconds`.
+**Workload controllers (`apps/v1`)**: Deployment, ReplicaSet, StatefulSet (stable `-0..-N` names + one Bound PVC per `volumeClaimTemplate`), DaemonSet (one Pod per node whose labels satisfy the template `nodeSelector` **and whose taints the pod tolerates** — zero Pods when nothing matches; under multi-node it fans out one Pod per matching+tolerated node, e.g. kube-proxy on all N). A **Deployment interposes a ReplicaSet** per pod-template revision (Deployment→RS→Pod, matching real topology), and a template change creates a new ReplicaSet and deletes the old one outright — an instantaneous swap (no `revisionHistoryLimit`, no `kubectl rollout undo`, no surge/unavailable pacing). All materialize Running Pods owned via `ownerReferences`; deleting a controller cascade-deletes the chain and drains Endpoints. Deployments/StatefulSets expose **`/scale`** and **`/status`** subresources. CronJob scheduling fires on the wall-clock progression ticker when `--k8s-progression` is running, and via `TickCronJobs()` on the deterministic/test path; either way it performs real due-evaluation against the cluster clock: it parses the standard 5-field `spec.schedule` (`*`, `*/n`, lists, `a-b` ranges) and materializes a Job only when a scheduled time falls in `(status.lastScheduleTime, now]` — advancing `lastScheduleTime` to the fired slot so re-ticking the same instant never double-creates — and honors `concurrencyPolicy` (`Forbid`/`Replace`/`Allow`) and `startingDeadlineSeconds`.
 
 **Other groups** (registry-backed CRUD + list/watch/patch/delete): `batch/v1` Job (→ Succeeded Pods) / CronJob; `networking.k8s.io/v1` Ingress (→ load-balancer IP) / IngressClass / NetworkPolicy; `rbac.authorization.k8s.io/v1` Role / RoleBinding / ClusterRole / ClusterRoleBinding; `storage.k8s.io/v1` StorageClass; `autoscaling/v2` HorizontalPodAutoscaler; `discovery.k8s.io/v1` EndpointSlice; `policy/v1` PodDisruptionBudget; `apiextensions.k8s.io/v1` CustomResourceDefinition; `admissionregistration.k8s.io/v1` Mutating/ValidatingWebhookConfiguration.
 
@@ -1845,7 +1853,7 @@ It behaves like a tiny always-converged cluster (minikube-like) rather than a ba
 
 **Finalizers**: an object carrying `metadata.finalizers` goes **Terminating** on delete (`deletionTimestamp` stamped, object retained) and is removed only when the last finalizer is cleared via update/patch — on the registry path and typed Namespace/Pod. Finalizers are also honored during cascade: a finalizer-bearing child reached by owner garbage-collection or namespace teardown goes Terminating rather than being reaped, until its finalizers drain. The server-owned `deletionTimestamp` survives a merge-patch — an RFC-7396 `null` cannot resurrect a Terminating object.
 
-**Pod subresources**: `pods/{name}/log` returns synthetic container output; `exec`/`attach`/`portforward` return a typed `501` (they need a streaming protocol upgrade the emulator doesn't implement); `pods/{name}/eviction` honors PodDisruptionBudgets.
+**Pod subresources**: `pods/{name}/log` returns synthetic container output; `exec` and `attach` complete the WebSocket streaming upgrade (`v5.channel.k8s.io`, plus v4 and the base protocols) and run a deterministic synthetic session — a self-describing banner on stdout (exec also echoes the requested command) followed by a Success `Status` on the error channel (exit 0) — there is no real container runtime, so no command actually runs and nothing is written to disk; a non-WebSocket (SPDY-only) client still gets a clean typed `Status`. `portforward` still returns a typed `501` (deferred). `pods/{name}/eviction` honors PodDisruptionBudgets.
 
 **Metrics & autoscaling**: `metrics.k8s.io/v1beta1` (`kubectl top`) serves synthetic Pod/Node metrics from the live pods + synthetic node; a HorizontalPodAutoscaler reconcile drives its target Deployment on a Resource CPU `averageUtilization` metric — sampling the target Pods' CPU from that metrics source and applying the real HPA ratio `desiredReplicas = ceil(currentReplicas × currentUtilization ÷ targetUtilization)`, clamped into `[minReplicas, maxReplicas]` — and falls back to a plain min/max clamp when no CPU metric is configured or the target Pods declare no CPU request, reporting `currentReplicas`/`desiredReplicas`/`currentMetrics` on status.
 
@@ -1869,7 +1877,9 @@ It behaves like a tiny always-converged cluster (minikube-like) rather than a ba
 
 **Opt-in Pod lifecycle progression**: by default Pods are driven straight to Running (deterministic, no kubelet). Enabling `APIServer.SetLifecycleProgression(true)` — or `cloudemu serve --k8s-progression` (env `CLOUDEMU_K8S_PROGRESSION`) — instead starts each Pod `Pending` and advances it `Pending → ContainerCreating → Running` (and `→ Terminating` on delete) on a logical clock, emitting the kubelet Event sequence at each step. In tests the transitions are driven explicitly via `Tick()` (fully deterministic under `FakeClock`); a live `cloudemu serve` runs a real-time ticker (`--k8s-progression-interval`, default 1s) so Pods visibly progress.
 
-**Emulation boundaries** (deliberate simplifications, not gaps): there is no real kubelet — Pods are driven Running synthetically (or through the opt-in staged progression above) and `pods/log` is synthetic while `exec`/`attach`/`portforward` return a typed 501; no real scheduling beyond the single synthetic node (DaemonSet `nodeSelector` is honored, but affinity/taints/resource-fit are not); admission webhooks make outbound calls only when explicitly enabled (off by default to stay zero-network); server-side apply tracks ownership at leaf granularity (no per-element list merge); NetworkPolicy and RBAC are **queryable** (SubjectAccessReview / EvaluateNetworkPolicy) rather than request-time-enforced, since the emulator has no packet path or authenticated identity; CronJob has no wall-clock timer (schedules are evaluated only when `TickCronJobs` is called) and supports only the standard 5-field cron syntax (nonstandard `@`-macros, `L`/`W`/`#`/`?` characters, and seconds/year fields are rejected); rollouts converge instantly (no surge/unavailable pacing, minimal revision history); and OpenAPI is served cluster-independently, so CRD schemas aren't published there (custom resources still work via discovery).
+**Scheduling** is a real filter-then-score scheduler, not a single fixed node. It defaults to one synthetic node (`cloudemu-node-0`, instant-Running), and `cloudemu serve --k8s-nodes N` (opt-in) seeds N nodes — 1 control-plane carrying a `node-role.kubernetes.io/control-plane:NoSchedule` taint plus workers. Placement honors `spec.nodeName`, `nodeSelector`, taints/tolerations (`NoSchedule`/`NoExecute` at schedule time), resource requests-vs-allocatable fit, **required and preferred node affinity**, inter-pod **affinity/anti-affinity** by `topologyKey`, and **topology spread** constraints, with **scoring** by preferred node/pod-(anti)affinity weights and topology-spread skew minimization (no resource-utilization bin-packing) — an unplaceable Pod stays `Pending` with `PodScheduled=False`/`Unschedulable` and a `FailedScheduling` event. The seed count is set at startup, but **nodes can be added or removed at runtime**: adding a node reschedules Pending Pods and re-fans DaemonSets, and removing one evacuates and reschedules the Pods bound to it.
+
+**Emulation boundaries** (deliberate simplifications, not gaps): there is no real kubelet — Pods are driven Running synthetically (or through the opt-in staged progression above), `pods/log` is synthetic, and `exec`/`attach` serve a deterministic synthetic WebSocket session (banner + Success, exit 0) rather than executing anything in a real container while `pods/portforward` returns a typed 501; `tolerationSeconds` and live `NoExecute` taint-based **eviction** are modeled at schedule time only (a running Pod is not evicted when a `NoExecute` taint is added after placement); admission webhooks make outbound calls only when explicitly enabled (off by default to stay zero-network); server-side apply tracks ownership at leaf granularity (no per-element list merge); NetworkPolicy and RBAC are **queryable** (SubjectAccessReview / EvaluateNetworkPolicy) rather than request-time-enforced, since the emulator has no packet path or authenticated identity; CronJob schedules are evaluated by a ticker — on a wall-clock interval when the opt-in progression ticker is running (`--k8s-progression`), or explicitly via `TickCronJobs` in tests — and support only the standard 5-field cron syntax (nonstandard `@`-macros, `L`/`W`/`#`/`?` characters, and seconds/year fields are rejected); rollouts converge instantly (no surge/unavailable pacing, minimal revision history); and OpenAPI is served cluster-independently, so CRD schemas aren't published there (custom resources still work via discovery).
 
 ---
 

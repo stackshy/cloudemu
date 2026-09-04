@@ -533,6 +533,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p functionPath)
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, p functionPath) {
+	if h.isGen2(p.fullName()) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "function "+p.name+" not found")
+		return
+	}
+
 	info, err := h.fn.GetFunction(r.Context(), p.name)
 	if err != nil {
 		writeErr(w, err)
@@ -548,6 +553,10 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, p functionPath) {
 		writeErr(w, err)
 		return
 	}
+
+	// gen2 functions share the driver store (so the invoke path resolves them)
+	// but are managed only through the v2 API — drop them from a v1 list.
+	infos = h.excludeGen2(p, infos)
 
 	// Sort by name so pagination over the base64 offset token is stable across
 	// calls (the provider store iterates a map in unspecified order).
@@ -568,6 +577,11 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, p functionPath) {
 }
 
 func (h *Handler) update(w http.ResponseWriter, r *http.Request, p functionPath) {
+	if h.isGen2(p.fullName()) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "function "+p.name+" not found")
+		return
+	}
+
 	var body cloudFunction
 	if !decodeJSON(w, r, &body) {
 		return
@@ -613,6 +627,11 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, p functionPath)
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, p functionPath) {
+	if h.isGen2(p.fullName()) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "function "+p.name+" not found")
+		return
+	}
+
 	if err := h.fn.DeleteFunction(r.Context(), p.name); err != nil {
 		writeErr(w, err)
 		return
@@ -634,6 +653,13 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, p functionPath)
 func (h *Handler) serveCall(w http.ResponseWriter, r *http.Request, p functionPath) {
 	if r.Method != http.MethodPost {
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
+		return
+	}
+
+	// The v1 :call invokes gen1 functions only; a gen2 function uses the v2
+	// invoke path even though both share the driver store.
+	if h.isGen2(p.fullName()) {
+		writeError(w, http.StatusNotFound, "NOT_FOUND", "function "+p.name+" not found")
 		return
 	}
 

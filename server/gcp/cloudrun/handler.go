@@ -29,6 +29,14 @@
 //
 // All mutating endpoints return google.longrunning.Operation envelopes with
 // done=true so SDK pollers terminate on the first response.
+//
+// A deployed service is also invocable directly: a request addressed to its
+// generated *.run.app host (any path, any method — see invoke.go) is routed
+// to the service and executed, independent of the Admin API path above. Real
+// Cloud Run enforces IAM run.invoker on the serving path for a non-public
+// service; CloudEmu accepts any credentials (SigV4/OAuth tokens are parsed,
+// never verified — see server/gcp/gcp.go), so every service is invocable
+// unauthenticated here regardless of its real ingress/IAM configuration.
 package cloudrun
 
 import (
@@ -78,17 +86,28 @@ func New(cr driver.CloudRun) *Handler {
 	return &Handler{cr: cr, policies: make(map[string]*iamPolicy)}
 }
 
-// Matches claims Cloud Run v2 job, service and location-operation paths. The
-// locations+{jobs,services,operations} guard keeps it disjoint from Cloud
-// Logging's /v2/projects/{p}/logs paths.
+// Matches claims Cloud Run v2 job, service and location-operation paths, plus
+// any request addressed to a deployed service's generated *.run.app host. The
+// locations+{jobs,services,operations} guard keeps the Admin API paths
+// disjoint from Cloud Logging's /v2/projects/{p}/logs paths.
 func (*Handler) Matches(r *http.Request) bool {
+	if isServiceHost(r.Host) {
+		return true
+	}
+
 	_, ok := parsePath(r.URL.Path)
 
 	return ok
 }
 
-// ServeHTTP routes by URL shape.
+// ServeHTTP routes by URL shape, or to a service invoke when the request
+// addresses a generated service host.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isServiceHost(r.Host) {
+		h.serveServiceInvoke(w, r)
+		return
+	}
+
 	p, ok := parsePath(r.URL.Path)
 	if !ok {
 		writeError(w, http.StatusNotFound, "NOT_FOUND", "unsupported path")
@@ -522,15 +541,23 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 	})
 }
 
+// writeErr maps a driver error to its wire envelope. The message is always
+// cerrors.Message(err), never err.Error() — the latter would bake cloudemu's
+// internal code-name prefix (e.g. "NotFound: ") into the message a real
+// client sees, which no real Cloud Run response ever does.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		writeError(w, http.StatusNotFound, "NOT_FOUND", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ALREADY_EXISTS", err.Error())
+		writeError(w, http.StatusConflict, "ALREADY_EXISTS", msg)
+	case cerrors.IsFailedPrecondition(err):
+		writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL", msg)
 	}
 }

@@ -52,7 +52,7 @@ func (m *Mock) DequeueMessages(
 	}
 
 	now := m.opts.Clock.Now()
-	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visTimeout, now)
+	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visTimeout, now, nil)
 
 	removeByIndices(qd, toRemove)
 

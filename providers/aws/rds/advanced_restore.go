@@ -12,6 +12,10 @@ import (
 var _ rdsdriver.AdvancedRestore = (*Mock)(nil)
 
 // CopyDBSnapshot clones an existing instance snapshot under a new identifier.
+// SourceDBSnapshotIdentifier is deliberately left empty on the copy: per the
+// AWS DBSnapshot API docs it "only has a value in the case of a cross-account
+// or cross-Region copy", and cloudemu models only same-account/same-region
+// copies.
 //
 //nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) CopyDBSnapshot(_ context.Context, source, target string, tags map[string]string) (*rdsdriver.Snapshot, error) {

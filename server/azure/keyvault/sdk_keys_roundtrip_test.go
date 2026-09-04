@@ -25,7 +25,7 @@ func newKeysClient(t *testing.T) *azkeys.Client {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
-	client, err := azkeys.NewClient(ts.URL, fakeCred{}, &azkeys.ClientOptions{
+	client, err := azkeys.NewClient(ts.URL+"/default", fakeCred{}, &azkeys.ClientOptions{
 		ClientOptions: azcore.ClientOptions{
 			Transport: ts.Client(),
 			Retry:     policy.RetryOptions{MaxRetries: -1},

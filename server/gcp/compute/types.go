@@ -7,14 +7,15 @@ package compute
 
 // instanceRequest is the inbound shape for POST .../instances (Insert).
 type instanceRequest struct {
-	Name              string             `json:"name"`
-	MachineType       string             `json:"machineType"`
-	Disks             []attachedDisk     `json:"disks,omitempty"`
-	NetworkInterfaces []networkInterface `json:"networkInterfaces,omitempty"`
-	Tags              tagsBlock          `json:"tags,omitempty"`
-	Labels            map[string]string  `json:"labels,omitempty"`
-	Metadata          metadataBlock      `json:"metadata,omitempty"`
-	ServiceAccounts   []serviceAccount   `json:"serviceAccounts,omitempty"`
+	Name               string             `json:"name"`
+	MachineType        string             `json:"machineType"`
+	Disks              []attachedDisk     `json:"disks,omitempty"`
+	NetworkInterfaces  []networkInterface `json:"networkInterfaces,omitempty"`
+	Tags               tagsBlock          `json:"tags,omitempty"`
+	Labels             map[string]string  `json:"labels,omitempty"`
+	Metadata           metadataBlock      `json:"metadata,omitempty"`
+	ServiceAccounts    []serviceAccount   `json:"serviceAccounts,omitempty"`
+	DeletionProtection bool               `json:"deletionProtection,omitempty"`
 }
 
 // metadataBlock is GCP's instance metadata. The boot script is carried as a
@@ -49,6 +50,7 @@ type attachedDisk struct {
 }
 
 type diskInitializeParams struct {
+	DiskName    string `json:"diskName,omitempty"`
 	SourceImage string `json:"sourceImage,omitempty"`
 	DiskType    string `json:"diskType,omitempty"`
 	DiskSizeGb  string `json:"diskSizeGb,omitempty"`

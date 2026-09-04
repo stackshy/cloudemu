@@ -164,6 +164,10 @@ type RecordInfo struct {
 	// SOA carries the editable Azure SOA timing fields as stored. Nil for
 	// non-SOA records and for the auto-created apex SOA.
 	SOA *SOARecord
+	// ETag is the Azure DNS record set's current entity tag, minted fresh on
+	// every create/update so an If-Match/If-None-Match precondition on a later
+	// write has something to compare against. Other providers leave it empty.
+	ETag string
 }
 
 // HealthCheckConfig describes a health check to create.

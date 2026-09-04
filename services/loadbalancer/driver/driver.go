@@ -38,6 +38,11 @@ type LBInfo struct {
 	CanonicalHostedZoneID string
 	// VPCID is the VPC the load balancer's subnets belong to.
 	VPCID string
+	// SubnetAZs maps each entry in Subnets to the availability zone it sits in,
+	// resolved from the networking driver at create/SetSubnets time. A subnet
+	// with no resolvable zone (resolver not wired, or subnet unknown) is absent
+	// from the map.
+	SubnetAZs map[string]string
 	// CreatedTime is when the load balancer was created.
 	CreatedTime time.Time
 	Tags        map[string]string
@@ -124,6 +129,7 @@ type ListenerConfig struct {
 	// SslPolicy and Certificates apply to TLS-terminating (HTTPS/TLS) listeners.
 	SslPolicy    string
 	Certificates []Certificate
+	Tags         map[string]string
 }
 
 // ListenerInfo describes a listener. See ListenerConfig for the relationship
@@ -137,6 +143,7 @@ type ListenerInfo struct {
 	DefaultActions []RuleAction
 	SslPolicy      string
 	Certificates   []Certificate
+	Tags           map[string]string
 }
 
 // Certificate is a server certificate bound to an HTTPS/TLS listener. The
@@ -249,6 +256,7 @@ type RuleConfig struct {
 	Priority    int
 	Conditions  []RuleCondition
 	Actions     []RuleAction
+	Tags        map[string]string
 }
 
 // RuleInfo describes a listener rule.
@@ -259,6 +267,7 @@ type RuleInfo struct {
 	Conditions  []RuleCondition
 	Actions     []RuleAction
 	IsDefault   bool
+	Tags        map[string]string
 }
 
 // ModifyListenerInput describes modifications to apply to a listener. A
@@ -364,6 +373,14 @@ type ListenerGetter interface {
 	GetListener(ctx context.Context, listenerARN string) (*ListenerInfo, error)
 }
 
+// RuleGetter is implemented by drivers that can fetch a single listener rule
+// by ARN, letting a handler resolve a rule's tags (ELBv2 DescribeTags accepts
+// listener-rule ARNs, and DescribeRules only looks up by parent listener ARN,
+// not by the rule's own ARN).
+type RuleGetter interface {
+	GetRule(ctx context.Context, ruleARN string) (*RuleInfo, error)
+}
+
 // LBNetworkModifier is implemented by drivers that can replace the security
 // groups or subnets of an existing load balancer (ELBv2 SetSecurityGroups /
 // SetSubnets). SetSubnets returns the resulting subnet list.
@@ -381,5 +398,18 @@ type TargetGroupAttributeStore interface {
 	GetTargetGroupAttributes(ctx context.Context, targetGroupARN string) (map[string]string, error)
 	ModifyTargetGroupAttributes(
 		ctx context.Context, targetGroupARN string, updates map[string]string,
+	) (map[string]string, error)
+}
+
+// ListenerAttributeStore is implemented by drivers that store per-listener
+// key/value attributes (ELBv2 DescribeListenerAttributes /
+// ModifyListenerAttributes). Both methods return the full attribute set,
+// load-balancer-type-derived defaults included, so a caller reads back exactly
+// what real ELBv2 reports. ModifyListenerAttributes merges updates over the
+// stored set.
+type ListenerAttributeStore interface {
+	GetListenerAttributes(ctx context.Context, listenerARN string) (map[string]string, error)
+	ModifyListenerAttributes(
+		ctx context.Context, listenerARN string, updates map[string]string,
 	) (map[string]string, error)
 }

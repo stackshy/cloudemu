@@ -47,7 +47,10 @@ func TestSpecificHandlersWinBeforeBlobFallback(t *testing.T) {
 		path string
 	}{
 		{"cosmos_dbs_before_blob", "/dbs"},
-		{"keyvault_secrets_before_blob", "/secrets"},
+		// Key Vault claims the vault-scoped data-plane path /{vault}/secrets on a
+		// bare host; a bare /secrets is intentionally a blob container path (so a
+		// container literally named "secrets" can be created).
+		{"keyvault_secrets_before_blob", "/default/secrets"},
 		{"acr_catalog_before_blob", "/acr/v1/_catalog"},
 	}
 

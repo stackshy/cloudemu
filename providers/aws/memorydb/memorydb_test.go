@@ -99,11 +99,17 @@ func TestClusterLifecycleAndTopology(t *testing.T) {
 		t.Errorf("FailoverShard: %v", err)
 	}
 
+	// c1 uses the default db.t4g.small — the smallest node in its family, so it
+	// can only scale up (to db.t4g.medium) and has nothing to scale down to.
 	up, down, err := m.ListAllowedNodeTypeUpdates(ctx, "c1")
 	requireNoError(t, err)
 
-	if len(up) == 0 || len(down) == 0 {
-		t.Errorf("node-type updates empty: up=%v down=%v", up, down)
+	if len(up) != 1 || up[0] != "db.t4g.medium" {
+		t.Errorf("scale-up = %v, want [db.t4g.medium]", up)
+	}
+
+	if len(down) != 0 {
+		t.Errorf("scale-down = %v, want empty for the smallest node type", down)
 	}
 
 	// Delete cluster + verify ACL detached.

@@ -34,6 +34,26 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"CreateIndex", "CreateView", "DeleteView", "GetDefaultView", "GetIndex",
 		"GetView", "ListIndexes", "ListResources", "ListViews", "Search",
 	},
+	"aws/costexplorer": {
+		"GetCostAndUsage", "GetCostForecast", "GetDimensionValues", "GetTags",
+	},
+	"aws/servicequotas": {
+		"GetAWSDefaultServiceQuota", "GetServiceQuota", "ListAWSDefaultServiceQuotas",
+		"ListRequestedServiceQuotaChangeHistory", "ListServiceQuotas",
+		"RequestServiceQuotaIncrease",
+	},
+	"aws/emr": {
+		"AddInstanceGroups", "AddJobFlowSteps", "CancelSteps", "DescribeCluster",
+		"DescribeStep", "ListBootstrapActions", "ListClusters", "ListInstanceGroups",
+		"ListInstances", "ListSteps", "ModifyInstanceGroups", "RunJobFlow",
+		"TerminateJobFlows",
+	},
+	"aws/savingsplans": {
+		"CreateSavingsPlan", "DeleteQueuedSavingsPlan", "DescribeSavingsPlanRates",
+		"DescribeSavingsPlans", "DescribeSavingsPlansOfferingRates",
+		"DescribeSavingsPlansOfferings", "ListTagsForResource", "TagResource",
+		"UntagResource",
+	},
 
 	// Azure — ARM handlers, routed on HTTP method + resource path shape.
 	"azure/disks": {
@@ -65,11 +85,39 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"azure/tenants": {
 		"List",
 	},
+	"azure/providers": {
+		"Get", "List", "Register", "Unregister",
+	},
+	"azure/tags": {
+		"CreateOrUpdateAtScope", "DeleteAtScope", "GetAtScope", "UpdateAtScope",
+	},
 	"azure/resourcegraph": {
 		"Operations", "Resources", "ResourcesHistory",
 	},
+	"azure/costmanagement": {
+		"Usage",
+	},
+	"azure/locks": {
+		"CreateOrUpdate", "Delete", "Get", "List",
+	},
+	"azure/eventhub": {
+		"CheckNameAvailability", "CreateOrUpdate", "CreateOrUpdateAuthorizationRule",
+		"Delete", "DeleteAuthorizationRule", "Get", "GetAuthorizationRule",
+		"List", "ListAuthorizationRules", "ListByEventHub", "ListByNamespace",
+		"ListByResourceGroup", "ListKeys", "RegenerateKeys",
+	},
 	"azure/queue": {
 		"Create", "Delete", "DeleteMessage", "DequeueMessages", "EnqueueMessage", "List",
+	},
+	"azure/kusto": {
+		"CreateOrUpdate", "Delete", "Get", "List", "ListByCluster",
+		"ListByResourceGroup", "Start", "Stop",
+		"CreateTable", "CreateMergeTable", "DropTable",
+		"ShowTables", "ShowTableSchema", "ShowDatabaseSchema",
+	},
+	"azure/synapse": {
+		"CreateOrUpdate", "Delete", "Get", "List", "ListByResourceGroup", "ListByWorkspace",
+		"Pause", "Resume", "Start", "Stop", "Update",
 	},
 
 	// GCP — REST handlers, routed on method + resource path / custom verb.
@@ -82,6 +130,12 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	},
 	"gcp/servicenetworking": {
 		"CreateConnection", "DeleteConnection", "ListConnections",
+	},
+	"gcp/cloudbilling": {
+		"CreateBillingAccount", "CreateBudget", "DeleteBudget", "GetBillingAccount",
+		"GetBudget", "GetProjectBillingInfo", "ListBillingAccounts", "ListBudgets",
+		"ListProjectBillingInfo", "ListServices", "ListSkus", "PatchBillingAccount",
+		"PatchBudget", "UpdateProjectBillingInfo",
 	},
 
 	// OCI — REST work-request envelope.

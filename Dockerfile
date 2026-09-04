@@ -1,7 +1,10 @@
 # syntax=docker/dockerfile:1
 
 # --- build stage -------------------------------------------------------------
-FROM golang:1.25 AS build
+# Pin the build stage to the runner's native arch ($BUILDPLATFORM) and
+# cross-compile to the requested target ($TARGETOS/$TARGETARCH) so a
+# multi-platform build stays native-speed instead of emulating each arch.
+FROM --platform=$BUILDPLATFORM golang:1.25 AS build
 
 WORKDIR /src
 
@@ -15,9 +18,11 @@ COPY . .
 ARG VERSION=docker
 ARG COMMIT=none
 ARG DATE=unknown
+ARG TARGETOS
+ARG TARGETARCH
 RUN --mount=type=cache,target=/go/pkg/mod \
     --mount=type=cache,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -trimpath \
+    CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
     -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE} -X main.builtBy=docker" \
     -o /out/cloudemu ./cmd/cloudemu
 

@@ -414,8 +414,9 @@ func (h *Handler) createKey(w http.ResponseWriter, r *http.Request, project, ema
 	}
 
 	// privateKeyData is the base64 credentials file, returned once at create.
+	// A freshly created key is never disabled.
 	keyFile := buildKeyFileData(project, email, k.AccessKeyID, k.SecretAccessKey)
-	writeJSON(w, toKeyJSON(project, email, k.AccessKeyID, keyFile, k.CreatedAt))
+	writeJSON(w, toKeyJSON(project, email, k.AccessKeyID, keyFile, k.CreatedAt, false))
 }
 
 func (h *Handler) getKey(w http.ResponseWriter, r *http.Request, project, email, keyID string) {
@@ -429,7 +430,7 @@ func (h *Handler) getKey(w http.ResponseWriter, r *http.Request, project, email,
 		if keys[i].AccessKeyID == keyID {
 			// Empty private-key body on GET — GCP only returns the private
 			// material once at create time.
-			writeJSON(w, toKeyJSON(project, email, keyID, "", keys[i].CreatedAt))
+			writeJSON(w, toKeyJSON(project, email, keyID, "", keys[i].CreatedAt, h.isKeyDisabled(keyID)))
 			return
 		}
 	}
@@ -448,7 +449,7 @@ func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request, project, emai
 	out := listKeysResponse{Keys: make([]serviceAccountKey, 0, len(keys))}
 	for i := range keys {
 		out.Keys = append(out.Keys,
-			toKeyJSON(project, email, keys[i].AccessKeyID, "", keys[i].CreatedAt))
+			toKeyJSON(project, email, keys[i].AccessKeyID, "", keys[i].CreatedAt, h.isKeyDisabled(keys[i].AccessKeyID)))
 	}
 
 	writeJSON(w, out)
@@ -460,7 +461,20 @@ func (h *Handler) deleteKey(w http.ResponseWriter, r *http.Request, email, keyID
 		return
 	}
 
+	h.mu.Lock()
+	delete(h.keyDisabled, keyID)
+	h.mu.Unlock()
+
 	writeJSON(w, struct{}{})
+}
+
+// isKeyDisabled reports whether keyID currently carries the disabled bit set
+// via keys.disable (and not since cleared by keys.enable).
+func (h *Handler) isKeyDisabled(keyID string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	return h.keyDisabled[keyID]
 }
 
 // --- helpers ---
@@ -550,8 +564,9 @@ func toRoleJSON(project, roleID string, props *roleProps) role {
 // toKeyJSON builds the wire envelope for a service-account key. private is
 // only populated on create (GCP returns the private key material exactly
 // once); GET / LIST pass an empty string. createdAt (RFC3339) drives the
-// validity window; a zero value means "now".
-func toKeyJSON(project, email, keyID, private, createdAt string) serviceAccountKey {
+// validity window; a zero value means "now". disabled reflects the handler's
+// local keys.disable/enable tracking, since the driver has no such field.
+func toKeyJSON(project, email, keyID, private, createdAt string, disabled bool) serviceAccountKey {
 	validAfter := createdAt
 	if validAfter == "" {
 		validAfter = time.Now().UTC().Format(time.RFC3339)
@@ -562,7 +577,7 @@ func toKeyJSON(project, email, keyID, private, createdAt string) serviceAccountK
 		validBefore = t.AddDate(keyValidityYears, 0, 0).UTC().Format(time.RFC3339)
 	}
 
-	return serviceAccountKey{
+	out := serviceAccountKey{
 		Name: "projects/" + project + "/serviceAccounts/" + email +
 			"/keys/" + keyID,
 		PrivateKeyType:  "TYPE_GOOGLE_CREDENTIALS_FILE",
@@ -572,7 +587,14 @@ func toKeyJSON(project, email, keyID, private, createdAt string) serviceAccountK
 		ValidBeforeTime: validBefore,
 		KeyOrigin:       "GOOGLE_PROVIDED",
 		KeyType:         "USER_MANAGED",
+		Disabled:        disabled,
 	}
+
+	if disabled {
+		out.DisableReason = keyDisableReasonUserInitiated
+	}
+
+	return out
 }
 
 // buildKeyFileData returns the base64-encoded service-account credentials file

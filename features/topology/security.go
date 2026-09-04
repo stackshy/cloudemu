@@ -3,10 +3,22 @@ package topology
 import (
 	"context"
 	"fmt"
+	"slices"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
+
+// ruleSource describes the peer whose traffic a security rule is evaluated
+// against: its IP address (IPv4 or IPv6) and the security groups it belongs to.
+// The group memberships let a rule that references another security group
+// (UserIdGroupPairs / ReferencedGroupID) resolve "is the peer a member of the
+// referenced group?" — the most common real-cloud pattern (e.g. "allow the db
+// SG ingress from the app SG"), which a CIDR-only matcher silently denies.
+type ruleSource struct {
+	ip       string
+	groupIDs []string
+}
 
 // EvaluateSecurityGroups checks whether traffic from srcSG to dstSG is allowed
 // on the given port and protocol. Both egress on src and ingress on dst must match.
@@ -42,7 +54,12 @@ func evaluateSGPair(
 	port int,
 	protocol string,
 ) *TrafficVerdict {
-	egressMatch := matchRules(src.EgressRules, src.ID, port, protocol, "0.0.0.0/0")
+	// Egress on the source is evaluated against the destination group; ingress
+	// on the destination against the source group. Carrying the peer's group id
+	// lets a referenced-group ("allow from sg-app") rule resolve, while the
+	// 0.0.0.0/0 ip preserves the existing all-traffic-CIDR matching.
+	egressMatch := matchRules(src.EgressRules, src.ID, port, protocol,
+		ruleSource{ip: "0.0.0.0/0", groupIDs: []string{dst.ID}})
 	if egressMatch == nil {
 		return &TrafficVerdict{
 			Allowed: false,
@@ -50,7 +67,8 @@ func evaluateSGPair(
 		}
 	}
 
-	ingressMatch := matchRules(dst.IngressRules, dst.ID, port, protocol, "0.0.0.0/0")
+	ingressMatch := matchRules(dst.IngressRules, dst.ID, port, protocol,
+		ruleSource{ip: "0.0.0.0/0", groupIDs: []string{src.ID}})
 	if ingressMatch == nil {
 		return &TrafficVerdict{
 			Allowed: false,
@@ -70,9 +88,12 @@ func matchRules(
 	rules []netdriver.SecurityRule,
 	groupID string,
 	port int,
-	protocol, targetIP string,
+	protocol string,
+	src ruleSource,
 ) *RuleMatch {
-	for _, r := range rules {
+	for i := range rules {
+		r := &rules[i]
+
 		if !protocolMatches(r.Protocol, protocol) {
 			continue
 		}
@@ -81,7 +102,7 @@ func matchRules(
 			continue
 		}
 
-		if !ipInCIDR(targetIP, r.CIDR) {
+		if !ruleSelectorMatches(r, src) {
 			continue
 		}
 
@@ -95,6 +116,32 @@ func matchRules(
 	}
 
 	return nil
+}
+
+// ruleSelectorMatches reports whether the rule's source/destination selector
+// admits the given peer. On the wire a rule carries exactly one of CIDR,
+// IPv6CIDR, PrefixListID or ReferencedGroupID, but the matcher is defensive: it
+// admits the peer when ANY populated selector matches. An empty selector never
+// matches, so an unpopulated rule does not admit everything.
+//
+// PrefixListID is a documented limitation: managed prefix lists are not part of
+// the topology engine's inputs (the networking driver it consumes exposes no
+// prefix-list lookup), so a prefix-list rule cannot be resolved here and is
+// treated as non-matching rather than crashing or silently admitting the peer.
+func ruleSelectorMatches(r *netdriver.SecurityRule, src ruleSource) bool {
+	if r.ReferencedGroupID != "" && slices.Contains(src.groupIDs, r.ReferencedGroupID) {
+		return true
+	}
+
+	if r.CIDR != "" && ipInCIDR(src.ip, r.CIDR) {
+		return true
+	}
+
+	if r.IPv6CIDR != "" && ipInCIDR(src.ip, r.IPv6CIDR) {
+		return true
+	}
+
+	return false
 }
 
 // EvaluateNetworkACL evaluates a network ACL's rules against the given traffic.

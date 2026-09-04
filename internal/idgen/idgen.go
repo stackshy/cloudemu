@@ -49,19 +49,28 @@ const suffixAlphabet = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123
 // secretARNSuffixLen is the length of the ARN suffix AWS appends.
 const secretARNSuffixLen = 6
 
-// SecretARNSuffix derives a deterministic 6-character alphanumeric suffix from
-// seed, matching the trailing "-XXXXXX" AWS adds to a Secrets Manager ARN. It is
-// deterministic per seed so the same secret keeps a stable ARN across a run
-// (and under a FakeClock), while distinct secrets get distinct suffixes.
-func SecretARNSuffix(seed string) string {
-	h := fnv.New64a()
-	_, _ = h.Write([]byte(seed))
-	n := h.Sum64()
-
+// SecretARNSuffix returns a fresh random 6-character alphanumeric suffix,
+// matching the trailing "-XXXXXX" AWS adds to a Secrets Manager ARN's resource
+// segment. Real Secrets Manager draws a new suffix on every CreateSecret call —
+// including when a secret is deleted and recreated under the same name — so
+// the old ARN never accidentally resolves to the new secret; callers must
+// generate it once at creation time and persist the resulting ARN (it is not
+// re-derivable from the name). It draws from crypto/rand; a random source
+// failure falls back to an all-'a' suffix so the function never panics.
+func SecretARNSuffix() string {
 	out := make([]byte, secretARNSuffixLen)
-	for i := range out {
-		out[i] = suffixAlphabet[n%uint64(len(suffixAlphabet))]
-		n /= uint64(len(suffixAlphabet))
+
+	b := make([]byte, secretARNSuffixLen)
+	if _, err := rand.Read(b); err != nil {
+		for i := range out {
+			out[i] = suffixAlphabet[0]
+		}
+
+		return string(out)
+	}
+
+	for i, v := range b {
+		out[i] = suffixAlphabet[int(v)%len(suffixAlphabet)]
 	}
 
 	return string(out)

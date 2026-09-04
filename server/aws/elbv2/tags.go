@@ -7,6 +7,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
 
 // tagMutator is the AWS-specific ELBv2 tag-write surface, asserted against the
@@ -139,11 +140,23 @@ func (h *Handler) describeTags(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// collectTags resolves each ARN against load balancers and target groups.
+// collectTags resolves each ARN against load balancers, target groups,
+// listeners, and rules.
 //
-// Both collections are listed unfiltered and matched locally rather than
-// queried per ARN, because a by-ARN describe reports not-found for a resource
-// of the other kind — which is a correct answer to the wrong question here.
+// Load balancers and target groups are listed unfiltered and matched locally
+// rather than queried per ARN, because a by-ARN describe reports not-found for
+// a resource of the other kind — which is a correct answer to the wrong
+// question here. Listeners and rules have no such bulk listing in the driver
+// interface (DescribeListeners/DescribeRules both require the parent ARN), so
+// any ARN still unresolved after the LB/TG pass is looked up directly via the
+// optional ListenerGetter/RuleGetter extensions.
+//
+// Every ARN that resolves to a real resource gets an entry here — even one
+// with no tags set (nil map, ranges to zero Tags members) — because a listener
+// or rule with no tags is still a taggable resource DescribeTags must report
+// on, not one to omit: an SDK reading DescribeTags back right after creating a
+// listener expects one TagDescription per requested ARN and indexes the first
+// entry unconditionally.
 func (h *Handler) collectTags(
 	r *http.Request, arns []string,
 ) (map[string]map[string]string, error) {
@@ -176,5 +189,36 @@ func (h *Handler) collectTags(
 		}
 	}
 
+	h.collectListenerAndRuleTags(r, arns, out)
+
 	return out, nil
+}
+
+// collectListenerAndRuleTags resolves any ARN not already present in out
+// against listeners and rules, via the optional ListenerGetter/RuleGetter
+// driver extensions.
+func (h *Handler) collectListenerAndRuleTags(
+	r *http.Request, arns []string, out map[string]map[string]string,
+) {
+	lg, hasListeners := h.lb.(lbdriver.ListenerGetter)
+	rg, hasRules := h.lb.(lbdriver.RuleGetter)
+
+	for _, arn := range arns {
+		if _, ok := out[arn]; ok {
+			continue
+		}
+
+		if hasListeners {
+			if li, err := lg.GetListener(r.Context(), arn); err == nil {
+				out[arn] = li.Tags
+				continue
+			}
+		}
+
+		if hasRules {
+			if rule, err := rg.GetRule(r.Context(), arn); err == nil {
+				out[arn] = rule.Tags
+			}
+		}
+	}
 }

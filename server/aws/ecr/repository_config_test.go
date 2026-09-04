@@ -63,10 +63,14 @@ func TestSDKECRPutImageTagMutability(t *testing.T) {
 			desc.Repositories[0].ImageTagMutability)
 	}
 
-	// The setting takes effect: re-pushing an existing tag now fails.
+	// The setting takes effect: moving the tag to different image content now
+	// fails. (Re-pushing the byte-identical manifest is a distinct case — real
+	// ECR's ImageAlreadyExistsException, covered by
+	// TestSDKECRPutImageIdenticalRepushAlreadyExists below — since nothing
+	// would actually change.)
 	_, err = client.PutImage(ctx, &awsecr.PutImageInput{
 		RepositoryName: aws.String("mut-repo"),
-		ImageManifest:  aws.String(sampleManifest),
+		ImageManifest:  aws.String(sampleManifest + " "),
 		ImageTag:       aws.String("v1"),
 	})
 
@@ -75,7 +79,9 @@ func TestSDKECRPutImageTagMutability(t *testing.T) {
 		t.Fatalf("re-push to IMMUTABLE repo: want ImageTagAlreadyExistsException, got %v", err)
 	}
 
-	// Flip back to MUTABLE; re-push succeeds again.
+	// Flip back to MUTABLE; moving the tag to different image content succeeds
+	// again (the earlier IMMUTABLE push was rejected, so v1 still points at the
+	// original sampleManifest digest here — sampleManifest+" " is a new digest).
 	if _, err := client.PutImageTagMutability(ctx, &awsecr.PutImageTagMutabilityInput{
 		RepositoryName:     aws.String("mut-repo"),
 		ImageTagMutability: ecrtypes.ImageTagMutabilityMutable,
@@ -85,10 +91,46 @@ func TestSDKECRPutImageTagMutability(t *testing.T) {
 
 	if _, err := client.PutImage(ctx, &awsecr.PutImageInput{
 		RepositoryName: aws.String("mut-repo"),
-		ImageManifest:  aws.String(sampleManifest),
+		ImageManifest:  aws.String(sampleManifest + " "),
 		ImageTag:       aws.String("v1"),
 	}); err != nil {
 		t.Fatalf("re-push after MUTABLE: %v", err)
+	}
+}
+
+// TestSDKECRPutImageIdenticalRepushAlreadyExists exercises real ECR's
+// ImageAlreadyExistsException: re-pushing the byte-identical manifest under a
+// tag it already carries is a no-op push and is rejected, regardless of the
+// repository's tag mutability setting — it is distinct from
+// ImageTagAlreadyExistsException, which fires only when the tag is being
+// moved to a DIFFERENT digest on an IMMUTABLE repository.
+func TestSDKECRPutImageIdenticalRepushAlreadyExists(t *testing.T) {
+	client := newECRClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateRepository(ctx, &awsecr.CreateRepositoryInput{
+		RepositoryName: aws.String("repush-repo"),
+	}); err != nil {
+		t.Fatalf("CreateRepository: %v", err)
+	}
+
+	if _, err := client.PutImage(ctx, &awsecr.PutImageInput{
+		RepositoryName: aws.String("repush-repo"),
+		ImageManifest:  aws.String(sampleManifest),
+		ImageTag:       aws.String("v1"),
+	}); err != nil {
+		t.Fatalf("PutImage v1: %v", err)
+	}
+
+	_, err := client.PutImage(ctx, &awsecr.PutImageInput{
+		RepositoryName: aws.String("repush-repo"),
+		ImageManifest:  aws.String(sampleManifest),
+		ImageTag:       aws.String("v1"),
+	})
+
+	var already *ecrtypes.ImageAlreadyExistsException
+	if !errors.As(err, &already) {
+		t.Fatalf("identical re-push: want ImageAlreadyExistsException, got %v", err)
 	}
 }
 

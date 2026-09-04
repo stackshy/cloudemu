@@ -74,7 +74,7 @@ flowchart LR
 
 - **`features/topology`** — reads compute, networking, and DNS drivers to evaluate real network reachability. See [topology.md](topology.md).
 - **`services/resourcediscovery`** — walks every driver a provider holds and returns one normalized inventory (backs AWS Resource Explorer, Azure Resource Graph, GCP Cloud Asset). See [features.md](features.md#10-cross-service-resource-discovery).
-- **`server/`** — exposes drivers over HTTP in each cloud's native SDK wire format, via a pluggable `Handler` registry so new services drop in as self-contained packages. See [sdk-server.md](sdk-server.md).
+- **`server/`** — exposes drivers over HTTP in each cloud's native SDK wire format, via a pluggable `Handler` registry so new services drop in as self-contained packages. This is also where billing/FinOps surfaces live (`server/aws/{costexplorer,savingsplans,servicequotas}`, `server/azure/costmanagement`, `server/gcp/cloudbilling`), all served from the `services/cost`/`services/pricing` model. The shared `server/serverkit` assembly wraps each provider handler with optional middleware — `features/vcr` record/replay — and mounts the `features/timetravel` save/rewind/fork routes under the `/_cloudemu` admin plane. See [sdk-server.md](sdk-server.md).
 
 ## Provider factory & cross-service wiring
 
@@ -108,8 +108,8 @@ p.GCE.SetMonitoring(p.CloudMonitoring)     // GCP
 | `internal/idgen` | ID generators: AWS ARNs, Azure resource IDs, GCP self-links, OCIDs |
 | `statemachine` | Generic FSM for VM lifecycle transitions (pending → running → stopping → …) |
 | `pagination` | Generic `Paginate[T]` with base64 page tokens |
-| `features/{recorder,metrics,ratelimit,inject,chaos,topology}` | The cross-cutting behaviors and cross-service engines |
-| `cost` | Simulated per-operation cost tracking |
+| `features/{recorder,metrics,ratelimit,inject,chaos,topology,vcr,timetravel,quota}` | The cross-cutting behaviors and cross-service engines — including `vcr` (record/replay the wire protocol), `timetravel` (named state save/rewind/fork), and `quota` (per-service quota + increase-request registry) |
+| `services/cost`, `services/pricing` | Cost modeling: a per-operation `cost.Tracker`, a resource-inventory `cost.Estimate`/commitment model, and the `services/pricing` rate tables that feed it |
 
 The source tree mirrors the layers — `services/<svc>/` (portable API + `driver/`), `providers/<cloud>/<service>/` (mocks), `server/<cloud>/<service>/` (wire handlers) — plus the `contrib/*` sibling modules. See [STRUCTURE.md](STRUCTURE.md) for the full layout, naming rules, and where new code goes.
 

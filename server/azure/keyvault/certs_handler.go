@@ -56,16 +56,21 @@ func NewCerts(s secretsdriver.Secrets) *CertsHandler {
 // permissive storage fallbacks. Disjoint from ARM (/subscriptions/…) and from
 // the secrets (/secrets) and keys (/keys) surfaces.
 func (*CertsHandler) Matches(r *http.Request) bool {
-	p := r.URL.Path
+	_, p, ok := vaultScope(r)
+	if !ok {
+		return false
+	}
 
 	return p == certsPrefix || strings.HasPrefix(p, certsPrefix+"/") ||
 		p == deletedCertsPrefix || strings.HasPrefix(p, deletedCertsPrefix+"/")
 }
 
 // ServeHTTP answers the bearer challenge for unauthenticated requests, then
-// routes on the path and method.
+// routes on the vault-stripped path and method.
 func (h *CertsHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	serveDataPlane(w, r, h.kv == nil, "Key Vault certificates backend unavailable", dataPlaneRoutes{
+	_, kvPath, _ := vaultScope(r)
+
+	serveDataPlane(w, r, kvPath, h.kv == nil, "Key Vault certificates backend unavailable", dataPlaneRoutes{
 		deletedPrefix: deletedCertsPrefix,
 		mainPrefix:    certsPrefix,
 		routeDeleted:  func(tail string) { h.routeDeleted(w, r, tail) },

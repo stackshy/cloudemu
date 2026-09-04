@@ -206,7 +206,22 @@ func TestSDKGCPBackendServiceBackendsRoundTrip(t *testing.T) {
 
 	client := newBackendServicesClient(t, ts.URL, option.WithHTTPClient(ts.Client()))
 
-	group := "projects/" + testProject + "/zones/us-central1-a/instanceGroups/ig-1"
+	igClient, err := gcpcompute.NewInstanceGroupsRESTClient(ctx, clientOpts(ts)...)
+	if err != nil {
+		t.Fatalf("NewInstanceGroupsRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = igClient.Close() })
+
+	waitOp(ctx, t, "instanceGroup Insert", func() (*gcpcompute.Operation, error) {
+		return igClient.Insert(ctx, &computepb.InsertInstanceGroupRequest{
+			Project:               testProject,
+			Zone:                  testZone,
+			InstanceGroupResource: &computepb.InstanceGroup{Name: ptrStr("ig-1")},
+		})
+	})
+
+	group := "projects/" + testProject + "/zones/" + testZone + "/instanceGroups/ig-1"
 
 	op, err := client.Insert(ctx, &computepb.InsertBackendServiceRequest{
 		Project: testProject,

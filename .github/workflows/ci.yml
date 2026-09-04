@@ -2,14 +2,32 @@ name: CI
 
 # Public repo → GitHub-hosted Actions are free. Kept fast: Build and Vet share
 # one job so `go vet` reuses the compile cache `go build` just populated
-# (standalone `go vet ./...` recompiles everything and is slow). Test runs in
-# parallel; the quick checks (Tidy/Format) give sub-minute feedback. Every job
-# restores the Go build+module cache. One run per PR (+ push to master);
-# superseded runs cancel.
+# (standalone `go vet ./...` recompiles everything and is slow). Test is sharded
+# across a matrix and runs in parallel; the quick checks (Tidy/Format) give
+# sub-minute feedback. Every job restores the Go build+module cache. One run per
+# PR (+ push to master); superseded runs cancel.
+#
+# Pipeline-time controls (see #837):
+#   * Test is split into a 4-way package-sharded matrix; a "Test" gate job
+#     aggregates the shards so the required-check name is preserved.
+#   * Race runs a fast subset on PRs and the full `-race ./...` tree nightly on a
+#     schedule (advisory — a mid-day race is caught by the nightly run).
+#   * A docs-only PR (only `*.md` / `docs/**`) skips the heavy Go jobs (Test,
+#     Race, Contrib, Compat). Those are skipped at the JOB level via `if:`, which
+#     GitHub reports as a successful check — so required checks are not left
+#     pending and docs PRs stay mergeable. The skip is fail-safe: the heavy jobs
+#     run unless the classifier explicitly said docs-only (`code=='false'`), so a
+#     classifier failure runs the full suite rather than skipping it, and the
+#     "Test" gate is fail-closed (it only counts a skip as a pass on a genuine
+#     docs-only classifier success).
 on:
   pull_request:
   push:
     branches: [master]
+  schedule:
+    # Nightly full-tree race detector (03:00 UTC). On PRs Race runs a fast
+    # subset only; the exhaustive `-race ./...` sweep runs here.
+    - cron: "0 3 * * *"
 
 permissions:
   contents: read
@@ -19,6 +37,48 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Classifies the change so the heavy Go jobs can be skipped for a docs-only
+  # PR. `code=true` unless EVERY changed file is `*.md` or under `docs/**`
+  # (anything else — .go, go.mod, fixtures, workflows — forces the full run, so
+  # a non-docs change can never silently skip the tests). push/schedule always
+  # run the full pipeline.
+  changes:
+    name: Detect changes
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.classify.outputs.code }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: classify
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
+            echo "non-PR event (${{ github.event_name }}) → run full pipeline"
+            echo "code=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          files="$(git diff --name-only "$BASE_SHA...$HEAD_SHA")"
+          echo "changed files:"
+          echo "$files"
+          code=false
+          while IFS= read -r f; do
+            [ -z "$f" ] && continue
+            case "$f" in
+              *.md) ;;      # markdown anywhere → docs
+              docs/*) ;;    # anything under docs/ → docs ('*' matches '/')
+              *) code=true ;;
+            esac
+          done <<EOF
+          $files
+          EOF
+          echo "code=$code"
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+
   build-vet:
     name: Build & Vet
     runs-on: ubuntu-latest
@@ -47,6 +107,11 @@ jobs:
   contrib-testcontainers:
     name: Contrib (testcontainers)
     runs-on: ubuntu-latest
+    needs: changes
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Separate Go module (keeps testcontainers-go out of the core module), so
     # the root build/vet doesn't cover it. Compile + vet only — the container
     # acceptance test needs Docker and is run on demand (go test ./...).
@@ -73,6 +138,11 @@ jobs:
   contrib-realengine:
     name: Contrib (realengine)
     runs-on: ubuntu-latest
+    needs: changes
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Separate Go module (keeps embedded-postgres out of the core module). Build
     # + vet only — the real-Postgres tests fetch a Postgres binary and run it,
     # so they are executed on demand (go test ./...), not on every CI run.
@@ -99,6 +169,11 @@ jobs:
   contrib-dockerengine:
     name: Contrib (dockerengine)
     runs-on: ubuntu-latest
+    needs: changes
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Separate Go module (keeps the docker-CLI-oriented deps out of the core
     # module). Build + vet + lint here; the real-container e2es (MySQL, compute,
     # containers, the Azure Functions host) shell out to the docker CLI and pull
@@ -132,6 +207,11 @@ jobs:
   contrib-server:
     name: Contrib (server)
     runs-on: ubuntu-latest
+    needs: changes
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Separate Go module: the batteries-included wire server that composes the
     # real engines onto the wire servers. Build + vet + lint here; the real-engine
     # e2e (embedded Postgres + miniredis + real AWS SDK) fetches a Postgres binary
@@ -151,6 +231,8 @@ jobs:
           key: go-${{ runner.os }}-server-${{ hashFiles('contrib/server/go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-server-
+      # Hard failure — keep the contrib module's compile check blocking (a
+      # go.sum/compile break here must fail CI, not merge silently).
       - name: build & vet
         working-directory: contrib/server
         run: |
@@ -193,6 +275,11 @@ jobs:
   contrib-terraform:
     name: Contrib (terraform)
     runs-on: ubuntu-latest
+    needs: changes
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Separate Go module: the IaC-compatibility suite. Unlike the other contrib
     # e2es (which need Docker), this one needs only an OpenTofu binary and a
     # provider download, so — as the evidenced-IaC-compat proof — it actually
@@ -229,8 +316,21 @@ jobs:
         run: "$(go env GOPATH)/bin/golangci-lint run --timeout=9m ./... || echo '::warning::golangci-lint reported findings (advisory)'"
 
   test:
-    name: Test
+    name: Test (${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
+    needs: changes
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 4 package shards. `total` in the run step MUST equal this list's
+        # length. Shards partition `go list ./...` by line number modulo total,
+        # so every package lands in exactly one shard and the union is the whole
+        # tree (proof: residues {1,2,3,0} = all classes mod 4).
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -245,15 +345,58 @@ jobs:
           key: go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-
-      - run: go test ./...
-      # Run the Bedrock packages under the race detector so their concurrency
-      # tests (guardrail versions, evaluation-job stop, etc.) actually exercise
-      # -race in CI rather than being inert.
-      - run: go test -race ./providers/aws/bedrock/... ./server/aws/bedrock/... ./providers/aws/bedrockagent/... ./server/aws/bedrockagent/... ./server/aws/bedrockagentruntime/...
+      - name: go test (shard ${{ matrix.shard }}/4)
+        run: |
+          set -euo pipefail
+          shard=${{ matrix.shard }}
+          total=4
+          pkgs="$(go list ./... | awk -v s="$shard" -v t="$total" 'NR % t == s % t')"
+          if [ -z "$pkgs" ]; then
+            echo "shard $shard/$total is empty — nothing to test"
+            exit 0
+          fi
+          echo "shard $shard/$total: $(echo "$pkgs" | wc -l | tr -d ' ') packages"
+          # shellcheck disable=SC2086 # word-splitting the newline package list is intended
+          go test $pkgs
+
+  # Aggregating gate: keeps the required-check name "Test" stable after
+  # sharding. Branch protection should keep requiring "Test" (NOT the per-shard
+  # "Test (n/4)" names). This gate is fail-CLOSED — a skipped matrix only passes
+  # when it is a *genuine* docs-only skip (classifier succeeded AND said
+  # code=='false'). If the `changes` classifier itself failed/was cancelled, or
+  # the shards were skipped while code=='true', the gate goes RED — so a
+  # classifier hiccup can never green "Test" having run zero tests.
+  test-gate:
+    name: Test
+    runs-on: ubuntu-latest
+    needs: [changes, test]
+    if: always()
+    steps:
+      - name: shards result
+        run: |
+          changes_result="${{ needs.changes.result }}"
+          changes_code="${{ needs.changes.outputs.code }}"
+          test_result="${{ needs.test.result }}"
+          echo "changes.result=$changes_result changes.code=$changes_code test.result=$test_result"
+          if [ "$test_result" = "success" ]; then
+            echo "all Test shards passed"
+            exit 0
+          fi
+          if [ "$test_result" = "skipped" ] && [ "$changes_result" = "success" ] && [ "$changes_code" = "false" ]; then
+            echo "docs-only PR — Test shards legitimately skipped"
+            exit 0
+          fi
+          echo "Test gate FAILED: shards did not pass (shard failure, classifier failure, or an unexpected skip)"
+          exit 1
 
   race:
     name: Race
     runs-on: ubuntu-latest
+    needs: changes
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
@@ -268,13 +411,22 @@ jobs:
           key: go-${{ runner.os }}-${{ hashFiles('**/go.sum') }}
           restore-keys: |
             go-${{ runner.os }}-
-      # Blocking whole-tree race detector. The per-entity-mutex idiom (see SQS
-      # queueData.mu / EC2 instanceData.mu; use memstore.Update, never Get+Set) is
-      # rolled out across the mutable-store entities, so the tree is race-clean and
-      # any newly introduced data race must fail CI. -race is 2-10x slower, hence
-      # the generous timeout.
-      - name: go test -race ./...
-        run: go test -race -timeout 20m ./...
+      # On PRs: a fast race signal over the concurrency-heavy Bedrock packages
+      # (guardrail versions, evaluation-job stop, etc.) — the same subset that
+      # previously rode along in the Test job. Nightly (schedule): the full
+      # whole-tree race detector. The per-entity-mutex idiom (see SQS
+      # queueData.mu / EC2 instanceData.mu; use memstore.Update, never Get+Set)
+      # keeps the tree race-clean; -race is 2-10x slower, hence the timeout.
+      - name: race (fast subset on PRs, full tree nightly)
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "schedule" ]; then
+            echo "nightly: full-tree race detector"
+            go test -race -timeout 20m ./...
+          else
+            echo "PR: fast race subset (Bedrock)"
+            go test -race ./providers/aws/bedrock/... ./server/aws/bedrock/... ./providers/aws/bedrockagent/... ./server/aws/bedrockagent/... ./server/aws/bedrockagentruntime/...
+          fi
 
   tidy:
     name: Tidy
@@ -293,6 +445,11 @@ jobs:
   compat:
     name: Compat matrix
     runs-on: ubuntu-latest
+    needs: changes
+    # Fail-safe: run unless the change was a genuine docs-only skip
+    # (code=='false'). If the classifier failed/errored, `code` is empty and the
+    # job RUNS (a classifier hiccup never silently skips a heavy job).
+    if: ${{ !cancelled() && needs.changes.outputs.code != 'false' }}
     # Runs the in-process SDK-compat suite and regenerates docs/compat/ from the
     # results + docs/coverage/coverage.json, then drift-checks it (same pattern
     # as Tidy). A red cell fails the suite; a stale matrix fails the diff.

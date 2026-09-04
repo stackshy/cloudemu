@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"strconv"
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
@@ -41,8 +43,21 @@ type funcSnapshot struct {
 	Aliases      map[string]driver.Alias                          `json:"aliases,omitempty"`
 	Concurrency  *driver.ConcurrencyConfig                        `json:"concurrency,omitempty"`
 	Policies     map[string]map[string]driver.PermissionStatement `json:"policies,omitempty"`
-	URLConfig    *driver.FunctionURLConfig                        `json:"urlConfig,omitempty"`
-	AWSConfig    driver.AWSFunctionConfig                         `json:"awsConfig"`
+	// URLConfigs is the Function URL config per qualifier (see funcData.urlConfigs).
+	URLConfigs map[string]*driver.FunctionURLConfig `json:"urlConfigs,omitempty"`
+	// URLConfig is the legacy single-URL shape a snapshot taken before Function
+	// URLs gained qualifier scoping used ("urlConfig", singular). Never written
+	// (snapshotFunc only populates URLConfigs), but still read on restore so an
+	// old on-disk snapshot's Function URL config isn't silently dropped — see
+	// restoreFunc.
+	URLConfig *driver.FunctionURLConfig `json:"urlConfig,omitempty"`
+	AWSConfig driver.AWSFunctionConfig  `json:"awsConfig"`
+	// EventInvokeConfigs is the async-invoke config per qualifier (retries,
+	// event age, OnSuccess/OnFailure destinations).
+	EventInvokeConfigs map[string]driver.EventInvokeConfig `json:"eventInvokeConfigs,omitempty"`
+	// ProvisionedConcurrencyConfigs is the provisioned-concurrency config per
+	// qualifier (a published version or alias name).
+	ProvisionedConcurrencyConfigs map[string]driver.ProvisionedConcurrencyConfig `json:"provisionedConcurrencyConfigs,omitempty"`
 }
 
 // versionSnapshot mirrors versionData (all fields unexported). Config carries the
@@ -57,10 +72,19 @@ type versionSnapshot struct {
 }
 
 // layerSnapshot mirrors layerData; its version store holds a fully-exported
-// *driver.LayerVersion and round-trips through the generic helper.
+// *driver.LayerVersion and round-trips through the generic helper. Permissions
+// mirrors the layerVersionPolicy map, keyed by version number (as a string,
+// since JSON object keys must be strings).
 type layerSnapshot struct {
-	Versions json.RawMessage `json:"versions,omitempty"`
-	NextVer  int             `json:"nextVer,omitempty"`
+	Versions    json.RawMessage                        `json:"versions,omitempty"`
+	NextVer     int                                    `json:"nextVer,omitempty"`
+	Permissions map[string]*layerVersionPolicySnapshot `json:"permissions,omitempty"`
+}
+
+// layerVersionPolicySnapshot mirrors layerVersionPolicy.
+type layerVersionPolicySnapshot struct {
+	Statements map[string]driver.LayerPermissionStatement `json:"statements,omitempty"`
+	RevisionID string                                     `json:"revisionId,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused —
@@ -91,7 +115,9 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 				return nil, fmt.Errorf("lambda: snapshot layer versions: %w", err)
 			}
 
-			snap.Layers[name] = &layerSnapshot{Versions: vers, NextVer: ld.nextVer}
+			snap.Layers[name] = &layerSnapshot{
+				Versions: vers, NextVer: ld.nextVer, Permissions: snapshotLayerPermissions(ld),
+			}
 		}
 	}
 
@@ -105,11 +131,33 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	return json.Marshal(snap)
 }
 
+// snapshotLayerPermissions captures ld's per-version resource policies, keyed
+// by version number as a string.
+func snapshotLayerPermissions(ld *layerData) map[string]*layerVersionPolicySnapshot {
+	ld.mu.Lock()
+	defer ld.mu.Unlock()
+
+	if len(ld.permissions) == 0 {
+		return nil
+	}
+
+	out := make(map[string]*layerVersionPolicySnapshot, len(ld.permissions))
+	for ver, pol := range ld.permissions {
+		out[strconv.Itoa(ver)] = &layerVersionPolicySnapshot{
+			Statements: maps.Clone(pol.statements),
+			RevisionID: pol.revisionID,
+		}
+	}
+
+	return out
+}
+
 func snapshotFunc(fd *funcData) *funcSnapshot {
 	fs := &funcSnapshot{
 		Info: fd.info, EngineBacked: fd.engineBacked, NextVersion: fd.nextVersion,
-		Concurrency: fd.concurrency, Policies: fd.policies, URLConfig: fd.urlConfig,
-		AWSConfig: fd.awsConfig,
+		Concurrency: fd.concurrency, Policies: fd.policies, URLConfigs: fd.urlConfigs,
+		AWSConfig: fd.awsConfig, EventInvokeConfigs: fd.eventInvokeConfigs,
+		ProvisionedConcurrencyConfigs: fd.provisionedConcurrencyConfigs,
 	}
 
 	for _, v := range fd.versions {
@@ -143,11 +191,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	for name, ls := range snap.Layers {
-		ld := &layerData{versions: memstore.New[*driver.LayerVersion](), nextVer: ls.NextVer}
-		if len(ls.Versions) > 0 {
-			if err := ld.versions.LoadSnapshot(ls.Versions); err != nil {
-				return fmt.Errorf("lambda: restore layer versions: %w", err)
-			}
+		ld, err := restoreLayerData(ls)
+		if err != nil {
+			return err
 		}
 
 		m.layers.Set(name, ld)
@@ -162,11 +208,44 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	return nil
 }
 
+// restoreLayerData rebuilds one layer's *layerData from its snapshot: the
+// version store, the monotonic version counter, and any per-version resource
+// policies (skipping a policy entry whose key isn't a valid version number —
+// snapshot JSON tampered with out of band, never produced by Snapshot itself).
+func restoreLayerData(ls *layerSnapshot) (*layerData, error) {
+	ld := &layerData{versions: memstore.New[*driver.LayerVersion](), nextVer: ls.NextVer}
+
+	if len(ls.Versions) > 0 {
+		if err := ld.versions.LoadSnapshot(ls.Versions); err != nil {
+			return nil, fmt.Errorf("lambda: restore layer versions: %w", err)
+		}
+	}
+
+	if len(ls.Permissions) == 0 {
+		return ld, nil
+	}
+
+	ld.permissions = make(map[int]*layerVersionPolicy, len(ls.Permissions))
+
+	for verStr, ps := range ls.Permissions {
+		ver, err := strconv.Atoi(verStr)
+		if err != nil {
+			continue
+		}
+
+		ld.permissions[ver] = &layerVersionPolicy{statements: ps.Statements, revisionID: ps.RevisionID}
+	}
+
+	return ld, nil
+}
+
 func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 	fd := funcData{
 		info: fs.Info, engineBacked: fs.EngineBacked, nextVersion: fs.NextVersion,
 		aliases: memstore.New[*aliasData](), concurrency: fs.Concurrency,
-		policies: fs.Policies, urlConfig: fs.URLConfig, awsConfig: fs.AWSConfig,
+		policies: fs.Policies, urlConfigs: legacyURLConfigs(fs), awsConfig: fs.AWSConfig,
+		eventInvokeConfigs:            fs.EventInvokeConfigs,
+		provisionedConcurrencyConfigs: fs.ProvisionedConcurrencyConfigs,
 	}
 
 	// Re-link the live handler if the host process has registered one for this
@@ -187,4 +266,17 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 	}
 
 	return fd
+}
+
+// legacyURLConfigs returns fs.URLConfigs, migrating a pre-qualifier-scoping
+// snapshot's legacy singular "urlConfig" field (fs.URLConfig) into the new
+// per-qualifier map when the snapshot predates it — otherwise a Function URL
+// config in an old on-disk snapshot would silently vanish on restore, since
+// the new map field simply isn't present in that JSON.
+func legacyURLConfigs(fs *funcSnapshot) map[string]*driver.FunctionURLConfig {
+	if len(fs.URLConfigs) > 0 || fs.URLConfig == nil {
+		return fs.URLConfigs
+	}
+
+	return map[string]*driver.FunctionURLConfig{policyKey(fs.URLConfig.Qualifier): fs.URLConfig}
 }

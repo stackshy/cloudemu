@@ -11,16 +11,46 @@ type armAccountCreate struct {
 }
 
 type armAccountCreateProps struct {
-	DatabaseAccountOfferType     string          `json:"databaseAccountOfferType,omitempty"`
-	EnableFreeTier               bool            `json:"enableFreeTier,omitempty"`
-	Capabilities                 []armCapability `json:"capabilities,omitempty"`
-	Locations                    []armLocation   `json:"locations,omitempty"`
-	EnableMultipleWriteLocations bool            `json:"enableMultipleWriteLocations,omitempty"`
+	DatabaseAccountOfferType     string                `json:"databaseAccountOfferType,omitempty"`
+	EnableFreeTier               bool                  `json:"enableFreeTier,omitempty"`
+	Capabilities                 []armCapability       `json:"capabilities,omitempty"`
+	Locations                    []armLocation         `json:"locations,omitempty"`
+	EnableMultipleWriteLocations bool                  `json:"enableMultipleWriteLocations,omitempty"`
+	ConsistencyPolicy            *armConsistencyPolicy `json:"consistencyPolicy,omitempty"`
+}
+
+// armConsistencyPolicy is the ARM Cosmos consistencyPolicy shape. The staleness
+// bounds are meaningful only for the BoundedStaleness level.
+type armConsistencyPolicy struct {
+	DefaultConsistencyLevel string `json:"defaultConsistencyLevel,omitempty"`
+	MaxIntervalInSeconds    int32  `json:"maxIntervalInSeconds,omitempty"`
+	MaxStalenessPrefix      int64  `json:"maxStalenessPrefix,omitempty"`
 }
 
 // armCapability is the ARM capability shape ([{name}]).
 type armCapability struct {
 	Name string `json:"name,omitempty"`
+}
+
+// armAccountUpdate is the ARM databaseAccounts PATCH body
+// (DatabaseAccountUpdateParameters). Unlike armAccountCreate, every field must
+// be optional and distinguishable from "not present" on decode — real Azure's
+// update type has no "kind" field at all (kind is immutable after create), and
+// EnableMultipleWriteLocations/ConsistencyPolicy/etc. use pointers here so a
+// PATCH that omits them doesn't reset them.
+type armAccountUpdate struct {
+	Location   string                 `json:"location,omitempty"`
+	Tags       map[string]string      `json:"tags,omitempty"`
+	Properties *armAccountUpdateProps `json:"properties,omitempty"`
+}
+
+// armAccountUpdateProps is the settable subset of
+// DatabaseAccountUpdateProperties the emulator tracks.
+type armAccountUpdateProps struct {
+	Capabilities                 []armCapability       `json:"capabilities,omitempty"`
+	Locations                    []armLocation         `json:"locations,omitempty"`
+	EnableMultipleWriteLocations *bool                 `json:"enableMultipleWriteLocations,omitempty"`
+	ConsistencyPolicy            *armConsistencyPolicy `json:"consistencyPolicy,omitempty"`
 }
 
 // armAccount is the ARM databaseAccounts wire shape returned on create/get.
@@ -35,15 +65,16 @@ type armAccount struct {
 }
 
 type armAccountProps struct {
-	DatabaseAccountOfferType string          `json:"databaseAccountOfferType,omitempty"`
-	EnableFreeTier           bool            `json:"enableFreeTier,omitempty"`
-	Capabilities             []armCapability `json:"capabilities,omitempty"`
-	ProvisioningState        string          `json:"provisioningState,omitempty"`
-	DocumentEndpoint         string          `json:"documentEndpoint,omitempty"`
-	Locations                []armLocation   `json:"locations,omitempty"`
-	ReadLocations            []armLocation   `json:"readLocations,omitempty"`
-	WriteLocations           []armLocation   `json:"writeLocations,omitempty"`
-	FailoverPolicies         []armFailover   `json:"failoverPolicies,omitempty"`
+	DatabaseAccountOfferType string                `json:"databaseAccountOfferType,omitempty"`
+	EnableFreeTier           bool                  `json:"enableFreeTier,omitempty"`
+	Capabilities             []armCapability       `json:"capabilities,omitempty"`
+	ProvisioningState        string                `json:"provisioningState,omitempty"`
+	DocumentEndpoint         string                `json:"documentEndpoint,omitempty"`
+	Locations                []armLocation         `json:"locations,omitempty"`
+	ReadLocations            []armLocation         `json:"readLocations,omitempty"`
+	WriteLocations           []armLocation         `json:"writeLocations,omitempty"`
+	FailoverPolicies         []armFailover         `json:"failoverPolicies,omitempty"`
+	ConsistencyPolicy        *armConsistencyPolicy `json:"consistencyPolicy,omitempty"`
 }
 
 // armLocation is a region entry in a database account's location arrays.

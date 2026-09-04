@@ -264,13 +264,13 @@ func writeNetworkACLAssocErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsInvalidArgument(err):
 		// Cross-VPC association attempt.
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", cerrors.Message(err))
 	case cerrors.IsNotFound(err) && !strings.Contains(err.Error(), "network ACL association"):
 		// A missing ACL, not a missing association. Matching the contiguous fixed
 		// phrase "network ACL association" is robust: the ACL-not-found message is
 		// `network ACL "<id>" not found`, so a caller-supplied id containing
 		// "association" cannot forge the phrase (the quote breaks it).
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkAclID.NotFound", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkAclID.NotFound", cerrors.Message(err))
 	default:
 		writeErrWithNotFound(w, err, "InvalidAssociationID.NotFound", "DependencyViolation")
 	}

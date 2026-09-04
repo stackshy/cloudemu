@@ -9,14 +9,17 @@
 // delete), and resource policies (AddPermission / GetPolicy /
 // RemovePermission), and tagging (TagResource / UntagResource / ListTags at
 // the /2017-03-31/tags prefix). Reserved concurrency (Put/Get/Delete
-// FunctionConcurrency), layers (Publish/Get/List/Delete layer versions and
-// ListLayers), and event source mappings are also wired through.
+// FunctionConcurrency), layers (Publish/Get/List/Delete layer versions,
+// GetLayerVersionByArn, ListLayers, and layer-version resource policies via
+// Add/Get/RemoveLayerVersionPermission), and event source mappings are also
+// wired through.
 package lambda
 
 import (
 	"context"
 	"encoding/json"
 	"io"
+	"net"
 	"net/http"
 	"sort"
 	"strings"
@@ -59,6 +62,30 @@ const layersPrefix = "/2018-10-31/layers"
 // function sub-resource (.../{name}/url and .../{name}/urls) but versioned under
 // 2021-10-31, so it needs its own Matches clause.
 const functionURLPrefix = "/2021-10-31/functions"
+
+// functionURLHostMarker identifies an inbound request as an invoke through a
+// generated Function URL rather than a control-plane call: real Lambda
+// Function URLs are addressed by a unique per-config host
+// (<url-id>.lambda-url.<region>.on.aws), not by path, so this routes on the
+// Host header instead of the URL path every other Lambda operation uses.
+const functionURLHostMarker = ".lambda-url."
+
+// isFunctionURLHost reports whether host (an incoming request's Host header,
+// optionally with a port) addresses a generated Function URL.
+func isFunctionURLHost(host string) bool {
+	return strings.Contains(requestHost(host), functionURLHostMarker)
+}
+
+// requestHost strips an optional port from an HTTP Host header and lower-cases
+// the remainder.
+func requestHost(host string) string {
+	h, _, err := net.SplitHostPort(host)
+	if err != nil {
+		h = host
+	}
+
+	return strings.ToLower(h)
+}
 
 // Function code-signing-config sub-resource (GetFunctionCodeSigningConfig et al).
 // Versioned under 2020-06-30 on the {name}/code-signing-config sub-resource, so
@@ -137,6 +164,20 @@ type policyManager interface {
 	GetPolicy(ctx context.Context, functionName, qualifier string) (string, error)
 }
 
+// layerPolicyManager is the AWS-specific layer-version resource-policy surface
+// (AddLayerVersionPermission / GetLayerVersionPolicy /
+// RemoveLayerVersionPermission). Like policyManager, it's not part of the
+// portable Serverless driver — layer version permissions are a Lambda concept —
+// so the handler type-asserts for it rather than requiring every cloud's
+// function provider to implement it.
+type layerPolicyManager interface {
+	AddLayerVersionPermission(
+		ctx context.Context, name string, version int, stmt sdrv.LayerPermissionStatement, revisionID string,
+	) (statementJSON, newRevisionID string, err error)
+	RemoveLayerVersionPermission(ctx context.Context, name string, version int, statementID, revisionID string) error
+	GetLayerVersionPolicy(ctx context.Context, name string, version int) (policy, revisionID string, err error)
+}
+
 // functionTagger is the AWS-specific Lambda tagging surface (not part of the
 // portable Serverless driver), asserted the same way as policyManager.
 type functionTagger interface {
@@ -196,15 +237,18 @@ func New(fn sdrv.Serverless, opts ...Option) *Handler {
 }
 
 // Matches returns true for any URL under /2015-03-31/functions — that's the
-// Lambda control-plane prefix the SDK uses for every operation in our MVP.
+// Lambda control-plane prefix the SDK uses for every operation in our MVP —
+// plus a request addressed to a generated Function URL host.
 func (*Handler) Matches(r *http.Request) bool {
-	return strings.HasPrefix(r.URL.Path, pathPrefix) ||
+	return isFunctionURLHost(r.Host) ||
+		strings.HasPrefix(r.URL.Path, pathPrefix) ||
 		strings.HasPrefix(r.URL.Path, tagsPrefix) ||
 		strings.HasPrefix(r.URL.Path, esmPrefix) ||
 		strings.HasPrefix(r.URL.Path, concurrencyWritePrefix) ||
 		strings.HasPrefix(r.URL.Path, concurrencyReadPrefix) ||
 		strings.HasPrefix(r.URL.Path, layersPrefix) ||
 		strings.HasPrefix(r.URL.Path, functionURLPrefix) ||
+		strings.HasPrefix(r.URL.Path, eventInvokeConfigPrefix) ||
 		isCodeSigningPath(r.URL.Path)
 }
 
@@ -214,6 +258,11 @@ func (*Handler) Matches(r *http.Request) bool {
 //	/2015-03-31/functions/{name}                GET=get, DELETE=delete
 //	/2015-03-31/functions/{name}/invocations    POST=invoke
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isFunctionURLHost(r.Host) {
+		h.serveFunctionURLInvoke(w, r)
+		return
+	}
+
 	if h.routePrefixed(w, r) {
 		return
 	}
@@ -270,6 +319,10 @@ func (h *Handler) routePrefixed(w http.ResponseWriter, r *http.Request) bool {
 		h.serveLayers(w, r)
 	case strings.HasPrefix(r.URL.Path, functionURLPrefix):
 		h.serveFunctionURL(w, r)
+	case strings.HasPrefix(r.URL.Path, eventInvokeConfigPrefix):
+		h.serveEventInvokeConfig(w, r)
+	case isProvisionedConcurrencyPath(r.URL.Path):
+		h.serveProvisionedConcurrency(w, r)
 	case isCodeSigningPath(r.URL.Path):
 		h.serveFunctionCodeSigningConfig(w, r)
 	default:
@@ -512,6 +565,11 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 
 	var req updateFunctionConfigurationRequest
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if err := h.validateLayers(r.Context(), req.Layers); err != nil {
+		writeErr(w, err)
 		return
 	}
 
@@ -835,6 +893,11 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.validateLayers(r.Context(), req.Layers); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	cfg := sdrv.FunctionConfig{
 		Name:        req.FunctionName,
 		Runtime:     req.Runtime,
@@ -951,6 +1014,25 @@ func (h *Handler) publishConfiguration(
 	}
 
 	return toVersionConfiguration(info, ver, awsCfg), nil
+}
+
+// validateLayers checks that every layer version ARN a CreateFunction /
+// UpdateFunctionConfiguration request references actually exists, matching
+// real Lambda, which rejects an unknown or malformed layer version ARN with
+// InvalidParameterValueException instead of silently accepting it.
+func (h *Handler) validateLayers(ctx context.Context, arns []string) error {
+	for _, arn := range arns {
+		name, version, ok := parseLayerARN(arn)
+		if !ok {
+			return cerrors.Newf(cerrors.InvalidArgument, "Layer version %s is not a valid layer version ARN", arn)
+		}
+
+		if _, err := h.fn.GetLayerVersion(ctx, name, version); err != nil {
+			return cerrors.Newf(cerrors.InvalidArgument, "Layer version %s does not exist", arn)
+		}
+	}
+
+	return nil
 }
 
 // resolveLayers maps the requested layer ARNs to the echoed Layers list,
@@ -1468,7 +1550,32 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, "ResourceConflictException", msg)
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "InvalidParameterValueException", msg)
+	case cerrors.IsFailedPrecondition(err):
+		writeError(w, http.StatusPreconditionFailed, "PreconditionFailedException", msg)
+	case cerrors.IsThrottled(err):
+		writeThrottle(w, msg)
 	default:
 		writeError(w, http.StatusInternalServerError, "ServiceException", msg)
 	}
+}
+
+// reservedConcurrencyReason is the Reason a reserved-concurrency throttle
+// carries in the TooManyRequestsException body — the value real Lambda returns
+// when a function's ReservedConcurrentExecutions limit is exhausted.
+const reservedConcurrencyReason = "ReservedFunctionConcurrentInvocationLimitExceeded"
+
+// writeThrottle emits the 429 TooManyRequestsException a throttled Invoke
+// returns. The body carries the Reason field the SDK deserializes into
+// TooManyRequestsException.Reason so callers can distinguish a reserved-
+// concurrency throttle from other limits.
+func writeThrottle(w http.ResponseWriter, msg string) {
+	w.Header().Set("Content-Type", contentTypeJSON)
+	w.Header().Set("X-Amzn-Errortype", "TooManyRequestsException")
+	w.WriteHeader(http.StatusTooManyRequests)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"Type":    "TooManyRequestsException",
+		"Message": msg,
+		"message": msg,
+		"Reason":  reservedConcurrencyReason,
+	})
 }

@@ -51,6 +51,13 @@ type blobXML struct {
 	Name       string       `xml:"Name"`
 	Properties blobPropsXML `xml:"Properties"`
 	Metadata   *metadataXML `xml:"Metadata,omitempty"`
+	// VersionID and IsCurrentVersion are emitted only for a List Blobs
+	// include=versions response; a plain listing leaves both empty.
+	VersionID        string `xml:"VersionId,omitempty"`
+	IsCurrentVersion *bool  `xml:"IsCurrentVersion,omitempty"`
+	// Deleted is emitted only for a soft-deleted blob in a List Blobs
+	// include=deleted response; a live blob leaves it nil.
+	Deleted *bool `xml:"Deleted,omitempty"`
 }
 
 type blobPropsXML struct {
@@ -60,6 +67,10 @@ type blobPropsXML struct {
 	ContentType   string `xml:"Content-Type"`
 	BlobType      string `xml:"BlobType"`
 	AccessTier    string `xml:"AccessTier,omitempty"`
+	// DeletedTime and RemainingRetentionDays are emitted only for a soft-deleted
+	// blob (List Blobs include=deleted); a live blob leaves both empty.
+	DeletedTime            string `xml:"DeletedTime,omitempty"`
+	RemainingRetentionDays *int32 `xml:"RemainingRetentionDays,omitempty"`
 }
 
 type blobPrefixXML struct {
@@ -117,6 +128,39 @@ type blobTagsXML struct {
 type tagXML struct {
 	Key   string `xml:"Key"`
 	Value string `xml:"Value"`
+}
+
+// pageListXML is the body for GET /{container}/{blob}?comp=pagelist (Get Page
+// Ranges): the ordered, coalesced byte ranges of a page blob that hold data.
+type pageListXML struct {
+	XMLName    xml.Name       `xml:"PageList"`
+	PageRange  []pageRangeXML `xml:"PageRange"`
+	NextMarker string         `xml:"NextMarker,omitempty"`
+}
+
+type pageRangeXML struct {
+	Start int64 `xml:"Start"`
+	End   int64 `xml:"End"`
+}
+
+// filterBlobsXML is the body for a Find Blobs by Tags response (GET /?comp=blobs
+// and GET /{container}?restype=container&comp=blobs).
+type filterBlobsXML struct {
+	XMLName         xml.Name        `xml:"EnumerationResults"`
+	ServiceEndpoint string          `xml:"ServiceEndpoint,attr,omitempty"`
+	Where           string          `xml:"Where"`
+	Blobs           filterBlobsList `xml:"Blobs"`
+	NextMarker      string          `xml:"NextMarker"`
+}
+
+type filterBlobsList struct {
+	Blobs []filterBlobXML `xml:"Blob"`
+}
+
+type filterBlobXML struct {
+	Name          string      `xml:"Name"`
+	ContainerName string      `xml:"ContainerName"`
+	Tags          blobTagsXML `xml:"Tags"`
 }
 
 // signedIdentifiersXML is the request/response body for PUT and GET

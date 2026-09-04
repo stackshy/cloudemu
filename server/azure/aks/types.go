@@ -10,6 +10,15 @@ const (
 	resourceTypeAgentPool          = "Microsoft.ContainerService/managedClusters/agentPools"
 	resourceTypeMaintenanceConfig  = "Microsoft.ContainerService/managedClusters/maintenanceConfigurations"
 	resourceTypeManagedClusterFull = "Microsoft.ContainerService/managedClusters"
+	// resourceTypeLocations and subOperationStatuses identify the synthetic
+	// .../locations/{loc}/operationStatuses/{id} LRO-polling endpoint that
+	// start/stop cluster actions point their Azure-AsyncOperation header at.
+	resourceTypeLocations = "locations"
+	subOperationStatuses  = "operationStatuses"
+	// clusterActionStart and clusterActionStop are the POST sub-resource verbs
+	// for Microsoft.ContainerService/managedClusters/{name}/{start,stop}.
+	clusterActionStart = "start"
+	clusterActionStop  = "stop"
 )
 
 // armManagedCluster mirrors the JSON shape Azure ARM expects for

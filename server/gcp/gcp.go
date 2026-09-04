@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
 	bigtableserver "github.com/stackshy/cloudemu/v2/server/gcp/bigtable"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudasset"
+	"github.com/stackshy/cloudemu/v2/server/gcp/cloudbilling"
 	"github.com/stackshy/cloudemu/v2/server/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudfunctions"
 	cloudloggingsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudlogging"
@@ -344,6 +345,20 @@ func New(d Drivers) *server.Server {
 	if d.Eventarc != nil {
 		eaH := eventarc.New(d.Eventarc)
 		eaH.SetOperationRegistry(opsReg)
+
+		// Destination validation: a trigger create/patch is rejected when it
+		// names a Cloud Function / Cloud Run service that doesn't exist,
+		// mirroring real Eventarc's admission check. Only wired when the peer
+		// service is present, so a server that omits one keeps accepting that
+		// destination kind unchecked.
+		if d.CloudFunctions != nil {
+			eaH.SetFunctionResolver(d.CloudFunctions)
+		}
+
+		if d.CloudRun != nil {
+			eaH.SetCloudRunResolver(d.CloudRun)
+		}
+
 		srv.Register(eaH)
 	}
 
@@ -381,6 +396,15 @@ func New(d Drivers) *server.Server {
 		srv.Register(fcmsrv.New(d.FCM))
 	}
 
+	// Cloud Billing (cloudbilling.googleapis.com) + Budget API
+	// (billingbudgets.googleapis.com) share the /v1/billingAccounts URL space and
+	// have no driver — the control plane is a self-contained store seeded with a
+	// default account and catalog, so the handler is always registered (like
+	// servicenetworking). Its /v1/projects/{p}/billingInfo route overlaps the
+	// /v1/projects/ family, so it registers before Firestore; the billingInfo-
+	// suffix guard keeps it disjoint from Firestore's /v1/projects/{p}/databases.
+	srv.Register(cloudbilling.New())
+
 	if d.Firestore != nil {
 		srv.Register(firestore.New(d.Firestore))
 	}
@@ -402,6 +426,14 @@ func New(d Drivers) *server.Server {
 		// GCS -> Pub/Sub -> Cloud Functions chain.
 		if pubsubHandler != nil {
 			gcsHandler.SetPublisher(pubsubHandler)
+		}
+
+		// GCS -> Cloud Functions: an object finalize/delete also invokes any gen2
+		// function whose storage eventTrigger is bound directly to the bucket —
+		// the Eventarc-backed delivery a real gen2 storage trigger uses, separate
+		// from (and requiring no) notificationConfig/topic.
+		if cfHandler != nil {
+			gcsHandler.SetFunctionInvoker(cfHandler)
 		}
 
 		srv.Register(gcsHandler)

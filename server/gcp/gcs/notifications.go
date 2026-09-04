@@ -4,9 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
@@ -22,6 +24,15 @@ const (
 	// pubsubTopicPrefix is the leading form the storage SDK uses for a
 	// notification's topic: //pubsub.googleapis.com/projects/{p}/topics/{t}.
 	pubsubTopicPrefix = "//pubsub.googleapis.com/"
+
+	// gen2StorageFinalizedType / gen2StorageDeletedType are the CloudEvent type
+	// strings a real Eventarc-backed gen2 Cloud Storage trigger uses on
+	// eventTrigger.eventType (the value a deployed gen2 function's storage
+	// trigger is created with), corresponding to the legacy
+	// eventTypeObjectFinalize / eventTypeObjectDelete notification event types
+	// above.
+	gen2StorageFinalizedType = "google.cloud.storage.object.v1.finalized"
+	gen2StorageDeletedType   = "google.cloud.storage.object.v1.deleted"
 )
 
 // TopicPublisher emits an object-change event to a Pub/Sub topic. The Pub/Sub
@@ -37,6 +48,44 @@ type TopicPublisher interface {
 // default) leaves object-change notifications a no-op.
 func (h *Handler) SetPublisher(p TopicPublisher) {
 	h.publisher = p
+}
+
+// FunctionInvoker delivers a GCS object-change event directly to every gen2
+// Cloud Function whose Cloud Storage eventTrigger is bound to (bucket,
+// eventType) — the Eventarc-backed delivery a real gen2 storage trigger uses.
+// resource is the storage#object resource JSON (an objectResource, marshaled
+// by the caller since the type is unexported). The Cloud Functions handler
+// implements it; the GCS handler calls it best-effort so a slow or missing
+// target never fails an object operation, mirroring TopicPublisher above.
+type FunctionInvoker interface {
+	InvokeForObjectEvent(ctx context.Context, bucket, eventType string, resource []byte)
+}
+
+// SetFunctionInvoker wires the Cloud Functions backend so an object
+// finalize/delete on a bucket with a matching gen2 storage eventTrigger is
+// delivered directly, independent of the notificationConfig -> Pub/Sub chain
+// SetPublisher drives. Nil (the default) leaves gen2 storage-trigger delivery
+// a no-op.
+func (h *Handler) SetFunctionInvoker(fi FunctionInvoker) {
+	h.functionInvoker = fi
+}
+
+// withDeliveryDepth seeds r's context with the re-entrant delivery depth
+// carried on recursionguard.DepthHeader. Invoking a gen2 function is
+// in-process (InvokeForObjectEvent -> Handler.Invoke), so the ctx depth rides
+// the goroutine for that hop; but a function that writes back to its own
+// trigger bucket does so as a fresh network call into this very handler, a
+// hop the in-process ctx can't cross. Reading the depth off the header — the
+// same bridge Event Grid webhook delivery uses — keeps a self-referential
+// write -> invoke -> write chain counting toward recursionguard.MaxDepth
+// instead of resetting to zero (and recursing unbounded) each hop.
+func withDeliveryDepth(r *http.Request) context.Context {
+	ctx := r.Context()
+	if d, err := strconv.Atoi(r.Header.Get(recursionguard.DepthHeader)); err == nil && d > 0 {
+		ctx = recursionguard.WithDepth(ctx, d)
+	}
+
+	return ctx
 }
 
 // notificationResource is the storage#notification JSON shape. The snake_case
@@ -181,10 +230,16 @@ func notificationView(r *http.Request, bucket string, cfg *storagedriver.GCSNoti
 	}
 }
 
-// emitObjectEvent publishes an object-change event to every bucket notification
-// config whose event-type filter and object-name prefix match. Best-effort: a
-// nil publisher, no configs, or a publish failure never affects the object op.
+// emitObjectEvent delivers an object-change event through both fan-out paths
+// a real object write/delete drives: the legacy notificationConfig -> Pub/Sub
+// chain (below) and, independently, a direct delivery to any gen2 Cloud
+// Function whose storage eventTrigger is bound to the bucket (a gen2 storage
+// trigger binds directly to the bucket; it has no notificationConfig or
+// explicit topic). Best-effort throughout: a nil publisher/invoker, no
+// configs/bound functions, or a delivery failure never affects the object op.
 func (h *Handler) emitObjectEvent(r *http.Request, bucket string, res *objectResource, eventType string) {
+	h.emitToFunctions(r.Context(), bucket, res, eventType)
+
 	if h.publisher == nil || h.ext == nil {
 		return
 	}
@@ -196,6 +251,41 @@ func (h *Handler) emitObjectEvent(r *http.Request, bucket string, res *objectRes
 
 	for i := range cfgs {
 		h.emitToConfig(r.Context(), bucket, res, eventType, &cfgs[i])
+	}
+}
+
+// emitToFunctions delivers res to h.functionInvoker as the gen2 CloudEvent
+// type corresponding to the legacy eventType. A nil invoker, an eventType
+// this package has no gen2 mapping for (archived/metadataUpdated are not
+// wired), or a marshal failure is a silent no-op.
+func (h *Handler) emitToFunctions(ctx context.Context, bucket string, res *objectResource, eventType string) {
+	if h.functionInvoker == nil {
+		return
+	}
+
+	gen2Type, ok := gen2FunctionEventType(eventType)
+	if !ok {
+		return
+	}
+
+	data, err := json.Marshal(res)
+	if err != nil {
+		return
+	}
+
+	h.functionInvoker.InvokeForObjectEvent(ctx, bucket, gen2Type, data)
+}
+
+// gen2FunctionEventType maps a legacy GCS notification event type to the
+// CloudEvent type string a gen2 storage eventTrigger uses.
+func gen2FunctionEventType(legacy string) (string, bool) {
+	switch legacy {
+	case eventTypeObjectFinalize:
+		return gen2StorageFinalizedType, true
+	case eventTypeObjectDelete:
+		return gen2StorageDeletedType, true
+	default:
+		return "", false
 	}
 }
 

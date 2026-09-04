@@ -118,6 +118,20 @@ func TestSDKGCPForwardingRuleTargetRoundTrip(t *testing.T) {
 
 	client := newForwardingRulesClient(t, ts.URL, option.WithHTTPClient(ts.Client()))
 
+	proxyClient, err := gcpcompute.NewTargetHttpProxiesRESTClient(ctx, clientOpts(ts)...)
+	if err != nil {
+		t.Fatalf("NewTargetHttpProxiesRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = proxyClient.Close() })
+
+	waitOp(ctx, t, "targetHttpProxy Insert", func() (*gcpcompute.Operation, error) {
+		return proxyClient.Insert(ctx, &computepb.InsertTargetHttpProxyRequest{
+			Project:                 testProject,
+			TargetHttpProxyResource: &computepb.TargetHttpProxy{Name: ptrStr("web-proxy")},
+		})
+	})
+
 	target := "projects/" + testProject + "/global/targetHttpProxies/web-proxy"
 
 	op, err := client.Insert(ctx, &computepb.InsertGlobalForwardingRuleRequest{

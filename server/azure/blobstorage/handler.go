@@ -15,9 +15,11 @@
 //	HEAD   /{container}/{blob}                          — head blob
 //	DELETE /{container}/{blob}                          — delete blob
 //
-// Less-used surfaces (lifecycle, encryption, versioning) are not yet wired and
-// return 501. An unrecognized or unimplemented blob-PUT comp selector fails
-// closed with an Azure error rather than falling through to a content write.
+// When account-level versioning is enabled, every blob write mints a new
+// version (x-ms-version-id); versions are readable/deletable via ?versionid= and
+// listable via include=versions. An unrecognized or unimplemented blob-PUT comp
+// selector fails closed with an Azure error rather than falling through to a
+// content write.
 package blobstorage
 
 import (
@@ -27,8 +29,10 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io"
+	"math"
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -65,9 +69,18 @@ const (
 	compLease       = "lease"
 	compTags        = "tags"
 	compPage        = "page"
+	compPageList    = "pagelist"
+	compUndelete    = "undelete"
+	// compImmutabilityPolicies / compLegalHold select the blob-level immutable
+	// storage (WORM) sub-operations: Set/Delete Blob Immutability Policy
+	// (?comp=immutabilityPolicies) and Set Blob Legal Hold (?comp=legalhold).
+	compImmutabilityPolicies = "immutabilityPolicies"
+	compLegalHold            = "legalhold"
+	// compBlobs is the ?comp= value for Find Blobs by Tags (GET /?comp=blobs and
+	// GET /{container}?restype=container&comp=blobs).
+	compBlobs = "blobs"
 
-	// blobTypePageBlob is the Azure page-blob type; cloudemu does not implement
-	// page-blob range semantics, so a page-blob create/write fails closed.
+	// blobTypePageBlob is the Azure page-blob type.
 	blobTypePageBlob = "PageBlob"
 
 	// compACL is the ?comp= value for Set/Get Container ACL
@@ -110,6 +123,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch {
 	case container == "" && q.Get("comp") == compList:
 		h.listContainers(w, r)
+	case container == "" && q.Get("comp") == compBlobs:
+		h.findBlobsByTags(w, r, "")
 	case container == "":
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "operation not supported on root")
 	case blob == "" && q.Get("restype") == "container":
@@ -159,6 +174,8 @@ func (h *Handler) containerOp(w http.ResponseWriter, r *http.Request, container 
 		switch q.Get("comp") {
 		case compList:
 			h.listBlobs(w, r, container, q)
+		case compBlobs:
+			h.findBlobsByTags(w, r, container)
 		case compACL:
 			h.getContainerACL(w, r, container)
 		default:
@@ -181,6 +198,11 @@ func (h *Handler) blobOp(w http.ResponseWriter, r *http.Request, container, blob
 
 		if ext, ok := h.bucket.(storagedriver.AzureBlobExtensions); ok && r.URL.Query().Get("comp") == compBlockList {
 			h.getBlockList(w, r, ext, container, blob)
+			return
+		}
+
+		if r.URL.Query().Get("comp") == compPageList {
+			h.getPageRanges(w, r, container, blob)
 			return
 		}
 
@@ -220,11 +242,15 @@ func (h *Handler) putBlobOp(w http.ResponseWriter, r *http.Request, container, b
 		return
 	}
 
-	// Page blobs are not implemented; fail closed rather than silently creating
-	// a block blob (which would misreport page-blob support and, on an existing
-	// blob, clobber it).
 	if strings.EqualFold(blobType, blobTypePageBlob) {
+		if page, ok := h.bucket.(storagedriver.AzurePageBlob); ok {
+			h.createPageBlob(w, r, page, container, blob)
+			return
+		}
+		// Fail closed rather than silently creating a block blob (which would
+		// misreport page-blob support and, on an existing blob, clobber it).
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "page blobs are not supported")
+
 		return
 	}
 
@@ -240,12 +266,33 @@ func (h *Handler) putBlobComp(w http.ResponseWriter, r *http.Request, container,
 		return
 	}
 
+	if comp == compUndelete {
+		h.undeleteBlob(w, r, container, blob)
+		return
+	}
+
+	if comp == compImmutabilityPolicies {
+		h.setBlobImmutabilityPolicy(w, r, container, blob)
+		return
+	}
+
+	if comp == compLegalHold {
+		h.setBlobLegalHold(w, r, container, blob)
+		return
+	}
+
 	if ext, ok := h.bucket.(storagedriver.AzureBlobExtensions); ok && h.dispatchBlobComp(w, r, ext, container, blob, comp) {
 		return
 	}
 
 	if comp == compPage {
+		if page, ok := h.bucket.(storagedriver.AzurePageBlob); ok {
+			h.putPage(w, r, page, container, blob)
+			return
+		}
+
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "page blobs are not supported")
+
 		return
 	}
 
@@ -419,6 +466,11 @@ func (h *Handler) getContainerProperties(w http.ResponseWriter, r *http.Request,
 }
 
 func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container string, q url.Values) {
+	if ext, ok := h.bucket.(storagedriver.AzureVersionedBlob); ok && includesOption(q.Get("include"), "versions") {
+		h.listBlobVersions(w, r, ext, container, q)
+		return
+	}
+
 	maxResults := parseMaxResults(q)
 
 	opts := storagedriver.ListOptions{
@@ -443,9 +495,27 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 	}
 
 	includeMetadata := includesOption(q.Get("include"), "metadata")
+	out.Blobs.Blobs = appendLiveBlobs(nil, result.Objects, includeMetadata)
 
-	for i := range result.Objects {
-		obj := &result.Objects[i]
+	for _, p := range result.CommonPrefixes {
+		out.Blobs.BlobPrefixes = append(out.Blobs.BlobPrefixes, blobPrefixXML{Name: p})
+	}
+
+	if ext, ok := h.bucket.(storagedriver.AzureSoftDeleteBlob); ok && includesOption(q.Get("include"), "deleted") {
+		if err := h.appendDeletedBlobs(r, ext, container, opts.Prefix, &out); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
+	writeXML(w, out)
+}
+
+// appendLiveBlobs renders each listed live blob as a blobXML, attaching metadata
+// when the caller asked for include=metadata.
+func appendLiveBlobs(dst []blobXML, objects []storagedriver.ObjectInfo, includeMetadata bool) []blobXML {
+	for i := range objects {
+		obj := &objects[i]
 
 		blobType := obj.BlobType
 		if blobType == "" {
@@ -468,11 +538,123 @@ func (h *Handler) listBlobs(w http.ResponseWriter, r *http.Request, container st
 			bx.Metadata = &metadataXML{Items: obj.Metadata}
 		}
 
-		out.Blobs.Blobs = append(out.Blobs.Blobs, bx)
+		dst = append(dst, bx)
 	}
 
-	for _, p := range result.CommonPrefixes {
-		out.Blobs.BlobPrefixes = append(out.Blobs.BlobPrefixes, blobPrefixXML{Name: p})
+	return dst
+}
+
+// appendDeletedBlobs merges the container's soft-deleted blobs into a List Blobs
+// include=deleted response, each marked Deleted=true with its DeletedTime and
+// RemainingRetentionDays, and re-sorts the combined blob list by name so live
+// and soft-deleted blobs interleave as real Azure returns them.
+//
+// Limitation (deferred): the soft-deleted set is appended on top of the already
+// maxresults-bounded live page rather than folded into one merged, uniformly
+// paginated live+deleted stream. Real Azure paginates the combined stream and
+// carries the deleted tail forward in the continuation marker; here the marker
+// tracks only the live listing, so a page can exceed maxresults by the deleted
+// count and the deleted tail is not itself continued. This matches real behavior
+// for the common small-container case; full merged-stream pagination is future
+// work (it needs a marker scheme that encodes both stream positions).
+func (*Handler) appendDeletedBlobs(
+	r *http.Request, ext storagedriver.AzureSoftDeleteBlob, container, prefix string, out *listBlobsResult,
+) error {
+	res, err := ext.ListDeletedBlobs(r.Context(), container, storagedriver.ListOptions{Prefix: prefix})
+	if err != nil {
+		return err
+	}
+
+	deletedTrue := true
+
+	for i := range res.Blobs {
+		d := &res.Blobs[i]
+		remaining := clampRetentionDays(d.RemainingRetentionDays)
+
+		out.Blobs.Blobs = append(out.Blobs.Blobs, blobXML{
+			Name: d.Info.Key,
+			Properties: blobPropsXML{
+				LastModified:           httpDate(d.Info.LastModified),
+				ETag:                   fmt.Sprintf("%q", d.Info.ETag),
+				ContentLength:          d.Info.Size,
+				ContentType:            d.Info.ContentType,
+				BlobType:               blobTypeBlockBlob,
+				DeletedTime:            httpDate(d.DeletedTime),
+				RemainingRetentionDays: &remaining,
+			},
+			Deleted: &deletedTrue,
+		})
+	}
+
+	sort.Slice(out.Blobs.Blobs, func(i, j int) bool {
+		return out.Blobs.Blobs[i].Name < out.Blobs.Blobs[j].Name
+	})
+
+	return nil
+}
+
+// clampRetentionDays narrows a non-negative day count to the int32 the wire
+// field carries, saturating at the int32 max (a remaining-retention window can
+// never approach that, so this only exists to keep the conversion provably
+// overflow-free).
+func clampRetentionDays(days int) int32 {
+	if days < 0 {
+		return 0
+	}
+
+	if days > math.MaxInt32 {
+		return math.MaxInt32
+	}
+
+	return int32(days)
+}
+
+// listBlobVersions serves GET /{container}?restype=container&comp=list&include=versions,
+// rendering every version of the matching blobs with its VersionId and
+// IsCurrentVersion marker. Versions sort by blob name then version id, so the
+// current version (newest id) appears last within a name, matching Azure.
+func (*Handler) listBlobVersions(
+	w http.ResponseWriter, r *http.Request, ext storagedriver.AzureVersionedBlob, container string, q url.Values,
+) {
+	maxResults := parseMaxResults(q)
+
+	res, err := ext.ListBlobVersions(r.Context(), container, storagedriver.ListOptions{
+		Prefix: q.Get("prefix"), MaxKeys: maxResults, PageToken: q.Get("marker"),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	page, err := pagination.Paginate(res.Versions, q.Get("marker"), maxResults)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "OutOfRangeInput", "invalid marker")
+		return
+	}
+
+	out := listBlobsResult{
+		ContainerName: container,
+		Prefix:        q.Get("prefix"),
+		Marker:        q.Get("marker"),
+		NextMarker:    page.NextPageToken,
+	}
+
+	for i := range page.Items {
+		v := &page.Items[i]
+		isCurrent := v.IsLatest
+
+		out.Blobs.Blobs = append(out.Blobs.Blobs, blobXML{
+			Name: v.Key,
+			Properties: blobPropsXML{
+				LastModified:  httpDate(v.LastModified),
+				ETag:          fmt.Sprintf("%q", v.ETag),
+				ContentLength: v.Size,
+				ContentType:   v.ContentType,
+				BlobType:      blobTypeBlockBlob,
+			},
+			VersionID:        v.VersionID,
+			IsCurrentVersion: &isCurrent,
+		})
 	}
 
 	writeXML(w, out)
@@ -552,6 +734,7 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 	if info, err := h.bucket.HeadObject(r.Context(), container, blob); err == nil {
 		etag = info.ETag
 		lastModified = info.LastModified
+		setIfNonEmpty(w, "x-ms-version-id", info.VersionID)
 	}
 	w.Header().Set("ETag", fmt.Sprintf("%q", etag))
 	w.Header().Set("Last-Modified", httpDate(lastModified))
@@ -744,6 +927,11 @@ func etagMatches(header, stored string) bool {
 }
 
 func (h *Handler) getBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	if versionID := r.URL.Query().Get("versionid"); versionID != "" {
+		h.getBlobVersion(w, r, container, blob, versionID)
+		return
+	}
+
 	if snapshot := r.URL.Query().Get("snapshot"); snapshot != "" {
 		h.getBlobSnapshot(w, r, container, blob, snapshot)
 		return
@@ -759,6 +947,7 @@ func (h *Handler) getBlob(w http.ResponseWriter, r *http.Request, container, blo
 		return
 	}
 
+	h.writeImmutabilityHeaders(w, r, container, blob)
 	serveBlobContent(w, r, &obj.Info, obj.Data)
 }
 
@@ -962,7 +1151,30 @@ func (h *Handler) getBlobSnapshot(w http.ResponseWriter, r *http.Request, contai
 	serveBlobContent(w, r, &obj.Info, obj.Data)
 }
 
+// getBlobVersion serves GET /{container}/{blob}?versionid=… reading a specific
+// version minted while account-level versioning was enabled.
+func (h *Handler) getBlobVersion(w http.ResponseWriter, r *http.Request, container, blob, versionID string) {
+	ext, ok := h.bucket.(storagedriver.AzureVersionedBlob)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "blob versioning not supported")
+		return
+	}
+
+	obj, err := ext.GetBlobVersion(r.Context(), container, blob, versionID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	serveBlobContent(w, r, &obj.Info, obj.Data)
+}
+
 func (h *Handler) headBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	if versionID := r.URL.Query().Get("versionid"); versionID != "" {
+		h.headBlobVersion(w, r, container, blob, versionID)
+		return
+	}
+
 	info, err := h.bucket.HeadObject(r.Context(), container, blob)
 	if err != nil {
 		writeErr(w, err)
@@ -970,6 +1182,26 @@ func (h *Handler) headBlob(w http.ResponseWriter, r *http.Request, container, bl
 	}
 
 	if readConditionHandled(w, r, info.ETag, info.LastModified) {
+		return
+	}
+
+	h.writeImmutabilityHeaders(w, r, container, blob)
+	writeBlobHeaders(w, info, info.Size)
+	w.WriteHeader(http.StatusOK)
+}
+
+// headBlobVersion serves HEAD /{container}/{blob}?versionid=… returning a
+// specific version's headers without its body.
+func (h *Handler) headBlobVersion(w http.ResponseWriter, r *http.Request, container, blob, versionID string) {
+	ext, ok := h.bucket.(storagedriver.AzureVersionedBlob)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "blob versioning not supported")
+		return
+	}
+
+	info, err := ext.HeadBlobVersion(r.Context(), container, blob, versionID)
+	if err != nil {
+		writeErr(w, err)
 		return
 	}
 
@@ -995,6 +1227,9 @@ func writeBlobHeaders(w http.ResponseWriter, info *storagedriver.ObjectInfo, siz
 		w.Header().Set("X-Ms-Access-Tier", info.AccessTier)
 	}
 
+	// On a versioning-enabled account, reads carry the served version's id.
+	setIfNonEmpty(w, "x-ms-version-id", info.VersionID)
+
 	// System content properties round-trip on read (Get Blob / Get Blob
 	// Properties) so tools like Terraform's azurerm_storage_blob don't see drift.
 	setIfNonEmpty(w, "Cache-Control", info.CacheControl)
@@ -1016,6 +1251,16 @@ func setIfNonEmpty(w http.ResponseWriter, key, v string) {
 }
 
 func (h *Handler) deleteBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	if r.URL.Query().Get("comp") == compImmutabilityPolicies {
+		h.deleteBlobImmutabilityPolicy(w, r, container, blob)
+		return
+	}
+
+	if versionID := r.URL.Query().Get("versionid"); versionID != "" {
+		h.deleteBlobVersion(w, r, container, blob, versionID)
+		return
+	}
+
 	if h.checkLease(w, r, container, blob) {
 		return
 	}
@@ -1044,6 +1289,41 @@ func (h *Handler) deleteBlob(w http.ResponseWriter, r *http.Request, container, 
 	}
 
 	w.WriteHeader(http.StatusAccepted)
+}
+
+// deleteBlobVersion serves DELETE /{container}/{blob}?versionid=… permanently
+// removing one version. Deleting the base blob itself (no versionid) leaves the
+// existing versions intact — that path runs through the normal deleteBlob flow.
+func (h *Handler) deleteBlobVersion(w http.ResponseWriter, r *http.Request, container, blob, versionID string) {
+	ext, ok := h.bucket.(storagedriver.AzureVersionedBlob)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "blob versioning not supported")
+		return
+	}
+
+	if err := ext.DeleteBlobVersion(r.Context(), container, blob, versionID); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// undeleteBlob serves PUT /{container}/{blob}?comp=undelete, restoring a
+// soft-deleted blob to active. Requires the AzureSoftDeleteBlob capability.
+func (h *Handler) undeleteBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
+	ext, ok := h.bucket.(storagedriver.AzureSoftDeleteBlob)
+	if !ok {
+		writeError(w, http.StatusNotImplemented, "NotImplemented", "blob soft delete not supported")
+		return
+	}
+
+	if err := ext.UndeleteBlob(r.Context(), container, blob); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, blob string) {
@@ -1079,6 +1359,7 @@ func (h *Handler) copyBlob(w http.ResponseWriter, r *http.Request, container, bl
 	if info, err := h.bucket.HeadObject(r.Context(), container, blob); err == nil {
 		w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
 		w.Header().Set("Last-Modified", httpDate(info.LastModified))
+		setIfNonEmpty(w, "x-ms-version-id", info.VersionID)
 	}
 	w.WriteHeader(http.StatusAccepted)
 }

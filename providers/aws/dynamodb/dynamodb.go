@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -17,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -45,6 +47,16 @@ const (
 	defaultStreamLimit = 100
 )
 
+// StreamShardID is the emulator's single, always-open DynamoDB Streams shard.
+// AWS's real ShardId shape enforces a minimum length of 28 characters
+// ("shardId-<20-digit-epoch-ms>-<8-hex-char-suffix>"); a shorter placeholder
+// (e.g. "shard-000") is rejected client-side by the AWS SDK/CLI's own request
+// validation before the request is ever sent, so GetShardIterator can never be
+// called against it. The value mirrors real DynamoDB's format and length.
+// Exported so server/aws/dynamodb can reference the same value instead of
+// keeping its own copy in sync by convention.
+const StreamShardID = "shardId-00000001700000000000-00000001"
+
 // Secondary-index projection types.
 const (
 	projectionAll      = "ALL"
@@ -65,6 +77,29 @@ type tableData struct {
 	pitrEnabled   bool
 }
 
+// DynamoDB table/GSI lifecycle states and their settle durations. A real table
+// reports CREATING on create and UPDATING on an UpdateTable before reaching
+// ACTIVE; a GSI reports CREATING while it back-fills. The overlay is a read-time
+// window (see internal/settle) gated behind config.Options.AsyncSettle: with the
+// default (off) SettleDuration returns 0, the window is inactive and every read
+// reports ACTIVE immediately — byte-for-byte the historical behavior.
+const (
+	statusActive   = "ACTIVE"
+	statusCreating = "CREATING"
+	statusUpdating = "UPDATING"
+
+	settleTableCreate = 2 * time.Second // table CREATING->ACTIVE
+	settleTableUpdate = 2 * time.Second // table UPDATING->ACTIVE (throughput/billing change)
+	settleGSICreate   = 2 * time.Second // GSI CREATING->ACTIVE
+)
+
+// gsiSettleKey is the key under which a table's GSI settle window is stored,
+// namespacing the index by its table so identically named indexes on different
+// tables never collide.
+func gsiSettleKey(table, index string) string {
+	return table + "\x00" + index
+}
+
 // Mock is an in-memory mock implementation of DynamoDB.
 type Mock struct {
 	mu            sync.RWMutex
@@ -72,6 +107,12 @@ type Mock struct {
 	opts          *config.Options
 	monitoring    mondriver.Monitoring
 	streamInvoker StreamEventInvoker
+	// tableSettle overlays a CREATING/UPDATING window onto a table's stored
+	// ACTIVE status; gsiSettle does the same for each GSI (keyed by
+	// gsiSettleKey). Both are self-locking and independent of m.mu, so read-path
+	// accessors need no provider lock. Inactive unless config.AsyncSettle is set.
+	tableSettle *settle.Set
+	gsiSettle   *settle.Set
 	// pendingStream buffers stream records captured under m.mu so their delivery
 	// runs after the lock is released (a mapped Lambda may write back into
 	// DynamoDB); guarded by m.mu.
@@ -80,6 +121,11 @@ type Mock struct {
 	// (token -> request fingerprint + time) so a replay short-circuits instead of
 	// re-applying; guarded by m.mu. Mirrors the SQS FIFO deduplicationIndex.
 	txIdempotency map[string]txIdempotencyRecord
+	// backups holds on-demand table backups keyed by BackupArn: each captures a
+	// table's schema and a deep copy of its items at backup time, so restoring
+	// replays them into a new table regardless of later mutations. Guarded by
+	// m.mu; see backup.go.
+	backups map[string]*backupData
 }
 
 // StreamEventInvoker delivers a DynamoDB Streams event batch to whatever Lambda
@@ -127,6 +173,9 @@ func New(opts *config.Options) *Mock {
 		tables:        make(map[string]*tableData),
 		opts:          opts,
 		txIdempotency: make(map[string]txIdempotencyRecord),
+		backups:       make(map[string]*backupData),
+		tableSettle:   settle.NewSet(),
+		gsiSettle:     settle.NewSet(),
 	}
 }
 
@@ -161,6 +210,58 @@ func validateItemKeys(cfg driver.TableConfig, item map[string]any) error {
 		}
 	}
 
+	return validateIndexKeyTypes(cfg, item)
+}
+
+// validateIndexKeyTypes checks every GSI/LSI key attribute present in item
+// against its declared AttributeDefinition type. Unlike the table's own
+// primary key, an index key attribute is optional on an item — an item that
+// omits it simply doesn't appear in that index — but AWS still rejects a type
+// mismatch on one that IS present with a ValidationException naming the index.
+func validateIndexKeyTypes(cfg driver.TableConfig, item map[string]any) error {
+	for _, gsi := range cfg.GSIs {
+		for _, keyName := range []string{gsi.PartitionKey, gsi.SortKey} {
+			if err := validateIndexKeyType(cfg, gsi.Name, keyName, item); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, lsi := range cfg.LSIs {
+		if err := validateIndexKeyType(cfg, lsi.Name, lsi.SortKey, item); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateIndexKeyType checks one index key attribute's value, when the item
+// carries it, against its AttributeDefinition type.
+func validateIndexKeyType(cfg driver.TableConfig, indexName, keyName string, item map[string]any) error {
+	if keyName == "" {
+		return nil
+	}
+
+	val, present := item[keyName]
+	if !present {
+		return nil
+	}
+
+	for _, def := range cfg.Attributes {
+		if def.Name != keyName {
+			continue
+		}
+
+		if actual := expr.TypeCode(val); actual != def.Type {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"One or more parameter values were invalid: Type mismatch for Index Key %s Expected: %s Actual: %s IndexName: %s",
+				keyName, def.Type, actual, indexName)
+		}
+
+		return nil
+	}
+
 	return nil
 }
 
@@ -191,16 +292,23 @@ func validateKeyNotEmpty(keyName string, val any) error {
 // is the sum of each attribute's name length (UTF-8 bytes) and value size. AWS
 // rejects an oversized write with a ValidationException.
 func validateItemSize(item map[string]any) error {
+	if itemSizeBytes(item) > maxItemSizeBytes {
+		return cerrors.New(cerrors.InvalidArgument, "Item size has exceeded the maximum allowed size")
+	}
+
+	return nil
+}
+
+// itemSizeBytes approximates the on-the-wire byte size DynamoDB attributes to an
+// item — the sum of each attribute's name length and value size. It backs both
+// the 400 KB item-ceiling check and a backup's reported SizeBytes.
+func itemSizeBytes(item map[string]any) int {
 	total := 0
 	for name, val := range item {
 		total += len(name) + valueSize(val)
 	}
 
-	if total > maxItemSizeBytes {
-		return cerrors.New(cerrors.InvalidArgument, "Item size has exceeded the maximum allowed size")
-	}
-
-	return nil
+	return total
 }
 
 // elementOverhead is the 1 byte DynamoDB charges per List or Map element, on
@@ -274,23 +382,51 @@ func collectionSize(val any) int {
 	}
 }
 
-// validateKeyMapNotEmpty rejects an empty-string/binary value on any key
-// attribute supplied in a Key map (UpdateItem, DeleteItem), matching the same
-// AWS rule PutItem enforces on the full item.
-func validateKeyMapNotEmpty(partitionKey, sortKey string, key map[string]any) error {
-	for _, keyName := range []string{partitionKey, sortKey} {
-		if keyName == "" {
-			continue
+// validateKeySchema enforces that a standalone Key parameter — GetItem,
+// DeleteItem, UpdateItem, BatchGetItem, TransactGetItems/TransactWriteItems —
+// names exactly the table's key schema attributes (the partition key, and the
+// sort key when the table has one): no fewer, no more, each with a non-empty
+// value of the declared type. Real DynamoDB collapses a missing or an
+// unrecognized key attribute into one ValidationException; the wire layer
+// otherwise silently looks up the wrong (or no) item instead of rejecting the
+// call the way real DynamoDB does.
+func validateKeySchema(cfg driver.TableConfig, key map[string]any) error {
+	want := map[string]struct{}{}
+	if cfg.PartitionKey != "" {
+		want[cfg.PartitionKey] = struct{}{}
+	}
+
+	if cfg.SortKey != "" {
+		want[cfg.SortKey] = struct{}{}
+	}
+
+	if len(key) != len(want) {
+		return newKeySchemaMismatch()
+	}
+
+	for name, val := range key {
+		if _, ok := want[name]; !ok {
+			return newKeySchemaMismatch()
 		}
 
-		if val, present := key[keyName]; present {
-			if err := validateKeyNotEmpty(keyName, val); err != nil {
-				return err
-			}
+		if err := validateKeyNotEmpty(name, val); err != nil {
+			return err
+		}
+
+		if err := validateKeyType(cfg, name, val); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+// newKeySchemaMismatch is the ValidationException AWS returns for a Key
+// parameter that omits a schema key attribute or names one the schema doesn't
+// have, verbatim across every DynamoDB operation that takes a standalone Key.
+func newKeySchemaMismatch() error {
+	return cerrors.New(cerrors.InvalidArgument,
+		"One or more parameter values were invalid: The provided key element does not match the schema")
 }
 
 // validateKeyType checks a present key attribute's type against the matching
@@ -351,6 +487,15 @@ func (m *Mock) CreateTable(ctx context.Context, cfg driver.TableConfig) error {
 	td.config = cfg
 	m.tables[cfg.Name] = td
 
+	now := m.opts.Clock.Now()
+	m.tableSettle.Begin(cfg.Name, statusCreating, now, m.opts.SettleDuration(settleTableCreate))
+
+	gsiDur := m.opts.SettleDuration(settleGSICreate)
+
+	for _, gsi := range cfg.GSIs {
+		m.gsiSettle.Begin(gsiSettleKey(cfg.Name, gsi.Name), statusCreating, now, gsiDur)
+	}
+
 	return nil
 }
 
@@ -398,8 +543,15 @@ func (m *Mock) DeleteTable(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if _, exists := m.tables[name]; !exists {
+	td, exists := m.tables[name]
+	if !exists {
 		return cerrors.Newf(cerrors.NotFound, "table %s not found", name)
+	}
+
+	m.tableSettle.Clear(name)
+
+	for _, gsi := range td.config.GSIs {
+		m.gsiSettle.Clear(gsiSettleKey(name, gsi.Name))
 	}
 
 	delete(m.tables, name)
@@ -449,6 +601,10 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 
 	if !exists {
 		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	if err := validateKeySchema(td.config, key); err != nil {
+		return nil, err
 	}
 
 	k := itemKey(td.config, key)
@@ -972,6 +1128,12 @@ func (m *Mock) BatchGetItems(_ context.Context, table string, keys []map[string]
 		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", table)
 	}
 
+	for _, key := range keys {
+		if err := validateKeySchema(td.config, key); err != nil {
+			return nil, err
+		}
+	}
+
 	var results []map[string]any
 
 	for _, key := range keys {
@@ -1152,6 +1314,8 @@ func (m *Mock) UpdateThroughput(_ context.Context, table, billingMode string, rc
 		td.config.WriteCapacityUnits = wcu
 	}
 
+	m.tableSettle.Begin(table, statusUpdating, m.opts.Clock.Now(), m.opts.SettleDuration(settleTableUpdate))
+
 	return nil
 }
 
@@ -1232,7 +1396,7 @@ func filterStreamRecords(records []driver.StreamRecord, limit int, token string)
 	}
 
 	return &driver.StreamIterator{
-		ShardID:   "shard-000",
+		ShardID:   StreamShardID,
 		Records:   result,
 		NextToken: nextToken,
 	}
@@ -1264,7 +1428,7 @@ func (m *Mock) TransactWriteItems(
 	}
 
 	for _, key := range deletes {
-		if err := validateKeyMapNotEmpty(td.config.PartitionKey, td.config.SortKey, key); err != nil {
+		if err := validateKeySchema(td.config, key); err != nil {
 			return err
 		}
 	}
@@ -1414,7 +1578,7 @@ func (m *Mock) flushStreamDeliveries(callerCtx context.Context) {
 			batch = append(batch, pending[k].rec)
 		}
 
-		payload := driver.BuildLambdaStreamEvent(pending[i].streamARN, pending[i].region, pending[i].viewType, batch)
+		payload := buildLambdaStreamEvent(pending[i].streamARN, pending[i].region, pending[i].viewType, batch)
 		_, _ = m.streamInvoker.DeliverEventSourceBatch(ctx, pending[i].streamARN, payload)
 
 		i = j
@@ -1512,11 +1676,15 @@ func (m *Mock) CreateIndex(_ context.Context, table string, cfg driver.GSIConfig
 
 	td.config.GSIs = append(td.config.GSIs, cfg)
 
+	now := m.opts.Clock.Now()
+	key := gsiSettleKey(table, cfg.Name)
+	m.gsiSettle.Begin(key, statusCreating, now, m.opts.SettleDuration(settleGSICreate))
+
 	return &driver.IndexInfo{
 		Name:         cfg.Name,
 		PartitionKey: cfg.PartitionKey,
 		SortKey:      cfg.SortKey,
-		Status:       "ACTIVE",
+		Status:       m.gsiSettle.State(key, now, statusActive),
 	}, nil
 }
 
@@ -1533,6 +1701,9 @@ func (m *Mock) DeleteIndex(_ context.Context, table, indexName string) error {
 	for i, gsi := range td.config.GSIs {
 		if gsi.Name == indexName {
 			td.config.GSIs = append(td.config.GSIs[:i], td.config.GSIs[i+1:]...)
+
+			m.gsiSettle.Clear(gsiSettleKey(table, indexName))
+
 			return nil
 		}
 	}
@@ -1556,12 +1727,28 @@ func (m *Mock) DescribeIndex(_ context.Context, table, indexName string) (*drive
 				Name:         gsi.Name,
 				PartitionKey: gsi.PartitionKey,
 				SortKey:      gsi.SortKey,
-				Status:       "ACTIVE",
+				Status:       m.gsiSettle.State(gsiSettleKey(table, indexName), m.opts.Clock.Now(), statusActive),
 			}, nil
 		}
 	}
 
 	return nil, cerrors.Newf(cerrors.NotFound, "index %s not found", indexName)
+}
+
+// TableStatus reports a table's lifecycle status, overlaying any active
+// CREATING/UPDATING settle window onto the stored ACTIVE state. It is the
+// read-path accessor the DynamoDB wire handler calls (via an optional
+// capability interface) instead of hardcoding "ACTIVE"; absent a window (the
+// AsyncSettle-off default, or after the window elapses) it returns ACTIVE.
+func (m *Mock) TableStatus(table string) string {
+	return m.tableSettle.State(table, m.opts.Clock.Now(), statusActive)
+}
+
+// GSIStatus reports a Global Secondary Index's lifecycle status, overlaying any
+// active CREATING settle window onto the stored ACTIVE state. Companion to
+// TableStatus for the wire handler's GlobalSecondaryIndexes block.
+func (m *Mock) GSIStatus(table, index string) string {
+	return m.gsiSettle.State(gsiSettleKey(table, index), m.opts.Clock.Now(), statusActive)
 }
 
 // ListIndexes returns all Global Secondary Indexes for a table.
@@ -1574,13 +1761,15 @@ func (m *Mock) ListIndexes(_ context.Context, table string) ([]driver.IndexInfo,
 		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", table)
 	}
 
+	now := m.opts.Clock.Now()
 	indexes := make([]driver.IndexInfo, 0, len(td.config.GSIs))
+
 	for _, gsi := range td.config.GSIs {
 		indexes = append(indexes, driver.IndexInfo{
 			Name:         gsi.Name,
 			PartitionKey: gsi.PartitionKey,
 			SortKey:      gsi.SortKey,
-			Status:       "ACTIVE",
+			Status:       m.gsiSettle.State(gsiSettleKey(table, gsi.Name), now, statusActive),
 		})
 	}
 

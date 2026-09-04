@@ -14,13 +14,22 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	cacheengine "github.com/stackshy/cloudemu/v2/services/cache/cacheengine"
 	"github.com/stackshy/cloudemu/v2/services/cache/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
-const defaultRedisPort = 6379
+const (
+	defaultRedisPort = 6379
+
+	// Real Memorystore Redis instance states (Instance.state enum). The mock
+	// stores the terminal READY and overlays the transient states via settle.
+	stateCreating = "CREATING"
+	stateReady    = "READY"
+	stateUpdating = "UPDATING"
+)
 
 // privateHostIP derives a deterministic private IPv4 in the 10/8 block for a
 // Memorystore instance's exposed Redis endpoint. Real Memorystore hands clients
@@ -56,7 +65,15 @@ type cacheData struct {
 
 // Mock is an in-memory mock implementation of GCP Memorystore.
 type Mock struct {
-	caches     *memstore.Store[*cacheData]
+	caches *memstore.Store[*cacheData]
+
+	// instSettle overlays a transient CREATING / UPDATING window (keyed by the
+	// instance self-link) over an instance's stored READY status so create/update
+	// report the real GCP intermediate state before settling. It is a no-op
+	// unless config.Options.AsyncSettle is set (SettleDuration returns 0 →
+	// inactive window → historical synchronous behavior). The Set has its own lock.
+	instSettle *settle.Set
+
 	opts       *config.Options
 	monitoring mondriver.Monitoring
 }
@@ -87,9 +104,17 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 // New creates a new Memorystore mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		caches: memstore.New[*cacheData](),
-		opts:   opts,
+		caches:     memstore.New[*cacheData](),
+		instSettle: settle.NewSet(),
+		opts:       opts,
 	}
+}
+
+// settleStatus overlays an instance's settle window (if any, keyed by self-link)
+// onto its stored terminal status: the transient value while the window is
+// active and unelapsed, otherwise final. Absent window → final.
+func (m *Mock) settleStatus(selfLink, final string) string {
+	return m.instSettle.State(selfLink, m.opts.Clock.Now(), final)
 }
 
 // CreateCache creates a new Memorystore instance.
@@ -125,7 +150,7 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		Scope:     cfg.Scope,
 		NodeType:  nodeType,
 		Engine:    engine,
-		Status:    "READY",
+		Status:    stateReady,
 		Endpoint:  endpoint,
 		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
 		Tags:      tags,
@@ -144,7 +169,15 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 
 	m.caches.Set(cfg.Name, cd)
 
+	// Under AsyncSettle a fresh instance reports CREATING until the window
+	// elapses, matching real Memorystore (instances.create → CREATING → READY).
+	// With the default (AsyncSettle off) SettleDuration is 0 → inactive window →
+	// READY immediately, so nothing changes for existing callers.
+	m.instSettle.Begin(selfLink, stateCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultCacheSettle))
+
 	result := info
+	result.Status = m.settleStatus(selfLink, result.Status)
 
 	return &result, nil
 }
@@ -162,6 +195,7 @@ func (m *Mock) DeleteCache(ctx context.Context, name string) error {
 	}
 
 	m.caches.Delete(name)
+	m.instSettle.Clear(cd.info.Name)
 
 	return nil
 }
@@ -174,6 +208,7 @@ func (m *Mock) GetCache(_ context.Context, name string) (*driver.CacheInfo, erro
 	}
 
 	result := cd.info
+	result.Status = m.settleStatus(cd.info.Name, result.Status)
 
 	return &result, nil
 }
@@ -187,7 +222,10 @@ func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.Cache
 		if !cd.info.Scope.Matches(filter) {
 			continue
 		}
-		caches = append(caches, cd.info)
+
+		info := cd.info
+		info.Status = m.settleStatus(cd.info.Name, info.Status)
+		caches = append(caches, info)
 	}
 
 	return caches, nil
@@ -214,7 +252,14 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 
 	m.caches.Set(cfg.Name, cd)
 
+	// Under AsyncSettle an updated instance briefly reports UPDATING before
+	// settling back to READY, matching real Memorystore (instances.patch →
+	// UPDATING → READY); a no-op when settle is off.
+	m.instSettle.Begin(cd.info.Name, stateUpdating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultCacheModifySettle))
+
 	result := cd.info
+	result.Status = m.settleStatus(cd.info.Name, result.Status)
 
 	return &result, nil
 }

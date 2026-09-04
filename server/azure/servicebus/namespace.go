@@ -5,6 +5,7 @@ import (
 	"io"
 	"maps"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -167,7 +168,7 @@ func (h *Handler) deleteNamespace(w http.ResponseWriter, sp sbPath) {
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *Handler) listNamespaces(w http.ResponseWriter, sp sbPath) {
+func (h *Handler) listNamespaces(w http.ResponseWriter, r *http.Request, sp sbPath) {
 	h.mu.RLock()
 
 	resources := make([]any, 0)
@@ -186,7 +187,7 @@ func (h *Handler) listNamespaces(w http.ResponseWriter, sp sbPath) {
 
 	h.mu.RUnlock()
 
-	azurearm.WriteJSON(w, http.StatusOK, paginate(resources))
+	azurearm.WriteJSON(w, http.StatusOK, paginate(r, resources))
 }
 
 func (h *Handler) checkNameAvailability(w http.ResponseWriter, r *http.Request) {
@@ -273,12 +274,52 @@ func writeNSNotFound(w http.ResponseWriter, name string) {
 		"namespace not found: "+name)
 }
 
-// paginate splits resources into a first page plus a nextLink placeholder when
-// the collection exceeds listPageSize.
-func paginate(resources []any) listResponse {
-	if len(resources) <= listPageSize {
-		return listResponse{Value: resources}
+// paginate returns the listPageSize-sized window of resources that starts at the
+// request's $skip offset. When more items remain it emits a nextLink — an
+// absolute URL that repeats the request with $skip advanced — that armservicebus
+// pagers follow until the collection is exhausted. A collection that fits a
+// single page (skip 0, len <= listPageSize) returns no nextLink.
+func paginate(r *http.Request, resources []any) listResponse {
+	skip := paginationSkip(r)
+	if skip >= len(resources) {
+		return listResponse{Value: []any{}}
 	}
 
-	return listResponse{Value: resources[:listPageSize], NextLink: "cloudemu-nextpage"}
+	end := skip + listPageSize
+	if end >= len(resources) {
+		return listResponse{Value: resources[skip:]}
+	}
+
+	return listResponse{Value: resources[skip:end], NextLink: nextPageLink(r, end)}
+}
+
+// paginationSkip reads the $skip offset a follow-up page request carries. A
+// missing or malformed value pages from the start.
+func paginationSkip(r *http.Request) int {
+	n, err := strconv.Atoi(r.URL.Query().Get(skipParam))
+	if err != nil || n < 0 {
+		return 0
+	}
+
+	return n
+}
+
+// nextPageLink builds the absolute URL that continues a listing at offset skip,
+// preserving the request path and query (api-version included) and overriding
+// $skip. armservicebus pagers GET this URL verbatim, so it must carry scheme and
+// host — a server request URL has neither.
+func nextPageLink(r *http.Request, skip int) string {
+	next := *r.URL
+	next.Host = r.Host
+
+	next.Scheme = "http"
+	if r.TLS != nil {
+		next.Scheme = "https"
+	}
+
+	q := next.Query()
+	q.Set(skipParam, strconv.Itoa(skip))
+	next.RawQuery = q.Encode()
+
+	return next.String()
 }

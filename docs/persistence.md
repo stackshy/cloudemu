@@ -27,6 +27,7 @@ provider plus the shared Kubernetes data plane (schema version 4).
 | Keep resources across a background-server `stop`→`start` | `cloudemu start --persist` |
 | Capture/name/switch between multiple states on a running server | `cloudemu snapshot save`/`load`/`list`/`delete` |
 | Export or replace the whole state over HTTP | `GET`/`POST /_cloudemu/snapshot` |
+| Save / rewind / fork named states over HTTP (time travel) | `POST /_cloudemu/snapshot/{name}` · `…/{name}/rewind` · `…/{from}/fork/{to}` |
 | Save/restore state from Go code | the [`persist`](https://pkg.go.dev/github.com/stackshy/cloudemu/v2/persist) package |
 
 ## `--persist` (always-on durability)
@@ -172,6 +173,24 @@ Both are disabled (`501`) when the server is started with `--admin=false`. A
 POST larger than 512 MiB is rejected. See the control-plane section of
 [standalone-server.md](standalone-server.md#resetting-state-between-tests-_cloudemu)
 for the neighbouring `reset`/`seed` endpoints.
+
+### Time travel (`/_cloudemu/snapshot/{name}`)
+
+The named-snapshot registry (`server/serverkit/timetravel.go`) adds git-like
+history on top of the same whole-emulator capture/restore, reachable over HTTP so
+any client can drive it — not just the `cloudemu snapshot` CLI:
+
+```sh
+curl -X POST   http://127.0.0.1:4566/_cloudemu/snapshot/baseline           # save current state as "baseline"
+curl -X POST   http://127.0.0.1:4566/_cloudemu/snapshot/baseline/rewind    # restore it (destructive)
+curl -X POST   http://127.0.0.1:4566/_cloudemu/snapshot/baseline/fork/exp  # branch it to a new name
+curl -X DELETE http://127.0.0.1:4566/_cloudemu/snapshot/exp                # drop a saved state
+```
+
+`rewind` wipes the running state and repopulates from the named checkpoint (same
+semantics as `snapshot load`); `fork` copies a checkpoint under a new name so you
+can branch experiments off a shared baseline. Like the endpoints above, these need
+the `--admin` plane.
 
 ## Go API (`persist` package)
 

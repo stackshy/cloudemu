@@ -11,20 +11,24 @@
 //
 // Driver -> wire mapping:
 //
-//	POST   /v2/entries:write              — WriteLogEntries -> (lazy CreateLogGroup) + PutLogEvents
-//	POST   /v2/entries:list               — ListLogEntries  -> GetLogEvents
-//	GET    /v2/projects/{p}/logs          — ListLogs        -> ListLogGroups
-//	DELETE /v2/projects/{p}/logs/{logid}  — DeleteLog       -> DeleteLogGroup
+//	POST   /v2/entries:write                                  — WriteLogEntries -> (lazy CreateLogGroup) + PutLogEvents
+//	POST   /v2/entries:list                                   — ListLogEntries  -> GetLogEvents
+//	GET    /v2/projects/{p}/logs                               — ListLogs        -> ListLogGroups
+//	DELETE /v2/projects/{p}/logs/{logid}                       — DeleteLog       -> DeleteLogGroup
+//	POST   /v2/projects/{p}/locations/{l}/buckets              — CreateBucket    -> GCPLogging.CreateBucket
+//	GET    /v2/projects/{p}/locations/{l}/buckets              — ListBuckets     -> GCPLogging.ListBuckets
+//	GET    /v2/projects/{p}/locations/{l}/buckets/{b}          — GetBucket       -> GCPLogging.GetBucket
+//	PATCH  /v2/projects/{p}/locations/{l}/buckets/{b}          — UpdateBucket    -> GCPLogging.UpdateBucket
+//	DELETE /v2/projects/{p}/locations/{l}/buckets/{b}          — DeleteBucket    -> GCPLogging.DeleteBucket
 //
-// Export sinks (projects.sinks) and log-based metrics (projects.metrics) — GCP
-// resource surfaces with no cross-provider equivalent — are served through the
-// optional driver.GCPLogging interface, which the GCP backend implements.
+// Export sinks (projects.sinks), log-based metrics (projects.metrics), and log
+// buckets (projects.locations.buckets) — GCP resource surfaces with no
+// cross-provider equivalent — are served through the optional
+// driver.GCPLogging interface, which the GCP backend implements.
 //
 // The /v2/ URL space is disjoint from the /v1/projects/ family (Firestore, IAM,
 // …), /compute/v1/, and /dns/v1/, so registration order relative to them is
 // unconstrained. Registered before the GCS fallback for consistency.
-//
-// Out of scope for this slice: log buckets (projects.locations.buckets).
 package cloudlogging
 
 import (
@@ -42,7 +46,9 @@ const (
 	logsCollection    = "logs"
 	sinksCollection   = "sinks"
 	metricsCollection = "metrics"
+	bucketsCollection = "buckets"
 	projectsSeg       = "projects"
+	locationsSeg      = "locations"
 )
 
 // defaultStream is the implicit log stream every Cloud Logging write lands in.
@@ -67,6 +73,10 @@ func New(l logdriver.Logging) *Handler {
 func (*Handler) Matches(r *http.Request) bool {
 	p := r.URL.Path
 	if p == entriesWrite || p == entriesList {
+		return true
+	}
+
+	if _, _, _, ok := bucketsPath(p); ok {
 		return true
 	}
 
@@ -99,6 +109,32 @@ func collectionPath(p, collection string) string {
 	return "/" + strings.Join(parts[collectionSegments:], "/")
 }
 
+// bucketsPath parses a Cloud Logging buckets URL of the form
+// "/v2/projects/{project}/locations/{location}/buckets[/{bucketID}]". ok is
+// false when p is not under this shape; tail is "/" for the bare collection.
+func bucketsPath(p string) (project, location, tail string, ok bool) {
+	if !strings.HasPrefix(p, basePrefix) {
+		return "", "", "", false
+	}
+
+	// projects/{p}/locations/{l}/buckets[/{tail}...] — at least the five
+	// leading segments must be present.
+	const bucketsSegments = 5
+
+	parts := strings.Split(strings.TrimPrefix(p, basePrefix), "/")
+	if len(parts) < bucketsSegments || parts[0] != projectsSeg || parts[2] != locationsSeg || parts[4] != bucketsCollection {
+		return "", "", "", false
+	}
+
+	project, location = parts[1], parts[3]
+
+	if len(parts) == bucketsSegments {
+		return project, location, "/", true
+	}
+
+	return project, location, "/" + strings.Join(parts[bucketsSegments:], "/"), true
+}
+
 // ServeHTTP routes on the path and method.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
@@ -107,6 +143,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case entriesList:
 		h.serveEntriesList(w, r)
+		return
+	}
+
+	if project, location, tail, ok := bucketsPath(r.URL.Path); ok {
+		h.routeBuckets(w, r, project, location, tail)
 		return
 	}
 

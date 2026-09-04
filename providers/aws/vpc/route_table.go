@@ -12,7 +12,8 @@ import (
 
 // Route target type constants.
 const (
-	RouteTargetLocal = "local"
+	RouteTargetLocal   = "local"
+	RouteTargetGateway = "gateway"
 )
 
 // Route-target not-found markers. A CreateRoute pointing at a gateway / NAT /

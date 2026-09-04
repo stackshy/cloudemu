@@ -299,6 +299,28 @@ func TestSDKSecretErrors(t *testing.T) {
 	}
 }
 
+// TestSDKPutSecretValueRequiresPayload guards a real-user e2e finding:
+// PutSecretValue with neither SecretString nor SecretBinary set must be
+// rejected — real Secrets Manager requires exactly one, since the whole point
+// of the call is to add a new version's content.
+func TestSDKPutSecretValueRequiresPayload(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("emptyput"), SecretString: aws.String("v1"),
+	}); err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	_, err := client.PutSecretValue(ctx, &awssm.PutSecretValueInput{SecretId: aws.String("emptyput")})
+
+	var invalid *smtypes.InvalidParameterException
+	if !errors.As(err, &invalid) {
+		t.Fatalf("PutSecretValue with no payload: got %v, want InvalidParameterException", err)
+	}
+}
+
 // TestSDKGetResourcePolicy guards the read path the aws_secretsmanager_secret
 // resource uses: GetResourcePolicy must return the secret's ARN/Name and no
 // ResourcePolicy (none is modeled), which the SDK reads as "no policy".

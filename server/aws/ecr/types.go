@@ -39,12 +39,20 @@ type imageJSON struct {
 }
 
 type imageDetailJSON struct {
-	RegistryID       string   `json:"registryId,omitempty"`
-	RepositoryName   string   `json:"repositoryName"`
-	ImageDigest      string   `json:"imageDigest"`
-	ImageTags        []string `json:"imageTags,omitempty"`
-	ImageSizeInBytes int64    `json:"imageSizeInBytes,omitempty"`
-	ImagePushedAt    float64  `json:"imagePushedAt,omitempty"`
+	RegistryID       string               `json:"registryId,omitempty"`
+	RepositoryName   string               `json:"repositoryName"`
+	ImageDigest      string               `json:"imageDigest"`
+	ImageTags        []string             `json:"imageTags,omitempty"`
+	ImageSizeInBytes int64                `json:"imageSizeInBytes,omitempty"`
+	ImagePushedAt    float64              `json:"imagePushedAt,omitempty"`
+	ImageScanStatus  *imageScanStatusJSON `json:"imageScanStatus,omitempty"`
+}
+
+// imageScanStatusJSON mirrors ECR's ImageScanStatus object, echoed on
+// DescribeImages once an image has scan results (from scanOnPush or an
+// explicit StartImageScan) — omitted, as in real ECR, when no scan has run.
+type imageScanStatusJSON struct {
+	Status string `json:"status"`
 }
 
 type imageFailureJSON struct {

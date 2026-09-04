@@ -5,6 +5,12 @@
 // early, not a billing-accurate figure.
 package pricing
 
+import (
+	"strings"
+
+	"github.com/stackshy/cloudemu/v2/services/compute"
+)
+
 // HoursPerMonth turns an hourly rate into a monthly estimate (~730h).
 const HoursPerMonth = 730
 
@@ -20,6 +26,10 @@ const (
 	provGCP   = "gcp"
 	provAzure = "azure"
 )
+
+// computeInstanceKey is the "service/resourceType" discriminator for a compute
+// instance, the one resource kind whose cost depends on its run state.
+const computeInstanceKey = "compute/Instance"
 
 // computeHourly entries are approximate on-demand rates gathered from public
 // pricing knowledge (not a live feed); accurate to ~2 significant figures.
@@ -234,6 +244,37 @@ var storageGBMonth = map[string]float64{
 	"gcp:pd-standard":                 0.04,
 }
 
+// ComputeInstanceBillable reports whether a compute instance in the given
+// lifecycle state should be billed for compute. Real clouds bill compute only
+// while an instance is running (or briefly pending): a stopping, stopped,
+// shutting-down, or terminated instance bills $0 for compute — a stopped
+// instance still pays for its attached block storage, which is priced
+// separately as a compute/Volume resource.
+//
+// The states are the canonical VM lifecycle states from services/compute, the
+// only values the compute walker copies into resourcediscovery.Resource.State.
+// GCP reports a stopped instance as "terminated" and Azure settles both PowerOff
+// and Deallocate to "stopped", so those cases fall out of this same set without
+// extra spellings (Azure's "deallocated" lives in a separate PowerState field
+// the walker never surfaces as State).
+//
+// It gates only compute instances; every other (service, resourceType) pair,
+// and a compute instance whose state is unknown/empty (e.g. a resource
+// constructed directly rather than walked from a provider), is treated as
+// billable, so pricing is unchanged for them.
+func ComputeInstanceBillable(service, resourceType, state string) bool {
+	if service+"/"+resourceType != computeInstanceKey {
+		return true
+	}
+
+	switch strings.ToLower(state) {
+	case compute.StateStopping, compute.StateStopped, compute.StateShuttingDown, compute.StateTerminated:
+		return false
+	default:
+		return true
+	}
+}
+
 // hourly returns the rate for sku, or def if the SKU is unknown.
 func hourly(table map[string]float64, sku string, def float64) float64 {
 	if r, ok := table[sku]; ok {
@@ -379,7 +420,7 @@ func Monthly(provider, service, resourceType, sku, region string, props map[stri
 	mult := regionMult(region)
 
 	switch service + "/" + resourceType {
-	case "compute/Instance":
+	case computeInstanceKey:
 		return hourly(computeHourly, sku, defaultComputeHourly) * mult * HoursPerMonth
 	case "relationaldb/DBInstance",
 		"relationaldb/SqlInstance",

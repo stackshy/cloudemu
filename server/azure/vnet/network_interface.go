@@ -42,6 +42,7 @@ type nicIPConfigRequestProps struct {
 	Subnet                          *armIDRef  `json:"subnet,omitempty"`
 	PublicIPAddress                 *armIDRef  `json:"publicIPAddress,omitempty"`
 	LoadBalancerBackendAddressPools []armIDRef `json:"loadBalancerBackendAddressPools,omitempty"`
+	ApplicationSecurityGroups       []armIDRef `json:"applicationSecurityGroups,omitempty"`
 }
 
 type armIDRef struct {
@@ -81,6 +82,7 @@ type nicIPConfigResponseProps struct {
 	Subnet                          *armIDRef  `json:"subnet,omitempty"`
 	PublicIPAddress                 *armIDRef  `json:"publicIPAddress,omitempty"`
 	LoadBalancerBackendAddressPools []armIDRef `json:"loadBalancerBackendAddressPools,omitempty"`
+	ApplicationSecurityGroups       []armIDRef `json:"applicationSecurityGroups,omitempty"`
 }
 
 type nicListResponse struct {
@@ -123,6 +125,8 @@ func (h *Handler) routeNIC(w http.ResponseWriter, r *http.Request, rp azurearm.R
 	switch r.Method {
 	case http.MethodPut:
 		h.createNIC(w, r, rp, svc)
+	case http.MethodPatch:
+		h.patchNIC(w, r, rp, svc)
 	case http.MethodGet:
 		h.getNIC(w, r, rp, svc)
 	case http.MethodDelete:
@@ -147,7 +151,7 @@ func (h *Handler) createNIC(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
-	ipConfigs, err := h.buildIPConfigs(r.Context(), rp.ResourceGroup, rp.ResourceName, req.Properties.IPConfigurations, svc)
+	ipConfigs, err := h.buildIPConfigs(r.Context(), rp.ResourceGroup, rp.ResourceName, req.Properties.IPConfigurations)
 	if err != nil {
 		if cerrors.IsFailedPrecondition(err) {
 			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeAssignedToMultipleIpConfigs", err.Error())
@@ -254,8 +258,8 @@ func (*Handler) listNICs(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 // dynamic private IP from the right range. rg/nicName identify the NIC being
 // created or updated, so a re-PUT of the same NIC doesn't conflict with its
 // own existing public IP reference.
-func (h *Handler) buildIPConfigs(ctx context.Context, rg, nicName string, in []nicIPConfigRequest,
-	svc netdriver.AzureNetworkInterfaces,
+func (h *Handler) buildIPConfigs(
+	ctx context.Context, rg, nicName string, in []nicIPConfigRequest,
 ) ([]netdriver.AzureIPConfig, error) {
 	out := make([]netdriver.AzureIPConfig, 0, len(in))
 
@@ -267,7 +271,8 @@ func (h *Handler) buildIPConfigs(ctx context.Context, rg, nicName string, in []n
 			PrivateIP:        p.PrivateIPAddress,
 			AllocationMethod: p.PrivateIPAllocationMethod,
 			Primary:          p.Primary,
-			LBBackendPoolIDs: backendPoolIDs(p.LoadBalancerBackendAddressPools),
+			LBBackendPoolIDs: refIDs(p.LoadBalancerBackendAddressPools),
+			ASGIDs:           refIDs(p.ApplicationSecurityGroups),
 		}
 
 		if p.Subnet != nil {
@@ -287,13 +292,17 @@ func (h *Handler) buildIPConfigs(ctx context.Context, rg, nicName string, in []n
 				return nil, cerrors.Newf(cerrors.InvalidArgument, "malformed public IP id %q", p.PublicIPAddress.ID)
 			}
 
-			if _, err := findPublicIPByName(ctx, h.net, pipRP.ResourceGroup, pipRP.ResourceName); err != nil {
+			pip, err := findPublicIPByName(ctx, h.net, pipRP.ResourceGroup, pipRP.ResourceName)
+			if err != nil {
 				return nil, cerrors.Newf(cerrors.InvalidArgument,
 					"ipConfiguration references public IP %q which does not exist", pipRP.ResourceName)
 			}
 
-			if err := checkPublicIPNotAttached(ctx, svc, p.PublicIPAddress.ID, rg, nicName); err != nil {
-				return nil, err
+			if kind, owner, claimed := h.publicIPClaimant(
+				ctx, p.PublicIPAddress.ID, pip.AllocationID, claimKindNIC, rg, nicName,
+			); claimed {
+				return nil, cerrors.Newf(cerrors.FailedPrecondition,
+					"public IP %q is already associated with %s %q", p.PublicIPAddress.ID, kind, owner)
 			}
 
 			cfg.PublicIPID = p.PublicIPAddress.ID
@@ -305,11 +314,11 @@ func (h *Handler) buildIPConfigs(ctx context.Context, rg, nicName string, in []n
 	return out, nil
 }
 
-// backendPoolIDs extracts the referenced load-balancer backend-pool ARM ids
-// from an ipConfiguration's loadBalancerBackendAddressPools, dropping empty
-// references. It returns nil when none are present so an unassociated
-// ipConfiguration carries no membership.
-func backendPoolIDs(refs []armIDRef) []string {
+// refIDs extracts the non-empty ARM resource ids from a slice of id references
+// (an ipConfiguration's loadBalancerBackendAddressPools or
+// applicationSecurityGroups), dropping empty references. It returns nil when
+// none are present so an unassociated ipConfiguration carries no membership.
+func refIDs(refs []armIDRef) []string {
 	if len(refs) == 0 {
 		return nil
 	}
@@ -329,31 +338,104 @@ func backendPoolIDs(refs []armIDRef) []string {
 	return out
 }
 
-// checkPublicIPNotAttached rejects attaching armID to (rg, nicName) when it is
-// already referenced by a DIFFERENT network interface's ipConfiguration — a
-// static public IP can only be bound to one NIC at a time in real Azure
-// (PublicIPAddressCannotBeAssignedToMultipleIpConfigs). A re-PUT of the same
-// NIC that keeps its own existing reference is not a conflict.
-func checkPublicIPNotAttached(ctx context.Context, svc netdriver.AzureNetworkInterfaces, armID, rg, nicName string) error {
+// toIDRefs wraps ARM resource id strings back into id references for the wire
+// response, the inverse of refIDs. It returns nil for an empty input so a
+// reference-less field stays omitted.
+func toIDRefs(ids []string) []armIDRef {
+	if len(ids) == 0 {
+		return nil
+	}
+
+	out := make([]armIDRef, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, armIDRef{ID: id})
+	}
+
+	return out
+}
+
+// Owner kinds a public IP can be claimed by, used to exclude the resource being
+// (re-)written from its own conflict check.
+const (
+	claimKindNIC = "nic"
+	claimKindNAT = "nat"
+)
+
+// publicIPClaimant returns the owner already bound to the public IP other than
+// the resource being written (selfKind + selfRG + selfName), so a NIC and a NAT
+// gateway both refuse to steal a static public IP that is already in use — real
+// Azure binds one to a single owner (PublicIPAddressCannotBeAssignedToMultiple…).
+// NICs reference the IP by its ARM id; NAT gateways reference it by the driver
+// Elastic-IP allocationID, so the caller passes both.
+func (h *Handler) publicIPClaimant(
+	ctx context.Context, pipArmID, allocationID, selfKind, selfRG, selfName string,
+) (kind, name string, claimed bool) {
+	if n, ok := h.nicPublicIPClaimant(ctx, pipArmID, selfKind, selfRG, selfName); ok {
+		return "network interface", n, true
+	}
+
+	if n, ok := h.natPublicIPClaimant(ctx, allocationID, selfKind, selfRG, selfName); ok {
+		return "NAT gateway", n, true
+	}
+
+	return "", "", false
+}
+
+// nicPublicIPClaimant reports the name of a network interface (other than self)
+// whose ipConfiguration already references pipArmID.
+func (h *Handler) nicPublicIPClaimant(ctx context.Context, pipArmID, selfKind, selfRG, selfName string) (string, bool) {
+	svc, ok := h.net.(netdriver.AzureNetworkInterfaces)
+	if !ok {
+		return "", false
+	}
+
 	nics, err := svc.ListNetworkInterfaces(ctx, "")
 	if err != nil {
-		return err
+		return "", false
 	}
 
 	for i := range nics {
-		if strings.EqualFold(nics[i].ResourceGroup, rg) && nics[i].Name == nicName {
+		if selfKind == claimKindNIC && strings.EqualFold(nics[i].ResourceGroup, selfRG) &&
+			strings.EqualFold(nics[i].Name, selfName) {
 			continue
 		}
 
 		for j := range nics[i].IPConfigs {
-			if strings.EqualFold(nics[i].IPConfigs[j].PublicIPID, armID) {
-				return cerrors.Newf(cerrors.FailedPrecondition,
-					"public IP %q is already associated with network interface %q", armID, nics[i].Name)
+			if strings.EqualFold(nics[i].IPConfigs[j].PublicIPID, pipArmID) {
+				return nics[i].Name, true
 			}
 		}
 	}
 
-	return nil
+	return "", false
+}
+
+// natPublicIPClaimant reports the name of a NAT gateway (other than self) already
+// bound to the Elastic-IP allocationID. An empty allocationID never matches.
+func (h *Handler) natPublicIPClaimant(ctx context.Context, allocationID, selfKind, selfRG, selfName string) (string, bool) {
+	if allocationID == "" {
+		return "", false
+	}
+
+	gws, err := h.net.DescribeNATGateways(ctx, nil)
+	if err != nil {
+		return "", false
+	}
+
+	for i := range gws {
+		name := tagOr(gws[i].Tags, armNATGatewayTag, "")
+		rg := tagOr(gws[i].Tags, armNATGatewayRGTag, "")
+
+		if selfKind == claimKindNAT && strings.EqualFold(rg, selfRG) && strings.EqualFold(name, selfName) {
+			continue
+		}
+
+		if strings.EqualFold(gws[i].AllocationID, allocationID) {
+			return name, true
+		}
+	}
+
+	return "", false
 }
 
 // subnetCIDR resolves the address prefix of the subnet named by an ARM subnet
@@ -444,6 +526,11 @@ func toNICResponse(nic *netdriver.AzureNIC, rp azurearm.ResourcePath) nicRespons
 		for _, poolID := range c.LBBackendPoolIDs {
 			rc.Properties.LoadBalancerBackendAddressPools = append(
 				rc.Properties.LoadBalancerBackendAddressPools, armIDRef{ID: poolID})
+		}
+
+		for _, asgID := range c.ASGIDs {
+			rc.Properties.ApplicationSecurityGroups = append(
+				rc.Properties.ApplicationSecurityGroups, armIDRef{ID: asgID})
 		}
 
 		out.Properties.IPConfigurations = append(out.Properties.IPConfigurations, rc)

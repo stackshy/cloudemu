@@ -53,6 +53,11 @@ func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.validateGSICreateThroughputs(r.Context(), req.TableName, req.BillingMode, req.GlobalSecondaryIndexUpdates); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	if err := h.applyThroughput(r.Context(), req.TableName, req.BillingMode, req.ProvisionedThroughput); err != nil {
 		writeErr(w, err)
 		return
@@ -81,7 +86,7 @@ func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"TableDescription": tableDescription(full)})
+	wire.WriteJSON(w, map[string]any{"TableDescription": h.describeTableShape(full)})
 }
 
 func indexDeleteName(del *struct {
@@ -115,7 +120,100 @@ func (h *Handler) applyThroughput(ctx context.Context, table, billingMode string
 		rcu, wcu = pt.ReadCapacityUnits, pt.WriteCapacityUnits
 	}
 
+	if err := h.validateThroughputChange(ctx, table, billingMode, rcu, wcu); err != nil {
+		return err
+	}
+
 	return updater.UpdateThroughput(ctx, table, billingMode, rcu, wcu)
+}
+
+// validateThroughputChange resolves the billing mode and capacity an
+// UpdateTable request would leave a table in — merging any field the request
+// omits with the table's current stored value — and enforces AWS's
+// PROVISIONED/PAY_PER_REQUEST throughput rule against the result. A field the
+// request explicitly supplies always overrides; an omitted one falls back to
+// the stored value so re-affirming an unrelated field (e.g. adding a GSI)
+// never manufactures a spurious minimum-capacity error on an already-valid
+// table. Switching to PAY_PER_REQUEST is instead checked against the caller's
+// raw values, since a merged fallback would hide a genuine conflict
+// (throughput given alongside a switch to PAY_PER_REQUEST).
+func (h *Handler) validateThroughputChange(ctx context.Context, table, billingMode string, rcu, wcu int64) error {
+	current, err := h.db.DescribeTable(ctx, table)
+	if err != nil {
+		return err
+	}
+
+	effectiveMode := billingMode
+	if effectiveMode == "" {
+		effectiveMode = current.BillingMode
+		if effectiveMode == "" {
+			effectiveMode = billingProvisioned
+		}
+	}
+
+	if effectiveMode == billingPayPerRequest {
+		return validateProvisionedThroughput(effectiveMode, rcu, wcu)
+	}
+
+	effRCU, effWCU := rcu, wcu
+	if effRCU == 0 {
+		effRCU = current.ReadCapacityUnits
+	}
+
+	if effWCU == 0 {
+		effWCU = current.WriteCapacityUnits
+	}
+
+	return validateProvisionedThroughput(effectiveMode, effRCU, effWCU)
+}
+
+// validateGSICreateThroughputs enforces the per-GSI PROVISIONED/PAY_PER_REQUEST
+// throughput rule (validateGSIThroughput) against every GSI Create in an
+// UpdateTable request. The effective billing mode is the request's own
+// BillingMode when it changes it, otherwise the table's current stored mode —
+// the same resolution validateThroughputChange uses — so adding a GSI without
+// touching billing is checked against the table as it stands today. A request
+// with no GSI creates skips the DescribeTable lookup entirely.
+func (h *Handler) validateGSICreateThroughputs(
+	ctx context.Context, table, billingMode string, updates []gsiUpdateJSON,
+) error {
+	hasCreate := false
+
+	for i := range updates {
+		if updates[i].Create != nil {
+			hasCreate = true
+			break
+		}
+	}
+
+	if !hasCreate {
+		return nil
+	}
+
+	effectiveMode := billingMode
+	if effectiveMode == "" {
+		current, err := h.db.DescribeTable(ctx, table)
+		if err != nil {
+			return err
+		}
+
+		effectiveMode = current.BillingMode
+		if effectiveMode == "" {
+			effectiveMode = billingProvisioned
+		}
+	}
+
+	for i := range updates {
+		if updates[i].Create == nil {
+			continue
+		}
+
+		if err := validateGSIThroughput(effectiveMode, updates[i].Create); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // attrDefJSON is one AttributeDefinitions entry on an UpdateTable request.
@@ -222,17 +320,10 @@ func (h *Handler) updateContinuousBackups(w http.ResponseWriter, r *http.Request
 		}
 	}
 
-	pitr := statusDisabled
-	if enabled {
-		pitr = statusEnabled
-	}
-
 	wire.WriteJSON(w, map[string]any{
 		"ContinuousBackupsDescription": map[string]any{
-			"ContinuousBackupsStatus": statusEnabled,
-			"PointInTimeRecoveryDescription": map[string]any{
-				"PointInTimeRecoveryStatus": pitr,
-			},
+			"ContinuousBackupsStatus":        statusEnabled,
+			"PointInTimeRecoveryDescription": h.pitrRecoveryDescription(r.Context(), req.TableName, enabled),
 		},
 	})
 }

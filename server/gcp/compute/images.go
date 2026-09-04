@@ -44,6 +44,7 @@ type imageResponse struct {
 	Family            string            `json:"family,omitempty"`
 	DiskSizeGb        string            `json:"diskSizeGb,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
+	LabelFingerprint  string            `json:"labelFingerprint,omitempty"`
 	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
 }
 
@@ -152,6 +153,34 @@ func (h *Handler) deleteImage(w http.ResponseWriter, r *http.Request, rp gcprest
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
+// setImageLabels handles POST .../global/images/{image}/setLabels, replacing
+// the image's user labels under labelFingerprint optimistic-concurrency.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) setImageLabels(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	var body setLabelsRequest
+	if !gcprest.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	img, err := findImageByName(r.Context(), h.compute, rp.ResourceName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	labeler, ok := h.compute.(resourceLabelMutator)
+	if !ok {
+		writeNotImplemented(w, "image setLabels")
+		return
+	}
+
+	h.applyResourceSetLabels(w, r, rp, body, img.Tags, resourceImages,
+		func(set map[string]string, remove []string) error {
+			return labeler.SetImageLabelsGCP(img.ID, set, remove)
+		})
+}
+
 // imageSourceDescription records the source the image was built from so a read
 // reflects it. Falls back to the image name when no source was given (import).
 func imageSourceDescription(req *imageRequest) string {
@@ -201,6 +230,7 @@ func toImageResponse(img *computedriver.ImageInfo, rp gcprest.ResourcePath, host
 		Family:            img.Tags[gcpImageFamilyTag],
 		DiskSizeGb:        img.Tags[gcpImageDiskSizeGbTag],
 		Labels:            userLabels(img.Tags),
+		LabelFingerprint:  labelFingerprintFor(userLabels(img.Tags)),
 		CreationTimestamp: img.CreatedAt,
 	}
 

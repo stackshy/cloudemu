@@ -177,13 +177,90 @@ func TestSDKAzureSQLDatabaseElasticPoolMembership(t *testing.T) {
 	}
 }
 
+// TestSDKAzureSQLDatabasePatchClearsElasticPoolID is the HIGH regression: real
+// Azure SQL removes a database from its elastic pool when a PATCH sets
+// properties.elasticPoolId to "" (learn.microsoft.com/azure/azure-sql/database/
+// elastic-pool-overview — moving a database into/out of a pool). Before the
+// fix, the wire layer decoded elasticPoolId as a plain string, so an explicit
+// "" was indistinguishable from the field being omitted and the merge silently
+// kept the database's existing pool membership — the PATCH had no effect and
+// the pool could never be deleted afterward.
+func TestSDKAzureSQLDatabasePatchClearsElasticPoolID(t *testing.T) {
+	cf := newFactory(t)
+	ctx := context.Background()
+	mustCreateSQLServer(t, cf)
+
+	ep := cf.NewElasticPoolsClient()
+
+	epPoller, err := ep.BeginCreateOrUpdate(ctx, "rg-1", "srv1", "pool1", armsql.ElasticPool{
+		Location: to.Ptr("eastus"),
+		SKU:      &armsql.SKU{Name: to.Ptr("StandardPool"), Tier: to.Ptr("Standard")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("pool BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := epPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("pool PollUntilDone: %v", err)
+	}
+
+	dbs := cf.NewDatabasesClient()
+
+	dbPoller, err := dbs.BeginCreateOrUpdate(ctx, "rg-1", "srv1", "pooleddb", armsql.Database{
+		Location:   to.Ptr("eastus"),
+		Properties: &armsql.DatabaseProperties{ElasticPoolID: to.Ptr("pool1")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("db BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := dbPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("db PollUntilDone: %v", err)
+	}
+
+	// PATCH: explicitly clear elasticPoolId to move the database out of the pool.
+	clearPoller, err := dbs.BeginUpdate(ctx, "rg-1", "srv1", "pooleddb", armsql.DatabaseUpdate{
+		Properties: &armsql.DatabaseUpdateProperties{ElasticPoolID: to.Ptr("")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("db BeginUpdate (clear pool): %v", err)
+	}
+
+	clearResp, err := clearPoller.PollUntilDone(ctx, nil)
+	if err != nil {
+		t.Fatalf("db PollUntilDone (clear pool): %v", err)
+	}
+
+	if clearResp.Database.Properties != nil && clearResp.Database.Properties.ElasticPoolID != nil {
+		t.Errorf("elasticPoolId not cleared on PATCH response: %+v", clearResp.Database.Properties)
+	}
+
+	got, err := dbs.Get(ctx, "rg-1", "srv1", "pooleddb", nil)
+	if err != nil {
+		t.Fatalf("Get after clearing pool: %v", err)
+	}
+
+	if got.Database.Properties != nil && got.Database.Properties.ElasticPoolID != nil {
+		t.Errorf("elasticPoolId not cleared on Get: %+v", got.Database.Properties)
+	}
+
+	// The pool is now empty, so it must delete cleanly.
+	delPoolPoller, err := ep.BeginDelete(ctx, "rg-1", "srv1", "pool1", nil)
+	if err != nil {
+		t.Fatalf("pool BeginDelete after clearing membership: %v", err)
+	}
+
+	if _, err := delPoolPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("pool PollUntilDone after clearing membership: %v", err)
+	}
+}
+
 // TestSDKAzureSQLDatabaseUpdateBadElasticPoolPreservesDatabase is the HIGH
 // regression: a PUT against an EXISTING database that references an
 // elasticPoolId which doesn't resolve must fail the request without deleting
-// the database. replaceDatabase upserts by deleting the stored record and
-// re-creating it merged with the request body — before the fix, the delete
-// ran first, so a bad pool reference on the re-create half permanently lost a
-// database that already existed.
+// the database. replaceDatabase validates the merged elasticPoolId before it
+// applies any change, so a bad pool reference leaves the existing database
+// exactly as it was.
 func TestSDKAzureSQLDatabaseUpdateBadElasticPoolPreservesDatabase(t *testing.T) {
 	cf := newFactory(t)
 	ctx := context.Background()

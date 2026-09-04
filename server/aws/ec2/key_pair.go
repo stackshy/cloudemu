@@ -172,7 +172,7 @@ func toKeyPairSummaryXML(kp *computedriver.KeyPairInfo) keyPairSummaryXML {
 // the generic ResourceAlreadyExists; other codes use the shared mapping.
 func writeKeyPairErr(w http.ResponseWriter, err error) {
 	if cerrors.IsAlreadyExists(err) {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidKeyPair.Duplicate", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidKeyPair.Duplicate", cerrors.Message(err))
 		return
 	}
 

@@ -94,6 +94,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		"unsupported Kinesis operation: "+r.Header.Get("X-Amz-Target"))
 }
 
+// resolveStreamIdentity returns the canonical StreamName and StreamARN for a
+// stream identified by either field. Several Kinesis responses (UpdateShardCount,
+// Enable/DisableEnhancedMonitoring) always carry both identifiers regardless of
+// which one the caller supplied in the request, so callers resolve through the
+// stream itself rather than echoing back whatever the request happened to set.
+func (h *Handler) resolveStreamIdentity(ctx context.Context, name, arn string) (resolvedName, resolvedARN string, err error) {
+	s, err := h.kinesis.DescribeStreamSummary(ctx, name, arn)
+	if err != nil {
+		return "", "", err
+	}
+
+	return s.StreamName, s.StreamARN, nil
+}
+
 // dispatch decodes a JSON request of type Req, invokes call, and writes the
 // returned value as JSON (or maps the error).
 func dispatch[Req any](

@@ -87,6 +87,25 @@ type InstanceConfig struct {
 	// Servers carries the compute zone id ("1"/"2"/"3"). Empty for AWS/GCP, which
 	// derive region from the endpoint/self-link.
 	Location string
+	// PreferredBackupWindow/PreferredMaintenanceWindow are AWS RDS
+	// CreateDBInstance attributes; empty means "use the provider's default",
+	// mirroring how AllocatedStorage/StorageType/InstanceClass above are
+	// already defaulted. Other engines leave them empty.
+	PreferredBackupWindow      string
+	PreferredMaintenanceWindow string
+	// BackupRetentionPeriod is the AWS RDS CreateDBInstance attribute. Unlike
+	// the two window fields above, 0 is a meaningful explicit value (it
+	// disables automated backups — terraform-provider-aws's schema default is
+	// 0), so it cannot be treated as "unset". Real RDS defaults it to 1 only
+	// when the caller omits the parameter entirely — the wire layer, which can
+	// see whether the parameter was present, applies that default before this
+	// field is set. Other engines leave it zero/unused.
+	BackupRetentionPeriod int
+	// AutoMinorVersionUpgrade is the AWS RDS CreateDBInstance attribute (real RDS
+	// defaults it to true when the caller omits it — the wire layer, which can
+	// see whether the parameter was present, applies that default before this
+	// field is set). Other engines leave it false/unused.
+	AutoMinorVersionUpgrade bool
 	// StorageEncrypted requests encryption-at-rest on the instance's storage
 	// (AWS RDS StorageEncrypted); false for engines with no such flag.
 	StorageEncrypted bool
@@ -165,7 +184,10 @@ type Instance struct {
 	PreferredMaintenanceWindow string
 	CACertificateIdentifier    string
 	Iops                       int
-	StorageEncrypted           bool
+	// AutoMinorVersionUpgrade echoes the AWS RDS DBInstance attribute; false for
+	// engines with no such concept.
+	AutoMinorVersionUpgrade bool
+	StorageEncrypted        bool
 	// KmsKeyId echoes the KMS key protecting an encrypted instance (AWS RDS
 	// KmsKeyId) on read; empty for unencrypted instances / other engines.
 	KmsKeyID           string
@@ -223,6 +245,9 @@ type ModifyInstanceInput struct {
 	StorageType                string
 	Iops                       int
 	DeletionProtection         *bool
+	// AutoMinorVersionUpgrade updates the AWS RDS DBInstance attribute; nil means
+	// "no change". Other engines ignore it.
+	AutoMinorVersionUpgrade *bool
 	// HighAvailabilityMode updates the Azure Flexible Server HA mode
 	// ("Disabled"/"SameZone"/"ZoneRedundant"); empty means "no change".
 	// StandbyAvailabilityZone updates the standby replica's zone when HA is
@@ -369,9 +394,23 @@ type Cluster struct {
 	Location  string
 	CreatedAt time.Time
 	Tags      map[string]string
+	// AssociatedRoles are the IAM roles associated with an Aurora DB cluster for
+	// integrations such as S3 import/export, Lambda, or Comprehend (AWS RDS
+	// DBCluster AssociatedRoles). Empty for non-AWS engines and clusters without
+	// role associations.
+	AssociatedRoles []DBClusterRole
 	// Scope records where an Azure SQL logical server lives (subscription/
 	// resource group). Zero for AWS/GCP and unscoped portable callers.
 	Scope scope.Scope
+}
+
+// DBClusterRole is an IAM role associated with an Aurora DB cluster (AWS RDS
+// DBClusterRole). FeatureName names the integration the role authorizes (e.g.
+// "s3Import"); Status reports the association state (ACTIVE/PENDING/INVALID).
+type DBClusterRole struct {
+	RoleARN     string
+	FeatureName string
+	Status      string
 }
 
 // SnapshotConfig configures an instance snapshot.
@@ -402,6 +441,11 @@ type Snapshot struct {
 	MasterUsername string
 	DBName         string
 	Port           int
+	// SourceDBSnapshotIdentifier is the AWS RDS DBSnapshot attribute that "only
+	// has a value in the case of a cross-account or cross-Region copy" (per the
+	// AWS API docs). cloudemu models only same-account/same-region copies, so
+	// this stays empty on every snapshot, including ones made by CopyDBSnapshot.
+	SourceDBSnapshotIdentifier string
 }
 
 // ClusterSnapshotConfig configures a cluster snapshot.
@@ -450,6 +494,18 @@ type RestoreInstanceInput struct {
 	// the snapshot was taken from, not the engine default.
 	Port int
 	Tags map[string]string
+	// AutoMinorVersionUpgrade is the AWS RDS RestoreDBInstanceFromDBSnapshot
+	// attribute; real RDS defaults it to true when the caller omits it — the
+	// wire layer, which can see whether the parameter was present, applies
+	// that default before this field is set (mirroring InstanceConfig's field
+	// of the same name).
+	AutoMinorVersionUpgrade bool
+	MultiAZ                 bool
+	PubliclyAccessible      bool
+	DeletionProtection      bool
+	// SubnetGroupName is the AWS RDS RestoreDBInstanceFromDBSnapshot
+	// DBSubnetGroupName attribute; empty means the account/region default VPC.
+	SubnetGroupName string
 }
 
 // RestoreClusterInput configures restoring a cluster from a snapshot.
@@ -510,6 +566,7 @@ type SubnetGroupConfig struct {
 	Name        string
 	Description string
 	SubnetIDs   []string
+	Tags        map[string]string
 }
 
 // SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept —
@@ -520,6 +577,11 @@ type SubnetGroupConfig struct {
 type SubnetGroups interface {
 	CreateDBSubnetGroup(ctx context.Context, cfg SubnetGroupConfig) (*SubnetGroup, error)
 	DescribeDBSubnetGroups(ctx context.Context, names []string) ([]SubnetGroup, error)
+	// ModifyDBSubnetGroup replaces the group's subnet membership (real RDS
+	// ModifyDBSubnetGroup requires SubnetIds) and optionally its description
+	// (empty means "no change", mirroring real RDS leaving it as-is when
+	// omitted).
+	ModifyDBSubnetGroup(ctx context.Context, name string, subnetIDs []string, description string) (*SubnetGroup, error)
 	DeleteDBSubnetGroup(ctx context.Context, name string) error
 }
 
@@ -547,6 +609,16 @@ type DatabaseConfig struct {
 	// bare pool name or a full ARM resource ID); empty for a standalone
 	// database. Set via properties.elasticPoolId on the ARM request body.
 	ElasticPoolID string
+	// CreateMode selects how the database is provisioned (Azure SQL
+	// properties.createMode). Empty / "Default" is a new empty database, while
+	// "Copy" and "PointInTimeRestore" provision a new, independent database
+	// seeded from an existing source database named by SourceDatabaseID. Other
+	// providers leave it empty.
+	CreateMode string
+	// SourceDatabaseID is the source a Copy / PointInTimeRestore create derives
+	// from: a full ARM database resource ID (".../servers/{s}/databases/{d}")
+	// or a bare database name on the same server. Ignored for a Default create.
+	SourceDatabaseID string
 }
 
 // Database is a logical database hosted by a managed server (Azure MySQL /
@@ -590,6 +662,43 @@ type Databases interface {
 // create/get/list/delete are unaffected.
 type DatabaseUpdater interface {
 	UpdateDatabase(ctx context.Context, cfg DatabaseConfig) (*Database, error)
+}
+
+// Transparent-data-encryption states, matching Microsoft.Sql's
+// TransparentDataEncryptionState. Azure SQL databases are encrypted at rest by
+// default, so a freshly created database reports TDEStateEnabled.
+const (
+	TDEStateEnabled  = "Enabled"
+	TDEStateDisabled = "Disabled"
+)
+
+// TransparentDataEncryptionConfig sets a logical database's TDE state.
+type TransparentDataEncryptionConfig struct {
+	Server   string
+	Database string
+	State    string
+}
+
+// TransparentDataEncryption is a logical database's transparent-data-encryption
+// configuration. Azure models it as a single "current" sub-resource of the
+// database, so it is keyed by (server, database) and carries just the state.
+type TransparentDataEncryption struct {
+	Server   string
+	Database string
+	State    string
+}
+
+// TransparentDataEncryptions is an OPTIONAL Azure SQL capability, discovered by
+// type assertion. It exposes the database transparentDataEncryption/current
+// sub-resource (set/get/list). A TDE record is materialized as Enabled when a
+// database is created, so a database always has one. Drivers that do not
+// implement it answer InvalidAction.
+type TransparentDataEncryptions interface {
+	SetTransparentDataEncryption(
+		ctx context.Context, cfg TransparentDataEncryptionConfig,
+	) (*TransparentDataEncryption, error)
+	GetTransparentDataEncryption(ctx context.Context, server, database string) (*TransparentDataEncryption, error)
+	ListTransparentDataEncryption(ctx context.Context, server, database string) ([]TransparentDataEncryption, error)
 }
 
 // FirewallRuleConfig describes a server firewall rule to create or replace.
@@ -753,6 +862,34 @@ func ElasticPoolName(id string) string {
 	}
 
 	return id
+}
+
+// SourceDatabaseRef extracts the source server and database name from an Azure
+// SQL sourceDatabaseId, a full ARM resource ID of the form
+// ".../servers/{server}/databases/{database}". Returns ok=false when id is not
+// a database resource ID (e.g. a bare database name), so a caller can fall back
+// to treating it as a same-server reference. Shared by the provider (which owns
+// the database store) and the wire server so both parse the id identically.
+func SourceDatabaseRef(id string) (server, database string, ok bool) {
+	const dbMarker = "/databases/"
+
+	const srvMarker = "/servers/"
+
+	di := strings.LastIndex(id, dbMarker)
+	si := strings.Index(id, srvMarker)
+
+	if di < 0 || si < 0 || si >= di {
+		return "", "", false
+	}
+
+	server = id[si+len(srvMarker) : di]
+	database = id[di+len(dbMarker):]
+
+	if server == "" || database == "" || strings.Contains(server, "/") || strings.Contains(database, "/") {
+		return "", "", false
+	}
+
+	return server, database, true
 }
 
 // FailoverGroupConfig describes a failover group to create (Azure SQL).
@@ -1311,6 +1448,15 @@ type ClusterEndpoints interface {
 // specific member, discovered by type assertion.
 type ClusterFailover interface {
 	FailoverDBCluster(ctx context.Context, clusterID, targetInstanceID string) (*Cluster, error)
+}
+
+// ClusterRoles is an OPTIONAL capability to associate and disassociate IAM
+// roles with an Aurora DB cluster (AWS RDS AddRoleToDBCluster /
+// RemoveRoleFromDBCluster), discovered by type assertion. The associations are
+// reported in Cluster.AssociatedRoles.
+type ClusterRoles interface {
+	AddRoleToDBCluster(ctx context.Context, clusterID, roleARN, featureName string) error
+	RemoveRoleFromDBCluster(ctx context.Context, clusterID, roleARN, featureName string) error
 }
 
 // GlobalClusterMember is a cluster participating in an Aurora global cluster.

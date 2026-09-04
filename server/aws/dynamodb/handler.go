@@ -25,14 +25,56 @@ const targetPrefix = "DynamoDB_20120810."
 const listTablesMaxPageSize = 100
 
 const (
-	keyTypeHash        = "HASH"
-	keyTypeRange       = "RANGE"
-	projectionAll      = "ALL"
-	projectionInclude  = "INCLUDE"
-	statusEnabled      = "ENABLED"
-	statusDisabled     = "DISABLED"
-	billingProvisioned = "PROVISIONED"
+	keyTypeHash          = "HASH"
+	keyTypeRange         = "RANGE"
+	projectionAll        = "ALL"
+	projectionInclude    = "INCLUDE"
+	statusEnabled        = "ENABLED"
+	statusDisabled       = "DISABLED"
+	billingProvisioned   = "PROVISIONED"
+	billingPayPerRequest = "PAY_PER_REQUEST"
 )
+
+// minProvisionedCapacity is the lowest ReadCapacityUnits/WriteCapacityUnits AWS
+// accepts on a PROVISIONED table or index.
+const minProvisionedCapacity = 1
+
+// validateProvisionedThroughput enforces AWS's cross-field rule between an
+// already-defaulted BillingMode and the ProvisionedThroughput that would result
+// from applying a request: PROVISIONED requires both RCU and WCU to be at
+// least 1, and PAY_PER_REQUEST forbids either being set. AWS rejects a
+// violation with a ValidationException carrying the wording matched here.
+func validateProvisionedThroughput(billingMode string, rcu, wcu int64) error {
+	if billingMode == billingPayPerRequest {
+		if rcu != 0 || wcu != 0 {
+			return cerrors.New(cerrors.InvalidArgument,
+				"One or more parameter values were invalid: "+
+					"Neither ReadCapacityUnits nor WriteCapacityUnits can be specified when BillingMode is PAY_PER_REQUEST")
+		}
+
+		return nil
+	}
+
+	if rcu == 0 && wcu == 0 {
+		return cerrors.New(cerrors.InvalidArgument,
+			"One or more parameter values were invalid: "+
+				"ProvisionedThroughput must be specified when BillingMode is not PAY_PER_REQUEST")
+	}
+
+	if rcu < minProvisionedCapacity {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"1 validation error detected: Value '%d' at 'provisionedThroughput.readCapacityUnits' "+
+				"failed to satisfy constraint: Member must have value greater than or equal to 1", rcu)
+	}
+
+	if wcu < minProvisionedCapacity {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"1 validation error detected: Value '%d' at 'provisionedThroughput.writeCapacityUnits' "+
+				"failed to satisfy constraint: Member must have value greater than or equal to 1", wcu)
+	}
+
+	return nil
+}
 
 // Query/Scan Select modes controlling which attributes (or only the counts) the
 // result carries.
@@ -188,7 +230,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
 	if h.routeTables(w, r, op) || h.routeItems(w, r, op) || h.routeBatch(w, r, op) ||
-		h.routeTags(w, r, op) || h.routeTTL(w, r, op) {
+		h.routeTags(w, r, op) || h.routeTTL(w, r, op) || h.routeBackups(w, r, op) {
 		return
 	}
 
@@ -295,6 +337,24 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	effectiveBilling := req.BillingMode
+	if effectiveBilling == "" {
+		effectiveBilling = billingProvisioned
+	}
+
+	if err := validateProvisionedThroughput(effectiveBilling,
+		req.ProvisionedThroughput.ReadCapacityUnits, req.ProvisionedThroughput.WriteCapacityUnits); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	for i := range req.GlobalSecondaryIndexes {
+		if err := validateGSIThroughput(effectiveBilling, &req.GlobalSecondaryIndexes[i]); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
 	if err := h.db.CreateTable(r.Context(), buildCreateConfig(&req)); err != nil {
 		writeErr(w, err)
 		return
@@ -311,7 +371,7 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"TableDescription": tableDescription(full)})
+	wire.WriteJSON(w, map[string]any{"TableDescription": h.describeTableShape(full)})
 }
 
 // buildCreateConfig maps a decoded CreateTable request onto a driver
@@ -421,6 +481,9 @@ func keySchemaKeys(req *createTableRequest) (partitionKey, sortKey string) {
 }
 
 // secondaryIndexJSON is the shared wire shape of a GSI or LSI on CreateTable.
+// ProvisionedThroughput is only meaningful for a GSI (an LSI always shares the
+// base table's throughput and never carries its own) — validateGSIThroughput
+// is the only reader of this field.
 type secondaryIndexJSON struct {
 	IndexName string `json:"IndexName"`
 	KeySchema []struct {
@@ -431,6 +494,20 @@ type secondaryIndexJSON struct {
 		ProjectionType   string   `json:"ProjectionType"`
 		NonKeyAttributes []string `json:"NonKeyAttributes"`
 	} `json:"Projection"`
+	ProvisionedThroughput struct {
+		ReadCapacityUnits  int64 `json:"ReadCapacityUnits"`
+		WriteCapacityUnits int64 `json:"WriteCapacityUnits"`
+	} `json:"ProvisionedThroughput"`
+}
+
+// validateGSIThroughput enforces the same PROVISIONED/PAY_PER_REQUEST
+// throughput rule as validateProvisionedThroughput, but per GSI: on a
+// PROVISIONED table each GSI must declare its own valid (>=1) RCU/WCU, and on
+// a PAY_PER_REQUEST table no GSI may declare any. LSIs are never checked —
+// callers must not pass one here.
+func validateGSIThroughput(billingMode string, gsi *secondaryIndexJSON) error {
+	return validateProvisionedThroughput(billingMode,
+		gsi.ProvisionedThroughput.ReadCapacityUnits, gsi.ProvisionedThroughput.WriteCapacityUnits)
 }
 
 // indexKeys extracts the HASH/RANGE attribute names from an index key schema.
@@ -469,9 +546,46 @@ func (h *Handler) applyCreateTags(r *http.Request, w http.ResponseWriter, table 
 	return true
 }
 
+// tableStatusReader is the optional provider capability that reports a table's
+// and its GSIs' live lifecycle status (CREATING/UPDATING/ACTIVE). Discovered by
+// type assertion so it stays off the cross-cloud Database interface — only the
+// AWS mock implements it. A provider without it (or with async settling
+// disabled) reports ACTIVE, which is why tableDescription still defaults every
+// status to ACTIVE and this overlay only ever narrows it to a transient value.
+type tableStatusReader interface {
+	TableStatus(table string) string
+	GSIStatus(table, index string) string
+}
+
+// describeTable builds the TableDescription for a table, overlaying the live
+// table/GSI lifecycle status from the optional tableStatusReader capability onto
+// the ACTIVE default tableDescription emits. With async settling off (the
+// default) the accessors return ACTIVE, so the shape is byte-for-byte unchanged.
+func (h *Handler) describeTableShape(cfg *dbdriver.TableConfig) map[string]any {
+	td := tableDescription(cfg)
+
+	reader, ok := h.db.(tableStatusReader)
+	if !ok {
+		return td
+	}
+
+	td["TableStatus"] = reader.TableStatus(cfg.Name)
+
+	if gsis, ok := td["GlobalSecondaryIndexes"].([]map[string]any); ok {
+		for _, gsi := range gsis {
+			name, _ := gsi["IndexName"].(string)
+			gsi["IndexStatus"] = reader.GSIStatus(cfg.Name, name)
+		}
+	}
+
+	return td
+}
+
 // tableDescription builds the DynamoDB TableDescription wire shape that both
 // CreateTable and DescribeTable return, including the fields an IaC client reads
-// back (ARN, creation time, attribute definitions, billing mode).
+// back (ARN, creation time, attribute definitions, billing mode). It reports
+// every status as ACTIVE; describeTableShape overlays any transient
+// CREATING/UPDATING status from the provider.
 func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
 	keySchema := []map[string]string{{"AttributeName": cfg.PartitionKey, "KeyType": keyTypeHash}}
 	if cfg.SortKey != "" {
@@ -643,7 +757,7 @@ func (h *Handler) describeTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"Table": tableDescription(cfg)})
+	wire.WriteJSON(w, map[string]any{"Table": h.describeTableShape(cfg)})
 }
 
 // describeContinuousBackups reports the table's point-in-time recovery state.
@@ -664,17 +778,12 @@ func (h *Handler) describeContinuousBackups(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	pitr := statusDisabled
-	if h.pitrEnabled(r.Context(), req.TableName) {
-		pitr = statusEnabled
-	}
+	enabled := h.pitrEnabled(r.Context(), req.TableName)
 
 	wire.WriteJSON(w, map[string]any{
 		"ContinuousBackupsDescription": map[string]any{
-			"ContinuousBackupsStatus": statusEnabled,
-			"PointInTimeRecoveryDescription": map[string]any{
-				"PointInTimeRecoveryStatus": pitr,
-			},
+			"ContinuousBackupsStatus":        statusEnabled,
+			"PointInTimeRecoveryDescription": h.pitrRecoveryDescription(r.Context(), req.TableName, enabled),
 		},
 	})
 }

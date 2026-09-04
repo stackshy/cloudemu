@@ -101,6 +101,13 @@ func (h *Handler) deleteRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// A stale lifecycle-policy-preview result must not survive the repository
+	// it was computed against — clear it so a later Get on a same-named
+	// repository (recreated after this delete) cannot replay it.
+	h.previewMu.Lock()
+	delete(h.previews, req.RepositoryName)
+	h.previewMu.Unlock()
+
 	wire.WriteJSON(w, deleteRepositoryResponse{Repository: toRepositoryJSON(repo)})
 }
 
@@ -223,7 +230,15 @@ func (h *Handler) describeImages(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		details = append(details, toImageDetailJSON(&images[i]))
+		detail := toImageDetailJSON(&images[i])
+
+		// Real ECR includes imageScanStatus once an image has scan results
+		// (scanOnPush or an explicit StartImageScan); it is omitted until then.
+		if scan, serr := h.registry.GetImageScanResults(r.Context(), req.RepositoryName, images[i].Digest); serr == nil {
+			detail.ImageScanStatus = &imageScanStatusJSON{Status: scan.Status}
+		}
+
+		details = append(details, detail)
 	}
 
 	page, err := pagination.PaginateSorted(details,

@@ -185,6 +185,70 @@ func TestModifyUserDataRoundTrips(t *testing.T) {
 	}
 }
 
+// TestDescribeInstanceAttributeUserDataEmptyWhenUnset pins that an instance
+// launched without UserData reports it as truly empty (Value nil, matching real
+// EC2's <userData/> with no nested <value>), not the empty string. This is the
+// terraform-provider-aws aws_instance real-user regression: its Read function
+// only re-hashes user_data into state when UserData.Value != nil, so a non-nil
+// empty string causes it to re-hash the already-hashed state value on every
+// refresh (SHA1(SHA1("")) != SHA1("")), producing a permanent plan diff for
+// every aws_instance that omits user_data.
+func TestDescribeInstanceAttributeUserDataEmptyWhenUnset(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+	id := runOneInstance(t, c)
+
+	got, err := c.DescribeInstanceAttribute(ctx, &ec2.DescribeInstanceAttributeInput{
+		InstanceId: aws.String(id),
+		Attribute:  ec2types.InstanceAttributeNameUserData,
+	})
+	if err != nil {
+		t.Fatalf("DescribeInstanceAttribute(UserData): %v", err)
+	}
+
+	if got.UserData != nil && got.UserData.Value != nil {
+		t.Fatalf("userData for an instance with no UserData = %+v, want a nil Value", got.UserData)
+	}
+}
+
+// TestRunInstancesUserDataRoundTripsAsBase64 pins that UserData set at
+// RunInstances time is readable back via DescribeInstanceAttribute, base64
+// encoded exactly as real EC2 returns it (the SDK's ModifyInstanceAttribute path
+// already had this covered; RunInstances did not: the mock stored the decoded
+// plaintext but echoed it back unencoded instead of re-encoding).
+func TestRunInstancesUserDataRoundTripsAsBase64(t *testing.T) {
+	ctx := context.Background()
+	c := newEC2Client(t)
+
+	script := []byte("#!/bin/bash\necho hello")
+
+	run, err := c.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:      aws.String("ami-123"),
+		InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
+		UserData:     aws.String(base64.StdEncoding.EncodeToString(script)),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+
+	id := aws.ToString(run.Instances[0].InstanceId)
+
+	got, err := c.DescribeInstanceAttribute(ctx, &ec2.DescribeInstanceAttributeInput{
+		InstanceId: aws.String(id),
+		Attribute:  ec2types.InstanceAttributeNameUserData,
+	})
+	if err != nil {
+		t.Fatalf("DescribeInstanceAttribute(UserData): %v", err)
+	}
+
+	want := base64.StdEncoding.EncodeToString(script)
+	if got.UserData == nil || aws.ToString(got.UserData.Value) != want {
+		t.Fatalf("userData not round-tripped: got %+v want %q", got.UserData, want)
+	}
+}
+
 // TestModifyEbsOptimizedRoundTrips pins that
 // ModifyInstanceAttribute(EbsOptimized=true) is honored and read back via
 // DescribeInstanceAttribute.

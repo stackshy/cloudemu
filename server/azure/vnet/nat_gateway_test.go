@@ -145,6 +145,17 @@ func TestSDKNATGatewayRoundTrip(t *testing.T) {
 		t.Errorf("natgw subnets=%v want [%s]", got.Properties, subnetID)
 	}
 
+	// The subnet association must be dropped before the NAT gateway can be
+	// deleted (real ARM refuses an in-use delete).
+	dsp, err := subnets.BeginCreateOrUpdate(ctx, "rg-1", "vnet-nat", "subnet-1", armnetwork.Subnet{
+		Properties: &armnetwork.SubnetPropertiesFormat{AddressPrefix: to.Ptr("10.0.1.0/24")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("disassociate subnet from natgw: %v", err)
+	}
+
+	pollDone(t, dsp)
+
 	// Delete frees the bound public IP.
 	dp, err := natClient.BeginDelete(ctx, "rg-1", "natgw-1", nil)
 	if err != nil {
@@ -212,6 +223,107 @@ func TestSDKNATGatewayPublicIPAlreadyBound(t *testing.T) {
 	var respErr *azcore.ResponseError
 	if !errors.As(err, &respErr) {
 		t.Fatalf("second natgw bound to the same public IP: got %v, want an ARM error", err)
+	}
+}
+
+// TestSDKPublicIPCrossOwnerConflict guards the shared public-IP claim check
+// across NIC and NAT gateway. A static public IP binds to exactly one owner in
+// real Azure, so once a NIC holds it a NAT gateway cannot take it, and vice
+// versa — the two subsystems (NIC by ARM id, NAT by Elastic-IP allocation) did
+// not consult each other before this guard.
+func TestSDKPublicIPCrossOwnerConflict(t *testing.T) {
+	ts := newVNetServer(t)
+	ctx := context.Background()
+	opts := clientOpts(ts)
+
+	pips, err := armnetwork.NewPublicIPAddressesClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	nicClient, err := armnetwork.NewInterfacesClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	natClient, err := armnetwork.NewNatGatewaysClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mkPIP := func(name string) string {
+		pp, cErr := pips.BeginCreateOrUpdate(ctx, "rg-1", name, armnetwork.PublicIPAddress{
+			Location: to.Ptr("eastus"),
+			SKU:      &armnetwork.PublicIPAddressSKU{Name: to.Ptr(armnetwork.PublicIPAddressSKUNameStandard)},
+			Properties: &armnetwork.PublicIPAddressPropertiesFormat{
+				PublicIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodStatic),
+			},
+		}, nil)
+		if cErr != nil {
+			t.Fatalf("create pip %s: %v", name, cErr)
+		}
+
+		pollDone(t, pp)
+
+		return "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/publicIPAddresses/" + name
+	}
+
+	bindNIC := func(name, pipID string) error {
+		np, cErr := nicClient.BeginCreateOrUpdate(ctx, "rg-1", name, armnetwork.Interface{
+			Location: to.Ptr("eastus"),
+			Properties: &armnetwork.InterfacePropertiesFormat{
+				IPConfigurations: []*armnetwork.InterfaceIPConfiguration{{
+					Name: to.Ptr("ipconfig1"),
+					Properties: &armnetwork.InterfaceIPConfigurationPropertiesFormat{
+						PublicIPAddress: &armnetwork.PublicIPAddress{ID: to.Ptr(pipID)},
+					},
+				}},
+			},
+		}, nil)
+		if cErr != nil {
+			return cErr
+		}
+
+		_, pErr := np.PollUntilDone(ctx, nil)
+
+		return pErr
+	}
+
+	bindNAT := func(name, pipID string) error {
+		np, cErr := natClient.BeginCreateOrUpdate(ctx, "rg-1", name, armnetwork.NatGateway{
+			Location: to.Ptr("eastus"),
+			Properties: &armnetwork.NatGatewayPropertiesFormat{
+				PublicIPAddresses: []*armnetwork.SubResource{{ID: to.Ptr(pipID)}},
+			},
+		}, nil)
+		if cErr != nil {
+			return cErr
+		}
+
+		_, pErr := np.PollUntilDone(ctx, nil)
+
+		return pErr
+	}
+
+	// NIC-then-NAT: a public IP held by a NIC cannot be bound to a NAT gateway.
+	pipA := mkPIP("pip-nic-then-nat")
+	if bErr := bindNIC("nic-a", pipA); bErr != nil {
+		t.Fatalf("nic bind pip-a: %v", bErr)
+	}
+
+	if bErr := bindNAT("nat-a", pipA); bErr == nil {
+		t.Fatal("NAT gateway bound a public IP already held by a NIC; want an ARM error")
+	}
+
+	// NAT-then-NIC: a public IP held by a NAT gateway cannot be attached to a NIC.
+	pipB := mkPIP("pip-nat-then-nic")
+	if bErr := bindNAT("nat-b", pipB); bErr != nil {
+		t.Fatalf("nat bind pip-b: %v", bErr)
+	}
+
+	var respErr *azcore.ResponseError
+	if bErr := bindNIC("nic-b", pipB); !errors.As(bErr, &respErr) {
+		t.Fatalf("NIC attached a public IP already held by a NAT gateway; got %v, want an ARM error", bErr)
 	}
 }
 

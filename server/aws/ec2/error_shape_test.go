@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ec2"
+	ec2types "github.com/aws/aws-sdk-go-v2/service/ec2/types"
 	smithy "github.com/aws/smithy-go"
 )
 
@@ -22,6 +23,18 @@ var leakedPrefixes = []string{ //nolint:gochecknoglobals // shared test fixture
 	"DependencyViolation:",
 	"PermissionDenied:",
 	"Internal:",
+	// Driver-baked sub-codes: some wire handlers used to match on a
+	// substring the driver embedded in the message itself (rather than the
+	// canonical cerrors.Code) to pick the exact AWS error CODE, and left
+	// that substring sitting in the human-facing message too. The AWS code
+	// is set separately at the wire layer, so none of these should ever
+	// appear in <Message>.
+	"ZoneMismatch:",
+	"VolumeInUse:",
+	"IncorrectInstanceState:",
+	"InvalidAttachment.NotFound:",
+	"CannotDelete:",
+	"InvalidNetworkInterface.InUse:",
 }
 
 func apiMessage(t *testing.T, err error) string {
@@ -181,6 +194,81 @@ func TestEC2ErrorMessagesHaveNoInternalPrefix(t *testing.T) {
 	})
 	if err == nil {
 		t.Fatal("DeleteInternetGateway on a missing gateway: want error, got nil")
+	}
+
+	assertNoLeakedPrefix(t, apiMessage(t, err))
+}
+
+// TestDeleteVolumeAttachedNoLeakedPrefix pins that DeleteVolume on an
+// attached volume answers VolumeInUse with a clean message — no
+// "FailedPrecondition:" prefix leaked from the internal error type.
+func TestDeleteVolumeAttachedNoLeakedPrefix(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+
+	_, subnetID := mkVPCSubnet(t, c)
+
+	run, err := c.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:      aws.String("ami-12345678"),
+		InstanceType: ec2types.InstanceTypeT2Micro,
+		SubnetId:     aws.String(subnetID),
+		MinCount:     aws.Int32(1),
+		MaxCount:     aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+
+	instanceID := aws.ToString(run.Instances[0].InstanceId)
+
+	vol, err := c.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(10),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+
+	volumeID := aws.ToString(vol.VolumeId)
+
+	if _, err := c.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId:   aws.String(volumeID),
+		InstanceId: aws.String(instanceID),
+		Device:     aws.String("/dev/sdf"),
+	}); err != nil {
+		t.Fatalf("AttachVolume: %v", err)
+	}
+
+	_, err = c.DeleteVolume(ctx, &ec2.DeleteVolumeInput{VolumeId: aws.String(volumeID)})
+	if err == nil {
+		t.Fatal("DeleteVolume on an attached volume: want error, got nil")
+	}
+
+	if got := apiCode(t, err); got != "VolumeInUse" {
+		t.Errorf("error code = %q, want VolumeInUse", got)
+	}
+
+	assertNoLeakedPrefix(t, apiMessage(t, err))
+}
+
+// TestCreateKeyPairDuplicateNoLeakedPrefix pins that a duplicate CreateKeyPair
+// answers InvalidKeyPair.Duplicate with a clean message — no "AlreadyExists:"
+// prefix leaked from the internal error type.
+func TestCreateKeyPairDuplicateNoLeakedPrefix(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+
+	if _, err := c.CreateKeyPair(ctx, &ec2.CreateKeyPairInput{KeyName: aws.String("dup-key")}); err != nil {
+		t.Fatalf("CreateKeyPair: %v", err)
+	}
+
+	_, err := c.CreateKeyPair(ctx, &ec2.CreateKeyPairInput{KeyName: aws.String("dup-key")})
+	if err == nil {
+		t.Fatal("CreateKeyPair duplicate: want error, got nil")
+	}
+
+	if got := apiCode(t, err); got != "InvalidKeyPair.Duplicate" {
+		t.Errorf("error code = %q, want InvalidKeyPair.Duplicate", got)
 	}
 
 	assertNoLeakedPrefix(t, apiMessage(t, err))

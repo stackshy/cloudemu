@@ -40,7 +40,16 @@ const (
 func (s *ClusterState) initPendingPodLocked(pod *corev1.Pod) {
 	now := s.now()
 	pod.Status.Phase = corev1.PodPending
-	s.scheduleNodeLocked(pod)
+
+	if !s.scheduleNodeLocked(pod) {
+		// No node can accept it (multi-node: nodeSelector/taints/requests). Leave
+		// it Pending/Unschedulable with no staged progression — there is no
+		// rescheduling loop, matching the fixed-at-seed simplification.
+		markPodUnschedulableLocked(pod, now)
+
+		return
+	}
+
 	pod.Status.Conditions = []corev1.PodCondition{
 		{Type: corev1.PodScheduled, Status: corev1.ConditionTrue, LastTransitionTime: now},
 	}

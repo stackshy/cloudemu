@@ -37,6 +37,9 @@ const (
 	messageAttrTypeString = "String"
 )
 
+// fifoSuffix is the mandatory topic-name suffix for a FIFO SNS topic.
+const fifoSuffix = ".fifo"
+
 // SNS delivery-outcome metric names.
 const (
 	metricNotificationsDelivered = "NumberOfNotificationsDelivered"
@@ -175,6 +178,11 @@ func (m *Mock) CreateTopic(ctx context.Context, cfg driver.TopicConfig) (*driver
 		return nil, errors.New(errors.InvalidArgument, "topic name is required")
 	}
 
+	if cfg.FifoTopic && !strings.HasSuffix(cfg.Name, fifoSuffix) {
+		return nil, errors.New(errors.InvalidArgument,
+			"Invalid parameter: Name Reason: FIFO Topic Names must end with .fifo")
+	}
+
 	if m.topics.Has(cfg.Name) {
 		return nil, errors.Newf(errors.AlreadyExists, "topic %q already exists", cfg.Name)
 	}
@@ -200,6 +208,8 @@ func (m *Mock) CreateTopic(ctx context.Context, cfg driver.TopicConfig) (*driver
 		SubscriptionCount:         0,
 		Tags:                      tags,
 	}
+
+	applyCreateFeedbackAttrs(&info, &cfg)
 
 	td := &topicData{
 		info:          info,
@@ -299,6 +309,26 @@ func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 		td.info.Policy = cfg.Policy
 	}
 
+	if cfg.DeliveryPolicy != "" {
+		td.info.DeliveryPolicy = cfg.DeliveryPolicy
+	}
+
+	if cfg.KmsMasterKeyID != "" {
+		td.info.KmsMasterKeyID = cfg.KmsMasterKeyID
+	}
+
+	if cfg.ContentBasedDeduplicationSet {
+		if !td.info.FifoTopic {
+			return nil, errors.New(errors.InvalidArgument,
+				"Invalid parameter: Attributes Reason: ContentBasedDeduplication attribute "+
+					"is not applicable for standard topics")
+		}
+
+		td.info.ContentBasedDeduplication = cfg.ContentBasedDeduplication
+	}
+
+	applyUpdateFeedbackAttrs(&td.info, &cfg)
+
 	if !cfg.Scope.IsZero() {
 		td.info.Scope = cfg.Scope
 	}
@@ -308,6 +338,67 @@ func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 	result := td.withCounts()
 
 	return &result, nil
+}
+
+// applyCreateFeedbackAttrs copies SignatureVersion, TracingConfig,
+// ArchivePolicy, and the per-protocol delivery-status feedback attributes from
+// a CreateTopic config onto the new topic's info, unconditionally (a create
+// always applies the field exactly as given, including its zero value).
+func applyCreateFeedbackAttrs(info *driver.TopicInfo, cfg *driver.TopicConfig) {
+	info.SignatureVersion = cfg.SignatureVersion
+	info.TracingConfig = cfg.TracingConfig
+	info.ArchivePolicy = cfg.ArchivePolicy
+	info.ApplicationSuccessFeedbackRoleArn = cfg.ApplicationSuccessFeedbackRoleArn
+	info.ApplicationFailureFeedbackRoleArn = cfg.ApplicationFailureFeedbackRoleArn
+	info.ApplicationSuccessFeedbackSampleRate = cfg.ApplicationSuccessFeedbackSampleRate
+	info.HTTPSuccessFeedbackRoleArn = cfg.HTTPSuccessFeedbackRoleArn
+	info.HTTPFailureFeedbackRoleArn = cfg.HTTPFailureFeedbackRoleArn
+	info.HTTPSuccessFeedbackSampleRate = cfg.HTTPSuccessFeedbackSampleRate
+	info.LambdaSuccessFeedbackRoleArn = cfg.LambdaSuccessFeedbackRoleArn
+	info.LambdaFailureFeedbackRoleArn = cfg.LambdaFailureFeedbackRoleArn
+	info.LambdaSuccessFeedbackSampleRate = cfg.LambdaSuccessFeedbackSampleRate
+	info.SQSSuccessFeedbackRoleArn = cfg.SQSSuccessFeedbackRoleArn
+	info.SQSFailureFeedbackRoleArn = cfg.SQSFailureFeedbackRoleArn
+	info.SQSSuccessFeedbackSampleRate = cfg.SQSSuccessFeedbackSampleRate
+	info.FirehoseSuccessFeedbackRoleArn = cfg.FirehoseSuccessFeedbackRoleArn
+	info.FirehoseFailureFeedbackRoleArn = cfg.FirehoseFailureFeedbackRoleArn
+	info.FirehoseSuccessFeedbackSampleRate = cfg.FirehoseSuccessFeedbackSampleRate
+}
+
+// setIfNonEmpty assigns src to *dst only when src is non-empty, mirroring the
+// no-clear-via-empty-string convention UpdateTopic already applies to
+// DeliveryPolicy/KmsMasterKeyID: SetTopicAttributes sets one attribute per
+// call, so an update config only ever carries an opinion on the attribute(s)
+// the caller actually named.
+func setIfNonEmpty(dst *string, src string) {
+	if src != "" {
+		*dst = src
+	}
+}
+
+// applyUpdateFeedbackAttrs merges SignatureVersion, TracingConfig,
+// ArchivePolicy, and the per-protocol delivery-status feedback attributes from
+// an UpdateTopic (SetTopicAttributes) config onto an existing topic's info,
+// leaving any attribute the caller didn't name (empty in cfg) unchanged.
+func applyUpdateFeedbackAttrs(info *driver.TopicInfo, cfg *driver.TopicConfig) {
+	setIfNonEmpty(&info.SignatureVersion, cfg.SignatureVersion)
+	setIfNonEmpty(&info.TracingConfig, cfg.TracingConfig)
+	setIfNonEmpty(&info.ArchivePolicy, cfg.ArchivePolicy)
+	setIfNonEmpty(&info.ApplicationSuccessFeedbackRoleArn, cfg.ApplicationSuccessFeedbackRoleArn)
+	setIfNonEmpty(&info.ApplicationFailureFeedbackRoleArn, cfg.ApplicationFailureFeedbackRoleArn)
+	setIfNonEmpty(&info.ApplicationSuccessFeedbackSampleRate, cfg.ApplicationSuccessFeedbackSampleRate)
+	setIfNonEmpty(&info.HTTPSuccessFeedbackRoleArn, cfg.HTTPSuccessFeedbackRoleArn)
+	setIfNonEmpty(&info.HTTPFailureFeedbackRoleArn, cfg.HTTPFailureFeedbackRoleArn)
+	setIfNonEmpty(&info.HTTPSuccessFeedbackSampleRate, cfg.HTTPSuccessFeedbackSampleRate)
+	setIfNonEmpty(&info.LambdaSuccessFeedbackRoleArn, cfg.LambdaSuccessFeedbackRoleArn)
+	setIfNonEmpty(&info.LambdaFailureFeedbackRoleArn, cfg.LambdaFailureFeedbackRoleArn)
+	setIfNonEmpty(&info.LambdaSuccessFeedbackSampleRate, cfg.LambdaSuccessFeedbackSampleRate)
+	setIfNonEmpty(&info.SQSSuccessFeedbackRoleArn, cfg.SQSSuccessFeedbackRoleArn)
+	setIfNonEmpty(&info.SQSFailureFeedbackRoleArn, cfg.SQSFailureFeedbackRoleArn)
+	setIfNonEmpty(&info.SQSSuccessFeedbackSampleRate, cfg.SQSSuccessFeedbackSampleRate)
+	setIfNonEmpty(&info.FirehoseSuccessFeedbackRoleArn, cfg.FirehoseSuccessFeedbackRoleArn)
+	setIfNonEmpty(&info.FirehoseFailureFeedbackRoleArn, cfg.FirehoseFailureFeedbackRoleArn)
+	setIfNonEmpty(&info.FirehoseSuccessFeedbackSampleRate, cfg.FirehoseSuccessFeedbackSampleRate)
 }
 
 // Subscribe creates a subscription to an SNS topic.
@@ -328,6 +419,22 @@ func (m *Mock) Subscribe(_ context.Context, cfg driver.SubscriptionConfig) (*dri
 
 	if cfg.Endpoint == "" {
 		return nil, errors.New(errors.InvalidArgument, "endpoint is required")
+	}
+
+	// Subscribe is idempotent on (TopicArn, Protocol, Endpoint): real SNS
+	// returns the existing subscription (pending or confirmed) instead of
+	// creating a duplicate. td.mu serializes the scan-then-create so two
+	// concurrent identical Subscribe calls can't both observe "not found" and
+	// each create their own subscription.
+	td.mu.Lock()
+	defer td.mu.Unlock()
+
+	for _, s := range td.subscriptions.All() {
+		if s.Protocol == cfg.Protocol && s.Endpoint == cfg.Endpoint {
+			result := s
+
+			return &result, nil
+		}
 	}
 
 	subID := idgen.GenerateID("sub-")
@@ -406,6 +513,10 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 		return nil, errors.New(errors.InvalidArgument, "message is required")
 	}
 
+	if err := validateFIFOPublish(&td.info, &input); err != nil {
+		return nil, err
+	}
+
 	if err := validateMessageStructure(&input); err != nil {
 		return nil, err
 	}
@@ -460,6 +571,32 @@ func arnResource(arn string) string {
 	}
 
 	return arn
+}
+
+// validateFIFOPublish enforces the two FIFO-topic Publish requirements real SNS
+// rejects when missing: every message to a FIFO topic must carry a
+// MessageGroupId, and it must carry a MessageDeduplicationId unless the topic
+// has ContentBasedDeduplication enabled (in which case SNS derives one from the
+// message body). Standard topics accept MessageGroupId optionally (forwarded to
+// SQS standard subscriptions for fair-queue routing) and never require dedup ids,
+// so this only applies to FIFO topics.
+func validateFIFOPublish(info *driver.TopicInfo, input *driver.PublishInput) error {
+	if !info.FifoTopic {
+		return nil
+	}
+
+	if input.MessageGroupID == "" {
+		return errors.New(errors.InvalidArgument,
+			"Invalid parameter: The MessageGroupId parameter is required for FIFO topics")
+	}
+
+	if input.MessageDeduplicationID == "" && !info.ContentBasedDeduplication {
+		return errors.New(errors.InvalidArgument,
+			"Invalid parameter: The topic should either have ContentBasedDeduplication set, "+
+				"or the Publish request should provide a MessageDeduplicationId")
+	}
+
+	return nil
 }
 
 // validateMessageStructure enforces the SNS rules for a MessageStructure=json

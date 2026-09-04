@@ -13,6 +13,8 @@ const (
 	excImageNotFound            = "ImageNotFoundException"
 	excScanNotFound             = "ScanNotFoundException"
 	excRepositoryPolicyNotFound = "RepositoryPolicyNotFoundException"
+	excLifecyclePolicyNotFound  = "LifecyclePolicyNotFoundException"
+	excImageAlreadyExists       = "ImageAlreadyExistsException"
 )
 
 // apiError pairs a canonical cloudemu error with the precise ECR exception name
@@ -40,4 +42,11 @@ func (e *apiError) Unwrap() error { return e.err }
 // code is fixed; the exception argument carries the AWS distinction.
 func apiErrf(exception, format string, args ...any) error {
 	return &apiError{err: errors.Newf(errors.NotFound, format, args...), exception: exception}
+}
+
+// apiErrExistsf builds an AlreadyExists apiError with a formatted message, for
+// ECR exceptions (ImageAlreadyExistsException) that the generic code-based
+// mapping would otherwise collapse to RepositoryAlreadyExistsException.
+func apiErrExistsf(exception, format string, args ...any) error {
+	return &apiError{err: errors.Newf(errors.AlreadyExists, format, args...), exception: exception}
 }

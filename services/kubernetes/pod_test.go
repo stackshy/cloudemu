@@ -137,8 +137,9 @@ func TestPod_AllNamespacesListAndUpdate(t *testing.T) {
 	var list corev1.PodList
 	mustDecode(t, resp.Body, &list)
 
-	if len(list.Items) != 2 {
-		t.Fatalf("all-ns list: got %d items, want 2", len(list.Items))
+	// 2 user pods + the seeded kube-system add-ons: 2 coredns + 1 kube-proxy = 5.
+	if len(list.Items) != 5 {
+		t.Fatalf("all-ns list: got %d items, want 5", len(list.Items))
 	}
 
 	// Update via PUT — name must match URL.

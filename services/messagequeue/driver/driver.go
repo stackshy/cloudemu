@@ -35,6 +35,11 @@ type QueueConfig struct {
 	// Bus: 10 minutes).
 	DuplicateDetectionWindow time.Duration
 
+	// RequiresSession enables Azure Service Bus sessions on the entity: every
+	// message must carry a SessionId, and messages are consumed per session. It is
+	// immutable after create. Ignored by non-Azure providers.
+	RequiresSession bool
+
 	// AWS SQS extras (ignored by non-AWS providers).
 	ReceiveMessageWaitTimeSeconds int
 	ContentBasedDeduplication     bool
@@ -293,6 +298,29 @@ type AzureQueueStorage interface {
 	GetQueueMetadata(ctx context.Context, queueURL string) (AzureQueueMetadata, error)
 	// SetQueueMetadata replaces the queue's user metadata.
 	SetQueueMetadata(ctx context.Context, queueURL string, metadata map[string]string) error
+}
+
+// AzureSessionQueue is the optional Azure Service Bus session surface, discovered
+// by type assertion on a MessageQueue backend (only the Azure Mock implements
+// it). Service Bus sessions have no real REST data plane — real SDKs drive
+// sessions over AMQP — so the receive side here is a CloudEmu REST extension that
+// lets a REST client exercise the session model; the send-side enforcement it
+// pairs with is faithful to real Azure.
+type AzureSessionQueue interface {
+	// ReceiveSession returns up to maxMessages currently-visible messages for a
+	// session in FIFO order and acquires or refreshes the session lock for
+	// lockOwner (for lockSecs seconds). An empty sessionID means accept the next
+	// unlocked session that has a visible message; the accepted session id is
+	// returned. peekLock=false completes the messages immediately (receive-and-
+	// delete).
+	ReceiveSession(
+		ctx context.Context, queueURL, sessionID, lockOwner string, maxMessages, lockSecs int, peekLock bool,
+	) (acceptedSession string, messages []Message, err error)
+	// GetSessionState and SetSessionState read and write a session's opaque state.
+	GetSessionState(ctx context.Context, queueURL, sessionID string) (string, error)
+	SetSessionState(ctx context.Context, queueURL, sessionID, state string) error
+	// RenewSessionLock extends the session lock held by lockOwner.
+	RenewSessionLock(ctx context.Context, queueURL, sessionID, lockOwner string, lockSecs int) error
 }
 
 // MessageQueue is the interface that message queue provider implementations must satisfy.

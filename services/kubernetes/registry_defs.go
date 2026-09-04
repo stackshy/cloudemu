@@ -166,6 +166,7 @@ func coreRegistryDefs() []*resourceDef {
 		{
 			group: "", version: "v1", kind: "Node", listKind: "NodeList",
 			plural: "nodes", namespaced: false, hasStatus: true,
+			reconcile: reconcileNode, onDelete: nodeOnDelete,
 			tableColumns: nodeTableProjector(),
 		},
 		{

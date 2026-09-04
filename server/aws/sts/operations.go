@@ -1,12 +1,16 @@
 package sts
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/server/authctx"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
+	"github.com/stackshy/cloudemu/v2/server/wire/sigv4"
 )
 
 // callerUserName is the synthetic IAM user name reported by GetCallerIdentity.
@@ -21,18 +25,122 @@ const defaultSessionName = "cloudemu-session"
 // value in the future is all any SDK requires.
 const sessionDuration = time.Hour
 
-// getCallerIdentity reports the configured account, a synthetic user ARN, and a
-// synthetic user id. This is the call most SDK init paths make.
-func (h *Handler) getCallerIdentity(w http.ResponseWriter, _ *http.Request) {
+// getCallerIdentity reports the configured account and the caller identity
+// resolved from the request's presented credentials (see
+// Handler.resolveCallerIdentity), reflecting an IAM user's own access key, an
+// assumed-role/federated session this handler minted, or — failing those — a
+// synthetic identity derived from the presented access key id so distinct
+// callers are not all collapsed onto one fake identity.
+func (h *Handler) getCallerIdentity(w http.ResponseWriter, r *http.Request) {
+	id := h.resolveCallerIdentity(r)
+
 	awsquery.WriteXMLResponse(w, getCallerIdentityResponse{
 		Xmlns: Namespace,
 		Result: getCallerIdentityResult{
 			Account: h.accountID,
-			Arn:     "arn:aws:iam::" + h.accountID + ":user/" + callerUserName,
-			UserID:  "AIDACLOUDEMU0000000000",
+			Arn:     id.arn,
+			UserID:  id.userID,
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// callerIdentity is the Arn/UserId pair GetCallerIdentity reports for a
+// caller, and what a minted temporary credential set is remembered under (see
+// Handler.identities) so a later GetCallerIdentity call made with those
+// credentials reflects it.
+type callerIdentity struct {
+	arn    string
+	userID string
+}
+
+// resolveCallerIdentity derives the caller identity for r, in priority order:
+//
+//  1. A principal the SigV4 authentication gate already verified (EnforceAuth
+//     on) and resolved to a real IAM user's ARN.
+//  2. No presented credentials at all: the fixed placeholder identity (keeps
+//     an unsigned/anonymous call's response unchanged).
+//  3. A temporary access key id this handler itself minted (AssumeRole,
+//     AssumeRoleWithWebIdentity, AssumeRoleWithSAML, GetFederationToken, or
+//     GetSessionToken): the identity recorded for it at mint time.
+//  4. A long-term access key id a wired IAM driver recognizes: that key's
+//     owning user.
+//  5. Otherwise: a synthetic-but-stable identity derived from the presented
+//     access key id, so distinct callers are not all collapsed onto one fake
+//     identity even when cloudemu cannot resolve who they are.
+//
+// cloudemu's wire layer parses SigV4 material but does not verify it unless
+// EnforceAuth is on, so outside that mode this reports who the request claims
+// to be, not a cryptographically proven identity — matching AWS's own
+// GetCallerIdentity semantics of reflecting the presented credential.
+func (h *Handler) resolveCallerIdentity(r *http.Request) callerIdentity {
+	if p, ok := authctx.PrincipalFrom(r.Context()); ok && p.ARN != "" {
+		return callerIdentity{arn: p.ARN, userID: firstNonEmpty(p.UserID, syntheticUserID(p.AccessKeyID))}
+	}
+
+	akid := sigv4.AccessKeyID(r)
+	if akid == "" {
+		return h.defaultCallerIdentity()
+	}
+
+	if id, ok := h.identityFor(akid); ok {
+		return id
+	}
+
+	if h.resolver != nil {
+		if info, ok := h.resolver.AccessKeyByID(r.Context(), akid); ok && info.UserARN != "" {
+			return callerIdentity{arn: info.UserARN, userID: firstNonEmpty(info.UserID, syntheticUserID(akid))}
+		}
+	}
+
+	return h.syntheticCallerIdentity(akid)
+}
+
+// defaultCallerIdentity is the well-formed placeholder GetCallerIdentity
+// reports for a request that presents no SigV4 credentials at all, preserving
+// the prior fixed response for that case.
+func (h *Handler) defaultCallerIdentity() callerIdentity {
+	return callerIdentity{
+		arn:    "arn:aws:iam::" + h.accountID + ":user/" + callerUserName,
+		userID: "AIDACLOUDEMU0000000000",
+	}
+}
+
+// syntheticCallerIdentity derives a stable identity from a presented access
+// key id cloudemu cannot otherwise resolve, so distinct callers still get
+// distinct (if fake) identities instead of all collapsing onto one constant.
+func (h *Handler) syntheticCallerIdentity(akid string) callerIdentity {
+	return callerIdentity{
+		arn:    "arn:aws:iam::" + h.accountID + ":user/" + strings.ReplaceAll(akid, "/", "-"),
+		userID: syntheticUserID(akid),
+	}
+}
+
+// syntheticUserIDHexLen is the number of hex characters (from a SHA-256 digest
+// of the access key id) appended after the AIDA prefix, matching real IAM
+// unique ids' length.
+const syntheticUserIDHexLen = 16
+
+// syntheticUserID deterministically derives an AIDA-style unique id from an
+// access key id, so the same presented key always reports the same synthetic
+// UserId and two different keys practically never collide.
+func syntheticUserID(akid string) string {
+	if akid == "" {
+		return "AIDACLOUDEMU0000000000"
+	}
+
+	sum := sha256.Sum256([]byte(akid))
+
+	return "AIDA" + strings.ToUpper(hex.EncodeToString(sum[:]))[:syntheticUserIDHexLen]
+}
+
+// firstNonEmpty returns a if non-empty, else b.
+func firstNonEmpty(a, b string) string {
+	if a != "" {
+		return a
+	}
+
+	return b
 }
 
 // assumeRole returns synthetic temporary credentials and an AssumedRoleUser
@@ -62,8 +170,9 @@ func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
+	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r))
+	creds, ok := h.mintCredentials(w, durationFromForm(r), callerIdentity{arn: assumedArn, userID: assumedRoleID})
 	if !ok {
 		return
 	}
@@ -73,13 +182,19 @@ func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 		Result: assumeRoleResult{
 			Credentials: creds,
 			AssumedRoleUser: assumedRoleUser{
-				AssumedRoleID: "AROACLOUDEMU0000000000:" + sessionName,
+				AssumedRoleID: assumedRoleID,
 				Arn:           assumedArn,
 			},
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
+
+// assumedRoleIDPrefix is the synthetic AssumedRoleId prefix (real STS uses the
+// "AROA" prefix followed by a unique id) reported by every AssumeRole-family
+// operation, and used to derive the identity a minted session is recorded
+// under for GetCallerIdentity.
+const assumedRoleIDPrefix = "AROACLOUDEMU0000000000"
 
 // trustAllows reports whether the caller may assume roleName. With no trust
 // evaluator wired it stays permissive (standalone init-creds behavior). With one
@@ -114,7 +229,9 @@ func (h *Handler) assumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Reque
 		provider = "cloudemu.local"
 	}
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r))
+	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
+
+	creds, ok := h.mintCredentials(w, durationFromForm(r), callerIdentity{arn: assumedArn, userID: assumedRoleID})
 	if !ok {
 		return
 	}
@@ -124,7 +241,7 @@ func (h *Handler) assumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Reque
 		Result: assumeRoleWithWebIdentityResult{
 			Credentials: creds,
 			AssumedRoleUser: assumedRoleUser{
-				AssumedRoleID: "AROACLOUDEMU0000000000:" + sessionName,
+				AssumedRoleID: assumedRoleID,
 				Arn:           assumedArn,
 			},
 			SubjectFromWebIdentityToken: "cloudemu-web-identity-subject",
@@ -141,8 +258,9 @@ func (h *Handler) assumeRoleWithSAML(w http.ResponseWriter, r *http.Request) {
 	roleName := roleNameFromArn(r.Form.Get("RoleArn"))
 	sessionName := "cloudemu-saml-session"
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
+	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r))
+	creds, ok := h.mintCredentials(w, durationFromForm(r), callerIdentity{arn: assumedArn, userID: assumedRoleID})
 	if !ok {
 		return
 	}
@@ -152,7 +270,7 @@ func (h *Handler) assumeRoleWithSAML(w http.ResponseWriter, r *http.Request) {
 		Result: assumeRoleWithSAMLResult{
 			Credentials: creds,
 			AssumedRoleUser: assumedRoleUser{
-				AssumedRoleID: "AROACLOUDEMU0000000000:" + sessionName,
+				AssumedRoleID: assumedRoleID,
 				Arn:           assumedArn,
 			},
 			Subject:       "cloudemu-saml-subject",
@@ -173,7 +291,10 @@ func (h *Handler) getFederationToken(w http.ResponseWriter, r *http.Request) {
 		name = "cloudemu-federated"
 	}
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r))
+	fedArn := "arn:aws:sts::" + h.accountID + ":federated-user/" + name
+	fedUserID := h.accountID + ":" + name
+
+	creds, ok := h.mintCredentials(w, durationFromForm(r), callerIdentity{arn: fedArn, userID: fedUserID})
 	if !ok {
 		return
 	}
@@ -183,8 +304,8 @@ func (h *Handler) getFederationToken(w http.ResponseWriter, r *http.Request) {
 		Result: getFederationTokenResult{
 			Credentials: creds,
 			FederatedUser: federatedUser{
-				FederatedUserID: h.accountID + ":" + name,
-				Arn:             "arn:aws:sts::" + h.accountID + ":federated-user/" + name,
+				FederatedUserID: fedUserID,
+				Arn:             fedArn,
 			},
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
@@ -226,9 +347,12 @@ func durationFromForm(r *http.Request) time.Duration {
 	return sessionDuration
 }
 
-// getSessionToken returns synthetic temporary credentials.
+// getSessionToken returns temporary credentials for the caller's own
+// identity — a GetSessionToken session represents the same caller, not a role
+// or a federated user, so the minted credentials are recorded under the
+// identity resolveCallerIdentity resolves for the request that asked for them.
 func (h *Handler) getSessionToken(w http.ResponseWriter, r *http.Request) {
-	creds, ok := h.mintCredentials(w, durationFromForm(r))
+	creds, ok := h.mintCredentials(w, durationFromForm(r), h.resolveCallerIdentity(r))
 	if !ok {
 		return
 	}
@@ -244,8 +368,10 @@ func (h *Handler) getSessionToken(w http.ResponseWriter, r *http.Request) {
 // the future. When a session store is wired (EnforceAuth on) it mints unique,
 // verifiable credentials and records their secret so the auth gate can verify a
 // signature made with them; otherwise it returns the fixed synthetic values it
-// always has (default, auth-off behavior is byte-for-byte unchanged).
-func (h *Handler) synthCredentials(dur time.Duration) (credentials, error) {
+// always has (default, auth-off behavior is byte-for-byte unchanged). Either
+// way, the returned access key id is recorded under identity so a later
+// GetCallerIdentity call made with these credentials reflects it.
+func (h *Handler) synthCredentials(dur time.Duration, identity callerIdentity) (credentials, error) {
 	if dur <= 0 {
 		dur = sessionDuration
 	}
@@ -256,6 +382,8 @@ func (h *Handler) synthCredentials(dur time.Duration) (credentials, error) {
 			return credentials{}, err
 		}
 
+		h.rememberIdentity(sess.AccessKeyID, identity)
+
 		return credentials{
 			AccessKeyID:     sess.AccessKeyID,
 			SecretAccessKey: sess.SecretAccessKey,
@@ -264,19 +392,23 @@ func (h *Handler) synthCredentials(dur time.Duration) (credentials, error) {
 		}, nil
 	}
 
+	const fixedAccessKeyID = "ASIACLOUDEMU000000000"
+
+	h.rememberIdentity(fixedAccessKeyID, identity)
+
 	return credentials{
-		AccessKeyID:     "ASIACLOUDEMU000000000",
+		AccessKeyID:     fixedAccessKeyID,
 		SecretAccessKey: "cloudemuSecretAccessKey0000000000000000",
 		SessionToken:    "cloudemu-session-token",
 		Expiration:      time.Now().UTC().Add(dur).Format(time.RFC3339),
 	}, nil
 }
 
-// mintCredentials builds temporary credentials for a handler, writing a
-// InternalFailure error response and reporting ok=false when credential
-// generation fails closed (a crypto/rand read error).
-func (h *Handler) mintCredentials(w http.ResponseWriter, dur time.Duration) (credentials, bool) {
-	creds, err := h.synthCredentials(dur)
+// mintCredentials builds temporary credentials representing identity for a
+// handler, writing an InternalFailure error response and reporting ok=false
+// when credential generation fails closed (a crypto/rand read error).
+func (h *Handler) mintCredentials(w http.ResponseWriter, dur time.Duration, identity callerIdentity) (credentials, bool) {
+	creds, err := h.synthCredentials(dur, identity)
 	if err != nil {
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure",
 			"could not generate temporary credentials")

@@ -228,6 +228,7 @@ func writeWriteResult(w http.ResponseWriter, info *storagedriver.ObjectInfo, sta
 	if info != nil {
 		w.Header().Set("ETag", fmt.Sprintf("%q", info.ETag))
 		w.Header().Set("Last-Modified", httpDate(info.LastModified))
+		setIfNonEmpty(w, "x-ms-version-id", info.VersionID)
 	}
 
 	w.Header().Set("X-Ms-Request-Server-Encrypted", "true")

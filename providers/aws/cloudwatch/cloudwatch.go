@@ -57,6 +57,7 @@ type Mock struct {
 	alarms          *memstore.Store[*alarmData]
 	compositeAlarms *memstore.Store[*compositeAlarmData]
 	dashboards      *memstore.Store[*storedDashboard]
+	metricStreams   *memstore.Store[*storedMetricStream]
 	channels        *memstore.Store[*driver.NotificationChannelInfo]
 	history         []driver.AlarmHistoryEntry
 	opts            *config.Options
@@ -103,6 +104,7 @@ func New(opts *config.Options) *Mock {
 		alarms:          memstore.New[*alarmData](),
 		compositeAlarms: memstore.New[*compositeAlarmData](),
 		dashboards:      memstore.New[*storedDashboard](),
+		metricStreams:   memstore.New[*storedMetricStream](),
 		channels:        memstore.New[*driver.NotificationChannelInfo](),
 		opts:            opts,
 	}

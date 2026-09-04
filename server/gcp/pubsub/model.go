@@ -168,6 +168,13 @@ func (h *Handler) newSub(name, topicShort string, cfg *subscription, filter filt
 // deliver selects up to maxMessages deliverable messages for a subscription,
 // leasing each for ackDeadline. Expired leases are swept first so nacked or
 // deadline-lapsed messages redeliver. The caller holds h.mu.
+//
+// When the subscription has enableMessageOrdering set, delivery additionally
+// enforces per-ordering-key sequencing: once a message with a given ordering
+// key is outstanding (delivered but not yet acked), no later message sharing
+// that key is delivered until the earlier one is acked — matching real Pub/Sub,
+// which holds back subsequent same-key messages rather than fanning them out
+// concurrently.
 func (h *Handler) deliver(sub *subState, maxMessages int) []receivedMessage {
 	ts, ok := h.topics[sub.topic]
 	if !ok {
@@ -179,6 +186,7 @@ func (h *Handler) deliver(sub *subState, maxMessages int) []receivedMessage {
 
 	leased := leasedIndices(sub)
 	ackDeadline := effectiveAckDeadline(sub)
+	gate := newOrderingGate(sub.cfg.EnableMessageOrdering)
 
 	// maxMessages is caller-controlled; do not use it as an allocation hint (a
 	// huge value would be an unbounded allocation). The append-driven slice grows
@@ -191,16 +199,59 @@ func (h *Handler) deliver(sub *subState, maxMessages int) []receivedMessage {
 			break
 		}
 
-		if sub.acked[idx] || leased[idx] {
+		if sub.acked[idx] {
 			continue
 		}
 
-		if msg, ok := h.tryDeliver(sub, ts, idx, now, ackDeadline); ok {
-			out = append(out, msg)
+		key := ts.messages[idx].orderingKey
+		if gate.blocked(key) {
+			continue
 		}
+
+		if leased[idx] {
+			gate.hold(key)
+			continue
+		}
+
+		msg, delivered := h.tryDeliver(sub, ts, idx, now, ackDeadline)
+		if !delivered {
+			continue
+		}
+
+		gate.hold(key)
+
+		out = append(out, msg)
 	}
 
 	return out
+}
+
+// orderingGate enforces real Pub/Sub's per-ordering-key sequencing across one
+// deliver() call: once a message with a given key is outstanding or has just
+// been handed out, later messages sharing that key are held back until the
+// earlier one is acked. Gating is a no-op when the subscription has
+// enableMessageOrdering disabled or the message carries no ordering key.
+type orderingGate struct {
+	enabled     bool
+	blockedKeys map[string]bool
+}
+
+func newOrderingGate(enabled bool) *orderingGate {
+	return &orderingGate{enabled: enabled, blockedKeys: make(map[string]bool)}
+}
+
+// blocked reports whether a message with this ordering key must be skipped
+// this round because an earlier same-key message is still outstanding.
+func (g *orderingGate) blocked(key string) bool {
+	return g.enabled && key != "" && g.blockedKeys[key]
+}
+
+// hold marks key as outstanding, blocking later same-key messages until the
+// subscription's ack cursor advances past it.
+func (g *orderingGate) hold(key string) {
+	if g.enabled && key != "" {
+		g.blockedKeys[key] = true
+	}
 }
 
 // tryDeliver decides one message's fate for a subscription: filtered-out and

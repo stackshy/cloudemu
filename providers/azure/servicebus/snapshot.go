@@ -39,6 +39,8 @@ type queueSnapshot struct {
 	DLQConfig              *driver.DeadLetterConfig `json:"dlqConfig,omitempty"`
 	DeadLetterOnExpiration bool                     `json:"deadLetterOnExpiration,omitempty"`
 	Metadata               map[string]string        `json:"metadata,omitempty"`
+	RequiresSession        bool                     `json:"requiresSession,omitempty"`
+	Sessions               map[string]*sessionState `json:"sessions,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused —
@@ -68,7 +70,7 @@ func snapshotQueue(qd *queueData) *queueSnapshot {
 		DeduplicationIndex: qd.deduplicationIndex, RequiresDupDetection: qd.requiresDupDetection,
 		DupDetectionWindow: qd.dupDetectionWindow, DedupByMessageID: qd.dedupByMessageID,
 		DLQConfig: qd.dlqConfig, DeadLetterOnExpiration: qd.deadLetterOnExpiration,
-		Metadata: qd.metadata,
+		Metadata: qd.metadata, RequiresSession: qd.requiresSession, Sessions: qd.sessions,
 	}
 
 	if len(qd.messages) > 0 {
@@ -102,7 +104,7 @@ func restoreQueue(qs *queueSnapshot) *queueData {
 		deduplicationIndex: qs.DeduplicationIndex, requiresDupDetection: qs.RequiresDupDetection,
 		dupDetectionWindow: qs.DupDetectionWindow, dedupByMessageID: qs.DedupByMessageID,
 		dlqConfig: qs.DLQConfig, deadLetterOnExpiration: qs.DeadLetterOnExpiration,
-		metadata: qs.Metadata,
+		metadata: qs.Metadata, requiresSession: qs.RequiresSession, sessions: qs.Sessions,
 	}
 
 	if qd.deduplicationIndex == nil {

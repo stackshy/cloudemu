@@ -151,7 +151,8 @@ func TestDeployment_AllNamespacesListAndDefaultReplicas(t *testing.T) {
 	var list appsv1.DeploymentList
 	mustDecode(t, resp.Body, &list)
 
-	if len(list.Items) != 2 {
+	// 2 created Deployments + the seeded coredns Deployment = 3.
+	if len(list.Items) != 3 {
 		t.Fatalf("all-ns list: got %d items", len(list.Items))
 	}
 }

@@ -196,11 +196,8 @@ func TestUUID(t *testing.T) {
 }
 
 func TestSecretARNSuffix(t *testing.T) {
-	// Deterministic per seed.
-	assert.Equal(t, SecretARNSuffix("my-secret"), SecretARNSuffix("my-secret"))
-
 	// Six alphanumeric characters.
-	suffix := SecretARNSuffix("us-east-1:123456789012:db")
+	suffix := SecretARNSuffix()
 	require.Len(t, suffix, 6)
 
 	for _, c := range suffix {
@@ -208,6 +205,8 @@ func TestSecretARNSuffix(t *testing.T) {
 		assert.True(t, isAlnum, "suffix char %q must be alphanumeric", c)
 	}
 
-	// Distinct seeds generally differ.
-	assert.NotEqual(t, SecretARNSuffix("secret-a"), SecretARNSuffix("secret-b"))
+	// Fresh per call (real Secrets Manager draws a new suffix on every
+	// CreateSecret, including a recreate under the same name), so two calls
+	// almost never collide.
+	assert.NotEqual(t, SecretARNSuffix(), SecretARNSuffix())
 }

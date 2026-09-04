@@ -381,7 +381,7 @@ func (h *Handler) buildRoleDetails(ctx context.Context) []roleDetailXML {
 			RoleID:                   role.ID,
 			Arn:                      role.ARN,
 			CreateDate:               role.CreatedAt,
-			AssumeRolePolicyDocument: role.AssumeRolePolicyDoc,
+			AssumeRolePolicyDocument: encodePolicyDocument(role.AssumeRolePolicyDoc),
 			InstanceProfileList:      roleInstanceProfiles(role, profiles),
 			RolePolicyList:           policyDetailListXML{Member: h.roleInlinePolicies(ctx, role.Name)},
 			AttachedManagedPolicies:  attachedPoliciesFromARNs(arns),
@@ -431,7 +431,7 @@ func inlinePolicyDetails(ctx context.Context, owner string,
 			continue
 		}
 
-		out = append(out, policyDetailXML{PolicyName: name, PolicyDocument: doc})
+		out = append(out, policyDetailXML{PolicyName: name, PolicyDocument: encodePolicyDocument(doc)})
 	}
 
 	return out

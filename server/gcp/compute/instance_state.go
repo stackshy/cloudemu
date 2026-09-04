@@ -17,14 +17,19 @@ import (
 // entries of the instance's tag map, keyed with the "cloudemu:gcp" prefix.
 // These keys are stripped from the emitted labels.
 const (
-	keyDisks         = "cloudemu:gcp:disks"
-	keyNetTags       = "cloudemu:gcp:nettags"
-	keyMetadata      = "cloudemu:gcp:metadata"
-	keyNetwork       = "cloudemu:gcp:network"
-	keyZone          = "cloudemu:gcp:zone"
-	keyAccessConfigs = "cloudemu:gcp:accessconfigs"
-	keyServiceAccts  = "cloudemu:gcp:serviceaccounts"
+	keyDisks              = "cloudemu:gcp:disks"
+	keyNetTags            = "cloudemu:gcp:nettags"
+	keyMetadata           = "cloudemu:gcp:metadata"
+	keyNetwork            = "cloudemu:gcp:network"
+	keyZone               = "cloudemu:gcp:zone"
+	keyAccessConfigs      = "cloudemu:gcp:accessconfigs"
+	keyServiceAccts       = "cloudemu:gcp:serviceaccounts"
+	keyDeletionProtection = "cloudemu:gcp:deletionprotection"
 )
+
+// tagValueTrue is the tag-map encoding of a boolean-true internal flag
+// (currently just keyDeletionProtection).
+const tagValueTrue = "true"
 
 // internalTagPrefix marks tag keys that carry CloudEmu-internal GCP state
 // rather than user labels. gcpNameTag ("cloudemu:gcpName") also matches.

@@ -93,38 +93,65 @@ func (m *Mock) DescribeNetworkACLs(_ context.Context, ids []string) ([]driver.Ne
 	return describeResources(m.networkACLs, ids, toNetworkACLInfo), nil
 }
 
-// AddNetworkACLRule adds a rule to the specified network ACL, keeping rules sorted.
+// AddNetworkACLRule adds a rule to the specified network ACL, keeping rules
+// sorted. The rule slice is rebuilt fresh onto a copy of the ACL under the
+// store lock (copy-on-write), never mutating the shared pointer in place.
 func (m *Mock) AddNetworkACLRule(_ context.Context, aclID string, rule *driver.NetworkACLRule) error {
-	acl, ok := m.networkACLs.Get(aclID)
-	if !ok {
+	if !m.networkACLs.Update(aclID, func(acl *networkACLData) *networkACLData {
+		rules := append(append([]driver.NetworkACLRule(nil), acl.Rules...), *rule)
+		sort.Slice(rules, func(i, j int) bool {
+			return rules[i].RuleNumber < rules[j].RuleNumber
+		})
+
+		cp := *acl
+		cp.Rules = rules
+
+		return &cp
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "network ACL %q not found", aclID)
 	}
-
-	acl.Rules = append(acl.Rules, *rule)
-	sort.Slice(acl.Rules, func(i, j int) bool {
-		return acl.Rules[i].RuleNumber < acl.Rules[j].RuleNumber
-	})
 
 	return nil
 }
 
-// RemoveNetworkACLRule removes a rule by rule number and direction.
+// RemoveNetworkACLRule removes a rule by rule number and direction, copy-on-write.
 func (m *Mock) RemoveNetworkACLRule(
 	_ context.Context, aclID string, ruleNumber int, egress bool,
 ) error {
-	acl, ok := m.networkACLs.Get(aclID)
-	if !ok {
+	removed := false
+
+	if !m.networkACLs.Update(aclID, func(acl *networkACLData) *networkACLData {
+		idx := -1
+
+		for i := range acl.Rules {
+			if acl.Rules[i].RuleNumber == ruleNumber && acl.Rules[i].Egress == egress {
+				idx = i
+				break
+			}
+		}
+
+		if idx == -1 {
+			return acl
+		}
+
+		removed = true
+		next := make([]driver.NetworkACLRule, 0, len(acl.Rules)-1)
+		next = append(next, acl.Rules[:idx]...)
+		next = append(next, acl.Rules[idx+1:]...)
+
+		cp := *acl
+		cp.Rules = next
+
+		return &cp
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "network ACL %q not found", aclID)
 	}
 
-	for i, r := range acl.Rules {
-		if r.RuleNumber == ruleNumber && r.Egress == egress {
-			acl.Rules = append(acl.Rules[:i], acl.Rules[i+1:]...)
-			return nil
-		}
+	if !removed {
+		return cerrors.Newf(cerrors.NotFound, "rule %d not found in network ACL %q", ruleNumber, aclID)
 	}
 
-	return cerrors.Newf(cerrors.NotFound, "rule %d not found in network ACL %q", ruleNumber, aclID)
+	return nil
 }
 
 func toNetworkACLInfo(acl *networkACLData) driver.NetworkACL {

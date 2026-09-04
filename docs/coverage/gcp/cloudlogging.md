@@ -35,14 +35,19 @@ GCPLogging is an optional interface implemented by the GCP logging backend for
 
 | Operation | Description |
 | --- | --- |
+| `CreateBucket` |  |
 | `CreateLogMetric` |  |
 | `CreateSink` |  |
+| `DeleteBucket` |  |
 | `DeleteLogMetric` |  |
 | `DeleteSink` |  |
+| `GetBucket` |  |
 | `GetLogMetric` |  |
 | `GetSink` |  |
+| `ListBuckets` |  |
 | `ListLogMetrics` |  |
 | `ListSinks` |  |
+| `UpdateBucket` |  |
 | `UpdateLogMetric` |  |
 | `UpdateSink` |  |
 

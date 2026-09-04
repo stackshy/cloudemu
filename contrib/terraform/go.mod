@@ -12,13 +12,13 @@ require (
 
 require (
 	github.com/apparentlymart/go-textseg/v15 v15.0.0 // indirect
-	github.com/aws/aws-sdk-go-v2 v1.43.7 // indirect
+	github.com/aws/aws-sdk-go-v2 v1.43.8 // indirect
 	github.com/aws/aws-sdk-go-v2/aws/protocol/eventstream v1.7.16 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.38 // indirect
-	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.38 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/configsources v1.4.39 // indirect
+	github.com/aws/aws-sdk-go-v2/internal/endpoints/v2 v2.7.39 // indirect
 	github.com/aws/aws-sdk-go-v2/service/keyspaces v1.28.2 // indirect
 	github.com/aws/aws-sdk-go-v2/service/memorydb v1.36.2 // indirect
-	github.com/aws/smithy-go v1.27.8 // indirect
+	github.com/aws/smithy-go v1.27.10 // indirect
 	github.com/davecgh/go-spew v1.1.2-0.20180830191138-d8f796af33cc // indirect
 	github.com/fxamacker/cbor/v2 v2.9.1 // indirect
 	github.com/go-logr/logr v1.4.3 // indirect

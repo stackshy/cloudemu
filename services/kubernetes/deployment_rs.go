@@ -18,12 +18,15 @@ import (
 
 // syncDeploymentReplicaSetLocked reconciles the Deployment's current-revision
 // ReplicaSet (creating/updating it and pruning stale revisions), materializes
-// its Pods, and returns the live replica count. Callers hold s.mu.
-func (s *ClusterState) syncDeploymentReplicaSetLocked(dep *appsv1.Deployment, desired int) int32 {
+// its Pods, and returns the materialized replica count and how many are actually
+// Running. Callers hold s.mu.
+func (s *ClusterState) syncDeploymentReplicaSetLocked(dep *appsv1.Deployment, desired int) (total, ready int32) {
 	st := s.reg.getStore(apiGroupApps, "v1", "replicasets")
 	if st == nil {
 		// Registry unavailable (should not happen) — fall back to direct ownership.
-		return clampInt32(s.syncScaledPods(dep.Namespace, dep.Name, deploymentOwnerRef(dep), dep.Spec.Template, desired))
+		tot, rdy := s.syncScaledPods(dep.Namespace, dep.Name, deploymentOwnerRef(dep), dep.Spec.Template, desired)
+
+		return clampInt32(tot), clampInt32(rdy)
 	}
 
 	rsName := dep.Name + "-" + podTemplateHash(dep.Spec.Template)
@@ -32,16 +35,17 @@ func (s *ClusterState) syncDeploymentReplicaSetLocked(dep *appsv1.Deployment, de
 
 	rs := s.upsertDeploymentRSLocked(st, dep, rsName, desired)
 	if rs == nil {
-		return 0
+		return 0, 0
 	}
 
 	reconcileReplicaSet(s, rs)
 	s.stampRegistryRVLocked(rs)
 	st.watch.publish(EventModified, rs.GetNamespace(), *rs.DeepCopy())
 
-	ready, _, _ := unstructured.NestedInt64(rs.Object, "status", "replicas")
+	tot, _, _ := unstructured.NestedInt64(rs.Object, "status", "replicas")
+	rdy, _, _ := unstructured.NestedInt64(rs.Object, "status", "readyReplicas")
 
-	return clampInt32(int(ready))
+	return clampInt32(int(tot)), clampInt32(int(rdy))
 }
 
 // upsertDeploymentRSLocked creates or updates the current-revision ReplicaSet,

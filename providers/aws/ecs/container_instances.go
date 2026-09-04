@@ -162,6 +162,10 @@ func (m *Mock) DeregisterContainerInstance(
 // stopTasksOnInstance marks every non-stopped task placed on the given instance
 // STOPPED. The caller holds placeMu (so this must not call StopTask, which also
 // takes it); capacity is not released because the instance is being removed.
+// This is an administrative teardown, not a user StopTask, so it clears (rather
+// than replaces) any launch-settle window a task may still be in: without this
+// a task force-stopped mid-launch-transient would keep reporting its stale
+// PROVISIONING/PENDING lastStatus instead of the STOPPED set here.
 func (m *Mock) stopTasksOnInstance(instanceARN string) {
 	for _, t := range m.tasks.SortedValues() {
 		if t.ContainerInstanceARN != instanceARN || t.LastStatus == statusStopped {
@@ -179,6 +183,7 @@ func (m *Mock) stopTasksOnInstance(instanceARN string) {
 		}
 
 		m.tasks.Set(updated.ARN, &updated)
+		m.taskSettle.Clear(updated.ARN)
 	}
 }
 

@@ -252,6 +252,16 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return fmt.Errorf("vpc: parse snapshot: %w", err)
 	}
 
+	// restoreStores merges the snapshot into each store's existing entries (see
+	// memstore.Store.LoadSnapshot), it does not replace them. New() already
+	// seeded this fresh Mock with an account/region default VPC (and its default
+	// subnets/SG/ACL/route table/IGW) before Restore is ever called, so without
+	// clearing that seed first, restoring a snapshot that itself carries a
+	// default VPC (every snapshotted Mock has one) would leave two. Every caller
+	// constructs a fresh Mock and restores into it immediately, so it is safe to
+	// drop the seed here: the snapshot is always the authoritative full state.
+	m.clearDefaultVPCSeed()
+
 	m.restoreENIs(snap.ENIs)
 
 	if err := m.restoreStores(&snap); err != nil {
@@ -261,6 +271,21 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	m.restoreScalarState(&snap)
 
 	return nil
+}
+
+// clearDefaultVPCSeed empties exactly the stores seedDefaultVPC populates on a
+// fresh Mock (see New()), so Restore's merge-based restoreStores starts from
+// nothing for those stores instead of layering the snapshot's own default VPC
+// on top of this Mock's freshly-seeded one.
+func (m *Mock) clearDefaultVPCSeed() {
+	m.vpcs.Clear()
+	m.subnets.Clear()
+	m.securityGroups.Clear()
+	m.networkACLs.Clear()
+	m.aclAssocs.Clear()
+	m.routeTables.Clear()
+	m.rtAssocs.Clear()
+	m.igws.Clear()
 }
 
 // restoreENIs reinstates each ENI under its original id.

@@ -79,25 +79,27 @@ type vpcSecurityGroupsXML struct {
 }
 
 type dbInstanceXML struct {
-	DBInstanceIdentifier                  string                     `xml:"DBInstanceIdentifier"`
-	DBInstanceArn                         string                     `xml:"DBInstanceArn"`
-	Engine                                string                     `xml:"Engine,omitempty"`
-	EngineVersion                         string                     `xml:"EngineVersion,omitempty"`
-	DBInstanceClass                       string                     `xml:"DBInstanceClass,omitempty"`
-	DBInstanceStatus                      string                     `xml:"DBInstanceStatus"`
-	MasterUsername                        string                     `xml:"MasterUsername,omitempty"`
-	DBName                                string                     `xml:"DBName,omitempty"`
-	AllocatedStorage                      int                        `xml:"AllocatedStorage,omitempty"`
-	StorageType                           string                     `xml:"StorageType,omitempty"`
-	Endpoint                              *endpointXML               `xml:"Endpoint,omitempty"`
-	MultiAZ                               bool                       `xml:"MultiAZ"`
-	PubliclyAccessible                    bool                       `xml:"PubliclyAccessible"`
-	AvailabilityZone                      string                     `xml:"AvailabilityZone,omitempty"`
-	DBClusterIdentifier                   string                     `xml:"DBClusterIdentifier,omitempty"`
-	DBSubnetGroup                         *dbSubnetGroupXML          `xml:"DBSubnetGroup,omitempty"`
-	InstanceCreateTime                    string                     `xml:"InstanceCreateTime,omitempty"`
-	DbiResourceID                         string                     `xml:"DbiResourceId,omitempty"`
-	BackupRetentionPeriod                 int                        `xml:"BackupRetentionPeriod,omitempty"`
+	DBInstanceIdentifier string            `xml:"DBInstanceIdentifier"`
+	DBInstanceArn        string            `xml:"DBInstanceArn"`
+	Engine               string            `xml:"Engine,omitempty"`
+	EngineVersion        string            `xml:"EngineVersion,omitempty"`
+	DBInstanceClass      string            `xml:"DBInstanceClass,omitempty"`
+	DBInstanceStatus     string            `xml:"DBInstanceStatus"`
+	MasterUsername       string            `xml:"MasterUsername,omitempty"`
+	DBName               string            `xml:"DBName,omitempty"`
+	AllocatedStorage     int               `xml:"AllocatedStorage,omitempty"`
+	StorageType          string            `xml:"StorageType,omitempty"`
+	Endpoint             *endpointXML      `xml:"Endpoint,omitempty"`
+	MultiAZ              bool              `xml:"MultiAZ"`
+	PubliclyAccessible   bool              `xml:"PubliclyAccessible"`
+	AvailabilityZone     string            `xml:"AvailabilityZone,omitempty"`
+	DBClusterIdentifier  string            `xml:"DBClusterIdentifier,omitempty"`
+	DBSubnetGroup        *dbSubnetGroupXML `xml:"DBSubnetGroup,omitempty"`
+	InstanceCreateTime   string            `xml:"InstanceCreateTime,omitempty"`
+	DbiResourceID        string            `xml:"DbiResourceId,omitempty"`
+	// BackupRetentionPeriod is NOT omitempty: 0 is a meaningful, real value
+	// (automated backups disabled), and real RDS always emits the element.
+	BackupRetentionPeriod                 int                        `xml:"BackupRetentionPeriod"`
 	PreferredBackupWindow                 string                     `xml:"PreferredBackupWindow,omitempty"`
 	PreferredMaintenanceWindow            string                     `xml:"PreferredMaintenanceWindow,omitempty"`
 	CACertificateIdentifier               string                     `xml:"CACertificateIdentifier,omitempty"`
@@ -105,6 +107,7 @@ type dbInstanceXML struct {
 	StorageEncrypted                      bool                       `xml:"StorageEncrypted"`
 	KmsKeyID                              string                     `xml:"KmsKeyId,omitempty"`
 	DeletionProtection                    bool                       `xml:"DeletionProtection"`
+	AutoMinorVersionUpgrade               bool                       `xml:"AutoMinorVersionUpgrade"`
 	DBParameterGroups                     *dbParameterGroupsXML      `xml:"DBParameterGroups,omitempty"`
 	OptionGroupMemberships                *optionGroupMembershipsXML `xml:"OptionGroupMemberships,omitempty"`
 	VpcSecurityGroups                     *vpcSecurityGroupsXML      `xml:"VpcSecurityGroups,omitempty"`
@@ -163,20 +166,32 @@ type dbClusterXML struct {
 	ClusterCreateTime   string                `xml:"ClusterCreateTime,omitempty"`
 	DBClusterMembers    *dbClusterMembersXML  `xml:"DBClusterMembers,omitempty"`
 	VpcSecurityGroups   *vpcSecurityGroupsXML `xml:"VpcSecurityGroups,omitempty"`
+	AssociatedRoles     *associatedRolesXML   `xml:"AssociatedRoles,omitempty"`
 	TagList             *tagListXML           `xml:"TagList,omitempty"`
 }
 
+type dbClusterRoleXML struct {
+	RoleArn     string `xml:"RoleArn"`
+	FeatureName string `xml:"FeatureName,omitempty"`
+	Status      string `xml:"Status,omitempty"`
+}
+
+type associatedRolesXML struct {
+	DBClusterRole []dbClusterRoleXML `xml:"DBClusterRole"`
+}
+
 type dbSnapshotXML struct {
-	DBSnapshotIdentifier string      `xml:"DBSnapshotIdentifier"`
-	DBSnapshotArn        string      `xml:"DBSnapshotArn"`
-	DBInstanceIdentifier string      `xml:"DBInstanceIdentifier"`
-	Engine               string      `xml:"Engine,omitempty"`
-	EngineVersion        string      `xml:"EngineVersion,omitempty"`
-	AllocatedStorage     int         `xml:"AllocatedStorage,omitempty"`
-	Status               string      `xml:"Status"`
-	PercentProgress      int         `xml:"PercentProgress"`
-	SnapshotCreateTime   string      `xml:"SnapshotCreateTime,omitempty"`
-	TagList              *tagListXML `xml:"TagList,omitempty"`
+	DBSnapshotIdentifier       string      `xml:"DBSnapshotIdentifier"`
+	DBSnapshotArn              string      `xml:"DBSnapshotArn"`
+	DBInstanceIdentifier       string      `xml:"DBInstanceIdentifier"`
+	Engine                     string      `xml:"Engine,omitempty"`
+	EngineVersion              string      `xml:"EngineVersion,omitempty"`
+	AllocatedStorage           int         `xml:"AllocatedStorage,omitempty"`
+	Status                     string      `xml:"Status"`
+	PercentProgress            int         `xml:"PercentProgress"`
+	SnapshotCreateTime         string      `xml:"SnapshotCreateTime,omitempty"`
+	SourceDBSnapshotIdentifier string      `xml:"SourceDBSnapshotIdentifier,omitempty"`
+	TagList                    *tagListXML `xml:"TagList,omitempty"`
 }
 
 type dbClusterSnapshotXML struct {
@@ -431,6 +446,7 @@ func toInstanceXML(inst *rdsdriver.Instance, resolvedSubnetGroup *dbSubnetGroupX
 		StorageEncrypted:                      inst.StorageEncrypted,
 		KmsKeyID:                              inst.KmsKeyID,
 		DeletionProtection:                    inst.DeletionProtection,
+		AutoMinorVersionUpgrade:               inst.AutoMinorVersionUpgrade,
 		DBParameterGroups:                     toDBParameterGroupsXML(inst.DBParameterGroupName),
 		OptionGroupMemberships:                toOptionGroupMembershipsXML(inst.OptionGroupName),
 		VpcSecurityGroups:                     toVpcSGsXML(inst.VPCSecurityGroups),
@@ -530,8 +546,26 @@ func toClusterXML(cluster *rdsdriver.Cluster) dbClusterXML {
 		ClusterCreateTime:   cluster.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		DBClusterMembers:    &members,
 		VpcSecurityGroups:   toVpcSGsXML(cluster.VPCSecurityGroups),
+		AssociatedRoles:     toAssociatedRolesXML(cluster.AssociatedRoles),
 		TagList:             toTagListXML(cluster.Tags),
 	}
+}
+
+func toAssociatedRolesXML(roles []rdsdriver.DBClusterRole) *associatedRolesXML {
+	if len(roles) == 0 {
+		return nil
+	}
+
+	out := &associatedRolesXML{DBClusterRole: make([]dbClusterRoleXML, 0, len(roles))}
+	for i := range roles {
+		out.DBClusterRole = append(out.DBClusterRole, dbClusterRoleXML{
+			RoleArn:     roles[i].RoleARN,
+			FeatureName: roles[i].FeatureName,
+			Status:      roles[i].Status,
+		})
+	}
+
+	return out
 }
 
 func toAvailabilityZonesXML(azs []string) *availabilityZonesXML {
@@ -544,16 +578,17 @@ func toAvailabilityZonesXML(azs []string) *availabilityZonesXML {
 
 func toSnapshotXML(snap *rdsdriver.Snapshot) dbSnapshotXML {
 	return dbSnapshotXML{
-		DBSnapshotIdentifier: snap.ID,
-		DBSnapshotArn:        snap.ARN,
-		DBInstanceIdentifier: snap.InstanceID,
-		Engine:               snap.Engine,
-		EngineVersion:        snap.EngineVersion,
-		AllocatedStorage:     snap.AllocatedStorage,
-		Status:               snap.State,
-		PercentProgress:      percentProgressForState(snap.State),
-		SnapshotCreateTime:   snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		TagList:              toTagListXML(snap.Tags),
+		DBSnapshotIdentifier:       snap.ID,
+		DBSnapshotArn:              snap.ARN,
+		DBInstanceIdentifier:       snap.InstanceID,
+		Engine:                     snap.Engine,
+		EngineVersion:              snap.EngineVersion,
+		AllocatedStorage:           snap.AllocatedStorage,
+		Status:                     snap.State,
+		PercentProgress:            percentProgressForState(snap.State),
+		SnapshotCreateTime:         snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		SourceDBSnapshotIdentifier: snap.SourceDBSnapshotIdentifier,
+		TagList:                    toTagListXML(snap.Tags),
 	}
 }
 

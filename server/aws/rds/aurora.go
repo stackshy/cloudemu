@@ -63,6 +63,25 @@ type failoverDBClusterResponse struct {
 	Metadata responseMetadata `xml:"ResponseMetadata"`
 }
 
+// ---- cluster IAM role association XML ----
+//
+// AddRoleToDBCluster / RemoveRoleFromDBCluster return an empty result body in
+// real RDS; the effect is observed via DescribeDBClusters AssociatedRoles.
+
+type addRoleToDBClusterResponse struct {
+	XMLName  xml.Name         `xml:"AddRoleToDBClusterResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Result   struct{}         `xml:"AddRoleToDBClusterResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+type removeRoleFromDBClusterResponse struct {
+	XMLName  xml.Name         `xml:"RemoveRoleFromDBClusterResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Result   struct{}         `xml:"RemoveRoleFromDBClusterResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
 // ---- global cluster XML ----
 
 type globalClusterMemberXML struct {
@@ -132,6 +151,12 @@ func (h *Handler) clusterEndpointsCap() (rdsdriver.ClusterEndpoints, bool) {
 
 func (h *Handler) clusterFailoverCap() (rdsdriver.ClusterFailover, bool) {
 	c, ok := h.db.(rdsdriver.ClusterFailover)
+
+	return c, ok
+}
+
+func (h *Handler) clusterRolesCap() (rdsdriver.ClusterRoles, bool) {
+	c, ok := h.db.(rdsdriver.ClusterRoles)
 
 	return c, ok
 }
@@ -293,6 +318,48 @@ func (h *Handler) failoverDBCluster(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, failoverDBClusterResponse{
 		Xmlns:    Namespace,
 		Result:   dbClusterResult{DBCluster: toClusterXML(cluster)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+//nolint:dupl // structurally mirrors removeRoleFromDBCluster by design.
+func (h *Handler) addRoleToDBCluster(w http.ResponseWriter, r *http.Request) {
+	store, ok := h.clusterRolesCap()
+	if !ok {
+		writeUnsupported(w, "cluster IAM role association")
+		return
+	}
+
+	err := store.AddRoleToDBCluster(r.Context(),
+		r.Form.Get("DBClusterIdentifier"), r.Form.Get("RoleArn"), r.Form.Get("FeatureName"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, addRoleToDBClusterResponse{
+		Xmlns:    Namespace,
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+//nolint:dupl // structurally mirrors addRoleToDBCluster by design.
+func (h *Handler) removeRoleFromDBCluster(w http.ResponseWriter, r *http.Request) {
+	store, ok := h.clusterRolesCap()
+	if !ok {
+		writeUnsupported(w, "cluster IAM role association")
+		return
+	}
+
+	err := store.RemoveRoleFromDBCluster(r.Context(),
+		r.Form.Get("DBClusterIdentifier"), r.Form.Get("RoleArn"), r.Form.Get("FeatureName"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, removeRoleFromDBClusterResponse{
+		Xmlns:    Namespace,
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

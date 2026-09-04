@@ -33,6 +33,7 @@ const (
 var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
 	"CreateDBSubnetGroup":                {},
 	"DescribeDBSubnetGroups":             {},
+	"ModifyDBSubnetGroup":                {},
 	"DeleteDBSubnetGroup":                {},
 	"CreateDBInstance":                   {},
 	"DescribeDBInstances":                {},
@@ -100,6 +101,8 @@ var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"ModifyDBClusterEndpoint":            {},
 	"DeleteDBClusterEndpoint":            {},
 	"FailoverDBCluster":                  {},
+	"AddRoleToDBCluster":                 {},
+	"RemoveRoleFromDBCluster":            {},
 	"CreateGlobalCluster":                {},
 	"DescribeGlobalClusters":             {},
 	"ModifyGlobalCluster":                {},
@@ -180,6 +183,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createDBSubnetGroup(w, r)
 	case "DescribeDBSubnetGroups":
 		h.describeDBSubnetGroups(w, r)
+	case "ModifyDBSubnetGroup":
+		h.modifyDBSubnetGroup(w, r)
 	case "DeleteDBSubnetGroup":
 		h.deleteDBSubnetGroup(w, r)
 	case "CreateDBInstance":
@@ -314,6 +319,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteDBClusterEndpoint(w, r)
 	case "FailoverDBCluster":
 		h.failoverDBCluster(w, r)
+	case "AddRoleToDBCluster":
+		h.addRoleToDBCluster(w, r)
+	case "RemoveRoleFromDBCluster":
+		h.removeRoleFromDBCluster(w, r)
 	case "CreateGlobalCluster":
 		h.createGlobalCluster(w, r)
 	case "DescribeGlobalClusters":
@@ -402,6 +411,7 @@ func matchFault(msg string, table []faultMapping, fallback string) string {
 //
 //nolint:gochecknoglobals // ordered static lookup table
 var notFoundFaults = []faultMapping{
+	{"IAM role", "DBClusterRoleNotFound"},
 	{"db subnet group", "DBSubnetGroupNotFoundFault"},
 	{"parameter group", "DBParameterGroupNotFound"},
 	{"option group", "OptionGroupNotFoundFault"},
@@ -417,6 +427,7 @@ var notFoundFaults = []faultMapping{
 
 //nolint:gochecknoglobals // ordered static lookup table
 var alreadyExistsFaults = []faultMapping{
+	{"IAM role", "DBClusterRoleAlreadyExists"},
 	{"db subnet group", "DBSubnetGroupAlreadyExists"},
 	{"parameter group", "DBParameterGroupAlreadyExists"},
 	{"option group", "OptionGroupAlreadyExistsFault"},

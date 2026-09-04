@@ -85,6 +85,58 @@ AzureBlobExtensions is an OPTIONAL Azure-specific blob data-plane capability,
 | `SetContainerMetadata` | SetContainerMetadata replaces a container's metadata (Set Container |
 | `StageBlock` | StageBlock buffers an uncommitted block (Put Block, ?comp=block) for a blob |
 
+### AzureFindBlobsByTags
+
+AzureFindBlobsByTags is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `FindBlobsByTags` |  |
+
+### AzureImmutableBlob
+
+AzureImmutableBlob is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `BlobImmutability` | BlobImmutability reports the blob's current immutability policy and legal |
+| `DeleteBlobImmutabilityPolicy` | DeleteBlobImmutabilityPolicy removes the blob's immutability policy |
+| `SetBlobImmutabilityPolicy` | SetBlobImmutabilityPolicy sets (or updates) the blob's time-based |
+| `SetBlobLegalHold` | SetBlobLegalHold sets or clears the blob's legal hold. |
+
+### AzurePageBlob
+
+AzurePageBlob is an OPTIONAL Azure-specific capability, discovered by type
+
+| Operation | Description |
+| --- | --- |
+| `ClearPage` | ClearPage zeroes the inclusive byte range [start,end] of a page blob and |
+| `CreatePageBlob` | CreatePageBlob creates an empty page blob of size bytes (a multiple of 512) |
+| `GetPageRanges` | GetPageRanges returns the page blob's written ranges (Get Page Ranges, |
+| `PutPage` | PutPage writes data over the inclusive byte range [start,end] of a page blob |
+
+### AzureSoftDeleteBlob
+
+AzureSoftDeleteBlob is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `ListDeletedBlobs` | ListDeletedBlobs returns the soft-deleted blobs matching opts, so a List |
+| `SoftDeleteEnabled` | SoftDeleteEnabled reports whether soft delete is currently in effect for |
+| `UndeleteBlob` | UndeleteBlob restores a soft-deleted blob to active (PUT ?comp=undelete). |
+
+### AzureVersionedBlob
+
+AzureVersionedBlob is an OPTIONAL Azure-specific capability, discovered by
+
+| Operation | Description |
+| --- | --- |
+| `DeleteBlobVersion` | DeleteBlobVersion permanently removes a specific version (DELETE |
+| `GetBlobVersion` | GetBlobVersion reads a specific version of a blob (GET ?versionid=…). |
+| `HeadBlobVersion` | HeadBlobVersion returns a specific version's info (HEAD ?versionid=…). |
+| `ListBlobVersions` | ListBlobVersions returns every version (current and previous) of the blobs |
+| `VersioningEnabled` | VersioningEnabled reports whether account-level blob versioning is on. |
+
 ### BlobServiceConfig
 
 BlobServiceConfig is an OPTIONAL Azure-specific capability, discovered by
@@ -102,37 +154,6 @@ BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
 | --- | --- |
 | `BucketAttributes` |  |
 
-### ConditionalBucket
-
-ConditionalBucket is an OPTIONAL capability (discovered by type assertion like
-
-| Operation | Description |
-| --- | --- |
-| `PutObjectConditional` |  |
-
-### GCSExtensions
-
-GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type
-
-| Operation | Description |
-| --- | --- |
-| `BucketAttrsGCS` | BucketAttrsGCS returns the bucket's GCS-specific attributes. |
-| `BucketIAMPolicy` |  |
-| `ComposeObjectGCS` | ComposeObjectGCS concatenates the source objects' bytes (in order) into |
-| `CreateNotificationConfig` | CreateNotificationConfig registers a Pub/Sub notification config on a |
-| `DeleteNotificationConfig` | DeleteNotificationConfig removes a bucket's notification config by id |
-| `DeleteObjectGCS` | DeleteObjectGCS deletes an object honoring pre and optional generation |
-| `GetNotificationConfig` | GetNotificationConfig returns a bucket's notification config by id |
-| `GetObjectGCS` | GetObjectGCS returns an object's bytes+info, selecting a specific |
-| `HeadObjectGCS` | HeadObjectGCS returns an object's info, selecting a specific generation |
-| `ListNotificationConfigs` | ListNotificationConfigs returns every notification config on a bucket |
-| `ListObjectGenerations` | ListObjectGenerations returns every generation (current + archived) of the |
-| `PutObjectGCS` | PutObjectGCS writes an object honoring pre (a failed condition returns a |
-| `SetBucketAttrsGCS` | SetBucketAttrsGCS records the bucket's location and default storage class |
-| `SetBucketIAMPolicy` | SetBucketIAMPolicy / BucketIAMPolicy persist and return the bucket's IAM |
-| `TouchBucket` | TouchBucket bumps the bucket's metageneration and updated timestamp, |
-| `UpdateObjectGCS` | UpdateObjectGCS mutates an existing object's system properties and/or |
-
 ### ObjectCopier
 
 ObjectCopier is an OPTIONAL capability (discovered by type assertion, like
@@ -140,24 +161,6 @@ ObjectCopier is an OPTIONAL capability (discovered by type assertion, like
 | Operation | Description |
 | --- | --- |
 | `CopyObjectV2` |  |
-
-### RawBucketConfig
-
-RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like
-
-| Operation | Description |
-| --- | --- |
-| `DeleteBucketConfig` | DeleteBucketConfig removes the stored document (idempotent). |
-| `GetBucketConfig` | GetBucketConfig returns the stored document, or NotFound when none was set. |
-| `PutBucketConfig` | PutBucketConfig stores document body under the sub-resource name (e.g. |
-
-### RegionalBucket
-
-RegionalBucket is an OPTIONAL capability a storage provider implements to
-
-| Operation | Description |
-| --- | --- |
-| `CreateBucketInRegion` |  |
 
 ### StorageAccountKeys
 
@@ -167,62 +170,6 @@ StorageAccountKeys is an OPTIONAL Azure-specific capability, discovered by
 | --- | --- |
 | `ListStorageAccountKeys` | ListStorageAccountKeys returns the account's access keys, generating a |
 | `RegenerateStorageAccountKey` | RegenerateStorageAccountKey rotates the value of the named key (key1/key2) |
-
-### SystemPropsBucket
-
-SystemPropsBucket is an OPTIONAL capability (discovered by type assertion like
-
-| Operation | Description |
-| --- | --- |
-| `PutObjectWithSystemProps` |  |
-
-### VersionedBucket
-
-VersionedBucket is an optional extension a storage provider implements when
-
-| Operation | Description |
-| --- | --- |
-| `AbortMultipartUpload` |  |
-| `CompleteMultipartUpload` |  |
-| `CopyObject` |  |
-| `CreateBucket` |  |
-| `CreateMultipartUpload` | Multipart uploads |
-| `DeleteBucket` |  |
-| `DeleteBucketPolicy` |  |
-| `DeleteBucketTagging` |  |
-| `DeleteCORSConfig` |  |
-| `DeleteObject` |  |
-| `DeleteObjectTagging` |  |
-| `DeleteObjectVersion` | DeleteObjectVersion removes a specific version when versionID != "". |
-| `EvaluateLifecycle` |  |
-| `GeneratePresignedURL` | Presigned URLs |
-| `GetBucketPolicy` |  |
-| `GetBucketTagging` |  |
-| `GetBucketVersioning` |  |
-| `GetCORSConfig` |  |
-| `GetEncryptionConfig` |  |
-| `GetLifecycleConfig` |  |
-| `GetObject` |  |
-| `GetObjectTagging` |  |
-| `GetObjectVersion` | GetObjectVersion / HeadObjectVersion fetch a specific version by ID. A |
-| `HeadObject` |  |
-| `HeadObjectVersion` |  |
-| `ListBuckets` |  |
-| `ListMultipartUploads` |  |
-| `ListObjectVersions` | ListObjectVersions returns the full version history matching opts. |
-| `ListObjects` |  |
-| `ListParts` | ListParts returns the parts buffered so far for an in-progress upload, |
-| `PutBucketPolicy` | Bucket Policy |
-| `PutBucketTagging` | Bucket Tagging |
-| `PutCORSConfig` | CORS |
-| `PutEncryptionConfig` | Encryption |
-| `PutLifecycleConfig` | Lifecycle policies |
-| `PutObject` |  |
-| `PutObjectTagging` | Object Tagging |
-| `SetBucketVersioning` | Versioning |
-| `SetVersioningStatus` | SetVersioningStatus sets the bucket's versioning status: "Enabled" or |
-| `UploadPart` |  |
-| `VersioningStatus` |  |
 
 ## Not in scope
 

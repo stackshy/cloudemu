@@ -14,6 +14,7 @@ func (h *Handler) snapshots() (cachedriver.Snapshots, bool) {
 	return s, ok
 }
 
+//nolint:dupl // per-action snapshot handler; the sibling parses a different request and writes a different response envelope
 func (h *Handler) createSnapshot(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.snapshots()
 	if !ok {
@@ -65,6 +66,53 @@ func (h *Handler) describeSnapshots(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, describeSnapshotsResponse{
 		Xmlns:    Namespace,
 		Result:   describeSnapshotsResult{Snapshots: snapshotsListXML{Snapshot: out}},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+//nolint:dupl // per-action snapshot handler; the sibling parses a different request and writes a different response envelope
+func (h *Handler) copySnapshot(w http.ResponseWriter, r *http.Request) {
+	store, ok := h.snapshots()
+	if !ok {
+		writeUnsupported(w, "snapshots")
+		return
+	}
+
+	snap, err := store.CopySnapshot(r.Context(), cachedriver.CopySnapshotConfig{
+		SourceSnapshotName: r.Form.Get("SourceSnapshotName"),
+		TargetSnapshotName: r.Form.Get("TargetSnapshotName"),
+		TargetBucket:       r.Form.Get("TargetBucket"),
+		KmsKeyID:           r.Form.Get("KmsKeyId"),
+		Tags:               parseTags(r.Form),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, copySnapshotResponse{
+		Xmlns:    Namespace,
+		Result:   snapshotResult{Snapshot: toSnapshotXML(snap)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) deleteSnapshot(w http.ResponseWriter, r *http.Request) {
+	store, ok := h.snapshots()
+	if !ok {
+		writeUnsupported(w, "snapshots")
+		return
+	}
+
+	snap, err := store.DeleteSnapshot(r.Context(), r.Form.Get("SnapshotName"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, deleteSnapshotResponse{
+		Xmlns:    Namespace,
+		Result:   snapshotResult{Snapshot: toSnapshotXML(snap)},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

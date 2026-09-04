@@ -21,6 +21,7 @@ package gcs
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -70,6 +71,8 @@ const (
 	// pathBO is /b/{bucket}/o = 3 segments.
 	pathBO = 3
 
+	// collectionProjects is the /projects/{project}/... top-level collection.
+	collectionProjects = "projects"
 	// subresIAM is the /b/{bucket}/iam sub-collection segment.
 	subresIAM = "iam"
 	// subresNotificationConfigs is the /b/{bucket}/notificationConfigs segment.
@@ -78,6 +81,14 @@ const (
 	// back when none was set at create.
 	defaultLocation     = "US"
 	defaultStorageClass = "STANDARD"
+
+	// defaultProjectNumber is the numeric project number every bucket reports.
+	// Real GCS always includes a non-zero projectNumber on the bucket resource;
+	// cloudemu doesn't model per-project numeric identifiers (buckets aren't
+	// project-scoped internally), so every bucket reports this fixed
+	// placeholder, mirroring the emulator's other fixed default account/project
+	// identifiers (e.g. config.Options.AccountID's "123456789012" default).
+	defaultProjectNumber = "123456789012"
 )
 
 // Handler serves GCS JSON REST requests against a storage.Bucket driver.
@@ -88,10 +99,36 @@ type Handler struct {
 	// object patch, versioned listing, and bucket location/IAM/metageneration.
 	ext storagedriver.GCSExtensions
 
+	// lifecycle is the optional capability that persists a bucket's lifecycle
+	// configuration verbatim (every rule condition), nil when the backing driver
+	// only supports the age-only portable driver.LifecycleConfig.
+	lifecycle lifecycleRawStore
+
+	// iamCfg is the optional capability that persists a bucket's iamConfiguration
+	// (Uniform Bucket-Level Access + Public Access Prevention); nil falls back to
+	// the read-only GCS defaults.
+	iamCfg iamConfigStore
+
+	// hmac is the optional capability backing project-scoped service-account HMAC
+	// keys; nil makes the /projects/{p}/hmacKeys endpoints report not-implemented.
+	hmac hmacKeyStore
+
+	// retention is the optional capability persisting a bucket's retention policy
+	// (WORM); nil makes retentionPolicy absent and unsettable.
+	retention retentionStore
+
 	// publisher emits object-change events to Pub/Sub for matching bucket
 	// notification configs. Nil (the default) makes object events a no-op, so
 	// object writes/deletes still succeed without Pub/Sub wired.
 	publisher TopicPublisher
+
+	// functionInvoker delivers an object-change event directly to every gen2
+	// Cloud Function whose Cloud Storage eventTrigger is bound to the bucket —
+	// the Eventarc-backed delivery a real gen2 storage trigger uses, independent
+	// of the legacy notificationConfig -> Pub/Sub -> function chain publisher
+	// drives above. Nil (the default) makes gen2 storage-trigger delivery a
+	// no-op, so object writes/deletes still succeed without it wired.
+	functionInvoker FunctionInvoker
 
 	// resumable holds in-progress resumable-upload sessions keyed by upload id.
 	// A session buffers the object's bytes as Content-Range chunks arrive over
@@ -119,8 +156,20 @@ type resumableSession struct {
 // New returns a GCS handler backed by b.
 func New(b storagedriver.Bucket) *Handler {
 	ext, _ := b.(storagedriver.GCSExtensions)
+	lifecycle, _ := b.(lifecycleRawStore)
+	iamCfg, _ := b.(iamConfigStore)
+	hmac, _ := b.(hmacKeyStore)
+	retention, _ := b.(retentionStore)
 
-	return &Handler{bucket: b, ext: ext, resumable: make(map[string]*resumableSession)}
+	return &Handler{
+		bucket:    b,
+		ext:       ext,
+		lifecycle: lifecycle,
+		iamCfg:    iamCfg,
+		hmac:      hmac,
+		retention: retention,
+		resumable: make(map[string]*resumableSession),
+	}
 }
 
 // Matches returns true for /storage/v1/, /upload/storage/v1/, and direct
@@ -181,6 +230,8 @@ func isVersionToken(seg string) bool {
 
 // ServeHTTP routes the request based on URL path shape.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	r = r.WithContext(withDeliveryDepth(r))
+
 	if strings.HasPrefix(r.URL.Path, uploadAPIPrefix) {
 		h.upload(w, r)
 		return
@@ -196,6 +247,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rest := strings.TrimPrefix(r.URL.Path, jsonAPIPrefix)
 	parts := strings.Split(rest, "/")
 
+	if len(parts) > 0 && parts[0] == collectionProjects {
+		h.projectRoute(w, r, parts)
+		return
+	}
+
+	h.serveBucketAPI(w, r, parts)
+}
+
+// serveBucketAPI dispatches the /storage/v1/b[/...] bucket + object JSON API
+// routes.
+func (h *Handler) serveBucketAPI(w http.ResponseWriter, r *http.Request, parts []string) {
 	if len(parts) == 0 || parts[0] != "b" {
 		writeError(w, http.StatusNotFound, "notFound", "unknown collection")
 		return
@@ -207,30 +269,40 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case pathBucket:
 		h.bucketResource(w, r, parts[1])
 	case pathBO:
-		// /b/{bucket}/o — list objects; /b/{bucket}/iam — bucket IAM policy.
-		switch parts[2] {
-		case "o":
-			h.listObjects(w, r, parts[1])
-		case subresIAM:
-			h.bucketIAM(w, r, parts[1])
-		case subresNotificationConfigs:
-			h.notificationCollection(w, r, parts[1])
-		default:
-			writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
-		}
+		h.serveBucketSubcollection(w, r, parts)
 	default:
-		// /b/{bucket}/o/{obj}[/...], /b/{bucket}/iam/testPermissions, or
-		// /b/{bucket}/notificationConfigs/{id}.
-		switch {
-		case parts[2] == "o":
-			h.objectOp(w, r, parts[1], strings.Join(parts[3:], "/"))
-		case parts[2] == subresIAM && parts[3] == "testPermissions":
-			h.testIAMPermissions(w, r, parts[1])
-		case parts[2] == subresNotificationConfigs:
-			h.notificationResourceOp(w, r, parts[1], parts[3])
-		default:
-			writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
-		}
+		h.serveBucketSubresource(w, r, parts)
+	}
+}
+
+// serveBucketSubcollection routes /b/{bucket}/{o|iam|notificationConfigs}.
+func (h *Handler) serveBucketSubcollection(w http.ResponseWriter, r *http.Request, parts []string) {
+	switch parts[2] {
+	case "o":
+		h.listObjects(w, r, parts[1])
+	case subresIAM:
+		h.bucketIAM(w, r, parts[1])
+	case subresNotificationConfigs:
+		h.notificationCollection(w, r, parts[1])
+	case "lockRetentionPolicy":
+		h.lockRetentionPolicy(w, r, parts[1])
+	default:
+		writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
+	}
+}
+
+// serveBucketSubresource routes the deep paths: /b/{bucket}/o/{obj}[/...],
+// /b/{bucket}/iam/testPermissions, and /b/{bucket}/notificationConfigs/{id}.
+func (h *Handler) serveBucketSubresource(w http.ResponseWriter, r *http.Request, parts []string) {
+	switch {
+	case parts[2] == "o":
+		h.objectOp(w, r, parts[1], strings.Join(parts[3:], "/"))
+	case parts[2] == subresIAM && parts[3] == "testPermissions":
+		h.testIAMPermissions(w, r, parts[1])
+	case parts[2] == subresNotificationConfigs:
+		h.notificationResourceOp(w, r, parts[1], parts[3])
+	default:
+		writeError(w, http.StatusNotFound, "notFound", "unknown sub-collection")
 	}
 }
 
@@ -289,8 +361,11 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if body.Lifecycle != nil {
-		_ = h.bucket.PutLifecycleConfig(r.Context(), body.Name, toLifecycleConfig(body.Lifecycle))
+		_ = h.putLifecycle(r.Context(), body.Name, body.Lifecycle)
 	}
+
+	_ = h.applyIAMConfig(r.Context(), body.Name, body.IamConfiguration)
+	_ = h.applyRetention(r.Context(), body.Name, body.RetentionPolicy)
 
 	writeJSON(w, http.StatusOK, h.bucketView(r, body.Name, time.Now().UTC().Format(time.RFC3339)))
 }
@@ -338,6 +413,7 @@ func (h *Handler) bucketView(r *http.Request, name, created string) bucketResour
 		Kind:             "storage#bucket",
 		ID:               name,
 		Name:             name,
+		ProjectNumber:    defaultProjectNumber,
 		SelfLink:         selfLink(r, "/storage/v1/b/"+name),
 		Location:         location,
 		LocationType:     locationType(location),
@@ -346,7 +422,7 @@ func (h *Handler) bucketView(r *http.Request, name, created string) bucketResour
 		Etag:             name + "/" + strconv.FormatInt(metageneration, 10),
 		TimeCreated:      created,
 		Updated:          updated,
-		IamConfiguration: &iamConfiguration{PublicAccessPrevention: "inherited"},
+		IamConfiguration: h.iamConfigView(r.Context(), name),
 	}
 
 	if enabled, err := h.bucket.GetBucketVersioning(r.Context(), name); err == nil && enabled {
@@ -357,8 +433,12 @@ func (h *Handler) bucketView(r *http.Request, name, created string) bucketResour
 		res.Labels = labels
 	}
 
-	if cfg, err := h.bucket.GetLifecycleConfig(r.Context(), name); err == nil && cfg != nil && len(cfg.Rules) > 0 {
-		res.Lifecycle = fromLifecycleConfig(cfg)
+	if lc := h.lifecycleView(r.Context(), name); lc != nil {
+		res.Lifecycle = lc
+	}
+
+	if rp := h.retentionView(r.Context(), name); rp != nil {
+		res.RetentionPolicy = rp
 	}
 
 	return res
@@ -411,53 +491,6 @@ func locationType(location string) string {
 	}
 }
 
-// toLifecycleConfig converts the GCS lifecycle JSON into the driver's rule set.
-// Delete → object expiration; SetStorageClass → a class transition.
-func toLifecycleConfig(lc *bucketLifecycle) storagedriver.LifecycleConfig {
-	cfg := storagedriver.LifecycleConfig{Rules: make([]storagedriver.LifecycleRule, 0, len(lc.Rule))}
-
-	for i, r := range lc.Rule {
-		rule := storagedriver.LifecycleRule{
-			ID:      strconv.Itoa(i),
-			Enabled: true,
-		}
-
-		switch r.Action.Type {
-		case "Delete":
-			rule.ExpirationDays = r.Condition.Age
-		case "SetStorageClass":
-			rule.TransitionDays = r.Condition.Age
-			rule.TransitionStorageClass = r.Action.StorageClass
-		}
-
-		cfg.Rules = append(cfg.Rules, rule)
-	}
-
-	return cfg
-}
-
-// fromLifecycleConfig renders the driver's lifecycle rules back into GCS JSON.
-func fromLifecycleConfig(cfg *storagedriver.LifecycleConfig) *bucketLifecycle {
-	lc := &bucketLifecycle{Rule: make([]lifecycleRule, 0, len(cfg.Rules))}
-
-	for _, rule := range cfg.Rules {
-		switch {
-		case rule.TransitionStorageClass != "":
-			lc.Rule = append(lc.Rule, lifecycleRule{
-				Action:    lifecycleAction{Type: "SetStorageClass", StorageClass: rule.TransitionStorageClass},
-				Condition: lifecycleCondition{Age: rule.TransitionDays},
-			})
-		case rule.ExpirationDays > 0:
-			lc.Rule = append(lc.Rule, lifecycleRule{
-				Action:    lifecycleAction{Type: "Delete"},
-				Condition: lifecycleCondition{Age: rule.ExpirationDays},
-			})
-		}
-	}
-
-	return lc
-}
-
 // patchBucket applies a bucket configuration update (versioning + labels),
 // which real clients set via Buckets.Patch/Update. Without this the driver's
 // versioning/label capabilities are unreachable over the wire.
@@ -467,25 +500,14 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 		return
 	}
 
-	if body.Versioning != nil {
-		if err := h.bucket.SetBucketVersioning(r.Context(), name, body.Versioning.Enabled); err != nil {
-			writeErr(w, err)
-			return
-		}
+	if err := h.checkBucketMetagenerationPrecondition(r, name); err != nil {
+		writePreconditionOrErr(w, err)
+		return
 	}
 
-	if body.Labels != nil {
-		if err := h.bucket.PutBucketTagging(r.Context(), name, body.Labels); err != nil {
-			writeErr(w, err)
-			return
-		}
-	}
-
-	if body.Lifecycle != nil {
-		if err := h.bucket.PutLifecycleConfig(r.Context(), name, toLifecycleConfig(body.Lifecycle)); err != nil {
-			writeErr(w, err)
-			return
-		}
+	if err := h.applyBucketConfig(r.Context(), name, &body); err != nil {
+		writePreconditionOrErr(w, err)
+		return
 	}
 
 	if h.ext != nil {
@@ -499,9 +521,119 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 	writeJSON(w, http.StatusOK, h.bucketView(r, name, ""))
 }
 
+// checkBucketMetagenerationPrecondition evaluates the Buckets.patch/update
+// ifMetagenerationMatch/ifMetagenerationNotMatch query preconditions against
+// the bucket's current metageneration, mirroring the 412 conditionNotMet
+// semantics real GCS applies to bucket updates (the object write path already
+// enforces the equivalent generation/metageneration preconditions).
+func (h *Handler) checkBucketMetagenerationPrecondition(r *http.Request, name string) error {
+	q := r.URL.Query()
+
+	matchStr := q.Get("ifMetagenerationMatch")
+	notMatchStr := q.Get("ifMetagenerationNotMatch")
+
+	if matchStr == "" && notMatchStr == "" {
+		return nil
+	}
+
+	metageneration := h.bucketMetageneration(r.Context(), name)
+
+	if matchStr != "" {
+		if want, err := strconv.ParseInt(matchStr, 10, 64); err == nil && metageneration != want {
+			return &storagedriver.GCSPreconditionError{Message: "conditionNotMet: ifMetagenerationMatch"}
+		}
+	}
+
+	if notMatchStr != "" {
+		if want, err := strconv.ParseInt(notMatchStr, 10, 64); err == nil && metageneration == want {
+			return &storagedriver.GCSPreconditionError{Message: "conditionNotMet: ifMetagenerationNotMatch"}
+		}
+	}
+
+	return nil
+}
+
+// bucketMetageneration returns name's current metageneration, defaulting to 1
+// when the backing driver doesn't record one (the same fallback
+// resolveBucketAttrs uses for a fresh or driver-untracked bucket).
+func (h *Handler) bucketMetageneration(ctx context.Context, name string) int64 {
+	if h.ext == nil {
+		return 1
+	}
+
+	attrs, err := h.ext.BucketAttrsGCS(ctx, name)
+	if err != nil || attrs.Metageneration <= 0 {
+		return 1
+	}
+
+	return attrs.Metageneration
+}
+
+// applyBucketConfig applies the mutable configuration fields present in a
+// Buckets.patch/update body (versioning, labels, lifecycle, iamConfiguration,
+// retentionPolicy), each only when supplied. It returns the first error
+// encountered. Each field is guarded by a small closure so adding another
+// configuration field does not raise the function's cyclomatic complexity.
+func (h *Handler) applyBucketConfig(ctx context.Context, name string, body *bucketResource) error {
+	appliers := []func() error{
+		func() error {
+			if body.Versioning == nil {
+				return nil
+			}
+
+			return h.bucket.SetBucketVersioning(ctx, name, body.Versioning.Enabled)
+		},
+		func() error {
+			if body.Labels == nil {
+				return nil
+			}
+
+			return h.bucket.PutBucketTagging(ctx, name, body.Labels)
+		},
+		func() error {
+			if body.Lifecycle == nil {
+				return nil
+			}
+
+			return h.putLifecycle(ctx, name, body.Lifecycle)
+		},
+		func() error {
+			if body.IamConfiguration == nil {
+				return nil
+			}
+
+			return h.applyIAMConfig(ctx, name, body.IamConfiguration)
+		},
+		func() error {
+			if body.RetentionPolicy == nil {
+				return nil
+			}
+
+			return h.applyRetention(ctx, name, body.RetentionPolicy)
+		},
+	}
+
+	for _, apply := range appliers {
+		if err := apply(); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, name string) {
 	if err := h.bucket.DeleteBucket(r.Context(), name); err != nil {
+		// Real GCS answers a non-empty-bucket delete with 409 reason "notEmpty"
+		// and a fixed human message, not the generic "conflict" reason writeErr
+		// uses for FailedPrecondition elsewhere (e.g. the retention-lock path).
+		if cerrors.IsFailedPrecondition(err) {
+			writeError(w, http.StatusConflict, "notEmpty", "The bucket you tried to delete was not empty.")
+			return
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 
@@ -551,14 +683,51 @@ func (h *Handler) setBucketIAM(w http.ResponseWriter, r *http.Request, name stri
 		return
 	}
 
-	if h.ext != nil {
-		if sErr := h.ext.SetBucketIAMPolicy(r.Context(), name, raw); sErr != nil {
-			writeErr(w, sErr)
-			return
-		}
+	// Stamp the server-controlled kind/resourceId now; the etag placeholder
+	// (the client's own, possibly stale, etag) is overwritten below by the
+	// backend with the real, atomically minted value.
+	prepared, sErr := stampIAMPolicy(raw, name, policy.Etag)
+	if sErr != nil {
+		writeError(w, http.StatusBadRequest, "invalid", sErr.Error())
+		return
 	}
 
-	writeRawJSON(w, raw)
+	if h.ext == nil {
+		writeRawJSON(w, prepared)
+		return
+	}
+
+	// The etag precondition check and the write happen atomically in the
+	// backend (one lock spans read-compare-write), so concurrent setIamPolicy
+	// calls that all read the same etag can't all "win" the way a separate
+	// getIamPolicy-then-setIamPolicy pair here would allow (a lost update).
+	out, pErr := h.ext.CompareAndSetBucketIAMPolicy(r.Context(), name, policy.Etag, prepared)
+	if pErr != nil {
+		writePreconditionOrErr(w, pErr)
+		return
+	}
+
+	writeRawJSON(w, out)
+}
+
+// stampIAMPolicy overwrites kind/resourceId/etag on the client-supplied
+// policy document — real GCS always sets these itself, ignoring whatever the
+// client sent — while leaving every other field untouched.
+func stampIAMPolicy(raw []byte, bucket, etag string) ([]byte, error) {
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		return nil, err
+	}
+
+	doc["kind"] = "storage#policy"
+	doc["resourceId"] = "projects/_/buckets/" + bucket
+	doc["etag"] = etag
+
+	if _, ok := doc["bindings"]; !ok {
+		doc["bindings"] = []iamPolicyBind{}
+	}
+
+	return json.Marshal(doc)
 }
 
 // testIAMPermissions serves /b/{bucket}/iam/testPermissions — the mock grants
@@ -605,7 +774,7 @@ func writeRawJSON(w http.ResponseWriter, raw []byte) {
 	w.WriteHeader(http.StatusOK)
 	// raw is an IAM policy document validated as JSON before storage and served
 	// as application/json, not HTML — no XSS surface.
-	_, _ = w.Write(raw) //nolint:gosec // validated JSON policy, served as application/json
+	_, _ = w.Write(raw)
 }
 
 // upload handles POST /upload/storage/v1/b/{bucket}/o, dispatching on
@@ -993,6 +1162,18 @@ func writePreconditionOrErr(w http.ResponseWriter, err error) {
 		return
 	}
 
+	var immErr *storagedriver.GCSImmutableError
+	if errors.As(err, &immErr) {
+		reason := immErr.Reason
+		if reason == "" {
+			reason = "retentionPolicyNotMet"
+		}
+
+		writeError(w, http.StatusForbidden, reason, immErr.Error())
+
+		return
+	}
+
 	writeErr(w, err)
 }
 
@@ -1205,6 +1386,8 @@ func (h *Handler) updateObject(w http.ResponseWriter, r *http.Request, bucket, k
 		ContentDisposition: body.ContentDisposition,
 		ContentLanguage:    body.ContentLanguage,
 		Metadata:           body.Metadata,
+		TemporaryHold:      body.TemporaryHold,
+		EventBasedHold:     body.EventBasedHold,
 	}, parsePrecondition(r.URL.Query()))
 	if err != nil {
 		writePreconditionOrErr(w, err)
@@ -1583,27 +1766,31 @@ func toObjectResource(info *storagedriver.ObjectInfo, bucket string, r *http.Req
 	}
 
 	return objectResource{
-		Kind:               "storage#object",
-		ID:                 bucket + "/" + info.Key + "/" + genStr,
-		Name:               info.Key,
-		Bucket:             bucket,
-		Generation:         genStr,
-		Metageneration:     strconv.FormatInt(metageneration, 10),
-		ContentType:        info.ContentType,
-		Size:               strconv.FormatInt(info.Size, 10),
-		MD5Hash:            info.MD5,
-		CRC32C:             info.CRC32C,
-		ETag:               info.ETag,
-		StorageClass:       storageClass,
-		CacheControl:       info.CacheControl,
-		ContentEncoding:    info.ContentEncoding,
-		ContentDisposition: info.ContentDisposition,
-		ContentLanguage:    info.ContentLanguage,
-		TimeCreated:        created,
-		Updated:            info.LastModified,
-		Metadata:           info.Metadata,
-		SelfLink:           selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key),
-		MediaLink:          selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key+"?alt=media"),
+		Kind:                    "storage#object",
+		ID:                      bucket + "/" + info.Key + "/" + genStr,
+		Name:                    info.Key,
+		Bucket:                  bucket,
+		Generation:              genStr,
+		Metageneration:          strconv.FormatInt(metageneration, 10),
+		ContentType:             info.ContentType,
+		Size:                    strconv.FormatInt(info.Size, 10),
+		MD5Hash:                 info.MD5,
+		CRC32C:                  info.CRC32C,
+		ETag:                    info.ETag,
+		StorageClass:            storageClass,
+		CacheControl:            info.CacheControl,
+		ContentEncoding:         info.ContentEncoding,
+		ContentDisposition:      info.ContentDisposition,
+		ContentLanguage:         info.ContentLanguage,
+		TimeCreated:             created,
+		Updated:                 info.LastModified,
+		TimeDeleted:             info.Deleted,
+		Metadata:                info.Metadata,
+		TemporaryHold:           info.TemporaryHold,
+		EventBasedHold:          info.EventBasedHold,
+		RetentionExpirationTime: info.RetentionExpiration,
+		SelfLink:                selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key),
+		MediaLink:               selfLink(r, "/storage/v1/b/"+bucket+"/o/"+info.Key+"?alt=media"),
 	}
 }
 

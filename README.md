@@ -127,16 +127,19 @@ client.PutObject(ctx, &s3.PutObjectInput{ /* … */ }) // hits the in-memory bac
 
 ## What you get
 
-**~45 AWS · 36 Azure · 24 GCP services**, plus a real in-memory **Kubernetes data plane**. The always-current, generated list is [docs/coverage](docs/coverage/README.md); the highlights:
+**~52 AWS · 47 Azure · 26 GCP services** (Azure roughly doubled in the recent wave), plus a real in-memory **Kubernetes data plane**. The always-current, generated list is [docs/coverage](docs/coverage/README.md); the highlights:
 
-- **Storage · Compute · Databases** — S3/Blob/GCS, EC2/VMs/GCE, DynamoDB & Cosmos & Firestore, RDS/Aurora, Cloud SQL, AlloyDB
-- **Serverless & Containers** — Lambda/Functions, ECS, and EKS/AKS/GKE with a full Kubernetes API
-- **Messaging & Events** — SQS/SNS/EventBridge, Service Bus/Event Grid, Pub/Sub/Eventarc
-- **Networking · DNS · Load Balancing** — VPC, subnets, security groups, route tables, Route 53/Cloud DNS, ELB
-- **Secrets · IAM · Monitoring · Logging** — Secrets Manager/Key Vault, CloudWatch/Azure Monitor, structured logs
+- **Storage · Compute · Databases** — S3/Blob/GCS, EC2/VMs/GCE (incl. Azure VM Scale Sets), DynamoDB & Cosmos & Firestore, RDS/Aurora, Cloud SQL, AlloyDB
+- **Serverless & Containers** — Lambda/Functions, ECS, Azure Container Apps, and EKS/AKS/GKE with a full Kubernetes API
+- **Messaging & Events** — SQS/SNS/EventBridge, Service Bus/Event Grid/Event Hubs, Pub/Sub/Eventarc
+- **Networking · DNS · Load Balancing** — VPC, subnets, security groups, route tables, Azure Private Link & VPN gateways, Route 53/Cloud DNS, ELB
+- **Secrets · IAM · Monitoring · Logging** — Secrets Manager/Key Vault, managed identities, CloudWatch/Azure Monitor, structured logs
+- **Analytics & Big Data** — AWS EMR, Azure Synapse, Azure Data Explorer (Kusto)
+- **Billing / FinOps** — Cost Explorer / Cost Management / Cloud Billing, plus Savings Plans and Service Quotas
 - **AI/ML** — Bedrock, SageMaker, Vertex AI
+- **Governance** — Azure management locks, tags-at-scope, and provider registration
 
-The **Kubernetes data plane** does real CRUD, server-side apply, and watch streaming — so `client-go` informers work — and converges controllers synchronously (a Deployment materializes Pods to Running on write). See [docs/services.md](docs/services.md).
+The **Kubernetes data plane** does real CRUD, server-side apply, and watch streaming — so `client-go` informers work — and converges controllers synchronously (a Deployment materializes Pods to Running on write). It runs a real scheduler (node & inter-pod affinity, topology spread, scoring), an opt-in multi-node cluster (`--k8s-nodes N`, taints/tolerations, dynamic node add/remove), and `exec`/`attach` over WebSocket. See [docs/services.md](docs/services.md).
 
 ## Works with your tools
 
@@ -155,7 +158,13 @@ The in-memory default is unchanged; `Provider.Close()` tears down whatever you w
 
 ## Persistence (opt-in)
 
-State is in memory and resettable, so it's ephemeral by default. When you want it to survive a restart, snapshot the **whole emulator** — every stateful service across all four providers, identity-preserving — to a single JSON file and restore it into a fresh instance. Run the background server with `--persist`, capture named states with `cloudemu snapshot save`/`load`, hit `GET`/`POST /_cloudemu/snapshot`, or drive it from Go with the `persist` package. → [docs/persistence.md](docs/persistence.md)
+State is in memory and resettable, so it's ephemeral by default. When you want it to survive a restart, snapshot the **whole emulator** — every stateful service across all four providers, identity-preserving — to a single JSON file and restore it into a fresh instance. Run the background server with `--persist`, capture named states with `cloudemu snapshot save`/`load`, hit `GET`/`POST /_cloudemu/snapshot`, or drive it from Go with the `persist` package. Named states also support **time travel** — `POST /_cloudemu/snapshot/{name}/rewind` restores a checkpoint and `…/{from}/fork/{to}` branches off it. → [docs/persistence.md](docs/persistence.md)
+
+## More capabilities
+
+- **VCR record / replay** — `cloudemu serve --vcr record --vcr-cassette tape.json` tapes the wire traffic; `--vcr replay` serves it back with no backend, so a captured session reruns deterministically.
+- **Time travel** — save, rewind, and fork whole-emulator state over the admin plane for git-like state history (above).
+- **Preflight check** — `cloudemu doctor` verifies the default ports are free, prints the build version, and reports whether Docker is available.
 
 ## Docs
 

@@ -14,6 +14,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
+	"github.com/stackshy/cloudemu/v2/providers/azure/containerapps"
 	"github.com/stackshy/cloudemu/v2/providers/azure/containerinstances"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmospostgresql"
@@ -26,6 +27,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedcassandra"
+	"github.com/stackshy/cloudemu/v2/providers/azure/managedidentity"
 	"github.com/stackshy/cloudemu/v2/providers/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/v2/providers/azure/notificationhubs"
@@ -33,6 +35,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/providers/azure/sql"
+	"github.com/stackshy/cloudemu/v2/providers/azure/sqlvirtualmachine"
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
@@ -151,6 +154,9 @@ type Provider struct {
 	Databricks         *databricks.Mock
 	AI                 *ai.Mock
 	Search             *search.Mock
+	ManagedIdentity    *managedidentity.Mock
+	SQLVirtualMachine  *sqlvirtualmachine.Mock
+	ContainerApps      *containerapps.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -205,6 +211,9 @@ func New(opts ...config.Option) *Provider {
 		Databricks:         databricks.New(o),
 		AI:                 ai.New(o),
 		Search:             search.New(o),
+		ManagedIdentity:    managedidentity.New(o),
+		SQLVirtualMachine:  sqlvirtualmachine.New(o),
+		ContainerApps:      containerapps.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -225,7 +234,20 @@ func New(opts ...config.Option) *Provider {
 	p.EventGrid.SetMonitoring(p.Monitor)
 	p.EventGrid.SetServiceBusDeliverer(p.ServiceBus)
 	p.EventGrid.SetFunctionInvoker(p.Functions)
+	p.EventGrid.SetStorageQueueDeliverer(p.QueueStorage)
+	// Native trigger delivery: a message enqueued to a Storage queue or Service
+	// Bus queue invokes any function whose function.json declares the matching
+	// trigger binding (queueTrigger / serviceBusTrigger) for that queue.
+	p.QueueStorage.SetFunctionTriggerSink(p.Functions, "queueTrigger")
+	p.ServiceBus.SetFunctionTriggerSink(p.Functions, "serviceBusTrigger")
 	p.BlobStorage.SetEventGridPublisher(p.EventGrid)
+	// A blob created/updated in a bound container invokes any function whose
+	// function.json declares a blobTrigger binding on that container.
+	p.BlobStorage.SetFunctionTriggerSink(p.Functions)
+	// A Cosmos DB document created/updated in a bound (database, container)
+	// invokes any function whose function.json declares a cosmosDBTrigger
+	// binding on it, mirroring Cosmos's change feed.
+	p.CosmosDB.SetFunctionTriggerSink(p.Functions)
 	p.SQL.SetMonitoring(p.Monitor)
 	p.PostgresFlex.SetMonitoring(p.Monitor)
 	p.MySQLFlex.SetMonitoring(p.Monitor)
@@ -259,6 +281,9 @@ func New(opts ...config.Option) *Provider {
 			IAM:             p.IAM,
 			Extra: []resourcediscovery.GenericResources{
 				azureMLDiscovery{p.AI},
+				managedIdentityDiscovery{p.ManagedIdentity},
+				sqlVirtualMachineDiscovery{p.SQLVirtualMachine},
+				containerAppsDiscovery{p.ContainerApps},
 			},
 		},
 	)

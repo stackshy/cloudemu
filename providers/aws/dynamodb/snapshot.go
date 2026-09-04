@@ -19,7 +19,15 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // flag. Items are keyed by their internal store key so they restore under the
 // same identity.
 type dynamoSnapshot struct {
-	Tables map[string]*tableSnapshot `json:"tables,omitempty"`
+	Tables  map[string]*tableSnapshot  `json:"tables,omitempty"`
+	Backups map[string]*backupSnapshot `json:"backups,omitempty"`
+}
+
+// backupSnapshot is one on-demand backup's serialized state: its description
+// (including the source-table schema) and the item set captured at backup time.
+type backupSnapshot struct {
+	Info  driver.BackupInfo `json:"info"`
+	Items []map[string]any  `json:"items,omitempty"`
 }
 
 type tableSnapshot struct {
@@ -54,6 +62,13 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		}
 	}
 
+	if len(m.backups) > 0 {
+		snap.Backups = make(map[string]*backupSnapshot, len(m.backups))
+		for arn, b := range m.backups {
+			snap.Backups[arn] = &backupSnapshot{Info: b.info, Items: b.items}
+		}
+	}
+
 	return json.Marshal(snap)
 }
 
@@ -85,6 +100,15 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		}
 
 		m.tables[name] = td
+	}
+
+	for arn, bs := range snap.Backups {
+		items := make([]map[string]any, len(bs.Items))
+		for i, item := range bs.Items {
+			items[i] = expr.RetypeItem(item)
+		}
+
+		m.backups[arn] = &backupData{info: bs.Info, items: items}
 	}
 
 	return nil

@@ -16,7 +16,7 @@ import (
 // the ARM-specific fields (region, routes, user tags) round-trip through the
 // Azure route-table metadata store.
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; the per-resource routers are the same method switch over a distinct type by design
 func (h *Handler) routeRouteTable(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	if rp.ResourceName == "" {
 		h.listRouteTables(w, r, rp)
@@ -26,6 +26,8 @@ func (h *Handler) routeRouteTable(w http.ResponseWriter, r *http.Request, rp azu
 	switch r.Method {
 	case http.MethodPut:
 		h.createRouteTable(w, r, rp)
+	case http.MethodPatch:
+		h.patchRouteTable(w, r, rp)
 	case http.MethodGet:
 		h.getRouteTable(w, r, rp)
 	case http.MethodDelete:
@@ -152,6 +154,23 @@ func (h *Handler) deleteRouteTable(w http.ResponseWriter, r *http.Request, rp az
 	info, err := h.findRouteTableInGroup(r.Context(), rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	// Real ARM refuses to delete a route table still associated with any subnet,
+	// answering 400 InUseRouteTableCannotBeDeleted; disassociate the subnet first.
+	//
+	// As with the NSG guard, the subnet reference scan and the route-table delete
+	// touch two independent memstores whose locks cannot span both, so the
+	// check-then-delete is not atomic. The gap mirrors real ARM's consistency
+	// window and closing it would need a cross-store lock the emulator does not
+	// model, so it is accepted here.
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeRouteTable, rp.ResourceName)
+
+	if refs := h.routeTableAssociatedSubnets(r.Context(), id); len(refs) > 0 {
+		azurearm.WriteError(w, http.StatusBadRequest, "InUseRouteTableCannotBeDeleted",
+			inUseMessage("Route table", rp.ResourceName, refs))
+
 		return
 	}
 

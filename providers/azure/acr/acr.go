@@ -35,6 +35,9 @@ var _ driver.ContainerRegistry = (*Mock)(nil)
 type imageData struct {
 	detail driver.ImageDetail
 	layers []driver.LayerInfo
+	// attrs is the manifest's changeableAttributes (deleteEnabled/writeEnabled/
+	// listEnabled/readEnabled), set via PATCH /acr/v1/{name}/_manifests/{digest}.
+	attrs changeableAttrs
 }
 
 type repoData struct {
@@ -44,6 +47,12 @@ type repoData struct {
 	policy        *driver.LifecyclePolicy
 	scanOnPush    bool
 	tagMutability string
+	// attrs is the repository's changeableAttributes, set via PATCH
+	// /acr/v1/{name}.
+	attrs changeableAttrs
+	// tagAttrs holds each tag's changeableAttributes, set via PATCH
+	// /acr/v1/{name}/_tags/{tag}. A tag absent from this map is fully enabled.
+	tagAttrs map[string]changeableAttrs
 }
 
 // Mock is an in-memory mock implementation of the Azure Container Registry service.
@@ -131,6 +140,7 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 		scans:         memstore.New[*driver.ScanResult](),
 		scanOnPush:    cfg.ImageScanOnPush,
 		tagMutability: mutability,
+		attrs:         defaultChangeableAttrs(),
 	}
 
 	m.repos.Set(cfg.Name, rd)
@@ -142,9 +152,16 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 
 // DeleteRepository deletes an ACR repository.
 func (m *Mock) DeleteRepository(_ context.Context, name string, force bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "repository %q not found", name)
+	}
+
+	if err := checkRepoDeletable(rd, name); err != nil {
+		return err
 	}
 
 	if !force && rd.images.Len() > 0 {
@@ -169,12 +186,21 @@ func (m *Mock) GetRepository(_ context.Context, name string) (*driver.Repository
 	return &result, nil
 }
 
-// ListRepositories lists all ACR repositories.
+// ListRepositories lists all ACR repositories whose listEnabled attribute is
+// not locked. A read-locked or write-locked repository still appears here;
+// only listEnabled hides a repository from the catalog.
 func (m *Mock) ListRepositories(_ context.Context) ([]driver.Repository, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	all := m.repos.All()
 	repos := make([]driver.Repository, 0, len(all))
 
 	for _, rd := range all {
+		if !rd.attrs.listEnabled {
+			continue
+		}
+
 		repo := rd.info
 		repo.ImageCount = rd.images.Len()
 		repos = append(repos, repo)
@@ -195,7 +221,15 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", manifest.Repository)
 	}
 
+	if err := checkRepoWritable(rd, manifest.Repository); err != nil {
+		return nil, err
+	}
+
 	if err := checkTagMutability(rd, manifest.Tag); err != nil {
+		return nil, err
+	}
+
+	if err := checkTagWritable(rd, manifest.Tag); err != nil {
 		return nil, err
 	}
 
@@ -209,9 +243,13 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 	}
 
 	// Content-addressing parity: re-pushing the same digest under a new tag must
-	// preserve the pre-existing tags on that manifest rather than clobbering them.
+	// preserve the pre-existing tags on that manifest rather than clobbering them,
+	// and a manifest that was already PATCHed keeps its changeableAttributes.
+	attrs := defaultChangeableAttrs()
+
 	if existing, ok := rd.images.Get(digest); ok {
 		tags = unionTags(existing.detail.Tags, manifest.Tag)
+		attrs = existing.attrs
 	}
 
 	detail := driver.ImageDetail{
@@ -224,7 +262,7 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 		MediaType:  mediaType,
 	}
 
-	img := &imageData{detail: detail, layers: manifest.Layers}
+	img := &imageData{detail: detail, layers: manifest.Layers, attrs: attrs}
 	rd.images.Set(digest, img)
 
 	if manifest.Tag != "" {
@@ -263,8 +301,13 @@ func (m *Mock) GetImage(_ context.Context, repository, reference string) (*drive
 	return &result, nil
 }
 
-// ListImages lists all images in an ACR repository.
+// ListImages lists all images in an ACR repository whose listEnabled
+// attribute is not locked. A read-locked or write-locked manifest still
+// appears here; only listEnabled hides a manifest from the listing.
 func (m *Mock) ListImages(_ context.Context, repository string) ([]driver.ImageDetail, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
@@ -274,6 +317,10 @@ func (m *Mock) ListImages(_ context.Context, repository string) ([]driver.ImageD
 	images := make([]driver.ImageDetail, 0, len(all))
 
 	for _, img := range all {
+		if !img.attrs.listEnabled {
+			continue
+		}
+
 		images = append(images, img.detail)
 	}
 
@@ -295,9 +342,17 @@ func (m *Mock) DeleteImage(_ context.Context, repository, reference string) erro
 		return errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
 	}
 
+	if err := checkManifestDeletable(img); err != nil {
+		return err
+	}
+
 	rd.images.Delete(img.detail.Digest)
 	rd.scans.Delete(img.detail.Digest)
 	rd.info.ImageCount = rd.images.Len()
+
+	for _, tag := range img.detail.Tags {
+		forgetTag(rd, tag)
+	}
 
 	return nil
 }
@@ -325,6 +380,10 @@ func (m *Mock) TagImage(_ context.Context, repository, sourceRef, targetTag stri
 		return err
 	}
 
+	if err := checkTagWritable(rd, targetTag); err != nil {
+		return err
+	}
+
 	updateTagIndex(rd, img.detail.Digest, targetTag)
 	rd.info.ImageCount = rd.images.Len()
 
@@ -348,6 +407,15 @@ func (m *Mock) DeleteTag(_ context.Context, repository, tag string) error {
 		return errors.Newf(errors.NotFound, "repository %q not found", repository)
 	}
 
+	attrs, ok := tagAttrsOf(rd, tag)
+	if !ok {
+		return errors.Newf(errors.NotFound, "tag %q not found in repository %q", tag, repository)
+	}
+
+	if !attrs.deleteEnabled {
+		return errors.Newf(errors.FailedPrecondition, "tag %q is delete-locked (deleteEnabled=false)", tag)
+	}
+
 	all := rd.images.All()
 	for d, img := range all {
 		if !hasTag(img.detail.Tags, tag) {
@@ -356,6 +424,7 @@ func (m *Mock) DeleteTag(_ context.Context, repository, tag string) error {
 
 		img.detail.Tags = removeTag(img.detail.Tags, tag)
 		rd.images.Set(d, img)
+		forgetTag(rd, tag)
 
 		return nil
 	}

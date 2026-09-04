@@ -109,7 +109,7 @@ func (o *propertyOverlay) evict(id string) {
 // top-level id/properties pair pass through untouched.
 func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !strings.HasPrefix(r.URL.Path, "/subscriptions/") {
+		if !strings.HasPrefix(r.URL.Path, "/subscriptions/") || isTagsAtScope(r.URL.Path) {
 			next.ServeHTTP(w, r)
 			return
 		}
@@ -127,6 +127,20 @@ func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.H
 			rec.flush(w)
 		}
 	})
+}
+
+// isTagsAtScope reports whether path targets the Tags resource provider
+// (Microsoft.Resources/tags/default). That handler fully models properties.tags,
+// and Replace/Delete legitimately drop tag keys — the overlay, which only ever
+// ADDS keys the response is missing, would wrongly resurrect a just-removed tag
+// as an "unmodeled" property, so the path must bypass the overlay entirely.
+func isTagsAtScope(path string) bool {
+	const suffix = "/providers/Microsoft.Resources/tags/default"
+
+	trimmed := strings.TrimRight(path, "/")
+
+	return len(trimmed) > len(suffix) &&
+		strings.EqualFold(trimmed[len(trimmed)-len(suffix):], suffix)
 }
 
 // resourceIDFromPath reconstructs the ARM resource id from a request path so a
@@ -467,6 +481,25 @@ func sanitizeUnmodeled(v any) any {
 	}
 }
 
+// isZeroScalarJSON reports whether v is the JSON zero value for a scalar type:
+// null, "", false, or 0. Only scalars are classified — maps and slices always
+// return false here (an empty object/array is a much rarer "clear" signal and
+// is left to the existing verbatim-capture behavior).
+func isZeroScalarJSON(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return true
+	case string:
+		return t == ""
+	case bool:
+		return !t
+	case float64:
+		return t == 0
+	default:
+		return false
+	}
+}
+
 // missingProperties returns the entries of req that resp does not already carry,
 // descending into nested objects — and, element-by-element, into arrays of
 // objects — so an unmodeled leaf under a modeled parent (or under a modeled
@@ -488,6 +521,21 @@ func missingProperties(req, resp map[string]any) map[string]any {
 
 		respVal, present := resp[k]
 		if !present {
+			// A request scalar at its JSON zero value (null/""/false/0) that the
+			// response doesn't echo is far more likely a field the handler DOES
+			// model — and correctly dropped via omitempty because a PATCH just
+			// set it back to its default — than genuinely unmodeled data worth
+			// preserving. Azure SQL's PATCH-to-clear elasticPoolId (set it to ""
+			// to remove a database from its elastic pool) is exactly this shape:
+			// without this guard, the overlay "helpfully" re-injected the
+			// just-cleared "" back into every future response, resurrecting pool
+			// membership the request explicitly removed. A non-zero scalar or a
+			// populated object/array is still captured verbatim below — this
+			// only narrows the false-positive case of a zero scalar.
+			if isZeroScalarJSON(reqVal) {
+				continue
+			}
+
 			// A wholly-unmodeled object is captured verbatim, so strip any
 			// write-only secret nested inside it — the per-key skip above only
 			// covers keys the loop visits directly, not those buried in a

@@ -14,11 +14,12 @@
 //	POST   .../virtualMachines/{name}/start  — Start
 //	POST   .../virtualMachines/{name}/powerOff — Stop
 //	POST   .../virtualMachines/{name}/restart — Restart
+//	POST   .../virtualMachines/{name}/redeploy — Redeploy (power-cycle to a new host)
+//	POST   .../virtualMachines/{name}/reimage  — Reimage (reset OS disk; VM ends running)
 //	POST   .../virtualMachines/{name}/retrieveBootDiagnosticsData — boot-diagnostics URIs
 //	GET    .../virtualMachines/{name}/bootDiagnostics/serialConsoleLog — serial-log bytes
 //
-// Less-used operations (capture, deallocate, instance view, redeploy, etc.)
-// are not yet wired and will return 501 Not Implemented.
+// Remaining less-used operations return 501 Not Implemented.
 package virtualmachines
 
 import (
@@ -43,6 +44,18 @@ const resourceTypeScaleSets = "virtualMachineScaleSets"
 // resourceTypeLocations is the resource type used for async operation
 // status endpoints (Microsoft.Compute/locations/{loc}/operationStatuses/{id}).
 const resourceTypeLocations = "locations"
+
+// Power-action verbs shared by the single-VM sub-resource dispatch and the
+// whole-VMSS power dispatch. Compared case-insensitively (ARM action segments
+// arrive as e.g. "powerOff").
+const (
+	actionStart      = "start"
+	actionPowerOff   = "poweroff"
+	actionDeallocate = "deallocate"
+	actionRestart    = "restart"
+	actionReimage    = "reimage"
+	actionRedeploy   = "redeploy"
+)
 
 // Handler serves ARM JSON requests for Microsoft.Compute/virtualMachines.
 type Handler struct {
@@ -189,14 +202,18 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp azurear
 //nolint:gocritic // rp travels through the dispatch chain once per request
 func (h *Handler) servePostAction(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	switch strings.ToLower(rp.SubResource) {
-	case "start":
+	case actionStart:
 		h.start(w, r, rp)
-	case "poweroff":
+	case actionPowerOff:
 		h.powerOff(w, r, rp)
-	case "deallocate":
+	case actionDeallocate:
 		h.deallocate(w, r, rp)
-	case "restart":
+	case actionRestart:
 		h.restart(w, r, rp)
+	case actionRedeploy:
+		h.redeploy(w, r, rp)
+	case actionReimage:
+		h.reimage(w, r, rp)
 	case "generalize":
 		h.generalize(w, r, rp)
 	case "capture":

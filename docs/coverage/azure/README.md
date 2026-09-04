@@ -7,39 +7,49 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | --- | --- | --- |
 | [ACR](./acr.md) | `containerregistry` | 15 |
 | [AI](./ai.md) | `azureai` | 92 |
-| [AKS](./aks.md) | — (provider-native) | 16 |
+| [AKS](./aks.md) | — (provider-native) | 18 |
 | [BlobStorage](./blobstorage.md) | `storage` | 35 |
 | [Cache](./cache.md) | `cache` | 17 |
+| [ContainerApps](./containerapps.md) | — (provider-native) | 19 |
 | [ContainerInstances](./containerinstances.md) | `containerinstances` | 10 |
 | [CosmosDB](./cosmosdb.md) | `database` | 24 |
 | [CosmosPostgreSQL](./cosmospostgresql.md) | `cosmospostgresql` | 34 |
 | [Cosmosaccount](./cosmosaccount.md) | — (provider-native) | 10 |
+| [Costmanagement](./costmanagement.md) | — (provider-native) | 1 |
 | [DNS](./dns.md) | `dns` | 16 |
 | [Databricks](./databricks.md) | `databricks` | 46 |
 | [Disks](./disks.md) | — (provider-native) | 7 |
 | [EventGrid](./eventgrid.md) | `eventbus` | 16 |
+| [Eventhub](./eventhub.md) | — (provider-native) | 14 |
 | [Functions](./functions.md) | `serverless` | 27 |
 | [IAM](./iam.md) | `iam` | 40 |
 | [Images](./images.md) | — (provider-native) | 5 |
 | [KeyVault](./keyvault.md) | `secrets` | 7 |
+| [Kusto](./kusto.md) | — (provider-native) | 14 |
 | [LB](./lb.md) | `loadbalancer` | 19 |
+| [Locks](./locks.md) | — (provider-native) | 4 |
 | [LogAnalytics](./loganalytics.md) | `logging` | 17 |
 | [ManagedCassandra](./managedcassandra.md) | `managedcassandra` | 15 |
+| [ManagedIdentity](./managedidentity.md) | — (provider-native) | 8 |
 | [Monitor](./monitor.md) | `monitoring` | 12 |
 | [MySQLFlex](./mysqlflex.md) | `relationaldb` | 21 |
 | [NotificationHubs](./notificationhubs.md) | `notification` | 9 |
 | [PostgresFlex](./postgresflex.md) | — (provider-native) | 21 |
+| [Providers](./providers.md) | — (provider-native) | 4 |
 | [Queue](./queue.md) | — (provider-native) | 6 |
 | [QueueStorage](./queuestorage.md) | `messagequeue` | 14 |
 | [Resourcegraph](./resourcegraph.md) | — (provider-native) | 3 |
 | [Resourcegroups](./resourcegroups.md) | — (provider-native) | 7 |
 | [SQL](./sql.md) | — (provider-native) | 21 |
+| [SQLVirtualMachine](./sqlvirtualmachine.md) | — (provider-native) | 9 |
 | [Search](./search.md) | `azuresearch` | 53 |
 | [Snapshots](./snapshots.md) | — (provider-native) | 5 |
 | [Sshpublickeys](./sshpublickeys.md) | — (provider-native) | 7 |
 | [Storageaccount](./storageaccount.md) | — (provider-native) | 10 |
 | [Subscriptions](./subscriptions.md) | — (provider-native) | 3 |
+| [Synapse](./synapse.md) | — (provider-native) | 11 |
 | [TableStorage](./tablestorage.md) | `tablestorage` | 9 |
+| [Tags](./tags.md) | — (provider-native) | 4 |
 | [Tenants](./tenants.md) | — (provider-native) | 1 |
 | [VNet](./vnet.md) | `networking` | 57 |
 | [VirtualMachines](./virtualmachines.md) | `compute` | 37 |

@@ -23,43 +23,6 @@ GCP's `containerregistry` service · portable interface `driver.ContainerRegistr
 | `StartImageScan` | Image scanning |
 | `TagImage` |  |
 
-## Optional capabilities
-
-Discovered by type assertion; only some providers implement these.
-
-### AzureRegistryManager
-
-AzureRegistryManager is the Azure-specific ACR management-plane surface,
-
-| Operation | Description |
-| --- | --- |
-| `CreateOrUpdateRegistry` | CreateOrUpdateRegistry is the ARM PUT (full create-or-replace). It reports |
-| `CreateOrUpdateReplication` |  |
-| `CreateOrUpdateWebhook` |  |
-| `DeleteRegistry` |  |
-| `DeleteReplication` |  |
-| `DeleteWebhook` |  |
-| `GetRegistry` |  |
-| `GetReplication` |  |
-| `GetWebhook` |  |
-| `ListRegistries` |  |
-| `ListRegistryCredentials` |  |
-| `ListRegistryUsages` |  |
-| `ListReplications` |  |
-| `ListWebhooks` |  |
-| `RegenerateRegistryCredential` |  |
-| `UpdateRegistry` | UpdateRegistry is the ARM PATCH (partial update). It merges upd onto the |
-| `UpdateReplication` |  |
-| `UpdateWebhook` |  |
-
-### AzureRepositoryWriter
-
-AzureRepositoryWriter is the Azure-specific ACR data-plane surface for
-
-| Operation | Description |
-| --- | --- |
-| `DeleteTag` |  |
-
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

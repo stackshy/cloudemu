@@ -93,31 +93,39 @@ func (m *Mock) DescribeVPCEndpoints(
 func (m *Mock) ModifyVPCEndpoint(
 	_ context.Context, id string, cfg driver.VPCEndpointConfig,
 ) (*driver.VPCEndpoint, error) {
-	ep, ok := m.endpoints.Get(id)
-	if !ok {
+	var out *driver.VPCEndpoint
+
+	found := m.endpoints.Update(id, func(ep *driver.VPCEndpoint) *driver.VPCEndpoint {
+		cp := *ep
+
+		if len(cfg.SubnetIDs) > 0 {
+			cp.SubnetIDs = copyStringSlice(cfg.SubnetIDs)
+		}
+
+		if len(cfg.SecurityGroupIDs) > 0 {
+			cp.SecurityGroupIDs = copyStringSlice(cfg.SecurityGroupIDs)
+		}
+
+		if len(cfg.RouteTableIDs) > 0 {
+			cp.RouteTableIDs = copyStringSlice(cfg.RouteTableIDs)
+		}
+
+		if len(cfg.Tags) > 0 {
+			cp.Tags = copyTags(cfg.Tags)
+		}
+
+		out = copyEndpoint(&cp)
+
+		return &cp
+	})
+	if !found {
 		return nil, cerrors.Newf(
 			cerrors.NotFound,
 			"service endpoint %q not found", id,
 		)
 	}
 
-	if len(cfg.SubnetIDs) > 0 {
-		ep.SubnetIDs = copyStringSlice(cfg.SubnetIDs)
-	}
-
-	if len(cfg.SecurityGroupIDs) > 0 {
-		ep.SecurityGroupIDs = copyStringSlice(cfg.SecurityGroupIDs)
-	}
-
-	if len(cfg.RouteTableIDs) > 0 {
-		ep.RouteTableIDs = copyStringSlice(cfg.RouteTableIDs)
-	}
-
-	if len(cfg.Tags) > 0 {
-		ep.Tags = copyTags(cfg.Tags)
-	}
-
-	return copyEndpoint(ep), nil
+	return out, nil
 }
 
 func toEndpointInfo(ep *driver.VPCEndpoint) driver.VPCEndpoint {

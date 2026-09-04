@@ -39,6 +39,7 @@ func attachProvider(root, prov string, byName map[string]*Service) error {
 
 	aliases := importAliases(file)
 	built := constructedFields(file)
+	mockDirs := providerMockDirsByField(root, prov, file, aliases)
 
 	for _, field := range providerFields(file) {
 		pkgPath, ok := aliases[field.pkgAlias]
@@ -46,12 +47,134 @@ func attachProvider(root, prov string, byName map[string]*Service) error {
 			continue
 		}
 
-		if svc := resolveField(root, prov, pkgPath, byName); svc != nil {
-			svc.Providers[prov] = field.name
+		svc := resolveField(root, prov, pkgPath, byName)
+		if svc == nil {
+			continue
+		}
+
+		svc.Providers[prov] = field.name
+
+		if dir := mockDirs[field.name]; dir != "" {
+			if svc.providerMethods == nil {
+				svc.providerMethods = map[string]map[string]bool{}
+			}
+
+			svc.providerMethods[prov] = mockMethods(dir)
 		}
 	}
 
 	return nil
+}
+
+// providerMockDirsByField maps each Provider field name to the absolute
+// directory of the concrete mock backing it, covering both factory field styles:
+//   - a field typed *pkg.Mock in the struct literal (AWS/Azure/GCP), whose mock
+//     package is the field type's import path; and
+//   - a bare driver-interface field assigned pkg.New(...) in the constructor
+//     (OCI's style), whose mock is only visible in the New() body.
+//
+// Only mocks under providers/<prov>/ are recorded, so a field backed by a shared
+// engine or a driver alias contributes nothing. The result feeds providerMethods
+// so each capability can be gated to the providers whose mock implements it.
+func providerMockDirsByField(root, prov string, file *ast.File, aliases map[string]string) map[string]string {
+	out := map[string]string{}
+	marker := "/providers/" + prov + "/"
+
+	for _, field := range structFields(file, providerStructName) {
+		pkgPath, ok := aliases[field.pkgAlias]
+		if !ok || !strings.Contains(pkgPath, marker) {
+			continue
+		}
+
+		out[field.name] = filepath.Join(root, strings.TrimPrefix(pkgPath, modulePath+"/"))
+	}
+
+	for field, pkgPath := range constructorMockPkgs(file, aliases, marker) {
+		if _, done := out[field]; done {
+			continue
+		}
+
+		out[field] = filepath.Join(root, strings.TrimPrefix(pkgPath, modulePath+"/"))
+	}
+
+	return out
+}
+
+// constructorMockPkgs scans the provider factory's New() for assignments of the
+// form `p.Field = pkg.NewXxx(...)` and maps the field name to that constructor
+// package's import path when it sits under marker. This surfaces the concrete
+// mock behind a bare driver-interface field (OCI's style), which the struct type
+// alone does not reveal — modeled on native.go's handlerCallPkg.
+func constructorMockPkgs(file *ast.File, aliases map[string]string, marker string) map[string]string {
+	out := map[string]string{}
+
+	fn := findFunc(file, "New")
+	if fn == nil || fn.Body == nil {
+		return out
+	}
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		as, ok := n.(*ast.AssignStmt)
+		if !ok {
+			return true
+		}
+
+		for i, lhs := range as.Lhs {
+			field := assignedFieldName(lhs)
+			if field == "" || i >= len(as.Rhs) {
+				continue
+			}
+
+			if pkgPath := constructorMockPkg(as.Rhs[i], aliases, marker); pkgPath != "" {
+				out[field] = pkgPath
+			}
+		}
+
+		return true
+	})
+
+	return out
+}
+
+// assignedFieldName returns the field name of a `p.Field` selector on the LHS of
+// an assignment, else "".
+func assignedFieldName(lhs ast.Expr) string {
+	sel, ok := lhs.(*ast.SelectorExpr)
+	if !ok {
+		return ""
+	}
+
+	if _, ok := sel.X.(*ast.Ident); !ok {
+		return ""
+	}
+
+	return sel.Sel.Name
+}
+
+// constructorMockPkg returns the import path of a `pkg.NewXxx(...)` call
+// expression when that package sits under marker, else "".
+func constructorMockPkg(expr ast.Expr, aliases map[string]string, marker string) string {
+	call, ok := expr.(*ast.CallExpr)
+	if !ok {
+		return ""
+	}
+
+	sel, ok := call.Fun.(*ast.SelectorExpr)
+	if !ok || !strings.HasPrefix(sel.Sel.Name, "New") {
+		return ""
+	}
+
+	id, ok := sel.X.(*ast.Ident)
+	if !ok {
+		return ""
+	}
+
+	path, ok := aliases[id.Name]
+	if !ok || !strings.Contains(path, marker) {
+		return ""
+	}
+
+	return path
 }
 
 // constructedFields returns the Provider fields the factory actually populates:

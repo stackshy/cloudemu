@@ -31,13 +31,14 @@ import (
 // Compile-time checks that Mock implements driver.Compute and, when a real
 // compute engine is wired, the optional driver.ConsoleReader capability.
 var (
-	_ driver.Compute            = (*Mock)(nil)
-	_ driver.ConsoleReader      = (*Mock)(nil)
-	_ driver.AzureVMController  = (*Mock)(nil)
-	_ driver.AzureDiskUpdater   = (*Mock)(nil)
-	_ driver.KeyPairGenerator   = (*Mock)(nil)
-	_ driver.AzureDiskAccessor  = (*Mock)(nil)
-	_ driver.AzureSSHKeyUpdater = (*Mock)(nil)
+	_ driver.Compute                 = (*Mock)(nil)
+	_ driver.ConsoleReader           = (*Mock)(nil)
+	_ driver.AzureVMController       = (*Mock)(nil)
+	_ driver.AzureDiskUpdater        = (*Mock)(nil)
+	_ driver.KeyPairGenerator        = (*Mock)(nil)
+	_ driver.AzureDiskAccessor       = (*Mock)(nil)
+	_ driver.AzureSSHKeyUpdater      = (*Mock)(nil)
+	_ driver.AzureDiskDeleteOptioner = (*Mock)(nil)
 )
 
 const (
@@ -71,8 +72,19 @@ type lifecycleTransition struct {
 }
 
 var (
-	runningMetricValues = []float64{25.0, 1024.0, 512.0, 100.0, 50.0} //nolint:gochecknoglobals // package-level test fixtures
-	zeroMetricValues    = []float64{0.0, 0.0, 0.0, 0.0, 0.0}          //nolint:gochecknoglobals // package-level test fixtures
+	// vmMetricNames are the Azure Monitor metric names auto-seeded for every VM,
+	// order-aligned with runningMetricValues/zeroMetricValues so both seed paths
+	// (emitInstanceMetrics, emitLifecycleMetrics) share one list and cannot drift.
+	// The trailing two match the memory metrics real Azure publishes under
+	// Microsoft.Compute/virtualMachines.
+	vmMetricNames = []string{ //nolint:gochecknoglobals // package-level config
+		"Percentage CPU", "Network In Total", "Network Out Total",
+		"Disk Read Operations/Sec", "Disk Write Operations/Sec",
+		"Available Memory Percentage", "Available Memory Bytes",
+	}
+	// The trailing two values are the memory metrics: ~60% available and 4 GiB.
+	runningMetricValues = []float64{25.0, 1024.0, 512.0, 100.0, 50.0, 60.0, 4294967296.0} //nolint:gochecknoglobals // fixtures
+	zeroMetricValues    = []float64{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}                    //nolint:gochecknoglobals // fixtures
 
 	startTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
 		intermediateState:     compute.StatePending,
@@ -236,22 +248,21 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, inst *instanceData) {
 		lt = m.opts.Clock.Now()
 	}
 
-	metrics := []string{"Percentage CPU", "Network In Total", "Network Out Total", "Disk Read Operations/Sec", "Disk Write Operations/Sec"}
-	values := []float64{25.0, 1024.0, 512.0, 100.0, 50.0}
 	resourceID := m.armResourceID(inst)
 
 	var data []mondriver.MetricDatum
 
-	// Backfill the 5 datapoints going backward from launch time so they land in
-	// the recent past. Forward-dating would place them in the future, where a
-	// metrics query ending at "now" filters them out.
-	for i, metricName := range metrics {
+	// Backfill 5 datapoints per metric going backward from launch time so they
+	// land in the recent past. Forward-dating would place them in the future,
+	// where a metrics query ending at "now" filters them out. A freshly-run VM
+	// is running, so it seeds the running values.
+	for i, metricName := range vmMetricNames {
 		for j := 0; j < 5; j++ {
 			ts := lt.Add(-time.Duration(j) * time.Minute)
 			data = append(data, mondriver.MetricDatum{
 				Namespace:  "Microsoft.Compute/virtualMachines",
 				MetricName: metricName,
-				Value:      values[i],
+				Value:      runningMetricValues[i],
 				Unit:       "None",
 				Dimensions: map[string]string{"resourceId": resourceID},
 				Timestamp:  ts,
@@ -267,12 +278,11 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, inst *instanceData, val
 		return
 	}
 
-	metrics := []string{"Percentage CPU", "Network In Total", "Network Out Total", "Disk Read Operations/Sec", "Disk Write Operations/Sec"}
 	now := m.opts.Clock.Now()
 	resourceID := m.armResourceID(inst)
-	data := make([]mondriver.MetricDatum, len(metrics))
+	data := make([]mondriver.MetricDatum, len(vmMetricNames))
 
-	for i, metricName := range metrics {
+	for i, metricName := range vmMetricNames {
 		data[i] = mondriver.MetricDatum{
 			Namespace:  "Microsoft.Compute/virtualMachines",
 			MetricName: metricName,
@@ -802,13 +812,17 @@ func applyMutableConfig(inst *instanceData, cfg driver.InstanceConfig, instanceI
 	}
 }
 
-// PatchInstance applies an ARM PATCH Update (BeginUpdate) merge-patch to an
-// existing instance. Only the fields the request supplied are applied: a
-// non-empty VMSize resizes the VM, a non-nil Tags map is MERGED into the
-// existing tags (adding/overwriting supplied keys, leaving omitted keys —
-// including the internal ARM-name tag — in place), and a non-nil Identity
-// replaces the identity block. Everything else (priority, licenseType, image,
-// zones, …) is left untouched, unlike UpdateInstance's full-config replace.
+// PatchInstance applies an ARM PATCH Update (BeginUpdate) to an existing
+// instance. Only the fields the request supplied are applied: a non-empty
+// VMSize resizes the VM, a non-nil Identity replaces the identity block, and a
+// non-nil Tags map REPLACES the existing tags wholesale — real Azure's PATCH
+// tags is a full replace, not a merge, despite PATCH otherwise reading as a
+// merge-patch (this is a well-documented Azure Compute quirk; see the sibling
+// SQL-VM UpdateTags). The internal ARM-name tag is preserved across the
+// replace since it is never part of the caller-supplied patch.Tags and
+// findByName depends on it surviving a tag PATCH. Everything else (priority,
+// licenseType, image, zones, …) is left untouched, unlike UpdateInstance's
+// full-config replace.
 func (m *Mock) PatchInstance(_ context.Context, instanceID string, patch driver.AzureVMPatch) error {
 	ok := m.instances.Update(instanceID, func(inst *instanceData) *instanceData {
 		if patch.VMSize != "" {
@@ -816,12 +830,11 @@ func (m *Mock) PatchInstance(_ context.Context, instanceID string, patch driver.
 		}
 
 		if patch.Tags != nil {
-			if inst.Tags == nil {
-				inst.Tags = make(map[string]string, len(patch.Tags))
-			}
+			armName := inst.Tags[armNameTag]
+			inst.Tags = copyTags(patch.Tags)
 
-			for k, v := range patch.Tags {
-				inst.Tags[k] = v
+			if armName != "" {
+				inst.Tags[armNameTag] = armName
 			}
 		}
 
@@ -871,6 +884,11 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 		return err
 	}
 
+	// Cascade the attached managed disks per each attachment's ARM deleteOption
+	// (recorded as VolumeInfo.DeleteOnTermination): a disk with the flag set is
+	// deleted with the VM, one without it is detached (returned to Unattached).
+	m.cascadeTerminatedVolumes(instanceIDs)
+
 	// Tear down the real backing for any engine-backed instances. Every id is now
 	// Terminated (transitionInstances verified they exist), so this is best-effort:
 	// continue through the whole batch and aggregate errors, otherwise one
@@ -906,6 +924,40 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	}
 
 	return errors.Join(errs...)
+}
+
+// cascadeTerminatedVolumes settles every managed disk attached to a
+// now-terminated instance per its ARM deleteOption: a disk whose attachment set
+// DeleteOnTermination=true is DELETED with the VM, one without it is returned to
+// the Unattached state (attachment cleared). The delete-vs-detach decision and
+// the mutation happen under one store-lock span (UpdateOrDelete re-reads the
+// attachment at mutation time) so a concurrent DetachVolume that cleared the
+// attachment first is observed here and the disk is not wrongly deleted.
+func (m *Mock) cascadeTerminatedVolumes(instanceIDs []string) {
+	terminated := make(map[string]bool, len(instanceIDs))
+	for _, id := range instanceIDs {
+		terminated[id] = true
+	}
+
+	for _, volID := range m.volumes.Keys() {
+		m.volumes.UpdateOrDelete(volID, func(v *driver.VolumeInfo) (*driver.VolumeInfo, bool) {
+			if v.AttachedTo == "" || !terminated[v.AttachedTo] {
+				return v, true
+			}
+
+			if v.DeleteOnTermination {
+				return v, false
+			}
+
+			cp := *v
+			cp.State = stateAvailable
+			cp.AttachedTo = ""
+			cp.Device = ""
+			cp.DeleteOnTermination = false
+
+			return &cp, true
+		})
+	}
 }
 
 // GetConsoleOutput returns the console output the configured compute engine
@@ -1126,41 +1178,81 @@ func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.Volume
 }
 
 func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device string) error {
-	vol, ok := m.volumes.Get(volumeID)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
-	}
-
-	if vol.State == stateInUse {
-		return cerrors.Newf(cerrors.FailedPrecondition, "disk %q already attached", volumeID)
-	}
-
 	if _, ok := m.instances.Get(instanceID); !ok {
 		return cerrors.Newf(cerrors.NotFound, "VM %q not found", instanceID)
 	}
 
-	vol.State = stateInUse
-	vol.AttachedTo = instanceID
-	vol.Device = device
+	// The in-use precondition and the mutation must happen under one store-lock
+	// span (copy-on-write) so a concurrent AttachVolume/DetachVolume on the same
+	// disk cannot race between the check and the write.
+	var attachErr error
 
-	return nil
-}
+	ok := m.volumes.Update(volumeID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
+		if v.State == stateInUse {
+			attachErr = cerrors.Newf(cerrors.FailedPrecondition, "disk %q already attached", volumeID)
+			return v
+		}
 
-// DetachVolume detaches a managed disk. instanceID/device are accepted for
-// driver-interface parity with AWS; Azure detaches by disk id alone.
-func (m *Mock) DetachVolume(_ context.Context, volumeID, _, _ string) error {
-	vol, ok := m.volumes.Get(volumeID)
+		cp := *v
+		cp.State = stateInUse
+		cp.AttachedTo = instanceID
+		cp.Device = device
+
+		return &cp
+	})
+
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
 	}
 
-	if vol.State != "in-use" {
-		return cerrors.Newf(cerrors.FailedPrecondition, "disk %q is not attached", volumeID)
+	return attachErr
+}
+
+// DetachVolume detaches a managed disk. instanceID/device are accepted for
+// driver-interface parity with AWS; Azure detaches by disk id alone. The
+// attachment-scoped DeleteOnTermination flag is cleared on detach (a disk that
+// survives its VM is no longer slated for cascade deletion).
+func (m *Mock) DetachVolume(_ context.Context, volumeID, _, _ string) error {
+	var detachErr error
+
+	ok := m.volumes.Update(volumeID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
+		if v.State != stateInUse {
+			detachErr = cerrors.Newf(cerrors.FailedPrecondition, "disk %q is not attached", volumeID)
+			return v
+		}
+
+		cp := *v
+		cp.State = stateAvailable
+		cp.AttachedTo = ""
+		cp.Device = ""
+		cp.DeleteOnTermination = false
+
+		return &cp
+	})
+
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
 	}
 
-	vol.State = stateAvailable
-	vol.AttachedTo = ""
-	vol.Device = ""
+	return detachErr
+}
+
+// SetDiskDeleteOnTermination records a disk attachment's ARM deleteOption on the
+// volume (deleteOption "Delete" ⟷ deleteOnTermination true), so VM delete can
+// cascade: a true flag deletes the disk with the VM, a false one detaches it.
+// It backs the AzureDiskDeleteOptioner capability; the Azure VM wire handler
+// calls it after attaching each OS / data disk a VM's storageProfile references.
+func (m *Mock) SetDiskDeleteOnTermination(_ context.Context, volumeID string, deleteOnTermination bool) error {
+	ok := m.volumes.Update(volumeID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
+		cp := *v
+		cp.DeleteOnTermination = deleteOnTermination
+
+		return &cp
+	})
+
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "disk %q not found", volumeID)
+	}
 
 	return nil
 }
@@ -1250,9 +1342,18 @@ func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.Snap
 	return describeResources(m.snapshots, ids), nil
 }
 
+//nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
 func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
-	if _, ok := m.instances.Get(cfg.InstanceID); !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "VM %q not found", cfg.InstanceID)
+	switch {
+	case cfg.InstanceID != "":
+		if _, ok := m.instances.Get(cfg.InstanceID); !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "VM %q not found", cfg.InstanceID)
+		}
+	case cfg.OSDiskID != "":
+		// Disk-sourced image: OSDiskID is the source disk's ARM ID, not a driver
+		// volume key, so the wire handler owns disk-existence validation.
+	default:
+		return nil, cerrors.New(cerrors.InvalidArgument, "image requires a source VM or OS disk")
 	}
 
 	id := fmt.Sprintf("/subscriptions/sub/resourceGroups/rg/providers/Microsoft.Compute/images/img-%d",
@@ -1260,12 +1361,35 @@ func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.I
 
 	img := &driver.ImageInfo{
 		ID: id, Name: cfg.Name, State: stateAvailable, Description: cfg.Description,
-		CreatedAt: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:      copyTags(cfg.Tags),
+		CreatedAt:  m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		Tags:       copyTags(cfg.Tags),
+		OSDiskID:   cfg.OSDiskID,
+		OSType:     cfg.OSType,
+		OSState:    cfg.OSState,
+		DiskSizeGB: cfg.DiskSizeGB,
 	}
 	m.images.Set(id, img)
 
 	result := *img
+
+	return &result, nil
+}
+
+// UpdateImageTags replaces the tag set of an existing image in place, backing
+// the Azure Microsoft.Compute/images PATCH. The wire handler owns the merge with
+// the image's cloudemu-internal tags, so this simply stores the tags it is given
+// and returns the updated image.
+func (m *Mock) UpdateImageTags(_ context.Context, id string, tags map[string]string) (*driver.ImageInfo, error) {
+	img, ok := m.images.Get(id)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "image %q not found", id)
+	}
+
+	updated := *img
+	updated.Tags = copyTags(tags)
+	m.images.Set(id, &updated)
+
+	result := updated
 
 	return &result, nil
 }

@@ -43,6 +43,7 @@ type diskResponse struct {
 	SourceImageID     string            `json:"sourceImageId,omitempty"`
 	Users             []string          `json:"users,omitempty"`
 	Labels            map[string]string `json:"labels,omitempty"`
+	LabelFingerprint  string            `json:"labelFingerprint,omitempty"`
 	CreationTimestamp string            `json:"creationTimestamp,omitempty"`
 }
 
@@ -148,10 +149,10 @@ func (h *Handler) deleteDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 	}
 
 	// Real GCP refuses to delete a disk still attached to an instance, returning
-	// 400 resourceInUseByAnotherResource. attachDisk only records the disk in the
-	// instance's disks[] (it never flips the driver volume state), so reuse the
-	// same instance scan that populates users[] on a read and reject while any
-	// instance still references this disk. Delete succeeds once the disk detaches.
+	// 400 resourceInUseByAnotherResource. attach flips the driver volume to
+	// in-use (AttachedTo), so the same volume-store scan that populates users[]
+	// on a read is the authoritative attachment view: reject while any instance
+	// still references this disk. Delete succeeds once the disk detaches.
 	host := hostFromRequest(r)
 	if users := h.diskUsersByName(r.Context(), host, rp.Project); len(users[rp.ResourceName]) > 0 {
 		diskLink := gcprest.SelfLink(host, rp.Project, gcprest.ScopeZones, rp.ScopeName, "disks", rp.ResourceName)
@@ -220,6 +221,125 @@ func (h *Handler) resizeDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 
 	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
 		"disks", rp.ResourceName, "resize")
+
+	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// resourceLabelMutator is the GCP-local capability the GCE Mock implements to
+// replace user labels on disks, images, and snapshots (the setLabels verb).
+// Reached via a type assertion so the shared compute driver stays unchanged.
+type resourceLabelMutator interface {
+	SetVolumeLabelsGCP(id string, set map[string]string, remove []string) error
+	SetImageLabelsGCP(id string, set map[string]string, remove []string) error
+	SetSnapshotLabelsGCP(id string, set map[string]string, remove []string) error
+}
+
+// applyResourceSetLabels enforces the labelFingerprint optimistic-concurrency
+// check (a stale/mismatched fingerprint → 412 conditionNotMet), computes which
+// existing user labels the new set drops, invokes mutate to replace the label
+// set on the underlying resource, and returns a DONE Operation. GCP setLabels
+// REPLACES the label set, so labels absent from body.Labels are removed.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) applyResourceSetLabels(
+	w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath,
+	body setLabelsRequest, currentTags map[string]string, resourceType string,
+	mutate func(set map[string]string, remove []string) error,
+) {
+	if !fingerprintMatches(body.LabelFingerprint, labelFingerprintFor(userLabels(currentTags))) {
+		writeConditionNotMet(w, "labelFingerprint")
+		return
+	}
+
+	var remove []string
+
+	for k := range userLabels(currentTags) {
+		if _, keep := body.Labels[k]; !keep {
+			remove = append(remove, k)
+		}
+	}
+
+	if err := mutate(body.Labels, remove); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
+		resourceType, rp.ResourceName, "setLabels")
+
+	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// setDiskLabels handles POST .../zones/{z}/disks/{disk}/setLabels, replacing the
+// disk's user labels under labelFingerprint optimistic-concurrency.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) setDiskLabels(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	var body setLabelsRequest
+	if !gcprest.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	labeler, ok := h.compute.(resourceLabelMutator)
+	if !ok {
+		writeNotImplemented(w, "disk setLabels")
+		return
+	}
+
+	h.applyResourceSetLabels(w, r, rp, body, vol.Tags, resourceDisks,
+		func(set map[string]string, remove []string) error {
+			return labeler.SetVolumeLabelsGCP(vol.ID, set, remove)
+		})
+}
+
+// createSnapshotFromDisk handles POST .../zones/{z}/disks/{disk}/createSnapshot:
+// the disk-scoped snapshot verb. The source disk comes from the URL; the body
+// carries the new snapshot's name and labels. The snapshot is global and
+// appears in snapshots.list/get with its sourceDisk set to the disk's self-link.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) createSnapshotFromDisk(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	var req snapshotRequest
+	if !gcprest.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	if req.Name == "" {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "snapshot name required")
+		return
+	}
+
+	vol, err := findDiskByName(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	if _, err := findSnapshotByName(r.Context(), h.compute, req.Name); conflictIfExists(w, err, "snapshot "+req.Name+" already exists") {
+		return
+	}
+
+	sourceDisk := "projects/" + rp.Project + "/zones/" + rp.ScopeName + "/disks/" + rp.ResourceName
+
+	cfg := computedriver.SnapshotConfig{
+		VolumeID:    vol.ID,
+		Description: req.Name,
+		Tags:        mergeSnapshotTags(req.Labels, req.Name, sourceDisk),
+	}
+
+	if _, err := h.compute.CreateSnapshot(r.Context(), cfg); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, gcprest.ScopeZones, rp.ScopeName,
+		"disks", rp.ResourceName, "createSnapshot")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -335,6 +455,7 @@ func toDiskResponse(vol *computedriver.VolumeInfo, rp gcprest.ResourcePath, host
 		SourceImage:       sourceImage,
 		Users:             users,
 		Labels:            userLabels(vol.Tags),
+		LabelFingerprint:  labelFingerprintFor(userLabels(vol.Tags)),
 		CreationTimestamp: vol.CreatedAt,
 	}
 
@@ -345,28 +466,44 @@ func toDiskResponse(vol *computedriver.VolumeInfo, rp gcprest.ResourcePath, host
 	return resp
 }
 
-// diskUsersByName scans instances and maps each disk name to the self-links of
-// the instances it is attached to, so a disk read reflects its users[] (kept
-// consistent with the instance-side disks[] populated by attachDisk).
+// diskUsersByName maps each disk name to the self-links of the instances it is
+// attached to, derived from the driver volume store's attachment state
+// (VolumeInfo.AttachedTo). Since insert and attachDisk both flip the driver
+// volume to in-use, this is the single source of truth for a disk's users[] —
+// consistent with the instance-side disks[] and the in-use delete guard.
 func (h *Handler) diskUsersByName(ctx context.Context, host, project string) map[string][]string {
+	vols, err := h.compute.DescribeVolumes(ctx, nil)
+	if err != nil {
+		return nil
+	}
+
 	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
 	if err != nil {
 		return nil
 	}
 
-	out := make(map[string][]string)
+	linkByID := make(map[string]string, len(instances))
 
 	for i := range instances {
 		instName := tagOr(instances[i].Tags, gcpNameTag, "")
 		zone := tagOr(instances[i].Tags, keyZone, "")
-		link := gcprest.SelfLink(host, project, gcprest.ScopeZones, zone, "instances", instName)
+		linkByID[instances[i].ID] = gcprest.SelfLink(host, project, gcprest.ScopeZones, zone, "instances", instName)
+	}
 
-		attached := decodeDisks(instances[i].Tags)
-		for j := range attached {
-			if dn := lastSegment(attached[j].Source); dn != "" {
-				out[dn] = append(out[dn], link)
-			}
+	out := make(map[string][]string)
+
+	for i := range vols {
+		if vols[i].AttachedTo == "" {
+			continue
 		}
+
+		link, ok := linkByID[vols[i].AttachedTo]
+		if !ok {
+			continue
+		}
+
+		name := tagOr(vols[i].Tags, gcpDiskNameTag, vols[i].ID)
+		out[name] = append(out[name], link)
 	}
 
 	return out

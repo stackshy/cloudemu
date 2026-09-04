@@ -357,6 +357,133 @@ func (m *Mock) TagImage(_ context.Context, repository, sourceRef, targetTag stri
 	return nil
 }
 
+// findTaggedImage resolves repository/digest and requires tag to be present
+// on that image, returning NotFound otherwise. Callers must hold m.mu (for
+// read or write) for the duration of any check-then-act sequence built on top
+// of it, so a concurrent repository patch or tag mutation cannot slip between
+// the check and the act.
+func (m *Mock) findTaggedImage(repository, digest, tag string) (*repoData, error) {
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	img, ok := rd.images.Get(digest)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "image %q not found in repository %q", digest, repository)
+	}
+
+	if !hasTag(img.detail.Tags, tag) {
+		return nil, errors.Newf(errors.NotFound, "tag %q not found on image %q in repository %q", tag, digest, repository)
+	}
+
+	return rd, nil
+}
+
+// repoImmutableTags reports whether rd's dockerConfig.immutableTags is
+// enabled. The GCP wire layer folds that flag into the repository's reserved
+// Tags (see driver.ImmutableTagsReservedTag) since the shared Repository
+// struct has no dedicated field for it.
+func repoImmutableTags(rd *repoData) bool {
+	return rd.info.Tags[driver.ImmutableTagsReservedTag] == driver.ImmutableTagsReservedValue
+}
+
+// CreateTag atomically creates a new tag on the image at digest: the
+// existence check and the write happen under one lock acquisition, so two
+// concurrent creates of the same not-yet-used tag id cannot both succeed (the
+// loser gets AlreadyExists) the way composing a separate read-only check with
+// a separately-locked TagImage call would allow. This is a GCP-specific
+// extension, not part of the shared driver.ContainerRegistry interface, since
+// AWS ECR / Azure ACR have no equivalent "create if absent" tag operation. A
+// brand-new tag id is always allowed, even when the repository has
+// immutableTags enabled: only mutating an existing tag (patch/delete) is
+// blocked.
+func (m *Mock) CreateTag(_ context.Context, repository, digest, tag string) error {
+	if tag == "" {
+		return errors.New(errors.InvalidArgument, "target tag cannot be empty")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	img, ok := rd.images.Get(digest)
+	if !ok {
+		return errors.Newf(errors.NotFound, "image %q not found in repository %q", digest, repository)
+	}
+
+	if hasTag(img.detail.Tags, tag) {
+		return errors.Newf(errors.AlreadyExists, "tag %q already exists", tag)
+	}
+
+	updateTagIndex(rd, digest, tag)
+	rd.info.ImageCount = rd.images.Len()
+
+	return nil
+}
+
+// PatchTag atomically validates a packages.tags.patch request: the image and
+// tag must exist, and the repository must not have immutableTags enabled.
+// The provider's package/version model allows exactly one version per
+// package, so there is nothing further to persist once the wire layer has
+// confirmed the requested version resolves to that same version — but the
+// immutableTags gate must still be evaluated under the same lock a mutation
+// would use, or a concurrent repository patch could flip the flag between the
+// wire layer's check and its response. This is a GCP-specific extension, not
+// part of the shared driver.ContainerRegistry interface.
+func (m *Mock) PatchTag(_ context.Context, repository, digest, tag string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, err := m.findTaggedImage(repository, digest, tag)
+	if err != nil {
+		return err
+	}
+
+	if repoImmutableTags(rd) {
+		return errors.Newf(errors.FailedPrecondition,
+			"repository %q has immutable tags; tag %q cannot be updated", repository, tag)
+	}
+
+	return nil
+}
+
+// UntagImage removes a single tag from an image, leaving the image (and its
+// other tags) intact. The existence checks, the immutableTags gate, and the
+// removal all happen under one lock acquisition, so a concurrent repository
+// patch cannot flip immutableTags between the check and the removal. This is
+// a GCP-specific extension, not part of the shared driver.ContainerRegistry
+// interface: Artifact Registry's native packages.tags.delete removes just the
+// tag, whereas the shared interface's DeleteImage removes the whole image
+// (AWS ECR / Azure ACR have no equivalent "delete a single tag" operation).
+// The GCP wire handler reaches it through an optional interface assertion,
+// the same pattern used by UpdateRepository.
+func (m *Mock) UntagImage(_ context.Context, repository, digest, tag string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, err := m.findTaggedImage(repository, digest, tag)
+	if err != nil {
+		return err
+	}
+
+	if repoImmutableTags(rd) {
+		return errors.Newf(errors.FailedPrecondition,
+			"repository %q has immutable tags; tag %q cannot be deleted", repository, tag)
+	}
+
+	rd.images.Update(digest, func(img *imageData) *imageData {
+		img.detail.Tags = removeTag(img.detail.Tags, tag)
+		return img
+	})
+
+	return nil
+}
+
 // PutLifecyclePolicy sets a cleanup policy on an Artifact Registry repository.
 func (m *Mock) PutLifecyclePolicy(_ context.Context, repository string, policy driver.LifecyclePolicy) error {
 	m.mu.Lock()

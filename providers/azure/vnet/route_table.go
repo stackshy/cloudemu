@@ -66,48 +66,80 @@ func (m *Mock) DescribeRouteTables(_ context.Context, ids []string) ([]driver.Ro
 	return describeResources(m.routeTables, ids, toRouteTableInfo), nil
 }
 
-// CreateRoute adds a route to the specified route table.
+// CreateRoute adds a route to the specified route table, copy-on-write: the
+// route slice is rebuilt fresh onto a copy of the table under the store lock,
+// so a reader holding the prior snapshot is unaffected.
 func (m *Mock) CreateRoute(
 	_ context.Context, routeTableID, destinationCIDR, targetID, targetType string,
 ) error {
-	rt, ok := m.routeTables.Get(routeTableID)
-	if !ok {
+	duplicate := false
+
+	if !m.routeTables.Update(routeTableID, func(rt *routeTableData) *routeTableData {
+		for i := range rt.Routes {
+			if rt.Routes[i].DestinationCIDR == destinationCIDR {
+				duplicate = true
+				return rt
+			}
+		}
+
+		cp := *rt
+		cp.Routes = append(append([]driver.Route(nil), rt.Routes...), driver.Route{
+			DestinationCIDR: destinationCIDR,
+			TargetID:        targetID,
+			TargetType:      targetType,
+			State:           "active",
+		})
+
+		return &cp
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "route table %q not found", routeTableID)
 	}
 
-	for _, r := range rt.Routes {
-		if r.DestinationCIDR == destinationCIDR {
-			return cerrors.Newf(cerrors.AlreadyExists,
-				"route for %q already exists in route table %q", destinationCIDR, routeTableID)
-		}
+	if duplicate {
+		return cerrors.Newf(cerrors.AlreadyExists,
+			"route for %q already exists in route table %q", destinationCIDR, routeTableID)
 	}
-
-	rt.Routes = append(rt.Routes, driver.Route{
-		DestinationCIDR: destinationCIDR,
-		TargetID:        targetID,
-		TargetType:      targetType,
-		State:           "active",
-	})
 
 	return nil
 }
 
-// DeleteRoute removes a route from the specified route table.
+// DeleteRoute removes a route from the specified route table, copy-on-write.
 func (m *Mock) DeleteRoute(_ context.Context, routeTableID, destinationCIDR string) error {
-	rt, ok := m.routeTables.Get(routeTableID)
-	if !ok {
+	removed := false
+
+	if !m.routeTables.Update(routeTableID, func(rt *routeTableData) *routeTableData {
+		idx := -1
+
+		for i := range rt.Routes {
+			if rt.Routes[i].DestinationCIDR == destinationCIDR {
+				idx = i
+				break
+			}
+		}
+
+		if idx == -1 {
+			return rt
+		}
+
+		removed = true
+		next := make([]driver.Route, 0, len(rt.Routes)-1)
+		next = append(next, rt.Routes[:idx]...)
+		next = append(next, rt.Routes[idx+1:]...)
+
+		cp := *rt
+		cp.Routes = next
+
+		return &cp
+	}) {
 		return cerrors.Newf(cerrors.NotFound, "route table %q not found", routeTableID)
 	}
 
-	for i, r := range rt.Routes {
-		if r.DestinationCIDR == destinationCIDR {
-			rt.Routes = append(rt.Routes[:i], rt.Routes[i+1:]...)
-			return nil
-		}
+	if !removed {
+		return cerrors.Newf(cerrors.NotFound, "route %q not found in route table %q",
+			destinationCIDR, routeTableID)
 	}
 
-	return cerrors.Newf(cerrors.NotFound, "route %q not found in route table %q",
-		destinationCIDR, routeTableID)
+	return nil
 }
 
 func toRouteTableInfo(rt *routeTableData) driver.RouteTable {

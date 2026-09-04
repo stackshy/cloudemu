@@ -58,6 +58,14 @@ AzureDiskAccessor is an optional Azure-only capability for the managed-disk
 | `GrantDiskAccess` | GrantDiskAccess issues a time-bounded SAS URI granting the requested |
 | `RevokeDiskAccess` | RevokeDiskAccess revokes any SAS access previously granted to the disk. |
 
+### AzureDiskDeleteOptioner
+
+AzureDiskDeleteOptioner is an optional Azure-only capability that records a
+
+| Operation | Description |
+| --- | --- |
+| `SetDiskDeleteOnTermination` | SetDiskDeleteOnTermination records whether the volume is deleted (true) or |
+
 ### AzureDiskUpdater
 
 AzureDiskUpdater is an optional Azure-only capability for an in-place managed
@@ -94,49 +102,13 @@ ConsoleReader is an optional capability a Compute implementation may provide
 | --- | --- |
 | `GetConsoleOutput` |  |
 
-### IamInstanceProfileAssociator
+### ImageTagUpdater
 
-IamInstanceProfileAssociator is an optional AWS-only capability for attaching
-
-| Operation | Description |
-| --- | --- |
-| `AssociateIamInstanceProfile` |  |
-| `DescribeIamInstanceProfileAssociations` |  |
-| `DisassociateIamInstanceProfile` |  |
-| `ReplaceIamInstanceProfileAssociation` |  |
-
-### ImageAttributeModifier
-
-ImageAttributeModifier is an optional AWS-only capability for the EC2 AMI
+ImageTagUpdater is an optional capability for replacing the tag set of an
 
 | Operation | Description |
 | --- | --- |
-| `DescribeImageLaunchPermissions` |  |
-| `ModifyImageAttribute` |  |
-
-### ImageCopier
-
-ImageCopier is an optional AWS-only capability for EC2 CopyImage (aws_ami_copy).
-
-| Operation | Description |
-| --- | --- |
-| `CopyImage` |  |
-
-### ImageRegistrar
-
-ImageRegistrar is an optional AWS-only capability for EC2 RegisterImage
-
-| Operation | Description |
-| --- | --- |
-| `RegisterImage` |  |
-
-### InstanceMetadataModifier
-
-InstanceMetadataModifier is an optional AWS-only capability for
-
-| Operation | Description |
-| --- | --- |
-| `ModifyInstanceMetadataOptions` |  |
+| `UpdateImageTags` |  |
 
 ### KeyPairGenerator
 
@@ -145,67 +117,6 @@ KeyPairGenerator is an optional Azure-only capability for the ARM
 | Operation | Description |
 | --- | --- |
 | `GenerateKeyPair` |  |
-
-### KeyPairImporter
-
-KeyPairImporter is an optional AWS-only capability for EC2 ImportKeyPair
-
-| Operation | Description |
-| --- | --- |
-| `ImportKeyPair` |  |
-
-### LaunchTemplateModifier
-
-LaunchTemplateModifier is an AWS-only optional capability implementing
-
-| Operation | Description |
-| --- | --- |
-| `ModifyLaunchTemplate` |  |
-
-### LaunchTemplateVersioner
-
-LaunchTemplateVersioner is an AWS-only optional capability implementing launch
-
-| Operation | Description |
-| --- | --- |
-| `CreateLaunchTemplateVersion` | CreateLaunchTemplateVersion appends a new immutable version to a template. |
-| `DescribeLaunchTemplateVersions` | DescribeLaunchTemplateVersions returns a template's versions (filtered, |
-| `GetLaunchTemplateData` | GetLaunchTemplateData synthesizes launch-template data from a running |
-
-### PlacementGroups
-
-PlacementGroups is an optional AWS-only capability for EC2 placement groups
-
-| Operation | Description |
-| --- | --- |
-| `CreatePlacementGroup` |  |
-| `DeletePlacementGroup` |  |
-| `DescribePlacementGroups` |  |
-
-### SnapshotAttributeModifier
-
-SnapshotAttributeModifier is an optional AWS-only capability for the EC2
-
-| Operation | Description |
-| --- | --- |
-| `DescribeSnapshotVolumePermissions` |  |
-| `ModifySnapshotAttribute` |  |
-
-### SnapshotCopier
-
-SnapshotCopier is an optional AWS-only capability for EC2 CopySnapshot. It is
-
-| Operation | Description |
-| --- | --- |
-| `CopySnapshot` |  |
-
-### VolumeModifier
-
-VolumeModifier is an optional AWS-only capability for EC2 ModifyVolume
-
-| Operation | Description |
-| --- | --- |
-| `ModifyVolume` |  |
 
 ## Not in scope
 

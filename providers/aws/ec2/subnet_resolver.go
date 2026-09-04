@@ -19,3 +19,33 @@ type SubnetResolver interface {
 func (m *Mock) SetSubnetResolver(r SubnetResolver) {
 	m.subnetResolver = r
 }
+
+// defaultSubnet returns the account/region's default subnet — the one a
+// RunInstances call with no SubnetId lands in, matching real EC2. Real EC2
+// picks a default subnet deterministically (its own internal ordering); this
+// picks the lowest subnet id among the default VPC's default subnets, which is
+// stable across calls for the same seeded state.
+func (m *Mock) defaultSubnet(ctx context.Context) (netdriver.SubnetInfo, bool) {
+	subs, err := m.subnetResolver.DescribeSubnets(ctx, nil)
+	if err != nil {
+		return netdriver.SubnetInfo{}, false
+	}
+
+	var best *netdriver.SubnetInfo
+
+	for i := range subs {
+		if !subs[i].IsDefault {
+			continue
+		}
+
+		if best == nil || subs[i].ID < best.ID {
+			best = &subs[i]
+		}
+	}
+
+	if best == nil {
+		return netdriver.SubnetInfo{}, false
+	}
+
+	return *best, true
+}

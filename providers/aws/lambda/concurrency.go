@@ -7,11 +7,45 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
-// PutFunctionConcurrency sets reserved concurrency for a function.
+// accountConcurrentExecutionLimit and minUnreservedConcurrentExecutions mirror
+// real Lambda's default per-account concurrency budget: a 1000-execution pool
+// shared by every function, of which at least 100 must always stay unreserved
+// (available to functions with no reserved concurrency configured). See
+// https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html
+const (
+	accountConcurrentExecutionLimit   = 1000
+	minUnreservedConcurrentExecutions = 100
+)
+
+// PutFunctionConcurrency sets reserved concurrency for a function. Real Lambda
+// blocks lowering reserved concurrency below the sum of provisioned
+// concurrency already configured across the function's versions/aliases (see
+// DeleteFunctionConcurrency for the same guard on full removal), since
+// provisioned concurrency is carved out of the reserved budget. It also blocks
+// a reservation that would push the account's shared unreserved-concurrency
+// pool below its 100-execution minimum, exactly as real Lambda does.
 func (m *Mock) PutFunctionConcurrency(_ context.Context, cfg driver.ConcurrencyConfig) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(cfg.FunctionName)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", cfg.FunctionName)
+	}
+
+	if provisioned := sumProvisionedConcurrency(&fd); cfg.ReservedConcurrentExecutions < provisioned {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"ReservedConcurrentExecutions %d is less than the provisioned concurrency (%d) already "+
+				"configured for function %s", cfg.ReservedConcurrentExecutions, provisioned, cfg.FunctionName)
+	}
+
+	otherReserved := m.sumReservedConcurrencyExcept(cfg.FunctionName)
+	unreserved := accountConcurrentExecutionLimit - otherReserved - cfg.ReservedConcurrentExecutions
+
+	if unreserved < minUnreservedConcurrentExecutions {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"Specified ReservedConcurrentExecutions for function decreases account's UnreservedConcurrentExecution "+
+				"below its minimum value of [%d].", minUnreservedConcurrentExecutions)
 	}
 
 	fd.concurrency = &driver.ConcurrencyConfig{
@@ -21,6 +55,29 @@ func (m *Mock) PutFunctionConcurrency(_ context.Context, cfg driver.ConcurrencyC
 	m.funcs.Set(cfg.FunctionName, fd)
 
 	return nil
+}
+
+// sumReservedConcurrencyExcept totals ReservedConcurrentExecutions across every
+// function in the account other than excludeName, so PutFunctionConcurrency can
+// check the candidate value against the account's shared unreserved pool
+// without double-counting the function being updated.
+func (m *Mock) sumReservedConcurrencyExcept(excludeName string) int {
+	total := 0
+
+	for _, name := range m.funcs.Keys() {
+		if name == excludeName {
+			continue
+		}
+
+		fd, ok := m.funcs.Get(name)
+		if !ok || fd.concurrency == nil {
+			continue
+		}
+
+		total += fd.concurrency.ReservedConcurrentExecutions
+	}
+
+	return total
 }
 
 // GetFunctionConcurrency retrieves the concurrency configuration for a function.
@@ -39,15 +96,82 @@ func (m *Mock) GetFunctionConcurrency(_ context.Context, functionName string) (*
 	return &result, nil
 }
 
-// DeleteFunctionConcurrency removes the concurrency configuration for a function.
+// DeleteFunctionConcurrency removes the concurrency configuration for a
+// function. Real Lambda blocks removing reserved concurrency entirely while
+// any provisioned concurrency is still configured on the function (the same
+// invariant PutFunctionConcurrency enforces for lowering it).
 func (m *Mock) DeleteFunctionConcurrency(_ context.Context, functionName string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	fd, ok := m.funcs.Get(functionName)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
+	}
+
+	if provisioned := sumProvisionedConcurrency(&fd); provisioned > 0 {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"cannot remove reserved concurrency for function %s: %d provisioned concurrency is still configured",
+			functionName, provisioned)
 	}
 
 	fd.concurrency = nil
 	m.funcs.Set(functionName, fd)
 
 	return nil
+}
+
+// reserveInvocationSlot enforces reserved concurrency for an invoke. A function
+// with no reserved limit is unbounded, so it returns a no-op release. When the
+// reserved limit is exhausted it returns a Throttled error the wire layer maps
+// to a 429 TooManyRequestsException. Otherwise it reserves a slot and returns
+// the release the caller defers to return it on completion.
+func (m *Mock) reserveInvocationSlot(fd *funcData, functionName string) (func(), error) {
+	if fd.concurrency == nil {
+		return func() {}, nil
+	}
+
+	release, ok := m.acquireConcurrency(functionName, fd.concurrency.ReservedConcurrentExecutions)
+	if !ok {
+		return nil, errReservedConcurrencyExceeded(functionName)
+	}
+
+	return release, nil
+}
+
+// acquireConcurrency reserves an execution slot for a function that has reserved
+// concurrency configured. It returns false when granting the slot would push the
+// in-flight count past reserved (the caller must throttle the invoke); otherwise
+// it increments the count and returns a release func the caller defers to return
+// the slot when the invocation completes. A reserved value of 0 always fails,
+// throttling every invoke. The map read-modify-write is guarded by inflightMu so
+// concurrent invokes account correctly.
+func (m *Mock) acquireConcurrency(functionName string, reserved int) (func(), bool) {
+	m.inflightMu.Lock()
+	defer m.inflightMu.Unlock()
+
+	if m.inflight[functionName] >= reserved {
+		return nil, false
+	}
+
+	m.inflight[functionName]++
+
+	return func() {
+		m.inflightMu.Lock()
+		defer m.inflightMu.Unlock()
+
+		m.inflight[functionName]--
+		if m.inflight[functionName] <= 0 {
+			delete(m.inflight, functionName)
+		}
+	}, true
+}
+
+// errReservedConcurrencyExceeded is the throttling error Invoke returns when a
+// function's reserved-concurrency limit is exhausted. The wire layer maps a
+// Throttled Lambda error to a 429 TooManyRequestsException whose Reason is
+// ReservedFunctionConcurrentInvocationLimitExceeded, matching real Lambda.
+func errReservedConcurrencyExceeded(functionName string) error {
+	return cerrors.Newf(cerrors.Throttled,
+		"rate exceeded for function %s: reserved concurrency limit reached", functionName)
 }

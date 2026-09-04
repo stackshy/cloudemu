@@ -150,16 +150,21 @@ func (m *Mock) DeleteMultiRegionCluster(_ context.Context, name string) (*mdbdri
 	return &out, nil
 }
 
-// ListAllowedMultiRegionClusterUpdates returns allowed node-type updates.
+// ListAllowedMultiRegionClusterUpdates returns the node types the multi-region
+// cluster may scale up to, derived from its current node type's family. The
+// multi-region API surfaces scale-up targets only.
 func (m *Mock) ListAllowedMultiRegionClusterUpdates(_ context.Context, name string) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if !m.multiRegion.Has(name) {
+	mrc, ok := m.multiRegion.Get(name)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "multi-region cluster %q not found", name)
 	}
 
-	return []string{"db.r7g.large", "db.r7g.xlarge"}, nil
+	scaleUp, _ := allowedNodeTypeUpdates(mrc.NodeType)
+
+	return scaleUp, nil
 }
 
 // DescribeMultiRegionParameterGroups returns the default multi-region parameter

@@ -7,6 +7,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/container/containerengine"
 	"github.com/stackshy/cloudemu/v2/services/ecs/driver"
 )
@@ -86,6 +87,10 @@ func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Ta
 			continue
 		}
 
+		// The response reflects what a caller polling DescribeTasks would see
+		// right now: the launch-settle transient (PROVISIONING/PENDING) rather
+		// than the task's already-final RUNNING, when AsyncSettle is enabled.
+		m.overlayStatus(task)
 		tasks = append(tasks, *task)
 	}
 
@@ -226,6 +231,7 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 		m.placeFargate(task, spec.netCfg, spec.platformVersion)
 		m.backTaskWithEngine(ctx, task, spec)
 		m.tasks.Set(task.ARN, task)
+		m.beginLaunchSettle(task)
 		clone := cloneTask(task)
 
 		return &clone, nil
@@ -248,9 +254,69 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 	task.LastStatus = statusRunning
 	m.backTaskWithEngine(ctx, task, spec)
 	m.tasks.Set(task.ARN, task)
+	m.beginLaunchSettle(task)
 	clone := cloneTask(task)
 
 	return &clone, nil
+}
+
+// beginLaunchSettle starts the task's launch settle window — a realistic
+// lastStatus transient shown before the task's already-final RUNNING becomes
+// wire-visible: PROVISIONING while a Fargate task's ENI attaches, PENDING for
+// EC2/EXTERNAL placement (matching AWS's own vocabulary for each launch type).
+// A task whose engine backing already drove it to a terminal state before this
+// call (e.g. a RunToCompletion container that exited immediately) never shows a
+// launch transient, matching real ECS: it skips straight from launch to
+// STOPPED. The window is inactive (immediately observed as final) unless
+// opts.AsyncSettle is enabled.
+func (m *Mock) beginLaunchSettle(task *driver.Task) {
+	if task.LastStatus != statusRunning {
+		return
+	}
+
+	intermediate := statusPending
+	if task.LaunchType == launchFargate {
+		intermediate = taskStatusProvisioning
+	}
+
+	m.taskSettle.Begin(task.ARN, intermediate, m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultECSTaskStartSettle))
+}
+
+// beginStopSettle starts the task's stop settle window — a realistic
+// lastStatus transient shown before the task's already-final STOPPED becomes
+// wire-visible: DEPROVISIONING while a Fargate task's ENI detaches, STOPPING
+// for EC2/EXTERNAL. The window is inactive (immediately observed as final)
+// unless opts.AsyncSettle is enabled.
+func (m *Mock) beginStopSettle(task *driver.Task) {
+	intermediate := taskStatusStopping
+	if task.LaunchType == launchFargate {
+		intermediate = taskStatusDeprovisioning
+	}
+
+	m.taskSettle.Begin(task.ARN, intermediate, m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultECSTaskStopSettle))
+}
+
+// overlayStatus rewrites t.LastStatus in place with the current settle
+// observation for t.ARN. It is applied only at the wire-response boundary
+// (RunTask/StopTask/ListTasks/DescribeTasks) on an already-cloned task value,
+// never on a record still held by a store, so it can never leak the transient
+// into internal bookkeeping (capacity release, service running/pending counts)
+// which always reads the stored final state directly.
+func (m *Mock) overlayStatus(t *driver.Task) {
+	t.LastStatus = m.taskSettle.State(t.ARN, m.opts.Clock.Now(), t.LastStatus)
+}
+
+// observedTask clones t (a stored record) and overlays its wire-visible
+// lastStatus with the current settle observation, so a caller polling
+// DescribeTasks/ListTasks shortly after RunTask/StopTask sees the realistic
+// PROVISIONING/PENDING or STOPPING/DEPROVISIONING transient (when AsyncSettle
+// is enabled) before the terminal RUNNING/STOPPED — matching the
+// aws-sdk-go-v2 TasksRunning/TasksStopped waiters.
+func (m *Mock) observedTask(t *driver.Task) driver.Task {
+	out := cloneTask(t)
+	m.overlayStatus(&out)
+
+	return out
 }
 
 // markContainers sets every container's last status. A container marked
@@ -402,8 +468,56 @@ func (m *Mock) networkBindingsFor(networkMode string, mappings []driver.PortMapp
 // StopTask marks a task STOPPED, releasing any container-instance capacity it
 // reserved back to the instance. Releasing is guarded by placeMu (shared with
 // placement) and skipped for an already-stopped task, so a repeated StopTask can
-// never double-credit an instance.
+// never double-credit an instance. The stop-settle window is guarded the same
+// way: a repeated StopTask on an already-stopped task must not restart it,
+// matching real ECS's idempotent StopTask (an already-stopped task is returned
+// as-is, never "un-stopping" back to a transient).
+//
+// When the stopped task belongs to a service, real ECS's scheduler notices on
+// its next reconciliation pass and both reflects the drop in the service's
+// running count and launches a replacement to converge back to desiredCount;
+// StopTask reconciles the owning service synchronously to mirror that (see
+// reconcile below).
 func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*driver.Task, error) {
+	return m.stopTask(ctx, cluster, task, reason, true)
+}
+
+// stopTask is StopTask's implementation, parameterized on whether to reconcile
+// the task's owning service afterward. drainService (the service scheduler's
+// own drain, used by DeleteService and UpdateService's redeploy) calls this
+// with reconcile=false: it already owns and re-converges the service's whole
+// state itself, so a second, independent reconciliation here would race it —
+// relaunching a replacement for a task the service is in the middle of
+// deliberately draining.
+func (m *Mock) stopTask(ctx context.Context, cluster, task, reason string, reconcile bool) (*driver.Task, error) {
+	updated, alreadyStopped, err := m.stopTaskLocked(ctx, cluster, task, reason)
+	if err != nil {
+		return nil, err
+	}
+
+	if !alreadyStopped {
+		m.beginStopSettle(updated)
+
+		if reconcile {
+			// Reconciliation may itself place a replacement task (taking
+			// placeMu via reserve), so it must run after stopTaskLocked has
+			// released placeMu below — calling it while still holding placeMu
+			// would deadlock on a non-reentrant mutex.
+			m.reconcileServiceAfterStop(ctx, updated)
+		}
+	}
+
+	out := cloneTask(updated)
+	m.overlayStatus(&out)
+
+	return &out, nil
+}
+
+// stopTaskLocked performs the placeMu-guarded core of stopTask: resolving the
+// task, tearing down its engine backing, releasing any reserved capacity, and
+// flipping it to STOPPED. It returns the stored (post-mutation) task and
+// whether it was already stopped before this call.
+func (m *Mock) stopTaskLocked(ctx context.Context, cluster, task, reason string) (*driver.Task, bool, error) {
 	m.placeMu.Lock()
 	defer m.placeMu.Unlock()
 
@@ -412,14 +526,14 @@ func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*dri
 	// ClusterNotFoundException + InvalidParameterException).
 	want := resolveClusterName(cluster)
 	if !m.clusterExists(want) {
-		return nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
+		return nil, false, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
 	}
 
 	// A task that resolves but lives in a different cluster is not visible to this
 	// StopTask, same as a task that does not exist at all: InvalidParameterException.
 	t, ok := m.resolveTask(task)
 	if !ok || clusterNameFromARN(t.ClusterARN) != want {
-		return nil, apiErrf(errors.NotFound, excInvalidParameter, "task %q not found", task)
+		return nil, false, apiErrf(errors.NotFound, excInvalidParameter, "task %q not found", task)
 	}
 
 	// Tear down the backing engine workload (if any) before flipping to STOPPED,
@@ -429,8 +543,16 @@ func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*dri
 		m.engineHandles.Delete(t.ARN)
 	}
 
+	// alreadyStopped is computed once from the task's stored (final) status,
+	// before this call's own mutation below, and gates both the capacity
+	// release and the settle-window start: a repeated StopTask on an
+	// already-stopped task must neither double-credit the instance nor restart
+	// the stop-settle window (which would make a terminal task report
+	// DEPROVISIONING/STOPPING again).
+	alreadyStopped := t.LastStatus == statusStopped
+
 	// Release reserved capacity exactly once, before flipping the task to STOPPED.
-	if t.LastStatus != statusStopped && t.ContainerInstanceARN != "" {
+	if !alreadyStopped && t.ContainerInstanceARN != "" {
 		if td, tdOK := m.resolveTaskDef(t.TaskDefinitionARN); tdOK {
 			cpu, memory := requiredResources(td)
 			m.release(t.ContainerInstanceARN, cpu, memory)
@@ -451,9 +573,7 @@ func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*dri
 
 	m.tasks.Set(updated.ARN, &updated)
 
-	out := cloneTask(&updated)
-
-	return &out, nil
+	return &updated, alreadyStopped, nil
 }
 
 // ListTasks returns tasks in a cluster, optionally filtered by family, desired
@@ -488,7 +608,7 @@ func (m *Mock) ListTasks(_ context.Context, cluster, family, desiredStatus, serv
 			continue
 		}
 
-		out = append(out, cloneTask(t))
+		out = append(out, m.observedTask(t))
 	}
 
 	return out, nil
@@ -511,7 +631,7 @@ func (m *Mock) DescribeTasks(_ context.Context, cluster string, ids []string) ([
 
 	for _, id := range ids {
 		if t, ok := m.resolveTask(id); ok && clusterNameFromARN(t.ClusterARN) == want {
-			found = append(found, cloneTask(t))
+			found = append(found, m.observedTask(t))
 			continue
 		}
 

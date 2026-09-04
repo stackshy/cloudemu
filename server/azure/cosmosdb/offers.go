@@ -43,6 +43,27 @@ func (h *Handler) deleteOffer(coll string) {
 	h.offerMu.Unlock()
 }
 
+// setOffer stores the provisioned throughput for the resource named by key (a
+// container's qualified table name, or a database's dbNS), under the same
+// containerRID-derived key the data plane and the SDK's /offers lookup use. This
+// is how the ARM control plane's throughput write becomes visible to the data
+// plane and vice versa — both planes share the one offers map.
+func (h *Handler) setOffer(key string, st offerState) {
+	h.offerMu.Lock()
+	h.offers[containerRID(key)] = st
+	h.offerMu.Unlock()
+}
+
+// getOffer returns the provisioned throughput for the resource named by key, or
+// ok=false when none is provisioned (a shared/serverless resource).
+func (h *Handler) getOffer(key string) (offerState, bool) {
+	h.offerMu.RLock()
+	st, ok := h.offers[containerRID(key)]
+	h.offerMu.RUnlock()
+
+	return st, ok
+}
+
 // parseOfferHeaders reads the manual (x-ms-offer-throughput) or autoscale
 // (x-ms-cosmos-offer-autopilot-settings) throughput headers the SDK sets on a
 // container create.

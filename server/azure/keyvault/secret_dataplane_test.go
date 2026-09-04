@@ -120,6 +120,61 @@ func TestSDKKeyVaultExpiryRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSDKKeyVaultExpiredSecretForbidsGet proves an expired secret's current
+// version 403s on get rather than returning the (unusable) value — matching
+// real Key Vault, which never falls back to an earlier version either.
+func TestSDKKeyVaultExpiredSecretForbidsGet(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	past := time.Now().Add(-time.Hour)
+
+	if _, err := client.SetSecret(ctx, "expired", azsecrets.SetSecretParameters{
+		Value:            to.Ptr("v"),
+		SecretAttributes: &azsecrets.SecretAttributes{Expires: to.Ptr(past)},
+	}, nil); err != nil {
+		t.Fatalf("SetSecret: %v", err)
+	}
+
+	_, err := client.GetSecret(ctx, "expired", "", nil)
+
+	var respErr *azcore.ResponseError
+	if !errors.As(err, &respErr) || respErr.StatusCode != 403 {
+		t.Fatalf("GetSecret(expired): got %v, want 403", err)
+	}
+
+	if respErr.ErrorCode != "Forbidden" {
+		t.Fatalf("error code = %q, want Forbidden", respErr.ErrorCode)
+	}
+}
+
+// TestSDKKeyVaultNotYetValidSecretForbidsGet mirrors the expired case for a
+// secret whose notBefore window has not opened yet.
+func TestSDKKeyVaultNotYetValidSecretForbidsGet(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	future := time.Now().Add(time.Hour)
+
+	if _, err := client.SetSecret(ctx, "premature", azsecrets.SetSecretParameters{
+		Value:            to.Ptr("v"),
+		SecretAttributes: &azsecrets.SecretAttributes{NotBefore: to.Ptr(future)},
+	}, nil); err != nil {
+		t.Fatalf("SetSecret: %v", err)
+	}
+
+	_, err := client.GetSecret(ctx, "premature", "", nil)
+
+	var respErr *azcore.ResponseError
+	if !errors.As(err, &respErr) || respErr.StatusCode != 403 {
+		t.Fatalf("GetSecret(not yet valid): got %v, want 403", err)
+	}
+
+	if respErr.ErrorCode != "Forbidden" {
+		t.Fatalf("error code = %q, want Forbidden", respErr.ErrorCode)
+	}
+}
+
 func TestSDKKeyVaultUpdateSecretProperties(t *testing.T) {
 	client := newSecretsClient(t)
 	ctx := context.Background()

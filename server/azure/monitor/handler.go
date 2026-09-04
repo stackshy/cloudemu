@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -182,6 +183,20 @@ func (h *Handler) list(w http.ResponseWriter, rp *azurearm.ResourcePath, kind st
 }
 
 func (h *Handler) delete(w http.ResponseWriter, rp *azurearm.ResourcePath, kind string) {
+	// Deleting an action group still referenced by a metricAlert or
+	// activityLogAlert is rejected, matching real Azure Monitor: a breach could
+	// no longer resolve the action group, and matching the azurelb backend-pool
+	// in-use guard convention (409/FailedPrecondition, not a silently dangling
+	// reference).
+	if kind == typeActionGroup {
+		if ref := h.actionGroupInUse(actionGroupID(rp)); ref != "" {
+			azurearm.WriteCErr(w, cerrors.Newf(cerrors.FailedPrecondition,
+				"action group %q is in use by %s and cannot be deleted", rp.ResourceName, ref))
+
+			return
+		}
+	}
+
 	// Azure DELETE is idempotent: a missing metricAlert/actionGroup/activityLogAlert
 	// returns 204 No Content ("resource does not exist"), not a 404 error body.
 	if !h.store.delete(rp.Subscription, rp.ResourceGroup, kind, rp.ResourceName) {
@@ -239,12 +254,17 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request, rp *azurearm.Res
 }
 
 // applySideEffects runs the driver-side wiring a resource's stored properties
-// imply: metricAlerts register/refresh the evaluated alarm, actionGroups
-// register/refresh their receivers. Other kinds (activityLogAlerts,
-// autoscaleSettings) are pure round-trip resources with no side effect.
+// imply: metricAlerts validate their action-group references then
+// register/refresh the evaluated alarm, actionGroups register/refresh their
+// receivers. Other kinds (activityLogAlerts, autoscaleSettings) are pure
+// round-trip resources with no side effect.
 func (h *Handler) applySideEffects(r *http.Request, rp *azurearm.ResourcePath, kind string, props map[string]any) error {
 	switch kind {
 	case typeAlerts:
+		if err := h.validateActionGroupRefs(actionGroupIDs(props)); err != nil {
+			return err
+		}
+
 		return h.registerAlarm(r, rp.ResourceName, props)
 	case typeActionGroup:
 		h.registerActionGroup(rp, props)

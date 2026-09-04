@@ -275,6 +275,11 @@ func (h *Handler) deleteZone(w http.ResponseWriter, r *http.Request, rt route) {
 		return
 	}
 
+	// Hold applyMu across the empty-check and the delete so a concurrent
+	// changes.create cannot slip a record into the zone between the two.
+	h.applyMu.Lock()
+	defer h.applyMu.Unlock()
+
 	// Cloud DNS refuses to delete a zone that still holds user record sets; only
 	// the auto-created apex SOA/NS may remain. Anything else → 400 containerNotEmpty.
 	if ok := h.rejectIfNotEmpty(w, r, id); !ok {
@@ -338,18 +343,24 @@ func (h *Handler) createChange(w http.ResponseWriter, r *http.Request, rt route)
 		return
 	}
 
+	// Hold applyMu across validation and apply so a concurrent changes.create
+	// (or managedZones.delete) on the same zone cannot invalidate a decision
+	// this call already made — the dns driver has no multi-key transaction
+	// primitive, so this lock is what makes the batch's all-or-nothing
+	// semantics hold under concurrency, not just single-threaded.
+	h.applyMu.Lock()
+	defer h.applyMu.Unlock()
+
 	info, err := h.dns.GetZone(r.Context(), id)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
 
-	// Cloud DNS applies a change atomically. The dns driver has no batch/
-	// transaction primitive, so validate the whole batch up front — deletions
-	// resolve and don't strip the apex, additions don't collide, and no name is
-	// left with a CNAME beside another type — before any mutation, so a bad batch
-	// fails cleanly without half-applying. (A concurrent writer between validation
-	// and apply could still race; a true fix needs a driver-level transaction.)
+	// Cloud DNS applies a change atomically: validate the whole batch up front —
+	// deletions resolve and don't strip the apex, additions don't collide, and no
+	// name is left with a CNAME beside another type — before any mutation, so a
+	// bad batch fails cleanly without half-applying.
 	if !h.checkDeletions(w, r, id, apexDNSName(info), &req) ||
 		!h.checkAdditions(w, r, id, &req) ||
 		!h.checkCNAME(w, r, id, &req) {

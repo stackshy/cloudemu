@@ -31,7 +31,9 @@ import (
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/features/timetravel"
 	"github.com/stackshy/cloudemu/v2/features/topology"
+	"github.com/stackshy/cloudemu/v2/features/vcr"
 	"github.com/stackshy/cloudemu/v2/persist"
 	eksprov "github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	"github.com/stackshy/cloudemu/v2/seed"
@@ -96,6 +98,11 @@ type Config struct {
 	K8sProgression         bool
 	K8sProgressionInterval time.Duration // ticker cadence for staged progression (default 1s)
 
+	// K8sNodes is the number of synthetic Nodes each cluster seeds, fixed at
+	// creation. Default (0 or 1) is a single node. >1 opts clusters into the
+	// multi-node first-fit scheduler (nodeSelector/taints/resource requests).
+	K8sNodes int
+
 	AzureSubscription string // Azure subscription GUID reported by the emulator (last-wins WithAccountID)
 
 	Admin bool // mount the /_cloudemu control plane
@@ -115,6 +122,14 @@ type Config struct {
 	LogRequests bool          // log every HTTP request
 	Quiet       bool          // suppress the startup banner
 	EnforceAuth bool          // require authentication on each request
+
+	// VCR record/replay of the wire protocol. VCRMode is "" (off), "record", or
+	// "replay"; VCRCassette is the JSON cassette file (loaded in replay, written
+	// in record); VCRStrict makes a replay miss fail (501) rather than fall
+	// through to the real handler.
+	VCRMode     string
+	VCRCassette string
+	VCRStrict   bool
 
 	EndpointsFile   string        // write resolved endpoints as JSON here
 	ShutdownTimeout time.Duration // grace period for in-flight requests on shutdown
@@ -149,6 +164,19 @@ type App struct {
 	// dirty flag is flipped by the request-boundary seam and the mutating admin
 	// ops.
 	flusher *flusher
+
+	// timetravel holds named in-memory state snapshots for rewind/fork, layered
+	// on the same whole-emulator capture/restore the snapshot endpoint uses. It
+	// survives resets (the registry is not part of provider state), so a rewind
+	// can undo a reset.
+	timetravel *timetravel.Registry
+
+	// vcr records or replays the wire protocol when --vcr is set (nil when off).
+	// It wraps each provider handler outermost — inside the admin control plane
+	// (so /_cloudemu is never recorded) but outside the dirty/persist seam — so
+	// replay short-circuits before dirtying state and record captures the final
+	// response the real handlers produced.
+	vcr *vcr.VCR
 
 	// rebuildMu serializes resets so two concurrent /_cloudemu/reset calls can't
 	// interleave and leave providers wired to different Kubernetes instances. It
@@ -209,7 +237,17 @@ func New(cfg *Config) (*App, error) {
 		a.flusher = a.newFlusher()
 	}
 
+	// Build the VCR engine BEFORE Rebuild, since swapFresh wraps each fresh
+	// handler with it.
+	if err := a.configureVCR(); err != nil {
+		return nil, err
+	}
+
 	a.Rebuild() // populate the backends before serving
+
+	// The registry captures/restores whole-emulator state through the same funcs
+	// the snapshot endpoint uses, so rewind/fork reuse persist.ExportAll/RestoreAll.
+	a.timetravel = timetravel.New(config.RealClock{}, a.snapshot, a.restore)
 
 	if err := a.applyBootState(); err != nil {
 		return nil, err
@@ -289,6 +327,40 @@ func (a *App) newFlusher() *flusher {
 // persistence is off (flusher nil), so callers need no guard.
 func (a *App) markDirty() {
 	a.flusher.markDirty()
+}
+
+// configureVCR builds the record/replay engine from the config when --vcr is
+// set (a no-op otherwise). Replay loads the cassette eagerly here, so a bad path
+// fails New rather than the first request.
+func (a *App) configureVCR() error {
+	if a.cfg.VCRMode == "" {
+		return nil
+	}
+
+	v, err := vcr.New(vcr.Options{
+		Mode:         vcr.Mode(a.cfg.VCRMode),
+		CassettePath: a.cfg.VCRCassette,
+		Strict:       a.cfg.VCRStrict,
+	})
+	if err != nil {
+		return err
+	}
+
+	a.vcr = v
+
+	return nil
+}
+
+// wrapVCR decorates a provider handler with the record/replay middleware,
+// tagged with its provider name so a single shared cassette disambiguates
+// identical paths across providers. It is a no-op (returns h unchanged) when VCR
+// is off, so there is zero overhead on the hot path.
+func (a *App) wrapVCR(h http.Handler, provider string) http.Handler {
+	if a.vcr == nil {
+		return h
+	}
+
+	return a.vcr.Wrap(h, provider)
 }
 
 // persistBanner is the persistence summary shown in the startup banner.
@@ -381,6 +453,12 @@ func (a *App) swapFresh() []closer {
 		if a.cfg.K8sProgression {
 			k8s.SetLifecycleProgression(true)
 		}
+
+		// Opt-in multi-node: seed N synthetic nodes per cluster (fixed at
+		// creation) so the first-fit scheduler places Pods across them.
+		if a.cfg.K8sNodes > 1 {
+			k8s.SetNodeCount(a.cfg.K8sNodes)
+		}
 	}
 
 	a.k8s = k8s
@@ -423,7 +501,7 @@ func (a *App) swapFresh() []closer {
 		// it. Wrapping here (not in buildServers) keeps admin/health probes — which
 		// Control answers before reaching this backend — from dirtying an idle
 		// emulator.
-		a.k8sBackend.Swap(a.wrapDirty(wrap(k8s, "kubernetes", a.cfg.LogRequests)))
+		a.k8sBackend.Swap(a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(k8s, "kubernetes", a.cfg.LogRequests)), "kubernetes")))
 	}
 
 	for p, h := range fresh {
@@ -467,7 +545,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		cloud.EKS.SetK8sAPI(k8s)
 
 		return builtProvider{
-			handler:   a.wrapDirty(wrap(awsserver.New(d), providerAWS, a.cfg.LogRequests)),
+			handler:   a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(awsserver.New(d), providerAWS, a.cfg.LogRequests)), providerAWS)),
 			target:    seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2},
 			snap:      cloud.SnapshotServices(),
 			discovery: cloud.ResourceDiscovery,
@@ -481,7 +559,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		cloud.GKE.SetK8sAPI(k8s)
 
 		return builtProvider{
-			handler:   a.wrapDirty(wrap(gcpserver.New(d), providerGCP, a.cfg.LogRequests)),
+			handler:   a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(gcpserver.New(d), providerGCP, a.cfg.LogRequests)), providerGCP)),
 			target:    seed.Target{Storage: cloud.GCS, Database: cloud.Firestore, Secrets: cloud.SecretManager, Compute: cloud.GCE},
 			snap:      cloud.SnapshotServices(),
 			discovery: cloud.ResourceDiscovery,
@@ -502,7 +580,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		cloud.AKS.SetK8sAPI(k8s)
 
 		return builtProvider{
-			handler:   a.wrapDirty(wrap(azureserver.New(d), providerAzure, a.cfg.LogRequests)),
+			handler:   a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(azureserver.New(d), providerAzure, a.cfg.LogRequests)), providerAzure)),
 			target:    seed.Target{Storage: cloud.BlobStorage, Database: cloud.CosmosDB, Secrets: cloud.KeyVault, Compute: cloud.VirtualMachines},
 			snap:      cloud.SnapshotServices(),
 			discovery: cloud.ResourceDiscovery,
@@ -515,7 +593,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 		// OCI has no managed-Kubernetes service, so no SetK8sAPI here, and its
 		// *Provider carries no engines to close.
 		return builtProvider{
-			handler: a.wrapDirty(wrap(ociserver.New(d), providerOCI, a.cfg.LogRequests)),
+			handler: a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(ociserver.New(d), providerOCI, a.cfg.LogRequests)), providerOCI)),
 			target: seed.Target{
 				Storage: cloud.ObjectStorage, Database: cloud.NoSQL,
 				Secrets: cloud.Vault, Compute: cloud.Compute,
@@ -662,6 +740,12 @@ func (a *App) extraHandler() http.Handler {
 
 			serveCost(w, r, ds)
 		default:
+			if strings.HasPrefix(strings.TrimPrefix(r.URL.Path, admin.Prefix), timeTravelPrefix) {
+				a.serveTimeTravel(w, r)
+
+				return
+			}
+
 			writeNetErr(w, http.StatusNotFound, "unknown control endpoint")
 		}
 	})
@@ -850,6 +934,15 @@ func (a *App) shutdown(servers []*namedServer) error {
 	for _, s := range servers {
 		if err := s.srv.Shutdown(ctx); err != nil && shutErr == nil {
 			shutErr = err
+		}
+	}
+
+	// Persist the recorded cassette once the servers are quiescent, so no
+	// in-flight request can still be appending an interaction mid-write. A no-op
+	// unless --vcr=record.
+	if a.vcr != nil {
+		if err := a.vcr.Flush(); err != nil {
+			fmt.Fprintf(a.out, "warning: saving vcr cassette: %v\n", err)
 		}
 	}
 

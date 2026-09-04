@@ -198,28 +198,51 @@ func renderProviderPage(outDir, prov, native string, svc *Service) string {
 	fmt.Fprintf(&b, "## Operations (%d)\n\n", len(svc.Operations))
 	renderOpTable(&b, svc.Operations)
 
-	if len(svc.Capabilities) > 0 {
-		fmt.Fprintln(&b, "## Optional capabilities")
-		fmt.Fprintln(&b)
-		fmt.Fprintln(&b, "Discovered by type assertion; only some providers implement these.")
-		fmt.Fprintln(&b)
-
-		for _, capability := range svc.Capabilities {
-			fmt.Fprintf(&b, "### %s\n\n", capability.Name)
-
-			if capability.Doc != "" {
-				fmt.Fprintf(&b, "%s\n\n", capability.Doc)
-			}
-
-			renderOpTable(&b, capability.Operations)
-		}
-	}
+	renderCapabilities(&b, prov, svc)
 
 	fmt.Fprintln(&b, "## Not in scope")
 	fmt.Fprintln(&b)
 	fmt.Fprint(&b, nonGoals(outDir, svc.Name))
 
 	return b.String()
+}
+
+// renderCapabilities lists the optional capabilities this provider's mock
+// actually implements. A capability is gated on FULL method-set coverage: the
+// provider is credited only when its mock has every method of the capability's
+// interface (a satisfied type assertion), so a provider page never claims a
+// capability it does not implement (e.g. OCI's VCN page must not list AWS-only
+// TransitGateways/IPAM). A single overlapping method is not enough — several
+// interfaces share a name like DeleteNetworkInterface.
+func renderCapabilities(b *strings.Builder, prov string, svc *Service) {
+	methods := svc.providerMethods[prov]
+
+	var covered []Capability
+
+	for _, capability := range svc.Capabilities {
+		if covers(methods, capability.Operations) {
+			covered = append(covered, capability)
+		}
+	}
+
+	if len(covered) == 0 {
+		return
+	}
+
+	fmt.Fprintln(b, "## Optional capabilities")
+	fmt.Fprintln(b)
+	fmt.Fprintln(b, "Discovered by type assertion; only some providers implement these.")
+	fmt.Fprintln(b)
+
+	for _, capability := range covered {
+		fmt.Fprintf(b, "### %s\n\n", capability.Name)
+
+		if capability.Doc != "" {
+			fmt.Fprintf(b, "%s\n\n", capability.Doc)
+		}
+
+		renderOpTable(b, capability.Operations)
+	}
 }
 
 func renderOpTable(b *strings.Builder, ops []Operation) {

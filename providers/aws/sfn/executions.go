@@ -3,6 +3,7 @@ package sfn
 import (
 	"context"
 	"encoding/json"
+	"sort"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -262,6 +263,10 @@ func abortHistory(events []driver.HistoryEvent, now time.Time, errCode, cause st
 	})
 }
 
+// ListExecutions returns the executions of stateMachineArn ordered the way
+// real Step Functions does: most recently started first (ties broken by ARN
+// for deterministic output when two executions share a start timestamp, e.g.
+// under FakeClock).
 func (m *Mock) ListExecutions(_ context.Context, stateMachineArn, statusFilter string) ([]driver.Execution, error) {
 	if _, err := m.getSM(stateMachineArn); err != nil {
 		return nil, err
@@ -287,6 +292,14 @@ func (m *Mock) ListExecutions(_ context.Context, stateMachineArn, statusFilter s
 
 		out = append(out, exec)
 	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].StartDate.Equal(out[j].StartDate) {
+			return out[i].StartDate.After(out[j].StartDate)
+		}
+
+		return out[i].ARN < out[j].ARN
+	})
 
 	return out, nil
 }

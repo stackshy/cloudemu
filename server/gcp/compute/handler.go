@@ -12,7 +12,8 @@
 //	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/start — start
 //	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/stop  — stop
 //	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/reset — reset
-//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/{verb} — setLabels/setMetadata/setTags/setMachineType/attachDisk/detachDisk
+//	POST   /compute/v1/projects/{p}/zones/{z}/instances/{name}/{verb} — setLabels/setMetadata/setTags/
+//	  setMachineType/attachDisk/detachDisk/addAccessConfig/deleteAccessConfig/setDeletionProtection
 //	GET    /compute/v1/projects/{p}/aggregated/instances             — aggregatedList (grouped by zone)
 //	GET    /compute/v1/projects/{p}/zones/{z}/operations/{name}      — get operation (always DONE)
 package compute
@@ -35,6 +36,10 @@ const (
 	resourceImages     = "images"
 	resourceMachineTyp = "machineTypes"
 )
+
+// actionSetLabels is the lowercased setLabels verb, shared by the instance,
+// disk, image, and snapshot POST-action routers.
+const actionSetLabels = "setlabels"
 
 // Handler serves GCP Compute Engine REST requests for instances and zone
 // operations.
@@ -166,6 +171,11 @@ func (h *Handler) serveSnapshotsRoute(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
+	if r.Method == http.MethodPost && strings.EqualFold(rp.Action, "setLabels") {
+		h.setSnapshotLabels(w, r, rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getSnapshot(w, r, rp)
@@ -188,6 +198,11 @@ func (h *Handler) serveImagesRoute(w http.ResponseWriter, r *http.Request, rp gc
 			writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		}
 
+		return
+	}
+
+	if r.Method == http.MethodPost && strings.EqualFold(rp.Action, "setLabels") {
+		h.setImageLabels(w, r, rp)
 		return
 	}
 
@@ -216,8 +231,8 @@ func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcp
 		return
 	}
 
-	if r.Method == http.MethodPost && strings.EqualFold(rp.Action, "resize") {
-		h.resizeDisk(w, r, rp)
+	if r.Method == http.MethodPost && rp.Action != "" {
+		h.serveDiskAction(w, r, rp)
 		return
 	}
 
@@ -226,6 +241,22 @@ func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcp
 		h.getDisk(w, r, rp)
 	case http.MethodDelete:
 		h.deleteDisk(w, r, rp)
+	default:
+		writeNotImplemented(w, r.Method+" "+r.URL.Path)
+	}
+}
+
+// serveDiskAction routes the POST disk verbs (resize/setLabels/createSnapshot).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) serveDiskAction(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	switch strings.ToLower(rp.Action) {
+	case "resize":
+		h.resizeDisk(w, r, rp)
+	case actionSetLabels:
+		h.setDiskLabels(w, r, rp)
+	case "createsnapshot":
+		h.createSnapshotFromDisk(w, r, rp)
 	default:
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 	}
@@ -279,18 +310,35 @@ func (h *Handler) serveInstanceAction(w http.ResponseWriter, r *http.Request, rp
 }
 
 // dispatchInstanceVerb routes the POST instance verbs (lifecycle + GCP-specific
-// mutations) to their handlers.
+// mutations) to their handlers. Split across two switches (lifecycle, then
+// GCP-specific mutations) to keep either one's cyclomatic complexity low as
+// the verb set grows.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) dispatchInstanceVerb(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	switch strings.ToLower(rp.Action) {
+	action := strings.ToLower(rp.Action)
+
+	switch action {
 	case "start":
 		h.startInstance(w, r, rp)
 	case "stop":
 		h.stopInstance(w, r, rp)
 	case "reset":
 		h.resetInstance(w, r, rp)
-	case "setlabels":
+	default:
+		h.dispatchInstanceMutationVerb(w, r, rp, action)
+	}
+}
+
+// dispatchInstanceMutationVerb routes the GCP-specific instance mutation verbs
+// (as opposed to the AWS-style lifecycle verbs dispatchInstanceVerb handles
+// directly): label/metadata/tag/machine-type updates, disk attach/detach,
+// external-IP accessConfig add/delete, and deletion-protection toggling.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) dispatchInstanceMutationVerb(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, action string) {
+	switch action {
+	case actionSetLabels:
 		h.setLabels(w, r, rp)
 	case "setmetadata":
 		h.setMetadata(w, r, rp)
@@ -302,6 +350,12 @@ func (h *Handler) dispatchInstanceVerb(w http.ResponseWriter, r *http.Request, r
 		h.attachDisk(w, r, rp)
 	case "detachdisk":
 		h.detachDisk(w, r, rp)
+	case "addaccessconfig":
+		h.addAccessConfig(w, r, rp)
+	case "deleteaccessconfig":
+		h.deleteAccessConfig(w, r, rp)
+	case "setdeletionprotection":
+		h.setDeletionProtection(w, r, rp)
 	default:
 		writeNotImplemented(w, "action: "+rp.Action)
 	}

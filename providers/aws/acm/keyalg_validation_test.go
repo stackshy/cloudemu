@@ -2,12 +2,96 @@ package acm_test
 
 import (
 	"context"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"strings"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/acm/driver"
 )
+
+// minRSAKeyBits is the floor real ACM (and modern TLS stacks) enforce on RSA
+// keys, regardless of the legacy KeyAlgorithm a caller requests.
+const minRSAKeyBits = 2048
+
+// TestRequestLegacyRSA1024FloorsToStrongKey proves that requesting the legacy
+// RSA_1024 algorithm still yields a >=2048-bit key: the certificate's own
+// reported KeyAlgorithm mirrors what the caller asked for, but the actual
+// generated key material must never be weak.
+func TestRequestLegacyRSA1024FloorsToStrongKey(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	arn, err := m.RequestCertificate(ctx, driver.RequestCertificateInput{
+		DomainName:   "legacy.example.com",
+		KeyAlgorithm: driver.KeyAlgRSA1024,
+	})
+	if err != nil {
+		t.Fatalf("RequestCertificate(RSA_1024): %v", err)
+	}
+
+	certPEM, _, err := m.GetCertificate(ctx, arn)
+	if err != nil {
+		t.Fatalf("GetCertificate: %v", err)
+	}
+
+	block, _ := pem.Decode([]byte(certPEM))
+	if block == nil {
+		t.Fatalf("certificate PEM did not decode")
+	}
+
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+
+	pub, ok := leaf.PublicKey.(*rsa.PublicKey)
+	if !ok {
+		t.Fatalf("public key type = %T, want *rsa.PublicKey", leaf.PublicKey)
+	}
+
+	if pub.N.BitLen() < minRSAKeyBits {
+		t.Fatalf("generated RSA key = %d bits, want >= %d", pub.N.BitLen(), minRSAKeyBits)
+	}
+}
+
+// TestRequestRSA2048StillGenerates2048 pins that a normal, already-strong
+// request is unaffected by the floor: it still generates exactly the
+// requested key size, not something larger.
+func TestRequestRSA2048StillGenerates2048(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	arn, err := m.RequestCertificate(ctx, driver.RequestCertificateInput{
+		DomainName:   "normal.example.com",
+		KeyAlgorithm: driver.KeyAlgRSA2048,
+	})
+	if err != nil {
+		t.Fatalf("RequestCertificate(RSA_2048): %v", err)
+	}
+
+	certPEM, _, err := m.GetCertificate(ctx, arn)
+	if err != nil {
+		t.Fatalf("GetCertificate: %v", err)
+	}
+
+	block, _ := pem.Decode([]byte(certPEM))
+	leaf, err := x509.ParseCertificate(block.Bytes)
+	if err != nil {
+		t.Fatalf("ParseCertificate: %v", err)
+	}
+
+	pub, ok := leaf.PublicKey.(*rsa.PublicKey)
+	if !ok {
+		t.Fatalf("public key type = %T, want *rsa.PublicKey", leaf.PublicKey)
+	}
+
+	if pub.N.BitLen() != minRSAKeyBits {
+		t.Fatalf("generated RSA key = %d bits, want exactly %d", pub.N.BitLen(), minRSAKeyBits)
+	}
+}
 
 func TestRequestECKeyAlgorithmReflected(t *testing.T) {
 	ctx := context.Background()

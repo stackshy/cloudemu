@@ -28,6 +28,12 @@ type iamSnapshot struct {
 	UserPolicies map[string]map[string]bool `json:"userPolicies,omitempty"`
 	RolePolicies map[string]map[string]bool `json:"rolePolicies,omitempty"`
 	GroupUsers   map[string]map[string]bool `json:"groupUsers,omitempty"`
+
+	// RoleAssignments captures the Azure RBAC role-assignment store
+	// (principal, roleDefinition, scope bindings). It has no AWS-shaped
+	// equivalent so it is not one of the generic memstore-backed stores above;
+	// its fully-exported RoleAssignmentInfo values round-trip directly.
+	RoleAssignments map[string]*RoleAssignmentInfo `json:"roleAssignments,omitempty"`
 }
 
 // policySnapshot mirrors policyData, promoting its unexported version list and
@@ -50,10 +56,11 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	defer m.mu.RUnlock()
 
 	snap := iamSnapshot{
-		Policies:     m.snapshotPolicies(),
-		UserPolicies: m.userPolicies,
-		RolePolicies: m.rolePolicies,
-		GroupUsers:   m.groupUsers,
+		Policies:        m.snapshotPolicies(),
+		UserPolicies:    m.userPolicies,
+		RolePolicies:    m.rolePolicies,
+		GroupUsers:      m.groupUsers,
+		RoleAssignments: m.snapshotRoleAssignments(),
 	}
 
 	if err := m.snapshotStores(&snap); err != nil {
@@ -72,6 +79,19 @@ func (m *Mock) snapshotPolicies() map[string]*policySnapshot {
 			Name: p.Name, ID: p.ID, ARN: p.ARN, Path: p.Path, PolicyDocument: p.PolicyDocument,
 			Description: p.Description, Versions: p.versions, VersionCounter: p.versionCounter,
 		}
+	}
+
+	return out
+}
+
+// snapshotRoleAssignments returns a defensive copy of the role-assignment
+// store so the caller's returned map is independent of later mutations.
+func (m *Mock) snapshotRoleAssignments() map[string]*RoleAssignmentInfo {
+	out := make(map[string]*RoleAssignmentInfo, len(m.roleAssignments))
+
+	for id, a := range m.roleAssignments {
+		cp := *a
+		out[id] = &cp
 	}
 
 	return out
@@ -128,6 +148,10 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 	if snap.GroupUsers != nil {
 		m.groupUsers = snap.GroupUsers
+	}
+
+	if snap.RoleAssignments != nil {
+		m.roleAssignments = snap.RoleAssignments
 	}
 
 	return nil

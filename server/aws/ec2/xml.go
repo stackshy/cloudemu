@@ -108,6 +108,7 @@ type instanceENIXML struct {
 	MacAddress         string                   `xml:"macAddress,omitempty"`
 	PrivateIP          string                   `xml:"privateIpAddress,omitempty"`
 	Status             string                   `xml:"status,omitempty"`
+	SourceDestCheck    bool                     `xml:"sourceDestCheck"`
 	Groups             []groupItem              `xml:"groupSet>item,omitempty"`
 	Attachment         instanceENIAttachmentXML `xml:"attachment"`
 }
@@ -143,18 +144,23 @@ type operatorXML struct {
 // DescribeInstances responses. We populate only the fields the SDK reliably
 // consumes and real apps actually read; unused AWS fields are omitted.
 type instanceXML struct {
-	InstanceID          string                   `xml:"instanceId"`
-	ImageID             string                   `xml:"imageId"`
-	State               instanceState            `xml:"instanceState"`
-	InstanceType        string                   `xml:"instanceType"`
-	LaunchTime          string                   `xml:"launchTime,omitempty"`
-	SubnetID            string                   `xml:"subnetId,omitempty"`
-	VPCID               string                   `xml:"vpcId,omitempty"`
-	PrivateIP           string                   `xml:"privateIpAddress,omitempty"`
-	PublicIP            string                   `xml:"ipAddress,omitempty"`
-	PrivateDNSName      string                   `xml:"privateDnsName,omitempty"`
-	PublicDNSName       string                   `xml:"dnsName,omitempty"`
-	KeyName             string                   `xml:"keyName,omitempty"`
+	InstanceID     string        `xml:"instanceId"`
+	ImageID        string        `xml:"imageId"`
+	State          instanceState `xml:"instanceState"`
+	InstanceType   string        `xml:"instanceType"`
+	LaunchTime     string        `xml:"launchTime,omitempty"`
+	SubnetID       string        `xml:"subnetId,omitempty"`
+	VPCID          string        `xml:"vpcId,omitempty"`
+	PrivateIP      string        `xml:"privateIpAddress,omitempty"`
+	PublicIP       string        `xml:"ipAddress,omitempty"`
+	PrivateDNSName string        `xml:"privateDnsName,omitempty"`
+	PublicDNSName  string        `xml:"dnsName,omitempty"`
+	KeyName        string        `xml:"keyName,omitempty"`
+	// SourceDestCheck mirrors the primary network interface's flag at the
+	// top level too — real EC2 reports it both places, and
+	// aws-sdk-go-v2/terraform-provider-aws read the top-level field, not
+	// the nested networkInterfaceSet entry.
+	SourceDestCheck     bool                     `xml:"sourceDestCheck"`
 	AmiLaunchIndex      int                      `xml:"amiLaunchIndex"`
 	Architecture        string                   `xml:"architecture,omitempty"`
 	RootDeviceType      string                   `xml:"rootDeviceType,omitempty"`
@@ -250,8 +256,15 @@ type attributeBooleanValueXML struct {
 	Value bool `xml:"value"`
 }
 
+// attributeValueXML carries a single string instance attribute. Value uses
+// omitempty so an empty attribute (notably userData that was never set) marshals
+// as a bare <userData></userData> with no nested <value> element — matching real
+// EC2, whose XML decoder then leaves the SDK's AttributeValue.Value pointer nil
+// rather than pointing at "". Without this, terraform-provider-aws's read path
+// (which only skips re-hashing user_data when Value is nil) re-hashes the
+// already-hashed state value on every refresh, producing a permanent plan diff.
 type attributeValueXML struct {
-	Value string `xml:"value"`
+	Value string `xml:"value,omitempty"`
 }
 
 // describeInstanceAttributeResponse carries exactly one requested attribute

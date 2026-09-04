@@ -87,12 +87,24 @@ func TestNew(t *testing.T) {
 	assert.Equal(t, ProviderAWS, eng.provider)
 }
 
+// TestListAllEmpty confirms an account with no user-created resources lists
+// only the account/region's seeded default VPC family (a VPC, its 3 default
+// subnets, default security group, main route table, and internet gateway) —
+// real EC2 never has a truly empty networking surface — and nothing from any
+// other service.
 func TestListAllEmpty(t *testing.T) {
 	f := newAWSFixture(t)
 
 	out, err := f.engine.ListAll(context.Background())
 	require.NoError(t, err)
-	assert.Empty(t, out)
+
+	byType := groupByType(out)
+	assert.Len(t, byType[TypeVPC], 1, "seeded default vpc")
+	assert.Len(t, byType[TypeSubnet], 3, "seeded default subnets")
+	assert.Len(t, byType[TypeSecurityGroup], 1, "seeded default security group")
+	assert.Len(t, byType[TypeRouteTable], 1, "seeded main route table")
+	assert.Len(t, byType[TypeInternetGateway], 1, "seeded default internet gateway")
+	assert.Len(t, out, 7, "no resources beyond the seeded default VPC family")
 }
 
 func TestListAllAcrossServices(t *testing.T) {
@@ -110,7 +122,8 @@ func TestListAllAcrossServices(t *testing.T) {
 
 	byType := groupByType(out)
 	assert.Len(t, byType[TypeInstance], 1, "compute instance")
-	assert.Len(t, byType[TypeVPC], 1, "vpc")
+	// 1 seeded account/region default VPC + the 1 created by seedVPC.
+	assert.Len(t, byType[TypeVPC], 2, "vpc")
 	assert.Len(t, byType[TypeBucket], 1, "bucket")
 	assert.Len(t, byType[TypeTable], 1, "table")
 	assert.Len(t, byType[TypeFunction], 1, "function")
@@ -204,9 +217,17 @@ func TestARNShapes(t *testing.T) {
 		case TypeInstance:
 			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:instance/"),
 				"unexpected instance ARN: %s", r.ARN)
+		case TypeVolume:
+			// Each launched instance materializes a root EBS volume.
+			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:volume/"),
+				"unexpected volume ARN: %s", r.ARN)
 		case TypeVPC:
 			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:vpc/"),
 				"unexpected VPC ARN: %s", r.ARN)
+		case TypeSubnet:
+			// The account/region's seeded default VPC surfaces its default subnets.
+			assert.True(t, strings.HasPrefix(r.ARN, "arn:aws:ec2:us-east-1:123456789012:subnet/"),
+				"unexpected subnet ARN: %s", r.ARN)
 		case TypeBucket:
 			assert.Equal(t, "arn:aws:s3:::my-bkt", r.ARN)
 		case TypeTable:

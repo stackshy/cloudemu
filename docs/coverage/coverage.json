@@ -109,6 +109,12 @@
         "name": "RotateClusterCertificates"
       },
       {
+        "name": "StartCluster"
+      },
+      {
+        "name": "StopCluster"
+      },
+      {
         "name": "UpdateClusterTags"
       }
     ],
@@ -1683,7 +1689,15 @@
         "doc": "Snapshots is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
           {
+            "name": "CopySnapshot",
+            "doc": "CopySnapshot deep-copies an existing snapshot to a new name, so mutating"
+          },
+          {
             "name": "CreateSnapshot"
+          },
+          {
+            "name": "DeleteSnapshot",
+            "doc": "DeleteSnapshot removes a snapshot and returns its last state (marked"
           },
           {
             "name": "DescribeSnapshots"
@@ -1752,6 +1766,57 @@
     ],
     "providers": {
       "gcp": "Cloudasset"
+    }
+  },
+  {
+    "service": "cloudbilling",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateBillingAccount"
+      },
+      {
+        "name": "CreateBudget"
+      },
+      {
+        "name": "DeleteBudget"
+      },
+      {
+        "name": "GetBillingAccount"
+      },
+      {
+        "name": "GetBudget"
+      },
+      {
+        "name": "GetProjectBillingInfo"
+      },
+      {
+        "name": "ListBillingAccounts"
+      },
+      {
+        "name": "ListBudgets"
+      },
+      {
+        "name": "ListProjectBillingInfo"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "ListSkus"
+      },
+      {
+        "name": "PatchBillingAccount"
+      },
+      {
+        "name": "PatchBudget"
+      },
+      {
+        "name": "UpdateProjectBillingInfo"
+      }
+    ],
+    "providers": {
+      "gcp": "Cloudbilling"
     }
   },
   {
@@ -1831,6 +1896,10 @@
         "doc": "GetService returns a service by name (bare service id or a fully"
       },
       {
+        "name": "Invoke",
+        "doc": "Invoke executes the named service (bare id or fully qualified name)"
+      },
+      {
         "name": "ListExecutions",
         "doc": "ListExecutions returns every stored execution of the named job."
       },
@@ -1845,6 +1914,10 @@
       {
         "name": "ListServices",
         "doc": "ListServices returns every stored service."
+      },
+      {
+        "name": "RegisterHandler",
+        "doc": "RegisterHandler plugs a Go handler in for the named service (bare id),"
       },
       {
         "name": "RunJob",
@@ -2293,6 +2366,16 @@
         ]
       },
       {
+        "name": "AzureDiskDeleteOptioner",
+        "doc": "AzureDiskDeleteOptioner is an optional Azure-only capability that records a",
+        "operations": [
+          {
+            "name": "SetDiskDeleteOnTermination",
+            "doc": "SetDiskDeleteOnTermination records whether the volume is deleted (true) or"
+          }
+        ]
+      },
+      {
         "name": "AzureDiskUpdater",
         "doc": "AzureDiskUpdater is an optional Azure-only capability for an in-place managed",
         "operations": [
@@ -2392,6 +2475,15 @@
         "operations": [
           {
             "name": "RegisterImage"
+          }
+        ]
+      },
+      {
+        "name": "ImageTagUpdater",
+        "doc": "ImageTagUpdater is an optional capability for replacing the tag set of an",
+        "operations": [
+          {
+            "name": "UpdateImageTags"
           }
         ]
       },
@@ -2833,6 +2925,72 @@
     }
   },
   {
+    "service": "containerapps",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "ActivateRevision"
+      },
+      {
+        "name": "CreateOrUpdateApp"
+      },
+      {
+        "name": "CreateOrUpdateEnvironment"
+      },
+      {
+        "name": "DeactivateRevision"
+      },
+      {
+        "name": "DeleteApp"
+      },
+      {
+        "name": "DeleteEnvironment"
+      },
+      {
+        "name": "DiscoverApps"
+      },
+      {
+        "name": "DiscoverEnvironments"
+      },
+      {
+        "name": "GetApp"
+      },
+      {
+        "name": "GetEnvironment"
+      },
+      {
+        "name": "GetRevision"
+      },
+      {
+        "name": "ListAppsByResourceGroup"
+      },
+      {
+        "name": "ListAppsBySubscription"
+      },
+      {
+        "name": "ListEnvironmentsByResourceGroup"
+      },
+      {
+        "name": "ListEnvironmentsBySubscription"
+      },
+      {
+        "name": "ListRevisions"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "RestartRevision"
+      }
+    ],
+    "providers": {
+      "azure": "ContainerApps"
+    }
+  },
+  {
     "service": "containerinstances",
     "interface": "ContainerInstances",
     "operations": [
@@ -3005,6 +3163,24 @@
         "operations": [
           {
             "name": "DeleteTag"
+          },
+          {
+            "name": "GetManifestAttributes"
+          },
+          {
+            "name": "GetRepositoryAttributes"
+          },
+          {
+            "name": "GetTagAttributes"
+          },
+          {
+            "name": "UpdateManifestAttributes"
+          },
+          {
+            "name": "UpdateRepositoryAttributes"
+          },
+          {
+            "name": "UpdateTagAttributes"
           }
         ]
       }
@@ -3172,6 +3348,39 @@
     }
   },
   {
+    "service": "costexplorer",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "GetCostAndUsage"
+      },
+      {
+        "name": "GetCostForecast"
+      },
+      {
+        "name": "GetDimensionValues"
+      },
+      {
+        "name": "GetTags"
+      }
+    ],
+    "providers": {
+      "aws": "CostExplorer"
+    }
+  },
+  {
+    "service": "costmanagement",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "Usage"
+      }
+    ],
+    "providers": {
+      "azure": "Costmanagement"
+    }
+  },
+  {
     "service": "database",
     "interface": "Database",
     "operations": [
@@ -3254,6 +3463,36 @@
       }
     ],
     "optionalCapabilities": [
+      {
+        "name": "Backuper",
+        "doc": "Backuper is an OPTIONAL capability, discovered by type assertion (like the",
+        "operations": [
+          {
+            "name": "CreateBackup",
+            "doc": "CreateBackup snapshots the table's schema and items under a new BackupArn."
+          },
+          {
+            "name": "DeleteBackup",
+            "doc": "DeleteBackup removes the backup identified by backupArn, returning its"
+          },
+          {
+            "name": "DescribeBackup",
+            "doc": "DescribeBackup returns the backup identified by backupArn."
+          },
+          {
+            "name": "ListBackups",
+            "doc": "ListBackups returns every backup, or only those of tableName when it is"
+          },
+          {
+            "name": "RestoreTableFromBackup",
+            "doc": "RestoreTableFromBackup creates targetTable from the backup's schema and"
+          },
+          {
+            "name": "RestoreTableToPointInTime",
+            "doc": "RestoreTableToPointInTime creates targetTable from sourceTable. The"
+          }
+        ]
+      },
       {
         "name": "TableAttributes",
         "doc": "TableAttributes is an OPTIONAL capability, discovered by type assertion (like",
@@ -4041,6 +4280,54 @@
     }
   },
   {
+    "service": "emr",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "AddInstanceGroups"
+      },
+      {
+        "name": "AddJobFlowSteps"
+      },
+      {
+        "name": "CancelSteps"
+      },
+      {
+        "name": "DescribeCluster"
+      },
+      {
+        "name": "DescribeStep"
+      },
+      {
+        "name": "ListBootstrapActions"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListInstanceGroups"
+      },
+      {
+        "name": "ListInstances"
+      },
+      {
+        "name": "ListSteps"
+      },
+      {
+        "name": "ModifyInstanceGroups"
+      },
+      {
+        "name": "RunJobFlow"
+      },
+      {
+        "name": "TerminateJobFlows"
+      }
+    ],
+    "providers": {
+      "aws": "EMR"
+    }
+  },
+  {
     "service": "eventbus",
     "interface": "EventBus",
     "operations": [
@@ -4103,6 +4390,57 @@
       "aws": "EventBridge",
       "azure": "EventGrid",
       "gcp": "Eventarc"
+    }
+  },
+  {
+    "service": "eventhub",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CheckNameAvailability"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "CreateOrUpdateAuthorizationRule"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DeleteAuthorizationRule"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "GetAuthorizationRule"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListAuthorizationRules"
+      },
+      {
+        "name": "ListByEventHub"
+      },
+      {
+        "name": "ListByNamespace"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListKeys"
+      },
+      {
+        "name": "RegenerateKeys"
+      }
+    ],
+    "providers": {
+      "azure": "Eventhub"
     }
   },
   {
@@ -6227,6 +6565,57 @@
     }
   },
   {
+    "service": "kusto",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateMergeTable"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "CreateTable"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DropTable"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByCluster"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ShowDatabaseSchema"
+      },
+      {
+        "name": "ShowTableSchema"
+      },
+      {
+        "name": "ShowTables"
+      },
+      {
+        "name": "Start"
+      },
+      {
+        "name": "Stop"
+      }
+    ],
+    "providers": {
+      "azure": "Kusto"
+    }
+  },
+  {
     "service": "loadbalancer",
     "interface": "LoadBalancer",
     "operations": [
@@ -6381,11 +6770,32 @@
         ]
       },
       {
+        "name": "ListenerAttributeStore",
+        "doc": "ListenerAttributeStore is implemented by drivers that store per-listener",
+        "operations": [
+          {
+            "name": "GetListenerAttributes"
+          },
+          {
+            "name": "ModifyListenerAttributes"
+          }
+        ]
+      },
+      {
         "name": "ListenerGetter",
         "doc": "ListenerGetter is implemented by drivers that can fetch a single listener by",
         "operations": [
           {
             "name": "GetListener"
+          }
+        ]
+      },
+      {
+        "name": "RuleGetter",
+        "doc": "RuleGetter is implemented by drivers that can fetch a single listener rule",
+        "operations": [
+          {
+            "name": "GetRule"
           }
         ]
       },
@@ -6427,6 +6837,27 @@
       "aws": "ELB",
       "azure": "LB",
       "gcp": "LB"
+    }
+  },
+  {
+    "service": "locks",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      }
+    ],
+    "providers": {
+      "azure": "Locks"
     }
   },
   {
@@ -6492,10 +6923,16 @@
         "doc": "GCPLogging is an optional interface implemented by the GCP logging backend for",
         "operations": [
           {
+            "name": "CreateBucket"
+          },
+          {
             "name": "CreateLogMetric"
           },
           {
             "name": "CreateSink"
+          },
+          {
+            "name": "DeleteBucket"
           },
           {
             "name": "DeleteLogMetric"
@@ -6504,16 +6941,25 @@
             "name": "DeleteSink"
           },
           {
+            "name": "GetBucket"
+          },
+          {
             "name": "GetLogMetric"
           },
           {
             "name": "GetSink"
           },
           {
+            "name": "ListBuckets"
+          },
+          {
             "name": "ListLogMetrics"
           },
           {
             "name": "ListSinks"
+          },
+          {
+            "name": "UpdateBucket"
           },
           {
             "name": "UpdateLogMetric"
@@ -6594,6 +7040,39 @@
     ],
     "providers": {
       "azure": "ManagedCassandra"
+    }
+  },
+  {
+    "service": "managedidentity",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverIdentities"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "ManagedIdentity"
     }
   },
   {
@@ -6843,6 +7322,27 @@
           {
             "name": "UpdateMessage",
             "doc": "UpdateMessage updates a message's content (when body is non-nil) and its"
+          }
+        ]
+      },
+      {
+        "name": "AzureSessionQueue",
+        "doc": "AzureSessionQueue is the optional Azure Service Bus session surface, discovered",
+        "operations": [
+          {
+            "name": "GetSessionState",
+            "doc": "GetSessionState and SetSessionState read and write a session's opaque state."
+          },
+          {
+            "name": "ReceiveSession",
+            "doc": "ReceiveSession returns up to maxMessages currently-visible messages for a"
+          },
+          {
+            "name": "RenewSessionLock",
+            "doc": "RenewSessionLock extends the session lock held by lockOwner."
+          },
+          {
+            "name": "SetSessionState"
           }
         ]
       }
@@ -7183,6 +7683,82 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "AzureApplicationSecurityGroups",
+        "doc": "AzureApplicationSecurityGroups is the Azure-only application-security-group",
+        "operations": [
+          {
+            "name": "DeleteAzureApplicationSecurityGroup",
+            "doc": "DeleteAzureApplicationSecurityGroup removes the ASG, reporting whether it"
+          },
+          {
+            "name": "GetAzureApplicationSecurityGroup",
+            "doc": "GetAzureApplicationSecurityGroup returns the ASG identified by"
+          },
+          {
+            "name": "ListAzureApplicationSecurityGroups",
+            "doc": "ListAzureApplicationSecurityGroups returns the ASGs in a resource group, or"
+          },
+          {
+            "name": "PutAzureApplicationSecurityGroup",
+            "doc": "PutAzureApplicationSecurityGroup creates or replaces an ASG in place (a"
+          }
+        ]
+      },
+      {
+        "name": "AzureNetworkGateways",
+        "doc": "AzureNetworkGateways is the Azure-only site-to-site VPN surface. Each resource",
+        "operations": [
+          {
+            "name": "DeleteAzureLocalNetworkGateway",
+            "doc": "DeleteAzureLocalNetworkGateway removes the local gateway, reporting whether it existed."
+          },
+          {
+            "name": "DeleteAzureVirtualNetworkGateway",
+            "doc": "DeleteAzureVirtualNetworkGateway removes the gateway, reporting whether it existed."
+          },
+          {
+            "name": "DeleteAzureVirtualNetworkGatewayConnection",
+            "doc": "DeleteAzureVirtualNetworkGatewayConnection removes the connection, reporting whether it existed."
+          },
+          {
+            "name": "GetAzureLocalNetworkGateway",
+            "doc": "GetAzureLocalNetworkGateway returns the local gateway identified by (resourceGroup, name)."
+          },
+          {
+            "name": "GetAzureVirtualNetworkGateway",
+            "doc": "GetAzureVirtualNetworkGateway returns the gateway identified by (resourceGroup, name)."
+          },
+          {
+            "name": "GetAzureVirtualNetworkGatewayConnection",
+            "doc": "GetAzureVirtualNetworkGatewayConnection returns the connection identified by (resourceGroup, name)."
+          },
+          {
+            "name": "ListAzureLocalNetworkGateways",
+            "doc": "ListAzureLocalNetworkGateways returns the local gateways in a resource group,"
+          },
+          {
+            "name": "ListAzureVirtualNetworkGatewayConnections",
+            "doc": "ListAzureVirtualNetworkGatewayConnections returns the connections in a resource"
+          },
+          {
+            "name": "ListAzureVirtualNetworkGateways",
+            "doc": "ListAzureVirtualNetworkGateways returns the gateways in a resource group, or"
+          },
+          {
+            "name": "PutAzureLocalNetworkGateway",
+            "doc": "PutAzureLocalNetworkGateway creates or replaces a local network gateway in place."
+          },
+          {
+            "name": "PutAzureVirtualNetworkGateway",
+            "doc": "PutAzureVirtualNetworkGateway creates or replaces a virtual network gateway"
+          },
+          {
+            "name": "PutAzureVirtualNetworkGatewayConnection",
+            "doc": "PutAzureVirtualNetworkGatewayConnection creates or replaces a connection in place."
+          }
+        ]
+      },
+      {
         "name": "AzureNetworkInterfaces",
         "doc": "AzureNetworkInterfaces is the Azure-specific network-interface surface,",
         "operations": [
@@ -7269,6 +7845,92 @@
           {
             "name": "UpsertAzureVNetPeering",
             "doc": "UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings"
+          }
+        ]
+      },
+      {
+        "name": "AzureNetworkTagReplacer",
+        "doc": "AzureNetworkTagReplacer replaces the entire stored tag collection on the core",
+        "operations": [
+          {
+            "name": "ReplaceAddressTags",
+            "doc": "ReplaceAddressTags sets the public IP address's tags, keyed by its"
+          },
+          {
+            "name": "ReplaceNATGatewayTags",
+            "doc": "ReplaceNATGatewayTags sets the NAT gateway's tags, keyed by its driver id."
+          },
+          {
+            "name": "ReplaceNetworkInterfaceTags",
+            "doc": "ReplaceNetworkInterfaceTags sets the network interface's tags, keyed by the"
+          },
+          {
+            "name": "ReplaceSecurityGroupTags",
+            "doc": "ReplaceSecurityGroupTags sets the network security group's tags, keyed by"
+          },
+          {
+            "name": "ReplaceVPCTags",
+            "doc": "ReplaceVPCTags sets the virtual network's tags, keyed by its driver id."
+          }
+        ]
+      },
+      {
+        "name": "AzurePrivateLink",
+        "doc": "AzurePrivateLink is the Azure-only Private Link surface. Each resource type is",
+        "operations": [
+          {
+            "name": "DeleteAzurePrivateEndpoint",
+            "doc": "DeleteAzurePrivateEndpoint removes the endpoint, reporting whether it existed."
+          },
+          {
+            "name": "DeleteAzurePrivateLinkService",
+            "doc": "DeleteAzurePrivateLinkService removes the service, reporting whether it existed."
+          },
+          {
+            "name": "GetAzurePrivateEndpoint",
+            "doc": "GetAzurePrivateEndpoint returns the endpoint identified by (resourceGroup, name)."
+          },
+          {
+            "name": "GetAzurePrivateLinkService",
+            "doc": "GetAzurePrivateLinkService returns the service identified by (resourceGroup, name)."
+          },
+          {
+            "name": "ListAzurePrivateEndpoints",
+            "doc": "ListAzurePrivateEndpoints returns the endpoints in a resource group, or all"
+          },
+          {
+            "name": "ListAzurePrivateLinkServices",
+            "doc": "ListAzurePrivateLinkServices returns the services in a resource group, or all"
+          },
+          {
+            "name": "PutAzurePrivateEndpoint",
+            "doc": "PutAzurePrivateEndpoint creates or replaces a private endpoint in place (a"
+          },
+          {
+            "name": "PutAzurePrivateLinkService",
+            "doc": "PutAzurePrivateLinkService creates or replaces a private link service in place."
+          }
+        ]
+      },
+      {
+        "name": "AzurePublicIPPrefixes",
+        "doc": "AzurePublicIPPrefixes is the Azure-only public-IP-prefix surface. Keyed by",
+        "operations": [
+          {
+            "name": "DeleteAzurePublicIPPrefix",
+            "doc": "DeleteAzurePublicIPPrefix removes the prefix, reporting whether it existed."
+          },
+          {
+            "name": "GetAzurePublicIPPrefix",
+            "doc": "GetAzurePublicIPPrefix returns the prefix identified by (resourceGroup, name)."
+          },
+          {
+            "name": "ListAzurePublicIPPrefixes",
+            "doc": "ListAzurePublicIPPrefixes returns the prefixes in a resource group, or all"
+          },
+          {
+            "name": "PutAzurePublicIPPrefix",
+            "doc": "PutAzurePublicIPPrefix creates or replaces a prefix in place (a repeat"
           }
         ]
       },
@@ -8503,6 +9165,27 @@
     }
   },
   {
+    "service": "providers",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "Register"
+      },
+      {
+        "name": "Unregister"
+      }
+    ],
+    "providers": {
+      "azure": "Providers"
+    }
+  },
+  {
     "service": "queue",
     "interface": "provider-native",
     "operations": [
@@ -8795,6 +9478,18 @@
         "operations": [
           {
             "name": "FailoverDBCluster"
+          }
+        ]
+      },
+      {
+        "name": "ClusterRoles",
+        "doc": "ClusterRoles is an OPTIONAL capability to associate and disassociate IAM",
+        "operations": [
+          {
+            "name": "AddRoleToDBCluster"
+          },
+          {
+            "name": "RemoveRoleFromDBCluster"
           }
         ]
       },
@@ -9173,6 +9868,10 @@
           },
           {
             "name": "DescribeDBSubnetGroups"
+          },
+          {
+            "name": "ModifyDBSubnetGroup",
+            "doc": "ModifyDBSubnetGroup replaces the group's subnet membership (real RDS"
           }
         ]
       },
@@ -9188,6 +9887,21 @@
           },
           {
             "name": "RemoveTagsFromResource"
+          }
+        ]
+      },
+      {
+        "name": "TransparentDataEncryptions",
+        "doc": "TransparentDataEncryptions is an OPTIONAL Azure SQL capability, discovered by",
+        "operations": [
+          {
+            "name": "GetTransparentDataEncryption"
+          },
+          {
+            "name": "ListTransparentDataEncryption"
+          },
+          {
+            "name": "SetTransparentDataEncryption"
           }
         ]
       },
@@ -10601,6 +11315,42 @@
     }
   },
   {
+    "service": "savingsplans",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateSavingsPlan"
+      },
+      {
+        "name": "DeleteQueuedSavingsPlan"
+      },
+      {
+        "name": "DescribeSavingsPlanRates"
+      },
+      {
+        "name": "DescribeSavingsPlans"
+      },
+      {
+        "name": "DescribeSavingsPlansOfferingRates"
+      },
+      {
+        "name": "DescribeSavingsPlansOfferings"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      }
+    ],
+    "providers": {
+      "aws": "SavingsPlans"
+    }
+  },
+  {
     "service": "secrets",
     "interface": "Secrets",
     "operations": [
@@ -10944,6 +11694,33 @@
     ],
     "providers": {
       "gcp": "Servicenetworking"
+    }
+  },
+  {
+    "service": "servicequotas",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "GetAWSDefaultServiceQuota"
+      },
+      {
+        "name": "GetServiceQuota"
+      },
+      {
+        "name": "ListAWSDefaultServiceQuotas"
+      },
+      {
+        "name": "ListRequestedServiceQuotaChangeHistory"
+      },
+      {
+        "name": "ListServiceQuotas"
+      },
+      {
+        "name": "RequestServiceQuotaIncrease"
+      }
+    ],
+    "providers": {
+      "aws": "ServiceQuotas"
     }
   },
   {
@@ -11545,6 +12322,42 @@
     }
   },
   {
+    "service": "sqlvirtualmachine",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverSQLVirtualMachines"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "UpdateTags"
+      }
+    ],
+    "providers": {
+      "azure": "SQLVirtualMachine"
+    }
+  },
+  {
     "service": "sshpublickeys",
     "interface": "provider-native",
     "operations": [
@@ -11802,6 +12615,103 @@
         ]
       },
       {
+        "name": "AzureFindBlobsByTags",
+        "doc": "AzureFindBlobsByTags is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "FindBlobsByTags"
+          }
+        ]
+      },
+      {
+        "name": "AzureImmutableBlob",
+        "doc": "AzureImmutableBlob is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "BlobImmutability",
+            "doc": "BlobImmutability reports the blob's current immutability policy and legal"
+          },
+          {
+            "name": "DeleteBlobImmutabilityPolicy",
+            "doc": "DeleteBlobImmutabilityPolicy removes the blob's immutability policy"
+          },
+          {
+            "name": "SetBlobImmutabilityPolicy",
+            "doc": "SetBlobImmutabilityPolicy sets (or updates) the blob's time-based"
+          },
+          {
+            "name": "SetBlobLegalHold",
+            "doc": "SetBlobLegalHold sets or clears the blob's legal hold."
+          }
+        ]
+      },
+      {
+        "name": "AzurePageBlob",
+        "doc": "AzurePageBlob is an OPTIONAL Azure-specific capability, discovered by type",
+        "operations": [
+          {
+            "name": "ClearPage",
+            "doc": "ClearPage zeroes the inclusive byte range [start,end] of a page blob and"
+          },
+          {
+            "name": "CreatePageBlob",
+            "doc": "CreatePageBlob creates an empty page blob of size bytes (a multiple of 512)"
+          },
+          {
+            "name": "GetPageRanges",
+            "doc": "GetPageRanges returns the page blob's written ranges (Get Page Ranges,"
+          },
+          {
+            "name": "PutPage",
+            "doc": "PutPage writes data over the inclusive byte range [start,end] of a page blob"
+          }
+        ]
+      },
+      {
+        "name": "AzureSoftDeleteBlob",
+        "doc": "AzureSoftDeleteBlob is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "ListDeletedBlobs",
+            "doc": "ListDeletedBlobs returns the soft-deleted blobs matching opts, so a List"
+          },
+          {
+            "name": "SoftDeleteEnabled",
+            "doc": "SoftDeleteEnabled reports whether soft delete is currently in effect for"
+          },
+          {
+            "name": "UndeleteBlob",
+            "doc": "UndeleteBlob restores a soft-deleted blob to active (PUT ?comp=undelete)."
+          }
+        ]
+      },
+      {
+        "name": "AzureVersionedBlob",
+        "doc": "AzureVersionedBlob is an OPTIONAL Azure-specific capability, discovered by",
+        "operations": [
+          {
+            "name": "DeleteBlobVersion",
+            "doc": "DeleteBlobVersion permanently removes a specific version (DELETE"
+          },
+          {
+            "name": "GetBlobVersion",
+            "doc": "GetBlobVersion reads a specific version of a blob (GET ?versionid=…)."
+          },
+          {
+            "name": "HeadBlobVersion",
+            "doc": "HeadBlobVersion returns a specific version's info (HEAD ?versionid=…)."
+          },
+          {
+            "name": "ListBlobVersions",
+            "doc": "ListBlobVersions returns every version (current and previous) of the blobs"
+          },
+          {
+            "name": "VersioningEnabled",
+            "doc": "VersioningEnabled reports whether account-level blob versioning is on."
+          }
+        ]
+      },
+      {
         "name": "BlobServiceConfig",
         "doc": "BlobServiceConfig is an OPTIONAL Azure-specific capability, discovered by",
         "operations": [
@@ -11840,7 +12750,12 @@
             "doc": "BucketAttrsGCS returns the bucket's GCS-specific attributes."
           },
           {
-            "name": "BucketIAMPolicy"
+            "name": "BucketIAMPolicy",
+            "doc": "BucketIAMPolicy returns the bucket's IAM policy document verbatim"
+          },
+          {
+            "name": "CompareAndSetBucketIAMPolicy",
+            "doc": "CompareAndSetBucketIAMPolicy atomically applies a setIamPolicy write"
           },
           {
             "name": "ComposeObjectGCS",
@@ -11887,10 +12802,6 @@
             "doc": "SetBucketAttrsGCS records the bucket's location and default storage class"
           },
           {
-            "name": "SetBucketIAMPolicy",
-            "doc": "SetBucketIAMPolicy / BucketIAMPolicy persist and return the bucket's IAM"
-          },
-          {
             "name": "TouchBucket",
             "doc": "TouchBucket bumps the bucket's metageneration and updated timestamp,"
           },
@@ -11906,6 +12817,177 @@
         "operations": [
           {
             "name": "CopyObjectV2"
+          }
+        ]
+      },
+      {
+        "name": "ObjectLockBucket",
+        "doc": "ObjectLockBucket is an OPTIONAL S3-specific capability (discovered by type",
+        "operations": [
+          {
+            "name": "AbortMultipartUpload"
+          },
+          {
+            "name": "CompleteMultipartUpload"
+          },
+          {
+            "name": "CopyObject"
+          },
+          {
+            "name": "CreateBucket"
+          },
+          {
+            "name": "CreateMultipartUpload",
+            "doc": "Multipart uploads"
+          },
+          {
+            "name": "DeleteBucket"
+          },
+          {
+            "name": "DeleteBucketPolicy"
+          },
+          {
+            "name": "DeleteBucketTagging"
+          },
+          {
+            "name": "DeleteCORSConfig"
+          },
+          {
+            "name": "DeleteObject"
+          },
+          {
+            "name": "DeleteObjectTagging"
+          },
+          {
+            "name": "DeleteObjectVersion",
+            "doc": "DeleteObjectVersion removes a specific version when versionID != \"\"."
+          },
+          {
+            "name": "DeleteObjectVersionWithBypass",
+            "doc": "DeleteObjectVersionWithBypass is DeleteObjectVersion with Object Lock"
+          },
+          {
+            "name": "EnableObjectLock",
+            "doc": "EnableObjectLock marks a bucket Object-Lock-enabled and turns on versioning"
+          },
+          {
+            "name": "EvaluateLifecycle"
+          },
+          {
+            "name": "GeneratePresignedURL",
+            "doc": "Presigned URLs"
+          },
+          {
+            "name": "GetBucketPolicy"
+          },
+          {
+            "name": "GetBucketTagging"
+          },
+          {
+            "name": "GetBucketVersioning"
+          },
+          {
+            "name": "GetCORSConfig"
+          },
+          {
+            "name": "GetEncryptionConfig"
+          },
+          {
+            "name": "GetLifecycleConfig"
+          },
+          {
+            "name": "GetObject"
+          },
+          {
+            "name": "GetObjectLegalHold",
+            "doc": "GetObjectLegalHold reports whether legal hold is ON for a version (current"
+          },
+          {
+            "name": "GetObjectRetention",
+            "doc": "GetObjectRetention returns the retention on a version (the current version"
+          },
+          {
+            "name": "GetObjectTagging"
+          },
+          {
+            "name": "GetObjectVersion",
+            "doc": "GetObjectVersion / HeadObjectVersion fetch a specific version by ID. A"
+          },
+          {
+            "name": "HeadObject"
+          },
+          {
+            "name": "HeadObjectVersion"
+          },
+          {
+            "name": "ListBuckets"
+          },
+          {
+            "name": "ListMultipartUploads"
+          },
+          {
+            "name": "ListObjectVersions",
+            "doc": "ListObjectVersions returns the full version history matching opts."
+          },
+          {
+            "name": "ListObjects"
+          },
+          {
+            "name": "ListParts",
+            "doc": "ListParts returns the parts buffered so far for an in-progress upload,"
+          },
+          {
+            "name": "ObjectLockEnabled",
+            "doc": "ObjectLockEnabled reports whether the bucket was created with Object Lock"
+          },
+          {
+            "name": "PutBucketPolicy",
+            "doc": "Bucket Policy"
+          },
+          {
+            "name": "PutBucketTagging",
+            "doc": "Bucket Tagging"
+          },
+          {
+            "name": "PutCORSConfig",
+            "doc": "CORS"
+          },
+          {
+            "name": "PutEncryptionConfig",
+            "doc": "Encryption"
+          },
+          {
+            "name": "PutLifecycleConfig",
+            "doc": "Lifecycle policies"
+          },
+          {
+            "name": "PutObject"
+          },
+          {
+            "name": "PutObjectLegalHold",
+            "doc": "PutObjectLegalHold sets legal hold ON/OFF for a version (current when"
+          },
+          {
+            "name": "PutObjectRetention",
+            "doc": "PutObjectRetention sets the retention on a version (current when"
+          },
+          {
+            "name": "PutObjectTagging",
+            "doc": "Object Tagging"
+          },
+          {
+            "name": "SetBucketVersioning",
+            "doc": "Versioning"
+          },
+          {
+            "name": "SetVersioningStatus",
+            "doc": "SetVersioningStatus sets the bucket's versioning status: \"Enabled\" or"
+          },
+          {
+            "name": "UploadPart"
+          },
+          {
+            "name": "VersioningStatus"
           }
         ]
       },
@@ -12200,6 +13282,48 @@
     }
   },
   {
+    "service": "synapse",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListByWorkspace"
+      },
+      {
+        "name": "Pause"
+      },
+      {
+        "name": "Resume"
+      },
+      {
+        "name": "Start"
+      },
+      {
+        "name": "Stop"
+      },
+      {
+        "name": "Update"
+      }
+    ],
+    "providers": {
+      "azure": "Synapse"
+    }
+  },
+  {
     "service": "tablestorage",
     "interface": "TableStorage",
     "operations": [
@@ -12234,6 +13358,27 @@
     ],
     "providers": {
       "azure": "TableStorage"
+    }
+  },
+  {
+    "service": "tags",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdateAtScope"
+      },
+      {
+        "name": "DeleteAtScope"
+      },
+      {
+        "name": "GetAtScope"
+      },
+      {
+        "name": "UpdateAtScope"
+      }
+    ],
+    "providers": {
+      "azure": "Tags"
     }
   },
   {

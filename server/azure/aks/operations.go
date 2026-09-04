@@ -1,7 +1,9 @@
 package aks
 
 import (
+	"context"
 	"net/http"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
@@ -184,6 +186,58 @@ func writeIdempotentDelete(w http.ResponseWriter, err error) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// postClusterAction is the shared body for start/stop. Both are long-running
+// actions whose SDK response type carries no fields, so a 202 +
+// Azure-AsyncOperation header pointing at a synthetic status endpoint is
+// enough for the poller to terminate once it observes Succeeded — no final
+// GET or resource body is required.
+func postClusterAction(
+	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath,
+	action func(ctx context.Context, rg, name string) (*aks.ManagedCluster, error),
+) {
+	if r.Method != http.MethodPost {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	if _, err := action(r.Context(), rp.ResourceGroup, rp.ResourceName); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	opID := rp.ResourceName + "-" + rp.SubResource
+	w.Header().Set("Azure-AsyncOperation", asyncStatusURL(r, rp.Subscription, opID))
+	w.Header().Set("Retry-After", "0")
+	w.WriteHeader(http.StatusAccepted)
+}
+
+// asyncStatusURL builds a self-referential operationStatuses URL for a
+// synthetic operation id, so the request's own scheme/host works on both the
+// plain-HTTP and TLS listeners.
+func asyncStatusURL(r *http.Request, subscription, opID string) string {
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+
+	return scheme + "://" + r.Host +
+		"/subscriptions/" + subscription +
+		"/providers/" + providerName + "/" + resourceTypeLocations + "/eastus/" + subOperationStatuses + "/" + opID +
+		"?api-version=2025-02-01"
+}
+
+// operationStatus answers the LRO poll start/stop point at. The backend is
+// synchronous, so by the time the SDK polls, the action has already
+// completed — every poll reports Succeeded.
+func (*Handler) operationStatus(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeMethodNotAllowed(w)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, map[string]string{"status": "Succeeded"})
+}
+
 func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var (
 		clusters []aks.ManagedCluster
@@ -346,9 +400,24 @@ func (h *Handler) listClusterCredentials(w http.ResponseWriter, r *http.Request,
 
 	azurearm.WriteJSON(w, http.StatusOK, armCredentialResults{
 		Kubeconfigs: []armCredentialResult{
-			{Name: rp.SubResource, Value: kubeconfig},
+			{Name: credentialName(rp.SubResource), Value: kubeconfig},
 		},
 	})
+}
+
+// credentialName maps the listCluster*Credential action verb onto the
+// kubeconfig entry name real AKS returns in kubeconfigs[].name. Real Azure
+// uses the short "clusterAdmin" / "clusterUser" / "clusterMonitoringUser"
+// forms, not the ARM action-path segment itself.
+func credentialName(action string) string {
+	switch {
+	case strings.EqualFold(action, "listClusterAdminCredential"):
+		return "clusterAdmin"
+	case strings.EqualFold(action, "listClusterMonitoringUserCredential"):
+		return "clusterMonitoringUser"
+	default:
+		return "clusterUser"
+	}
 }
 
 func (h *Handler) rotateClusterCertificates(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

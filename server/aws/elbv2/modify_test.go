@@ -452,7 +452,12 @@ func TestSDKSetSecurityGroupsAndSubnets(t *testing.T) {
 
 // TestSDKTargetHealthAdvances proves a freshly registered target reports
 // "initial" (with the AWS reason code) and then advances to "healthy".
-func TestSDKTargetHealthAdvances(t *testing.T) {
+// TestSDKTargetHealthDefaultsToHealthy proves that outside AsyncSettle a
+// registered target reports healthy immediately — the synchronous default
+// every resource in cloudemu uses unless a caller opts into realistic
+// intermediate states. See TestAsyncSettleWireELBv2TargetHealth for the
+// initial->healthy->draining->removed progression under AsyncSettle.
+func TestSDKTargetHealthDefaultsToHealthy(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()
 
@@ -468,8 +473,7 @@ func TestSDKTargetHealthAdvances(t *testing.T) {
 
 	tgARN := aws.ToString(tgOut.TargetGroups[0].TargetGroupArn)
 
-	// A target group only begins health checks once a listener forwards to it;
-	// attach one so the initial->healthy progression is exercised.
+	// A target group only begins health checks once a listener forwards to it.
 	attachListener(t, client, ctx, "th-alb", tgARN)
 
 	if _, err := client.RegisterTargets(ctx, &elb.RegisterTargetsInput{
@@ -479,32 +483,36 @@ func TestSDKTargetHealthAdvances(t *testing.T) {
 		t.Fatalf("RegisterTargets: %v", err)
 	}
 
-	first, err := client.DescribeTargetHealth(ctx, &elb.DescribeTargetHealthInput{
+	out, err := client.DescribeTargetHealth(ctx, &elb.DescribeTargetHealthInput{
 		TargetGroupArn: aws.String(tgARN),
 	})
 	if err != nil {
-		t.Fatalf("DescribeTargetHealth #1: %v", err)
+		t.Fatalf("DescribeTargetHealth: %v", err)
 	}
 
-	th := first.TargetHealthDescriptions[0].TargetHealth
-	if th.State != elbtypes.TargetHealthStateEnumInitial {
-		t.Errorf("first state = %q, want initial", th.State)
+	th := out.TargetHealthDescriptions[0].TargetHealth
+	if th.State != elbtypes.TargetHealthStateEnumHealthy {
+		t.Errorf("state = %q, want healthy", th.State)
 	}
 
-	if th.Reason != elbtypes.TargetHealthReasonEnumRegistrationInProgress {
-		t.Errorf("reason = %q, want Elb.RegistrationInProgress", th.Reason)
+	// DeregisterTargets removes the target immediately, again the synchronous
+	// default.
+	if _, err := client.DeregisterTargets(ctx, &elb.DeregisterTargetsInput{
+		TargetGroupArn: aws.String(tgARN),
+		Targets:        []elbtypes.TargetDescription{{Id: aws.String("i-1"), Port: aws.Int32(80)}},
+	}); err != nil {
+		t.Fatalf("DeregisterTargets: %v", err)
 	}
 
-	second, err := client.DescribeTargetHealth(ctx, &elb.DescribeTargetHealthInput{
+	after, err := client.DescribeTargetHealth(ctx, &elb.DescribeTargetHealthInput{
 		TargetGroupArn: aws.String(tgARN),
 	})
 	if err != nil {
-		t.Fatalf("DescribeTargetHealth #2: %v", err)
+		t.Fatalf("DescribeTargetHealth after deregister: %v", err)
 	}
 
-	if second.TargetHealthDescriptions[0].TargetHealth.State != elbtypes.TargetHealthStateEnumHealthy {
-		t.Errorf("second state = %q, want healthy",
-			second.TargetHealthDescriptions[0].TargetHealth.State)
+	if n := len(after.TargetHealthDescriptions); n != 0 {
+		t.Errorf("descriptions after deregister = %d, want 0", n)
 	}
 }
 
@@ -565,8 +573,8 @@ func TestSDKDescribeTargetHealthUnregisteredTarget(t *testing.T) {
 		t.Fatal("registered target i-1 missing from response")
 	}
 
-	if reg.TargetHealth.State != elbtypes.TargetHealthStateEnumInitial {
-		t.Errorf("registered state = %q, want initial", reg.TargetHealth.State)
+	if reg.TargetHealth.State != elbtypes.TargetHealthStateEnumHealthy {
+		t.Errorf("registered state = %q, want healthy", reg.TargetHealth.State)
 	}
 
 	nr, ok := byID["i-missing"]

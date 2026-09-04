@@ -303,6 +303,207 @@ type AzureBlobExtensions interface {
 	ContainerAccessPolicy(ctx context.Context, container string) (publicAccess string, policies []SignedIdentifier, err error)
 }
 
+// AzureVersionedBlob is an OPTIONAL Azure-specific capability, discovered by
+// type assertion, that models automatic blob versioning (x-ms-version-id). When
+// account-level versioning is enabled (Set Blob Service Properties,
+// isVersioningEnabled) every write to a blob mints a new immutable version, the
+// most recent of which is the current version served by the base blob; older
+// versions stay readable, listable, and individually deletable by their id.
+//
+// It is distinct from the S3-shaped VersionedBucket: Azure enables versioning
+// once at the account/blob-service level (not per bucket with a status) and does
+// not use delete markers — deleting the base blob simply retains the existing
+// versions. S3/GCS don't implement it.
+//
+// Note: version bytes are captured in memory at write time; combining an
+// external StorageEngine with versioning captures version metadata only.
+type AzureVersionedBlob interface {
+	// VersioningEnabled reports whether account-level blob versioning is on.
+	VersioningEnabled(ctx context.Context) (bool, error)
+	// GetBlobVersion reads a specific version of a blob (GET ?versionid=…).
+	GetBlobVersion(ctx context.Context, container, blob, versionID string) (*Object, error)
+	// HeadBlobVersion returns a specific version's info (HEAD ?versionid=…).
+	HeadBlobVersion(ctx context.Context, container, blob, versionID string) (*ObjectInfo, error)
+	// DeleteBlobVersion permanently removes a specific version (DELETE
+	// ?versionid=…). Removing the current version also removes the base blob.
+	DeleteBlobVersion(ctx context.Context, container, blob, versionID string) error
+	// ListBlobVersions returns every version (current and previous) of the blobs
+	// matching opts, so a List Blobs include=versions can render each with its
+	// VersionID and IsLatest (IsCurrentVersion) marker.
+	ListBlobVersions(ctx context.Context, container string, opts ListOptions) (*VersionListResult, error)
+}
+
+// DeletedBlob is one soft-deleted blob reported by ListDeletedBlobs (List Blobs
+// include=deleted). It carries the blob's info together with the soft-delete
+// bookkeeping the wire layer echoes: when it was deleted and how many retention
+// days remain before it is permanently purged.
+type DeletedBlob struct {
+	Info ObjectInfo
+	// DeletedTime is when the blob was soft-deleted (blob time format, UTC).
+	DeletedTime string
+	// RemainingRetentionDays is the whole days left in the retention window
+	// before the soft-deleted blob is permanently removed.
+	RemainingRetentionDays int
+}
+
+// DeletedBlobListResult is the result of a ListDeletedBlobs operation.
+type DeletedBlobListResult struct {
+	Blobs []DeletedBlob
+}
+
+// AzureSoftDeleteBlob is an OPTIONAL Azure-specific capability, discovered by
+// type assertion, that models blob soft delete. When the account-level delete
+// retention policy is enabled (Set Blob Service Properties,
+// deleteRetentionPolicy.enabled/days) a Delete Blob retains the blob instead of
+// removing it: it disappears from a normal List but reappears under List Blobs
+// include=deleted with Deleted=true, a DeletedTime, and a RemainingRetentionDays
+// countdown, and Undelete Blob (PUT ?comp=undelete) restores it. After the
+// retention window elapses the blob is permanently gone.
+//
+// It is distinct from the S3 delete-marker model and from Azure blob versioning:
+// soft delete engages only when the account retention policy is on AND versioning
+// is off (with versioning enabled, retained versions are the recovery mechanism,
+// so a delete leaves the versions intact instead of soft-deleting the base blob).
+// S3/GCS don't implement it.
+//
+// Note: soft-deleted bytes are captured in memory at delete time; combining an
+// external StorageEngine with soft delete captures soft-deleted metadata only.
+type AzureSoftDeleteBlob interface {
+	// SoftDeleteEnabled reports whether soft delete is currently in effect for
+	// the data plane (the account retention policy is enabled and versioning off).
+	SoftDeleteEnabled(ctx context.Context) (bool, error)
+	// UndeleteBlob restores a soft-deleted blob to active (PUT ?comp=undelete).
+	// It is a no-op success when the blob is already active, and NotFound when no
+	// active or soft-deleted blob of that name exists.
+	UndeleteBlob(ctx context.Context, container, blob string) error
+	// ListDeletedBlobs returns the soft-deleted blobs matching opts, so a List
+	// Blobs include=deleted can render each with Deleted=true and its retention
+	// bookkeeping.
+	ListDeletedBlobs(ctx context.Context, container string, opts ListOptions) (*DeletedBlobListResult, error)
+}
+
+// Blob-level immutability policy modes (x-ms-immutability-policy-mode). An empty
+// mode means no time-based immutability policy is set on the blob.
+const (
+	// BlobImmutabilityUnlocked is an editable time-based retention policy: the
+	// retain-until date may be increased or decreased, and the policy deleted.
+	BlobImmutabilityUnlocked = "Unlocked"
+	// BlobImmutabilityLocked is a permanent time-based retention policy: the
+	// retain-until date may only be extended (never shortened), and the policy
+	// can never be removed.
+	BlobImmutabilityLocked = "Locked"
+)
+
+// BlobImmutabilityPolicy is a blob-level (version-level) time-based retention
+// immutability policy: a retain-until instant and a mode (Unlocked/Locked). A
+// zero value (empty Mode, zero ExpiryTime) means no policy is set. While the
+// current time is before ExpiryTime the blob is protected from delete and
+// overwrite (WORM).
+type BlobImmutabilityPolicy struct {
+	ExpiryTime time.Time
+	Mode       string
+}
+
+// AzureImmutableBlob is an OPTIONAL Azure-specific capability, discovered by
+// type assertion, that ENFORCES blob immutable storage (WORM): a time-based
+// retention immutability policy (Set/Delete Blob Immutability Policy,
+// ?comp=immutabilityPolicies) and a legal hold (Set Blob Legal Hold,
+// ?comp=legalhold). While a blob has an unexpired immutability policy OR a legal
+// hold set, Delete Blob and any overwrite are rejected with the Azure 409
+// BlobImmutableDueToPolicy / BlobImmutableDueToLegalHold error. An Unlocked
+// policy may have its retain-until date raised or lowered and may be deleted; a
+// Locked policy may only be extended and can never be removed. S3/GCS don't
+// implement it (they carry their own object-lock/retention capabilities).
+//
+// Note: real Azure blob-level immutability builds on versioning, where an
+// overwrite creates a new version and leaves the protected version intact;
+// cloudemu models the container-level WORM semantics the world-case targets —
+// while protected, both delete and overwrite of the blob are blocked.
+type AzureImmutableBlob interface {
+	// SetBlobImmutabilityPolicy sets (or updates) the blob's time-based
+	// retention immutability policy and returns the effective policy. Setting a
+	// policy in the past is rejected. On an Unlocked policy the retain-until date
+	// may be raised or lowered and the mode may be promoted to Locked; on a
+	// Locked policy the date may only be extended and the mode can never revert
+	// to Unlocked — a disallowed change returns a FailedPrecondition error.
+	SetBlobImmutabilityPolicy(
+		ctx context.Context, container, blob string, policy BlobImmutabilityPolicy,
+	) (BlobImmutabilityPolicy, error)
+	// DeleteBlobImmutabilityPolicy removes the blob's immutability policy
+	// (allowed only while it is Unlocked; a Locked policy returns a 409
+	// BlobImmutableDueToPolicy error).
+	DeleteBlobImmutabilityPolicy(ctx context.Context, container, blob string) error
+	// SetBlobLegalHold sets or clears the blob's legal hold.
+	SetBlobLegalHold(ctx context.Context, container, blob string, hold bool) error
+	// BlobImmutability reports the blob's current immutability policy and legal
+	// hold, so Get Blob Properties can echo the x-ms-immutability-policy-* and
+	// x-ms-legal-hold headers.
+	BlobImmutability(ctx context.Context, container, blob string) (policy BlobImmutabilityPolicy, legalHold bool, err error)
+}
+
+// PageRange is one contiguous [Start,End] byte span (inclusive) of a page blob
+// that currently holds written data, as reported by Get Page Ranges.
+type PageRange struct {
+	Start int64
+	End   int64
+}
+
+// AzurePageBlob is an OPTIONAL Azure-specific capability, discovered by type
+// assertion, that models page blobs — fixed-capacity blobs written in 512-byte
+// pages at arbitrary offsets (the backing type for Azure managed disks). A page
+// blob is created empty at a declared size (all pages read as zeros); Put Page
+// writes an aligned range, Clear Page zeroes one, and Get Page Ranges reports
+// the ranges that currently hold written data (adjacent written pages coalesced
+// into one range). All ranges are aligned to the 512-byte page boundary.
+//
+// It is distinct from block/append blobs: those grow by staging or appending
+// whole blocks, whereas a page blob is a random-access fixed-size byte array.
+// S3/GCS don't implement it.
+//
+// Note: page bytes are captured in memory; a page blob is not offloaded to an
+// external StorageEngine.
+type AzurePageBlob interface {
+	// CreatePageBlob creates an empty page blob of size bytes (a multiple of 512)
+	// with all pages zero-valued and no written ranges (Put Blob,
+	// x-ms-blob-type: PageBlob, x-ms-blob-content-length: size). props may be nil.
+	CreatePageBlob(
+		ctx context.Context, container, blob string, size int64, props *BlobProperties, metadata map[string]string,
+	) (*ObjectInfo, error)
+	// PutPage writes data over the inclusive byte range [start,end] of a page blob
+	// (Put Page, ?comp=page, x-ms-page-write: update). start and end must align to
+	// the 512-byte page boundary (start%512==0, (end+1)%512==0), lie within the
+	// blob, and len(data) must equal end-start+1.
+	PutPage(ctx context.Context, container, blob string, start, end int64, data []byte) (*ObjectInfo, error)
+	// ClearPage zeroes the inclusive byte range [start,end] of a page blob and
+	// drops it from the written ranges (Clear Page, ?comp=page,
+	// x-ms-page-write: clear). Same alignment/bounds rules as PutPage.
+	ClearPage(ctx context.Context, container, blob string, start, end int64) (*ObjectInfo, error)
+	// GetPageRanges returns the page blob's written ranges (Get Page Ranges,
+	// GET ?comp=pagelist), coalesced and ordered by Start, together with the
+	// blob's total size.
+	GetPageRanges(ctx context.Context, container, blob string) (ranges []PageRange, blobSize int64, err error)
+}
+
+// TaggedBlob is one blob returned by FindBlobsByTags: its container, name, and
+// the full index-tag set that matched the query.
+type TaggedBlob struct {
+	Container string
+	Name      string
+	Tags      map[string]string
+}
+
+// AzureFindBlobsByTags is an OPTIONAL Azure-specific capability, discovered by
+// type assertion, that searches blobs by their index tags (Find Blobs by Tags,
+// GET /?comp=blobs&where=… at the account level or
+// GET /{container}?restype=container&comp=blobs&where=… scoped to one
+// container). It returns every live blob whose tags satisfy all of the
+// equality conditions in match; an empty match matches every tagged blob.
+// container is "" for an account-wide search or a container name to scope it.
+// The tags themselves are the ones set via Set Blob Tags (PutObjectTagging).
+type AzureFindBlobsByTags interface {
+	FindBlobsByTags(ctx context.Context, container string, match map[string]string) ([]TaggedBlob, error)
+}
+
 // BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
 // the networking NetworkInterfaces capability): a provider whose buckets map to
 // a richer resource (Azure storage accounts) exposes their SKU/kind/access-tier
@@ -366,6 +567,21 @@ type ObjectInfo struct {
 	// PutObject and echoed on GET/HEAD. Empty when unset; providers that don't
 	// model it leave it empty.
 	Expires string
+	// TemporaryHold / EventBasedHold report the GCS object WORM holds. While
+	// either is set the object cannot be deleted or overwritten. Zero for
+	// providers that don't model holds.
+	TemporaryHold  bool
+	EventBasedHold bool
+	// RetentionExpiration is the GCS retentionExpirationTime — the RFC3339 instant
+	// before which the object cannot be deleted or overwritten under the bucket's
+	// retention policy. Empty when the bucket has no retention policy (or an
+	// eventBasedHold is currently pinning the object).
+	RetentionExpiration string
+	// Deleted is the GCS timeDeleted (RFC3339) — the instant a version became
+	// noncurrent, either archived by an overwrite or a live delete on a
+	// versioning-enabled bucket. Empty for a live version, or for providers that
+	// don't model versioning/generations.
+	Deleted string
 }
 
 // Object is an object with its data.
@@ -447,6 +663,73 @@ type VersionedBucket interface {
 
 	// ListObjectVersions returns the full version history matching opts.
 	ListObjectVersions(ctx context.Context, bucket string, opts ListOptions) (*VersionListResult, error)
+}
+
+// Object-lock retention modes (S3 Object Lock). GOVERNANCE can be bypassed by a
+// principal holding s3:BypassGovernanceRetention; COMPLIANCE can be bypassed by
+// no one, not even the root account, until the retention period elapses.
+const (
+	ObjectLockGovernance = "GOVERNANCE"
+	ObjectLockCompliance = "COMPLIANCE"
+)
+
+// ObjectRetention is an S3 Object Lock retention setting on a single object
+// version: a Mode (GOVERNANCE or COMPLIANCE) and the UTC instant until which the
+// version is retained. A zero value (empty Mode, zero RetainUntilDate) means no
+// retention is configured.
+type ObjectRetention struct {
+	Mode            string
+	RetainUntilDate time.Time
+}
+
+// ObjectLockBucket is an OPTIONAL S3-specific capability (discovered by type
+// assertion, like VersionedBucket) that ENFORCES S3 Object Lock (WORM). Retention
+// (GOVERNANCE/COMPLIANCE + RetainUntilDate) and legal hold are recorded per
+// object version; while a version is protected — legal hold ON, or a retention
+// period that has not elapsed — its bytes cannot be permanently deleted or
+// overwritten. A GOVERNANCE retention (but not the version's legal hold) can be
+// lifted with s3:BypassGovernanceRetention; a COMPLIANCE retention cannot be
+// shortened, removed, or bypassed by anyone until it expires. Object Lock builds
+// on versioning, so it layers on VersionedBucket. Providers without it keep the
+// plain versioned behavior with no WORM protection.
+type ObjectLockBucket interface {
+	VersionedBucket
+
+	// ObjectLockEnabled reports whether the bucket was created with Object Lock
+	// enabled (x-amz-bucket-object-lock-enabled), so retention/legal hold may be
+	// configured on its objects.
+	ObjectLockEnabled(ctx context.Context, bucket string) (bool, error)
+	// EnableObjectLock marks a bucket Object-Lock-enabled and turns on versioning
+	// (Object Lock requires it). Idempotent.
+	EnableObjectLock(ctx context.Context, bucket string) error
+
+	// GetObjectRetention returns the retention on a version (the current version
+	// when versionID==""). A zero ObjectRetention means none is set.
+	GetObjectRetention(ctx context.Context, bucket, key, versionID string) (ObjectRetention, error)
+	// PutObjectRetention sets the retention on a version (current when
+	// versionID==""). First-setting or extending a retention is always allowed;
+	// shortening, removing, or downgrading an ACTIVE GOVERNANCE retention requires
+	// bypassGovernance, and an active COMPLIANCE retention can never be shortened,
+	// removed, or downgraded. A disallowed change returns a PermissionDenied error.
+	PutObjectRetention(
+		ctx context.Context, bucket, key, versionID string, ret ObjectRetention, bypassGovernance bool,
+	) error
+	// GetObjectLegalHold reports whether legal hold is ON for a version (current
+	// when versionID=="").
+	GetObjectLegalHold(ctx context.Context, bucket, key, versionID string) (bool, error)
+	// PutObjectLegalHold sets legal hold ON/OFF for a version (current when
+	// versionID==""). Always allowed.
+	PutObjectLegalHold(ctx context.Context, bucket, key, versionID string, on bool) error
+
+	// DeleteObjectVersionWithBypass is DeleteObjectVersion with Object Lock
+	// enforcement: a protected version cannot be permanently removed, and
+	// bypassGovernance lifts only a GOVERNANCE block (never COMPLIANCE, never a
+	// legal hold). A blocked delete returns a PermissionDenied error. A top-level
+	// delete (versionID=="") still records a delete marker without touching the
+	// protected versions beneath it.
+	DeleteObjectVersionWithBypass(
+		ctx context.Context, bucket, key, versionID string, bypassGovernance bool,
+	) (deletedVersionID string, deleteMarker bool, err error)
 }
 
 // RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like
@@ -759,6 +1042,26 @@ func (e *GCSPreconditionError) Error() string {
 	return e.Message
 }
 
+// GCSImmutableError signals a delete or overwrite blocked by a bucket retention
+// policy that has not yet elapsed or by an active object hold (temporaryHold /
+// eventBasedHold). Real GCS answers 403 Forbidden with a reason such as
+// "retentionPolicyNotMet"; providers return this typed error and the GCS handler
+// matches it with errors.As to emit the exact 403.
+type GCSImmutableError struct {
+	// Reason is the GCS error reason (e.g. "retentionPolicyNotMet").
+	Reason string
+	// Message is the human-readable explanation returned to the caller.
+	Message string
+}
+
+func (e *GCSImmutableError) Error() string {
+	if e.Message == "" {
+		return "object is immutable (retention policy or hold)"
+	}
+
+	return e.Message
+}
+
 // GCSObjectUpdate carries the mutable properties an Objects: patch/update sets.
 // A nil pointer field leaves that property unchanged; a nil Metadata map leaves
 // custom metadata unchanged, while a non-nil map is merged (a nil value deletes
@@ -770,6 +1073,11 @@ type GCSObjectUpdate struct {
 	ContentDisposition *string
 	ContentLanguage    *string
 	Metadata           map[string]*string
+	// TemporaryHold / EventBasedHold set or clear the object's WORM holds
+	// (Objects: patch). A nil pointer leaves the hold unchanged. Releasing an
+	// eventBasedHold (true→false) resets the object's retention clock.
+	TemporaryHold  *bool
+	EventBasedHold *bool
 }
 
 // GCSObjectAttrs carries the object system properties settable at INSERT time
@@ -781,6 +1089,17 @@ type GCSObjectAttrs struct {
 	ContentDisposition string
 	ContentLanguage    string
 	StorageClass       string
+}
+
+// GCSRetentionPolicy is a bucket retention policy (WORM). RetentionPeriod is in
+// seconds; objects cannot be deleted or overwritten until they are older than
+// it. EffectiveTime is when the policy took effect; IsLocked reports whether it
+// has been made permanent (it can then only be increased, never shortened or
+// removed).
+type GCSRetentionPolicy struct {
+	RetentionPeriod int64
+	EffectiveTime   string
+	IsLocked        bool
 }
 
 // GCSComposeSource names one source component of an Objects: compose request.
@@ -850,10 +1169,22 @@ type GCSExtensions interface {
 	// TouchBucket bumps the bucket's metageneration and updated timestamp,
 	// called after any bucket configuration change.
 	TouchBucket(ctx context.Context, bucket string) error
-	// SetBucketIAMPolicy / BucketIAMPolicy persist and return the bucket's IAM
-	// policy document verbatim (Buckets: setIamPolicy / getIamPolicy).
-	SetBucketIAMPolicy(ctx context.Context, bucket string, policyJSON []byte) error
+	// BucketIAMPolicy returns the bucket's IAM policy document verbatim
+	// (Buckets: getIamPolicy).
 	BucketIAMPolicy(ctx context.Context, bucket string) ([]byte, error)
+	// CompareAndSetBucketIAMPolicy atomically applies a setIamPolicy write
+	// (Buckets: setIamPolicy). When expectedEtag is non-empty it must match
+	// the bucket's current stored policy etag, or the write is rejected with
+	// *GCSPreconditionError (real GCS's 412 conditionNotMet); an empty
+	// expectedEtag is an unconditional write. The etag check and the write
+	// happen under a single lock, so concurrent setIamPolicy calls that all
+	// read the same etag can't all "win" — the lost update a separate
+	// BucketIAMPolicy-then-CompareAndSetBucketIAMPolicy pair would allow.
+	// policyJSON is the client's validated document (kind/resourceId already
+	// stamped by the caller, etag a placeholder); the implementation mints
+	// the real etag from the bucket's actual current state and returns the
+	// final stored document.
+	CompareAndSetBucketIAMPolicy(ctx context.Context, bucket, expectedEtag string, policyJSON []byte) ([]byte, error)
 
 	// CreateNotificationConfig registers a Pub/Sub notification config on a
 	// bucket (Notifications: insert), returning the stored config with its

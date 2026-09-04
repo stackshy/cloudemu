@@ -22,8 +22,10 @@ package vnet
 
 import (
 	"context"
+	"maps"
 	"net/http"
 	"strings"
+	"sync"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -31,17 +33,22 @@ import (
 )
 
 const (
-	providerName     = "Microsoft.Network"
-	typeVNet         = "virtualNetworks"
-	typeNSG          = "networkSecurityGroups"
-	typeRouteTable   = "routeTables"
-	typePublicIP     = "publicIPAddresses"
-	typeLocations    = "locations"
-	armNameTag       = "cloudemu:azureNetName"
-	armSubnetTag     = "cloudemu:azureSubnet"
-	armNSGTag        = "cloudemu:azureNSGName"
-	armPublicIPTag   = "cloudemu:azurePublicIP"
-	armPublicIPRGTag = "cloudemu:azurePublicIPResourceGroup"
+	providerName   = "Microsoft.Network"
+	typeVNet       = "virtualNetworks"
+	typeNSG        = "networkSecurityGroups"
+	typeRouteTable = "routeTables"
+	typePublicIP   = "publicIPAddresses"
+	typeLocations  = "locations"
+	// internalTagPrefix marks the wire-internal bookkeeping tags (ARM name /
+	// resource-group anchors, association references) the (rg, name) lookups
+	// depend on; stripInternal hides them from responses and an UpdateTags PATCH
+	// preserves them across a wholesale user-tag replacement.
+	internalTagPrefix = "cloudemu:"
+	armNameTag        = "cloudemu:azureNetName"
+	armSubnetTag      = "cloudemu:azureSubnet"
+	armNSGTag         = "cloudemu:azureNSGName"
+	armPublicIPTag    = "cloudemu:azurePublicIP"
+	armPublicIPRGTag  = "cloudemu:azurePublicIPResourceGroup"
 	// armVNetRGTag / armNSGRGTag record the resource group a virtual network or
 	// network security group was created under. The cross-cloud networking
 	// driver has a single flat namespace, so without this a resource is globally
@@ -85,7 +92,12 @@ const (
 
 // Handler serves Microsoft.Network ARM requests against a networking driver.
 type Handler struct {
-	net netdriver.Networking
+	// patchMu serializes the read-modify-write UpdateTags PATCH handlers so two
+	// concurrent PATCHes to the same resource cannot drop a write (the driver's
+	// Get and Put are individually locked, but the get-then-put across them is
+	// not atomic). It guards only that get-modify-put window.
+	patchMu sync.Mutex
+	net     netdriver.Networking
 }
 
 // New returns a network handler.
@@ -107,7 +119,8 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case typeVNet, typeNSG, typeRouteTable, typePublicIP, typeNIC, typeNATGateway, typeLocations:
+	case typeVNet, typeNSG, typeRouteTable, typePublicIP, typePublicIPPrefix, typeNIC, typeNATGateway, typeASG,
+		typeVNGateway, typeLNGateway, typeConnection, typePrivateEndpoint, typePrivateLinkService, typeLocations:
 		return true
 	}
 
@@ -122,15 +135,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if rp.ResourceType == typeLocations && rp.SubResource == "operationStatuses" {
-		azurearm.WriteJSON(w, http.StatusOK, map[string]string{
-			"name":   rp.SubResourceName,
-			"status": "Succeeded",
-		})
-
+	if serveLocationsOperationStatus(w, rp) {
 		return
 	}
 
+	h.routeByResourceType(w, r, rp)
+}
+
+// routeByResourceType dispatches to the per-type router. Split out of ServeHTTP
+// so the dispatch stays under the cyclomatic-complexity gate as resource types
+// are added (the same reason serveLocationsOperationStatus is separate).
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) routeByResourceType(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	switch rp.ResourceType {
 	case typeVNet:
 		h.routeVNet(w, r, rp)
@@ -140,14 +157,73 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeRouteTable(w, r, rp)
 	case typePublicIP:
 		h.routePublicIP(w, r, rp)
+	case typePublicIPPrefix:
+		h.routePublicIPPrefix(w, r, rp)
 	case typeNIC:
 		h.routeNIC(w, r, rp)
 	case typeNATGateway:
 		h.routeNATGateway(w, r, rp)
+	case typeASG:
+		h.routeASG(w, r, rp)
 	default:
+		if h.routeOptionalResourceType(w, r, rp) {
+			return
+		}
+
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
 			"unsupported resource type: "+rp.ResourceType)
 	}
+}
+
+// routeOptionalResourceType dispatches the Azure-only resource types served
+// through type-asserted networking-driver capabilities (site-to-site VPN
+// gateways, Private Link). Split out of routeByResourceType so that switch stays
+// under the cyclomatic-complexity gate as capabilities are added. It returns
+// true when it handled the request.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) routeOptionalResourceType(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) bool {
+	return h.routeGatewayResourceType(w, r, rp) || h.routePrivateLinkResourceType(w, r, rp)
+}
+
+// routeGatewayResourceType dispatches the site-to-site VPN resource types
+// (virtualNetworkGateways, localNetworkGateways, connections). Split out of
+// routeByResourceType so its dispatch switch stays under the cyclomatic-complexity
+// gate. It returns true when it handled the request.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) routeGatewayResourceType(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) bool {
+	switch rp.ResourceType {
+	case typeVNGateway:
+		h.routeVNGateway(w, r, rp)
+	case typeLNGateway:
+		h.routeLNGateway(w, r, rp)
+	case typeConnection:
+		h.routeConnection(w, r, rp)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// serveLocationsOperationStatus answers the locations/operationStatuses poll
+// URL that async (202) operations point at, reporting Succeeded. It returns true
+// when it handled the request. Split out of ServeHTTP so the main dispatch stays
+// under the cyclomatic-complexity gate as resource types are added.
+//
+//nolint:gocritic // rp is a request-scoped value
+func serveLocationsOperationStatus(w http.ResponseWriter, rp azurearm.ResourcePath) bool {
+	if rp.ResourceType != typeLocations || rp.SubResource != "operationStatuses" {
+		return false
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, map[string]string{
+		"name":   rp.SubResourceName,
+		"status": "Succeeded",
+	})
+
+	return true
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -193,6 +269,8 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 	switch r.Method {
 	case http.MethodPut:
 		h.createVNet(w, r, rp)
+	case http.MethodPatch:
+		h.patchVNet(w, r, rp)
 	case http.MethodGet:
 		h.getVNet(w, r, rp)
 	case http.MethodDelete:
@@ -241,6 +319,8 @@ func (h *Handler) routeNSG(w http.ResponseWriter, r *http.Request, rp azurearm.R
 	switch r.Method {
 	case http.MethodPut:
 		h.createNSG(w, r, rp)
+	case http.MethodPatch:
+		h.patchNSG(w, r, rp)
 	case http.MethodGet:
 		h.getNSG(w, r, rp)
 	case http.MethodDelete:
@@ -510,7 +590,7 @@ func (h *Handler) getVNet(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 	azurearm.WriteJSON(w, http.StatusOK, h.vnetResponse(r.Context(), info, rp))
 }
 
-//nolint:gocritic,dupl // rp is request-scoped; mirrors listNSGs over a distinct resource type by design
+//nolint:gocritic // rp is request-scoped; mirrors listNSGs over a distinct resource type by design
 func (h *Handler) listVNets(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	infos, err := h.net.DescribeVPCs(r.Context(), nil)
 	if err != nil {
@@ -565,14 +645,12 @@ func (h *Handler) deleteVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 		return
 	}
 
-	// Cascade-delete the child subnets so they stop being globally addressable
-	// once their parent network is gone.
-	h.deleteChildSubnets(r.Context(), info.ID)
-
 	if meta, ok := h.azureMeta(); ok {
 		meta.DeleteAzureVNetMetadata(r.Context(), info.ID)
 	}
 
+	// DeleteVPC cascade-deletes the child subnets at the driver layer (the single
+	// source of truth), so they stop being globally addressable with their parent.
 	if err := h.net.DeleteVPC(r.Context(), info.ID); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
@@ -612,6 +690,10 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup strin
 	recordErr(h.purgeVNets(ctx, resourceGroup))
 	recordErr(h.purgeNSGs(ctx, resourceGroup))
 	recordErr(h.purgeRouteTables(ctx, resourceGroup))
+	h.purgeASGs(ctx, resourceGroup)
+	h.purgePublicIPPrefixes(ctx, resourceGroup)
+	h.purgeNetworkGateways(ctx, resourceGroup)
+	h.purgePrivateLink(ctx, resourceGroup)
 
 	return firstErr
 }
@@ -693,6 +775,8 @@ func (h *Handler) purgePublicIPs(ctx context.Context, resourceGroup string) erro
 
 // purgeVNets deletes every virtual network (with its subnets and metadata) in
 // the resource group, returning the first delete error encountered.
+//
+//nolint:dupl // mirrors purgeNSGs over a distinct resource type and store by design
 func (h *Handler) purgeVNets(ctx context.Context, resourceGroup string) error {
 	vpcs, err := h.net.DescribeVPCs(ctx, nil)
 	if err != nil {
@@ -706,12 +790,11 @@ func (h *Handler) purgeVNets(ctx context.Context, resourceGroup string) error {
 			continue
 		}
 
-		h.deleteChildSubnets(ctx, vpcs[i].ID)
-
 		if meta, ok := h.azureMeta(); ok {
 			meta.DeleteAzureVNetMetadata(ctx, vpcs[i].ID)
 		}
 
+		// DeleteVPC cascade-deletes the vnet's child subnets at the driver layer.
 		if derr := h.net.DeleteVPC(ctx, vpcs[i].ID); derr != nil && firstErr == nil {
 			firstErr = derr
 		}
@@ -722,6 +805,8 @@ func (h *Handler) purgeVNets(ctx context.Context, resourceGroup string) error {
 
 // purgeNSGs deletes every network security group (with its metadata) in the
 // resource group, returning the first delete error encountered.
+//
+//nolint:dupl // mirrors purgeRouteTables over a distinct resource type and store by design
 func (h *Handler) purgeNSGs(ctx context.Context, resourceGroup string) error {
 	nsgs, err := h.net.DescribeSecurityGroups(ctx, nil)
 	if err != nil {
@@ -745,20 +830,6 @@ func (h *Handler) purgeNSGs(ctx context.Context, resourceGroup string) error {
 	}
 
 	return firstErr
-}
-
-// deleteChildSubnets removes every subnet that belongs to the given vnet.
-func (h *Handler) deleteChildSubnets(ctx context.Context, vpcID string) {
-	subs, err := h.net.DescribeSubnets(ctx, nil)
-	if err != nil {
-		return
-	}
-
-	for i := range subs {
-		if subs[i].VPCID == vpcID {
-			_ = h.net.DeleteSubnet(ctx, subs[i].ID)
-		}
-	}
 }
 
 // vnetSubnetInUse reports whether any network interface's ipConfiguration
@@ -1254,7 +1325,7 @@ func (h *Handler) getNSG(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 	azurearm.WriteJSON(w, http.StatusOK, h.nsgResponse(r.Context(), info, rp))
 }
 
-//nolint:gocritic,dupl // rp is request-scoped; mirrors listVNets over a distinct resource type by design
+//nolint:gocritic // rp is request-scoped; mirrors listVNets over a distinct resource type by design
 func (h *Handler) listNSGs(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	infos, err := h.net.DescribeSecurityGroups(r.Context(), nil)
 	if err != nil {
@@ -1293,6 +1364,26 @@ func (h *Handler) deleteNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 		return
 	}
 
+	// Real ARM refuses to delete an NSG still associated with any subnet or NIC,
+	// answering 400 InUseNetworkSecurityGroupCannotBeDeleted and naming the
+	// associated resources; the association must be dropped first.
+	//
+	// The reference scan reads the subnets/NICs stores and the delete writes the
+	// security-groups store — two independent memstores. Their per-store locks
+	// cannot span both, so this check-then-delete is not atomic; a subnet PUT
+	// that associates the NSG in the same instant may slip through. Real ARM has
+	// the same eventual-consistency window, and making it atomic would need a
+	// cross-store lock the emulator does not model, so the narrow gap is
+	// accepted here.
+	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeNSG, rp.ResourceName)
+
+	if refs := append(h.nsgAssociatedSubnets(r.Context(), id), h.nsgAssociatedNICs(r.Context(), id)...); len(refs) > 0 {
+		azurearm.WriteError(w, http.StatusBadRequest, "InUseNetworkSecurityGroupCannotBeDeleted",
+			inUseMessage("Network security group", rp.ResourceName, refs))
+
+		return
+	}
+
 	if meta, ok := h.azureMeta(); ok {
 		meta.DeleteAzureNSGMetadata(r.Context(), info.ID)
 	}
@@ -1307,7 +1398,7 @@ func (h *Handler) deleteNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 // PublicIP operations.
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; the per-resource routers are the same method switch over a distinct type by design
 func (h *Handler) routePublicIP(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	if rp.ResourceName == "" {
 		h.listPublicIPs(w, r, rp)
@@ -1317,6 +1408,8 @@ func (h *Handler) routePublicIP(w http.ResponseWriter, r *http.Request, rp azure
 	switch r.Method {
 	case http.MethodPut:
 		h.createPublicIP(w, r, rp)
+	case http.MethodPatch:
+		h.patchPublicIP(w, r, rp)
 	case http.MethodGet:
 		h.getPublicIP(w, r, rp)
 	case http.MethodDelete:
@@ -1346,6 +1439,13 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 
 	tags := mergeTags(req.Tags, armPublicIPTag, rp.ResourceName)
 	tags = mergeTags(tags, armPublicIPRGTag, rp.ResourceGroup)
+
+	// A public IP may be drawn from a public IP prefix. The mock only records the
+	// reference (deferred child-IP allocation); the prefix rebuilds its read-only
+	// publicIPAddresses[] back-reference by scanning for this internal tag.
+	if req.Properties.PublicIPPrefix != nil && req.Properties.PublicIPPrefix.ID != "" {
+		tags = mergeTags(tags, armPublicIPPrefixTag, req.Properties.PublicIPPrefix.ID)
+	}
 
 	cfg := netdriver.ElasticIPConfig{
 		SKU:                sku,
@@ -1428,7 +1528,10 @@ func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, rp azur
 	// A NIC's ipConfiguration reference doesn't go through
 	// AssociateAddress/eip.AssociationID (that's reserved for AWS-style
 	// instance/NAT-gateway attachment), so it needs its own in-use check here
-	// — the same scan the ipConfiguration back-reference already does.
+	// — the same scan the ipConfiguration back-reference already does. This scan
+	// reads the NICs store while ReleaseAddress deletes from the public-IP store,
+	// so it shares the same non-atomic, ARM-like consistency window documented on
+	// the NSG guard; the eip's own association guard (ReleaseAddress) is atomic.
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typePublicIP, rp.ResourceName)
 
 	if h.publicIPConfigurationRef(r.Context(), rp.Subscription, id) != nil {
@@ -1596,6 +1699,7 @@ func findPublicIPByName(ctx context.Context, n netdriver.Networking, rg, name st
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) vnetResponse(ctx context.Context, info *netdriver.VPCInfo, rp azurearm.ResourcePath) vnetResponse {
 	location, prefixes := h.vnetLocationPrefixes(ctx, info)
+	resourceGUID := h.vnetResourceGUID(ctx, info)
 
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeVNet, rp.ResourceName)
 
@@ -1609,6 +1713,7 @@ func (h *Handler) vnetResponse(ctx context.Context, info *netdriver.VPCInfo, rp 
 		Properties: vnetResponseProps{
 			ProvisioningState: "Succeeded",
 			AddressSpace:      &addressSpace{AddressPrefixes: prefixes},
+			ResourceGUID:      resourceGUID,
 		},
 	}
 
@@ -1655,6 +1760,23 @@ func (h *Handler) vnetLocationPrefixes(ctx context.Context, info *netdriver.VPCI
 	return location, prefixes
 }
 
+// vnetResourceGUID returns the persisted properties.resourceGuid ARM reports
+// for a virtual network, or "" when no Azure metadata is stored for it (e.g.
+// the networking driver doesn't implement the optional metadata capability).
+func (h *Handler) vnetResourceGUID(ctx context.Context, info *netdriver.VPCInfo) string {
+	meta, ok := h.azureMeta()
+	if !ok {
+		return ""
+	}
+
+	md, found := meta.GetAzureVNetMetadata(ctx, info.ID)
+	if !found {
+		return ""
+	}
+
+	return md.ResourceGUID
+}
+
 //nolint:gocritic // rp is a request-scoped value
 func toSubnetResponse(info *netdriver.SubnetInfo, rp azurearm.ResourcePath) subnetResponse {
 	name := tagOr(info.Tags, armSubnetTag, rp.SubResourceName)
@@ -1696,6 +1818,8 @@ func (h *Handler) nsgResponse(ctx context.Context, info *netdriver.SecurityGroup
 
 	var rules []securityRule
 
+	var resourceGUID string
+
 	if meta, ok := h.azureMeta(); ok {
 		if md, found := meta.GetAzureNSGMetadata(ctx, info.ID); found {
 			if md.Location != "" {
@@ -1703,6 +1827,7 @@ func (h *Handler) nsgResponse(ctx context.Context, info *netdriver.SecurityGroup
 			}
 
 			rules = fromAzureNSGRules(id, md.SecurityRules)
+			resourceGUID = md.ResourceGUID
 		}
 	}
 
@@ -1719,6 +1844,7 @@ func (h *Handler) nsgResponse(ctx context.Context, info *netdriver.SecurityGroup
 			DefaultSecurityRules: defaultSecurityRules(id),
 			Subnets:              h.nsgAssociatedSubnets(ctx, id),
 			NetworkInterfaces:    h.nsgAssociatedNICs(ctx, id),
+			ResourceGUID:         resourceGUID,
 		},
 	}
 }
@@ -1803,6 +1929,19 @@ func subnetResourceID(nsgARMID, vnetName, subnetName string) string {
 		"/subnets/" + subnetName
 }
 
+// inUseMessage renders the ARM "cannot be deleted, still in use" body shared by
+// the NSG / route table / NAT gateway delete-in-use guards, naming the
+// associated resources the caller must disassociate first.
+func inUseMessage(resourceType, name string, refs []armIDRef) string {
+	ids := make([]string, 0, len(refs))
+	for i := range refs {
+		ids = append(ids, refs[i].ID)
+	}
+
+	return resourceType + " " + name + " cannot be deleted because it is in use by the following resources: " +
+		strings.Join(ids, ", ") + ". In order to delete the resource, remove the association with the listed resource(s)."
+}
+
 // nicResourceID builds a NIC ARM id sharing the subscription of nsgARMID,
 // used only for the NSG's read-only associated-NICs back-reference.
 func nicResourceID(nsgARMID, nicResourceGroup, nicName string) string {
@@ -1836,6 +1975,7 @@ func (h *Handler) toPublicIPResponse(
 			PublicIPAllocationMethod: info.AllocationMethod,
 			IPAddress:                info.PublicIP,
 			IdleTimeoutInMinutes:     info.IdleTimeoutMinutes,
+			ResourceGUID:             info.ResourceGUID,
 		},
 	}
 
@@ -1851,6 +1991,10 @@ func (h *Handler) toPublicIPResponse(
 	}
 
 	out.Properties.IPConfiguration = h.publicIPConfigurationRef(ctx, rp.Subscription, id)
+
+	if prefixID := tagOr(info.Tags, armPublicIPPrefixTag, ""); prefixID != "" {
+		out.Properties.PublicIPPrefix = &armIDRef{ID: prefixID}
+	}
 
 	return out
 }
@@ -1914,6 +2058,29 @@ func writeAcceptedAsync(w http.ResponseWriter, r *http.Request, sub, opID string
 
 // Tag helpers.
 
+// armTagsObject is the ARM UpdateTags PATCH body ({"tags": {...}}) — the
+// TagsObject the armnetwork *Client.UpdateTags / BeginUpdateTags methods send.
+// Only tags are updatable through this operation; the resource's properties are
+// left intact.
+type armTagsObject struct {
+	Tags map[string]string `json:"tags,omitempty"`
+}
+
+// replacementTags normalizes an UpdateTags PATCH body's tags for wholesale
+// replacement — real Azure's resource-level UpdateTags SETS the tag collection,
+// it does not merge (the merge/replace/delete modes live only on the generic
+// Microsoft.Resources/tags API). A populated map replaces the stored set (cloned
+// so the store never aliases the request); a present-but-empty map ({}) wipes it
+// (nil). The caller applies this only when the body carried a tags key, so an
+// absent tags key leaves the stored set untouched.
+func replacementTags(in map[string]string) map[string]string {
+	if len(in) == 0 {
+		return nil
+	}
+
+	return maps.Clone(in)
+}
+
 func mergeTags(in map[string]string, key, val string) map[string]string {
 	out := make(map[string]string, len(in)+1)
 
@@ -1942,7 +2109,7 @@ func stripInternal(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if strings.HasPrefix(k, "cloudemu:") {
+		if strings.HasPrefix(k, internalTagPrefix) {
 			continue
 		}
 

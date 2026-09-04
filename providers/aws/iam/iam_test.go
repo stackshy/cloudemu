@@ -211,6 +211,37 @@ func TestDeletePolicy(t *testing.T) {
 	assertError(t, m.DeletePolicy(ctx, "arn:nonexistent"), true)
 }
 
+func TestDeletePolicyWithNonDefaultVersions(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	p, err := m.CreatePolicy(ctx, driver.PolicyConfig{Name: "pol1", PolicyDocument: "{}"})
+	requireNoError(t, err)
+
+	_, err = m.CreatePolicyVersion(ctx, driver.PolicyVersionConfig{
+		PolicyARN:      p.ARN,
+		PolicyDocument: "{}",
+		SetAsDefault:   false,
+	})
+	requireNoError(t, err)
+
+	// A non-default version still exists: real IAM refuses the delete.
+	assertError(t, m.DeletePolicy(ctx, p.ARN), true)
+
+	versions, err := m.ListPolicyVersions(ctx, p.ARN)
+	requireNoError(t, err)
+
+	for _, v := range versions {
+		if v.IsDefaultVersion {
+			continue
+		}
+
+		requireNoError(t, m.DeletePolicyVersion(ctx, p.ARN, v.VersionID))
+	}
+
+	// Only the default version remains: the delete now succeeds.
+	requireNoError(t, m.DeletePolicy(ctx, p.ARN))
+}
+
 func TestAttachUserPolicy(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

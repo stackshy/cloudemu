@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 )
 
@@ -154,7 +155,15 @@ func (m *Mock) CreateTable(_ context.Context, cfg ksdriver.CreateTableConfig) (*
 	m.setTags(t.ARN, cfg.Tags)
 	m.registerTableUDTRefs(cfg.KeyspaceName, cfg.Name, &t.SchemaDefinition)
 
+	// Under AsyncSettle a fresh table reports CREATING until the window elapses,
+	// matching real Keyspaces (CreateTable → CREATING → ACTIVE). With the default
+	// (AsyncSettle off) SettleDuration is 0 → inactive window → ACTIVE immediately,
+	// so nothing changes for existing callers.
+	m.tableSettle.Begin(key, ksdriver.StatusCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultKeyspacesSettle))
+
 	out := cloneTable(&t)
+	m.overlayTableStatus(&out)
 
 	return &out, nil
 }
@@ -185,6 +194,14 @@ func resolveEncryption(e ksdriver.EncryptionSpecification) ksdriver.EncryptionSp
 	return e
 }
 
+// overlayTableStatus overlays a table's settle window (keyed by "keyspace/table")
+// onto its Status field: the transient value while the window is active and
+// unelapsed, otherwise the stored terminal status. A no-op when no window exists
+// (default AsyncSettle-off path).
+func (m *Mock) overlayTableStatus(t *ksdriver.Table) {
+	t.Status = m.tableSettle.State(tableKey(t.KeyspaceName, t.Name), m.opts.Clock.Now(), t.Status)
+}
+
 func (m *Mock) getTableLocked(keyspace, table string) (ksdriver.Table, error) {
 	t, ok := m.tables.Get(tableKey(keyspace, table))
 	if !ok {
@@ -205,13 +222,12 @@ func (m *Mock) GetTable(_ context.Context, keyspace, table string) (*ksdriver.Ta
 	}
 
 	out := cloneTable(&t)
+	m.overlayTableStatus(&out)
 
 	return &out, nil
 }
 
 // ListTables returns all tables in a keyspace, deterministically ordered.
-//
-//nolint:dupl // the per-keyspace prefix filter mirrors ListTypes by design.
 func (m *Mock) ListTables(_ context.Context, keyspace string) ([]ksdriver.Table, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -226,7 +242,9 @@ func (m *Mock) ListTables(_ context.Context, keyspace string) ([]ksdriver.Table,
 
 	for i := range all {
 		if strings.HasPrefix(tableKey(all[i].KeyspaceName, all[i].Name), prefix) {
-			out = append(out, cloneTable(&all[i]))
+			ct := cloneTable(&all[i])
+			m.overlayTableStatus(&ct)
+			out = append(out, ct)
 		}
 	}
 
@@ -278,9 +296,16 @@ func (m *Mock) UpdateTable(_ context.Context, cfg ksdriver.UpdateTableConfig) (*
 		t.AutoScaling = cloneAutoScaling(cfg.AutoScaling)
 	}
 
-	m.tables.Set(tableKey(cfg.KeyspaceName, cfg.Name), t)
+	key := tableKey(cfg.KeyspaceName, cfg.Name)
+	m.tables.Set(key, t)
+
+	// Under AsyncSettle an updated table briefly reports UPDATING before settling
+	// back to ACTIVE (UpdateTable → UPDATING → ACTIVE); a no-op when settle is off.
+	m.tableSettle.Begin(key, ksdriver.StatusUpdating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultKeyspacesSettle))
 
 	out := cloneTable(&t)
+	m.overlayTableStatus(&out)
 
 	return &out, nil
 }
@@ -306,6 +331,7 @@ func (m *Mock) DeleteTable(_ context.Context, keyspace, table string) error {
 	}
 
 	m.tables.Delete(key)
+	m.tableSettle.Clear(key)
 	delete(m.tags, t.ARN)
 	m.unregisterTableUDTRefs(keyspace, table)
 
@@ -367,7 +393,13 @@ func (m *Mock) RestoreTable(_ context.Context, cfg ksdriver.RestoreTableConfig) 
 	m.setTags(restored.ARN, cfg.Tags)
 	m.registerTableUDTRefs(cfg.TargetKeyspace, cfg.TargetTable, &restored.SchemaDefinition)
 
+	// A restored table reports RESTORING until the window elapses (RestoreTable →
+	// RESTORING → ACTIVE); a no-op when settle is off.
+	m.tableSettle.Begin(targetKey, ksdriver.StatusRestoring, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultKeyspacesSettle))
+
 	out := cloneTable(&restored)
+	m.overlayTableStatus(&out)
 
 	return &out, nil
 }

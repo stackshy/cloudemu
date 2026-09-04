@@ -118,11 +118,12 @@ type Mock struct {
 
 	// instSettle / snapSettle overlay a "creating"/"rebooting" window over an
 	// instance's or snapshot's stored (available) State on the Describe surface,
-	// keyed by id and guarded by mu. They live beside the stores rather than on
-	// the shared rdsdriver structs (which Azure flexible-server/SQL also use),
-	// keeping settling AWS-internal. Absent = report the stored State directly.
-	instSettle map[string]settle.Window
-	snapSettle map[string]settle.Window
+	// keyed by id. They live beside the stores rather than on the shared
+	// rdsdriver structs (which Azure flexible-server/SQL also use), keeping
+	// settling AWS-internal. Each settle.Set carries its own lock; absent =
+	// report the stored State directly.
+	instSettle *settle.Set
+	snapSettle *settle.Set
 
 	opts           *config.Options
 	subnetResolver SubnetResolver
@@ -147,30 +148,22 @@ func New(opts *config.Options) *Mock {
 		clusterCreds:       map[string]clusterCred{},
 		groupTags:          map[string]map[string]string{},
 		rootPasswords:      map[string]string{},
-		instSettle:         map[string]settle.Window{},
-		snapSettle:         map[string]settle.Window{},
+		instSettle:         settle.NewSet(),
+		snapSettle:         settle.NewSet(),
 		opts:               opts,
 	}
 }
 
 // settleInstanceState overlays the instance's settle window (if any) onto its
-// stored final state. The caller must hold at least m.mu.RLock.
+// stored final state.
 func (m *Mock) settleInstanceState(id, final string) string {
-	if w, ok := m.instSettle[id]; ok {
-		return w.Observe(m.opts.Clock.Now(), final)
-	}
-
-	return final
+	return m.instSettle.State(id, m.opts.Clock.Now(), final)
 }
 
 // settleSnapshotState overlays the snapshot's settle window (if any) onto its
-// stored final state. The caller must hold at least m.mu.RLock.
+// stored final state.
 func (m *Mock) settleSnapshotState(id, final string) string {
-	if w, ok := m.snapSettle[id]; ok {
-		return w.Observe(m.opts.Clock.Now(), final)
-	}
-
-	return final
+	return m.snapSettle.State(id, m.opts.Clock.Now(), final)
 }
 
 // SetMonitoring wires a CloudWatch-style backend for auto-metric emission.
@@ -323,6 +316,7 @@ func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
 	c.Members = cloneSlice(c.Members)
 	c.VPCSecurityGroups = cloneSlice(c.VPCSecurityGroups)
 	c.AvailabilityZones = cloneSlice(c.AvailabilityZones)
+	c.AssociatedRoles = cloneSlice(c.AssociatedRoles)
 
 	return c
 }
@@ -417,9 +411,9 @@ func (m *Mock) reserveInstance(ctx context.Context, cfg rdsdriver.InstanceConfig
 
 	inst := m.newInstance(ctx, cfg)
 	m.instances.Set(cfg.ID, inst)
-	m.instSettle[cfg.ID] = settle.Pending(rdsdriver.StateCreating, m.opts.Clock.Now(),
-		m.opts.SettleDuration(settle.DefaultDBInstanceSettle))
 	m.rootPasswords[cfg.ID] = cfg.MasterUserPassword
+	m.instSettle.Begin(cfg.ID, rdsdriver.StateCreating, m.opts.Clock.Now(),
+		m.opts.SettleDuration(settle.DefaultDBInstanceSettle))
 
 	if cfg.ClusterID != "" {
 		cluster, _ := m.clusters.Get(cfg.ClusterID)
@@ -460,6 +454,22 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 		engineVersion = defaultEngineVersion(cfg.Engine)
 	}
 
+	// BackupRetentionPeriod is NOT defaulted here: unlike AllocatedStorage/
+	// StorageType/InstanceClass above, 0 is a meaningful explicit value (it
+	// disables automated backups). The wire layer, which can see whether the
+	// caller supplied the parameter at all, applies the AWS default (1) before
+	// this field is set — mirroring AutoMinorVersionUpgrade below. A direct Go
+	// library caller who wants the default must set it explicitly.
+	backupWindow := cfg.PreferredBackupWindow
+	if backupWindow == "" {
+		backupWindow = defaultBackupWindow
+	}
+
+	maintenanceWindow := cfg.PreferredMaintenanceWindow
+	if maintenanceWindow == "" {
+		maintenanceWindow = defaultMaintenanceWindow
+	}
+
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 
 	return rdsdriver.Instance{
@@ -484,10 +494,11 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 		ClusterID:                  cfg.ClusterID,
 		AvailabilityZone:           cfg.AvailabilityZone,
 		DbiResourceID:              resourceID("db-", cfg.ID),
-		BackupRetentionPeriod:      defaultBackupRetention,
-		PreferredBackupWindow:      defaultBackupWindow,
-		PreferredMaintenanceWindow: defaultMaintenanceWindow,
+		BackupRetentionPeriod:      cfg.BackupRetentionPeriod,
+		PreferredBackupWindow:      backupWindow,
+		PreferredMaintenanceWindow: maintenanceWindow,
 		CACertificateIdentifier:    defaultCACertIdentifier,
+		AutoMinorVersionUpgrade:    cfg.AutoMinorVersionUpgrade,
 		StorageEncrypted:           cfg.StorageEncrypted,
 		KmsKeyID:                   resolveKMSKeyID(cfg.StorageEncrypted, cfg.KmsKeyID),
 		DeletionProtection:         cfg.DeletionProtection,
@@ -756,6 +767,10 @@ func applyImmediateMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanc
 		inst.DeletionProtection = *input.DeletionProtection
 	}
 
+	if input.AutoMinorVersionUpgrade != nil {
+		inst.AutoMinorVersionUpgrade = *input.AutoMinorVersionUpgrade
+	}
+
 	if input.Tags != nil {
 		inst.Tags = copyTags(input.Tags)
 	}
@@ -930,7 +945,7 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 
 	m.instances.Delete(id)
 	delete(m.rootPasswords, id)
-	delete(m.instSettle, id)
+	m.instSettle.Clear(id)
 
 	return nil
 }
@@ -964,7 +979,7 @@ func (m *Mock) RebootInstance(_ context.Context, id string) error {
 	m.instances.Set(id, inst)
 	// The logical state stays available; a fresh "rebooting" window makes Describe
 	// report the available->rebooting->available transient dip under AsyncSettle.
-	m.instSettle[id] = settle.Pending(rdsdriver.StateRebooting, m.opts.Clock.Now(),
+	m.instSettle.Begin(id, rdsdriver.StateRebooting, m.opts.Clock.Now(),
 		m.opts.SettleDuration(settle.DefaultDBRebootSettle))
 
 	m.emitInstanceMetrics(id, inst.Engine, cpuMetricRunning, connectionsRunning)
@@ -994,7 +1009,7 @@ func (m *Mock) transitionInstance(id, from, to string, cpu, conns float64, verb 
 	m.instances.Set(id, inst)
 	// A lifecycle transition (start/stop) supersedes any post-create settle
 	// window so the instance reports its new state, not a stale "creating".
-	delete(m.instSettle, id)
+	m.instSettle.Clear(id)
 
 	m.emitInstanceMetrics(id, inst.Engine, cpu, conns)
 
@@ -1263,11 +1278,11 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 
 	now := m.opts.Clock.Now()
 	m.snapshots.Set(cfg.ID, snap)
-	m.snapSettle[cfg.ID] = settle.Pending(rdsdriver.SnapshotCreating, now,
+	m.snapSettle.Begin(cfg.ID, rdsdriver.SnapshotCreating, now,
 		m.opts.SettleDuration(settle.DefaultDBSnapshotSettle))
 	// The source instance briefly reports "backing-up" while the snapshot settles,
 	// matching real RDS; its logical state stays available.
-	m.instSettle[cfg.InstanceID] = settle.Pending(rdsdriver.StateBackingUp, now,
+	m.instSettle.Begin(cfg.InstanceID, rdsdriver.StateBackingUp, now,
 		m.opts.SettleDuration(settle.DefaultDBSnapshotSettle))
 
 	out := snap
@@ -1317,7 +1332,7 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "DB snapshot %q not found", id)
 	}
 
-	delete(m.snapSettle, id)
+	m.snapSettle.Clear(id)
 
 	return nil
 }
@@ -1325,6 +1340,8 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 // RestoreInstanceFromSnapshot creates a new instance from a snapshot and backs
 // it with a real database (when an engine is wired in) so the restored endpoint
 // is reachable, not a synthetic host that resolves to nothing.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) RestoreInstanceFromSnapshot(
 	ctx context.Context, input rdsdriver.RestoreInstanceInput,
 ) (*rdsdriver.Instance, error) {
@@ -1355,20 +1372,30 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 	inst := rdsdriver.Instance{
-		ID:               input.NewInstanceID,
-		ARN:              instanceARN(region, m.opts.AccountID, input.NewInstanceID),
-		Engine:           snap.Engine,
-		EngineVersion:    snap.EngineVersion,
-		InstanceClass:    instanceClass,
-		AllocatedStorage: snap.AllocatedStorage,
-		StorageType:      defaultStorageType,
-		MasterUsername:   username,
-		DBName:           dbName,
-		Endpoint:         endpointFor(input.NewInstanceID, region, "abcd1234"),
-		Port:             port,
-		State:            rdsdriver.StateAvailable,
-		CreatedAt:        m.opts.Clock.Now().UTC(),
-		Tags:             copyTags(input.Tags),
+		ID:                         input.NewInstanceID,
+		ARN:                        instanceARN(region, m.opts.AccountID, input.NewInstanceID),
+		Engine:                     snap.Engine,
+		EngineVersion:              snap.EngineVersion,
+		InstanceClass:              instanceClass,
+		AllocatedStorage:           snap.AllocatedStorage,
+		StorageType:                defaultStorageType,
+		MasterUsername:             username,
+		DBName:                     dbName,
+		Endpoint:                   endpointFor(input.NewInstanceID, region, "abcd1234"),
+		Port:                       port,
+		State:                      rdsdriver.StateAvailable,
+		DbiResourceID:              resourceID("db-", input.NewInstanceID),
+		BackupRetentionPeriod:      defaultBackupRetention,
+		PreferredBackupWindow:      defaultBackupWindow,
+		PreferredMaintenanceWindow: defaultMaintenanceWindow,
+		CACertificateIdentifier:    defaultCACertIdentifier,
+		AutoMinorVersionUpgrade:    input.AutoMinorVersionUpgrade,
+		MultiAZ:                    input.MultiAZ,
+		PubliclyAccessible:         input.PubliclyAccessible,
+		DeletionProtection:         input.DeletionProtection,
+		SubnetGroupName:            input.SubnetGroupName,
+		CreatedAt:                  m.opts.Clock.Now().UTC(),
+		Tags:                       copyTags(input.Tags),
 	}
 
 	// Provision the restored instance's OWN database (keyed by the new id, so it

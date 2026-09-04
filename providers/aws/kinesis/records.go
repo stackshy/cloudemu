@@ -393,7 +393,7 @@ func (m *Mock) GetRecords(_ context.Context, shardIterator string, limit int32) 
 	out := &driver.GetRecordsOutput{
 		Records:            recs,
 		NextShardIterator:  m.encodeFreshIterator(tok.StreamName, tok.ShardID, end),
-		MillisBehindLatest: 0,
+		MillisBehindLatest: millisBehindLatest(shard.records, end),
 	}
 
 	// A drained, closed shard reports its children and a nil iterator (end of shard).
@@ -403,6 +403,33 @@ func (m *Mock) GetRecords(_ context.Context, shardIterator string, limit int32) 
 	}
 
 	return out, nil
+}
+
+// millisBehindLatest reports how far behind the tip of the shard a GetRecords
+// call left the iterator, matching Kinesis's MillisBehindLatest: the gap
+// between the newest record's arrival time and the last record returned in
+// this call. Zero once the iterator has caught up to the tip (end reaches the
+// end of the shard) or when the shard has no records at all.
+func millisBehindLatest(records []driver.Record, end int) int64 {
+	if end >= len(records) || len(records) == 0 {
+		return 0
+	}
+
+	latest := records[len(records)-1].ApproximateArrivalTimestamp
+
+	var reached time.Time
+	if end > 0 {
+		reached = records[end-1].ApproximateArrivalTimestamp
+	} else {
+		reached = records[0].ApproximateArrivalTimestamp
+	}
+
+	behind := latest.Sub(reached)
+	if behind < 0 {
+		return 0
+	}
+
+	return behind.Milliseconds()
 }
 
 func childShardsOf(shards []*shardState, parentID string) []driver.ChildShard {

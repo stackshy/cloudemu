@@ -37,7 +37,11 @@ type sbMessage struct {
 	Attributes      map[string]string
 	// SystemProps carries Azure Service Bus brokered-message system properties
 	// (MessageId, CorrelationId, Label, SessionId, ...) preserved from the send.
-	SystemProps   map[string]string
+	SystemProps map[string]string
+	// SessionID is the message's Service Bus SessionId, promoted from
+	// SystemProps["SessionId"] at enqueue so session receive can filter on it in
+	// FIFO order. Empty on a non-session entity.
+	SessionID     string
 	ReceiptHandle string
 	VisibleAt     time.Time
 	SentAt        time.Time
@@ -73,10 +77,46 @@ type queueData struct {
 	// instead of dropping it (Service Bus deadLetteringOnMessageExpiration).
 	deadLetterOnExpiration bool
 	metadata               map[string]string
+	// requiresSession enables Service Bus sessions on the entity: every message
+	// must carry a SessionId, and messages are consumed per session. sessions
+	// tracks each session's lock and state, keyed by SessionId; it is allocated
+	// only for a session entity.
+	requiresSession bool
+	sessions        map[string]*sessionState
+}
+
+// sessionState tracks a single Service Bus session's lock ownership and its
+// opaque state blob. Fields are exported so it snapshots directly like
+// sbMessage. A zero LockOwner means the session is unlocked.
+type sessionState struct {
+	LockOwner   string    // opaque receiver/lock id holding the session; "" = unlocked
+	LockedUntil time.Time // session-lock expiry
+	State       string    // opaque session-state blob (get/set session state)
 }
 
 // FunctionTrigger is a function that gets called when a message is sent to a queue.
 type FunctionTrigger func(queueURL string, message driver.Message)
+
+// FunctionTriggerSink delivers a message enqueued to a queue to any Azure
+// Function bound to that queue by a trigger binding (queueTrigger for Queue
+// Storage, serviceBusTrigger for Service Bus). The Azure Functions provider
+// implements it. It is wired per Mock instance via SetFunctionTriggerSink so the
+// distinct Queue Storage and Service Bus instances each dispatch their own
+// binding type, mirroring how Event Grid delivery calls InvokeExternal.
+type FunctionTriggerSink interface {
+	DeliverFunctionTrigger(ctx context.Context, bindingType, queueName string, body []byte)
+}
+
+// TopicFunctionTriggerSink is an optional extension of FunctionTriggerSink for
+// Service Bus topic/subscription delivery: a serviceBusTrigger binding may bind
+// a (topicName, subscriptionName) pair instead of a queueName, and a message
+// published to the topic is fanned out to each subscription's own backing
+// store (see server/azure/servicebus's topic send). dispatchFunctionTrigger
+// type-asserts for this interface, so a sink that only implements
+// FunctionTriggerSink (e.g. a queue-only test double) keeps working unchanged.
+type TopicFunctionTriggerSink interface {
+	DeliverTopicFunctionTrigger(ctx context.Context, bindingType, topicName, subscriptionName string, body []byte)
+}
 
 // Mock is an in-memory mock implementation of the Azure Service Bus service.
 type Mock struct {
@@ -85,6 +125,11 @@ type Mock struct {
 	mu         sync.RWMutex
 	triggers   map[string]FunctionTrigger // queueURL -> trigger
 	monitoring mondriver.Monitoring
+	// funcSink and triggerBinding wire automatic Azure Function trigger delivery:
+	// on each enqueue, funcSink is asked to invoke any function whose function.json
+	// declares a triggerBinding-typed binding for the queue. Both are guarded by mu.
+	funcSink       FunctionTriggerSink
+	triggerBinding string
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -137,6 +182,21 @@ func (m *Mock) RemoveTrigger(queueURL string) {
 	defer m.mu.Unlock()
 
 	delete(m.triggers, queueURL)
+}
+
+// SetFunctionTriggerSink wires the Azure Functions provider as the destination
+// for this queue surface's automatic trigger deliveries. bindingType is the
+// function.json trigger type this surface fires — "queueTrigger" for Queue
+// Storage, "serviceBusTrigger" for Service Bus — so only functions bound with
+// the matching trigger are invoked. A nil sink disables trigger delivery (the
+// default). This is the cross-service seam, analogous to Event Grid's
+// SetFunctionInvoker.
+func (m *Mock) SetFunctionTriggerSink(sink FunctionTriggerSink, bindingType string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	m.funcSink = sink
+	m.triggerBinding = bindingType
 }
 
 // DeliverExternal enqueues body into the queue or topic whose name matches the
@@ -230,6 +290,11 @@ func (m *Mock) CreateQueue(_ context.Context, cfg driver.QueueConfig) (*driver.Q
 		dlqConfig:              cfg.DeadLetterQueue,
 		deadLetterOnExpiration: cfg.DeadLetterOnExpiration,
 		metadata:               metadata,
+		requiresSession:        cfg.RequiresSession,
+	}
+
+	if cfg.RequiresSession {
+		qd.sessions = make(map[string]*sessionState)
 	}
 
 	m.queues.Set(url, qd)
@@ -293,34 +358,149 @@ func (m *Mock) ListQueues(_ context.Context, prefix string) ([]driver.QueueInfo,
 // SendMessage sends a message to the specified Service Bus queue.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*driver.SendMessageOutput, error) {
+func (m *Mock) SendMessage(ctx context.Context, input driver.SendMessageInput) (*driver.SendMessageOutput, error) {
 	qd, ok := m.queues.Get(input.QueueURL)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "queue %q not found", input.QueueURL)
 	}
 
+	res, err := m.enqueueLocked(qd, &input)
+	if err != nil {
+		return nil, err
+	}
+
+	// A duplicate send is silently accepted but not re-enqueued, so it fires no
+	// trigger and emits no incoming-message metric.
+	if res.msg == nil {
+		return &driver.SendMessageOutput{MessageID: res.dupID}, nil
+	}
+
+	// Triggers run AFTER the queue lock is released: a function invoked by a
+	// trigger may re-enqueue to this same queue, which would deadlock on the
+	// non-reentrant qd.mu if fired while it is still held. The recursion guard
+	// threaded through ctx bounds any self-referential enqueue→invoke→enqueue
+	// chain (see dispatchFunctionTrigger / lambda.InvokeExternal).
+	m.fireTrigger(input.QueueURL, res.msg)
+	m.dispatchFunctionTrigger(ctx, res.queueName, res.msg)
+
+	m.emitMetric(res.queueName, map[string]float64{
+		"IncomingMessages": 1, "Size": float64(len(input.Body)),
+	})
+
+	return &driver.SendMessageOutput{
+		MessageID:  res.msg.ID,
+		ExpiresAt:  res.msg.ExpiresAt,
+		PopReceipt: res.msg.ReceiptHandle,
+	}, nil
+}
+
+// enqueueResult carries what SendMessage needs after the queue lock is released:
+// the stored message and the queue's name for trigger dispatch. A nil msg with a
+// non-empty dupID means the send was a silently-accepted duplicate that was not
+// re-enqueued (so it fires no trigger).
+type enqueueResult struct {
+	msg       *sbMessage
+	queueName string
+	dupID     string
+}
+
+// enqueueLocked validates and appends one message under the queue lock.
+func (m *Mock) enqueueLocked(qd *queueData, input *driver.SendMessageInput) (enqueueResult, error) {
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
-	if err := validateFIFORequirements(qd, &input); err != nil {
-		return nil, err
+	if err := validateFIFORequirements(qd, input); err != nil {
+		return enqueueResult{}, err
+	}
+
+	// A session-enabled entity requires every message to carry a SessionId (real
+	// Azure rejects a session-less send with InvalidOperation → 400).
+	sessionID := input.SystemProperties["SessionId"]
+	if qd.requiresSession && sessionID == "" {
+		return enqueueResult{}, cerrors.New(cerrors.InvalidArgument, "SessionId is required for a session-enabled entity")
 	}
 
 	now := m.opts.Clock.Now()
 
-	// FIFO deduplication: check if same DeduplicationID was sent within 5-min window.
-	if existingID, found := findDuplicate(qd, &input, now); found {
-		return &driver.SendMessageOutput{MessageID: existingID}, nil
+	// A repeat DeduplicationID (FIFO) or MessageId (Service Bus dup-detection)
+	// inside the window is silently accepted but not re-enqueued.
+	if existingID, found := findSendDuplicate(qd, input, now); found {
+		return enqueueResult{queueName: qd.info.Name, dupID: existingID}, nil
 	}
 
-	// Service Bus duplicate detection: a repeat MessageId inside the configured
-	// window is silently accepted but not re-enqueued.
-	if existingID, found := findMessageIDDuplicate(qd, &input, now); found {
-		return &driver.SendMessageOutput{MessageID: existingID}, nil
+	msg := buildSendMessage(input, sessionID, now, qd.delaySeconds)
+	qd.messages = append(qd.messages, msg)
+	recordSendDedup(qd, input, now)
+
+	return enqueueResult{msg: msg, queueName: qd.info.Name}, nil
+}
+
+// dispatchFunctionTrigger forwards a just-enqueued message to the Azure Functions
+// provider so any function bound to this queue fires. It is a no-op when no sink
+// is wired (the default, and every non-Azure-Functions deployment). Called after
+// the queue lock is released; see SendMessage.
+//
+// A queue backing a topic subscription (see subscriptionEntity) is dispatched as
+// a topic/subscription trigger instead of a queueName trigger when the sink
+// supports it, since that queue is an internal fan-out target a serviceBusTrigger
+// binding never names directly (real Azure Functions binds (topicName,
+// subscriptionName) for a topic, not the internal per-subscription store).
+func (m *Mock) dispatchFunctionTrigger(ctx context.Context, queueName string, msg *sbMessage) {
+	m.mu.RLock()
+	sink := m.funcSink
+	bindingType := m.triggerBinding
+	m.mu.RUnlock()
+
+	if sink == nil {
+		return
 	}
 
-	msgID := idgen.GenerateID("sb-msg-")
+	if topic, sub, ok := subscriptionEntity(queueName); ok {
+		if topicSink, ok := sink.(TopicFunctionTriggerSink); ok {
+			topicSink.DeliverTopicFunctionTrigger(ctx, bindingType, topic, sub, []byte(msg.Body))
+			return
+		}
+	}
 
+	sink.DeliverFunctionTrigger(ctx, bindingType, queueName, []byte(msg.Body))
+}
+
+// subscriptionEntitySegments is the segment count of the
+// "{namespace}/{topic}/subscriptions/{sub}" entity name a topic subscription's
+// backing queue is created with (see server/azure/servicebus's
+// createSubQueue), used by subscriptionEntity to recognize it.
+const subscriptionEntitySegments = 4
+
+// subscriptionEntity reports whether name is a topic subscription's backing
+// queue name and, if so, the topic and subscription it belongs to. Service Bus
+// namespace, topic and subscription names cannot contain "/", so the 4-segment
+// shape unambiguously identifies this internal addressing convention.
+func subscriptionEntity(name string) (topic, sub string, ok bool) {
+	const subSegment = "subscriptions"
+
+	segs := strings.Split(name, "/")
+	if len(segs) != subscriptionEntitySegments || segs[2] != subSegment {
+		return "", "", false
+	}
+
+	return segs[1], segs[3], true
+}
+
+// findSendDuplicate reports an already-accepted message id when input is a FIFO
+// (DeduplicationID) or Service Bus (MessageId) duplicate within the dedup window.
+func findSendDuplicate(qd *queueData, input *driver.SendMessageInput, now time.Time) (string, bool) {
+	if id, found := findDuplicate(qd, input, now); found {
+		return id, true
+	}
+
+	return findMessageIDDuplicate(qd, input, now)
+}
+
+// buildSendMessage constructs the stored message from a send, copying the caller
+// maps and resolving the effective visibility/expiry. TimeToLive is measured
+// from the message's active time (visibleAt), so a scheduled message with a TTL
+// shorter than its delay still survives until at least its scheduled enqueue.
+func buildSendMessage(input *driver.SendMessageInput, sessionID string, now time.Time, queueDelay int) *sbMessage {
 	attrs := make(map[string]string, len(input.Attributes))
 	for k, v := range input.Attributes {
 		attrs[k] = v
@@ -333,74 +513,58 @@ func (m *Mock) SendMessage(_ context.Context, input driver.SendMessageInput) (*d
 
 	delaySeconds := input.DelaySeconds
 	if delaySeconds == 0 {
-		delaySeconds = qd.delaySeconds
+		delaySeconds = queueDelay
 	}
 
 	visibleAt := now.Add(time.Duration(delaySeconds) * time.Second)
-	// TimeToLive is measured from when the message becomes active (its enqueue
-	// time), not from submit. For a scheduled message (ScheduledEnqueueTimeUtc in
-	// the future, carried here as a delivery delay) the effective enqueue time is
-	// visibleAt, so a message scheduled for T+delay with a TTL shorter than the
-	// delay still survives until at least T+delay and then lives for its full TTL.
-	// For a non-scheduled send visibleAt == now, so this is unchanged.
-	expiresAt := computeExpiry(visibleAt, input.MessageTTLSeconds)
 
-	// Mint a pop receipt at enqueue time so the message can be deleted or updated
-	// with the Put Message-returned receipt before its first dequeue, as Azure
-	// Queue Storage allows. A subsequent dequeue issues a fresh receipt that
-	// supersedes this one.
-	receiptHandle := idgen.GenerateID("sb-lock-")
-
-	msg := &sbMessage{
-		ID:              msgID,
+	return &sbMessage{
+		ID:              idgen.GenerateID("sb-msg-"),
 		Body:            input.Body,
 		GroupID:         input.GroupID,
 		DeduplicationID: input.DeduplicationID,
 		Attributes:      attrs,
 		SystemProps:     sysProps,
-		ReceiptHandle:   receiptHandle,
-		VisibleAt:       visibleAt,
-		SentAt:          now,
-		ExpiresAt:       expiresAt,
+		SessionID:       sessionID,
+		// A pop receipt minted at enqueue lets the message be deleted/updated with
+		// the Put Message-returned receipt before its first dequeue.
+		ReceiptHandle: idgen.GenerateID("sb-lock-"),
+		VisibleAt:     visibleAt,
+		SentAt:        now,
+		ExpiresAt:     computeExpiry(visibleAt, input.MessageTTLSeconds),
 	}
+}
 
-	qd.messages = append(qd.messages, msg)
-
+// recordSendDedup updates the FIFO and Service Bus duplicate-detection indexes
+// for a just-enqueued message.
+func recordSendDedup(qd *queueData, input *driver.SendMessageInput, now time.Time) {
 	if qd.info.FIFO && input.DeduplicationID != "" {
 		qd.deduplicationIndex[input.DeduplicationID] = now
 	}
 
 	if qd.requiresDupDetection {
-		if mid := messageIDOf(&input); mid != "" {
+		if mid := messageIDOf(input); mid != "" {
 			qd.dedupByMessageID[mid] = now
 		}
 	}
+}
 
-	// Fire Function trigger if registered.
+// fireTrigger invokes any registered Function trigger for the queue.
+func (m *Mock) fireTrigger(queueURL string, msg *sbMessage) {
 	m.mu.RLock()
-	trigger := m.triggers[input.QueueURL]
+	trigger := m.triggers[queueURL]
 	m.mu.RUnlock()
 
-	if trigger != nil {
-		triggerMsg := driver.Message{
-			MessageID:  msgID,
-			Body:       input.Body,
-			Attributes: attrs,
-			GroupID:    input.GroupID,
-		}
-
-		trigger(input.QueueURL, triggerMsg)
+	if trigger == nil {
+		return
 	}
 
-	m.emitMetric(qd.info.Name, map[string]float64{
-		"IncomingMessages": 1, "Size": float64(len(input.Body)),
+	trigger(queueURL, driver.Message{
+		MessageID:  msg.ID,
+		Body:       msg.Body,
+		Attributes: msg.Attributes,
+		GroupID:    msg.GroupID,
 	})
-
-	return &driver.SendMessageOutput{
-		MessageID:  msgID,
-		ExpiresAt:  expiresAt,
-		PopReceipt: receiptHandle,
-	}, nil
 }
 
 func validateFIFORequirements(qd *queueData, input *driver.SendMessageInput) error {
@@ -500,13 +664,9 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 	}
 
 	now := m.opts.Clock.Now()
-	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visibilityTimeout, now)
+	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visibilityTimeout, now, plainReceiveAccept(qd))
 
-	// Remove DLQ-moved and expired messages in reverse order.
-	for i := len(toRemove) - 1; i >= 0; i-- {
-		idx := toRemove[i]
-		qd.messages = append(qd.messages[:idx], qd.messages[idx+1:]...)
-	}
+	removeByIndices(qd, toRemove)
 
 	if results == nil {
 		results = []driver.Message{}
@@ -518,6 +678,19 @@ func (m *Mock) ReceiveMessages(_ context.Context, input driver.ReceiveMessageInp
 	})
 
 	return results, nil
+}
+
+// plainReceiveAccept is the predicate for a plain (non-session) receive. On a
+// session entity it accepts nothing — Service Bus sessions are consumed only via
+// the session receiver, so a plain REST receive against a session queue returns
+// empty, matching real Azure (where session receive is not available over REST).
+// On a non-session entity it returns nil, accepting every message unchanged.
+func plainReceiveAccept(qd *queueData) func(*sbMessage) bool {
+	if !qd.requiresSession {
+		return nil
+	}
+
+	return func(*sbMessage) bool { return false }
 }
 
 func clampMaxMessages(maxMessages int) int {
@@ -532,8 +705,13 @@ func clampMaxMessages(maxMessages int) int {
 	return maxMessages
 }
 
+// collectVisibleMessages gathers up to maxMessages visible messages that pass
+// the accept predicate (nil accepts every message), reaping expired ones and
+// dead-lettering exhausted ones. The predicate lets the plain and session
+// receive paths share one collector: the plain path skips session messages on a
+// session entity, the session path selects a single SessionId.
 func (m *Mock) collectVisibleMessages(
-	qd *queueData, maxMessages, visibilityTimeout int, now time.Time,
+	qd *queueData, maxMessages, visibilityTimeout int, now time.Time, accept func(*sbMessage) bool,
 ) (messages []driver.Message, dlqIndices []int) {
 	var results []driver.Message
 
@@ -542,6 +720,10 @@ func (m *Mock) collectVisibleMessages(
 	for i, msg := range qd.messages {
 		if len(results) >= maxMessages {
 			break
+		}
+
+		if accept != nil && !accept(msg) {
+			continue
 		}
 
 		if m.reapExpired(qd, msg, now) {
@@ -792,7 +974,7 @@ func (m *Mock) ReceiveMessagesWithOptions(
 	}
 
 	now := m.opts.Clock.Now()
-	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visTimeout, now)
+	results, toRemove := m.collectVisibleMessages(qd, maxMsgs, visTimeout, now, plainReceiveAccept(qd))
 
 	removeByIndices(qd, toRemove)
 

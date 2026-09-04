@@ -30,11 +30,6 @@ const (
 	macHashPrime = 131
 	bitsPerByte  = 8
 
-	// eniInUseErrPrefix marks the delete-while-attached precondition so the wire
-	// layer can emit InvalidNetworkInterface.InUse rather than the generic
-	// DependencyViolation.
-	eniInUseErrPrefix = "InvalidNetworkInterface.InUse: "
-
 	// primaryDeviceIndex is the device index EC2 gives an instance's primary
 	// (eth0) network interface — always 0.
 	primaryDeviceIndex = 0
@@ -182,6 +177,27 @@ func (m *Mock) ReleaseInstanceNetworkInterfaces(_ context.Context, instanceID st
 	return nil
 }
 
+// SetPrimaryNetworkInterfaceSourceDestCheck mirrors a
+// ModifyInstanceAttribute(SourceDestCheck) write onto the instance's primary
+// (device index 0) ENI, so DescribeNetworkInterfaces / the instance's embedded
+// networkInterfaceSet report the same flag ModifyNetworkInterfaceAttribute
+// would set directly on the interface. A no-op when the instance has no
+// primary ENI (e.g. a launch with no subnet).
+func (m *Mock) SetPrimaryNetworkInterfaceSourceDestCheck(_ context.Context, instanceID string, value bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, eni := range m.enis.All() {
+		if eni.InstanceID == instanceID && eni.DeviceIndex == primaryDeviceIndex {
+			eni.SourceDestCheck = value
+
+			return nil
+		}
+	}
+
+	return nil
+}
+
 // DescribeNetworkInterfaces returns ENIs matching the given IDs, or all if empty.
 //
 // An explicitly named ID that does not exist is NotFound rather than an empty
@@ -218,7 +234,7 @@ func (m *Mock) AttachNetworkInterface(
 
 	if eni.AttachmentID != "" {
 		return "", errors.Newf(errors.FailedPrecondition,
-			"InvalidNetworkInterface.InUse: network interface %q is already attached to instance %q",
+			"network interface %q is already attached to instance %q",
 			networkInterfaceID, eni.InstanceID)
 	}
 
@@ -271,7 +287,7 @@ func (m *Mock) DeleteNetworkInterface(_ context.Context, id string) error {
 
 	if eni.AttachmentID != "" {
 		return errors.Newf(errors.FailedPrecondition,
-			"%snetwork interface %q is currently in use and cannot be deleted", eniInUseErrPrefix, id)
+			"network interface %q is currently in use and cannot be deleted", id)
 	}
 
 	m.enis.Delete(id)

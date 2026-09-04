@@ -128,6 +128,89 @@ func vaultPropertiesFromJSON(p *vaultPropertiesJSON) secretsdriver.KVVaultProper
 	return out
 }
 
+// mergeVaultProperties applies a PATCH request's properties onto a stored
+// vault's properties: only fields the request body actually carries replace
+// the existing value (a nil pointer, empty SKU/access-policy list, or empty
+// string leaves the stored field untouched), matching real ARM PATCH merge
+// semantics as opposed to PUT's full replace.
+func mergeVaultProperties(existing *secretsdriver.KVVaultProperties, p *vaultPropertiesJSON) secretsdriver.KVVaultProperties {
+	out := *existing
+
+	if p.TenantID != "" {
+		out.TenantID = p.TenantID
+	}
+
+	if p.SKU != nil {
+		out.SKU = secretsdriver.KVVaultSKU{Family: p.SKU.Family, Name: p.SKU.Name}
+	}
+
+	if p.AccessPolicies != nil {
+		out.AccessPolicies = accessPoliciesFromJSON(p.AccessPolicies)
+	}
+
+	if p.SoftDeleteRetentionInDays != 0 {
+		out.SoftDeleteRetentionInDays = p.SoftDeleteRetentionInDays
+	}
+
+	if p.PublicNetworkAccess != "" {
+		out.PublicNetworkAccess = p.PublicNetworkAccess
+	}
+
+	mergeVaultFlags(&out, p)
+
+	return out
+}
+
+// accessPoliciesFromJSON converts a PATCH/PUT request's access-policy list to
+// the driver shape.
+func accessPoliciesFromJSON(in []vaultAccessPolicyJSON) []secretsdriver.KVAccessPolicy {
+	out := make([]secretsdriver.KVAccessPolicy, 0, len(in))
+
+	for i := range in {
+		ap := &in[i]
+		out = append(out, secretsdriver.KVAccessPolicy{
+			TenantID: ap.TenantID,
+			ObjectID: ap.ObjectID,
+			Permissions: secretsdriver.KVAccessPermissions{
+				Keys:         ap.Permissions.Keys,
+				Secrets:      ap.Permissions.Secrets,
+				Certificates: ap.Permissions.Certificates,
+				Storage:      ap.Permissions.Storage,
+			},
+		})
+	}
+
+	return out
+}
+
+// mergeVaultFlags applies the pointer-bool feature flags of a PATCH request
+// onto out: a nil pointer in p leaves the corresponding stored flag untouched.
+func mergeVaultFlags(out *secretsdriver.KVVaultProperties, p *vaultPropertiesJSON) {
+	if p.EnableRbacAuthorization != nil {
+		out.EnableRbacAuthorization = p.EnableRbacAuthorization
+	}
+
+	if p.EnabledForDeployment != nil {
+		out.EnabledForDeployment = p.EnabledForDeployment
+	}
+
+	if p.EnabledForDiskEncryption != nil {
+		out.EnabledForDiskEncryption = p.EnabledForDiskEncryption
+	}
+
+	if p.EnabledForTemplateDeployment != nil {
+		out.EnabledForTemplateDeployment = p.EnabledForTemplateDeployment
+	}
+
+	if p.EnableSoftDelete != nil {
+		out.EnableSoftDelete = p.EnableSoftDelete
+	}
+
+	if p.EnablePurgeProtection != nil {
+		out.EnablePurgeProtection = p.EnablePurgeProtection
+	}
+}
+
 // toVaultJSON converts a stored driver record into its ARM element. Resources
 // without a recorded scope fall back to the request path's scope.
 func toVaultJSON(rp *azurearm.ResourcePath, info *secretsdriver.KVVaultInfo) vaultJSON {

@@ -41,7 +41,7 @@ func serveCost(w http.ResponseWriter, r *http.Request, engines map[string]*resou
 			rr := &res[i]
 
 			est := pricing.Monthly(rr.Provider, rr.Service, rr.Type, rr.SKU, rr.Region, rr.Properties)
-			if est <= 0 {
+			if est <= 0 || !pricing.ComputeInstanceBillable(rr.Service, rr.Type, rr.State) {
 				continue
 			}
 

@@ -155,6 +155,27 @@ func (h *Handler) databases() (rdsdriver.Databases, bool) {
 	return d, ok
 }
 
+// databaseStatuser is the optional provider capability that reports a
+// database's transient ARM status (Creating / Scaling) while an async settle
+// window is active. Providers that don't implement it (settle disabled or not
+// adopted) leave the status empty, so read responses report the terminal
+// Online. Kept an assertion (not a required interface method) so the wire
+// layer stays decoupled from the settle overlay.
+type databaseStatuser interface {
+	DatabaseTransientStatus(server, name string) string
+}
+
+// databaseStatus returns the transient status the provider reports for a
+// database, or "" when the provider doesn't expose one.
+func (h *Handler) databaseStatus(server, name string) string {
+	s, ok := h.db.(databaseStatuser)
+	if !ok {
+		return ""
+	}
+
+	return s.DatabaseTransientStatus(server, name)
+}
+
 func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.DatabaseConfig {
 	cfg := rdsdriver.DatabaseConfig{
 		Server:   rp.ResourceName,
@@ -170,7 +191,11 @@ func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.Datab
 
 	if body.Properties != nil {
 		cfg.Collation = body.Properties.Collation
-		cfg.ElasticPoolID = body.Properties.ElasticPoolID
+		if body.Properties.ElasticPoolID != nil {
+			cfg.ElasticPoolID = *body.Properties.ElasticPoolID
+		}
+		cfg.CreateMode = body.Properties.CreateMode
+		cfg.SourceDatabaseID = body.Properties.SourceDatabaseID
 
 		if body.Properties.ZoneRedundant != nil {
 			cfg.ZoneRedundant = *body.Properties.ZoneRedundant
@@ -194,15 +219,16 @@ func (h *Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurea
 
 	out, err := db.CreateDatabase(r.Context(), cfg)
 	if err == nil {
-		azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
+		azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp, h.databaseStatus(out.Server, out.Name)))
 		return
 	}
 
 	if cerrors.IsNotFound(err) {
-		// CreateDatabase raises NotFound for two distinct causes: a missing
-		// parent server, or (once the server exists) an elasticPoolId that
-		// doesn't resolve to a pool on it. Disambiguate by server existence.
-		h.writeDatabaseNotFound(r.Context(), w, rp.ResourceName, err)
+		// CreateDatabase raises NotFound for three distinct causes: a missing
+		// parent server, a Copy/PointInTimeRestore sourceDatabaseId that doesn't
+		// resolve, or (once the server exists) an elasticPoolId that doesn't
+		// resolve to a pool on it. Disambiguate by server existence + copy mode.
+		h.writeDatabaseNotFound(r.Context(), w, rp.ResourceName, &cfg, err)
 		return
 	}
 
@@ -213,14 +239,14 @@ func (h *Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurea
 
 	out, err = replaceDatabase(r.Context(), db, &body, &cfg)
 	if err == nil {
-		azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
+		azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp, h.databaseStatus(out.Server, out.Name)))
 		return
 	}
 
 	if cerrors.IsNotFound(err) {
-		// Same disambiguation as above: replaceDatabase's own elastic-pool
-		// pre-check also raises NotFound.
-		h.writeDatabaseNotFound(r.Context(), w, rp.ResourceName, err)
+		// replaceDatabase's only NotFound is its elastic-pool pre-check (the
+		// copy path never runs on the update half), so pass no cfg.
+		h.writeDatabaseNotFound(r.Context(), w, rp.ResourceName, nil, err)
 		return
 	}
 
@@ -233,10 +259,19 @@ func (h *Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurea
 // server whose referenced elastic pool doesn't exist (real Azure answers 400
 // TargetElasticPoolDoesNotExist — see
 // https://learn.microsoft.com/en-us/rest/api/sql/databases/create-or-update).
-func (h *Handler) writeDatabaseNotFound(ctx context.Context, w http.ResponseWriter, server string, err error) {
+func (h *Handler) writeDatabaseNotFound(
+	ctx context.Context, w http.ResponseWriter, server string, cfg *rdsdriver.DatabaseConfig, err error,
+) {
 	clusters, dErr := h.db.DescribeClusters(ctx, []string{server})
 	if dErr != nil || len(clusters) == 0 {
 		azurearm.WriteParentNotFound(w, err)
+		return
+	}
+
+	// Server exists: a Copy/PointInTimeRestore whose sourceDatabaseId is set
+	// resolved the source before the pool check, so the NotFound is the source.
+	if cfg != nil && cfg.SourceDatabaseID != "" {
+		azurearm.WriteError(w, http.StatusNotFound, "SourceDatabaseNotFound", err.Error())
 		return
 	}
 
@@ -274,7 +309,11 @@ func mergeDatabaseFields(existing *rdsdriver.Database, body *armDatabase, cfg *r
 		merged.Tags = cfg.Tags
 	}
 
-	if cfg.ElasticPoolID != "" {
+	// ElasticPoolID is merged on pointer presence, not on cfg's zero-value check:
+	// a request explicitly clearing the field (elasticPoolId: "") must remove the
+	// database from its pool, which "" == not-supplied would otherwise mask (see
+	// dbCfgFromBody, which only sets cfg.ElasticPoolID when the pointer is set).
+	if body.Properties != nil && body.Properties.ElasticPoolID != nil {
 		merged.ElasticPoolID = cfg.ElasticPoolID
 	}
 
@@ -285,15 +324,18 @@ func mergeDatabaseFields(existing *rdsdriver.Database, body *armDatabase, cfg *r
 	return merged
 }
 
-// replaceDatabase merges the request body over the stored database and
-// re-creates it, so a PUT/PATCH against an existing database changes sku/tier/
-// HA while leaving omitted fields intact.
+// replaceDatabase merges the request body over the stored database and applies
+// the result in place, so a PUT/PATCH against an existing database changes
+// sku/tier/HA while leaving omitted fields intact.
 //
-// The merged elasticPoolId is validated before DeleteDatabase runs: a request
-// that references a nonexistent pool must fail the update with no side
-// effect, not delete the database out from under a bad request (CreateDatabase
-// re-validates the pool too, but only after the delete below would already
-// have happened).
+// It updates the record in place via the DatabaseUpdater capability rather than
+// deleting and re-creating it. A delete+recreate upsert dropped the database's
+// transparentDataEncryption record and re-materialized it as Enabled on the
+// re-create, silently re-enabling TDE on a database the user had disabled it on.
+// The in-place update leaves the TDE sub-resource untouched.
+//
+// The merged elasticPoolId is validated before the update: a request that
+// references a nonexistent pool must fail with no side effect.
 func replaceDatabase(
 	ctx context.Context, db rdsdriver.Databases, body *armDatabase, cfg *rdsdriver.DatabaseConfig,
 ) (*rdsdriver.Database, error) {
@@ -308,11 +350,12 @@ func replaceDatabase(
 		return nil, err
 	}
 
-	if err := db.DeleteDatabase(ctx, cfg.Server, cfg.Name); err != nil {
-		return nil, err
+	updater, ok := db.(rdsdriver.DatabaseUpdater)
+	if !ok {
+		return nil, cerrors.New(cerrors.InvalidArgument, "database update is not supported by this provider")
 	}
 
-	return db.CreateDatabase(ctx, rdsdriver.DatabaseConfig{
+	return updater.UpdateDatabase(ctx, rdsdriver.DatabaseConfig{
 		Server:        merged.Server,
 		Name:          merged.Name,
 		Charset:       merged.Charset,
@@ -347,14 +390,14 @@ func requireElasticPool(ctx context.Context, db rdsdriver.Databases, server, poo
 	return err
 }
 
-func (*Handler) getDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases) {
+func (h *Handler) getDatabase(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases) {
 	out, err := db.GetDatabase(r.Context(), rp.ResourceName, rp.SubResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp))
+	azurearm.WriteJSON(w, http.StatusOK, toARMDatabase(out, rp, h.databaseStatus(out.Server, out.Name)))
 }
 
 func (*Handler) deleteDatabase(
@@ -370,7 +413,7 @@ func (*Handler) deleteDatabase(
 	w.WriteHeader(http.StatusOK)
 }
 
-func (*Handler) listDatabases(
+func (h *Handler) listDatabases(
 	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db rdsdriver.Databases,
 ) {
 	items, err := db.ListDatabases(r.Context(), rp.ResourceName)
@@ -381,7 +424,7 @@ func (*Handler) listDatabases(
 
 	out := make([]armDatabase, 0, len(items))
 	for i := range items {
-		out = append(out, toARMDatabase(&items[i], rp))
+		out = append(out, toARMDatabase(&items[i], rp, h.databaseStatus(items[i].Server, items[i].Name)))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, armList[armDatabase]{Value: out})

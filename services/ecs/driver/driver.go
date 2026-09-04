@@ -428,6 +428,11 @@ type Service struct {
 	Deployments                   []Deployment
 	Events                        []ServiceEvent
 	Tags                          []Tag
+	// AvailabilityZoneRebalancing is "ENABLED" or "DISABLED". Real ECS always
+	// reports this field (defaulting new services to "DISABLED" when the
+	// caller doesn't specify it), so it is never left empty on a stored
+	// service.
+	AvailabilityZoneRebalancing string
 }
 
 // ContainerInstance is an EC2 instance registered into a cluster. It models a
@@ -522,6 +527,9 @@ type CreateServiceInput struct {
 	LoadBalancers                 []LoadBalancer
 	ServiceRegistries             []ServiceRegistry
 	Tags                          []Tag
+	// AvailabilityZoneRebalancing is "ENABLED" or "DISABLED"; an empty value
+	// defaults to "DISABLED" (matching real ECS).
+	AvailabilityZoneRebalancing string
 }
 
 // UpdateServiceInput describes mutations to an existing service. Nil pointers
@@ -542,6 +550,9 @@ type UpdateServiceInput struct {
 	CapacityProviderStrategy      []CapacityProviderStrategyItem
 	LoadBalancers                 []LoadBalancer
 	ServiceRegistries             []ServiceRegistry
+	// AvailabilityZoneRebalancing is "ENABLED" or "DISABLED"; an empty value
+	// leaves the service's current setting unchanged.
+	AvailabilityZoneRebalancing string
 }
 
 // RegisterContainerInstanceInput describes an EC2 container instance to register

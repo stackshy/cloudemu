@@ -112,6 +112,78 @@ func TestSDKSNSFifoTopicToFifoQueueDelivers(t *testing.T) {
 	}
 }
 
+// TestSDKSNSFifoPublishRequiresGroupAndDedupIds is a regression guard for the
+// two FIFO Publish requirements real SNS enforces (API_Publish.html /
+// API_CreateTopic.html) that cloudemu previously accepted silently: every
+// message to a FIFO topic needs MessageGroupId, and needs
+// MessageDeduplicationId unless the topic has ContentBasedDeduplication set.
+func TestSDKSNSFifoPublishRequiresGroupAndDedupIds(t *testing.T) {
+	sns, _ := newSNSAndSQS(t)
+	ctx := context.Background()
+
+	strict, err := sns.CreateTopic(ctx, &awssns.CreateTopicInput{
+		Name:       aws.String("strict.fifo"),
+		Attributes: map[string]string{"FifoTopic": "true"},
+	})
+	if err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+
+	if _, err := sns.Publish(ctx, &awssns.PublishInput{
+		TopicArn: strict.TopicArn, Message: aws.String("no group id"),
+	}); err == nil {
+		t.Fatal("Publish to FIFO topic without MessageGroupId succeeded, want InvalidParameter")
+	}
+
+	if _, err := sns.Publish(ctx, &awssns.PublishInput{
+		TopicArn: strict.TopicArn, Message: aws.String("no dedup id"), MessageGroupId: aws.String("g1"),
+	}); err == nil {
+		t.Fatal("Publish to FIFO topic (no ContentBasedDeduplication) without dedup id succeeded, want InvalidParameter")
+	}
+
+	// A fully-specified publish still succeeds.
+	if _, err := sns.Publish(ctx, &awssns.PublishInput{
+		TopicArn: strict.TopicArn, Message: aws.String("ok"),
+		MessageGroupId: aws.String("g1"), MessageDeduplicationId: aws.String("d1"),
+	}); err != nil {
+		t.Fatalf("Publish with group+dedup ids: %v", err)
+	}
+
+	// ContentBasedDeduplication=true relieves the dedup-id requirement.
+	auto, err := sns.CreateTopic(ctx, &awssns.CreateTopicInput{
+		Name:       aws.String("auto.fifo"),
+		Attributes: map[string]string{"FifoTopic": "true", "ContentBasedDeduplication": "true"},
+	})
+	if err != nil {
+		t.Fatalf("CreateTopic(auto): %v", err)
+	}
+
+	if _, err := sns.Publish(ctx, &awssns.PublishInput{
+		TopicArn: auto.TopicArn, Message: aws.String("ok"), MessageGroupId: aws.String("g1"),
+	}); err != nil {
+		t.Fatalf("Publish with ContentBasedDeduplication and no dedup id: %v", err)
+	}
+
+	// A standard topic never requires either id, and MessageGroupId is optional
+	// there (forwarded to SQS standard subscriptions for fair-queue routing).
+	std, err := sns.CreateTopic(ctx, &awssns.CreateTopicInput{Name: aws.String("standard-topic")})
+	if err != nil {
+		t.Fatalf("CreateTopic(standard): %v", err)
+	}
+
+	if _, err := sns.Publish(ctx, &awssns.PublishInput{
+		TopicArn: std.TopicArn, Message: aws.String("plain"),
+	}); err != nil {
+		t.Fatalf("Publish to standard topic with no ids: %v", err)
+	}
+
+	if _, err := sns.Publish(ctx, &awssns.PublishInput{
+		TopicArn: std.TopicArn, Message: aws.String("with group"), MessageGroupId: aws.String("g1"),
+	}); err != nil {
+		t.Fatalf("Publish to standard topic with MessageGroupId: %v", err)
+	}
+}
+
 // TestSDKSNSNumericAttributeFilterPolicy reproduces a numeric filter policy on a
 // message ATTRIBUTE: attribute values travel the wire as strings, so a numeric
 // operator must still match one that encodes a number. A matching message was
