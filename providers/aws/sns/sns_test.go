@@ -63,6 +63,15 @@ func TestCreateTopic(t *testing.T) {
 			},
 			expectErr: true,
 		},
+		{
+			name:      "fifo topic without .fifo suffix is rejected",
+			cfg:       driver.TopicConfig{Name: "not-fifo-named", FifoTopic: true},
+			expectErr: true,
+		},
+		{
+			name: "fifo topic with .fifo suffix",
+			cfg:  driver.TopicConfig{Name: "properly-named.fifo", FifoTopic: true},
+		},
 	}
 
 	for _, tc := range tests {
@@ -124,6 +133,54 @@ func TestUpdateTopicDisplayName(t *testing.T) {
 	info, err := m.GetTopic(ctx, "t")
 	require.NoError(t, err)
 	assert.Equal(t, "My Topic", info.DisplayName)
+}
+
+// TestUpdateTopicFIFOAndDeliveryAttributes guards SetTopicAttributes's other
+// paths through UpdateTopic (DeliveryPolicy, KmsMasterKeyId,
+// ContentBasedDeduplication), which previously never made it past the wire
+// handler and caused a permanent Terraform diff on aws_sns_topic's
+// content_based_deduplication field.
+func TestUpdateTopicFIFOAndDeliveryAttributes(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateTopic(ctx, driver.TopicConfig{Name: "t.fifo", FifoTopic: true})
+	require.NoError(t, err)
+
+	_, err = m.UpdateTopic(ctx, driver.TopicConfig{
+		Name:                         "t.fifo",
+		DeliveryPolicy:               `{"http":{"defaultHealthyRetryPolicy":{"numRetries":5}}}`,
+		KmsMasterKeyID:               "alias/my-key",
+		ContentBasedDeduplication:    true,
+		ContentBasedDeduplicationSet: true,
+	})
+	require.NoError(t, err)
+
+	info, err := m.GetTopic(ctx, "t.fifo")
+	require.NoError(t, err)
+	assert.Contains(t, info.DeliveryPolicy, "numRetries")
+	assert.Equal(t, "alias/my-key", info.KmsMasterKeyID)
+	assert.True(t, info.ContentBasedDeduplication)
+
+	// An explicit false must also stick — this is exactly the bug: a plain
+	// zero-value bool couldn't previously be distinguished from "not set".
+	_, err = m.UpdateTopic(ctx, driver.TopicConfig{
+		Name: "t.fifo", ContentBasedDeduplication: false, ContentBasedDeduplicationSet: true,
+	})
+	require.NoError(t, err)
+
+	info, err = m.GetTopic(ctx, "t.fifo")
+	require.NoError(t, err)
+	assert.False(t, info.ContentBasedDeduplication)
+
+	// UpdateTopic with ContentBasedDeduplicationSet left false (no attribute
+	// named in the request) must leave the existing value untouched.
+	_, err = m.UpdateTopic(ctx, driver.TopicConfig{Name: "t.fifo", DisplayName: "unrelated change"})
+	require.NoError(t, err)
+
+	info, err = m.GetTopic(ctx, "t.fifo")
+	require.NoError(t, err)
+	assert.False(t, info.ContentBasedDeduplication)
 }
 
 // TestTagUntagTopic is a regression guard for issue #319: SNS TagResource /
@@ -555,4 +612,95 @@ func TestPublishReturnsUniqueMessageIDs(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.NotEqual(t, out1.MessageID, out2.MessageID)
+}
+
+// TestPublishFIFOValidation guards the two real-SNS FIFO Publish requirements:
+// every message needs a MessageGroupId, and needs a MessageDeduplicationId
+// unless the topic has ContentBasedDeduplication enabled. Standard topics are
+// unaffected — MessageGroupId there is optional (forwarded to SQS standard
+// subscriptions for fair-queue routing), never required or rejected.
+func TestPublishFIFOValidation(t *testing.T) {
+	tests := []struct {
+		name      string
+		setup     func(*Mock) driver.PublishInput
+		expectErr bool
+	}{
+		{
+			name: "fifo topic missing MessageGroupId",
+			setup: func(m *Mock) driver.PublishInput {
+				_, err := m.CreateTopic(context.Background(), driver.TopicConfig{
+					Name: "grp.fifo", FifoTopic: true, ContentBasedDeduplication: true,
+				})
+				require.NoError(t, err)
+
+				return driver.PublishInput{TopicID: "grp.fifo", Message: "hi"}
+			},
+			expectErr: true,
+		},
+		{
+			name: "fifo topic missing MessageDeduplicationId without ContentBasedDeduplication",
+			setup: func(m *Mock) driver.PublishInput {
+				_, err := m.CreateTopic(context.Background(), driver.TopicConfig{
+					Name: "dedup.fifo", FifoTopic: true,
+				})
+				require.NoError(t, err)
+
+				return driver.PublishInput{TopicID: "dedup.fifo", Message: "hi", MessageGroupID: "g1"}
+			},
+			expectErr: true,
+		},
+		{
+			name: "fifo topic with group and dedup id succeeds",
+			setup: func(m *Mock) driver.PublishInput {
+				_, err := m.CreateTopic(context.Background(), driver.TopicConfig{
+					Name: "ok.fifo", FifoTopic: true,
+				})
+				require.NoError(t, err)
+
+				return driver.PublishInput{
+					TopicID: "ok.fifo", Message: "hi", MessageGroupID: "g1", MessageDeduplicationID: "d1",
+				}
+			},
+		},
+		{
+			name: "fifo topic with ContentBasedDeduplication skips dedup id requirement",
+			setup: func(m *Mock) driver.PublishInput {
+				_, err := m.CreateTopic(context.Background(), driver.TopicConfig{
+					Name: "cbd.fifo", FifoTopic: true, ContentBasedDeduplication: true,
+				})
+				require.NoError(t, err)
+
+				return driver.PublishInput{TopicID: "cbd.fifo", Message: "hi", MessageGroupID: "g1"}
+			},
+		},
+		{
+			name: "standard topic accepts MessageGroupId without a dedup id",
+			setup: func(m *Mock) driver.PublishInput {
+				info := createTopicHelper(m, "std-with-group")
+				return driver.PublishInput{TopicID: info.Name, Message: "hi", MessageGroupID: "g1"}
+			},
+		},
+		{
+			name: "standard topic requires neither MessageGroupId nor dedup id",
+			setup: func(m *Mock) driver.PublishInput {
+				info := createTopicHelper(m, "std-plain")
+				return driver.PublishInput{TopicID: info.Name, Message: "hi"}
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newTestMock()
+			input := tc.setup(m)
+
+			_, err := m.Publish(context.Background(), input)
+			if tc.expectErr {
+				require.Error(t, err)
+				return
+			}
+
+			require.NoError(t, err)
+		})
+	}
 }

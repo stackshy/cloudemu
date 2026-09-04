@@ -26,6 +26,12 @@ type TopicConfig struct {
 	// by GetTopicAttributes; FIFO publish ordering/dedup is not yet enforced.
 	FifoTopic                 bool
 	ContentBasedDeduplication bool
+	// ContentBasedDeduplicationSet reports that ContentBasedDeduplication was
+	// supplied explicitly on an UpdateTopic (SetTopicAttributes) call, so the AWS
+	// provider can distinguish an explicit false (applied) from a config with no
+	// opinion on the field (left unchanged). CreateTopic doesn't need it: a create
+	// always applies the field as given.
+	ContentBasedDeduplicationSet bool
 
 	// Scope records where the resource lives (Azure subscription/resource
 	// group, GCP project). Zero for AWS and unscoped portable callers.

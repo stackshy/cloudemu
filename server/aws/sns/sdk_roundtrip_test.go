@@ -419,6 +419,64 @@ func TestSDKSNSPendingConfirmationCounts(t *testing.T) {
 	}
 }
 
+// TestSDKSNSListSubscriptionsMasksPendingArn is a regression guard: real SNS
+// masks SubscriptionArn as the literal "PendingConfirmation" in
+// ListSubscriptions/ListSubscriptionsByTopic for a still-unconfirmed
+// subscription (distinct from Subscribe's own "pending confirmation" return
+// value) and reports the owning account id in Owner — cloudemu previously
+// echoed the real internal ARN and left Owner empty for every subscription.
+func TestSDKSNSListSubscriptionsMasksPendingArn(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	topic, err := client.CreateTopic(ctx, &awssns.CreateTopicInput{Name: aws.String("mask-topic")})
+	if err != nil {
+		t.Fatalf("CreateTopic: %v", err)
+	}
+
+	topicArn := aws.ToString(topic.TopicArn)
+
+	if _, err := client.Subscribe(ctx, &awssns.SubscribeInput{
+		TopicArn: aws.String(topicArn), Protocol: aws.String("email"), Endpoint: aws.String("a@b.com"),
+	}); err != nil {
+		t.Fatalf("Subscribe(email): %v", err)
+	}
+
+	if _, err := client.Subscribe(ctx, &awssns.SubscribeInput{
+		TopicArn: aws.String(topicArn), Protocol: aws.String("sqs"),
+		Endpoint: aws.String("arn:aws:sqs:us-east-1:000000000000:q"),
+	}); err != nil {
+		t.Fatalf("Subscribe(sqs): %v", err)
+	}
+
+	out, err := client.ListSubscriptionsByTopic(ctx,
+		&awssns.ListSubscriptionsByTopicInput{TopicArn: aws.String(topicArn)})
+	if err != nil {
+		t.Fatalf("ListSubscriptionsByTopic: %v", err)
+	}
+
+	if len(out.Subscriptions) != 2 {
+		t.Fatalf("got %d subscriptions, want 2", len(out.Subscriptions))
+	}
+
+	for _, s := range out.Subscriptions {
+		if aws.ToString(s.Owner) == "" {
+			t.Fatalf("subscription %s: Owner is empty, want the account id", aws.ToString(s.Protocol))
+		}
+
+		switch aws.ToString(s.Protocol) {
+		case "email":
+			if arn := aws.ToString(s.SubscriptionArn); arn != "PendingConfirmation" {
+				t.Fatalf("email SubscriptionArn = %q, want masked \"PendingConfirmation\"", arn)
+			}
+		case "sqs":
+			if arn := aws.ToString(s.SubscriptionArn); arn == "PendingConfirmation" || arn == "" {
+				t.Fatalf("sqs (auto-confirmed) SubscriptionArn = %q, want the real ARN", arn)
+			}
+		}
+	}
+}
+
 // TestSDKSNSConfirmSubscription drives a pending email subscription through
 // ConfirmSubscription (previously undispatched → InvalidAction) using the token
 // the mock generated, and asserts the subscription flips to confirmed.
