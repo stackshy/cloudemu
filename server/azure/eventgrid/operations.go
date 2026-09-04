@@ -85,26 +85,27 @@ type topicUpdateJSON struct {
 	} `json:"properties,omitempty"`
 }
 
-// updateTopic maps Topics.Update (PATCH) onto UpdateEventBus: a resource-level
-// tag PATCH replaces the tag set wholesale (matching real Azure and every
-// other resource's Update in this codebase — e.g. cosmosaccount, images), a
-// caller who omits tags entirely leaves the existing set untouched, and the
-// mutable publicNetworkAccess is applied. Returns the updated topic (200).
+// updateTopic maps Topics.Update (PATCH) onto UpdateEventBus for the mutable
+// publicNetworkAccess, and — separately — onto the eventBusTagWriter
+// capability for tags: a resource-level tag PATCH replaces the tag set
+// wholesale (matching real Azure and every other resource's Update in this
+// codebase — e.g. cosmosaccount, images), a caller who omits tags entirely
+// leaves the existing set untouched, and a caller who supplies an explicit
+// empty tags object wipes it. Tags are routed around UpdateEventBus's
+// cfg.Tags != nil gate on purpose: tagsFromPtr collapses an empty-but-present
+// map to nil, which that gate cannot tell apart from "tags omitted" — so
+// funneling the wipe through cfg.Tags would silently no-op it (the bug this
+// fixes). body.Tags being non-nil (checked before tagsFromPtr) is what
+// distinguishes present-and-empty from absent. Returns the updated topic
+// (200).
 func (h *Handler) updateTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body topicUpdateJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
 		return
 	}
 
-	current, err := h.bus.GetEventBus(r.Context(), rp.ResourceName)
-	if err != nil {
-		azurearm.WriteCErr(w, err)
-		return
-	}
-
 	cfg := ebdriver.EventBusConfig{
 		Name:                rp.ResourceName,
-		Tags:                replaceTagsIfPresent(current.Tags, body.Tags),
 		PublicNetworkAccess: updatePublicNetworkAccess(&body),
 	}
 
@@ -112,6 +113,14 @@ func (h *Handler) updateTopic(w http.ResponseWriter, r *http.Request, rp *azurea
 	if uerr != nil {
 		azurearm.WriteCErr(w, uerr)
 		return
+	}
+
+	if body.Tags != nil && h.tagWriter != nil {
+		info, uerr = h.tagWriter.SetEventBusTags(r.Context(), rp.ResourceName, tagsFromPtr(body.Tags))
+		if uerr != nil {
+			azurearm.WriteCErr(w, uerr)
+			return
+		}
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, toTopicJSON(rp, info))

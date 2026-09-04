@@ -176,6 +176,56 @@ func TestSDKTopicUpdatePatchOmittedTagsLeavesExisting(t *testing.T) {
 	}
 }
 
+// TestSDKTopicUpdatePatchEmptyTagsWipes verifies the third leg of the
+// resource-level tag PATCH contract: a body that carries an explicit empty
+// tags object ({}, not omitted) wipes the topic's tags entirely, matching
+// Domains.Update and SystemTopics.Update. This is the regression case: an
+// empty-but-present map collapses to nil once decoded, and nil is also what
+// "tags omitted" decodes to, so a naive implementation that funnels tags
+// through UpdateEventBus's cfg.Tags != nil gate silently no-ops the wipe.
+func TestSDKTopicUpdatePatchEmptyTagsWipes(t *testing.T) {
+	cf, _ := newEGFactory(t)
+	topics := cf.NewTopicsClient()
+	ctx := context.Background()
+
+	createPoller, err := topics.BeginCreateOrUpdate(ctx, testRG, "wipe-topic", armeventgrid.Topic{
+		Location: to.Ptr("eastus"),
+		Tags:     map[string]*string{"env": to.Ptr("test")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("create PollUntilDone: %v", err)
+	}
+
+	updPoller, err := topics.BeginUpdate(ctx, testRG, "wipe-topic", armeventgrid.TopicUpdateParameters{
+		Tags: map[string]*string{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Topics.BeginUpdate: %v", err)
+	}
+
+	updated, err := updPoller.PollUntilDone(ctx, nil)
+	if err != nil {
+		t.Fatalf("Update PollUntilDone: %v", err)
+	}
+
+	if len(updated.Tags) != 0 {
+		t.Fatalf("PATCH tags:{} should wipe tags in the update response, got %+v", updated.Tags)
+	}
+
+	got, err := topics.Get(ctx, testRG, "wipe-topic", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if len(got.Tags) != 0 {
+		t.Fatalf("Get after PATCH tags:{} should show wiped tags, got %+v", got.Tags)
+	}
+}
+
 // TestSDKTopicRegenerateKey locks B3: BeginRegenerateKey("key1") changes key1
 // but not key2, and ListSharedAccessKeys reflects the rotated value.
 func TestSDKTopicRegenerateKey(t *testing.T) {

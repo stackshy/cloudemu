@@ -73,6 +73,48 @@ func TestSDKDomainUpdatePatchReplacesTags(t *testing.T) {
 	}
 }
 
+// TestSDKDomainUpdatePatchEmptyTagsWipes verifies the third leg of the
+// resource-level tag PATCH contract: a body that carries an explicit empty
+// tags object ({}, not omitted) wipes the domain's tags entirely, rather than
+// leaving them untouched.
+func TestSDKDomainUpdatePatchEmptyTagsWipes(t *testing.T) {
+	cf, _ := newEGFactory(t)
+	dc := cf.NewDomainsClient()
+	ctx := context.Background()
+
+	createPoller, err := dc.BeginCreateOrUpdate(ctx, testRG, "wipe-domain", armeventgrid.Domain{
+		Location: to.Ptr("eastus"),
+		Tags:     map[string]*string{"env": to.Ptr("test")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Domains.BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("create PollUntilDone: %v", err)
+	}
+
+	updPoller, err := dc.BeginUpdate(ctx, testRG, "wipe-domain", armeventgrid.DomainUpdateParameters{
+		Tags: map[string]*string{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Domains.BeginUpdate: %v", err)
+	}
+
+	if _, err := updPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Update PollUntilDone: %v", err)
+	}
+
+	got, err := dc.Get(ctx, testRG, "wipe-domain", nil)
+	if err != nil {
+		t.Fatalf("Domains.Get: %v", err)
+	}
+
+	if len(got.Tags) != 0 {
+		t.Fatalf("PATCH tags:{} should wipe tags, got %+v", got.Tags)
+	}
+}
+
 // TestSDKSystemTopicUpdatePatchReplacesTags verifies SystemTopics.BeginUpdate
 // REPLACES the system topic's tag set wholesale.
 func TestSDKSystemTopicUpdatePatchReplacesTags(t *testing.T) {
@@ -125,6 +167,53 @@ func TestSDKSystemTopicUpdatePatchReplacesTags(t *testing.T) {
 
 	if len(got.Tags) != 1 || got.Tags["team"] == nil || *got.Tags["team"] != "data" {
 		t.Fatalf("Get after patch tags = %+v, want only {team: data}", got.Tags)
+	}
+}
+
+// TestSDKSystemTopicUpdatePatchEmptyTagsWipes verifies the third leg of the
+// resource-level tag PATCH contract: a body that carries an explicit empty
+// tags object ({}, not omitted) wipes the system topic's tags entirely.
+func TestSDKSystemTopicUpdatePatchEmptyTagsWipes(t *testing.T) {
+	cf, _ := newEGFactory(t)
+	st := cf.NewSystemTopicsClient()
+	ctx := context.Background()
+
+	const source = "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Storage/storageAccounts/acct"
+
+	createPoller, err := st.BeginCreateOrUpdate(ctx, testRG, "wipe-systopic", armeventgrid.SystemTopic{
+		Location: to.Ptr("global"),
+		Tags:     map[string]*string{"env": to.Ptr("test")},
+		Properties: &armeventgrid.SystemTopicProperties{
+			Source:    to.Ptr(source),
+			TopicType: to.Ptr("Microsoft.Storage.StorageAccounts"),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("SystemTopics.BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("create PollUntilDone: %v", err)
+	}
+
+	updPoller, err := st.BeginUpdate(ctx, testRG, "wipe-systopic", armeventgrid.SystemTopicUpdateParameters{
+		Tags: map[string]*string{},
+	}, nil)
+	if err != nil {
+		t.Fatalf("SystemTopics.BeginUpdate: %v", err)
+	}
+
+	if _, err := updPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("Update PollUntilDone: %v", err)
+	}
+
+	got, err := st.Get(ctx, testRG, "wipe-systopic", nil)
+	if err != nil {
+		t.Fatalf("SystemTopics.Get: %v", err)
+	}
+
+	if len(got.Tags) != 0 {
+		t.Fatalf("PATCH tags:{} should wipe tags, got %+v", got.Tags)
 	}
 }
 
