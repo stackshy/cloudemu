@@ -2,6 +2,7 @@ package efs_test
 
 import (
 	"context"
+	"net"
 	"net/http/httptest"
 	"testing"
 
@@ -90,5 +91,31 @@ func TestSDKMountTargetPlacementFromSubnet(t *testing.T) {
 	if aws.ToString(mtB.AvailabilityZoneName) != "us-east-1b" || aws.ToString(mtB.AvailabilityZoneId) != "use1-az2" {
 		t.Fatalf("mtB AZ = %q/%q, want us-east-1b/use1-az2",
 			aws.ToString(mtB.AvailabilityZoneName), aws.ToString(mtB.AvailabilityZoneId))
+	}
+
+	// Each mount target's auto-assigned IP falls inside its own subnet's CIDR,
+	// and the two never collide (real EFS never issues the same private IP to
+	// two network interfaces).
+	ipA, ipB := aws.ToString(mtA.IpAddress), aws.ToString(mtB.IpAddress)
+	if ipA == ipB {
+		t.Fatalf("mtA and mtB share the same auto-assigned IP %q", ipA)
+	}
+
+	_, cidrA, err := net.ParseCIDR(subnetA.CIDRBlock)
+	if err != nil {
+		t.Fatalf("parse subnet A CIDR: %v", err)
+	}
+
+	if !cidrA.Contains(net.ParseIP(ipA)) {
+		t.Fatalf("mtA IP %q is not inside subnet A's CIDR %q", ipA, subnetA.CIDRBlock)
+	}
+
+	_, cidrB, err := net.ParseCIDR(subnetB.CIDRBlock)
+	if err != nil {
+		t.Fatalf("parse subnet B CIDR: %v", err)
+	}
+
+	if !cidrB.Contains(net.ParseIP(ipB)) {
+		t.Fatalf("mtB IP %q is not inside subnet B's CIDR %q", ipB, subnetB.CIDRBlock)
 	}
 }

@@ -53,6 +53,13 @@ type Mock struct {
 	// per-file-system fallback is used instead of a random per-call VpcId.
 	subnetResolver SubnetResolver
 
+	// ipCounters hands out unique offsets for auto-assigned mount-target IPs,
+	// keyed by subnet id ("" is the global fallback used when no subnet CIDR is
+	// resolvable), guarded by ipMu. Without this every unspecified mount-target
+	// IP would collide on the same fixed address.
+	ipCounters map[string]int
+	ipMu       sync.Mutex
+
 	opts *config.Options
 }
 
@@ -64,6 +71,7 @@ func New(opts *config.Options) *Mock {
 		apIndex:      memstore.New[string](),
 		tokenIndex:   memstore.New[string](),
 		apTokenIndex: memstore.New[string](),
+		ipCounters:   make(map[string]int),
 		opts:         opts,
 	}
 }

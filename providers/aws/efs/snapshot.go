@@ -24,6 +24,7 @@ type efsSnapshot struct {
 	TokenIndex   json.RawMessage            `json:"tokenIndex,omitempty"`
 	APTokenIndex json.RawMessage            `json:"apTokenIndex,omitempty"`
 	AccountPref  string                     `json:"accountPref,omitempty"`
+	IPCounters   map[string]int             `json:"ipCounters,omitempty"`
 }
 
 // fsDataSnapshot mirrors fsData, promoting its fields to exported ones so they
@@ -50,6 +51,12 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.prefMu.RLock()
 	snap.AccountPref = m.accountPref
 	m.prefMu.RUnlock()
+
+	m.ipMu.Lock()
+	if len(m.ipCounters) > 0 {
+		snap.IPCounters = m.ipCounters
+	}
+	m.ipMu.Unlock()
 
 	return json.Marshal(snap)
 }
@@ -120,6 +127,12 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.prefMu.Lock()
 		m.accountPref = snap.AccountPref
 		m.prefMu.Unlock()
+	}
+
+	if snap.IPCounters != nil {
+		m.ipMu.Lock()
+		m.ipCounters = snap.IPCounters
+		m.ipMu.Unlock()
 	}
 
 	return nil

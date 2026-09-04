@@ -2,6 +2,8 @@ package efs
 
 import (
 	"context"
+	"fmt"
+	"net"
 	"strconv"
 	"strings"
 
@@ -48,7 +50,7 @@ func (m *Mock) CreateMountTarget(ctx context.Context, in driver.CreateMountTarge
 		FileSystemID:         fd.fs.FileSystemID,
 		SubnetID:             in.SubnetID,
 		LifeCycleState:       driver.StateAvailable,
-		IPAddress:            ipAddressOrDefault(in.IPAddress),
+		IPAddress:            m.allocateIP(in.IPAddress, in.SubnetID, subnet),
 		NetworkInterfaceID:   eni,
 		AvailabilityZoneID:   azIdent,
 		AvailabilityZoneName: azName,
@@ -165,12 +167,71 @@ func azIDFromName(azName string) string {
 	return regionShortCode(region) + "-az" + strconv.Itoa(ordinal)
 }
 
-func ipAddressOrDefault(ip string) string {
-	if ip != "" {
-		return ip
+// ipSegmentSize is the modulus for one dotted-decimal IPv4 octet.
+const ipSegmentSize = 256
+
+// mtFirstHost is the first assignable host offset within a subnet CIDR (AWS
+// reserves the network address and the first three host addresses in every
+// subnet), used as the starting point for auto-assigned mount-target IPs.
+const mtFirstHost = 4
+
+// allocateIP returns explicit if the caller supplied one. Otherwise it hands out
+// the next private IPv4 inside the subnet's CIDR — real EFS auto-assigns a free
+// address from the target subnet — falling back to a synthetic-but-unique
+// 10.0.x.y address when the subnet can't be resolved. Every call returns a
+// distinct address: a fixed default would let two mount targets (even across
+// different subnets and file systems) collide on the same private IP, which
+// real EFS/EC2 never does.
+func (m *Mock) allocateIP(explicit, subnetID string, subnet *netdriver.SubnetInfo) string {
+	if explicit != "" {
+		return explicit
 	}
 
-	return "10.0.0.10"
+	if subnet == nil || subnet.CIDRBlock == "" {
+		return m.nextIP()
+	}
+
+	_, ipNet, err := net.ParseCIDR(subnet.CIDRBlock)
+	if err != nil {
+		return m.nextIP()
+	}
+
+	base := ipNet.IP.To4()
+	if base == nil {
+		return m.nextIP()
+	}
+
+	m.ipMu.Lock()
+	offset := m.ipCounters[subnetID] + mtFirstHost
+	m.ipCounters[subnetID]++
+	m.ipMu.Unlock()
+
+	host := make(net.IP, len(base))
+	copy(host, base)
+
+	carry := offset
+	for i := len(host) - 1; i >= 0 && carry > 0; i-- {
+		sum := int(host[i]) + carry
+		host[i] = byte(sum % ipSegmentSize) //nolint:gosec // sum%256 is always in [0,255]
+		carry = sum / ipSegmentSize
+	}
+
+	if !ipNet.Contains(host) {
+		return m.nextIP()
+	}
+
+	return host.String()
+}
+
+// nextIP hands out a globally-unique fallback address (10.0.x.y) when no subnet
+// CIDR is available to allocate an in-range address from.
+func (m *Mock) nextIP() string {
+	m.ipMu.Lock()
+	n := m.ipCounters[""]
+	m.ipCounters[""]++
+	m.ipMu.Unlock()
+
+	return fmt.Sprintf("10.0.%d.%d", n/ipSegmentSize, n%ipSegmentSize)
 }
 
 // DeleteMountTarget removes a mount target.
