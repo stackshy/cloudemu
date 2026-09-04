@@ -365,6 +365,16 @@ func (m *Mock) RotateSecret(
 			"secret is scheduled for deletion, so this operation is not allowed")
 	}
 
+	// A secret that has never had a rotation Lambda configured, and whose
+	// caller didn't supply one in this call, can't rotate: real Secrets
+	// Manager rejects it rather than silently advancing the version with
+	// nothing to actually generate a new value.
+	if rotationLambdaARN == "" && sd.rotationLambdaARN == "" {
+		return nil, errors.New(errors.FailedPrecondition,
+			"you tried to enable rotation on a secret that doesn't already have a Lambda function ARN configured "+
+				"and you didn't include such an ARN as a parameter in this call")
+	}
+
 	now := m.opts.Clock.Now().UTC()
 	sd.applyRotationConfig(rotationLambdaARN, rules, now)
 

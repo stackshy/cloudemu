@@ -3,6 +3,7 @@ package secretsmanager_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -168,6 +169,7 @@ func TestSDKRotateSecret(t *testing.T) {
 
 	rot, err := client.RotateSecret(ctx, &awssm.RotateSecretInput{
 		SecretId: aws.String("torotate"), RotateImmediately: aws.Bool(true),
+		RotationLambdaARN: aws.String("arn:aws:lambda:us-east-1:123456789012:function:rotate"),
 	})
 	if err != nil {
 		t.Fatalf("RotateSecret: %v", err)
@@ -228,6 +230,41 @@ func TestSDKRotateSecretConfig(t *testing.T) {
 
 	if desc.NextRotationDate == nil {
 		t.Fatal("NextRotationDate is nil with AutomaticallyAfterDays set")
+	}
+}
+
+// TestSDKRotateSecretRequiresLambdaARN guards a real-user e2e finding:
+// RotateSecret on a secret that has never had a rotation Lambda configured,
+// and whose call doesn't supply one either, is rejected — real Secrets
+// Manager refuses to advance the version with nothing to actually generate a
+// new value. Supplying the ARN in the same call (first-time configure) still
+// works.
+func TestSDKRotateSecretRequiresLambdaARN(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("rotnolambda"), SecretString: aws.String("v"),
+	}); err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	_, err := client.RotateSecret(ctx, &awssm.RotateSecretInput{
+		SecretId: aws.String("rotnolambda"), RotateImmediately: aws.Bool(true),
+	})
+
+	var invalid *smtypes.InvalidRequestException
+	if !errors.As(err, &invalid) {
+		t.Fatalf("RotateSecret with no lambda ever configured: got %v, want InvalidRequestException", err)
+	}
+
+	// Supplying RotationLambdaARN in the same call configures it and succeeds.
+	if _, err := client.RotateSecret(ctx, &awssm.RotateSecretInput{
+		SecretId:          aws.String("rotnolambda"),
+		RotationLambdaARN: aws.String("arn:aws:lambda:us-east-1:123456789012:function:rotate"),
+		RotateImmediately: aws.Bool(true),
+	}); err != nil {
+		t.Fatalf("RotateSecret with RotationLambdaARN supplied: %v", err)
 	}
 }
 
