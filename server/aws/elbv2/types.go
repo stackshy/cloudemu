@@ -390,7 +390,7 @@ func toLoadBalancerXML(lb *lbdriver.LBInfo) loadBalancerXML {
 		az := &availabilityZonesXML{}
 		for _, s := range lb.Subnets {
 			az.Member = append(az.Member, availabilityZoneXML{
-				ZoneName: zoneNameForSubnet(),
+				ZoneName: zoneNameForSubnet(lb.SubnetAZs, s),
 				SubnetID: s,
 			})
 		}
@@ -405,10 +405,16 @@ func toLoadBalancerXML(lb *lbdriver.LBInfo) loadBalancerXML {
 	return out
 }
 
-// zoneNameForSubnet returns the availability-zone name reported for a subnet.
-// The emulator does not model subnet placement, so it reports the region's
-// first zone — enough to populate the non-empty ZoneName real ELBv2 returns.
-func zoneNameForSubnet() string {
+// zoneNameForSubnet returns the availability-zone name reported for subnet s.
+// When the networking driver resolved s's real zone (azs, keyed by subnet ID)
+// it is used; otherwise this falls back to the region's first zone — enough to
+// populate the non-empty ZoneName real ELBv2 returns even with no resolver
+// wired.
+func zoneNameForSubnet(azs map[string]string, s string) string {
+	if zone, ok := azs[s]; ok && zone != "" {
+		return zone
+	}
+
 	return defaultAvailabilityZone
 }
 

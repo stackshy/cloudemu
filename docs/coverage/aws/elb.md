@@ -48,6 +48,15 @@ LBNetworkModifier is implemented by drivers that can replace the security
 | `SetSecurityGroups` |  |
 | `SetSubnets` |  |
 
+### ListenerAttributeStore
+
+ListenerAttributeStore is implemented by drivers that store per-listener
+
+| Operation | Description |
+| --- | --- |
+| `GetListenerAttributes` |  |
+| `ModifyListenerAttributes` |  |
+
 ### ListenerGetter
 
 ListenerGetter is implemented by drivers that can fetch a single listener by
@@ -55,6 +64,14 @@ ListenerGetter is implemented by drivers that can fetch a single listener by
 | Operation | Description |
 | --- | --- |
 | `GetListener` |  |
+
+### RuleGetter
+
+RuleGetter is implemented by drivers that can fetch a single listener rule
+
+| Operation | Description |
+| --- | --- |
+| `GetRule` |  |
 
 ### RuleModifier
 

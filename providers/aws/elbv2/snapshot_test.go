@@ -91,6 +91,53 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSnapshotRestoreRoundTripListenerAttrsAndTags proves listener attribute
+// overrides and listener/rule tags — both added after the original snapshot
+// shape was fixed — survive a snapshot/restore round-trip too, not just the
+// four fields covered by seedELB above.
+func TestSnapshotRestoreRoundTripListenerAttrsAndTags(t *testing.T) {
+	ctx := context.Background()
+
+	src := newTestMock()
+
+	lb, err := src.CreateLoadBalancer(ctx, driver.LBConfig{Name: "attr-lb", Type: "network"})
+	requireNoError(t, err)
+
+	li, err := src.CreateListener(ctx, driver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "TCP", Port: 80, Tags: map[string]string{"env": "prod"},
+	})
+	requireNoError(t, err)
+
+	rule, err := src.CreateRule(ctx, driver.RuleConfig{
+		ListenerARN: li.ARN,
+		Priority:    1,
+		Conditions:  []driver.RuleCondition{{Field: "path-pattern", Values: []string{"/x"}}},
+		Tags:        map[string]string{"team": "platform"},
+	})
+	requireNoError(t, err)
+
+	_, err = src.ModifyListenerAttributes(ctx, li.ARN, map[string]string{"tcp.idle_timeout.seconds": "60"})
+	requireNoError(t, err)
+
+	data, err := src.Snapshot(ctx, true)
+	requireNoError(t, err)
+
+	dst := newTestMock()
+	requireNoError(t, dst.Restore(ctx, data))
+
+	gotListener, err := dst.GetListener(ctx, li.ARN)
+	requireNoError(t, err)
+	assertEqual(t, "prod", gotListener.Tags["env"])
+
+	gotRule, err := dst.GetRule(ctx, rule.ARN)
+	requireNoError(t, err)
+	assertEqual(t, "platform", gotRule.Tags["team"])
+
+	gotAttrs, err := dst.GetListenerAttributes(ctx, li.ARN)
+	requireNoError(t, err)
+	assertEqual(t, "60", gotAttrs["tcp.idle_timeout.seconds"])
+}
+
 // TestSnapshotEmpty confirms a fresh mock snapshots and restores without error.
 func TestSnapshotEmpty(t *testing.T) {
 	ctx := context.Background()

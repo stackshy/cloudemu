@@ -25,7 +25,9 @@ var (
 	_ driver.RuleModifier              = (*Mock)(nil)
 	_ driver.LBNetworkModifier         = (*Mock)(nil)
 	_ driver.ListenerGetter            = (*Mock)(nil)
+	_ driver.RuleGetter                = (*Mock)(nil)
 	_ driver.TargetGroupAttributeStore = (*Mock)(nil)
+	_ driver.ListenerAttributeStore    = (*Mock)(nil)
 )
 
 // defaultIdleTimeoutSec is the default idle timeout for load balancers in seconds.
@@ -107,6 +109,9 @@ type Mock struct {
 	tgAttrsMu sync.RWMutex
 	tgAttrs   map[string]map[string]string // tgARN -> attribute overrides
 
+	listenerAttrsMu sync.RWMutex
+	listenerAttrs   map[string]map[string]string // listenerARN -> attribute overrides
+
 	// subnetResolver derives a load balancer's VpcId from its subnets. Real
 	// ELBv2 infers VpcId rather than taking it as input; without the resolver
 	// wired in the field is simply left empty.
@@ -116,18 +121,19 @@ type Mock struct {
 // New creates a new ELB mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		lbs:          memstore.New[driver.LBInfo](),
-		lbSettle:     memstore.New[settle.Window](),
-		tgs:          memstore.New[driver.TargetGroupInfo](),
-		listeners:    memstore.New[driver.ListenerInfo](),
-		rules:        memstore.New[driver.RuleInfo](),
-		opts:         opts,
-		health:       make(map[string]map[targetKey]*driver.TargetHealth),
-		healthSettle: settle.NewSet(),
-		drainSettle:  settle.NewSet(),
-		healthArmed:  make(map[string]struct{}),
-		attrs:        make(map[string]driver.LBAttributes),
-		tgAttrs:      make(map[string]map[string]string),
+		lbs:           memstore.New[driver.LBInfo](),
+		lbSettle:      memstore.New[settle.Window](),
+		tgs:           memstore.New[driver.TargetGroupInfo](),
+		listeners:     memstore.New[driver.ListenerInfo](),
+		rules:         memstore.New[driver.RuleInfo](),
+		opts:          opts,
+		health:        make(map[string]map[targetKey]*driver.TargetHealth),
+		healthSettle:  settle.NewSet(),
+		drainSettle:   settle.NewSet(),
+		healthArmed:   make(map[string]struct{}),
+		attrs:         make(map[string]driver.LBAttributes),
+		tgAttrs:       make(map[string]map[string]string),
+		listenerAttrs: make(map[string]map[string]string),
 	}
 }
 
@@ -183,6 +189,7 @@ func (m *Mock) CreateLoadBalancer(ctx context.Context, cfg driver.LBConfig) (*dr
 		IPAddressType:         ipType,
 		CanonicalHostedZoneID: canonicalHostedZoneID(m.opts.Region),
 		VPCID:                 m.resolveVPCID(ctx, cfg.Subnets),
+		SubnetAZs:             m.resolveAZs(ctx, cfg.Subnets),
 		CreatedTime:           now,
 		Tags:                  tags,
 	}
@@ -276,6 +283,10 @@ func (m *Mock) DeleteLoadBalancer(_ context.Context, arn string) error {
 		}
 
 		m.listeners.Delete(key)
+
+		m.listenerAttrsMu.Lock()
+		delete(m.listenerAttrs, listenerARN)
+		m.listenerAttrsMu.Unlock()
 	}
 
 	// Drop the stored load-balancer attributes so a recreated ARN does not
@@ -382,12 +393,29 @@ const (
 	defaultHCMatcher       = "200"
 	defaultHCPort          = "traffic-port"
 	defaultHCPath          = "/"
+	protocolHTTP           = "HTTP"
 )
 
 // isHTTPProtocol reports whether p is an HTTP-family protocol (which carries a
 // path and an HTTP matcher on its health check).
 func isHTTPProtocol(p string) bool {
-	return p == "HTTP" || p == "HTTPS"
+	return p == protocolHTTP || p == "HTTPS"
+}
+
+// defaultHealthCheckProtocol reports the HealthCheckProtocol ELBv2 defaults to
+// for a target group of the given protocol. Per the CreateTargetGroup API
+// reference, this is NOT the target group's own protocol mirrored back: an
+// Application Load Balancer target group (HTTP or HTTPS) always defaults to
+// HTTP, and a Network or Gateway Load Balancer target group (TCP, TLS, UDP,
+// TCP_UDP, GENEVE, QUIC, TCP_QUIC) always defaults to TCP — the GENEVE, TLS,
+// UDP, TCP_UDP, QUIC, and TCP_QUIC protocols are not themselves supported as a
+// health check protocol.
+func defaultHealthCheckProtocol(tgProtocol string) string {
+	if isHTTPProtocol(tgProtocol) {
+		return protocolHTTP
+	}
+
+	return "TCP"
 }
 
 // defaultHealthCheck fills a target group's health-check settings, applying the
@@ -398,7 +426,7 @@ func defaultHealthCheck(cfg driver.TargetGroupConfig) driver.HealthCheck {
 	hc := cfg.HealthCheck
 
 	if hc.Protocol == "" {
-		hc.Protocol = cfg.Protocol
+		hc.Protocol = defaultHealthCheckProtocol(cfg.Protocol)
 	}
 
 	if hc.Port == "" {
@@ -620,6 +648,7 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 		DefaultActions: cloneActions(cfg.DefaultActions),
 		SslPolicy:      cfg.SslPolicy,
 		Certificates:   cloneCertificates(cfg.Certificates),
+		Tags:           copyStringMap(cfg.Tags),
 	}
 
 	m.listeners.Set(arn, li)
@@ -715,6 +744,10 @@ func (m *Mock) DeleteListener(_ context.Context, arn string) error {
 		}
 	}
 
+	m.listenerAttrsMu.Lock()
+	delete(m.listenerAttrs, arn)
+	m.listenerAttrsMu.Unlock()
+
 	return nil
 }
 
@@ -742,6 +775,8 @@ func (m *Mock) DescribeListeners(_ context.Context, lbARN string) ([]driver.List
 }
 
 // CreateRule creates a new listener rule.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
 func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.RuleInfo, error) {
 	if _, ok := m.listeners.Get(cfg.ListenerARN); !ok {
 		return nil, errors.Newf(errors.NotFound, "listener %q not found", cfg.ListenerARN)
@@ -780,6 +815,7 @@ func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.Rul
 		Conditions:  conditions,
 		Actions:     actions,
 		IsDefault:   false,
+		Tags:        copyStringMap(cfg.Tags),
 	}
 
 	m.rules.Set(arn, rule)
@@ -812,6 +848,18 @@ func (m *Mock) DeleteRule(_ context.Context, ruleARN string) error {
 	}
 
 	return nil
+}
+
+// GetRule returns a single listener rule by ARN.
+func (m *Mock) GetRule(_ context.Context, ruleARN string) (*driver.RuleInfo, error) {
+	r, ok := m.rules.Get(ruleARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "rule %q not found", ruleARN)
+	}
+
+	result := r
+
+	return &result, nil
 }
 
 // DescribeRules returns all rules for the specified listener.
@@ -1050,13 +1098,14 @@ func (m *Mock) SetSecurityGroups(_ context.Context, lbARN string, securityGroups
 
 // SetSubnets replaces the subnets a load balancer is attached to and returns
 // the resulting subnet list.
-func (m *Mock) SetSubnets(_ context.Context, lbARN string, subnets []string) ([]string, error) {
+func (m *Mock) SetSubnets(ctx context.Context, lbARN string, subnets []string) ([]string, error) {
 	lb, ok := m.lbs.Get(lbARN)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", lbARN)
 	}
 
 	lb.Subnets = append([]string(nil), subnets...)
+	lb.SubnetAZs = m.resolveAZs(ctx, subnets)
 	m.lbs.Set(lbARN, lb)
 
 	return lb.Subnets, nil
@@ -1211,6 +1260,90 @@ func (m *Mock) ModifyTargetGroupAttributes(
 func mergedTargetGroupAttributes(overrides map[string]string) map[string]string {
 	out := make(map[string]string, len(defaultTargetGroupAttributes)+len(overrides))
 	for k, v := range defaultTargetGroupAttributes {
+		out[k] = v
+	}
+
+	for k, v := range overrides {
+		out[k] = v
+	}
+
+	return out
+}
+
+// defaultListenerAttributes returns the attribute defaults ELBv2 reports for a
+// freshly created listener before any ModifyListenerAttributes call. Per the
+// ListenerAttribute API reference, tcp.idle_timeout.seconds (default 350) only
+// applies to Network and Gateway Load Balancer listeners; an Application Load
+// Balancer listener has no attribute with a documented default, so it starts
+// with an empty set.
+func defaultListenerAttributes(lbType string) map[string]string {
+	if lbType == "network" || lbType == "gateway" {
+		return map[string]string{"tcp.idle_timeout.seconds": "350"}
+	}
+
+	return map[string]string{}
+}
+
+// GetListenerAttributes returns the full attribute set for a listener: the
+// ELBv2 defaults (derived from its load balancer's type) overlaid with any
+// stored overrides.
+func (m *Mock) GetListenerAttributes(_ context.Context, listenerARN string) (map[string]string, error) {
+	li, ok := m.listeners.Get(listenerARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "listener %q not found", listenerARN)
+	}
+
+	m.listenerAttrsMu.RLock()
+	defer m.listenerAttrsMu.RUnlock()
+
+	return mergedListenerAttributes(m.lbType(li.LBARN), m.listenerAttrs[listenerARN]), nil
+}
+
+// ModifyListenerAttributes merges updates into the listener's stored overrides
+// and returns the resulting full attribute set.
+func (m *Mock) ModifyListenerAttributes(
+	_ context.Context, listenerARN string, updates map[string]string,
+) (map[string]string, error) {
+	li, ok := m.listeners.Get(listenerARN)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "listener %q not found", listenerARN)
+	}
+
+	m.listenerAttrsMu.Lock()
+	defer m.listenerAttrsMu.Unlock()
+
+	overrides := m.listenerAttrs[listenerARN]
+	if overrides == nil {
+		overrides = make(map[string]string, len(updates))
+	}
+
+	for k, v := range updates {
+		overrides[k] = v
+	}
+
+	m.listenerAttrs[listenerARN] = overrides
+
+	return mergedListenerAttributes(m.lbType(li.LBARN), overrides), nil
+}
+
+// lbType returns the Type ("application", "network", "gateway") of the load
+// balancer at arn, or "" if it cannot be resolved.
+func (m *Mock) lbType(lbARN string) string {
+	lb, ok := m.lbs.Get(lbARN)
+	if !ok {
+		return ""
+	}
+
+	return lb.Type
+}
+
+// mergedListenerAttributes returns a fresh map of the type-derived defaults
+// overlaid with overrides, so the caller never aliases stored state.
+func mergedListenerAttributes(lbType string, overrides map[string]string) map[string]string {
+	defaults := defaultListenerAttributes(lbType)
+
+	out := make(map[string]string, len(defaults)+len(overrides))
+	for k, v := range defaults {
 		out[k] = v
 	}
 
