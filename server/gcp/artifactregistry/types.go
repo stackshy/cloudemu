@@ -173,7 +173,7 @@ const (
 	descriptionTag    = "cloudemu:gcpArDescription"
 	modeTag           = "cloudemu:gcpArMode"
 	kmsKeyTag         = "cloudemu:gcpArKmsKeyName"
-	immutableTagsTag  = "cloudemu:gcpArImmutableTags"
+	immutableTagsTag  = crdriver.ImmutableTagsReservedTag
 	cleanupPolicyTag  = "cloudemu:gcpArCleanupPolicies"
 	cleanupDryRunTag  = "cloudemu:gcpArCleanupPolicyDryRun"
 	reservedTagPrefix = "cloudemu:"

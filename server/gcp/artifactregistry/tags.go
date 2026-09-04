@@ -2,9 +2,13 @@
 // delete) that subcollections.go left read-only, plus the enforcement of a
 // Docker repository's dockerConfig.immutableTags flag. Real Artifact Registry
 // blocks re-pointing or deleting a tag once immutable tags are enabled (create
-// of a brand-new tag id is always allowed); this file is the only place that
-// checks the flag, since createRepository/patchRepository merely persist it
-// (see operations.go) without enforcing anything.
+// of a brand-new tag id is always allowed). The existence checks and the
+// immutableTags gate are evaluated atomically inside the provider's
+// CreateTag/PatchTag/UntagImage (one lock acquisition each), not composed here
+// from separate GetRepository/TagImage calls: a wire-layer check-then-act
+// would leave a window for a concurrent repository patch to flip
+// immutableTags, or for two concurrent creates of the same tag id to both
+// succeed.
 package artifactregistry
 
 import (
@@ -12,13 +16,27 @@ import (
 	"net/http"
 	"strings"
 
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
-// tagUnsetter is the optional GCP-only driver extension for removing a single
-// tag without deleting the underlying package/version (packages.tags.delete).
-// Only the GCP Artifact Registry mock implements it.
+// tagCreator is the optional GCP-only driver extension for atomically
+// creating a new tag (packages.tags.create). Only the GCP Artifact Registry
+// mock implements it.
+type tagCreator interface {
+	CreateTag(ctx context.Context, repository, digest, tag string) error
+}
+
+// tagPatcher is the optional GCP-only driver extension for atomically
+// validating a tag patch (packages.tags.patch), including the immutableTags
+// gate. Only the GCP Artifact Registry mock implements it.
+type tagPatcher interface {
+	PatchTag(ctx context.Context, repository, digest, tag string) error
+}
+
+// tagUnsetter is the optional GCP-only driver extension for atomically
+// removing a single tag without deleting the underlying package/version
+// (packages.tags.delete), including the immutableTags gate. Only the GCP
+// Artifact Registry mock implements it.
 type tagUnsetter interface {
 	UntagImage(ctx context.Context, repository, digest, tag string) error
 }
@@ -60,7 +78,8 @@ func (h *Handler) serveTagsCollection(w http.ResponseWriter, r *http.Request, rt
 
 // createTag implements packages.tags.create. A brand-new tag id is always
 // allowed, even on an immutable-tags repository; only mutating an existing
-// tag (patch/delete) is blocked.
+// tag (patch/delete) is blocked. The existence-check-then-write is delegated
+// to the provider's CreateTag so it happens under one lock acquisition.
 func (h *Handler) createTag(w http.ResponseWriter, r *http.Request, rt *route) {
 	img, ok := h.findImage(w, r, rt)
 	if !ok {
@@ -73,11 +92,6 @@ func (h *Handler) createTag(w http.ResponseWriter, r *http.Request, rt *route) {
 		return
 	}
 
-	if containsTagName(img.Tags, tagID) {
-		gcprest.WriteError(w, http.StatusConflict, "alreadyExists", "tag "+tagID+" already exists")
-		return
-	}
-
 	var body tagsJSON
 	if !gcprest.DecodeJSON(w, r, &body) {
 		return
@@ -87,7 +101,13 @@ func (h *Handler) createTag(w http.ResponseWriter, r *http.Request, rt *route) {
 		return
 	}
 
-	if err := h.registry.TagImage(r.Context(), rt.repository, img.Digest, tagID); err != nil {
+	creator, ok := h.registry.(tagCreator)
+	if !ok {
+		gcprest.WriteError(w, http.StatusNotFound, "notFound", "tags.create unsupported")
+		return
+	}
+
+	if err := creator.CreateTag(r.Context(), rt.repository, img.Digest, tagID); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -98,16 +118,12 @@ func (h *Handler) createTag(w http.ResponseWriter, r *http.Request, rt *route) {
 // patchTag implements packages.tags.patch. The mock's package/version model
 // is one version per package, so a tag under package {pkg} only ever
 // resolves to version {pkg}; a patch can therefore only confirm that version
-// (a differing one 404s as not found), but the immutableTags gate below is
-// still fully meaningful and is what real clients probe.
+// (a differing one 404s as not found), but the immutableTags gate — checked
+// atomically inside the provider's PatchTag — is still fully meaningful and
+// is what real clients probe.
 func (h *Handler) patchTag(w http.ResponseWriter, r *http.Request, rt *route) {
 	img, ok := h.findImage(w, r, rt)
 	if !ok {
-		return
-	}
-
-	if !containsTagName(img.Tags, rt.pkgSubID) {
-		gcprest.WriteError(w, http.StatusNotFound, "notFound", "tag "+rt.pkgSubID+" not found")
 		return
 	}
 
@@ -120,26 +136,26 @@ func (h *Handler) patchTag(w http.ResponseWriter, r *http.Request, rt *route) {
 		return
 	}
 
-	if !h.rejectIfImmutable(w, r, rt, "updated") {
+	patcher, ok := h.registry.(tagPatcher)
+	if !ok {
+		gcprest.WriteError(w, http.StatusNotFound, "notFound", "tags.patch unsupported")
+		return
+	}
+
+	if err := patcher.PatchTag(r.Context(), rt.repository, img.Digest, rt.pkgSubID); err != nil {
+		gcprest.WriteCErr(w, err)
 		return
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, toTagJSON(rt, rt.pkgSubID, img.Digest))
 }
 
-// deleteTag implements packages.tags.delete, blocked by immutableTags.
+// deleteTag implements packages.tags.delete. The existence check and the
+// immutableTags gate are evaluated atomically inside the provider's
+// UntagImage, under the same lock as the removal itself.
 func (h *Handler) deleteTag(w http.ResponseWriter, r *http.Request, rt *route) {
 	img, ok := h.findImage(w, r, rt)
 	if !ok {
-		return
-	}
-
-	if !containsTagName(img.Tags, rt.pkgSubID) {
-		gcprest.WriteError(w, http.StatusNotFound, "notFound", "tag "+rt.pkgSubID+" not found")
-		return
-	}
-
-	if !h.rejectIfImmutable(w, r, rt, "deleted") {
 		return
 	}
 
@@ -155,26 +171,6 @@ func (h *Handler) deleteTag(w http.ResponseWriter, r *http.Request, rt *route) {
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, map[string]any{})
-}
-
-// rejectIfImmutable writes a FAILED_PRECONDITION response and returns false
-// when the tag's repository has dockerConfig.immutableTags enabled; verb
-// names the blocked action ("updated"/"deleted") in the error message.
-func (h *Handler) rejectIfImmutable(w http.ResponseWriter, r *http.Request, rt *route, verb string) bool {
-	repo, err := h.registry.GetRepository(r.Context(), rt.repository)
-	if err != nil {
-		gcprest.WriteCErr(w, err)
-		return false
-	}
-
-	if repo.Tags[immutableTagsTag] != trueTag {
-		return true
-	}
-
-	gcprest.WriteCErr(w, cerrors.Newf(cerrors.FailedPrecondition,
-		"repository %q has immutable tags; tag %q cannot be %s", rt.repository, rt.pkgSubID, verb))
-
-	return false
 }
 
 // checkTagVersion validates that versionRef names an existing version under
@@ -218,15 +214,4 @@ func parseVersionRef(ref string) (pkg, version string, ok bool) {
 	}
 
 	return pkg, version, true
-}
-
-// containsTagName reports whether tag is present in tags.
-func containsTagName(tags []string, tag string) bool {
-	for _, t := range tags {
-		if t == tag {
-			return true
-		}
-	}
-
-	return false
 }
