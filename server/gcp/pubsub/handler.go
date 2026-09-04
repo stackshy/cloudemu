@@ -44,11 +44,12 @@ const (
 	verbSetIamPolicy       = "setIamPolicy"
 	verbTestIamPermissions = "testIamPermissions"
 
-	reasonNotFound         = "NOT_FOUND"
-	reasonInvalidArgument  = "INVALID_ARGUMENT"
-	reasonMethodNotAllowed = "METHOD_NOT_ALLOWED"
-	reasonAlreadyExists    = "ALREADY_EXISTS"
-	reasonInternal         = "INTERNAL"
+	reasonNotFound           = "NOT_FOUND"
+	reasonInvalidArgument    = "INVALID_ARGUMENT"
+	reasonMethodNotAllowed   = "METHOD_NOT_ALLOWED"
+	reasonAlreadyExists      = "ALREADY_EXISTS"
+	reasonFailedPrecondition = "FAILED_PRECONDITION"
+	reasonInternal           = "INTERNAL"
 
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 5 << 20
@@ -542,15 +543,25 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 	})
 }
 
+// writeErr maps a CloudEmu canonical error to the matching GCP HTTP status and
+// reason. The wire message is cerrors.Message(err) — the error's human-readable
+// text without the canonical code prefix (e.g. "topic x not found", not
+// "NotFound: topic x not found") — matching every other cloud's wire handlers,
+// which never leak the internal error-taxonomy name into the message an SDK
+// surfaces to the caller.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, reasonNotFound, err.Error())
+		writeError(w, http.StatusNotFound, reasonNotFound, msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, reasonAlreadyExists, err.Error())
+		writeError(w, http.StatusConflict, reasonAlreadyExists, msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, reasonInvalidArgument, err.Error())
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, msg)
+	case cerrors.IsFailedPrecondition(err):
+		writeError(w, http.StatusBadRequest, reasonFailedPrecondition, msg)
 	default:
-		writeError(w, http.StatusInternalServerError, reasonInternal, err.Error())
+		writeError(w, http.StatusInternalServerError, reasonInternal, msg)
 	}
 }
