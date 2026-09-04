@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	ddbprovider "github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 )
@@ -18,14 +19,11 @@ import (
 // predicate is disjoint from the control-plane DynamoDB_20120810.* handler.
 const streamsTargetPrefix = "DynamoDBStreams_20120810."
 
-// streamShardID must match providers/aws/dynamodb's streamShardID constant.
-// AWS's real ShardId shape enforces a minimum length of 28 characters
-// ("shardId-<20-digit-epoch-ms>-<8-hex-char-suffix>"); a shorter placeholder
-// is rejected client-side by the AWS SDK/CLI's own request validation before
-// the request is ever sent, so GetShardIterator can never be called against
-// it.
+// streamShardID reuses providers/aws/dynamodb's exported StreamShardID so the
+// wire layer's advertised ShardId and the provider's own driver.StreamIterator
+// ShardID can never silently desync into two different values.
 const (
-	streamShardID     = "shardId-00000001700000000000-00000001"
+	streamShardID     = ddbprovider.StreamShardID
 	streamEventSource = "aws:dynamodb"
 	streamEventVer    = "1.1"
 	defaultAWSRegion  = "us-east-1"

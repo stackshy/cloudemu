@@ -47,14 +47,15 @@ const (
 	defaultStreamLimit = 100
 )
 
-// streamShardID is the emulator's single, always-open DynamoDB Streams shard.
+// StreamShardID is the emulator's single, always-open DynamoDB Streams shard.
 // AWS's real ShardId shape enforces a minimum length of 28 characters
 // ("shardId-<20-digit-epoch-ms>-<8-hex-char-suffix>"); a shorter placeholder
 // (e.g. "shard-000") is rejected client-side by the AWS SDK/CLI's own request
 // validation before the request is ever sent, so GetShardIterator can never be
-// called against it. The value mirrors real DynamoDB's format and length; it
-// must match server/aws/dynamodb's streamShardID constant.
-const streamShardID = "shardId-00000001700000000000-00000001"
+// called against it. The value mirrors real DynamoDB's format and length.
+// Exported so server/aws/dynamodb can reference the same value instead of
+// keeping its own copy in sync by convention.
+const StreamShardID = "shardId-00000001700000000000-00000001"
 
 // Secondary-index projection types.
 const (
@@ -1395,7 +1396,7 @@ func filterStreamRecords(records []driver.StreamRecord, limit int, token string)
 	}
 
 	return &driver.StreamIterator{
-		ShardID:   streamShardID,
+		ShardID:   StreamShardID,
 		Records:   result,
 		NextToken: nextToken,
 	}

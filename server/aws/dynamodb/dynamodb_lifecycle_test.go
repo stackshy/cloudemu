@@ -31,6 +31,7 @@ import (
 	emuconfig "github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
+	ddbprovider "github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stretchr/testify/assert"
@@ -1076,7 +1077,7 @@ func TestDDBStreams(t *testing.T) {
 
 	it, err := provider.DynamoDB.GetStreamRecords(ctx, "events", 100, "")
 	require.NoError(t, err)
-	assert.Equal(t, "shardId-00000001700000000000-00000001", it.ShardID)
+	assert.Equal(t, ddbprovider.StreamShardID, it.ShardID)
 	require.Len(t, it.Records, 4)
 
 	types := make([]string, 0, len(it.Records))

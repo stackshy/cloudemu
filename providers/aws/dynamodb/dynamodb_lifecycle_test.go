@@ -691,8 +691,8 @@ func TestStreams(t *testing.T) {
 		it, err := m.GetStreamRecords(ctx, "events", 100, "")
 		e2eRequireNoErr(t, err)
 
-		if it.ShardID != streamShardID {
-			t.Fatalf("ShardID = %q, want %q", it.ShardID, streamShardID)
+		if it.ShardID != StreamShardID {
+			t.Fatalf("ShardID = %q, want %q", it.ShardID, StreamShardID)
 		}
 
 		if len(it.Records) != 4 {
