@@ -13,17 +13,19 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // cwSnapshot is the full serialized state of the CloudWatch mock. The alarm,
-// composite-alarm, dashboard, and notification-channel stores hold value types
-// whose fields are all exported, so they round-trip through the generic memstore
-// helper. The metric buffer is keyed by a struct (metricKey) — which json cannot
-// serialize as a map key — so it is promoted to a deterministically-ordered
-// slice. The alarm-history slice is captured in order. The mutex, the wired SNS
+// composite-alarm, dashboard, metric-stream, and notification-channel stores
+// hold value types whose fields are all exported, so they round-trip through
+// the generic memstore helper. The metric buffer is keyed by a struct
+// (metricKey) — which json cannot serialize as a map key — so it is promoted
+// to a deterministically-ordered slice. The alarm-history slice is captured
+// in order. The mutex, the wired SNS
 // action publisher, and *config.Options are intentionally not captured.
 type cwSnapshot struct {
 	Metrics         []metricEntrySnapshot      `json:"metrics,omitempty"`
 	Alarms          json.RawMessage            `json:"alarms,omitempty"`
 	CompositeAlarms json.RawMessage            `json:"compositeAlarms,omitempty"`
 	Dashboards      json.RawMessage            `json:"dashboards,omitempty"`
+	MetricStreams   json.RawMessage            `json:"metricStreams,omitempty"`
 	Channels        json.RawMessage            `json:"channels,omitempty"`
 	History         []driver.AlarmHistoryEntry `json:"history,omitempty"`
 }
@@ -92,6 +94,7 @@ func (m *Mock) snapshotStores(snap *cwSnapshot) error {
 		{&snap.Alarms, m.alarms.Snapshot},
 		{&snap.CompositeAlarms, m.compositeAlarms.Snapshot},
 		{&snap.Dashboards, m.dashboards.Snapshot},
+		{&snap.MetricStreams, m.metricStreams.Snapshot},
 		{&snap.Channels, m.channels.Snapshot},
 	}
 
@@ -138,6 +141,7 @@ func (m *Mock) restoreStores(snap *cwSnapshot) error {
 		{snap.Alarms, m.alarms.LoadSnapshot},
 		{snap.CompositeAlarms, m.compositeAlarms.LoadSnapshot},
 		{snap.Dashboards, m.dashboards.LoadSnapshot},
+		{snap.MetricStreams, m.metricStreams.LoadSnapshot},
 		{snap.Channels, m.channels.LoadSnapshot},
 	}
 

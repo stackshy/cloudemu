@@ -456,6 +456,23 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request, body []byt
 		return
 	}
 
+	if name, ok := metricStreamNameFromARN(in.ResourceARN); ok {
+		tagger, ok := h.monitoring.(metricStreamTagger)
+		if !ok {
+			writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", "tagging not supported")
+			return
+		}
+
+		if err := tagger.AddMetricStreamTags(r.Context(), name, tagsToMap(in.Tags)); err != nil {
+			writeDriverErr(w, err)
+			return
+		}
+
+		writeCBORResponse(w, struct{}{})
+
+		return
+	}
+
 	tagger, ok := h.monitoring.(alarmTagger)
 	if !ok {
 		writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", "tagging not supported")
@@ -477,6 +494,23 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request, body []b
 		return
 	}
 
+	if name, ok := metricStreamNameFromARN(in.ResourceARN); ok {
+		tagger, ok := h.monitoring.(metricStreamTagger)
+		if !ok {
+			writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", "tagging not supported")
+			return
+		}
+
+		if err := tagger.RemoveMetricStreamTags(r.Context(), name, in.TagKeys); err != nil {
+			writeDriverErr(w, err)
+			return
+		}
+
+		writeCBORResponse(w, struct{}{})
+
+		return
+	}
+
 	tagger, ok := h.monitoring.(alarmTagger)
 	if !ok {
 		writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", "tagging not supported")
@@ -495,6 +529,24 @@ func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request, bo
 	var in listTagsForResourceInput
 	if err := cbor.Unmarshal(body, &in); err != nil {
 		writeCBORError(w, http.StatusBadRequest, "SerializationException", err.Error())
+		return
+	}
+
+	if name, ok := metricStreamNameFromARN(in.ResourceARN); ok {
+		tagger, ok := h.monitoring.(metricStreamTagger)
+		if !ok {
+			writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", "tagging not supported")
+			return
+		}
+
+		tags, err := tagger.MetricStreamTags(r.Context(), name)
+		if err != nil {
+			writeDriverErr(w, err)
+			return
+		}
+
+		writeCBORResponse(w, listTagsForResourceOutput{Tags: mapToTags(tags)})
+
 		return
 	}
 
