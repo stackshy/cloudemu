@@ -1007,9 +1007,12 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 		meta[k] = v
 	}
 
+	// The destination is a fresh single-PUT object, not a multipart upload, so its
+	// ETag is always the plain MD5 of the copied bytes — even when the source's
+	// ETag carries a multipart "-N" suffix.
 	dstObj := &s3Object{
 		Key: dstKey, Data: dataCopy, Size: srcObj.Size, ContentType: srcObj.ContentType,
-		ETag: srcObj.ETag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
+		ETag: md5Hex(dataCopy), LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata: meta, Tags: maps.Clone(srcObj.Tags), SystemProps: srcObj.SystemProps,
 	}
 
@@ -1067,8 +1070,10 @@ func copyDstSystemProps(req *driver.CopyObjectRequest, src *copySrcSnapshot) dri
 // CopyObjectV2 performs a full-fidelity S3 server-side copy: it honors a
 // versioned source, the COPY/REPLACE metadata directive, and copy-source
 // preconditions (a failed precondition aborts with FailedPrecondition; a
-// delete-marker source version with InvalidArgument). The destination inherits
-// the source ETag exactly (COPY) unless REPLACE supplies new metadata.
+// delete-marker source version with InvalidArgument). The destination is
+// always a fresh single-PUT object, so its ETag is recomputed as the plain
+// MD5 of the copied bytes rather than inherited from the source — matching
+// real S3 even when the source was uploaded via multipart (a "...-N" ETag).
 func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) (*driver.CopyObjectResult, error) {
 	src, err := m.resolveCopySource(ctx, req.Src, req.SrcVersionID)
 	if err != nil {
@@ -1104,9 +1109,13 @@ func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) 
 		tags = req.Tags
 	}
 
+	// The destination is a fresh single-PUT object, not a multipart upload, so its
+	// ETag is always the plain MD5 of the copied bytes — even when the source's
+	// ETag carries a multipart "-N" suffix (copy-source preconditions above already
+	// matched against the source's own ETag, so this doesn't affect them).
 	dstObj := &s3Object{
 		Key: req.DstKey, Data: dataCopy, Size: src.size, ContentType: contentType,
-		ETag: src.etag, LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
+		ETag: md5Hex(dataCopy), LastModified: m.opts.Clock.Now().UTC().Format(s3TimeFormat),
 		Metadata: maps.Clone(metadata), Tags: maps.Clone(tags), SystemProps: copyDstSystemProps(req, src),
 	}
 
