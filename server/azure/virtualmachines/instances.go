@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -774,6 +775,12 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp azurearm.Resou
 	out := make([]vmResponse, 0, len(instances))
 
 	for i := range instances {
+		// A deleted VM's record lingers in the shared compute driver (see
+		// findByName), but real Azure LIST never reports a deleted resource.
+		if instances[i].State == stateTerminated {
+			continue
+		}
+
 		if rp.ResourceGroup != "" && !strings.EqualFold(instances[i].ResourceGroup, rp.ResourceGroup) {
 			continue
 		}
@@ -1224,6 +1231,13 @@ func writeAcceptedAsync(w http.ResponseWriter, r *http.Request, subscription, op
 // findByName looks up a VM by its ARM resource name within a resource group.
 // An empty resourceGroup matches across all groups (subscription-scoped lookup).
 // Returns NotFound when no matching instance exists.
+//
+// A terminated instance never matches: the shared compute driver keeps a
+// terminated instance's record around (AWS EC2's DescribeInstances keeps
+// reporting a terminated instance for a while, which the driver models), but
+// real Azure ARM deletes the resource outright — a GET/PATCH/power-action/PUT
+// against a deleted VM's name gets a 404 ResourceNotFound, and a re-PUT of the
+// same name provisions a brand-new VM rather than resurrecting the old one.
 func findByName(ctx context.Context, c computedriver.Compute, resourceGroup, name string) (*computedriver.Instance, error) {
 	instances, err := c.DescribeInstances(ctx, nil, nil)
 	if err != nil {
@@ -1231,6 +1245,10 @@ func findByName(ctx context.Context, c computedriver.Compute, resourceGroup, nam
 	}
 
 	for i := range instances {
+		if instances[i].State == stateTerminated {
+			continue
+		}
+
 		// ARM resource names and resource-group names are case-insensitive, so a
 		// GET/LIST with differently-cased segments must still resolve the VM.
 		if !strings.EqualFold(tagOr(instances[i].Tags, armNameTag, ""), name) {
@@ -1433,7 +1451,7 @@ func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vm
 		Zones:    inst.Zones,
 		Identity: fromDriverIdentity(inst.Identity),
 		Properties: vmResponseProps{
-			VMID:              inst.ID,
+			VMID:              vmGUID(inst.ID),
 			ProvisioningState: provisioningState,
 			HardwareProfile:   &hardwareProfile{VMSize: inst.InstanceType},
 			StorageProfile:    osDiskProfile(inst.OSType),
@@ -1476,6 +1494,15 @@ func defaultIfEmpty(v, fallback string) string {
 	}
 
 	return v
+}
+
+// vmGUID derives a stable GUID-shaped properties.vmId from the driver instance
+// id, mirroring the GUID Azure always assigns a VM (real ARM never returns the
+// emulator's internal "vm-XXXXXXXX" id shape here). Deterministic per instance
+// id so it stays stable across GET/LIST/PATCH, matching diskUniqueID's
+// analogous treatment of Microsoft.Compute/disks' properties.uniqueId.
+func vmGUID(instanceID string) string {
+	return idgen.SyntheticGUID("vmid/" + instanceID)
 }
 
 func stripInternalTags(in map[string]string) map[string]string {

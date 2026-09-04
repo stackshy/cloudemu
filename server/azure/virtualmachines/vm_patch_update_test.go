@@ -13,13 +13,16 @@ import (
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
-// TestSDKVMPatchUpdateAppliesVMSizeAndMergesTags is the regression test for the
-// PATCH Update fix: a real armcompute BeginUpdate that supplies
-// hardwareProfile.vmSize (a resize) and a new tag must take effect — Get shows
-// the new size and the added tag — while a tag the PATCH omitted (set at create)
-// is preserved (ARM PATCH is RFC 7386 merge-patch). Before the fix update() only
-// reconciled data disks and silently dropped vmSize/tags.
-func TestSDKVMPatchUpdateAppliesVMSizeAndMergesTags(t *testing.T) {
+// TestSDKVMPatchUpdateAppliesVMSizeAndReplacesTags is the regression test for
+// the PATCH Update fix: a real armcompute BeginUpdate that supplies
+// hardwareProfile.vmSize (a resize) and a tags map must take effect — Get shows
+// the new size and the new tag set. Unlike a generic RFC 7386 merge-patch, real
+// Azure Compute's PATCH tags is a full replace: a tag set at create and omitted
+// from the PATCH body does NOT survive (this is a well-documented Azure quirk —
+// see providers/azure/sqlvirtualmachine's UpdateTags for the sibling case).
+// Before the underlying fix update() only reconciled data disks and silently
+// dropped vmSize/tags entirely.
+func TestSDKVMPatchUpdateAppliesVMSizeAndReplacesTags(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	srv := azureserver.New(azureserver.Drivers{VirtualMachines: cloudP.VirtualMachines})
 
@@ -51,8 +54,8 @@ func TestSDKVMPatchUpdateAppliesVMSizeAndMergesTags(t *testing.T) {
 		t.Fatalf("CreateOrUpdate poll: %v", err)
 	}
 
-	// PATCH: resize to D4s_v3 and add a "team" tag. Neither the size nor the tag
-	// were touched by the create; "env" is not re-sent (merge-patch must keep it).
+	// PATCH: resize to D4s_v3 and set a "team" tag. "env" (set at create) is not
+	// re-sent, so real Azure's tags-replace semantics drop it.
 	updatePoller, err := client.BeginUpdate(ctx, "rg-1", "vm-patch",
 		armcompute.VirtualMachineUpdate{
 			Tags: map[string]*string{"team": to.Ptr("blue")},
@@ -81,13 +84,14 @@ func TestSDKVMPatchUpdateAppliesVMSizeAndMergesTags(t *testing.T) {
 		t.Errorf("vmSize=%v, want Standard_D4s_v3", vmSizeOf(got.VirtualMachine))
 	}
 
-	// New tag added AND pre-existing tag preserved (merge, not replace).
+	// New tag applied, but the tag set was replaced wholesale: the create-time
+	// "env" tag, omitted from the PATCH body, does not survive.
 	if v := tagVal(got.Tags, "team"); v != "blue" {
 		t.Errorf("tag team=%q, want blue", v)
 	}
 
-	if v := tagVal(got.Tags, "env"); v != "prod" {
-		t.Errorf("tag env=%q, want prod (PATCH must not drop an omitted existing tag)", v)
+	if _, ok := got.Tags["env"]; ok {
+		t.Errorf("tag env=%q survived PATCH; real Azure PATCH tags replaces the set wholesale", tagVal(got.Tags, "env"))
 	}
 }
 
