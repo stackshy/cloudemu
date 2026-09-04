@@ -270,6 +270,14 @@ func TestGCSVersionedDeleteRetainsGenerations(t *testing.T) {
 
 		if a.Name == "k" {
 			gens = append(gens, a.Generation)
+
+			// Every noncurrent generation — the one superseded by the
+			// overwrite and the one archived by the live delete — must carry
+			// a timeDeleted the way real GCS stamps the instant a version
+			// became noncurrent (google-cloud-go decodes it into Deleted).
+			if a.Deleted.IsZero() {
+				t.Errorf("generation %d: Deleted is zero, want a timeDeleted stamp", a.Generation)
+			}
 		}
 	}
 

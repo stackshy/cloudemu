@@ -1,9 +1,12 @@
 package gcs_test
 
 import (
+	"errors"
+	"net/http"
 	"testing"
 
 	"cloud.google.com/go/storage"
+	"google.golang.org/api/googleapi"
 )
 
 // TestGCSBucketLocationStorageClass proves a bucket created with a non-default
@@ -133,5 +136,69 @@ func TestGCSBucketMetageneration(t *testing.T) {
 
 	if a2.MetaGeneration <= a.MetaGeneration {
 		t.Errorf("MetaGeneration did not increase after a patch: %d -> %d", a.MetaGeneration, a2.MetaGeneration)
+	}
+}
+
+// TestGCSBucketProjectNumber proves the bucket resource carries a
+// projectNumber, a field real GCS always sets on every bucket (previously
+// absent from the wire response entirely).
+func TestGCSBucketProjectNumber(t *testing.T) {
+	ctx, client := newStorageClient(t)
+	bkt := mustCreateBucket(t, ctx, client, "projnum")
+
+	a, err := bkt.Attrs(ctx)
+	if err != nil {
+		t.Fatalf("Attrs: %v", err)
+	}
+
+	if a.ProjectNumber == 0 {
+		t.Errorf("ProjectNumber = 0, want a non-zero projectNumber")
+	}
+}
+
+// TestGCSBucketPatchMetagenerationPrecondition proves Buckets.patch/update
+// honors ifMetagenerationMatch/ifMetagenerationNotMatch (previously silently
+// ignored, applying the update regardless of a stale metageneration).
+func TestGCSBucketPatchMetagenerationPrecondition(t *testing.T) {
+	ctx, client := newStorageClient(t)
+	bkt := mustCreateBucket(t, ctx, client, "bucket-precond")
+
+	a, err := bkt.Attrs(ctx)
+	if err != nil {
+		t.Fatalf("Attrs: %v", err)
+	}
+
+	// A stale ifMetagenerationMatch must fail with 412, and must not apply
+	// the update.
+	_, err = bkt.If(storage.BucketConditions{MetagenerationMatch: a.MetaGeneration + 1}).
+		Update(ctx, storage.BucketAttrsToUpdate{VersioningEnabled: true})
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != http.StatusPreconditionFailed {
+		t.Fatalf("stale ifMetagenerationMatch update: got %v, want googleapi.Error 412", err)
+	}
+
+	a2, err := bkt.Attrs(ctx)
+	if err != nil {
+		t.Fatalf("Attrs after rejected update: %v", err)
+	}
+
+	if a2.VersioningEnabled {
+		t.Errorf("versioning enabled despite a rejected precondition")
+	}
+
+	// The correct metageneration must be accepted.
+	if _, err := bkt.If(storage.BucketConditions{MetagenerationMatch: a.MetaGeneration}).
+		Update(ctx, storage.BucketAttrsToUpdate{VersioningEnabled: true}); err != nil {
+		t.Fatalf("update with correct ifMetagenerationMatch: %v", err)
+	}
+
+	a3, err := bkt.Attrs(ctx)
+	if err != nil {
+		t.Fatalf("Attrs after accepted update: %v", err)
+	}
+
+	if !a3.VersioningEnabled {
+		t.Errorf("versioning not enabled after a correctly preconditioned update")
 	}
 }

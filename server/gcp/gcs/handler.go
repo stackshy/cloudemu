@@ -81,6 +81,14 @@ const (
 	// back when none was set at create.
 	defaultLocation     = "US"
 	defaultStorageClass = "STANDARD"
+
+	// defaultProjectNumber is the numeric project number every bucket reports.
+	// Real GCS always includes a non-zero projectNumber on the bucket resource;
+	// cloudemu doesn't model per-project numeric identifiers (buckets aren't
+	// project-scoped internally), so every bucket reports this fixed
+	// placeholder, mirroring the emulator's other fixed default account/project
+	// identifiers (e.g. config.Options.AccountID's "123456789012" default).
+	defaultProjectNumber = "123456789012"
 )
 
 // Handler serves GCS JSON REST requests against a storage.Bucket driver.
@@ -405,6 +413,7 @@ func (h *Handler) bucketView(r *http.Request, name, created string) bucketResour
 		Kind:             "storage#bucket",
 		ID:               name,
 		Name:             name,
+		ProjectNumber:    defaultProjectNumber,
 		SelfLink:         selfLink(r, "/storage/v1/b/"+name),
 		Location:         location,
 		LocationType:     locationType(location),
@@ -491,6 +500,11 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 		return
 	}
 
+	if err := h.checkBucketMetagenerationPrecondition(r, name); err != nil {
+		writePreconditionOrErr(w, err)
+		return
+	}
+
 	if err := h.applyBucketConfig(r.Context(), name, &body); err != nil {
 		writePreconditionOrErr(w, err)
 		return
@@ -505,6 +519,54 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 	}
 
 	writeJSON(w, http.StatusOK, h.bucketView(r, name, ""))
+}
+
+// checkBucketMetagenerationPrecondition evaluates the Buckets.patch/update
+// ifMetagenerationMatch/ifMetagenerationNotMatch query preconditions against
+// the bucket's current metageneration, mirroring the 412 conditionNotMet
+// semantics real GCS applies to bucket updates (the object write path already
+// enforces the equivalent generation/metageneration preconditions).
+func (h *Handler) checkBucketMetagenerationPrecondition(r *http.Request, name string) error {
+	q := r.URL.Query()
+
+	matchStr := q.Get("ifMetagenerationMatch")
+	notMatchStr := q.Get("ifMetagenerationNotMatch")
+
+	if matchStr == "" && notMatchStr == "" {
+		return nil
+	}
+
+	metageneration := h.bucketMetageneration(r.Context(), name)
+
+	if matchStr != "" {
+		if want, err := strconv.ParseInt(matchStr, 10, 64); err == nil && metageneration != want {
+			return &storagedriver.GCSPreconditionError{Message: "conditionNotMet: ifMetagenerationMatch"}
+		}
+	}
+
+	if notMatchStr != "" {
+		if want, err := strconv.ParseInt(notMatchStr, 10, 64); err == nil && metageneration == want {
+			return &storagedriver.GCSPreconditionError{Message: "conditionNotMet: ifMetagenerationNotMatch"}
+		}
+	}
+
+	return nil
+}
+
+// bucketMetageneration returns name's current metageneration, defaulting to 1
+// when the backing driver doesn't record one (the same fallback
+// resolveBucketAttrs uses for a fresh or driver-untracked bucket).
+func (h *Handler) bucketMetageneration(ctx context.Context, name string) int64 {
+	if h.ext == nil {
+		return 1
+	}
+
+	attrs, err := h.ext.BucketAttrsGCS(ctx, name)
+	if err != nil || attrs.Metageneration <= 0 {
+		return 1
+	}
+
+	return attrs.Metageneration
 }
 
 // applyBucketConfig applies the mutable configuration fields present in a
@@ -562,7 +624,16 @@ func (h *Handler) applyBucketConfig(ctx context.Context, name string, body *buck
 
 func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, name string) {
 	if err := h.bucket.DeleteBucket(r.Context(), name); err != nil {
+		// Real GCS answers a non-empty-bucket delete with 409 reason "notEmpty"
+		// and a fixed human message, not the generic "conflict" reason writeErr
+		// uses for FailedPrecondition elsewhere (e.g. the retention-lock path).
+		if cerrors.IsFailedPrecondition(err) {
+			writeError(w, http.StatusConflict, "notEmpty", "The bucket you tried to delete was not empty.")
+			return
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 
@@ -1713,6 +1784,7 @@ func toObjectResource(info *storagedriver.ObjectInfo, bucket string, r *http.Req
 		ContentLanguage:         info.ContentLanguage,
 		TimeCreated:             created,
 		Updated:                 info.LastModified,
+		TimeDeleted:             info.Deleted,
 		Metadata:                info.Metadata,
 		TemporaryHold:           info.TemporaryHold,
 		EventBasedHold:          info.EventBasedHold,
