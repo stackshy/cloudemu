@@ -85,7 +85,7 @@ func New(opts *config.Options) *Mock {
 	// Account-default resources (present in every real MemoryDB account).
 	m.acls.Set("open-access", mdbdriver.ACL{
 		Name: "open-access", ARN: m.arn("acl", "open-access"),
-		Status: mdbdriver.StatusAvailable, MinimumEngineVersion: "6.2",
+		Status: mdbdriver.StatusActive, MinimumEngineVersion: "6.2",
 	})
 	m.parameterGroups.Set("default.memorydb-redis7", mdbdriver.ParameterGroup{
 		Name: "default.memorydb-redis7", ARN: m.arn("parametergroup", "default.memorydb-redis7"),

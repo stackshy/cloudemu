@@ -377,8 +377,23 @@ func TestSDKACLUpdateDeleteAndUserUpdate(t *testing.T) {
 		t.Fatalf("expected 1 user on acl2, got %d", len(upd.ACL.UserNames))
 	}
 
-	if _, err := client.DeleteACL(ctx, &awsmemorydb.DeleteACLInput{ACLName: aws.String("acl2")}); err != nil {
+	// MemoryDB reports ACLs/users as "active" (not "available"), and the Terraform
+	// aws_memorydb_acl / aws_memorydb_user create waiters block until they observe it.
+	if got := aws.ToString(upd.ACL.Status); got != "active" {
+		t.Fatalf("ACL status = %q, want active", got)
+	}
+
+	if got := aws.ToString(users.Users[0].Status); got != "active" {
+		t.Fatalf("user status = %q, want active", got)
+	}
+
+	del, err := client.DeleteACL(ctx, &awsmemorydb.DeleteACLInput{ACLName: aws.String("acl2")})
+	if err != nil {
 		t.Fatalf("DeleteACL: %v", err)
+	}
+
+	if got := aws.ToString(del.ACL.Status); got != "deleting" {
+		t.Fatalf("DeleteACL status = %q, want deleting", got)
 	}
 }
 
