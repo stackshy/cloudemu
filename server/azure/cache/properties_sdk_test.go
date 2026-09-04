@@ -157,6 +157,36 @@ func TestSDKAzureCacheRedisPropertiesRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSDKAzureCacheOmittedPropertiesDefaults verifies a create that omits
+// enableNonSslPort and publicNetworkAccess reads back the Azure defaults
+// (enableNonSslPort=false, publicNetworkAccess=Enabled) rather than a null —
+// real Azure persists and returns these on every cache, so an SDK caller that
+// dereferences the pointer must not hit a nil.
+func TestSDKAzureCacheOmittedPropertiesDefaults(t *testing.T) {
+	client := newRedisClient(t)
+	ctx := context.Background()
+
+	createCache(t, client, "defaults-cache")
+
+	got, err := client.Get(ctx, testRG, "defaults-cache", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	props := got.Properties
+	if props == nil {
+		t.Fatal("expected properties on response")
+	}
+
+	if props.EnableNonSSLPort == nil || *props.EnableNonSSLPort {
+		t.Errorf("enableNonSslPort = %v, want false (default)", props.EnableNonSSLPort)
+	}
+
+	if props.PublicNetworkAccess == nil || *props.PublicNetworkAccess != armredis.PublicNetworkAccessEnabled {
+		t.Errorf("publicNetworkAccess = %v, want Enabled (default)", props.PublicNetworkAccess)
+	}
+}
+
 // assertRedisConfig checks both a typed key (maxmemory-policy) and an
 // unmodeled passthrough key (maxmemory-reserved, decoded into
 // AdditionalProperties) survive the round-trip.

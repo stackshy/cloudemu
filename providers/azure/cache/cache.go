@@ -22,6 +22,18 @@ import (
 
 const defaultRedisSSLPort = 6380
 
+// Azure Cache for Redis create-time defaults. Real Azure persists and returns
+// these on every cache even when the create request omits them, so a client
+// that reads them back (or an SDK caller dereferencing the pointer) sees the
+// same values it would against the real service rather than a null.
+const (
+	// defaultEnableNonSSLPort is the enableNonSslPort default (false — the
+	// non-SSL 6379 port is disabled unless explicitly enabled).
+	defaultEnableNonSSLPort = false
+	// defaultPublicNetworkAccess is the publicNetworkAccess default (Enabled).
+	defaultPublicNetworkAccess = "Enabled"
+)
+
 // accessKeyBytes is the byte length of a generated Redis access key before
 // base64 encoding; 32 bytes encodes to the 44-character key real Azure returns.
 const accessKeyBytes = 32
@@ -113,6 +125,20 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		tags[k] = v
 	}
 
+	// Apply Azure create-time defaults for fields the request omitted, so a
+	// minimal create reads back the same values real Azure would return instead
+	// of a null (matching the ARM RedisResource schema defaults).
+	enableNonSSLPort := cfg.EnableNonSSLPort
+	if enableNonSSLPort == nil {
+		v := defaultEnableNonSSLPort
+		enableNonSSLPort = &v
+	}
+
+	publicNetworkAccess := cfg.PublicNetworkAccess
+	if publicNetworkAccess == "" {
+		publicNetworkAccess = defaultPublicNetworkAccess
+	}
+
 	info := driver.CacheInfo{
 		Name:                cfg.Name,
 		Scope:               cfg.Scope,
@@ -128,9 +154,9 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		ShardCount:          cfg.ShardCount,
 		ReplicasPerPrimary:  cfg.ReplicasPerPrimary,
 		RedisConfiguration:  cloneStringMap(cfg.RedisConfiguration),
-		EnableNonSSLPort:    cfg.EnableNonSSLPort,
+		EnableNonSSLPort:    enableNonSSLPort,
 		MinimumTLSVersion:   cfg.MinimumTLSVersion,
-		PublicNetworkAccess: cfg.PublicNetworkAccess,
+		PublicNetworkAccess: publicNetworkAccess,
 		RedisVersion:        cfg.RedisVersion,
 		PrimaryKey:          generateAccessKey(),
 		SecondaryKey:        generateAccessKey(),
