@@ -165,7 +165,7 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request) {
 	name := r.Form.Get("Name")
 	attrs := parseSubscriptionAttributes(r.Form)
 
-	info, err := h.notif.CreateTopic(r.Context(), notifdriver.TopicConfig{
+	cfg := notifdriver.TopicConfig{
 		Name:                      name,
 		Tags:                      parseSNSTags(r.Form),
 		DisplayName:               attrs["DisplayName"],
@@ -174,7 +174,10 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request) {
 		KmsMasterKeyID:            attrs["KmsMasterKeyId"],
 		FifoTopic:                 attrs["FifoTopic"] == attrTrue,
 		ContentBasedDeduplication: attrs["ContentBasedDeduplication"] == attrTrue,
-	})
+	}
+	applyFeedbackAttrs(&cfg, attrs)
+
+	info, err := h.notif.CreateTopic(r.Context(), cfg)
 	if err != nil {
 		if cerrors.IsAlreadyExists(err) {
 			if existing, gerr := h.notif.GetTopic(r.Context(), name); gerr == nil {
@@ -219,33 +222,21 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request) {
 // exposes the topic's ARN, display name, and subscription count as the standard
 // SNS attribute map.
 // setTopicAttributes maps SetTopicAttributes to Notification.UpdateTopic,
-// persisting DisplayName and Policy. Other attributes (DeliveryPolicy) are
-// accepted and dropped.
+// persisting every attribute real SetTopicAttributes accepts (DisplayName,
+// Policy, DeliveryPolicy, KmsMasterKeyId, ContentBasedDeduplication,
+// SignatureVersion, TracingConfig, ArchivePolicy, and the delivery-status
+// feedback family). An unrecognized attribute name is a no-op, matching real
+// SNS's behavior of ignoring attributes it doesn't own on this call.
 func (h *Handler) setTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	name := topicNameFromARN(r.Form.Get("TopicArn"))
 
 	cfg := notifdriver.TopicConfig{Name: name}
 
+	attrName := r.Form.Get("AttributeName")
 	value := r.Form.Get("AttributeValue")
 
-	var apply bool
-
-	switch r.Form.Get("AttributeName") {
-	case "DisplayName":
-		cfg.DisplayName = value
-		apply = true
-	case "Policy":
-		cfg.Policy = value
-		apply = true
-	case "DeliveryPolicy":
-		cfg.DeliveryPolicy = value
-		apply = true
-	case "KmsMasterKeyId":
-		cfg.KmsMasterKeyID = value
-		apply = true
-	case "ContentBasedDeduplication":
-		cfg.ContentBasedDeduplication = value == attrTrue
-		cfg.ContentBasedDeduplicationSet = true
+	apply := applyCoreTopicAttribute(&cfg, attrName, value)
+	if applyFeedbackAttr(&cfg, attrName, value) {
 		apply = true
 	}
 
@@ -259,6 +250,124 @@ func (h *Handler) setTopicAttributes(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, setTopicAttributesResponse{
 		Xmlns: Namespace, Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+// applyCoreTopicAttribute maps a single SetTopicAttributes AttributeName/Value
+// pair onto cfg for the pre-existing, non-feedback attributes. Reports whether
+// the name was recognized.
+func applyCoreTopicAttribute(cfg *notifdriver.TopicConfig, name, value string) bool {
+	switch name {
+	case "DisplayName":
+		cfg.DisplayName = value
+	case "Policy":
+		cfg.Policy = value
+	case "DeliveryPolicy":
+		cfg.DeliveryPolicy = value
+	case "KmsMasterKeyId":
+		cfg.KmsMasterKeyID = value
+	case "ContentBasedDeduplication":
+		cfg.ContentBasedDeduplication = value == attrTrue
+		cfg.ContentBasedDeduplicationSet = true
+	case "SignatureVersion":
+		cfg.SignatureVersion = value
+	case "TracingConfig":
+		cfg.TracingConfig = value
+	case "ArchivePolicy":
+		cfg.ArchivePolicy = value
+	default:
+		return false
+	}
+
+	return true
+}
+
+// applyFeedbackAttr maps a single SetTopicAttributes AttributeName/Value pair
+// onto cfg for the delivery-status feedback family. Reports whether the name
+// was recognized. Split across two per-protocol-group helpers to keep each
+// switch's cyclomatic complexity within the project's limit.
+func applyFeedbackAttr(cfg *notifdriver.TopicConfig, name, value string) bool {
+	if applyApplicationHTTPFeedbackAttr(cfg, name, value) {
+		return true
+	}
+
+	return applyLambdaSQSFirehoseFeedbackAttr(cfg, name, value)
+}
+
+// applyApplicationHTTPFeedbackAttr handles the Application/HTTP half of the
+// feedback family (see applyFeedbackAttr).
+func applyApplicationHTTPFeedbackAttr(cfg *notifdriver.TopicConfig, name, value string) bool {
+	switch name {
+	case "ApplicationSuccessFeedbackRoleArn":
+		cfg.ApplicationSuccessFeedbackRoleArn = value
+	case "ApplicationFailureFeedbackRoleArn":
+		cfg.ApplicationFailureFeedbackRoleArn = value
+	case "ApplicationSuccessFeedbackSampleRate":
+		cfg.ApplicationSuccessFeedbackSampleRate = value
+	case "HTTPSuccessFeedbackRoleArn":
+		cfg.HTTPSuccessFeedbackRoleArn = value
+	case "HTTPFailureFeedbackRoleArn":
+		cfg.HTTPFailureFeedbackRoleArn = value
+	case "HTTPSuccessFeedbackSampleRate":
+		cfg.HTTPSuccessFeedbackSampleRate = value
+	default:
+		return false
+	}
+
+	return true
+}
+
+// applyLambdaSQSFirehoseFeedbackAttr handles the Lambda/SQS/Firehose half of
+// the feedback family (see applyFeedbackAttr).
+func applyLambdaSQSFirehoseFeedbackAttr(cfg *notifdriver.TopicConfig, name, value string) bool {
+	switch name {
+	case "LambdaSuccessFeedbackRoleArn":
+		cfg.LambdaSuccessFeedbackRoleArn = value
+	case "LambdaFailureFeedbackRoleArn":
+		cfg.LambdaFailureFeedbackRoleArn = value
+	case "LambdaSuccessFeedbackSampleRate":
+		cfg.LambdaSuccessFeedbackSampleRate = value
+	case "SQSSuccessFeedbackRoleArn":
+		cfg.SQSSuccessFeedbackRoleArn = value
+	case "SQSFailureFeedbackRoleArn":
+		cfg.SQSFailureFeedbackRoleArn = value
+	case "SQSSuccessFeedbackSampleRate":
+		cfg.SQSSuccessFeedbackSampleRate = value
+	case "FirehoseSuccessFeedbackRoleArn":
+		cfg.FirehoseSuccessFeedbackRoleArn = value
+	case "FirehoseFailureFeedbackRoleArn":
+		cfg.FirehoseFailureFeedbackRoleArn = value
+	case "FirehoseSuccessFeedbackSampleRate":
+		cfg.FirehoseSuccessFeedbackSampleRate = value
+	default:
+		return false
+	}
+
+	return true
+}
+
+// applyFeedbackAttrs copies the delivery-status feedback family and
+// SignatureVersion/TracingConfig/ArchivePolicy from a CreateTopic Attributes
+// map onto cfg, mirroring the individual-attribute cases setTopicAttributes
+// applies one at a time. Real SNS accepts these at create time too.
+func applyFeedbackAttrs(cfg *notifdriver.TopicConfig, attrs map[string]string) {
+	cfg.SignatureVersion = attrs["SignatureVersion"]
+	cfg.TracingConfig = attrs["TracingConfig"]
+	cfg.ArchivePolicy = attrs["ArchivePolicy"]
+	cfg.ApplicationSuccessFeedbackRoleArn = attrs["ApplicationSuccessFeedbackRoleArn"]
+	cfg.ApplicationFailureFeedbackRoleArn = attrs["ApplicationFailureFeedbackRoleArn"]
+	cfg.ApplicationSuccessFeedbackSampleRate = attrs["ApplicationSuccessFeedbackSampleRate"]
+	cfg.HTTPSuccessFeedbackRoleArn = attrs["HTTPSuccessFeedbackRoleArn"]
+	cfg.HTTPFailureFeedbackRoleArn = attrs["HTTPFailureFeedbackRoleArn"]
+	cfg.HTTPSuccessFeedbackSampleRate = attrs["HTTPSuccessFeedbackSampleRate"]
+	cfg.LambdaSuccessFeedbackRoleArn = attrs["LambdaSuccessFeedbackRoleArn"]
+	cfg.LambdaFailureFeedbackRoleArn = attrs["LambdaFailureFeedbackRoleArn"]
+	cfg.LambdaSuccessFeedbackSampleRate = attrs["LambdaSuccessFeedbackSampleRate"]
+	cfg.SQSSuccessFeedbackRoleArn = attrs["SQSSuccessFeedbackRoleArn"]
+	cfg.SQSFailureFeedbackRoleArn = attrs["SQSFailureFeedbackRoleArn"]
+	cfg.SQSSuccessFeedbackSampleRate = attrs["SQSSuccessFeedbackSampleRate"]
+	cfg.FirehoseSuccessFeedbackRoleArn = attrs["FirehoseSuccessFeedbackRoleArn"]
+	cfg.FirehoseFailureFeedbackRoleArn = attrs["FirehoseFailureFeedbackRoleArn"]
+	cfg.FirehoseSuccessFeedbackSampleRate = attrs["FirehoseSuccessFeedbackSampleRate"]
 }
 
 func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
@@ -323,14 +432,19 @@ func (h *Handler) getTopicAttributes(w http.ResponseWriter, r *http.Request) {
 }
 
 // optionalTopicAttributes returns the GetTopicAttributes entries SNS emits only
-// when set: DisplayName, DeliveryPolicy, KmsMasterKeyId, and — for a FIFO topic —
-// the FifoTopic / ContentBasedDeduplication flags.
+// when set: DisplayName, DeliveryPolicy, KmsMasterKeyId, SignatureVersion,
+// TracingConfig, ArchivePolicy, the delivery-status feedback family, and — for
+// a FIFO topic — the FifoTopic / ContentBasedDeduplication flags.
 func optionalTopicAttributes(info *notifdriver.TopicInfo) []attributeEntry {
 	var entries []attributeEntry
 
 	entries = appendNonEmptyAttr(entries, "DisplayName", info.DisplayName)
 	entries = appendNonEmptyAttr(entries, "DeliveryPolicy", info.DeliveryPolicy)
 	entries = appendNonEmptyAttr(entries, "KmsMasterKeyId", info.KmsMasterKeyID)
+	entries = appendNonEmptyAttr(entries, "SignatureVersion", info.SignatureVersion)
+	entries = appendNonEmptyAttr(entries, "TracingConfig", info.TracingConfig)
+	entries = appendNonEmptyAttr(entries, "ArchivePolicy", info.ArchivePolicy)
+	entries = append(entries, feedbackTopicAttributes(info)...)
 
 	if info.FifoTopic {
 		entries = append(entries,
@@ -341,6 +455,31 @@ func optionalTopicAttributes(info *notifdriver.TopicInfo) []attributeEntry {
 			},
 		)
 	}
+
+	return entries
+}
+
+// feedbackTopicAttributes returns the delivery-status feedback family's
+// GetTopicAttributes entries, each included only when set.
+func feedbackTopicAttributes(info *notifdriver.TopicInfo) []attributeEntry {
+	var entries []attributeEntry
+
+	entries = appendNonEmptyAttr(entries, "ApplicationSuccessFeedbackRoleArn", info.ApplicationSuccessFeedbackRoleArn)
+	entries = appendNonEmptyAttr(entries, "ApplicationFailureFeedbackRoleArn", info.ApplicationFailureFeedbackRoleArn)
+	entries = appendNonEmptyAttr(entries,
+		"ApplicationSuccessFeedbackSampleRate", info.ApplicationSuccessFeedbackSampleRate)
+	entries = appendNonEmptyAttr(entries, "HTTPSuccessFeedbackRoleArn", info.HTTPSuccessFeedbackRoleArn)
+	entries = appendNonEmptyAttr(entries, "HTTPFailureFeedbackRoleArn", info.HTTPFailureFeedbackRoleArn)
+	entries = appendNonEmptyAttr(entries, "HTTPSuccessFeedbackSampleRate", info.HTTPSuccessFeedbackSampleRate)
+	entries = appendNonEmptyAttr(entries, "LambdaSuccessFeedbackRoleArn", info.LambdaSuccessFeedbackRoleArn)
+	entries = appendNonEmptyAttr(entries, "LambdaFailureFeedbackRoleArn", info.LambdaFailureFeedbackRoleArn)
+	entries = appendNonEmptyAttr(entries, "LambdaSuccessFeedbackSampleRate", info.LambdaSuccessFeedbackSampleRate)
+	entries = appendNonEmptyAttr(entries, "SQSSuccessFeedbackRoleArn", info.SQSSuccessFeedbackRoleArn)
+	entries = appendNonEmptyAttr(entries, "SQSFailureFeedbackRoleArn", info.SQSFailureFeedbackRoleArn)
+	entries = appendNonEmptyAttr(entries, "SQSSuccessFeedbackSampleRate", info.SQSSuccessFeedbackSampleRate)
+	entries = appendNonEmptyAttr(entries, "FirehoseSuccessFeedbackRoleArn", info.FirehoseSuccessFeedbackRoleArn)
+	entries = appendNonEmptyAttr(entries, "FirehoseFailureFeedbackRoleArn", info.FirehoseFailureFeedbackRoleArn)
+	entries = appendNonEmptyAttr(entries, "FirehoseSuccessFeedbackSampleRate", info.FirehoseSuccessFeedbackSampleRate)
 
 	return entries
 }
