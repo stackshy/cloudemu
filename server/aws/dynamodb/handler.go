@@ -348,6 +348,13 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	for i := range req.GlobalSecondaryIndexes {
+		if err := validateGSIThroughput(effectiveBilling, &req.GlobalSecondaryIndexes[i]); err != nil {
+			writeErr(w, err)
+			return
+		}
+	}
+
 	if err := h.db.CreateTable(r.Context(), buildCreateConfig(&req)); err != nil {
 		writeErr(w, err)
 		return
@@ -474,6 +481,9 @@ func keySchemaKeys(req *createTableRequest) (partitionKey, sortKey string) {
 }
 
 // secondaryIndexJSON is the shared wire shape of a GSI or LSI on CreateTable.
+// ProvisionedThroughput is only meaningful for a GSI (an LSI always shares the
+// base table's throughput and never carries its own) — validateGSIThroughput
+// is the only reader of this field.
 type secondaryIndexJSON struct {
 	IndexName string `json:"IndexName"`
 	KeySchema []struct {
@@ -484,6 +494,20 @@ type secondaryIndexJSON struct {
 		ProjectionType   string   `json:"ProjectionType"`
 		NonKeyAttributes []string `json:"NonKeyAttributes"`
 	} `json:"Projection"`
+	ProvisionedThroughput struct {
+		ReadCapacityUnits  int64 `json:"ReadCapacityUnits"`
+		WriteCapacityUnits int64 `json:"WriteCapacityUnits"`
+	} `json:"ProvisionedThroughput"`
+}
+
+// validateGSIThroughput enforces the same PROVISIONED/PAY_PER_REQUEST
+// throughput rule as validateProvisionedThroughput, but per GSI: on a
+// PROVISIONED table each GSI must declare its own valid (>=1) RCU/WCU, and on
+// a PAY_PER_REQUEST table no GSI may declare any. LSIs are never checked —
+// callers must not pass one here.
+func validateGSIThroughput(billingMode string, gsi *secondaryIndexJSON) error {
+	return validateProvisionedThroughput(billingMode,
+		gsi.ProvisionedThroughput.ReadCapacityUnits, gsi.ProvisionedThroughput.WriteCapacityUnits)
 }
 
 // indexKeys extracts the HASH/RANGE attribute names from an index key schema.

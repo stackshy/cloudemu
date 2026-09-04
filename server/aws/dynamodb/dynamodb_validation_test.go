@@ -483,6 +483,190 @@ func TestDDBUpdateTableAddGSIOnProvisionedTableSucceeds(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestDDBCreateTableGSIThroughput: CreateTable's cross-field rule between the
+// table's BillingMode and each GSI's own ProvisionedThroughput — a PROVISIONED
+// table requires every GSI to declare a valid (>=1) RCU/WCU, and a
+// PAY_PER_REQUEST table forbids any GSI from declaring throughput at all. The
+// ordinary on-demand case (PAY_PER_REQUEST, GSI with no throughput) must NOT
+// be rejected.
+func TestDDBCreateTableGSIThroughput(t *testing.T) {
+	cases := []struct {
+		name        string
+		billingMode ddbtypes.BillingMode
+		throughput  *ddbtypes.ProvisionedThroughput
+		wantErr     bool
+	}{
+		{
+			name:        "provisioned table, gsi with valid throughput succeeds",
+			billingMode: ddbtypes.BillingModeProvisioned,
+			throughput:  &ddbtypes.ProvisionedThroughput{ReadCapacityUnits: aws.Int64(5), WriteCapacityUnits: aws.Int64(5)},
+			wantErr:     false,
+		},
+		{
+			name:        "provisioned table, gsi missing throughput rejected",
+			billingMode: ddbtypes.BillingModeProvisioned,
+			throughput:  nil,
+			wantErr:     true,
+		},
+		{
+			name:        "provisioned table, gsi with zero throughput rejected",
+			billingMode: ddbtypes.BillingModeProvisioned,
+			throughput:  &ddbtypes.ProvisionedThroughput{ReadCapacityUnits: aws.Int64(0), WriteCapacityUnits: aws.Int64(0)},
+			wantErr:     true,
+		},
+		{
+			name:        "pay-per-request table, gsi with no throughput succeeds",
+			billingMode: ddbtypes.BillingModePayPerRequest,
+			throughput:  nil,
+			wantErr:     false,
+		},
+		{
+			name:        "pay-per-request table, gsi with throughput rejected",
+			billingMode: ddbtypes.BillingModePayPerRequest,
+			throughput:  &ddbtypes.ProvisionedThroughput{ReadCapacityUnits: aws.Int64(5), WriteCapacityUnits: aws.Int64(5)},
+			wantErr:     true,
+		},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, _ := newSuiteDDBEnv(t)
+			ctx := context.Background()
+			table := fmt.Sprintf("gsi_throughput_ct_%d", i)
+
+			var tableThroughput *ddbtypes.ProvisionedThroughput
+			if tc.billingMode == ddbtypes.BillingModeProvisioned {
+				tableThroughput = &ddbtypes.ProvisionedThroughput{ReadCapacityUnits: aws.Int64(5), WriteCapacityUnits: aws.Int64(5)}
+			}
+
+			_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+				TableName:   aws.String(table),
+				BillingMode: tc.billingMode,
+				KeySchema:   []ddbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash}},
+				AttributeDefinitions: []ddbtypes.AttributeDefinition{
+					{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+					{AttributeName: aws.String("gk"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+				},
+				ProvisionedThroughput: tableThroughput,
+				GlobalSecondaryIndexes: []ddbtypes.GlobalSecondaryIndex{{
+					IndexName:             aws.String("gsi1"),
+					KeySchema:             []ddbtypes.KeySchemaElement{{AttributeName: aws.String("gk"), KeyType: ddbtypes.KeyTypeHash}},
+					Projection:            &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+					ProvisionedThroughput: tc.throughput,
+				}},
+			})
+
+			if tc.wantErr {
+				assert.Equal(t, "ValidationException", apiErrorCode(t, err))
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
+// TestDDBCreateTableLSINeverRequiresThroughput: an LSI shares the base
+// table's throughput and never declares its own — a CreateTable with a
+// PROVISIONED table and an LSI (no per-index throughput field exists on an
+// LSI) must succeed.
+func TestDDBCreateTableLSINeverRequiresThroughput(t *testing.T) {
+	client, _ := newSuiteDDBEnv(t)
+	ctx := context.Background()
+
+	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+		TableName: aws.String("lsi_no_throughput"),
+		KeySchema: []ddbtypes.KeySchemaElement{
+			{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash},
+			{AttributeName: aws.String("sk"), KeyType: ddbtypes.KeyTypeRange},
+		},
+		AttributeDefinitions: []ddbtypes.AttributeDefinition{
+			{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("sk"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+			{AttributeName: aws.String("lsk"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+		},
+		BillingMode:           ddbtypes.BillingModeProvisioned,
+		ProvisionedThroughput: &ddbtypes.ProvisionedThroughput{ReadCapacityUnits: aws.Int64(5), WriteCapacityUnits: aws.Int64(5)},
+		LocalSecondaryIndexes: []ddbtypes.LocalSecondaryIndex{{
+			IndexName:  aws.String("lsi1"),
+			KeySchema:  []ddbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash}, {AttributeName: aws.String("lsk"), KeyType: ddbtypes.KeyTypeRange}},
+			Projection: &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+		}},
+	})
+
+	require.NoError(t, err)
+}
+
+// TestDDBUpdateTableAddGSIThroughput: UpdateTable's GSI-Create path enforces
+// the same per-GSI throughput rule as CreateTable — a newly-added GSI on a
+// PROVISIONED table must declare valid throughput, and on a PAY_PER_REQUEST
+// table must declare none.
+func TestDDBUpdateTableAddGSIThroughput(t *testing.T) {
+	cases := []struct {
+		name        string
+		billingMode ddbtypes.BillingMode
+		throughput  *ddbtypes.ProvisionedThroughput
+		wantErr     bool
+	}{
+		{
+			name:        "provisioned table, gsi missing throughput rejected",
+			billingMode: ddbtypes.BillingModeProvisioned,
+			throughput:  nil,
+			wantErr:     true,
+		},
+		{
+			name:        "pay-per-request table, gsi with throughput rejected",
+			billingMode: ddbtypes.BillingModePayPerRequest,
+			throughput:  &ddbtypes.ProvisionedThroughput{ReadCapacityUnits: aws.Int64(5), WriteCapacityUnits: aws.Int64(5)},
+			wantErr:     true,
+		},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			client, _ := newSuiteDDBEnv(t)
+			ctx := context.Background()
+			table := fmt.Sprintf("gsi_throughput_ut_%d", i)
+
+			var tableThroughput *ddbtypes.ProvisionedThroughput
+			if tc.billingMode == ddbtypes.BillingModeProvisioned {
+				tableThroughput = &ddbtypes.ProvisionedThroughput{ReadCapacityUnits: aws.Int64(5), WriteCapacityUnits: aws.Int64(5)}
+			}
+
+			_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
+				TableName:   aws.String(table),
+				BillingMode: tc.billingMode,
+				KeySchema:   []ddbtypes.KeySchemaElement{{AttributeName: aws.String("id"), KeyType: ddbtypes.KeyTypeHash}},
+				AttributeDefinitions: []ddbtypes.AttributeDefinition{
+					{AttributeName: aws.String("id"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+				},
+				ProvisionedThroughput: tableThroughput,
+			})
+			require.NoError(t, err)
+
+			_, err = client.UpdateTable(ctx, &dynamodb.UpdateTableInput{
+				TableName: aws.String(table),
+				AttributeDefinitions: []ddbtypes.AttributeDefinition{
+					{AttributeName: aws.String("gk"), AttributeType: ddbtypes.ScalarAttributeTypeS},
+				},
+				GlobalSecondaryIndexUpdates: []ddbtypes.GlobalSecondaryIndexUpdate{{
+					Create: &ddbtypes.CreateGlobalSecondaryIndexAction{
+						IndexName:             aws.String("gsi1"),
+						KeySchema:             []ddbtypes.KeySchemaElement{{AttributeName: aws.String("gk"), KeyType: ddbtypes.KeyTypeHash}},
+						Projection:            &ddbtypes.Projection{ProjectionType: ddbtypes.ProjectionTypeAll},
+						ProvisionedThroughput: tc.throughput,
+					},
+				}},
+			})
+
+			if tc.wantErr {
+				assert.Equal(t, "ValidationException", apiErrorCode(t, err))
+			} else {
+				require.NoError(t, err)
+			}
+		})
+	}
+}
+
 // TestDDBPutItemGSIKeyTypeValidation: PutItem validates a GSI key attribute's
 // type when the item carries it, names the offending index, but does NOT
 // require the attribute to be present at all — a sparse GSI (an item that

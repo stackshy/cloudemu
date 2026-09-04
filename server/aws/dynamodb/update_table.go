@@ -53,6 +53,11 @@ func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := h.validateGSICreateThroughputs(r.Context(), req.TableName, req.BillingMode, req.GlobalSecondaryIndexUpdates); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	if err := h.applyThroughput(r.Context(), req.TableName, req.BillingMode, req.ProvisionedThroughput); err != nil {
 		writeErr(w, err)
 		return
@@ -160,6 +165,55 @@ func (h *Handler) validateThroughputChange(ctx context.Context, table, billingMo
 	}
 
 	return validateProvisionedThroughput(effectiveMode, effRCU, effWCU)
+}
+
+// validateGSICreateThroughputs enforces the per-GSI PROVISIONED/PAY_PER_REQUEST
+// throughput rule (validateGSIThroughput) against every GSI Create in an
+// UpdateTable request. The effective billing mode is the request's own
+// BillingMode when it changes it, otherwise the table's current stored mode —
+// the same resolution validateThroughputChange uses — so adding a GSI without
+// touching billing is checked against the table as it stands today. A request
+// with no GSI creates skips the DescribeTable lookup entirely.
+func (h *Handler) validateGSICreateThroughputs(
+	ctx context.Context, table, billingMode string, updates []gsiUpdateJSON,
+) error {
+	hasCreate := false
+
+	for i := range updates {
+		if updates[i].Create != nil {
+			hasCreate = true
+			break
+		}
+	}
+
+	if !hasCreate {
+		return nil
+	}
+
+	effectiveMode := billingMode
+	if effectiveMode == "" {
+		current, err := h.db.DescribeTable(ctx, table)
+		if err != nil {
+			return err
+		}
+
+		effectiveMode = current.BillingMode
+		if effectiveMode == "" {
+			effectiveMode = billingProvisioned
+		}
+	}
+
+	for i := range updates {
+		if updates[i].Create == nil {
+			continue
+		}
+
+		if err := validateGSIThroughput(effectiveMode, updates[i].Create); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // attrDefJSON is one AttributeDefinitions entry on an UpdateTable request.
