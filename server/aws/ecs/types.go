@@ -371,6 +371,9 @@ type wireService struct {
 	Events                        []wireServiceEvent           `json:"events,omitempty"`
 	CreatedAt                     float64                      `json:"createdAt,omitempty"`
 	Tags                          []wireTag                    `json:"tags,omitempty"`
+	// AvailabilityZoneRebalancing has no omitempty: real ECS always reports
+	// this field ("ENABLED"/"DISABLED"), even for services that never opted in.
+	AvailabilityZoneRebalancing string `json:"availabilityZoneRebalancing"`
 }
 
 // wireDeploymentController echoes the service's deployment controller type.
@@ -1300,6 +1303,7 @@ func serviceToWire(s *driver.Service) wireService {
 		Events:                        fromServiceEvents(s.Events),
 		CreatedAt:                     epoch(s.CreatedAt),
 		Tags:                          fromTags(s.Tags),
+		AvailabilityZoneRebalancing:   s.AvailabilityZoneRebalancing,
 	}
 	if s.DeploymentController != "" {
 		out.DeploymentController = &wireDeploymentController{Type: s.DeploymentController}
