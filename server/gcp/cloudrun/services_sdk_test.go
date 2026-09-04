@@ -3,9 +3,11 @@ package cloudrun_test
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 
+	"google.golang.org/api/googleapi"
 	run "google.golang.org/api/run/v2"
 )
 
@@ -343,5 +345,111 @@ func TestSDKServicesListPagination(t *testing.T) {
 
 	if len(page2.Services) != 1 || page2.NextPageToken != "" {
 		t.Fatalf("page2 services=%d token=%q", len(page2.Services), page2.NextPageToken)
+	}
+}
+
+// TestSDKErrorMessagesHaveNoCodePrefix covers a real-user e2e finding: a
+// NotFound/AlreadyExists error's wire message must be the plain human text,
+// never cloudemu's internal code-name ("NotFound: ", "AlreadyExists: ")
+// baked in — no real Cloud Run response ever leaks that internal taxonomy.
+func TestSDKErrorMessagesHaveNoCodePrefix(t *testing.T) {
+	svc := newRun(t, nil)
+	ctx := context.Background()
+
+	_, err := svc.Projects.Locations.Services.Get(parent + "/services/nope").Context(ctx).Do()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != 404 {
+		t.Fatalf("Get(missing): got %v, want 404", err)
+	}
+
+	if strings.HasPrefix(gerr.Message, "NotFound:") {
+		t.Errorf("message = %q, leaks internal code-name prefix", gerr.Message)
+	}
+
+	if _, err := svc.Projects.Locations.Services.Create(parent, sdkService()).
+		ServiceId("web").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	_, err = svc.Projects.Locations.Services.Create(parent, sdkService()).ServiceId("web").Context(ctx).Do()
+
+	gerr = nil
+	if !errors.As(err, &gerr) || gerr.Code != 409 {
+		t.Fatalf("duplicate Create: got %v, want 409", err)
+	}
+
+	if strings.HasPrefix(gerr.Message, "AlreadyExists:") {
+		t.Errorf("message = %q, leaks internal code-name prefix", gerr.Message)
+	}
+}
+
+// TestSDKRevisionDeleteBlockedWhileServingOrLatest covers a real-user e2e
+// finding: real Cloud Run refuses to delete a revision that is able to
+// receive traffic, is the only revision of its service, or is the service's
+// latest revision — deleting any of those would leave the service's own
+// latestReadyRevision/latestCreatedRevision/trafficStatuses pointers dangling
+// at a revision GetRevision then 404s on. See
+// https://docs.cloud.google.com/run/docs/managing/revisions.
+func TestSDKRevisionDeleteBlockedWhileServingOrLatest(t *testing.T) {
+	svc := newRun(t, nil)
+	ctx := context.Background()
+
+	op, err := svc.Projects.Locations.Services.Create(parent, sdkService()).ServiceId("web").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	var created run.GoogleCloudRunV2Service
+	decodeOpResponse(t, op, &created)
+
+	// The sole revision: it is the only revision, the latest revision, AND
+	// serving 100% of traffic — any one of those alone must block the delete.
+	_, err = svc.Projects.Locations.Services.Revisions.Delete(created.LatestReadyRevision).Context(ctx).Do()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != 400 {
+		t.Fatalf("delete sole revision: got %v, want 400 FAILED_PRECONDITION", err)
+	}
+
+	got, err := svc.Projects.Locations.Services.Get(parent + "/services/web").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.LatestReadyRevision != created.LatestReadyRevision {
+		t.Fatalf("service's latestReadyRevision changed after a blocked delete: %q", got.LatestReadyRevision)
+	}
+
+	if _, err := svc.Projects.Locations.Services.Revisions.Get(created.LatestReadyRevision).Context(ctx).Do(); err != nil {
+		t.Fatalf("revision still resolvable after blocked delete: %v", err)
+	}
+
+	// Deploy a second revision: the first revision is now neither latest nor
+	// serving traffic, so deleting it must still succeed exactly as before.
+	updated := sdkService()
+	updated.Template.Containers[0].Image = "gcr.io/demo/web:v2"
+
+	if _, err := svc.Projects.Locations.Services.Patch(parent+"/services/web", updated).Context(ctx).Do(); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	if _, err := svc.Projects.Locations.Services.Revisions.Delete(created.LatestReadyRevision).
+		Context(ctx).Do(); err != nil {
+		t.Fatalf("delete superseded, non-serving revision: got %v, want success", err)
+	}
+
+	// The new latest revision, now the service's only remaining revision and
+	// serving 100% of traffic, must itself be blocked.
+	got, err = svc.Projects.Locations.Services.Get(parent + "/services/web").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	_, err = svc.Projects.Locations.Services.Revisions.Delete(got.LatestReadyRevision).Context(ctx).Do()
+
+	gerr = nil
+	if !errors.As(err, &gerr) || gerr.Code != 400 {
+		t.Fatalf("delete new latest/sole revision: got %v, want 400 FAILED_PRECONDITION", err)
 	}
 }
