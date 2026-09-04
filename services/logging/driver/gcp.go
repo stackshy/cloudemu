@@ -55,6 +55,28 @@ type LogBucket struct {
 	UpdatedAt      time.Time
 }
 
+// SinkUpdate describes a partial update (PATCH) to an export sink's mutable
+// fields. Each Set* flag mirrors whether the wire layer's updateMask named that
+// field, so a field the caller did not name is left unchanged rather than reset
+// to its Go zero value (a masked patch must never silently clear the sink's
+// destination, filter, or description).
+type SinkUpdate struct {
+	Destination        string
+	SetDestination     bool
+	Filter             string
+	SetFilter          bool
+	Description        string
+	SetDescription     bool
+	Disabled           bool
+	SetDisabled        bool
+	IncludeChildren    bool
+	SetIncludeChildren bool
+	// WriterIdentity, when non-empty, replaces the sink's writer identity — a
+	// uniqueWriterIdentity or customWriterIdentity transition requested on the
+	// wire. Empty leaves the stored identity unchanged.
+	WriterIdentity string
+}
+
 // BucketUpdate describes a partial update (PATCH) to a log bucket's mutable
 // fields. Each Set* flag mirrors whether the wire layer's updateMask (or, for a
 // mask-less caller, a presence heuristic) named that field, so a field the
@@ -77,7 +99,7 @@ type GCPLogging interface {
 	CreateSink(ctx context.Context, project string, sink *LogSink) (*LogSink, error)
 	GetSink(ctx context.Context, project, name string) (*LogSink, error)
 	ListSinks(ctx context.Context, project string) ([]LogSink, error)
-	UpdateSink(ctx context.Context, project string, sink *LogSink) (*LogSink, error)
+	UpdateSink(ctx context.Context, project, name string, update *SinkUpdate) (*LogSink, error)
 	DeleteSink(ctx context.Context, project, name string) error
 
 	CreateLogMetric(ctx context.Context, project string, metric *LogBasedMetric) (*LogBasedMetric, error)

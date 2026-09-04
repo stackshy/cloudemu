@@ -78,6 +78,91 @@ func TestSDKSinksLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKSinksWriterIdentity guards the writer-identity contract a real
+// Terraform/gcloud user depends on: uniqueWriterIdentity=true yields an identity
+// distinct from the shared non-unique account (so terraform-google infers
+// unique_writer_identity=true and sees no drift), the default yields the shared
+// account, and customWriterIdentity is honored verbatim.
+func TestSDKSinksWriterIdentity(t *testing.T) {
+	svc := newLoggingService(t)
+	ctx := context.Background()
+	parent := "projects/" + testProject
+
+	const nonUnique = "serviceAccount:cloud-logs@system.gserviceaccount.com"
+
+	unique, err := svc.Projects.Sinks.Create(parent, &logging.LogSink{
+		Name: "uniq", Destination: "storage.googleapis.com/b",
+	}).UniqueWriterIdentity(true).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Sinks.Create unique: %v", err)
+	}
+
+	if unique.WriterIdentity == "" || unique.WriterIdentity == nonUnique {
+		t.Errorf("unique writerIdentity = %q, want a distinct non-shared account", unique.WriterIdentity)
+	}
+
+	shared, err := svc.Projects.Sinks.Create(parent, &logging.LogSink{
+		Name: "shared", Destination: "storage.googleapis.com/b",
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Sinks.Create shared: %v", err)
+	}
+
+	if shared.WriterIdentity != nonUnique {
+		t.Errorf("shared writerIdentity = %q, want %q", shared.WriterIdentity, nonUnique)
+	}
+
+	custom, err := svc.Projects.Sinks.Create(parent, &logging.LogSink{
+		Name: "cust", Destination: "storage.googleapis.com/b",
+	}).CustomWriterIdentity("serviceAccount:me@x.iam.gserviceaccount.com").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Sinks.Create custom: %v", err)
+	}
+
+	if custom.WriterIdentity != "serviceAccount:me@x.iam.gserviceaccount.com" {
+		t.Errorf("custom writerIdentity = %q", custom.WriterIdentity)
+	}
+}
+
+// TestSDKSinksMaskedPatch guards updateMask partial semantics: a patch naming
+// only "filter" updates the filter and must leave destination, description and
+// writerIdentity untouched (a full-replace would silently clear them — the bug
+// this test locks down).
+func TestSDKSinksMaskedPatch(t *testing.T) {
+	svc := newLoggingService(t)
+	ctx := context.Background()
+	parent := "projects/" + testProject
+	sinkName := parent + "/sinks/patch-sink"
+
+	if _, err := svc.Projects.Sinks.Create(parent, &logging.LogSink{
+		Name:        "patch-sink",
+		Destination: "storage.googleapis.com/keep",
+		Filter:      "severity>=ERROR",
+		Description: "keep me",
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Sinks.Create: %v", err)
+	}
+
+	updated, err := svc.Projects.Sinks.Patch(sinkName, &logging.LogSink{
+		Filter: "severity>=WARNING",
+	}).UpdateMask("filter").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Sinks.Patch: %v", err)
+	}
+
+	if updated.Filter != "severity>=WARNING" {
+		t.Errorf("filter = %q, want severity>=WARNING", updated.Filter)
+	}
+
+	if updated.Destination != "storage.googleapis.com/keep" {
+		t.Errorf("destination cleared by masked patch: %q", updated.Destination)
+	}
+
+	if updated.Description != "keep me" {
+		t.Errorf("description cleared by masked patch: %q", updated.Description)
+	}
+}
+
 // TestSDKSinksGetMissing guards a not-found error for an unknown sink.
 func TestSDKSinksGetMissing(t *testing.T) {
 	svc := newLoggingService(t)
