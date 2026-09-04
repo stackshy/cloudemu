@@ -82,7 +82,7 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 
 	filter, err := parseFilter(body.Filter)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "invalid filter: "+err.Error())
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "invalid filter: "+cerrors.Message(err))
 		return
 	}
 
@@ -130,7 +130,7 @@ func (h *Handler) patchSubscription(w http.ResponseWriter, r *http.Request, name
 
 	if err := applySubMask(&sub.cfg, &req.Subscription, masks); err != nil {
 		h.mu.Unlock()
-		writeError(w, http.StatusBadRequest, reasonInvalidArgument, err.Error())
+		writeError(w, http.StatusBadRequest, reasonInvalidArgument, cerrors.Message(err))
 
 		return
 	}
@@ -316,6 +316,15 @@ func (h *Handler) pull(w http.ResponseWriter, r *http.Request, name string) {
 	if err != nil {
 		h.mu.Unlock()
 		writeErr(w, err)
+
+		return
+	}
+
+	// A detached subscription drops its backlog and rejects further Pull/
+	// StreamingPull requests with FAILED_PRECONDITION, matching real Pub/Sub.
+	if sub.cfg.Detached {
+		h.mu.Unlock()
+		writeError(w, http.StatusBadRequest, reasonFailedPrecondition, "subscription "+name+" is detached")
 
 		return
 	}
