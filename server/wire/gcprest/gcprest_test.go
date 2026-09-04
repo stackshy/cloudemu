@@ -137,6 +137,25 @@ func TestWriteCErrMapping(t *testing.T) {
 	}
 }
 
+// TestWriteCErrOmitsCodePrefix guards against the wire message leaking the
+// cloudemu internal error-taxonomy code prefix (cerrors.Error() renders
+// "NotFound: instance x not found") into the message an SDK surfaces to the
+// caller. Real GCP (and every other cloud's wire handlers here) only ever
+// sends the human-readable text.
+func TestWriteCErrOmitsCodePrefix(t *testing.T) {
+	rec := httptest.NewRecorder()
+	gcprest.WriteCErr(rec, cerrors.Newf(cerrors.NotFound, "instance %s not found", "vm-1"))
+
+	body := rec.Body.String()
+	if strings.Contains(body, "NotFound:") {
+		t.Errorf("body=%q leaks the internal error code prefix", body)
+	}
+
+	if !strings.Contains(body, "instance vm-1 not found") {
+		t.Errorf("body=%q missing the human-readable message", body)
+	}
+}
+
 func TestDecodeJSONInvalid(t *testing.T) {
 	rec := httptest.NewRecorder()
 	r := httptest.NewRequest(http.MethodPost, "/", bytes.NewBufferString(`{not json`))

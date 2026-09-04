@@ -1,6 +1,7 @@
 package compute
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -13,7 +14,11 @@ const defaultCPUPlatform = "Intel Broadwell"
 // toInstanceResponse maps a driver Instance back to GCP's REST shape, resolving
 // the GCP-specific state carried in the instance's internal tags (disks,
 // network tags, metadata, network self-link) and filling realistic defaults.
-func toInstanceResponse(inst *computedriver.Instance, project, host string) instanceResponse {
+// ctx/h are used to resolve each attached disk's CURRENT size from the disk
+// store (see resolveDisks), so a read reflects a disks.resize that happened
+// after the instance was created — matching real GCP, where instances.get's
+// disks[].diskSizeGb is the disk's live size, not a snapshot from attach time.
+func (h *Handler) toInstanceResponse(ctx context.Context, inst *computedriver.Instance, project, host string) instanceResponse {
 	name := tagOr(inst.Tags, gcpNameTag, "")
 	zone := tagOr(inst.Tags, keyZone, "")
 	labels := userLabels(inst.Tags)
@@ -30,8 +35,8 @@ func toInstanceResponse(inst *computedriver.Instance, project, host string) inst
 		SelfLink:           zoneLink(host, project, zone, "instances", name),
 		CreationTimestamp:  inst.LaunchTime,
 		CPUPlatform:        defaultCPUPlatform,
-		DeletionProtection: false,
-		Disks:              resolveDisks(inst, host, project, zone, name),
+		DeletionProtection: deletionProtection(inst.Tags),
+		Disks:              h.resolveDisks(ctx, inst, host, project, zone, name),
 		NetworkInterfaces:  instanceNICs(inst, host, project, zone),
 		Labels:             labels,
 		LabelFingerprint:   labelFingerprintFor(labels),
@@ -63,7 +68,11 @@ func zoneLink(host, project, zone, resourceType, name string) string {
 
 // resolveDisks turns the stored inbound disk descriptors into the full GCP
 // attachedDisk read shape (resolved source self-link, diskSizeGb, type, mode).
-func resolveDisks(inst *computedriver.Instance, host, project, zone, instanceName string) []attachedDisk {
+// diskSizeGb is refreshed from the backing Disk resource's CURRENT size when
+// one can be resolved (every wire-materialized disk has one — see
+// materializeInsertDisks), so a disks.resize after instance creation is
+// reflected on the next instances.get rather than the stale insert-time value.
+func (h *Handler) resolveDisks(ctx context.Context, inst *computedriver.Instance, host, project, zone, instanceName string) []attachedDisk {
 	disks := decodeDisks(inst.Tags)
 	if len(disks) == 0 {
 		return nil
@@ -96,10 +105,33 @@ func resolveDisks(inst *computedriver.Instance, host, project, zone, instanceNam
 			d.Source = zoneLink(host, project, zone, "disks", d.DeviceName)
 		}
 
+		if size, ok := h.currentDiskSizeGb(ctx, d.Source, zone); ok {
+			d.DiskSizeGb = size
+		}
+
 		out = append(out, d)
 	}
 
 	return out
+}
+
+// currentDiskSizeGb resolves the live sizeGb of the Disk resource named by a
+// disks[] entry's source self-link, so a resize after instance creation is
+// reflected on read. Returns ok=false when the disk can't be resolved (a
+// driver-direct instance with no matching Disk resource), leaving the
+// caller's insert-time value in place.
+func (h *Handler) currentDiskSizeGb(ctx context.Context, source, zone string) (string, bool) {
+	name := lastSegment(source)
+	if name == "" {
+		return "", false
+	}
+
+	vol, err := findDiskByName(ctx, h.compute, name, zone)
+	if err != nil {
+		return "", false
+	}
+
+	return strconv.Itoa(vol.Size), true
 }
 
 func deviceNameFor(boot bool, instanceName string, index int) string {

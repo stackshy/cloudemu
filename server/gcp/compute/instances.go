@@ -308,7 +308,7 @@ func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, toInstanceResponse(inst, rp.Project, hostFromRequest(r)))
+	gcprest.WriteJSON(w, http.StatusOK, h.toInstanceResponse(r.Context(), inst, rp.Project, hostFromRequest(r)))
 }
 
 // listInstances handles GET .../instances. Scopes to the requested zone and
@@ -332,7 +332,7 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rp gcpre
 			continue
 		}
 
-		resp := toInstanceResponse(&instances[i], rp.Project, host)
+		resp := h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host)
 		if pred(&resp) {
 			out = append(out, resp)
 		}
@@ -372,7 +372,7 @@ func (h *Handler) aggregatedListInstances(w http.ResponseWriter, r *http.Request
 	items := make(map[string]instancesScopedList)
 
 	for i := range instances {
-		resp := toInstanceResponse(&instances[i], rp.Project, host)
+		resp := h.toInstanceResponse(r.Context(), &instances[i], rp.Project, host)
 		if !pred(&resp) {
 			continue
 		}
@@ -398,6 +398,17 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rp gcpr
 	inst, err := findInZone(r.Context(), h.compute, rp.ResourceName, rp.ScopeName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	// Real GCP refuses to delete an instance with deletionProtection set,
+	// returning 400 until the caller clears it (setDeletionProtection or a
+	// fresh instances.update).
+	if deletionProtection(inst.Tags) {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
+			"The instance '"+rp.ResourceName+"' has deletionProtection field set to true,"+
+				" please set it to false before performing this operation.")
+
 		return
 	}
 
@@ -560,7 +571,17 @@ func insertTags(req *instanceRequest, zone string) map[string]string {
 		out[keyServiceAccts] = encodeJSON(req.ServiceAccounts)
 	}
 
+	if req.DeletionProtection {
+		out[keyDeletionProtection] = tagValueTrue
+	}
+
 	return out
+}
+
+// deletionProtection reports whether the instance was created (or later set,
+// via setDeletionProtection) with deletionProtection enabled.
+func deletionProtection(tags map[string]string) bool {
+	return tags[keyDeletionProtection] == tagValueTrue
 }
 
 // accessConfig field defaults GCP stamps on an external-IP mapping.
@@ -585,31 +606,45 @@ func accessConfigsFor(nics []networkInterface, instanceName string) []accessConf
 		out := make([]accessConfig, 0, len(nics[i].AccessConfigs))
 
 		for j := range nics[i].AccessConfigs {
-			ac := nics[i].AccessConfigs[j]
-
-			if ac.Type == "" {
-				ac.Type = accessConfigOneToOneNAT
-			}
-
-			if ac.Name == "" {
-				ac.Name = accessConfigDefaultName
-			}
-
-			if ac.NetworkTier == "" {
-				ac.NetworkTier = accessConfigNetworkTier
-			}
-
-			if ac.NatIP == "" {
-				ac.NatIP = ephemeralExternalIP(instanceName, j)
-			}
-
-			out = append(out, ac)
+			out = append(out, fillAccessConfigDefaults(&nics[i].AccessConfigs[j], instanceName, j))
 		}
 
 		return out
 	}
 
 	return nil
+}
+
+// fillAccessConfigDefaults stamps GCP's server-side defaults onto an
+// accessConfig the caller may have left partially filled: type, name, and
+// network tier default to GCP's standard external-IP values, and a missing
+// natIP is synthesized as an ephemeral external IP (mirroring GCP auto-
+// assigning one) seeded on instanceName+index so repeated reads are stable.
+// An explicit natIP — a reserved google_compute_address — is preserved so that
+// address reads back IN_USE while this instance holds it. Shared by
+// instances.insert (accessConfigsFor) and instances.addAccessConfig. Takes ac
+// by pointer only to avoid copying the (small but not tiny) struct; it never
+// mutates through the caller's copy, since the filled-in value is returned.
+func fillAccessConfigDefaults(ac *accessConfig, instanceName string, index int) accessConfig {
+	filled := *ac
+
+	if filled.Type == "" {
+		filled.Type = accessConfigOneToOneNAT
+	}
+
+	if filled.Name == "" {
+		filled.Name = accessConfigDefaultName
+	}
+
+	if filled.NetworkTier == "" {
+		filled.NetworkTier = accessConfigNetworkTier
+	}
+
+	if filled.NatIP == "" {
+		filled.NatIP = ephemeralExternalIP(instanceName, index)
+	}
+
+	return filled
 }
 
 // findInZone looks up an instance by GCP name, scoped to zone. An instance with

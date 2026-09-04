@@ -229,19 +229,25 @@ func WriteError(w http.ResponseWriter, status int, reason, msg string) {
 }
 
 // WriteCErr maps a CloudEmu canonical error to the matching GCP HTTP status
-// and reason.
+// and reason. The wire message is cerrors.Message(err) — the error's
+// human-readable text without the canonical code prefix (e.g. "instance x not
+// found", not "NotFound: instance x not found") — matching every other cloud's
+// wire handlers, which never leak the internal error-taxonomy name into the
+// message an SDK surfaces to the caller.
 func WriteCErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		WriteError(w, http.StatusNotFound, "notFound", err.Error())
+		WriteError(w, http.StatusNotFound, "notFound", msg)
 	case cerrors.IsAlreadyExists(err):
-		WriteError(w, http.StatusConflict, "alreadyExists", err.Error())
+		WriteError(w, http.StatusConflict, "alreadyExists", msg)
 	case cerrors.IsInvalidArgument(err):
-		WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		WriteError(w, http.StatusBadRequest, "invalid", msg)
 	case cerrors.IsFailedPrecondition(err):
-		WriteError(w, http.StatusConflict, "conditionNotMet", err.Error())
+		WriteError(w, http.StatusConflict, "conditionNotMet", msg)
 	default:
-		WriteError(w, http.StatusInternalServerError, "internalError", err.Error())
+		WriteError(w, http.StatusInternalServerError, "internalError", msg)
 	}
 }
 
