@@ -64,6 +64,15 @@ func TestFirestoreRunTransaction(t *testing.T) {
 // transaction's writes unconditionally (no conflict detection at all), so
 // concurrent read-modify-write transactions silently raced and the final
 // count was well under N.
+//
+// checkTransactionConflict's read-set check and applyStaged's write were also
+// found to run as two separate, unsynchronized store operations (no atomic
+// section spanning them): two commits could both pass the conflict check
+// before either applied, then both overwrite -- a narrower but still real
+// lost-update race that this same assertion catches, just less reliably at
+// low contention (empirically ~6/10 runs at concurrency=10 -race -count=10).
+// concurrency is set high enough, and repeated across enough attempts per
+// goroutine, to make that race reproduce on every run should it regress.
 func TestFirestoreConcurrentTransactionsNoLostUpdates(t *testing.T) {
 	ctx, client, _ := newDBClient(t, "counters")
 
@@ -73,7 +82,12 @@ func TestFirestoreConcurrentTransactionsNoLostUpdates(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	const concurrency = 10
+	const concurrency = 40
+	// High contention drives many aborts/retries even under a correct
+	// implementation; give each transaction generous headroom above the
+	// client's default of 5 so a retry-exhaustion error never masquerades as
+	// a lost-update failure.
+	const maxAttempts = concurrency * 3
 
 	var wg sync.WaitGroup
 
@@ -95,7 +109,7 @@ func TestFirestoreConcurrentTransactionsNoLostUpdates(t *testing.T) {
 				cur, _ := n.(int64)
 
 				return tx.Update(doc, []gcpfirestore.Update{{Path: "n", Value: cur + 1}})
-			})
+			}, gcpfirestore.MaxAttempts(maxAttempts))
 		}(i)
 	}
 
@@ -114,7 +128,7 @@ func TestFirestoreConcurrentTransactionsNoLostUpdates(t *testing.T) {
 
 	n, _ := final.DataAt("n")
 	if n != int64(concurrency) {
-		t.Errorf("final n=%v want %d (lost updates: no optimistic concurrency on transaction commit)", n, concurrency)
+		t.Errorf("final n=%v want %d (lost updates: transaction conflict-check and apply are not atomic)", n, concurrency)
 	}
 }
 

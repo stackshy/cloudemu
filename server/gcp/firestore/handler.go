@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -85,6 +86,23 @@ type reference string
 type Handler struct {
 	db   dbdriver.Database
 	txns *transactionRegistry
+
+	// commitMu makes each :commit's read-set conflict check and its write
+	// apply a single atomic section. dbdriver.Database (shared with the
+	// DynamoDB and CosmosDB backends) has no notion of a document's expected
+	// read state, so checkTransactionConflict's h.db.GetItem calls and
+	// applyStaged's h.db.TransactWriteItems call are otherwise two separate,
+	// unsynchronized store operations: two concurrent commits on the same
+	// document could each pass the conflict check before either applies,
+	// then both overwrite -- a lost update. Serializing the whole commit body
+	// behind this lock closes that window. It is always the OUTERMOST lock
+	// taken here -- acquired before any h.db call and held for the duration
+	// of one commit, while the store's own locking is acquired and released
+	// within each individual h.db call and never held across them -- so
+	// nesting is one-directional and this can never deadlock against it.
+	// Only :commit takes it; other handler reads (GetItem, batchGet,
+	// runQuery, ...) are unaffected.
+	commitMu sync.Mutex
 }
 
 // New returns a Firestore handler backed by db.
@@ -294,6 +312,12 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
+
+	// Hold commitMu for the whole check-stage-apply sequence below so it runs
+	// as one atomic section relative to every other commit -- see commitMu's
+	// doc comment on Handler for why this closes the lost-update race.
+	h.commitMu.Lock()
+	defer h.commitMu.Unlock()
 
 	// The transaction is terminal after this commit attempt either way: on
 	// success it is done, and on an aborted/conflicting commit the SDK's
