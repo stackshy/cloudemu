@@ -577,6 +577,11 @@ type ObjectInfo struct {
 	// retention policy. Empty when the bucket has no retention policy (or an
 	// eventBasedHold is currently pinning the object).
 	RetentionExpiration string
+	// Deleted is the GCS timeDeleted (RFC3339) — the instant a version became
+	// noncurrent, either archived by an overwrite or a live delete on a
+	// versioning-enabled bucket. Empty for a live version, or for providers that
+	// don't model versioning/generations.
+	Deleted string
 }
 
 // Object is an object with its data.

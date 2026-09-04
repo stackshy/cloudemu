@@ -7,6 +7,7 @@ type bucketResource struct {
 	Kind             string            `json:"kind"`
 	ID               string            `json:"id"`
 	Name             string            `json:"name"`
+	ProjectNumber    string            `json:"projectNumber,omitempty"`
 	SelfLink         string            `json:"selfLink,omitempty"`
 	Location         string            `json:"location,omitempty"`
 	LocationType     string            `json:"locationType,omitempty"`
@@ -103,6 +104,7 @@ type objectResource struct {
 	ContentLanguage         string            `json:"contentLanguage,omitempty"`
 	TimeCreated             string            `json:"timeCreated,omitempty"`
 	Updated                 string            `json:"updated,omitempty"`
+	TimeDeleted             string            `json:"timeDeleted,omitempty"`
 	Metadata                map[string]string `json:"metadata,omitempty"`
 	TemporaryHold           bool              `json:"temporaryHold,omitempty"`
 	EventBasedHold          bool              `json:"eventBasedHold,omitempty"`

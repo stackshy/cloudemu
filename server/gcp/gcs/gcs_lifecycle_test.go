@@ -516,12 +516,24 @@ func TestStorageBucketEdgeCases(t *testing.T) {
 		t.Fatalf("Delete of non-empty bucket succeeded, want error")
 	}
 
-	// Real GCS returns 409 conflict here; the emulator maps the driver's
-	// FailedPrecondition through its default branch. Record what the SDK sees.
-	if errors.As(err, &gerr) {
-		t.Logf("non-empty bucket delete surfaced as googleapi.Error code=%d (real GCS: 409)", gerr.Code)
-	} else {
-		t.Logf("non-empty bucket delete surfaced as %T: %v", err, err)
+	// Real GCS returns 409 with reason "notEmpty" and a fixed human message,
+	// not the generic "conflict" reason writeErr uses for FailedPrecondition
+	// elsewhere.
+	if !errors.As(err, &gerr) {
+		t.Fatalf("non-empty bucket delete surfaced as %T: %v, want *googleapi.Error", err, err)
+	}
+
+	if gerr.Code != http.StatusConflict {
+		t.Errorf("non-empty bucket delete code = %d, want 409", gerr.Code)
+	}
+
+	if len(gerr.Errors) != 1 || gerr.Errors[0].Reason != "notEmpty" {
+		t.Errorf("non-empty bucket delete reason = %+v, want a single errors[].reason=notEmpty", gerr.Errors)
+	}
+
+	const wantMsg = "The bucket you tried to delete was not empty."
+	if gerr.Message != wantMsg {
+		t.Errorf("non-empty bucket delete message = %q, want %q", gerr.Message, wantMsg)
 	}
 
 	if got := readObject(t, ctx, bkt, "keep.txt"); !bytes.Equal(got, []byte("keep")) {

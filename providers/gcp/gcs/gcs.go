@@ -71,6 +71,10 @@ type gcsObject struct {
 	// an eventBasedHold is released, restarting the retention clock. Empty falls
 	// back to Created.
 	RetentionRef string
+	// Deleted is the RFC3339 instant this generation became noncurrent (archived
+	// on overwrite, or archived by a live delete on a versioning-enabled bucket).
+	// Empty for the live generation.
+	Deleted string
 }
 
 type gcsMultipartUpload struct {
@@ -239,6 +243,7 @@ func toInfo(o *gcsObject, cloneMeta bool) driver.ObjectInfo {
 		ContentDisposition: o.ContentDisposition, ContentLanguage: o.ContentLanguage,
 		StorageClass:  o.StorageClass,
 		TemporaryHold: o.TemporaryHold, EventBasedHold: o.EventBasedHold,
+		Deleted: o.Deleted,
 	}
 }
 
@@ -353,11 +358,11 @@ func (m *Mock) putObject(
 		stored = nil
 	}
 
-	archiveVersion(bkt, key, current, exists)
+	now := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
+
+	archiveVersion(bkt, key, current, exists, now)
 
 	md5b64, crc32cb64 := checksums(data)
-
-	now := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
 
 	obj := &gcsObject{
 		Key:                key,
@@ -449,10 +454,15 @@ func checkMetagenerationConditions(pre driver.GCSPrecondition, metagen int64, ex
 
 // archiveVersion retains the current object generation when versioning is
 // enabled, so a versions=true listing can still surface it after an overwrite.
-func archiveVersion(bkt *bucketMeta, key string, current *gcsObject, exists bool) {
+// deletedAt stamps the generation's GCS timeDeleted — the instant it became
+// noncurrent — the same way real GCS reports when a version was superseded or
+// explicitly deleted.
+func archiveVersion(bkt *bucketMeta, key string, current *gcsObject, exists bool, deletedAt string) {
 	if !exists || !bkt.versioning {
 		return
 	}
+
+	current.Deleted = deletedAt
 
 	bkt.mu.Lock()
 	defer bkt.mu.Unlock()
@@ -562,7 +572,8 @@ func (m *Mock) deleteObject(ctx context.Context, bucket, key string, generation 
 	// Versioning-enabled live delete archives the current generation (it becomes
 	// noncurrent) — real GCS retains it, listable via versions=true.
 	if bkt.versioning {
-		archiveVersion(bkt, key, current, true)
+		now := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
+		archiveVersion(bkt, key, current, true, now)
 		bkt.objects.Delete(key)
 		m.emitMetric(ctx, "api/request_count", 1, map[string]string{"bucket_name": bucket})
 
@@ -890,10 +901,10 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 		stored = nil
 	}
 
-	dstCurrent, dstExists := dstBkt.objects.Get(dstKey)
-	archiveVersion(dstBkt, dstKey, dstCurrent, dstExists)
-
 	copyNow := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
+
+	dstCurrent, dstExists := dstBkt.objects.Get(dstKey)
+	archiveVersion(dstBkt, dstKey, dstCurrent, dstExists, copyNow)
 
 	dstBkt.objects.Set(dstKey, &gcsObject{
 		Key: dstKey, Data: stored, Size: srcObj.Size, ContentType: srcObj.ContentType,
@@ -1078,9 +1089,9 @@ func (m *Mock) CompleteMultipartUpload(
 		}
 	}
 
-	archiveVersion(bkt, key, current, exists)
-
 	completeNow := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
+
+	archiveVersion(bkt, key, current, exists, completeNow)
 
 	bkt.objects.Set(key, &gcsObject{
 		Key:            key,
