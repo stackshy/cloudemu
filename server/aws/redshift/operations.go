@@ -371,6 +371,27 @@ func (h *Handler) getClusterCredentials(w http.ResponseWriter, r *http.Request) 
 	})
 }
 
+// describeLoggingStatus reports a cluster's audit-logging configuration.
+// Audit logging is not modeled, so an existing cluster always reports logging
+// disabled. Terraform's aws_redshift_cluster read calls this unconditionally to
+// populate its logging block, so a missing action fails the whole create.
+func (h *Handler) describeLoggingStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.Form.Get("ClusterIdentifier")
+
+	// The cluster must exist; ClusterNotFound (404) otherwise, matching AWS.
+	clusters, err := h.db.DescribeClusters(r.Context(), []string{id})
+	if err != nil || len(clusters) == 0 {
+		writeErr(w, errClusterNotFound(id))
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, describeLoggingStatusResponse{
+		Xmlns:    Namespace,
+		Result:   loggingStatusResult{LoggingEnabled: false},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
 //nolint:dupl // structurally similar to resumeCluster but a distinct action + response type.
 func (h *Handler) pauseCluster(w http.ResponseWriter, r *http.Request) {
 	pauser, ok := h.db.(clusterPauser)

@@ -186,8 +186,18 @@ func (h *Handler) describeClusterParameters(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
+	// Honor the optional Source filter ("user" | "engine-default"). Terraform's
+	// aws_redshift_parameter_group read requests Source=user to see only the
+	// parameters the user overrode; without the filter it stores every
+	// engine-default too and then plans to delete them on the next run.
+	source := r.Form.Get("Source")
+
 	out := make([]redshiftParameterXML, 0, len(params))
 	for i := range params {
+		if source != "" && params[i].Source != source {
+			continue
+		}
+
 		out = append(out, redshiftParameterXML{
 			ParameterName:  params[i].Name,
 			ParameterValue: params[i].Value,
