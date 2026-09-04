@@ -3,16 +3,20 @@ package monitoring
 // GCP Cloud Monitoring REST shapes.
 
 type alertPolicy struct {
-	Name                 string            `json:"name,omitempty"`
-	DisplayName          string            `json:"displayName,omitempty"`
-	Documentation        any               `json:"documentation,omitempty"`
-	UserLabels           map[string]string `json:"userLabels,omitempty"`
-	Conditions           []alertCondition  `json:"conditions,omitempty"`
-	Combiner             string            `json:"combiner,omitempty"`
-	Enabled              bool              `json:"enabled,omitempty"`
-	NotificationChannels []string          `json:"notificationChannels,omitempty"`
-	CreationRecord       any               `json:"creationRecord,omitempty"`
-	MutationRecord       any               `json:"mutationRecord,omitempty"`
+	Name          string            `json:"name,omitempty"`
+	DisplayName   string            `json:"displayName,omitempty"`
+	Documentation any               `json:"documentation,omitempty"`
+	UserLabels    map[string]string `json:"userLabels,omitempty"`
+	Conditions    []alertCondition  `json:"conditions,omitempty"`
+	Combiner      string            `json:"combiner,omitempty"`
+	// Enabled is a pointer so an explicit false round-trips on read (a plain bool
+	// with omitempty drops enabled:false) and a create that omits it can be
+	// defaulted to true — Cloud Monitoring always returns enabled and treats an
+	// unset value on write as enabled.
+	Enabled              *bool    `json:"enabled,omitempty"`
+	NotificationChannels []string `json:"notificationChannels,omitempty"`
+	CreationRecord       any      `json:"creationRecord,omitempty"`
+	MutationRecord       any      `json:"mutationRecord,omitempty"`
 }
 
 // alertCondition round-trips every Cloud Monitoring condition variant, not just
