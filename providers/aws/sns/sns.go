@@ -209,6 +209,8 @@ func (m *Mock) CreateTopic(ctx context.Context, cfg driver.TopicConfig) (*driver
 		Tags:                      tags,
 	}
 
+	applyCreateFeedbackAttrs(&info, &cfg)
+
 	td := &topicData{
 		info:          info,
 		subscriptions: memstore.New[driver.SubscriptionInfo](),
@@ -316,8 +318,16 @@ func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 	}
 
 	if cfg.ContentBasedDeduplicationSet {
+		if !td.info.FifoTopic {
+			return nil, errors.New(errors.InvalidArgument,
+				"Invalid parameter: Attributes Reason: ContentBasedDeduplication attribute "+
+					"is not applicable for standard topics")
+		}
+
 		td.info.ContentBasedDeduplication = cfg.ContentBasedDeduplication
 	}
+
+	applyUpdateFeedbackAttrs(&td.info, &cfg)
 
 	if !cfg.Scope.IsZero() {
 		td.info.Scope = cfg.Scope
@@ -328,6 +338,67 @@ func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 	result := td.withCounts()
 
 	return &result, nil
+}
+
+// applyCreateFeedbackAttrs copies SignatureVersion, TracingConfig,
+// ArchivePolicy, and the per-protocol delivery-status feedback attributes from
+// a CreateTopic config onto the new topic's info, unconditionally (a create
+// always applies the field exactly as given, including its zero value).
+func applyCreateFeedbackAttrs(info *driver.TopicInfo, cfg *driver.TopicConfig) {
+	info.SignatureVersion = cfg.SignatureVersion
+	info.TracingConfig = cfg.TracingConfig
+	info.ArchivePolicy = cfg.ArchivePolicy
+	info.ApplicationSuccessFeedbackRoleArn = cfg.ApplicationSuccessFeedbackRoleArn
+	info.ApplicationFailureFeedbackRoleArn = cfg.ApplicationFailureFeedbackRoleArn
+	info.ApplicationSuccessFeedbackSampleRate = cfg.ApplicationSuccessFeedbackSampleRate
+	info.HTTPSuccessFeedbackRoleArn = cfg.HTTPSuccessFeedbackRoleArn
+	info.HTTPFailureFeedbackRoleArn = cfg.HTTPFailureFeedbackRoleArn
+	info.HTTPSuccessFeedbackSampleRate = cfg.HTTPSuccessFeedbackSampleRate
+	info.LambdaSuccessFeedbackRoleArn = cfg.LambdaSuccessFeedbackRoleArn
+	info.LambdaFailureFeedbackRoleArn = cfg.LambdaFailureFeedbackRoleArn
+	info.LambdaSuccessFeedbackSampleRate = cfg.LambdaSuccessFeedbackSampleRate
+	info.SQSSuccessFeedbackRoleArn = cfg.SQSSuccessFeedbackRoleArn
+	info.SQSFailureFeedbackRoleArn = cfg.SQSFailureFeedbackRoleArn
+	info.SQSSuccessFeedbackSampleRate = cfg.SQSSuccessFeedbackSampleRate
+	info.FirehoseSuccessFeedbackRoleArn = cfg.FirehoseSuccessFeedbackRoleArn
+	info.FirehoseFailureFeedbackRoleArn = cfg.FirehoseFailureFeedbackRoleArn
+	info.FirehoseSuccessFeedbackSampleRate = cfg.FirehoseSuccessFeedbackSampleRate
+}
+
+// setIfNonEmpty assigns src to *dst only when src is non-empty, mirroring the
+// no-clear-via-empty-string convention UpdateTopic already applies to
+// DeliveryPolicy/KmsMasterKeyID: SetTopicAttributes sets one attribute per
+// call, so an update config only ever carries an opinion on the attribute(s)
+// the caller actually named.
+func setIfNonEmpty(dst *string, src string) {
+	if src != "" {
+		*dst = src
+	}
+}
+
+// applyUpdateFeedbackAttrs merges SignatureVersion, TracingConfig,
+// ArchivePolicy, and the per-protocol delivery-status feedback attributes from
+// an UpdateTopic (SetTopicAttributes) config onto an existing topic's info,
+// leaving any attribute the caller didn't name (empty in cfg) unchanged.
+func applyUpdateFeedbackAttrs(info *driver.TopicInfo, cfg *driver.TopicConfig) {
+	setIfNonEmpty(&info.SignatureVersion, cfg.SignatureVersion)
+	setIfNonEmpty(&info.TracingConfig, cfg.TracingConfig)
+	setIfNonEmpty(&info.ArchivePolicy, cfg.ArchivePolicy)
+	setIfNonEmpty(&info.ApplicationSuccessFeedbackRoleArn, cfg.ApplicationSuccessFeedbackRoleArn)
+	setIfNonEmpty(&info.ApplicationFailureFeedbackRoleArn, cfg.ApplicationFailureFeedbackRoleArn)
+	setIfNonEmpty(&info.ApplicationSuccessFeedbackSampleRate, cfg.ApplicationSuccessFeedbackSampleRate)
+	setIfNonEmpty(&info.HTTPSuccessFeedbackRoleArn, cfg.HTTPSuccessFeedbackRoleArn)
+	setIfNonEmpty(&info.HTTPFailureFeedbackRoleArn, cfg.HTTPFailureFeedbackRoleArn)
+	setIfNonEmpty(&info.HTTPSuccessFeedbackSampleRate, cfg.HTTPSuccessFeedbackSampleRate)
+	setIfNonEmpty(&info.LambdaSuccessFeedbackRoleArn, cfg.LambdaSuccessFeedbackRoleArn)
+	setIfNonEmpty(&info.LambdaFailureFeedbackRoleArn, cfg.LambdaFailureFeedbackRoleArn)
+	setIfNonEmpty(&info.LambdaSuccessFeedbackSampleRate, cfg.LambdaSuccessFeedbackSampleRate)
+	setIfNonEmpty(&info.SQSSuccessFeedbackRoleArn, cfg.SQSSuccessFeedbackRoleArn)
+	setIfNonEmpty(&info.SQSFailureFeedbackRoleArn, cfg.SQSFailureFeedbackRoleArn)
+	setIfNonEmpty(&info.SQSSuccessFeedbackSampleRate, cfg.SQSSuccessFeedbackSampleRate)
+	setIfNonEmpty(&info.FirehoseSuccessFeedbackRoleArn, cfg.FirehoseSuccessFeedbackRoleArn)
+	setIfNonEmpty(&info.FirehoseFailureFeedbackRoleArn, cfg.FirehoseFailureFeedbackRoleArn)
+	setIfNonEmpty(&info.FirehoseSuccessFeedbackSampleRate, cfg.FirehoseSuccessFeedbackSampleRate)
 }
 
 // Subscribe creates a subscription to an SNS topic.
@@ -348,6 +419,22 @@ func (m *Mock) Subscribe(_ context.Context, cfg driver.SubscriptionConfig) (*dri
 
 	if cfg.Endpoint == "" {
 		return nil, errors.New(errors.InvalidArgument, "endpoint is required")
+	}
+
+	// Subscribe is idempotent on (TopicArn, Protocol, Endpoint): real SNS
+	// returns the existing subscription (pending or confirmed) instead of
+	// creating a duplicate. td.mu serializes the scan-then-create so two
+	// concurrent identical Subscribe calls can't both observe "not found" and
+	// each create their own subscription.
+	td.mu.Lock()
+	defer td.mu.Unlock()
+
+	for _, s := range td.subscriptions.All() {
+		if s.Protocol == cfg.Protocol && s.Endpoint == cfg.Endpoint {
+			result := s
+
+			return &result, nil
+		}
 	}
 
 	subID := idgen.GenerateID("sub-")

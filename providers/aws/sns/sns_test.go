@@ -183,6 +183,38 @@ func TestUpdateTopicFIFOAndDeliveryAttributes(t *testing.T) {
 	assert.False(t, info.ContentBasedDeduplication)
 }
 
+// TestUpdateTopicContentBasedDeduplicationRejectedOnStandardTopic guards real
+// AWS's rule that ContentBasedDeduplication is only valid on a FIFO topic: a
+// SetTopicAttributes call naming it on a standard topic must be rejected
+// rather than silently accepted.
+func TestUpdateTopicContentBasedDeduplicationRejectedOnStandardTopic(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateTopic(ctx, driver.TopicConfig{Name: "standard"})
+	require.NoError(t, err)
+
+	_, err = m.UpdateTopic(ctx, driver.TopicConfig{
+		Name: "standard", ContentBasedDeduplication: true, ContentBasedDeduplicationSet: true,
+	})
+	require.Error(t, err)
+
+	// The rejection must not have partially applied the attribute.
+	info, err := m.GetTopic(ctx, "standard")
+	require.NoError(t, err)
+	assert.False(t, info.ContentBasedDeduplication)
+
+	// The FIFO case must keep working: this is a regression guard, not a
+	// blanket rejection of the attribute.
+	_, err = m.CreateTopic(ctx, driver.TopicConfig{Name: "standard2.fifo", FifoTopic: true})
+	require.NoError(t, err)
+
+	_, err = m.UpdateTopic(ctx, driver.TopicConfig{
+		Name: "standard2.fifo", ContentBasedDeduplication: true, ContentBasedDeduplicationSet: true,
+	})
+	require.NoError(t, err)
+}
+
 // TestTagUntagTopic is a regression guard for issue #319: SNS TagResource /
 // UntagResource were unimplemented.
 func TestTagUntagTopic(t *testing.T) {
@@ -472,6 +504,60 @@ func TestMultipleSubscriptionsSameTopic(t *testing.T) {
 	subs, err := m.ListSubscriptions(ctx, topic.Name)
 	require.NoError(t, err)
 	assert.Equal(t, 3, len(subs))
+}
+
+// TestSubscribeIdempotent guards real SNS's documented Subscribe semantics: a
+// repeat Subscribe call with the same (TopicArn, Protocol, Endpoint) returns
+// the existing subscription instead of creating a duplicate.
+func TestSubscribeIdempotent(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	topic := createTestTopic(t, m, "idempotent-sub")
+
+	first, err := m.Subscribe(ctx, driver.SubscriptionConfig{
+		TopicID: topic.Name, Protocol: "sqs", Endpoint: "arn:aws:sqs:us-east-1:123456789012:q",
+	})
+	require.NoError(t, err)
+
+	second, err := m.Subscribe(ctx, driver.SubscriptionConfig{
+		TopicID: topic.Name, Protocol: "sqs", Endpoint: "arn:aws:sqs:us-east-1:123456789012:q",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, first.ID, second.ID)
+
+	subs, err := m.ListSubscriptions(ctx, topic.Name)
+	require.NoError(t, err)
+	assert.Len(t, subs, 1)
+}
+
+// TestSubscribeIdempotentPending guards the pending-confirmation case: a
+// repeat Subscribe on a protocol that starts pending (e.g. email) returns the
+// same pending subscription rather than minting a second confirmation token.
+func TestSubscribeIdempotentPending(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	topic := createTestTopic(t, m, "idempotent-pending")
+
+	first, err := m.Subscribe(ctx, driver.SubscriptionConfig{
+		TopicID: topic.Name, Protocol: "email", Endpoint: "dev@example.com",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "pending", first.Status)
+
+	second, err := m.Subscribe(ctx, driver.SubscriptionConfig{
+		TopicID: topic.Name, Protocol: "email", Endpoint: "dev@example.com",
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, first.ID, second.ID)
+	assert.Equal(t, first.ConfirmationToken, second.ConfirmationToken)
+
+	subs, err := m.ListSubscriptions(ctx, topic.Name)
+	require.NoError(t, err)
+	assert.Len(t, subs, 1)
 }
 
 func TestUnsubscribe(t *testing.T) {
