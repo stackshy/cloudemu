@@ -2,6 +2,7 @@ package sfn
 
 import (
 	"context"
+	"sort"
 	"strconv"
 	"time"
 
@@ -234,6 +235,10 @@ func (m *Mock) DeleteStateMachine(_ context.Context, arn string) error {
 	return nil
 }
 
+// ListStateMachines returns every state machine ordered the way real Step
+// Functions does: most recently created first (ties broken by ARN for
+// deterministic output when two machines share a creation timestamp, e.g.
+// under FakeClock).
 func (m *Mock) ListStateMachines(_ context.Context) ([]driver.StateMachine, error) {
 	all := m.machines.SortedValues()
 	out := make([]driver.StateMachine, 0, len(all))
@@ -243,6 +248,14 @@ func (m *Mock) ListStateMachines(_ context.Context) ([]driver.StateMachine, erro
 		out = append(out, copySM(&sd.sm))
 		sd.mu.RUnlock()
 	}
+
+	sort.SliceStable(out, func(i, j int) bool {
+		if !out[i].CreationDate.Equal(out[j].CreationDate) {
+			return out[i].CreationDate.After(out[j].CreationDate)
+		}
+
+		return out[i].ARN < out[j].ARN
+	})
 
 	return out, nil
 }
