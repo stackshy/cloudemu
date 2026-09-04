@@ -37,10 +37,18 @@ type endpointXML struct {
 // cacheNodeXML mirrors AWS's CacheNode. The SDK reads the per-node Endpoint to
 // populate CacheCluster.CacheNodes[].Endpoint; that is where a single-node
 // Redis cluster's connection address lives.
+//
+// CustomerAvailabilityZone is mandatory in practice: the Terraform AWS provider
+// dereferences it unconditionally when flattening a cluster's nodes and aborts
+// with "Unexpected nil pointer" if it is absent, so every emitted node must
+// carry one. CacheNodeCreateTime is included for fidelity (real AWS always sets
+// it) even though the provider does not validate it.
 type cacheNodeXML struct {
-	CacheNodeID     string       `xml:"CacheNodeId"`
-	CacheNodeStatus string       `xml:"CacheNodeStatus"`
-	Endpoint        *endpointXML `xml:"Endpoint,omitempty"`
+	CacheNodeID              string       `xml:"CacheNodeId"`
+	CacheNodeStatus          string       `xml:"CacheNodeStatus"`
+	CacheNodeCreateTime      string       `xml:"CacheNodeCreateTime,omitempty"`
+	Endpoint                 *endpointXML `xml:"Endpoint,omitempty"`
+	CustomerAvailabilityZone string       `xml:"CustomerAvailabilityZone"`
 }
 
 type cacheNodesXML struct {
@@ -55,17 +63,19 @@ type cacheParameterGroupStatusXML struct {
 }
 
 type cacheClusterXML struct {
-	CacheClusterID       string                        `xml:"CacheClusterId"`
-	CacheClusterStatus   string                        `xml:"CacheClusterStatus"`
-	CacheNodeType        string                        `xml:"CacheNodeType,omitempty"`
-	Engine               string                        `xml:"Engine,omitempty"`
-	EngineVersion        string                        `xml:"EngineVersion,omitempty"`
-	NumCacheNodes        int                           `xml:"NumCacheNodes,omitempty"`
-	CacheClusterCreateAt string                        `xml:"CacheClusterCreateTime,omitempty"`
-	ARN                  string                        `xml:"ARN,omitempty"`
-	CacheParameterGroup  *cacheParameterGroupStatusXML `xml:"CacheParameterGroup,omitempty"`
-	ConfigurationEndpt   *endpointXML                  `xml:"ConfigurationEndpoint,omitempty"`
-	CacheNodes           *cacheNodesXML                `xml:"CacheNodes,omitempty"`
+	CacheClusterID          string                        `xml:"CacheClusterId"`
+	CacheClusterStatus      string                        `xml:"CacheClusterStatus"`
+	ReplicationGroupID      string                        `xml:"ReplicationGroupId,omitempty"`
+	AutoMinorVersionUpgrade bool                          `xml:"AutoMinorVersionUpgrade"`
+	CacheNodeType           string                        `xml:"CacheNodeType,omitempty"`
+	Engine                  string                        `xml:"Engine,omitempty"`
+	EngineVersion           string                        `xml:"EngineVersion,omitempty"`
+	NumCacheNodes           int                           `xml:"NumCacheNodes,omitempty"`
+	CacheClusterCreateAt    string                        `xml:"CacheClusterCreateTime,omitempty"`
+	ARN                     string                        `xml:"ARN,omitempty"`
+	CacheParameterGroup     *cacheParameterGroupStatusXML `xml:"CacheParameterGroup,omitempty"`
+	ConfigurationEndpt      *endpointXML                  `xml:"ConfigurationEndpoint,omitempty"`
+	CacheNodes              *cacheNodesXML                `xml:"CacheNodes,omitempty"`
 }
 
 // --- response envelopes, one per Action ---
@@ -232,6 +242,26 @@ func defaultParamGroupName(engine, version string) string {
 	return "default." + family
 }
 
+// fallbackRegion is used when a cluster's ARN is missing or malformed and its
+// region cannot be read; it is the AWS default region.
+const fallbackRegion = "us-east-1"
+
+// clusterAZ derives a plausible availability zone (the region's first AZ,
+// "<region>a") for a node from the cluster's ARN
+// (arn:aws:elasticache:<region>:<account>:...). The emulator does not model
+// per-node AZ placement, but the field must be present and non-empty.
+func clusterAZ(arn string) string {
+	const regionField = 3
+
+	region := fallbackRegion
+
+	if parts := strings.Split(arn, ":"); len(parts) > regionField && parts[regionField] != "" {
+		region = parts[regionField]
+	}
+
+	return region + "a"
+}
+
 // splitEndpoint separates the driver's "host:port" endpoint into an Address and
 // Port. Falls back to the default Redis port when no ":port" suffix is present.
 func splitEndpoint(endpoint string) *endpointXML {
@@ -272,14 +302,16 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 	}
 
 	out := cacheClusterXML{
-		CacheClusterID:       info.Name,
-		CacheClusterStatus:   info.Status,
-		CacheNodeType:        info.NodeType,
-		Engine:               info.Engine,
-		EngineVersion:        info.EngineVersion,
-		NumCacheNodes:        numNodes,
-		CacheClusterCreateAt: info.CreatedAt,
-		ARN:                  info.ARN,
+		CacheClusterID:          info.Name,
+		CacheClusterStatus:      info.Status,
+		ReplicationGroupID:      info.ReplicationGroupID,
+		AutoMinorVersionUpgrade: info.AutoMinorVersionUpgrade,
+		CacheNodeType:           info.NodeType,
+		Engine:                  info.Engine,
+		EngineVersion:           info.EngineVersion,
+		NumCacheNodes:           numNodes,
+		CacheClusterCreateAt:    info.CreatedAt,
+		ARN:                     info.ARN,
 	}
 
 	if info.Engine != "" {
@@ -304,12 +336,21 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 			out.ConfigurationEndpt = ep
 		}
 
+		// Every node must carry a non-empty CustomerAvailabilityZone or the
+		// Terraform provider aborts reading the cluster (see cacheNodeXML). The
+		// emulator does not place nodes in specific AZs, so report the first AZ of
+		// the cluster's region (region + "a"), which is what a single-AZ cluster
+		// looks like to a client.
+		az := clusterAZ(info.ARN)
+
 		nodes := make([]cacheNodeXML, 0, numNodes)
 		for i := 1; i <= numNodes; i++ {
 			nodes = append(nodes, cacheNodeXML{
-				CacheNodeID:     fmt.Sprintf("%04d", i),
-				CacheNodeStatus: info.Status,
-				Endpoint:        ep,
+				CacheNodeID:              fmt.Sprintf("%04d", i),
+				CacheNodeStatus:          info.Status,
+				CacheNodeCreateTime:      info.CreatedAt,
+				Endpoint:                 ep,
+				CustomerAvailabilityZone: az,
 			})
 		}
 
