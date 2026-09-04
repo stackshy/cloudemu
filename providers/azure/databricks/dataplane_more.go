@@ -2,6 +2,7 @@ package databricks
 
 import (
 	"context"
+	"sort"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
@@ -32,6 +33,8 @@ func (m *Mock) ListRuns(_ context.Context, jobID int64) ([]driver.Run, error) {
 			out = append(out, *run)
 		}
 	}
+
+	sort.SliceStable(out, func(i, j int) bool { return out[i].RunID < out[j].RunID })
 
 	return out, nil
 }
@@ -186,6 +189,8 @@ func (m *Mock) ListClusterPolicies(_ context.Context) ([]driver.ClusterPolicy, e
 		out = append(out, *p)
 	}
 
+	sort.SliceStable(out, func(i, j int) bool { return out[i].PolicyID < out[j].PolicyID })
+
 	return out, nil
 }
 
@@ -246,6 +251,8 @@ func (m *Mock) AllClusterLibraryStatuses(_ context.Context) ([]driver.ClusterLib
 	for clusterID, statuses := range all {
 		out = append(out, driver.ClusterLibraryStatuses{ClusterID: clusterID, Statuses: cloneStatuses(statuses)})
 	}
+
+	sort.SliceStable(out, func(i, j int) bool { return out[i].ClusterID < out[j].ClusterID })
 
 	return out, nil
 }

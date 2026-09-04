@@ -110,6 +110,64 @@ func TestJobLifecycle(t *testing.T) {
 	assertError(t, err, true)
 }
 
+// TestDataPlaneListOrderDeterministic guards the data-plane list endpoints
+// (clusters, jobs, instance pools, policies) against map-iteration-order
+// nondeterminism: a real Databricks SDK/Terraform user must see a stable order.
+func TestDataPlaneListOrderDeterministic(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	for _, n := range []string{"c1", "c2", "c3", "c4", "c5"} {
+		_, err := m.CreateCluster(ctx, driver.ClusterConfig{Name: n, SparkVersion: "13.3", NodeTypeID: "nt"})
+		requireNoError(t, err)
+	}
+	for _, n := range []string{"j1", "j2", "j3", "j4", "j5"} {
+		_, err := m.CreateJob(ctx, driver.JobConfig{Name: n, SettingsJSON: []byte(`{}`)})
+		requireNoError(t, err)
+	}
+	for _, n := range []string{"p1", "p2", "p3"} {
+		_, err := m.CreateInstancePool(ctx, driver.InstancePoolConfig{Name: n, NodeTypeID: "nt", MaxCapacity: 1})
+		requireNoError(t, err)
+	}
+	for _, n := range []string{"pol1", "pol2", "pol3"} {
+		_, err := m.CreateClusterPolicy(ctx, driver.ClusterPolicyConfig{Name: n})
+		requireNoError(t, err)
+	}
+
+	sortedByClusterID := func(cs []driver.Cluster) bool {
+		for i := 1; i < len(cs); i++ {
+			if cs[i-1].ID > cs[i].ID {
+				return false
+			}
+		}
+
+		return true
+	}
+
+	// Jobs get monotonically increasing int64 IDs, so ID order == creation order.
+	var wantJobs []int64
+
+	first, err := m.ListJobs(ctx)
+	requireNoError(t, err)
+	for i := range first {
+		wantJobs = append(wantJobs, first[i].ID)
+	}
+
+	for iter := 0; iter < 20; iter++ {
+		clusters, err := m.ListClusters(ctx)
+		requireNoError(t, err)
+		if !sortedByClusterID(clusters) {
+			t.Fatalf("clusters not sorted by ID: %+v", clusters)
+		}
+
+		jobs, err := m.ListJobs(ctx)
+		requireNoError(t, err)
+		for i := range jobs {
+			assertEqual(t, wantJobs[i], jobs[i].ID)
+		}
+	}
+}
+
 func TestPermissions(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
