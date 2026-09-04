@@ -152,3 +152,79 @@ func TestCreateAccessPointClientTokenConcurrent(t *testing.T) {
 		t.Fatalf("want exactly 1 access point after idempotent races, got %d", len(aps))
 	}
 }
+
+// TestDeleteFileSystemBlockedByReplication verifies that a file system with an
+// active replication configuration cannot be deleted (real EFS: "You can't
+// delete a file system that is part of an EFS Replication configuration"),
+// and that deletion succeeds once the replication configuration is removed.
+func TestDeleteFileSystemBlockedByReplication(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	fs, err := m.CreateFileSystem(ctx, driver.CreateFileSystemInput{CreationToken: "repl-src"})
+	if err != nil {
+		t.Fatalf("create fs: %v", err)
+	}
+
+	if _, err := m.CreateReplicationConfiguration(ctx, fs.FileSystemID,
+		[]driver.DestinationToCreate{{Region: "us-west-2"}}); err != nil {
+		t.Fatalf("create replication: %v", err)
+	}
+
+	if err := m.DeleteFileSystem(ctx, fs.FileSystemID); !errors.IsFailedPrecondition(err) {
+		t.Fatalf("delete with active replication should be FailedPrecondition (FileSystemInUse), got %v", err)
+	}
+
+	if err := m.DeleteReplicationConfiguration(ctx, fs.FileSystemID); err != nil {
+		t.Fatalf("delete replication: %v", err)
+	}
+
+	if err := m.DeleteFileSystem(ctx, fs.FileSystemID); err != nil {
+		t.Fatalf("delete after replication removed should succeed, got %v", err)
+	}
+}
+
+// TestCreateMountTargetUniqueIPWithoutResolver verifies that auto-assigned
+// mount-target IP addresses never collide, even with no subnet resolver wired
+// (so every mount target falls back to the synthetic-IP path). Real EFS/EC2
+// never issues the same private IP to two network interfaces.
+func TestCreateMountTargetUniqueIPWithoutResolver(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	fs, err := m.CreateFileSystem(ctx, driver.CreateFileSystemInput{CreationToken: "ip-fs"})
+	if err != nil {
+		t.Fatalf("create fs: %v", err)
+	}
+
+	mt1, err := m.CreateMountTarget(ctx, driver.CreateMountTargetInput{
+		FileSystemID: fs.FileSystemID, SubnetID: "subnet-a",
+	})
+	if err != nil {
+		t.Fatalf("create mt1: %v", err)
+	}
+
+	mt2, err := m.CreateMountTarget(ctx, driver.CreateMountTargetInput{
+		FileSystemID: fs.FileSystemID, SubnetID: "subnet-b",
+	})
+	if err != nil {
+		t.Fatalf("create mt2: %v", err)
+	}
+
+	if mt1.IPAddress == mt2.IPAddress {
+		t.Fatalf("two mount targets got the same auto-assigned IP %q; real EFS never issues the same IP twice",
+			mt1.IPAddress)
+	}
+
+	// An explicit IPAddress is always honored verbatim.
+	mt3, err := m.CreateMountTarget(ctx, driver.CreateMountTargetInput{
+		FileSystemID: fs.FileSystemID, SubnetID: "subnet-c", IPAddress: "10.5.5.5",
+	})
+	if err != nil {
+		t.Fatalf("create mt3: %v", err)
+	}
+
+	if mt3.IPAddress != "10.5.5.5" {
+		t.Fatalf("explicit IPAddress not honored: got %q", mt3.IPAddress)
+	}
+}

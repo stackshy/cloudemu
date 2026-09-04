@@ -73,3 +73,46 @@ func TestSnapshotRoundTripEFS(t *testing.T) {
 		t.Fatalf("re-snapshot not byte-identical to original")
 	}
 }
+
+// TestSnapshotRoundTripEFSPreservesIPCounters verifies that the mount-target IP
+// allocator's counters survive a snapshot/restore, so a mount target created
+// after restore never reuses an IP already handed out before the snapshot
+// (which would otherwise produce a duplicate IP once the in-memory counter
+// resets to zero on a fresh mock).
+func TestSnapshotRoundTripEFSPreservesIPCounters(t *testing.T) {
+	ctx := context.Background()
+	src := newMock(t)
+
+	fs, err := src.CreateFileSystem(ctx, driver.CreateFileSystemInput{CreationToken: "ip-snap"})
+	if err != nil {
+		t.Fatalf("create file system: %v", err)
+	}
+
+	mt1, err := src.CreateMountTarget(ctx, driver.CreateMountTargetInput{
+		FileSystemID: fs.FileSystemID, SubnetID: "subnet-snap-1",
+	})
+	if err != nil {
+		t.Fatalf("create mount target: %v", err)
+	}
+
+	raw, err := src.Snapshot(ctx, true)
+	if err != nil {
+		t.Fatalf("snapshot: %v", err)
+	}
+
+	dst := newMock(t)
+	if err := dst.Restore(ctx, raw); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+
+	mt2, err := dst.CreateMountTarget(ctx, driver.CreateMountTargetInput{
+		FileSystemID: fs.FileSystemID, SubnetID: "subnet-snap-2",
+	})
+	if err != nil {
+		t.Fatalf("create mount target after restore: %v", err)
+	}
+
+	if mt1.IPAddress == mt2.IPAddress {
+		t.Fatalf("mount target created after restore reused IP %q handed out before the snapshot", mt1.IPAddress)
+	}
+}

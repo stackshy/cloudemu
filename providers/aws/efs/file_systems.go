@@ -104,10 +104,11 @@ func backupOnCreate(backup bool, availabilityZoneName string) string {
 	return driver.BackupDisabled
 }
 
-// DeleteFileSystem deletes a file system. It must have no mount targets or
-// access points. The check and delete run under the file system's write lock so
-// a concurrent CreateMountTarget can't attach to a file system mid-delete, and
-// all index entries (token, access points) are released.
+// DeleteFileSystem deletes a file system. It must have no mount targets, no
+// access points, and no replication configuration. The check and delete run
+// under the file system's write lock so a concurrent CreateMountTarget can't
+// attach to a file system mid-delete, and all index entries (token, access
+// points) are released.
 func (m *Mock) DeleteFileSystem(_ context.Context, fileSystemID string) error {
 	fd, ok := m.getFS(fileSystemID)
 	if !ok {
@@ -125,6 +126,11 @@ func (m *Mock) DeleteFileSystem(_ context.Context, fileSystemID string) error {
 	if n := len(fd.accessPts); n > 0 {
 		return inUse(driver.KindFileSystem,
 			"file system %q has %d access point(s); delete them first", fileSystemID, n)
+	}
+
+	if fd.replication != nil {
+		return inUse(driver.KindFileSystem,
+			"file system %q has a replication configuration; delete it first", fileSystemID)
 	}
 
 	m.fileSystems.Delete(fileSystemID)
