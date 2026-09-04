@@ -106,6 +106,11 @@ type deploymentResponse struct {
 	CreatedDate int64  `json:"createdDate"`
 }
 
+// listDeploymentsResponse is the GetDeployments wire object.
+type listDeploymentsResponse struct {
+	Item []deploymentResponse `json:"item"`
+}
+
 // stageResponse is the Stage wire object.
 type stageResponse struct {
 	StageName    string            `json:"stageName"`
@@ -113,6 +118,11 @@ type stageResponse struct {
 	Description  string            `json:"description,omitempty"`
 	CreatedDate  int64             `json:"createdDate"`
 	Variables    map[string]string `json:"variables,omitempty"`
+}
+
+// listStagesResponse is the GetStages wire object.
+type listStagesResponse struct {
+	Item []stageResponse `json:"item"`
 }
 
 func toRestAPIResponse(a *driver.RestAPI) restAPIResponse {
@@ -160,6 +170,10 @@ func toIntegrationResponse(ig *driver.Integration) integrationResponse {
 		Type: ig.Type, HTTPMethod: ig.IntegrationHTTPMethod,
 		URI: ig.URI, PassthroughBehavior: ig.PassthroughBehavior,
 	}
+}
+
+func toDeploymentResponse(d *driver.Deployment) deploymentResponse {
+	return deploymentResponse{ID: d.ID, Description: d.Description, CreatedDate: d.CreatedDate}
 }
 
 func toStageResponse(s *driver.Stage) stageResponse {

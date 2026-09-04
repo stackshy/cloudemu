@@ -74,6 +74,51 @@ func (m *Mock) GetResources(_ context.Context, restAPIID string) ([]driver.Resou
 	return out, nil
 }
 
+// DeleteResource removes a resource and its whole descendant subtree, as real
+// API Gateway does. The API's root resource cannot be deleted.
+func (m *Mock) DeleteResource(_ context.Context, restAPIID, resourceID string) error {
+	ad, err := m.getAPI(restAPIID)
+	if err != nil {
+		return err
+	}
+
+	ad.mu.Lock()
+	defer ad.mu.Unlock()
+
+	if _, ok := ad.resources[resourceID]; !ok {
+		return cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+	}
+
+	if resourceID == ad.api.RootResourceID {
+		return cerrors.New(cerrors.InvalidArgument, "Cannot remove the root resource of the RestApi")
+	}
+
+	for _, id := range descendants(ad.resources, resourceID) {
+		delete(ad.resources, id)
+	}
+
+	return nil
+}
+
+// descendants returns resourceID plus every resource beneath it in the tree
+// (its children, grandchildren, ...), so DeleteResource can remove the whole
+// subtree in one pass.
+func descendants(resources map[string]*driver.Resource, resourceID string) []string {
+	out := []string{resourceID}
+
+	for i := 0; i < len(out); i++ {
+		parent := out[i]
+
+		for id, r := range resources {
+			if r.ParentID == parent {
+				out = append(out, id)
+			}
+		}
+	}
+
+	return out
+}
+
 // GetResource returns a single resource by id.
 func (m *Mock) GetResource(_ context.Context, restAPIID, resourceID string) (*driver.Resource, error) {
 	ad, err := m.getAPI(restAPIID)

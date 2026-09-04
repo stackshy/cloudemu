@@ -206,6 +206,87 @@ func TestE2E_UndefinedRouteForbidden(t *testing.T) {
 	}
 }
 
+// TestE2E_DeleteLifecycle drives the full destroy path a Terraform
+// `terraform destroy` performs against a REST API: delete the integration, the
+// method, the stage, the deployment, and finally the resource — verifying each
+// step over the wire and that a re-GET afterward 404s.
+func TestE2E_DeleteLifecycle(t *testing.T) {
+	srv := newE2E(t)
+	base := srv.URL
+
+	api := doJSON(t, http.MethodPost, base+"/restapis", `{"name":"petstore"}`)
+	apiID, _ := api["id"].(string)
+	rootID, _ := api["rootResourceId"].(string)
+
+	res := doJSON(t, http.MethodPost, base+"/restapis/"+apiID+"/resources/"+rootID, `{"pathPart":"pets"}`)
+	resID, _ := res["id"].(string)
+
+	doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET", `{"authorizationType":"NONE"}`)
+	doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET/integration", `{"type":"MOCK"}`)
+
+	dep := doJSON(t, http.MethodPost, base+"/restapis/"+apiID+"/deployments", `{"stageName":"prod"}`)
+	depID, _ := dep["id"].(string)
+
+	// GetDeployment / GetDeployments / GetStages round-trip before teardown.
+	got := doJSON(t, http.MethodGet, base+"/restapis/"+apiID+"/deployments/"+depID, "")
+	if got["id"] != depID {
+		t.Fatalf("GetDeployment mismatch: %v", got)
+	}
+
+	deps := doJSON(t, http.MethodGet, base+"/restapis/"+apiID+"/deployments", "")
+	if items, _ := deps["item"].([]any); len(items) != 1 {
+		t.Fatalf("GetDeployments = %v, want 1 item", deps)
+	}
+
+	stages := doJSON(t, http.MethodGet, base+"/restapis/"+apiID+"/stages", "")
+	if items, _ := stages["item"].([]any); len(items) != 1 {
+		t.Fatalf("GetStages = %v, want 1 item", stages)
+	}
+
+	deleteOK(t, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET/integration")
+	deleteOK(t, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET")
+	deleteOK(t, base+"/restapis/"+apiID+"/stages/prod")
+	deleteOK(t, base+"/restapis/"+apiID+"/deployments/"+depID)
+	deleteOK(t, base+"/restapis/"+apiID+"/resources/"+resID)
+
+	if status := doStatus(t, http.MethodGet, base+"/restapis/"+apiID+"/resources/"+resID); status != http.StatusNotFound {
+		t.Fatalf("GetResource after delete status = %d, want 404", status)
+	}
+}
+
+func deleteOK(t *testing.T, url string) {
+	t.Helper()
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, nil)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE %s: %v", url, err)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("DELETE %s -> %d, want 202: %s", url, resp.StatusCode, body)
+	}
+}
+
+func doStatus(t *testing.T, method, url string) int {
+	t.Helper()
+
+	req, _ := http.NewRequestWithContext(context.Background(), method, url, nil)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+
+	defer resp.Body.Close()
+
+	return resp.StatusCode
+}
+
 // TestE2E_ControlPlaneRoundTrip verifies the management API list/get after create.
 func TestE2E_ControlPlaneRoundTrip(t *testing.T) {
 	srv := newE2E(t)
