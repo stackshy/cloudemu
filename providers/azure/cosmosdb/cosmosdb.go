@@ -89,6 +89,32 @@ func (m *Mock) SetTableAttributes(table string, attrs driver.AccountAttributes) 
 	m.accountAttrs[table] = attrs
 }
 
+// UpdateTableAttributes atomically applies fn to a table's stored Cosmos-account
+// attributes (Azure databaseAccounts PATCH — DatabaseAccountsClient.Update),
+// seeding the common defaults (GlobalDocumentDB/Standard offer) first if none
+// were set yet. Routed through the same mutex as Set/Get rather than a
+// Get-then-Set pair, so a concurrent PATCH/create can never lose an update.
+func (m *Mock) UpdateTableAttributes(
+	_ context.Context, table string, fn func(driver.AccountAttributes) driver.AccountAttributes,
+) (driver.AccountAttributes, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if m.accountAttrs == nil {
+		m.accountAttrs = make(map[string]driver.AccountAttributes)
+	}
+
+	cur, ok := m.accountAttrs[table]
+	if !ok {
+		cur = driver.AccountAttributes{Kind: "GlobalDocumentDB", OfferType: "Standard"}
+	}
+
+	updated := fn(cur)
+	m.accountAttrs[table] = updated
+
+	return updated, nil
+}
+
 // AccountTables returns the names of tables that have been registered as Cosmos
 // DB accounts (i.e. had account attributes seeded through SetTableAttributes),
 // sorted for a deterministic listing. Data-plane containers, which never carry

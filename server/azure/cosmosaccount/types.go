@@ -32,6 +32,27 @@ type armCapability struct {
 	Name string `json:"name,omitempty"`
 }
 
+// armAccountUpdate is the ARM databaseAccounts PATCH body
+// (DatabaseAccountUpdateParameters). Unlike armAccountCreate, every field must
+// be optional and distinguishable from "not present" on decode — real Azure's
+// update type has no "kind" field at all (kind is immutable after create), and
+// EnableMultipleWriteLocations/ConsistencyPolicy/etc. use pointers here so a
+// PATCH that omits them doesn't reset them.
+type armAccountUpdate struct {
+	Location   string                 `json:"location,omitempty"`
+	Tags       map[string]string      `json:"tags,omitempty"`
+	Properties *armAccountUpdateProps `json:"properties,omitempty"`
+}
+
+// armAccountUpdateProps is the settable subset of
+// DatabaseAccountUpdateProperties the emulator tracks.
+type armAccountUpdateProps struct {
+	Capabilities                 []armCapability       `json:"capabilities,omitempty"`
+	Locations                    []armLocation         `json:"locations,omitempty"`
+	EnableMultipleWriteLocations *bool                 `json:"enableMultipleWriteLocations,omitempty"`
+	ConsistencyPolicy            *armConsistencyPolicy `json:"consistencyPolicy,omitempty"`
+}
+
 // armAccount is the ARM databaseAccounts wire shape returned on create/get.
 type armAccount struct {
 	ID         string            `json:"id,omitempty"`
