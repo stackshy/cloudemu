@@ -12,10 +12,32 @@ import (
 // subLocation is the ?location sub-resource key (GetBucketLocation).
 const subLocation = "location"
 
+// subLifecycle is the ?lifecycle sub-resource key (Put/GetBucketLifecycleConfiguration).
+const subLifecycle = "lifecycle"
+
 // maxConfigBody caps a bucket-configuration document. Real S3 bucket policies
 // top out at 20 KB; this is a generous ceiling covering cors/lifecycle/website
 // XML as well.
 const maxConfigBody = 2 << 20
+
+// transitionDefaultMinimumObjectSizeHeader is the request/response header real
+// S3 uses to carry PutBucketLifecycleConfiguration's
+// TransitionDefaultMinimumObjectSize setting. Unlike every other lifecycle
+// field it travels as a header rather than XML body, so the byte-for-byte raw
+// echo in writeRawBucketConfig never sees it — it needs separate capture and
+// echo alongside the stored document.
+const transitionDefaultMinimumObjectSizeHeader = "X-Amz-Transition-Default-Minimum-Object-Size"
+
+// transitionDefaultMinimumObjectSizeKey is the internal RawBucketConfig
+// sub-resource name used to persist the header value alongside the lifecycle
+// document. It is not a real S3 query-string sub-resource, just a bookkeeping
+// key in the same opaque per-bucket document store.
+const transitionDefaultMinimumObjectSizeKey = "lifecycle-transition-default-minimum-object-size"
+
+// transitionDefaultMinimumObjectSizeDefault is the value real S3 applies to a
+// general purpose bucket's lifecycle configuration when the header is omitted
+// from the request.
+const transitionDefaultMinimumObjectSizeDefault = "all_storage_classes_128K"
 
 // notConfiguredErr maps a read-only bucket configuration sub-resource (query
 // key) to the AWS error code S3 returns when the bucket has no such
@@ -28,7 +50,7 @@ var notConfiguredErr = map[string]string{
 	"policy":            "NoSuchBucketPolicy",
 	"cors":              "NoSuchCORSConfiguration",
 	"website":           "NoSuchWebsiteConfiguration",
-	"lifecycle":         "NoSuchLifecycleConfiguration",
+	subLifecycle:        "NoSuchLifecycleConfiguration",
 	"replication":       "ReplicationConfigurationNotFoundError",
 	"encryption":        "ServerSideEncryptionConfigurationNotFoundError",
 	"object-lock":       "ObjectLockConfigurationNotFoundError",
@@ -41,7 +63,7 @@ var notConfiguredErr = map[string]string{
 //
 //nolint:gochecknoglobals // static set
 var configSubresources = []string{
-	"policy", "cors", "website", "lifecycle", "replication", "encryption",
+	"policy", "cors", "website", subLifecycle, "replication", "encryption",
 	"object-lock", "publicAccessBlock", "ownershipControls",
 	"requestPayment", "accelerate", "logging", subLocation, "policyStatus",
 }
@@ -98,6 +120,20 @@ func (h *Handler) putBucketConfig(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
+	if sub == subLifecycle {
+		minSize := r.Header.Get(transitionDefaultMinimumObjectSizeHeader)
+		if minSize == "" {
+			minSize = transitionDefaultMinimumObjectSizeDefault
+		}
+
+		if err := h.rawConfig.PutBucketConfig(r.Context(), bucket, transitionDefaultMinimumObjectSizeKey, []byte(minSize)); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.Header().Set(transitionDefaultMinimumObjectSizeHeader, minSize)
+	}
+
 	w.WriteHeader(http.StatusOK)
 }
 
@@ -108,6 +144,10 @@ func (h *Handler) deleteBucketConfig(w http.ResponseWriter, r *http.Request, buc
 		if err := h.rawConfig.DeleteBucketConfig(r.Context(), bucket, sub); err != nil {
 			writeErr(w, err)
 			return
+		}
+
+		if sub == subLifecycle {
+			_ = h.rawConfig.DeleteBucketConfig(r.Context(), bucket, transitionDefaultMinimumObjectSizeKey)
 		}
 	}
 
@@ -138,12 +178,30 @@ func (h *Handler) getBucketConfig(w http.ResponseWriter, r *http.Request, bucket
 
 	if h.rawConfig != nil {
 		if body, err := h.rawConfig.GetBucketConfig(r.Context(), bucket, sub); err == nil {
+			if sub == subLifecycle {
+				w.Header().Set(transitionDefaultMinimumObjectSizeHeader, h.lifecycleTransitionMinSize(r, bucket))
+			}
+
 			writeRawBucketConfig(w, sub, body)
+
 			return
 		}
 	}
 
 	writeConfigDefault(w, sub)
+}
+
+// lifecycleTransitionMinSize returns the TransitionDefaultMinimumObjectSize
+// value stored alongside the bucket's lifecycle document, falling back to the
+// real-S3 default for a general purpose bucket when none was ever recorded
+// (e.g. a document written before this side-channel existed).
+func (h *Handler) lifecycleTransitionMinSize(r *http.Request, bucket string) string {
+	stored, err := h.rawConfig.GetBucketConfig(r.Context(), bucket, transitionDefaultMinimumObjectSizeKey)
+	if err != nil {
+		return transitionDefaultMinimumObjectSizeDefault
+	}
+
+	return string(stored)
 }
 
 // writeRawBucketConfig echoes a persisted configuration document verbatim with

@@ -124,7 +124,13 @@ func TestSDKBucketEncryptionRoundTrip(t *testing.T) {
 
 // TestSDKBucketLifecycleRoundTrip covers the config-persistence gap for
 // PutBucketLifecycleConfiguration: the rule must read back instead of
-// NoSuchLifecycleConfiguration.
+// NoSuchLifecycleConfiguration. It also covers TransitionDefaultMinimumObjectSize,
+// which real S3 carries as a request/response HEADER rather than XML body — the
+// Terraform AWS provider always sends this header (its schema defaults it to
+// all_storage_classes_128K), and polls GetBucketLifecycleConfiguration
+// comparing the full rule set including this field until it matches. Dropping
+// it made every "terraform apply" of aws_s3_bucket_lifecycle_configuration hang
+// for its full 3-minute timeout and then fail outright.
 func TestSDKBucketLifecycleRoundTrip(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()
@@ -142,6 +148,7 @@ func TestSDKBucketLifecycleRoundTrip(t *testing.T) {
 				Expiration: &types.LifecycleExpiration{Days: aws.Int32(30)},
 			}},
 		},
+		TransitionDefaultMinimumObjectSize: types.TransitionDefaultMinimumObjectSizeAllStorageClasses128k,
 	}); err != nil {
 		t.Fatalf("PutBucketLifecycleConfiguration: %v", err)
 	}
@@ -157,6 +164,47 @@ func TestSDKBucketLifecycleRoundTrip(t *testing.T) {
 	}
 	if got.Rules[0].Expiration == nil || aws.ToInt32(got.Rules[0].Expiration.Days) != 30 {
 		t.Fatalf("lifecycle expiration = %+v, want 30 days", got.Rules[0].Expiration)
+	}
+	if got.TransitionDefaultMinimumObjectSize != types.TransitionDefaultMinimumObjectSizeAllStorageClasses128k {
+		t.Fatalf("TransitionDefaultMinimumObjectSize = %q, want %q",
+			got.TransitionDefaultMinimumObjectSize, types.TransitionDefaultMinimumObjectSizeAllStorageClasses128k)
+	}
+}
+
+// TestSDKBucketLifecycleTransitionMinSizeDefault covers the case where the
+// client omits TransitionDefaultMinimumObjectSize entirely (e.g. aws-cli/boto3,
+// which never sends this header): real S3 still reports a default value for a
+// general purpose bucket on the subsequent read.
+func TestSDKBucketLifecycleTransitionMinSizeDefault(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	const bucket = "lc-default-bucket"
+	mustCreateBucket(t, client, bucket)
+
+	if _, err := client.PutBucketLifecycleConfiguration(ctx, &awss3.PutBucketLifecycleConfigurationInput{
+		Bucket: aws.String(bucket),
+		LifecycleConfiguration: &types.BucketLifecycleConfiguration{
+			Rules: []types.LifecycleRule{{
+				ID:         aws.String("expire-all"),
+				Status:     types.ExpirationStatusEnabled,
+				Filter:     &types.LifecycleRuleFilter{Prefix: aws.String("")},
+				Expiration: &types.LifecycleExpiration{Days: aws.Int32(7)},
+			}},
+		},
+	}); err != nil {
+		t.Fatalf("PutBucketLifecycleConfiguration: %v", err)
+	}
+
+	got, err := client.GetBucketLifecycleConfiguration(ctx, &awss3.GetBucketLifecycleConfigurationInput{
+		Bucket: aws.String(bucket),
+	})
+	if err != nil {
+		t.Fatalf("GetBucketLifecycleConfiguration: %v", err)
+	}
+	if got.TransitionDefaultMinimumObjectSize != types.TransitionDefaultMinimumObjectSizeAllStorageClasses128k {
+		t.Fatalf("TransitionDefaultMinimumObjectSize = %q, want default %q",
+			got.TransitionDefaultMinimumObjectSize, types.TransitionDefaultMinimumObjectSizeAllStorageClasses128k)
 	}
 }
 
