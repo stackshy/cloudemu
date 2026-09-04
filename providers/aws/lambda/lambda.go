@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"maps"
+	"regexp"
 	"sort"
 	"strings"
 	"sync"
@@ -71,12 +72,16 @@ const (
 	maxTimeoutSecs = 900
 )
 
-// validRuntimes is the set of Runtime identifiers the real Lambda CreateFunction/
-// UpdateFunctionConfiguration API enum accepts (current GA runtimes plus older
-// values the service still allows on an existing function). An unrecognized
-// value is rejected with InvalidParameterValueException, matching real Lambda's
-// "Member must satisfy enum value set" error for the `runtime` parameter. See
-// https://docs.aws.amazon.com/lambda/latest/api/API_CreateFunction.html
+// validRuntimes is a snapshot of Runtime identifiers the real Lambda
+// CreateFunction/UpdateFunctionConfiguration API enum accepts (current GA
+// runtimes plus older values the service still allows on an existing
+// function), used only to produce a helpful, AWS-shaped enum list in the
+// rejection error. It is NOT the sole source of truth for what's accepted —
+// see validateRuntime — because AWS ships new runtimes roughly twice a year
+// (nodejs24.x, python3.14, java17.al2023, ... have all shipped since this
+// list was last written) and a hardcoded enum silently goes stale, wrongly
+// rejecting every real, currently-supported runtime it doesn't yet know
+// about. See https://docs.aws.amazon.com/lambda/latest/api/API_CreateFunction.html
 //
 //nolint:gochecknoglobals // read-only lookup table, never mutated.
 var validRuntimes = map[string]bool{
@@ -91,11 +96,17 @@ var validRuntimes = map[string]bool{
 	"nodejs18.x":      true,
 	"nodejs20.x":      true,
 	"nodejs22.x":      true,
+	"nodejs24.x":      true,
+	"nodejs26.x":      true,
 	"java8":           true,
 	"java8.al2":       true,
+	"java8.al2023":    true,
 	"java11":          true,
+	"java11.al2023":   true,
 	"java17":          true,
+	"java17.al2023":   true,
 	"java21":          true,
+	"java25":          true,
 	"python2.7":       true,
 	"python3.6":       true,
 	"python3.7":       true,
@@ -105,29 +116,49 @@ var validRuntimes = map[string]bool{
 	"python3.11":      true,
 	"python3.12":      true,
 	"python3.13":      true,
+	"python3.14":      true,
+	"python3.15":      true,
 	"dotnetcore1.0":   true,
 	"dotnetcore2.0":   true,
 	"dotnetcore2.1":   true,
 	"dotnetcore3.1":   true,
-	"dotnetcore6.0":   true,
 	"dotnet6":         true,
 	"dotnet8":         true,
+	"dotnet9":         true,
+	"dotnet10":        true,
 	"nodejs4.3-edge":  true,
 	"go1.x":           true,
 	"ruby2.5":         true,
 	"ruby2.7":         true,
 	"ruby3.2":         true,
 	"ruby3.3":         true,
+	"ruby3.4":         true,
+	"ruby4.0":         true,
 	"provided":        true,
 	"provided.al2":    true,
 	"provided.al2023": true,
 }
 
-// validateRuntime rejects a Runtime value that isn't one of the real Lambda
-// enum's identifiers. An empty Runtime is allowed through (container-image
+// runtimeFamilyPattern matches the *shape* of a real Lambda runtime
+// identifier: a known language-family prefix (nodejs/python/java/dotnet/
+// ruby/go/provided) followed by a version/variant suffix (digits, dots,
+// lowercase letters — e.g. "22.x", "3.14", ".al2023"). Real AWS ships new
+// runtime versions within these same families a couple of times a year, so
+// rejecting solely on the validRuntimes snapshot above would start wrongly
+// rejecting brand-new, genuinely valid runtimes (e.g. nodejs24.x before this
+// list was updated to include it) the moment AWS releases them. Validation
+// therefore only rejects a Runtime that doesn't even match a known family —
+// the "totally-fake-runtime" / typo case a real user actually hits — and
+// accepts anything shaped like a real identifier even when it isn't yet in
+// the explicit snapshot.
+var runtimeFamilyPattern = regexp.MustCompile(`^(nodejs|python|java|dotnet|ruby|go|provided)[0-9a-z.]*$`)
+
+// validateRuntime rejects a Runtime value that is neither a known snapshot
+// entry nor shaped like a real Lambda runtime identifier (see
+// runtimeFamilyPattern). An empty Runtime is allowed through (container-image
 // PackageType functions omit it), matching real Lambda.
 func validateRuntime(runtime string) error {
-	if runtime == "" || validRuntimes[runtime] {
+	if runtime == "" || validRuntimes[runtime] || runtimeFamilyPattern.MatchString(runtime) {
 		return nil
 	}
 
