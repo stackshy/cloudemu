@@ -31,13 +31,18 @@ const (
 	singleNodeCount = 1
 	// defaultKMSKeyAlias is the account-default Redshift KMS key real AWS fills in
 	// when a cluster is created encrypted without an explicit KmsKeyId.
-	defaultKMSKeyAlias       = "alias/aws/redshift"
-	snapshotBackupSizeMB     = 100.0
-	cpuUtilizationRunning    = 25.0
-	databaseConnectionsRun   = 5.0
-	readIOPSRunning          = 10.0
-	writeIOPSRunning         = 5.0
-	networkReceiveThroughput = 1024.0
+	defaultKMSKeyAlias = "alias/aws/redshift"
+	// defaultParameterGroupName is the parameter group a cluster is associated
+	// with when CreateCluster names none. Real Redshift always attaches one (the
+	// family default), and clients rely on it: terraform's aws_redshift_cluster
+	// reads ClusterParameterGroups[0] unconditionally and panics on an empty list.
+	defaultParameterGroupName = "default.redshift-1.0"
+	snapshotBackupSizeMB      = 100.0
+	cpuUtilizationRunning     = 25.0
+	databaseConnectionsRun    = 5.0
+	readIOPSRunning           = 10.0
+	writeIOPSRunning          = 5.0
+	networkReceiveThroughput  = 1024.0
 )
 
 // errInstanceOpsUnsupported is the canonical error returned for instance-level
@@ -563,6 +568,11 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		numberOfNodes = singleNodeCount
 	}
 
+	parameterGroup := cfg.DBClusterParameterGroupName
+	if parameterGroup == "" {
+		parameterGroup = defaultParameterGroupName
+	}
+
 	cluster := rdbdriver.Cluster{
 		ID:                          cfg.ID,
 		ARN:                         clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
@@ -575,7 +585,7 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		State:                       rdbdriver.StateAvailable,
 		VPCSecurityGroups:           append([]string(nil), cfg.VPCSecurityGroups...),
 		SubnetGroupName:             cfg.SubnetGroupName,
-		DBClusterParameterGroupName: cfg.DBClusterParameterGroupName,
+		DBClusterParameterGroupName: parameterGroup,
 		NodeType:                    cfg.NodeType,
 		NumberOfNodes:               numberOfNodes,
 		Encrypted:                   cfg.Encrypted,
@@ -1023,21 +1033,22 @@ func (m *Mock) RestoreClusterFromSnapshot(
 	}
 
 	cluster := rdbdriver.Cluster{
-		ID:             input.NewClusterID,
-		ARN:            clusterARN(m.opts.Region, m.opts.AccountID, input.NewClusterID),
-		Engine:         snap.Engine,
-		EngineVersion:  snap.EngineVersion,
-		MasterUsername: snap.MasterUsername,
-		DatabaseName:   snap.DatabaseName,
-		Endpoint:       endpointFor(input.NewClusterID),
-		Port:           defaultPort,
-		State:          rdbdriver.StateAvailable,
-		NodeType:       snap.NodeType,
-		NumberOfNodes:  numberOfNodes,
-		Encrypted:      snap.Encrypted,
-		KmsKeyID:       restoredKMSKeyID(snap.Encrypted, snap.KmsKeyID, input.KmsKeyID),
-		CreatedAt:      now,
-		Tags:           copyTags(input.Tags),
+		ID:                          input.NewClusterID,
+		ARN:                         clusterARN(m.opts.Region, m.opts.AccountID, input.NewClusterID),
+		Engine:                      snap.Engine,
+		EngineVersion:               snap.EngineVersion,
+		MasterUsername:              snap.MasterUsername,
+		DatabaseName:                snap.DatabaseName,
+		Endpoint:                    endpointFor(input.NewClusterID),
+		Port:                        defaultPort,
+		State:                       rdbdriver.StateAvailable,
+		DBClusterParameterGroupName: defaultParameterGroupName,
+		NodeType:                    snap.NodeType,
+		NumberOfNodes:               numberOfNodes,
+		Encrypted:                   snap.Encrypted,
+		KmsKeyID:                    restoredKMSKeyID(snap.Encrypted, snap.KmsKeyID, input.KmsKeyID),
+		CreatedAt:                   now,
+		Tags:                        copyTags(input.Tags),
 	}
 
 	m.clusters.Set(input.NewClusterID, cluster)
