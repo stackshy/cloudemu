@@ -33,6 +33,9 @@ type subscription struct {
 	RetryPolicy               json.RawMessage   `json:"retryPolicy,omitempty"`
 	Detached                  bool              `json:"detached,omitempty"`
 	EnableExactlyOnceDelivery bool              `json:"enableExactlyOnceDelivery,omitempty"`
+	// State is output-only: real Pub/Sub always reports ACTIVE for a healthy
+	// subscription. It is server-assigned and ignored on create/patch input.
+	State string `json:"state,omitempty"`
 }
 
 // updateTopicRequest is PATCH topics/{name} (topics.patch): the topic fields to

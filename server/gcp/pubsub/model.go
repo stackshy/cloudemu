@@ -12,6 +12,15 @@ import (
 
 const (
 	defaultAckDeadlineSeconds = 10
+	// defaultMessageRetentionDuration is Pub/Sub's server-assigned subscription
+	// message retention when the field is omitted on create: 7 days.
+	defaultMessageRetentionDuration = "604800s"
+	// defaultExpirationTTL is the ttl of the expirationPolicy Pub/Sub assigns a
+	// subscription created without one: 31 days.
+	defaultExpirationTTL = "2678400s"
+	// subscriptionStateActive is the output-only state real Pub/Sub reports for a
+	// healthy subscription.
+	subscriptionStateActive = "ACTIVE"
 	// defaultMaxDeliveryAttempts is Pub/Sub's default when a deadLetterPolicy
 	// sets a dead-letter topic but omits maxDeliveryAttempts.
 	defaultMaxDeliveryAttempts = 5

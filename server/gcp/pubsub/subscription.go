@@ -80,6 +80,8 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 
+	applySubscriptionDefaults(&body)
+
 	filter, err := parseFilter(body.Filter)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "invalid filter: "+cerrors.Message(err))
@@ -102,6 +104,27 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, cfg)
+}
+
+// defaultExpirationPolicyJSON is the expirationPolicy Pub/Sub assigns a
+// subscription created without one: a 31-day ttl.
+const defaultExpirationPolicyJSON = `{"ttl":"` + defaultExpirationTTL + `"}`
+
+// applySubscriptionDefaults fills in the server-assigned fields real Pub/Sub
+// returns for a subscription created with only its required fields, so a create
+// that omits them round-trips the same values on Get/List (the top Terraform
+// drift source). An explicitly-provided expirationPolicy — including an empty
+// one ({} = never expire) — is left untouched.
+func applySubscriptionDefaults(s *subscription) {
+	if s.MessageRetentionDuration == "" {
+		s.MessageRetentionDuration = defaultMessageRetentionDuration
+	}
+
+	if len(s.ExpirationPolicy) == 0 {
+		s.ExpirationPolicy = []byte(defaultExpirationPolicyJSON)
+	}
+
+	s.State = subscriptionStateActive
 }
 
 // patchSubscription applies subscriptions.patch: it merges only the fields named
