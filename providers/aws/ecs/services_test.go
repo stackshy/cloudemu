@@ -2,6 +2,7 @@ package ecs
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -184,4 +185,127 @@ func TestUpdateService_AvailabilityZoneRebalancing(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "ENABLED", updated.AvailabilityZoneRebalancing)
+}
+
+// TestStopTask_ConcurrentSameServiceNoOverLaunch guards the per-service
+// reconcile lock: reconcileServiceAfterStop's read-live-counts ->
+// decide-shortfall -> launch-replacements -> commit sequence must be atomic
+// per service, or two concurrent StopTask calls on two different RUNNING
+// tasks of the same service can each read the pre-replacement counts, each
+// independently compute the full shortfall, and each launch a replacement —
+// leaving the service permanently over-provisioned above desiredCount (with
+// nothing to ever scale it back down). Repeated iterations under -race make
+// this reliably catch a regression of the lock.
+func TestStopTask_ConcurrentSameServiceNoOverLaunch(t *testing.T) {
+	const iterations = 20
+
+	for iter := range iterations {
+		m := newTestMock()
+		ctx := context.Background()
+
+		_, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+		require.NoError(t, err)
+
+		_, err = m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
+			Family:               "web",
+			ContainerDefinitions: []driver.ContainerDefinition{{Name: "c", Image: "img"}},
+		})
+		require.NoError(t, err)
+
+		// Generous EC2 capacity so both the initial convergence and any
+		// replacement tasks always fit.
+		m.SeedContainerInstance("prod", "i-race", WithCapacity(81920, 163840))
+
+		svc, err := m.CreateService(ctx, driver.CreateServiceInput{
+			ServiceName:    "web-svc",
+			Cluster:        "prod",
+			TaskDefinition: "web:1",
+			DesiredCount:   2,
+		})
+		require.NoError(t, err)
+		require.Equal(t, 2, svc.RunningCount)
+
+		tasks, err := m.ListTasks(ctx, "prod", "", "", "web-svc")
+		require.NoError(t, err)
+		require.Len(t, tasks, 2)
+
+		var wg sync.WaitGroup
+
+		wg.Add(len(tasks))
+
+		for _, task := range tasks {
+			go func(taskARN string) {
+				defer wg.Done()
+
+				_, stopErr := m.StopTask(ctx, "prod", taskARN, "concurrent stop")
+				assert.NoError(t, stopErr)
+			}(task.ARN)
+		}
+
+		wg.Wait()
+
+		running, err := m.ListTasks(ctx, "prod", "", statusRunning, "web-svc")
+		require.NoError(t, err)
+
+		pending, err := m.ListTasks(ctx, "prod", "", statusPending, "web-svc")
+		require.NoError(t, err)
+
+		assert.Equalf(t, 2, len(running)+len(pending),
+			"iteration %d: service must never over-launch above desiredCount=2 (got %d running + %d pending)",
+			iter, len(running), len(pending))
+
+		found, _, err := m.DescribeServices(ctx, "prod", []string{"web-svc"})
+		require.NoError(t, err)
+		require.Len(t, found, 1)
+		assert.Equalf(t, 2, found[0].RunningCount+found[0].PendingCount,
+			"iteration %d: service bookkeeping must match live counts", iter)
+	}
+}
+
+// TestStopTask_StandaloneTaskNoServiceGroupNoop guards the reconcile path for
+// a standalone task started via RunTask (no owning service, so no
+// "service:"-prefixed Group): serviceNameFromGroup must report false and
+// reconcileServiceAfterStop must no-op cleanly on StopTask — no crash, no
+// accidental relaunch, no phantom service.
+func TestStopTask_StandaloneTaskNoServiceGroupNoop(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+	require.NoError(t, err)
+
+	_, err = m.RegisterTaskDefinition(ctx, driver.RegisterTaskDefinitionInput{
+		Family:               "web",
+		ContainerDefinitions: []driver.ContainerDefinition{{Name: "c", Image: "img"}},
+	})
+	require.NoError(t, err)
+
+	m.SeedContainerInstance("prod", "i-standalone")
+
+	// A plain RunTask (no service) carries no "service:" Group.
+	tasks, failures, err := m.RunTask(ctx, driver.RunTaskInput{Cluster: "prod", TaskDefinition: "web"})
+	require.NoError(t, err)
+	require.Empty(t, failures)
+	require.Len(t, tasks, 1)
+	assert.Empty(t, tasks[0].Group)
+
+	stopped, err := m.StopTask(ctx, "prod", tasks[0].ARN, "standalone stop")
+	require.NoError(t, err)
+	assert.Equal(t, statusStopped, stopped.LastStatus)
+
+	// No service was created, so nothing to relaunch: exactly the one
+	// now-stopped task exists, and no service surfaces it.
+	all, err := m.ListTasks(ctx, "prod", "", "", "")
+	require.NoError(t, err)
+	require.Len(t, all, 1)
+	assert.Equal(t, statusStopped, all[0].LastStatus)
+
+	svcs, err := m.ListServices(ctx, "prod")
+	require.NoError(t, err)
+	assert.Empty(t, svcs)
+
+	// A repeated StopTask on the already-stopped standalone task is also a
+	// clean no-op (the reconcile path's early return handles it both times).
+	_, err = m.StopTask(ctx, "prod", tasks[0].ARN, "standalone stop again")
+	require.NoError(t, err)
 }

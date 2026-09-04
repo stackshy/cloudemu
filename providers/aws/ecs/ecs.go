@@ -53,6 +53,14 @@ type Mock struct {
 	placeMu    sync.Mutex // serializes container-instance capacity reserve/release
 	clusterMu  sync.Mutex // serializes CreateCluster name-reuse compare-and-set
 
+	// reconcileLock serializes reconcileServiceAfterStop per service (see
+	// service_reconcile_lock.go), closing the concurrent-StopTask over-launch
+	// race. It is always the outermost lock acquired in that path — taken
+	// before placeMu (via launchServiceReplacements -> launchTask -> reserve)
+	// and before m.services's own per-call lock (via Update) — so it can never
+	// deadlock against them.
+	reconcileLock *serviceReconcileLock
+
 	launcher ManagedInstanceLauncher // optional: provisions backing managed EC2 instances
 
 	// engineHandles maps a task ARN to the config.ContainerEngine handle backing
@@ -107,6 +115,7 @@ func New(opts *config.Options) *Mock {
 		attributes:    memstore.New[*driver.Attribute](),
 		engineHandles: memstore.New[string](),
 		taskSettle:    settle.NewSet(),
+		reconcileLock: newServiceReconcileLock(),
 		opts:          opts,
 	}
 }

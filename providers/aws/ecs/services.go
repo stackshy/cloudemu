@@ -379,6 +379,16 @@ func (m *Mock) launchServiceReplacements(ctx context.Context, svc *driver.Servic
 // A task with no owning service (Group doesn't start with "service:") is a
 // no-op, as is a service that's been deleted or is mid-delete (Status is no
 // longer ACTIVE) — DeleteService/drainService already own tearing that down.
+//
+// The whole read-decide-launch-commit sequence below runs under the service's
+// reconcileLock key: two concurrent StopTask calls on different tasks of the
+// same service must not both read the pre-replacement counts, both compute
+// the full shortfall, and both launch replacements — that would over-provision
+// the service above desiredCount with nothing to ever scale it back down. The
+// lock is per-service (keyed by cluster+name), so unrelated services still
+// reconcile concurrently, and it is acquired here — before stopTaskLocked's
+// placeMu has any chance to be re-taken by a replacement launch, and before
+// m.services's own per-call lock — making it the outermost lock in this path.
 func (m *Mock) reconcileServiceAfterStop(ctx context.Context, task *driver.Task) {
 	name, ok := serviceNameFromGroup(task.Group)
 	if !ok {
@@ -387,6 +397,9 @@ func (m *Mock) reconcileServiceAfterStop(ctx context.Context, task *driver.Task)
 
 	cluster := clusterNameFromARN(task.ClusterARN)
 	key := serviceKey(cluster, name)
+
+	unlock := m.reconcileLock.lock(key)
+	defer unlock()
 
 	svc, ok := m.services.Get(key)
 	if !ok || svc.Status != statusActive {
