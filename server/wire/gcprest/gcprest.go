@@ -216,13 +216,51 @@ type errorDetail struct {
 	Reason  string `json:"reason"`
 }
 
-// WriteError writes a GCP-style JSON error response.
+// canonicalStatus maps a Google JSON-API error `reason` (the camelCase token
+// carried in errors[].reason, e.g. "notFound") to the canonical
+// google.rpc.Code enum NAME real GCP returns in the top-level `status` field
+// (all-caps SNAKE_CASE, e.g. "NOT_FOUND"). See
+// https://cloud.google.com/apis/design/errors and the google.rpc.Code enum.
+// Reasons without a canonical code (e.g. HTTP 405 "methodNotAllowed", which has
+// no google.rpc.Code) return "" so the omitempty `status` field is dropped —
+// matching real GCP, which omits `status` for those responses.
+func canonicalStatus(reason string) string {
+	const statusInvalidArgument = "INVALID_ARGUMENT"
+
+	switch reason {
+	case "notFound":
+		return "NOT_FOUND"
+	case "alreadyExists":
+		return "ALREADY_EXISTS"
+	case "invalid", "invalidArgument", statusInvalidArgument, "badRequest", "required":
+		return statusInvalidArgument
+	case "conditionNotMet", "failedPrecondition", "resourceInUseByAnotherResource",
+		"containerNotEmpty", "cnameResourceRecordSetConflict":
+		return "FAILED_PRECONDITION"
+	case "forbidden":
+		return "PERMISSION_DENIED"
+	case "rateLimitExceeded":
+		return "RESOURCE_EXHAUSTED"
+	case "notImplemented":
+		return "UNIMPLEMENTED"
+	case "backendError":
+		return "UNAVAILABLE"
+	case "internalError":
+		return "INTERNAL"
+	default:
+		return ""
+	}
+}
+
+// WriteError writes a GCP-style JSON error response. reason is the Google
+// JSON-API camelCase token surfaced in errors[].reason; the top-level `status`
+// field carries the canonical google.rpc.Code NAME derived from it.
 func WriteError(w http.ResponseWriter, status int, reason, msg string) {
 	WriteJSON(w, status, errorEnvelope{
 		Error: errorBody{
 			Code:    status,
 			Message: msg,
-			Status:  reason,
+			Status:  canonicalStatus(reason),
 			Errors:  []errorDetail{{Message: msg, Reason: reason}},
 		},
 	})

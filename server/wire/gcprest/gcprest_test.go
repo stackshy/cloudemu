@@ -2,6 +2,7 @@ package gcprest_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -109,16 +110,20 @@ func TestNewDoneOperationGlobal(t *testing.T) {
 
 func TestWriteCErrMapping(t *testing.T) {
 	cases := []struct {
-		name   string
-		err    error
-		status int
+		name string
+		err  error
+		code int
+		// reason is the Google JSON-API camelCase token in errors[].reason.
 		reason string
+		// status is the canonical google.rpc.Code NAME in the top-level
+		// error.status field, matching what real GCP returns.
+		status string
 	}{
-		{"NotFound", cerrors.New(cerrors.NotFound, "missing"), http.StatusNotFound, "notFound"},
-		{"AlreadyExists", cerrors.New(cerrors.AlreadyExists, "dup"), http.StatusConflict, "alreadyExists"},
-		{"InvalidArgument", cerrors.New(cerrors.InvalidArgument, "bad"), http.StatusBadRequest, "invalid"},
-		{"FailedPrecondition", cerrors.New(cerrors.FailedPrecondition, "fp"), http.StatusConflict, "conditionNotMet"},
-		{"Unknown", errors.New("boom"), http.StatusInternalServerError, "internalError"},
+		{"NotFound", cerrors.New(cerrors.NotFound, "missing"), http.StatusNotFound, "notFound", "NOT_FOUND"},
+		{"AlreadyExists", cerrors.New(cerrors.AlreadyExists, "dup"), http.StatusConflict, "alreadyExists", "ALREADY_EXISTS"},
+		{"InvalidArgument", cerrors.New(cerrors.InvalidArgument, "bad"), http.StatusBadRequest, "invalid", "INVALID_ARGUMENT"},
+		{"FailedPrecondition", cerrors.New(cerrors.FailedPrecondition, "fp"), http.StatusConflict, "conditionNotMet", "FAILED_PRECONDITION"},
+		{"Unknown", errors.New("boom"), http.StatusInternalServerError, "internalError", "INTERNAL"},
 	}
 
 	for _, c := range cases {
@@ -126,12 +131,34 @@ func TestWriteCErrMapping(t *testing.T) {
 			rec := httptest.NewRecorder()
 			gcprest.WriteCErr(rec, c.err)
 
-			if rec.Code != c.status {
-				t.Errorf("status=%d want %d", rec.Code, c.status)
+			if rec.Code != c.code {
+				t.Errorf("http code=%d want %d", rec.Code, c.code)
 			}
 
-			if !strings.Contains(rec.Body.String(), c.reason) {
-				t.Errorf("body=%q does not contain %q", rec.Body.String(), c.reason)
+			var env struct {
+				Error struct {
+					Code    int    `json:"code"`
+					Status  string `json:"status"`
+					Message string `json:"message"`
+					Errors  []struct {
+						Reason string `json:"reason"`
+					} `json:"errors"`
+				} `json:"error"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &env); err != nil {
+				t.Fatalf("decode body: %v (body=%q)", err, rec.Body.String())
+			}
+
+			if env.Error.Status != c.status {
+				t.Errorf("error.status=%q want canonical %q", env.Error.Status, c.status)
+			}
+
+			if env.Error.Code != c.code {
+				t.Errorf("error.code=%d want %d", env.Error.Code, c.code)
+			}
+
+			if len(env.Error.Errors) == 0 || env.Error.Errors[0].Reason != c.reason {
+				t.Errorf("errors[].reason=%+v want %q", env.Error.Errors, c.reason)
 			}
 		})
 	}

@@ -143,8 +143,8 @@ func TestGetInstanceNotFound(t *testing.T) {
 	_ = json.NewDecoder(resp.Body).Decode(&env)
 
 	body, _ := env["error"].(map[string]any)
-	if body["status"] != "notFound" {
-		t.Errorf("status=%v want notFound", body["status"])
+	if body["status"] != "NOT_FOUND" {
+		t.Errorf("status=%v want NOT_FOUND", body["status"])
 	}
 }
 
