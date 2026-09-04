@@ -93,7 +93,10 @@ func (m *Mock) sealValue(ctx context.Context, effectiveType, keyID, plaintext st
 
 	blob, err := m.kmsCrypto.Encrypt(ctx, keyID, []byte(plaintext))
 	if err != nil {
-		return "", err
+		// Whatever KMS failure prevented sealing (disabled/deleted key, etc.),
+		// real Parameter Store surfaces it as the distinct InvalidKeyId client
+		// error, not a 500 that leaks the underlying KMS message.
+		return "", driver.ErrInvalidKeyID
 	}
 
 	return base64.StdEncoding.EncodeToString(blob), nil
@@ -114,7 +117,11 @@ func (m *Mock) revealValue(ctx context.Context, v *version, withDecryption bool)
 
 	plaintext, err := m.kmsCrypto.Decrypt(ctx, blob)
 	if err != nil {
-		return "", err
+		// Mirrors sealValue: a disabled/deleted key (or any other KMS unwrap
+		// failure) is reported as InvalidKeyId, matching real Parameter Store's
+		// documented GetParameter/GetParameters/GetParametersByPath/
+		// GetParameterHistory error shape instead of a generic 500.
+		return "", driver.ErrInvalidKeyID
 	}
 
 	return string(plaintext), nil
@@ -232,17 +239,88 @@ func resolveOverwriteType(existing *paramData, requested string) (string, error)
 	return "", driver.ErrTypeMismatch
 }
 
-// PutParameter creates a new parameter or, when Overwrite is set, appends a new
-// version to an existing one.
+// Parameter tiers, matching AWS SSM Parameter Store.
+const (
+	tierStandard    = "Standard"
+	tierAdvanced    = "Advanced"
+	tierIntelligent = "Intelligent-Tiering"
+)
+
+// resolveOverwriteTier decides the tier of a new version appended to an
+// existing parameter. A tier isn't required when updating: omitting it
+// retains the existing tier, rather than resetting to Standard. Explicitly
+// requesting Standard on a parameter that is currently Advanced is rejected —
+// real Parameter Store never lets an Advanced parameter revert to Standard.
+func resolveOverwriteTier(existing *paramData, requested string) (string, error) {
+	existingTier := existing.tier
+	if existingTier == "" {
+		existingTier = tierStandard
+	}
+
+	if requested == "" {
+		return existingTier, nil
+	}
+
+	if existingTier == tierAdvanced && requested == tierStandard {
+		return "", driver.ErrCannotRevertTier
+	}
+
+	return requested, nil
+}
+
+// maxValueBytes is the value-size limit for tier: 8 KB for Advanced (and for
+// Intelligent-Tiering, which self-selects up to the Advanced ceiling), 4 KB
+// for Standard (the default when Tier is omitted).
+func maxValueBytes(tier string) int {
+	if tier == tierAdvanced || tier == tierIntelligent {
+		return driver.AdvancedTierMaxValueBytes
+	}
+
+	return driver.StandardTierMaxValueBytes
+}
+
+// validateValueSize rejects a Value that exceeds tier's size limit, matching
+// real Parameter Store's ValidationException instead of silently accepting
+// (or silently truncating) an over-limit value.
+func validateValueSize(tier, value string) error {
+	if len(value) > maxValueBytes(tier) {
+		return driver.ErrValueTooLarge
+	}
+
+	return nil
+}
+
+// validateParameterName rejects a Name whose leading path segment (after
+// stripping an optional leading "/") is "aws" or "ssm" (case-insensitive).
+// Real Parameter Store reserves that namespace for AWS-published parameters
+// and rejects a customer PutParameter there with ValidationException.
+func validateParameterName(name string) error {
+	lower := strings.ToLower(strings.TrimPrefix(name, "/"))
+
+	if strings.HasPrefix(lower, "aws") || strings.HasPrefix(lower, "ssm") {
+		return driver.ErrReservedNamePrefix
+	}
+
+	return nil
+}
+
+// validatePutParameter checks the tier-independent PutParameter inputs (name,
+// Overwrite/Tags conflict, Type, and AllowedPattern) up front, before any store
+// lookup or tier resolution. Value size is validated separately once the tier
+// is known.
 //
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
+//nolint:gocritic // hugeParam: mirrors the PutParameter signature.
+func validatePutParameter(cfg driver.PutConfig) error {
 	if cfg.Name == "" {
-		return 0, "", errors.New(errors.InvalidArgument, "parameter name is required")
+		return errors.New(errors.InvalidArgument, "parameter name is required")
+	}
+
+	if err := validateParameterName(cfg.Name); err != nil {
+		return err
 	}
 
 	if cfg.Overwrite && len(cfg.Tags) > 0 {
-		return 0, "", driver.ErrTagsWithOverwrite
+		return driver.ErrTagsWithOverwrite
 	}
 
 	// An explicitly set Type must be one AWS recognizes; an unrecognized value
@@ -250,18 +328,25 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 	// omitted Type is allowed here: it defaults to String on create and retains
 	// the existing type on Overwrite.
 	if cfg.Type != "" && !validType(cfg.Type) {
-		return 0, "", driver.ErrUnsupportedType
+		return driver.ErrUnsupportedType
 	}
 
 	// AllowedPattern (if set) must be a valid regexp and the Value must match it.
 	// This is independent of the parameter type, so validate it up front.
 	if err := validateAllowedPattern(cfg.AllowedPattern, cfg.Value); err != nil {
-		return 0, "", err
+		return err
 	}
 
-	tier := cfg.Tier
-	if tier == "" {
-		tier = "Standard"
+	return nil
+}
+
+// PutParameter creates a new parameter or, when Overwrite is set, appends a new
+// version to an existing one.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
+	if err := validatePutParameter(cfg); err != nil {
+		return 0, "", err
 	}
 
 	dataType := cfg.DataType
@@ -272,7 +357,16 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 	now := m.now()
 
 	if existing, ok := m.params.Get(cfg.Name); ok {
-		return m.overwriteParameter(ctx, existing, &cfg, tier, dataType, now)
+		return m.overwriteParameter(ctx, existing, &cfg, dataType, now)
+	}
+
+	tier := cfg.Tier
+	if tier == "" {
+		tier = tierStandard
+	}
+
+	if err := validateValueSize(tier, cfg.Value); err != nil {
+		return 0, "", err
 	}
 
 	return m.createParameter(ctx, &cfg, tier, dataType, now)
@@ -282,7 +376,7 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 // Overwrite path). Overwrite without the flag is rejected, and changing the
 // type is rejected via resolveOverwriteType.
 func (m *Mock) overwriteParameter(
-	ctx context.Context, existing *paramData, cfg *driver.PutConfig, tier, dataType, now string,
+	ctx context.Context, existing *paramData, cfg *driver.PutConfig, dataType, now string,
 ) (ver int64, assignedTier string, err error) {
 	existing.mu.Lock()
 	defer existing.mu.Unlock()
@@ -295,6 +389,15 @@ func (m *Mock) overwriteParameter(
 	newType, err := resolveOverwriteType(existing, cfg.Type)
 	if err != nil {
 		return 0, "", err
+	}
+
+	tier, err := resolveOverwriteTier(existing, cfg.Tier)
+	if err != nil {
+		return 0, "", err
+	}
+
+	if sizeErr := validateValueSize(tier, cfg.Value); sizeErr != nil {
+		return 0, "", sizeErr
 	}
 
 	keyID, err := resolveKeyID(newType, cfg.KeyID)
@@ -442,12 +545,16 @@ func (m *Mock) toParameter(
 	}, nil
 }
 
+// selectorFor renders the SDK's Selector response field: empty when no
+// version/label was requested, otherwise ":<version-or-label>" — real
+// Parameter Store includes the colon (e.g. ":2" or ":prod"), not just the
+// bare version/label text.
 func selectorFor(requested, base string) string {
 	if requested == base {
 		return ""
 	}
 
-	return strings.TrimPrefix(requested, base+":")
+	return ":" + strings.TrimPrefix(requested, base+":")
 }
 
 // GetParameter retrieves a single parameter by name, honoring an optional
@@ -523,6 +630,10 @@ func (m *Mock) GetParameters(
 
 		found = append(found, p)
 	}
+
+	// Real GetParameters always returns Parameters in alphabetical order by
+	// name, regardless of the order Names was requested in.
+	sort.Slice(found, func(i, j int) bool { return found[i].Name < found[j].Name })
 
 	return found, invalid, nil
 }

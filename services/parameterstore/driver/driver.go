@@ -82,6 +82,56 @@ var ErrValuePatternMismatch = errors.New(errors.InvalidArgument,
 	"Parameter value "+
 		"doesn't match the allowed pattern.")
 
+// ErrInvalidKeyID is returned by PutParameter/GetParameter/GetParameters/
+// GetParametersByPath/GetParameterHistory when encrypting or decrypting a
+// SecureString value fails because the resolved KMS key can't be used (e.g.
+// it's disabled, pending deletion, or otherwise unusable). Real Parameter
+// Store surfaces this as the distinct client error InvalidKeyId — not a 500 —
+// regardless of which underlying KMS failure caused it. It carries
+// InvalidArgument so generic handling still treats it as a bad request, while
+// the SDK-compat layer matches it with errors.Is to return InvalidKeyId.
+//
+//nolint:revive // exact AWS InvalidKeyId wording, surfaced verbatim to the SDK
+var ErrInvalidKeyID = errors.New(errors.InvalidArgument, "The query key ID isn't valid.")
+
+// ErrReservedNamePrefix is returned by PutParameter when Name (after stripping
+// a leading "/") starts with "aws" or "ssm" (case-insensitive). Real Parameter
+// Store reserves that namespace for AWS-published parameters and rejects a
+// customer-created parameter there with ValidationException.
+//
+//nolint:revive // exact AWS ValidationException wording, surfaced verbatim to the SDK
+var ErrReservedNamePrefix = errors.New(errors.InvalidArgument,
+	"Parameter name: can't be prefixed with \"aws\" or \"ssm\" (case-insensitive).")
+
+// ErrValueTooLarge is returned by PutParameter when Value exceeds the size
+// limit of the parameter's tier: 4 KB for Standard, 8 KB for Advanced. Real
+// Parameter Store rejects an over-limit Standard-tier value with
+// ValidationException instead of silently accepting it or auto-upgrading the
+// tier (auto-upgrade only happens under the Intelligent-Tiering account
+// default, which isn't modeled here).
+//
+//nolint:revive // ValidationException wording, surfaced verbatim to the SDK
+var ErrValueTooLarge = errors.New(errors.InvalidArgument,
+	"Parameter value exceeds the allowed size for this parameter tier.")
+
+// StandardTierMaxValueBytes and AdvancedTierMaxValueBytes are the value-size
+// limits Real Parameter Store enforces per tier.
+const (
+	StandardTierMaxValueBytes = 4096
+	AdvancedTierMaxValueBytes = 8192
+)
+
+// ErrCannotRevertTier is returned by PutParameter when an Overwrite=true
+// update explicitly sets Tier to Standard on a parameter that is currently
+// Advanced. Real Parameter Store never lets an Advanced parameter revert to
+// Standard — doing so would truncate its value and drop any policies — so
+// this is rejected with ValidationException. Omitting Tier on an Overwrite
+// update is unaffected: it retains the existing tier rather than reverting.
+var ErrCannotRevertTier = errors.New(errors.InvalidArgument,
+	"Reverting an advanced parameter to a standard parameter would result in data loss. "+
+		"This is not a supported operation. If you still want to proceed, "+
+		"please remove the parameter and recreate it as a standard parameter.")
+
 // DefaultSecureStringKeyID is the KMS key Parameter Store assigns to a
 // SecureString parameter when PutParameter omits KeyId — the AWS-managed
 // default key alias.

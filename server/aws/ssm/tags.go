@@ -3,6 +3,7 @@ package ssm
 import (
 	"context"
 	"net/http"
+	"sort"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
@@ -102,6 +103,11 @@ func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 	for k, v := range tags {
 		out = append(out, ssmTag{Key: k, Value: v})
 	}
+
+	// Go map iteration order is randomized, so without sorting this list's
+	// order would vary from call to call for the same parameter. Real
+	// ListTagsForResource returns a stable order.
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 
 	wire.WriteJSON(w, map[string]any{"TagList": out})
 }
