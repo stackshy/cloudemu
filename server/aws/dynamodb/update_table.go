@@ -115,7 +115,51 @@ func (h *Handler) applyThroughput(ctx context.Context, table, billingMode string
 		rcu, wcu = pt.ReadCapacityUnits, pt.WriteCapacityUnits
 	}
 
+	if err := h.validateThroughputChange(ctx, table, billingMode, rcu, wcu); err != nil {
+		return err
+	}
+
 	return updater.UpdateThroughput(ctx, table, billingMode, rcu, wcu)
+}
+
+// validateThroughputChange resolves the billing mode and capacity an
+// UpdateTable request would leave a table in — merging any field the request
+// omits with the table's current stored value — and enforces AWS's
+// PROVISIONED/PAY_PER_REQUEST throughput rule against the result. A field the
+// request explicitly supplies always overrides; an omitted one falls back to
+// the stored value so re-affirming an unrelated field (e.g. adding a GSI)
+// never manufactures a spurious minimum-capacity error on an already-valid
+// table. Switching to PAY_PER_REQUEST is instead checked against the caller's
+// raw values, since a merged fallback would hide a genuine conflict
+// (throughput given alongside a switch to PAY_PER_REQUEST).
+func (h *Handler) validateThroughputChange(ctx context.Context, table, billingMode string, rcu, wcu int64) error {
+	current, err := h.db.DescribeTable(ctx, table)
+	if err != nil {
+		return err
+	}
+
+	effectiveMode := billingMode
+	if effectiveMode == "" {
+		effectiveMode = current.BillingMode
+		if effectiveMode == "" {
+			effectiveMode = billingProvisioned
+		}
+	}
+
+	if effectiveMode == billingPayPerRequest {
+		return validateProvisionedThroughput(effectiveMode, rcu, wcu)
+	}
+
+	effRCU, effWCU := rcu, wcu
+	if effRCU == 0 {
+		effRCU = current.ReadCapacityUnits
+	}
+
+	if effWCU == 0 {
+		effWCU = current.WriteCapacityUnits
+	}
+
+	return validateProvisionedThroughput(effectiveMode, effRCU, effWCU)
 }
 
 // attrDefJSON is one AttributeDefinitions entry on an UpdateTable request.

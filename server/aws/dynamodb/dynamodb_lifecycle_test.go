@@ -1076,7 +1076,7 @@ func TestDDBStreams(t *testing.T) {
 
 	it, err := provider.DynamoDB.GetStreamRecords(ctx, "events", 100, "")
 	require.NoError(t, err)
-	assert.Equal(t, "shard-000", it.ShardID)
+	assert.Equal(t, "shardId-00000001700000000000-00000001", it.ShardID)
 	require.Len(t, it.Records, 4)
 
 	types := make([]string, 0, len(it.Records))

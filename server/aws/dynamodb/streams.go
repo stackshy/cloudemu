@@ -18,8 +18,14 @@ import (
 // predicate is disjoint from the control-plane DynamoDB_20120810.* handler.
 const streamsTargetPrefix = "DynamoDBStreams_20120810."
 
+// streamShardID must match providers/aws/dynamodb's streamShardID constant.
+// AWS's real ShardId shape enforces a minimum length of 28 characters
+// ("shardId-<20-digit-epoch-ms>-<8-hex-char-suffix>"); a shorter placeholder
+// is rejected client-side by the AWS SDK/CLI's own request validation before
+// the request is ever sent, so GetShardIterator can never be called against
+// it.
 const (
-	streamShardID     = "shard-000"
+	streamShardID     = "shardId-00000001700000000000-00000001"
 	streamEventSource = "aws:dynamodb"
 	streamEventVer    = "1.1"
 	defaultAWSRegion  = "us-east-1"

@@ -47,6 +47,15 @@ const (
 	defaultStreamLimit = 100
 )
 
+// streamShardID is the emulator's single, always-open DynamoDB Streams shard.
+// AWS's real ShardId shape enforces a minimum length of 28 characters
+// ("shardId-<20-digit-epoch-ms>-<8-hex-char-suffix>"); a shorter placeholder
+// (e.g. "shard-000") is rejected client-side by the AWS SDK/CLI's own request
+// validation before the request is ever sent, so GetShardIterator can never be
+// called against it. The value mirrors real DynamoDB's format and length; it
+// must match server/aws/dynamodb's streamShardID constant.
+const streamShardID = "shardId-00000001700000000000-00000001"
+
 // Secondary-index projection types.
 const (
 	projectionAll      = "ALL"
@@ -200,6 +209,58 @@ func validateItemKeys(cfg driver.TableConfig, item map[string]any) error {
 		}
 	}
 
+	return validateIndexKeyTypes(cfg, item)
+}
+
+// validateIndexKeyTypes checks every GSI/LSI key attribute present in item
+// against its declared AttributeDefinition type. Unlike the table's own
+// primary key, an index key attribute is optional on an item — an item that
+// omits it simply doesn't appear in that index — but AWS still rejects a type
+// mismatch on one that IS present with a ValidationException naming the index.
+func validateIndexKeyTypes(cfg driver.TableConfig, item map[string]any) error {
+	for _, gsi := range cfg.GSIs {
+		for _, keyName := range []string{gsi.PartitionKey, gsi.SortKey} {
+			if err := validateIndexKeyType(cfg, gsi.Name, keyName, item); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, lsi := range cfg.LSIs {
+		if err := validateIndexKeyType(cfg, lsi.Name, lsi.SortKey, item); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// validateIndexKeyType checks one index key attribute's value, when the item
+// carries it, against its AttributeDefinition type.
+func validateIndexKeyType(cfg driver.TableConfig, indexName, keyName string, item map[string]any) error {
+	if keyName == "" {
+		return nil
+	}
+
+	val, present := item[keyName]
+	if !present {
+		return nil
+	}
+
+	for _, def := range cfg.Attributes {
+		if def.Name != keyName {
+			continue
+		}
+
+		if actual := expr.TypeCode(val); actual != def.Type {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"One or more parameter values were invalid: Type mismatch for Index Key %s Expected: %s Actual: %s IndexName: %s",
+				keyName, def.Type, actual, indexName)
+		}
+
+		return nil
+	}
+
 	return nil
 }
 
@@ -320,23 +381,51 @@ func collectionSize(val any) int {
 	}
 }
 
-// validateKeyMapNotEmpty rejects an empty-string/binary value on any key
-// attribute supplied in a Key map (UpdateItem, DeleteItem), matching the same
-// AWS rule PutItem enforces on the full item.
-func validateKeyMapNotEmpty(partitionKey, sortKey string, key map[string]any) error {
-	for _, keyName := range []string{partitionKey, sortKey} {
-		if keyName == "" {
-			continue
+// validateKeySchema enforces that a standalone Key parameter — GetItem,
+// DeleteItem, UpdateItem, BatchGetItem, TransactGetItems/TransactWriteItems —
+// names exactly the table's key schema attributes (the partition key, and the
+// sort key when the table has one): no fewer, no more, each with a non-empty
+// value of the declared type. Real DynamoDB collapses a missing or an
+// unrecognized key attribute into one ValidationException; the wire layer
+// otherwise silently looks up the wrong (or no) item instead of rejecting the
+// call the way real DynamoDB does.
+func validateKeySchema(cfg driver.TableConfig, key map[string]any) error {
+	want := map[string]struct{}{}
+	if cfg.PartitionKey != "" {
+		want[cfg.PartitionKey] = struct{}{}
+	}
+
+	if cfg.SortKey != "" {
+		want[cfg.SortKey] = struct{}{}
+	}
+
+	if len(key) != len(want) {
+		return newKeySchemaMismatch()
+	}
+
+	for name, val := range key {
+		if _, ok := want[name]; !ok {
+			return newKeySchemaMismatch()
 		}
 
-		if val, present := key[keyName]; present {
-			if err := validateKeyNotEmpty(keyName, val); err != nil {
-				return err
-			}
+		if err := validateKeyNotEmpty(name, val); err != nil {
+			return err
+		}
+
+		if err := validateKeyType(cfg, name, val); err != nil {
+			return err
 		}
 	}
 
 	return nil
+}
+
+// newKeySchemaMismatch is the ValidationException AWS returns for a Key
+// parameter that omits a schema key attribute or names one the schema doesn't
+// have, verbatim across every DynamoDB operation that takes a standalone Key.
+func newKeySchemaMismatch() error {
+	return cerrors.New(cerrors.InvalidArgument,
+		"One or more parameter values were invalid: The provided key element does not match the schema")
 }
 
 // validateKeyType checks a present key attribute's type against the matching
@@ -511,6 +600,10 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 
 	if !exists {
 		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	if err := validateKeySchema(td.config, key); err != nil {
+		return nil, err
 	}
 
 	k := itemKey(td.config, key)
@@ -1034,6 +1127,12 @@ func (m *Mock) BatchGetItems(_ context.Context, table string, keys []map[string]
 		return nil, cerrors.Newf(cerrors.NotFound, "table %s not found", table)
 	}
 
+	for _, key := range keys {
+		if err := validateKeySchema(td.config, key); err != nil {
+			return nil, err
+		}
+	}
+
 	var results []map[string]any
 
 	for _, key := range keys {
@@ -1296,7 +1395,7 @@ func filterStreamRecords(records []driver.StreamRecord, limit int, token string)
 	}
 
 	return &driver.StreamIterator{
-		ShardID:   "shard-000",
+		ShardID:   streamShardID,
 		Records:   result,
 		NextToken: nextToken,
 	}
@@ -1328,7 +1427,7 @@ func (m *Mock) TransactWriteItems(
 	}
 
 	for _, key := range deletes {
-		if err := validateKeyMapNotEmpty(td.config.PartitionKey, td.config.SortKey, key); err != nil {
+		if err := validateKeySchema(td.config, key); err != nil {
 			return err
 		}
 	}
