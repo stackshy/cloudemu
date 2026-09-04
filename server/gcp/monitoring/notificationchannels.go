@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
@@ -122,6 +123,12 @@ func (h *Handler) listChannels(w http.ResponseWriter, r *http.Request, project s
 	for i := range infos {
 		out.NotificationChannels = append(out.NotificationChannels, toChannelJSON(project, &infos[i]))
 	}
+
+	// The backing store returns channels in random map order; sort by resource
+	// name so repeated lists are stable and don't read as drift to clients.
+	sort.Slice(out.NotificationChannels, func(i, j int) bool {
+		return out.NotificationChannels[i].Name < out.NotificationChannels[j].Name
+	})
 
 	writeJSON(w, http.StatusOK, out)
 }

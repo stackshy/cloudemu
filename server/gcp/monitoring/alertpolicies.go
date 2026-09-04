@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strconv"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -55,6 +56,14 @@ func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request, project s
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
 		return
+	}
+
+	// Cloud Monitoring treats an unset enabled on write as enabled, and always
+	// returns the field on read. Default it here so a create that omits enabled
+	// reads back as enabled:true (not the Go zero false).
+	if body.Enabled == nil {
+		t := true
+		body.Enabled = &t
 	}
 
 	// Real Cloud Monitoring assigns an opaque numeric id, not one derived from
@@ -124,9 +133,20 @@ func (h *Handler) getPolicy(w http.ResponseWriter, project, name string) {
 
 func (h *Handler) listPolicies(w http.ResponseWriter, _ *http.Request, project string) {
 	h.mu.RLock()
+
+	// Iterating the map directly yields a random order each call, which reads as
+	// perpetual drift to Terraform/clients that diff list output. Emit policies
+	// in stable creation order (ascending numeric id) so repeated lists match.
+	ids := make([]string, 0, len(h.policies))
+	for id := range h.policies {
+		ids = append(ids, id)
+	}
+
+	sort.Slice(ids, func(i, j int) bool { return policyIDLess(ids[i], ids[j]) })
+
 	out := alertPoliciesList{AlertPolicies: make([]alertPolicy, 0, len(h.policies))}
 
-	for id := range h.policies {
+	for _, id := range ids {
 		pol := h.policies[id]
 		pol.Name = policyResourceName(project, id)
 		out.AlertPolicies = append(out.AlertPolicies, pol)
@@ -134,6 +154,19 @@ func (h *Handler) listPolicies(w http.ResponseWriter, _ *http.Request, project s
 	h.mu.RUnlock()
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// policyIDLess orders opaque policy ids by their numeric value (creation order),
+// falling back to string order for any non-numeric id.
+func policyIDLess(a, b string) bool {
+	ai, aerr := strconv.ParseUint(a, 10, 64)
+	bi, berr := strconv.ParseUint(b, 10, 64)
+
+	if aerr == nil && berr == nil {
+		return ai < bi
+	}
+
+	return a < b
 }
 
 // patchPolicy applies a partial update. GCP scopes changes by updateMask; the
@@ -196,7 +229,7 @@ func (h *Handler) patchPolicy(w http.ResponseWriter, r *http.Request, project, n
 	}
 
 	if body.Enabled != nil {
-		cur.Enabled = *body.Enabled
+		cur.Enabled = body.Enabled
 	}
 
 	cur.MutationRecord = &mutationRecord{MutateTime: nowRFC3339(), MutatedBy: "cloudemu"}
