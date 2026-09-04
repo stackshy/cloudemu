@@ -162,6 +162,47 @@ func TestListWorkspaces(t *testing.T) {
 	assertEqual(t, 3, len(all))
 }
 
+// TestListWorkspacesDeterministicOrder guards against the map-iteration-order
+// regression: list endpoints must return workspaces sorted by ARM resource ID
+// so SDK consumers and Terraform see a stable order across calls.
+func TestListWorkspacesDeterministicOrder(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	for _, name := range []string{"charlie", "alpha", "delta", "bravo"} {
+		cfg := validConfig()
+		cfg.Name = name
+		cfg.ResourceGroup = "rg-1"
+		_, err := m.CreateWorkspace(ctx, cfg)
+		requireNoError(t, err)
+	}
+
+	// The names sort as alpha < bravo < charlie < delta; because every ID shares
+	// the same rg prefix, ID order equals name order here.
+	want := []string{"alpha", "bravo", "charlie", "delta"}
+
+	assertOrder := func(list []driver.Workspace) {
+		t.Helper()
+		if len(list) != len(want) {
+			t.Fatalf("expected %d workspaces, got %d", len(want), len(list))
+		}
+		for i := range want {
+			assertEqual(t, want[i], list[i].Name)
+		}
+	}
+
+	// Repeat so a lucky single map iteration cannot mask nondeterminism.
+	for i := 0; i < 20; i++ {
+		bySub, err := m.ListWorkspaces(ctx)
+		requireNoError(t, err)
+		assertOrder(bySub)
+
+		byRG, err := m.ListWorkspacesByResourceGroup(ctx, "rg-1")
+		requireNoError(t, err)
+		assertOrder(byRG)
+	}
+}
+
 func TestTagsCopiedOnCreate(t *testing.T) {
 	m := newTestMock()
 	cfg := validConfig()
