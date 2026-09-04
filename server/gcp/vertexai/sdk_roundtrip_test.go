@@ -152,18 +152,51 @@ func doErr(t *testing.T, method, url string, body any) int {
 	return resp.StatusCode
 }
 
+// doErrBody issues a request expecting a non-2xx status and returns the HTTP
+// code plus the decoded JSON body, so callers can assert the error envelope.
+func doErrBody(t *testing.T, method, url string, body any) (int, map[string]any) {
+	t.Helper()
+
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(method, url, bytes.NewReader(b))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+
+	out := map[string]any{}
+	if len(bytes.TrimSpace(raw)) > 0 {
+		require.NoError(t, json.Unmarshal(raw, &out), "body=%s", raw)
+	}
+
+	return resp.StatusCode, out
+}
+
 // TestPredictNoDeployedModels: :predict on an endpoint with no deployed models
-// is a 400 FAILED_PRECONDITION, not a 200 echo.
+// is a 400 FAILED_PRECONDITION, not a 200 echo. The body must carry the
+// canonical google.rpc.Code NAME in the top-level status field — a regression
+// guard for the shared gcprest codec dropping a canonical uppercase reason.
 func TestPredictNoDeployedModels(t *testing.T) {
 	url := newServer(t)
 
 	op := do(t, http.MethodPost, url+base+"/endpoints", map[string]any{"displayName": "ep"})
 	epName := op["response"].(map[string]any)["name"].(string)
 
-	code := doErr(t, http.MethodPost, url+"/v1/"+epName+":predict", map[string]any{
+	code, body := doErrBody(t, http.MethodPost, url+"/v1/"+epName+":predict", map[string]any{
 		"instances": []any{map[string]any{"x": 1}},
 	})
 	assert.Equal(t, http.StatusBadRequest, code)
+
+	errObj, ok := body["error"].(map[string]any)
+	require.Truef(t, ok, "error object missing: %+v", body)
+	assert.Equalf(t, "FAILED_PRECONDITION", errObj["status"],
+		"top-level status must be canonical (present, not dropped): %+v", errObj)
 }
 
 // TestDeployUnknownModel: deploying a model resource that was never uploaded is

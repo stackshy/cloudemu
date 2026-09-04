@@ -216,6 +216,21 @@ type errorDetail struct {
 	Reason  string `json:"reason"`
 }
 
+// google.rpc.Code enum NAMEs used by the mapping below. Kept as named
+// constants because they are referenced from both canonicalStatus (as the
+// mapped result) and isCanonicalCode (as the already-canonical passthrough set).
+const (
+	codeInvalidArgument    = "INVALID_ARGUMENT"
+	codeNotFound           = "NOT_FOUND"
+	codeAlreadyExists      = "ALREADY_EXISTS"
+	codeFailedPrecondition = "FAILED_PRECONDITION"
+	codePermissionDenied   = "PERMISSION_DENIED"
+	codeResourceExhausted  = "RESOURCE_EXHAUSTED"
+	codeUnimplemented      = "UNIMPLEMENTED"
+	codeUnavailable        = "UNAVAILABLE"
+	codeInternal           = "INTERNAL"
+)
+
 // canonicalStatus maps a Google JSON-API error `reason` (the camelCase token
 // carried in errors[].reason, e.g. "notFound") to the canonical
 // google.rpc.Code enum NAME real GCP returns in the top-level `status` field
@@ -225,30 +240,58 @@ type errorDetail struct {
 // no google.rpc.Code) return "" so the omitempty `status` field is dropped —
 // matching real GCP, which omits `status` for those responses.
 func canonicalStatus(reason string) string {
-	const statusInvalidArgument = "INVALID_ARGUMENT"
+	// Some callers (e.g. eventarc, fcm, vertexai) already pass a canonical
+	// google.rpc.Code NAME as the reason. Return it unchanged so a canonical
+	// input is never silently dropped by the camelCase mapping below.
+	if isCanonicalCode(reason) {
+		return reason
+	}
 
+	return camelReasonToCode(reason)
+}
+
+// camelReasonToCode maps a camelCase JSON-API reason token to its canonical
+// google.rpc.Code NAME, or "" when the reason has no canonical code.
+func camelReasonToCode(reason string) string {
 	switch reason {
 	case "notFound":
-		return "NOT_FOUND"
+		return codeNotFound
 	case "alreadyExists":
-		return "ALREADY_EXISTS"
-	case "invalid", "invalidArgument", statusInvalidArgument, "badRequest", "required":
-		return statusInvalidArgument
+		return codeAlreadyExists
+	case "invalid", "invalidArgument", "badRequest", "required":
+		return codeInvalidArgument
 	case "conditionNotMet", "failedPrecondition", "resourceInUseByAnotherResource",
 		"containerNotEmpty", "cnameResourceRecordSetConflict":
-		return "FAILED_PRECONDITION"
+		return codeFailedPrecondition
 	case "forbidden":
-		return "PERMISSION_DENIED"
+		return codePermissionDenied
 	case "rateLimitExceeded":
-		return "RESOURCE_EXHAUSTED"
+		return codeResourceExhausted
 	case "notImplemented":
-		return "UNIMPLEMENTED"
+		return codeUnimplemented
 	case "backendError":
-		return "UNAVAILABLE"
+		return codeUnavailable
 	case "internalError":
-		return "INTERNAL"
+		return codeInternal
 	default:
 		return ""
+	}
+}
+
+// isCanonicalCode reports whether s is already one of the google.rpc.Code enum
+// NAMEs (all-caps SNAKE_CASE). The set is explicit so a typo'd or garbage
+// reason cannot pass through as if it were canonical. See
+// https://github.com/googleapis/googleapis/blob/master/google/rpc/code.proto.
+func isCanonicalCode(s string) bool {
+	switch s {
+	//nolint:misspell // google.rpc.Code enum name is CANCELLED (two Ls)
+	case "OK", "CANCELLED", "UNKNOWN", codeInvalidArgument, "DEADLINE_EXCEEDED",
+		codeNotFound, codeAlreadyExists, codePermissionDenied, codeResourceExhausted,
+		codeFailedPrecondition, "ABORTED", "OUT_OF_RANGE", codeUnimplemented,
+		codeInternal, codeUnavailable, "DATA_LOSS", "UNAUTHENTICATED":
+		return true
+	default:
+		return false
 	}
 }
 
