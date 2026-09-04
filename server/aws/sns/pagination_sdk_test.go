@@ -55,14 +55,22 @@ func TestSDKListSubscriptionsByTopicPagination(t *testing.T) {
 		t.Fatalf("page2 = %d subs token=%q, want 1 no token", len(page2.Subscriptions), aws.ToString(page2.NextToken))
 	}
 
+	// Every one of these subscriptions is still unconfirmed (email requires
+	// ConfirmSubscription), so real SNS masks SubscriptionArn as
+	// "PendingConfirmation" in list responses; Endpoint is the only
+	// per-subscription identifier left to walk uniqueness by.
 	seen := map[string]bool{}
 	for _, s := range append(page1.Subscriptions, page2.Subscriptions...) {
-		arn := aws.ToString(s.SubscriptionArn)
-		if seen[arn] {
-			t.Fatalf("subscription %q returned twice across pages", arn)
+		if arn := aws.ToString(s.SubscriptionArn); arn != "PendingConfirmation" {
+			t.Fatalf("subscription ARN = %q, want masked \"PendingConfirmation\" (still unconfirmed)", arn)
 		}
 
-		seen[arn] = true
+		endpoint := aws.ToString(s.Endpoint)
+		if seen[endpoint] {
+			t.Fatalf("subscription %q returned twice across pages", endpoint)
+		}
+
+		seen[endpoint] = true
 	}
 
 	if len(seen) != total {

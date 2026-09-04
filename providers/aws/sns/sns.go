@@ -37,6 +37,9 @@ const (
 	messageAttrTypeString = "String"
 )
 
+// fifoSuffix is the mandatory topic-name suffix for a FIFO SNS topic.
+const fifoSuffix = ".fifo"
+
 // SNS delivery-outcome metric names.
 const (
 	metricNotificationsDelivered = "NumberOfNotificationsDelivered"
@@ -175,6 +178,11 @@ func (m *Mock) CreateTopic(ctx context.Context, cfg driver.TopicConfig) (*driver
 		return nil, errors.New(errors.InvalidArgument, "topic name is required")
 	}
 
+	if cfg.FifoTopic && !strings.HasSuffix(cfg.Name, fifoSuffix) {
+		return nil, errors.New(errors.InvalidArgument,
+			"Invalid parameter: Name Reason: FIFO Topic Names must end with .fifo")
+	}
+
 	if m.topics.Has(cfg.Name) {
 		return nil, errors.Newf(errors.AlreadyExists, "topic %q already exists", cfg.Name)
 	}
@@ -299,6 +307,18 @@ func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.T
 		td.info.Policy = cfg.Policy
 	}
 
+	if cfg.DeliveryPolicy != "" {
+		td.info.DeliveryPolicy = cfg.DeliveryPolicy
+	}
+
+	if cfg.KmsMasterKeyID != "" {
+		td.info.KmsMasterKeyID = cfg.KmsMasterKeyID
+	}
+
+	if cfg.ContentBasedDeduplicationSet {
+		td.info.ContentBasedDeduplication = cfg.ContentBasedDeduplication
+	}
+
 	if !cfg.Scope.IsZero() {
 		td.info.Scope = cfg.Scope
 	}
@@ -406,6 +426,10 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 		return nil, errors.New(errors.InvalidArgument, "message is required")
 	}
 
+	if err := validateFIFOPublish(&td.info, &input); err != nil {
+		return nil, err
+	}
+
 	if err := validateMessageStructure(&input); err != nil {
 		return nil, err
 	}
@@ -460,6 +484,32 @@ func arnResource(arn string) string {
 	}
 
 	return arn
+}
+
+// validateFIFOPublish enforces the two FIFO-topic Publish requirements real SNS
+// rejects when missing: every message to a FIFO topic must carry a
+// MessageGroupId, and it must carry a MessageDeduplicationId unless the topic
+// has ContentBasedDeduplication enabled (in which case SNS derives one from the
+// message body). Standard topics accept MessageGroupId optionally (forwarded to
+// SQS standard subscriptions for fair-queue routing) and never require dedup ids,
+// so this only applies to FIFO topics.
+func validateFIFOPublish(info *driver.TopicInfo, input *driver.PublishInput) error {
+	if !info.FifoTopic {
+		return nil
+	}
+
+	if input.MessageGroupID == "" {
+		return errors.New(errors.InvalidArgument,
+			"Invalid parameter: The MessageGroupId parameter is required for FIFO topics")
+	}
+
+	if input.MessageDeduplicationID == "" && !info.ContentBasedDeduplication {
+		return errors.New(errors.InvalidArgument,
+			"Invalid parameter: The topic should either have ContentBasedDeduplication set, "+
+				"or the Publish request should provide a MessageDeduplicationId")
+	}
+
+	return nil
 }
 
 // validateMessageStructure enforces the SNS rules for a MessageStructure=json

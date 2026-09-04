@@ -226,14 +226,30 @@ func (h *Handler) setTopicAttributes(w http.ResponseWriter, r *http.Request) {
 
 	cfg := notifdriver.TopicConfig{Name: name}
 
+	value := r.Form.Get("AttributeValue")
+
+	var apply bool
+
 	switch r.Form.Get("AttributeName") {
 	case "DisplayName":
-		cfg.DisplayName = r.Form.Get("AttributeValue")
+		cfg.DisplayName = value
+		apply = true
 	case "Policy":
-		cfg.Policy = r.Form.Get("AttributeValue")
+		cfg.Policy = value
+		apply = true
+	case "DeliveryPolicy":
+		cfg.DeliveryPolicy = value
+		apply = true
+	case "KmsMasterKeyId":
+		cfg.KmsMasterKeyID = value
+		apply = true
+	case "ContentBasedDeduplication":
+		cfg.ContentBasedDeduplication = value == attrTrue
+		cfg.ContentBasedDeduplicationSet = true
+		apply = true
 	}
 
-	if cfg.DisplayName != "" || cfg.Policy != "" {
+	if apply {
 		if _, err := h.notif.UpdateTopic(r.Context(), cfg); err != nil {
 			writeErr(w, err)
 			return
@@ -519,17 +535,32 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// pendingConfirmationListArn is the literal SNS shows as SubscriptionArn in
+// ListSubscriptions/ListSubscriptionsByTopic for a still-unconfirmed
+// subscription. Distinct from Subscribe's own "pending confirmation" return
+// value (lowercase, with a space) — real SNS uses this different literal here.
+const pendingConfirmationListArn = "PendingConfirmation"
+
 // subscriptionMembers converts driver subscriptions into SNS XML members. The
 // driver's SubscriptionInfo.ID is already the subscription ARN; TopicArn is the
-// topic's resource ARN passed by the caller.
+// topic's resource ARN passed by the caller. A still-pending subscription's ARN
+// is masked as "PendingConfirmation", matching real SNS list responses (only
+// GetSubscriptionAttributes/Subscribe echo the real ARN before confirmation).
 func subscriptionMembers(topicArn string, subs []notifdriver.SubscriptionInfo) []subscriptionMember {
 	out := make([]subscriptionMember, 0, len(subs))
+
 	for i := range subs {
+		arn := subs[i].ID
+		if subs[i].Status == statusPending {
+			arn = pendingConfirmationListArn
+		}
+
 		out = append(out, subscriptionMember{
-			SubscriptionArn: subs[i].ID,
+			SubscriptionArn: arn,
 			TopicArn:        topicArn,
 			Protocol:        subs[i].Protocol,
 			Endpoint:        subs[i].Endpoint,
+			Owner:           accountFromARN(subs[i].ID),
 		})
 	}
 
