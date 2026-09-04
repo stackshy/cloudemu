@@ -125,7 +125,7 @@ func (h *Handler) siteStore() (azureFunctionApps, bool) {
 // Matches accepts ARM Microsoft.Web/sites paths plus the non-ARM /api/{name}
 // invoke shape.
 func (*Handler) Matches(r *http.Request) bool {
-	if strings.HasPrefix(r.URL.Path, invokePathPrefix) {
+	if isInvokeRequest(r) {
 		return true
 	}
 
@@ -141,9 +141,57 @@ func (*Handler) Matches(r *http.Request) bool {
 	return rp.ResourceType == resourceType || strings.EqualFold(rp.ResourceType, serverFarmsType)
 }
 
+// isInvokeRequest reports whether r addresses the Functions HTTP-invoke surface
+// at /api/{functionName} (real Azure: POST <app>.azurewebsites.net/api/<name>).
+//
+// The first path segment after /api/ must be a function name, not a REST API
+// version token: Azure function-app names must start with a letter, whereas
+// other Azure data planes served under /api/ version themselves numerically
+// (e.g. Databricks /api/2.1/clusters/create, /api/2.0/jobs/...). Excluding a
+// numeric-version first segment keeps this matcher from swallowing those data
+// planes, which — being registered after Functions — lose the first-match race
+// and become unreachable through `cloudemu serve`.
+func isInvokeRequest(r *http.Request) bool {
+	if !strings.HasPrefix(r.URL.Path, invokePathPrefix) {
+		return false
+	}
+
+	first := strings.TrimPrefix(r.URL.Path, invokePathPrefix)
+	if i := strings.IndexByte(first, '/'); i >= 0 {
+		first = first[:i]
+	}
+
+	if first == "" {
+		return false
+	}
+
+	return !looksLikeAPIVersion(first)
+}
+
+// looksLikeAPIVersion reports whether seg is a REST API version token such as
+// "2.0" or "2.1" — the shape a versioned data-plane API puts right after /api/.
+// A token qualifies only if it is made up solely of digits and dots and carries
+// at least one digit, so it never collides with a real function name (which
+// starts with a letter).
+func looksLikeAPIVersion(seg string) bool {
+	hasDigit := false
+
+	for _, c := range seg {
+		switch {
+		case c >= '0' && c <= '9':
+			hasDigit = true
+		case c == '.':
+		default:
+			return false
+		}
+	}
+
+	return hasDigit
+}
+
 // ServeHTTP routes requests by URL shape.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.URL.Path, invokePathPrefix) {
+	if isInvokeRequest(r) {
 		h.serveInvoke(w, r)
 		return
 	}
