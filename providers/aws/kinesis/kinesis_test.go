@@ -112,6 +112,55 @@ func TestGetRecordsAdvancesIterator(t *testing.T) {
 	}
 }
 
+// TestGetRecordsReportsMillisBehindLatest verifies MillisBehindLatest reflects
+// the gap between the tip of the shard and the last record a GetRecords call
+// returned, matching real Kinesis: 0 once caught up, positive while records
+// remain unread.
+func TestGetRecordsReportsMillisBehindLatest(t *testing.T) {
+	ctx := context.Background()
+	m, clk := newMockClock(t)
+
+	if err := m.CreateStream(ctx, driver.CreateStreamInput{StreamName: "s", ShardCount: 1}); err != nil {
+		t.Fatalf("CreateStream: %v", err)
+	}
+
+	for i := 0; i < 3; i++ {
+		if _, err := m.PutRecord(ctx, driver.PutRecordInput{StreamName: "s", PartitionKey: "k", Data: []byte{byte(i)}}); err != nil {
+			t.Fatalf("PutRecord %d: %v", i, err)
+		}
+
+		clk.Advance(time.Second)
+	}
+
+	desc, err := m.DescribeStream(ctx, "s", "", 0, "")
+	if err != nil {
+		t.Fatalf("DescribeStream: %v", err)
+	}
+
+	it := trimHorizonIterator(t, ctx, m, desc.Shards[0].ShardID)
+
+	// Reading only the first of 3 records (spaced 1s apart) leaves 2s behind the
+	// tip of the shard.
+	out, err := m.GetRecords(ctx, it, 1)
+	if err != nil {
+		t.Fatalf("GetRecords: %v", err)
+	}
+
+	if want := (2 * time.Second).Milliseconds(); out.MillisBehindLatest != want {
+		t.Fatalf("MillisBehindLatest = %d, want %d", out.MillisBehindLatest, want)
+	}
+
+	// Draining the rest catches the iterator up to the tip: 0.
+	out2, err := m.GetRecords(ctx, out.NextShardIterator, 10)
+	if err != nil {
+		t.Fatalf("GetRecords(2): %v", err)
+	}
+
+	if out2.MillisBehindLatest != 0 {
+		t.Fatalf("MillisBehindLatest after catching up = %d, want 0", out2.MillisBehindLatest)
+	}
+}
+
 func TestRetentionGuards(t *testing.T) {
 	ctx := context.Background()
 	m := newMock(t)

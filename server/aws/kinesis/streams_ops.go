@@ -216,11 +216,16 @@ func (h *Handler) updateShardCount(w http.ResponseWriter, r *http.Request) {
 			return nil, err
 		}
 
+		name, arn, err := h.resolveStreamIdentity(ctx, req.StreamName, req.StreamARN)
+		if err != nil {
+			return nil, err
+		}
+
 		return map[string]any{
-			"StreamName":        req.StreamName,
+			"StreamName":        name,
 			"CurrentShardCount": current,
 			"TargetShardCount":  target,
-			"StreamARN":         req.StreamARN,
+			"StreamARN":         arn,
 		}, nil
 	})
 }
