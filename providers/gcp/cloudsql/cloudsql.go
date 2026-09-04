@@ -766,12 +766,14 @@ func (m *Mock) DescribeSnapshots(
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	all := m.snapshots.All()
+	// SortedValues, not All: map iteration order is random, and BackupRuns.list
+	// must return a deterministic order like every other Cloud SQL list verb.
+	all := m.snapshots.SortedValues()
 	idSet := stringSet(ids)
 
 	out := make([]rdsdriver.Snapshot, 0, len(all))
 
-	//nolint:gocritic // map values are sized for accuracy; copy is unavoidable when materializing the result slice.
+	//nolint:gocritic // materializing the result slice requires copying each value; pointers/indexing would leak store internals.
 	for _, snap := range all {
 		if instanceID != "" && snap.InstanceID != instanceID {
 			continue
