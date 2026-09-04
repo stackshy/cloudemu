@@ -25,6 +25,10 @@ func (m *Mock) putClusterLocked(cfg btdriver.CreateClusterConfig) error {
 		return err
 	}
 
+	if err := validateAutoscaling(cfg.Autoscaling); err != nil {
+		return err
+	}
+
 	instance := parentName(cfg.Name)
 	if !m.instances.Has(instance) {
 		return cerrors.Newf(cerrors.InvalidArgument, "instance %q not found", instance)
@@ -70,6 +74,28 @@ func cloneAutoscaling(a *btdriver.Autoscaling) *btdriver.Autoscaling {
 func validateServeNodes(n int) error {
 	if n < 0 || n > maxServeNodes {
 		return cerrors.Newf(cerrors.InvalidArgument, "serveNodes must be between 0 and %d", maxServeNodes)
+	}
+
+	return nil
+}
+
+// validateAutoscaling enforces Bigtable's AutoscalingLimits rules: both
+// min_serve_nodes and max_serve_nodes are REQUIRED, min_serve_nodes must be at
+// least 1, and max_serve_nodes must be at least min_serve_nodes. Without this,
+// a config with an unset minimum would seed serveNodes to 0, which real
+// Bigtable never reports.
+func validateAutoscaling(a *btdriver.Autoscaling) error {
+	if a == nil {
+		return nil
+	}
+
+	if a.MinServeNodes < 1 {
+		return cerrors.Newf(cerrors.InvalidArgument, "autoscaling min_serve_nodes must be at least 1, got %d", a.MinServeNodes)
+	}
+
+	if a.MaxServeNodes < a.MinServeNodes {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"autoscaling max_serve_nodes (%d) must be at least min_serve_nodes (%d)", a.MaxServeNodes, a.MinServeNodes)
 	}
 
 	return nil
@@ -143,7 +169,18 @@ func (m *Mock) UpdateCluster(
 	}
 
 	if autoscaling != nil {
+		if err := validateAutoscaling(autoscaling); err != nil {
+			return nil, nil, err
+		}
+
 		c.Autoscaling = cloneAutoscaling(autoscaling)
+
+		// serveNodes is the cluster's current node count and must stay within the
+		// autoscaling floor. Switching to autoscaling (or raising the minimum)
+		// re-derives it up to MinServeNodes so it is never 0 or below the floor.
+		if c.ServeNodes < autoscaling.MinServeNodes {
+			c.ServeNodes = autoscaling.MinServeNodes
+		}
 	} else if serveNodes > 0 {
 		if err := validateServeNodes(serveNodes); err != nil {
 			return nil, nil, err

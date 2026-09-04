@@ -414,6 +414,81 @@ func TestCreateAutoscalingClusterSeedsServeNodesFromMinimum(t *testing.T) {
 	}
 }
 
+func TestCreateAutoscalingRejectsInvalidLimits(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+
+	// min_serve_nodes and max_serve_nodes are REQUIRED on AutoscalingLimits; a
+	// config with the minimum unset must not be silently accepted (it would seed
+	// serveNodes to 0, which real Bigtable never reports).
+	if _, _, err := m.CreateCluster(ctx, btdriver.CreateClusterConfig{
+		Name: inst + "/clusters/nomin", Location: "us-east1-b",
+		Autoscaling: &btdriver.Autoscaling{MaxServeNodes: 5},
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("missing min_serve_nodes: got %v, want InvalidArgument", err)
+	}
+
+	// max_serve_nodes must be at least min_serve_nodes.
+	if _, _, err := m.CreateCluster(ctx, btdriver.CreateClusterConfig{
+		Name: inst + "/clusters/maxltmin", Location: "us-east1-b",
+		Autoscaling: &btdriver.Autoscaling{MinServeNodes: 5, MaxServeNodes: 3},
+	}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("max < min: got %v, want InvalidArgument", err)
+	}
+}
+
+func TestUpdateManualToAutoscalingClampsServeNodesToFloor(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+	name := inst + "/clusters/c1"
+
+	// Switching a manual cluster (serveNodes 3) to autoscaling with a higher
+	// floor must re-derive serveNodes up to the floor, not leave it below.
+	if _, _, err := m.UpdateCluster(ctx, name, 0, &btdriver.Autoscaling{MinServeNodes: 6, MaxServeNodes: 10}); err != nil {
+		t.Fatalf("UpdateCluster: %v", err)
+	}
+
+	got, _ := m.GetCluster(ctx, name)
+	if got.ServeNodes < 6 {
+		t.Fatalf("serveNodes below floor after switch: got %d, want >= 6", got.ServeNodes)
+	}
+}
+
+func TestUpdateRaisingAutoscalingMinClampsServeNodesUp(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+	name := inst + "/clusters/c1"
+
+	// Seed an autoscaling cluster: serveNodes starts at the minimum (2).
+	if _, _, err := m.UpdateCluster(ctx, name, 0, &btdriver.Autoscaling{MinServeNodes: 2, MaxServeNodes: 10}); err != nil {
+		t.Fatalf("UpdateCluster seed: %v", err)
+	}
+
+	// Raising the minimum to 4 must raise serveNodes to at least 4.
+	if _, _, err := m.UpdateCluster(ctx, name, 0, &btdriver.Autoscaling{MinServeNodes: 4, MaxServeNodes: 10}); err != nil {
+		t.Fatalf("UpdateCluster raise: %v", err)
+	}
+
+	got, _ := m.GetCluster(ctx, name)
+	if got.ServeNodes < 4 {
+		t.Fatalf("serveNodes not clamped up: got %d, want >= 4", got.ServeNodes)
+	}
+}
+
+func TestUpdateAutoscalingRejectsInvalidLimits(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+	name := inst + "/clusters/c1"
+
+	if _, _, err := m.UpdateCluster(ctx, name, 0, &btdriver.Autoscaling{MaxServeNodes: 5}); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("update missing min_serve_nodes: got %v, want InvalidArgument", err)
+	}
+}
+
 func TestTestIamPermissionsIntersectsPolicy(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
