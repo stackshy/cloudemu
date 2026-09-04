@@ -170,7 +170,7 @@ func (h *Handler) createSecurityGroup(w http.ResponseWriter, r *http.Request) {
 // InvalidGroup.Duplicate code, falling back to the shared SG error mapping.
 func writeCreateSGErr(w http.ResponseWriter, err error) {
 	if cerrors.IsAlreadyExists(err) {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidGroup.Duplicate", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidGroup.Duplicate", cerrors.Message(err))
 		return
 	}
 
@@ -189,8 +189,11 @@ func (h *Handler) deleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	if err := h.vpc.DeleteSecurityGroup(r.Context(), id); err != nil {
 		// The default security group is non-deletable: EC2 answers a distinct
 		// Client.CannotDelete code rather than the generic DependencyViolation.
-		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "CannotDelete:") {
-			awsquery.WriteXMLError(w, http.StatusBadRequest, "Client.CannotDelete", err.Error())
+		// Matched on the driver's clean message text — "cannot be deleted"
+		// appears only in this case (the in-use/referenced case says "is in
+		// use by", not "cannot be deleted").
+		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "cannot be deleted") {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "Client.CannotDelete", cerrors.Message(err))
 			return
 		}
 
@@ -1100,7 +1103,7 @@ func parseRuleDescriptions(form url.Values) []ruleDescription {
 // group-level SG error mapping for everything else.
 func writeSGRuleErr(w http.ResponseWriter, err error) {
 	if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "rule") {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSecurityGroupRuleId.NotFound", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSecurityGroupRuleId.NotFound", cerrors.Message(err))
 		return
 	}
 

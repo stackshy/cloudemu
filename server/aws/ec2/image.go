@@ -220,7 +220,7 @@ func parseImageBlockDeviceMappings(r *http.Request) []computedriver.ImageBlockDe
 // is InvalidSnapshot.NotFound (RegisterImage never reports InvalidAMIID).
 func writeRegisterImageErr(w http.ResponseWriter, err error) {
 	if cerrors.IsAlreadyExists(err) {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAMIName.Duplicate", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAMIName.Duplicate", cerrors.Message(err))
 		return
 	}
 

@@ -193,4 +193,58 @@ func TestDeleteAttachedNetworkInterfaceCode(t *testing.T) {
 	if got := apiCode(t, err); got != "InvalidNetworkInterface.InUse" {
 		t.Errorf("code = %q, want InvalidNetworkInterface.InUse", got)
 	}
+
+	assertNoLeakedPrefix(t, apiMessage(t, err))
+}
+
+// TestReattachNetworkInterfaceCode pins that attaching an ENI that is already
+// attached to an instance answers InvalidNetworkInterface.InUse with a clean
+// message — no "InvalidNetworkInterface.InUse:" prefix leaked from the
+// internal error type.
+func TestReattachNetworkInterfaceCode(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+	_, subnetID := mkVPCSubnet(t, c)
+
+	run, err := c.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId: aws.String("ami-12345"), InstanceType: ec2types.InstanceTypeT2Micro,
+		MinCount: aws.Int32(1), MaxCount: aws.Int32(1), SubnetId: aws.String(subnetID),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+
+	instanceID := aws.ToString(run.Instances[0].InstanceId)
+
+	created, err := c.CreateNetworkInterface(ctx, &ec2.CreateNetworkInterfaceInput{
+		SubnetId: aws.String(subnetID),
+	})
+	if err != nil {
+		t.Fatalf("CreateNetworkInterface: %v", err)
+	}
+
+	eniID := aws.ToString(created.NetworkInterface.NetworkInterfaceId)
+
+	if _, err := c.AttachNetworkInterface(ctx, &ec2.AttachNetworkInterfaceInput{
+		NetworkInterfaceId: aws.String(eniID),
+		InstanceId:         aws.String(instanceID),
+		DeviceIndex:        aws.Int32(1),
+	}); err != nil {
+		t.Fatalf("AttachNetworkInterface: %v", err)
+	}
+
+	_, err = c.AttachNetworkInterface(ctx, &ec2.AttachNetworkInterfaceInput{
+		NetworkInterfaceId: aws.String(eniID),
+		InstanceId:         aws.String(instanceID),
+		DeviceIndex:        aws.Int32(2),
+	})
+	if err == nil {
+		t.Fatal("AttachNetworkInterface(already attached) succeeded, want an error")
+	}
+
+	if got := apiCode(t, err); got != "InvalidNetworkInterface.InUse" {
+		t.Errorf("code = %q, want InvalidNetworkInterface.InUse", got)
+	}
+
+	assertNoLeakedPrefix(t, apiMessage(t, err))
 }

@@ -904,7 +904,7 @@ func (m *Mock) DeleteSecurityGroup(_ context.Context, id string) error {
 
 	if sg.IsDefault {
 		return errors.Newf(errors.FailedPrecondition,
-			"CannotDelete: default security group %q cannot be deleted", id)
+			"default security group %q cannot be deleted", id)
 	}
 
 	// Real EC2 refuses to delete a security group that is still attached to a

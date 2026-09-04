@@ -160,7 +160,7 @@ func TestDescribeNetworkInterfacesRejectsUnknownFilter(t *testing.T) {
 
 	resp := do(t, h, http.MethodPost, "/", url.Values{
 		"Action":        {"DescribeNetworkInterfaces"},
-		"Filter.1.Name": {"attachment.instance-id"}, "Filter.1.Value.1": {"i-whatever"},
+		"Filter.1.Name": {"requester-managed"}, "Filter.1.Value.1": {"true"},
 	})
 	if resp.Code == http.StatusOK {
 		t.Errorf("an unimplemented filter must not be silently ignored: %s", resp.Body.String())
@@ -172,5 +172,83 @@ func TestDescribeNetworkInterfacesRejectsUnknownFilter(t *testing.T) {
 	})
 	if ok.Code != http.StatusOK {
 		t.Errorf("supported filter = %d: %s", ok.Code, ok.Body.String())
+	}
+}
+
+// TestDescribeNetworkInterfacesAttachmentFilters pins support for the
+// attachment.instance-id / attachment.device-index / source-dest-check
+// filters real EC2 documents for DescribeNetworkInterfaces. Terraform's
+// aws_instance resource looks up an instance's primary ENI by
+// attachment.instance-id to read source_dest_check; rejecting that filter
+// (as "invalid") broke every read of that attribute and caused a perpetual
+// plan diff.
+func TestDescribeNetworkInterfacesAttachmentFilters(t *testing.T) {
+	h := newFullHandler()
+
+	_, subnetID := mkVPCAndSubnet(t, h)
+
+	runResp := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"RunInstances"}, "ImageId": {"ami-12345678"}, "InstanceType": {"t2.micro"},
+		"SubnetId": {subnetID}, "MinCount": {"1"}, "MaxCount": {"1"},
+	})
+	if runResp.Code != http.StatusOK {
+		t.Fatalf("RunInstances = %d: %s", runResp.Code, runResp.Body.String())
+	}
+
+	instanceID := extractFirstInstanceID(runResp.Body.String())
+
+	createResp := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"CreateNetworkInterface"}, "SubnetId": {subnetID},
+	})
+	if createResp.Code != http.StatusOK {
+		t.Fatalf("CreateNetworkInterface = %d: %s", createResp.Code, createResp.Body.String())
+	}
+
+	eniID := between(createResp.Body.String(), "<networkInterfaceId>", "</networkInterfaceId>")
+	if eniID == "" {
+		t.Fatalf("CreateNetworkInterface returned no id: %s", createResp.Body.String())
+	}
+
+	attachResp := do(t, h, http.MethodPost, "/", url.Values{
+		"Action": {"AttachNetworkInterface"}, "NetworkInterfaceId": {eniID},
+		"InstanceId": {instanceID}, "DeviceIndex": {"1"},
+	})
+	if attachResp.Code != http.StatusOK {
+		t.Fatalf("AttachNetworkInterface = %d: %s", attachResp.Code, attachResp.Body.String())
+	}
+
+	resp := do(t, h, http.MethodPost, "/", url.Values{
+		"Action":        {"DescribeNetworkInterfaces"},
+		"Filter.1.Name": {"attachment.instance-id"}, "Filter.1.Value.1": {instanceID},
+	})
+	if resp.Code != http.StatusOK {
+		t.Fatalf("attachment.instance-id filter = %d: %s", resp.Code, resp.Body.String())
+	}
+
+	body := resp.Body.String()
+	if !strings.Contains(body, "<networkInterfaceId>"+eniID+"</networkInterfaceId>") {
+		t.Errorf("expected the attached ENI %q in the result, got: %s", eniID, body)
+	}
+
+	if !strings.Contains(body, "<sourceDestCheck>true</sourceDestCheck>") {
+		t.Errorf("expected sourceDestCheck true on the attached ENI, got: %s", body)
+	}
+
+	// attachment.device-index and source-dest-check are documented alongside
+	// attachment.instance-id; pin them too so the whole filter set stays wired.
+	idxResp := do(t, h, http.MethodPost, "/", url.Values{
+		"Action":        {"DescribeNetworkInterfaces"},
+		"Filter.1.Name": {"attachment.device-index"}, "Filter.1.Value.1": {"1"},
+	})
+	if idxResp.Code != http.StatusOK || !strings.Contains(idxResp.Body.String(), eniID) {
+		t.Errorf("attachment.device-index filter = %d: %s", idxResp.Code, idxResp.Body.String())
+	}
+
+	sdcResp := do(t, h, http.MethodPost, "/", url.Values{
+		"Action":        {"DescribeNetworkInterfaces"},
+		"Filter.1.Name": {"source-dest-check"}, "Filter.1.Value.1": {"true"},
+	})
+	if sdcResp.Code != http.StatusOK || !strings.Contains(sdcResp.Body.String(), eniID) {
+		t.Errorf("source-dest-check filter = %d: %s", sdcResp.Code, sdcResp.Body.String())
 	}
 }
