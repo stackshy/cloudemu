@@ -35,12 +35,59 @@ type repoDataSnapshot struct {
 	Policy        *driver.LifecyclePolicy       `json:"policy,omitempty"`
 	ScanOnPush    bool                          `json:"scanOnPush,omitempty"`
 	TagMutability string                        `json:"tagMutability,omitempty"`
+	// Attrs is the repository's changeableAttributes. A nil pointer (a
+	// snapshot taken before this field existed) restores to fully enabled.
+	Attrs *changeableAttrsSnapshot `json:"attrs,omitempty"`
+	// TagAttrs holds each PATCHed tag's changeableAttributes, keyed by tag
+	// name. A tag absent here restores to fully enabled.
+	TagAttrs map[string]changeableAttrsSnapshot `json:"tagAttrs,omitempty"`
 }
 
 // imageDataSnapshot is the exported form of imageData.
 type imageDataSnapshot struct {
 	Detail driver.ImageDetail `json:"detail"`
 	Layers []driver.LayerInfo `json:"layers,omitempty"`
+	// Attrs is the manifest's changeableAttributes. A nil pointer (a snapshot
+	// taken before this field existed) restores to fully enabled.
+	Attrs *changeableAttrsSnapshot `json:"attrs,omitempty"`
+}
+
+// changeableAttrsSnapshot is the exported, JSON-serializable form of
+// changeableAttrs.
+type changeableAttrsSnapshot struct {
+	DeleteEnabled bool `json:"deleteEnabled"`
+	WriteEnabled  bool `json:"writeEnabled"`
+	ListEnabled   bool `json:"listEnabled"`
+	ReadEnabled   bool `json:"readEnabled"`
+}
+
+func (a changeableAttrs) toSnapshot() changeableAttrsSnapshot {
+	return changeableAttrsSnapshot{
+		DeleteEnabled: a.deleteEnabled,
+		WriteEnabled:  a.writeEnabled,
+		ListEnabled:   a.listEnabled,
+		ReadEnabled:   a.readEnabled,
+	}
+}
+
+func (s changeableAttrsSnapshot) toInternal() changeableAttrs {
+	return changeableAttrs{
+		deleteEnabled: s.DeleteEnabled,
+		writeEnabled:  s.WriteEnabled,
+		listEnabled:   s.ListEnabled,
+		readEnabled:   s.ReadEnabled,
+	}
+}
+
+// attrsOrDefault resolves a possibly-absent snapshot pointer to fully enabled,
+// so restoring a snapshot taken before changeableAttributes existed does not
+// spuriously lock every resource.
+func attrsOrDefault(s *changeableAttrsSnapshot) changeableAttrs {
+	if s == nil {
+		return defaultChangeableAttrs()
+	}
+
+	return s.toInternal()
 }
 
 // registryDataSnapshot is the exported form of registryData.
@@ -79,16 +126,27 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 }
 
 func snapshotRepo(rd *repoData) (*repoDataSnapshot, error) {
+	attrs := rd.attrs.toSnapshot()
+
 	rs := &repoDataSnapshot{
 		Info:          rd.info,
 		Images:        make(map[string]*imageDataSnapshot, rd.images.Len()),
 		Policy:        rd.policy,
 		ScanOnPush:    rd.scanOnPush,
 		TagMutability: rd.tagMutability,
+		Attrs:         &attrs,
+	}
+
+	if len(rd.tagAttrs) > 0 {
+		rs.TagAttrs = make(map[string]changeableAttrsSnapshot, len(rd.tagAttrs))
+		for tag, a := range rd.tagAttrs {
+			rs.TagAttrs[tag] = a.toSnapshot()
+		}
 	}
 
 	for tag, img := range rd.images.All() {
-		rs.Images[tag] = &imageDataSnapshot{Detail: img.detail, Layers: img.layers}
+		imgAttrs := img.attrs.toSnapshot()
+		rs.Images[tag] = &imageDataSnapshot{Detail: img.detail, Layers: img.layers, Attrs: &imgAttrs}
 	}
 
 	scans, err := rd.scans.Snapshot()
@@ -150,10 +208,18 @@ func restoreRepo(rs *repoDataSnapshot) (*repoData, error) {
 		policy:        rs.Policy,
 		scanOnPush:    rs.ScanOnPush,
 		tagMutability: rs.TagMutability,
+		attrs:         attrsOrDefault(rs.Attrs),
+	}
+
+	if len(rs.TagAttrs) > 0 {
+		rd.tagAttrs = make(map[string]changeableAttrs, len(rs.TagAttrs))
+		for tag, a := range rs.TagAttrs {
+			rd.tagAttrs[tag] = a.toInternal()
+		}
 	}
 
 	for tag, is := range rs.Images {
-		rd.images.Set(tag, &imageData{detail: is.Detail, layers: is.Layers})
+		rd.images.Set(tag, &imageData{detail: is.Detail, layers: is.Layers, attrs: attrsOrDefault(is.Attrs)})
 	}
 
 	if len(rs.Scans) > 0 {

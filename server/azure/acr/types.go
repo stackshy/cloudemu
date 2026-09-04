@@ -11,7 +11,7 @@ import (
 const registryLoginServer = "cloudemu.azurecr.io"
 
 // changeableAttributes mirrors ACR's RepositoryWriteableProperties /
-// TagWriteableProperties. The mock reports everything enabled.
+// TagWriteableProperties / ManifestWriteableProperties.
 type changeableAttributes struct {
 	DeleteEnabled bool `json:"deleteEnabled"`
 	WriteEnabled  bool `json:"writeEnabled"`
@@ -21,6 +21,47 @@ type changeableAttributes struct {
 
 func allEnabled() changeableAttributes {
 	return changeableAttributes{DeleteEnabled: true, WriteEnabled: true, ListEnabled: true, ReadEnabled: true}
+}
+
+// toChangeableAttributes converts the driver's always-resolved
+// AzureChangeableAttributes into the wire shape. A nil field defaults to
+// enabled, matching a registry that predates changeableAttributes tracking.
+func toChangeableAttributes(a crdriver.AzureChangeableAttributes) changeableAttributes {
+	return changeableAttributes{
+		DeleteEnabled: boolOrEnabled(a.DeleteEnabled),
+		WriteEnabled:  boolOrEnabled(a.WriteEnabled),
+		ListEnabled:   boolOrEnabled(a.ListEnabled),
+		ReadEnabled:   boolOrEnabled(a.ReadEnabled),
+	}
+}
+
+func boolOrEnabled(p *bool) bool {
+	if p == nil {
+		return true
+	}
+
+	return *p
+}
+
+// changeableAttributesPatch is the PATCH request body for
+// UpdateRepositoryProperties / UpdateTagProperties / UpdateManifestProperties:
+// the raw {Repository,Tag,Manifest}WriteableProperties object, unwrapped. Every
+// field is optional; an absent field leaves the corresponding attribute
+// unchanged.
+type changeableAttributesPatch struct {
+	DeleteEnabled *bool `json:"deleteEnabled"`
+	WriteEnabled  *bool `json:"writeEnabled"`
+	ListEnabled   *bool `json:"listEnabled"`
+	ReadEnabled   *bool `json:"readEnabled"`
+}
+
+func (p changeableAttributesPatch) toDriver() crdriver.AzureChangeableAttributes {
+	return crdriver.AzureChangeableAttributes{
+		DeleteEnabled: p.DeleteEnabled,
+		WriteEnabled:  p.WriteEnabled,
+		ListEnabled:   p.ListEnabled,
+		ReadEnabled:   p.ReadEnabled,
+	}
 }
 
 // catalogResponse is the GET /acr/v1/_catalog body.
@@ -93,7 +134,7 @@ type manifestProperties struct {
 	Manifest  manifestAttributes `json:"manifest"`
 }
 
-func toManifestAttribute(img *crdriver.ImageDetail) manifestAttributes {
+func toManifestAttribute(img *crdriver.ImageDetail, attrs changeableAttributes) manifestAttributes {
 	tags := img.Tags
 	if tags == nil {
 		tags = []string{}
@@ -106,14 +147,19 @@ func toManifestAttribute(img *crdriver.ImageDetail) manifestAttributes {
 		MediaType:            img.MediaType,
 		ImageSize:            img.SizeBytes,
 		Tags:                 tags,
-		ChangeableAttributes: allEnabled(),
+		ChangeableAttributes: attrs,
 	}
 }
 
-func toManifestAttributes(images []crdriver.ImageDetail) []manifestAttributes {
+// toManifestAttributes renders images (already filtered for listEnabled by the
+// driver's ListImages) into wire form, resolving each manifest's real
+// changeableAttributes via attrsFor.
+func toManifestAttributes(
+	images []crdriver.ImageDetail, attrsFor func(digest string) changeableAttributes,
+) []manifestAttributes {
 	out := make([]manifestAttributes, 0, len(images))
 	for i := range images {
-		out = append(out, toManifestAttribute(&images[i]))
+		out = append(out, toManifestAttribute(&images[i], attrsFor(images[i].Digest)))
 	}
 
 	return out
@@ -148,7 +194,13 @@ func countTags(images []crdriver.ImageDetail) int {
 	return n
 }
 
-func toTagAttributes(images []crdriver.ImageDetail) []tagAttributes {
+// toTagAttributes renders every tag on images (already filtered for
+// manifest-level listEnabled by the driver's ListImages) into wire form,
+// resolving each tag's real changeableAttributes via attrsFor and dropping any
+// tag whose own listEnabled is false.
+func toTagAttributes(
+	images []crdriver.ImageDetail, attrsFor func(tag string) changeableAttributes,
+) []tagAttributes {
 	out := make([]tagAttributes, 0, len(images))
 
 	for i := range images {
@@ -159,12 +211,17 @@ func toTagAttributes(images []crdriver.ImageDetail) []tagAttributes {
 				continue
 			}
 
+			attrs := attrsFor(tag)
+			if !attrs.ListEnabled {
+				continue
+			}
+
 			out = append(out, tagAttributes{
 				Name:                 tag,
 				Digest:               img.Digest,
 				CreatedTime:          img.PushedAt,
 				LastUpdateTime:       img.PushedAt,
-				ChangeableAttributes: allEnabled(),
+				ChangeableAttributes: attrs,
 			})
 		}
 	}

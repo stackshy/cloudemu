@@ -3163,6 +3163,24 @@
         "operations": [
           {
             "name": "DeleteTag"
+          },
+          {
+            "name": "GetManifestAttributes"
+          },
+          {
+            "name": "GetRepositoryAttributes"
+          },
+          {
+            "name": "GetTagAttributes"
+          },
+          {
+            "name": "UpdateManifestAttributes"
+          },
+          {
+            "name": "UpdateRepositoryAttributes"
+          },
+          {
+            "name": "UpdateTagAttributes"
           }
         ]
       }
