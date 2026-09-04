@@ -63,6 +63,24 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
 		h.queryDeleteAlarms(w, r)
 	case opSetAlarmState:
 		h.querySetAlarmState(w, r)
+	case opPutMetricStream:
+		h.queryPutMetricStream(w, r)
+	case opGetMetricStream:
+		h.queryGetMetricStream(w, r)
+	case opListMetricStreams:
+		h.queryListMetricStreams(w, r)
+	case opDeleteMetricStream:
+		h.queryDeleteMetricStream(w, r)
+	case opStartMetricStreams:
+		h.queryStartMetricStreams(w, r)
+	case opStopMetricStreams:
+		h.queryStopMetricStreams(w, r)
+	case opTagResource:
+		h.queryTagResource(w, r)
+	case opUntagResource:
+		h.queryUntagResource(w, r)
+	case opListTagsForResource:
+		h.queryListTagsForResource(w, r)
 	default:
 		writeQueryError(w, http.StatusBadRequest, "InvalidAction", "unsupported CloudWatch action: "+r.Form.Get("Action"))
 	}

@@ -47,6 +47,15 @@ const (
 	opGetDashboard        = "GetDashboard"
 	opListDashboards      = "ListDashboards"
 	opDeleteDashboards    = "DeleteDashboards"
+	opPutMetricStream     = "PutMetricStream"
+	opGetMetricStream     = "GetMetricStream"
+	opListMetricStreams   = "ListMetricStreams"
+	opDeleteMetricStream  = "DeleteMetricStream"
+	opStartMetricStreams  = "StartMetricStreams"
+	opStopMetricStreams   = "StopMetricStreams"
+	opTagResource         = "TagResource"
+	opUntagResource       = "UntagResource"
+	opListTagsForResource = "ListTagsForResource"
 )
 
 // Handler serves CloudWatch rpc-v2-cbor requests against a monitoring driver.
@@ -142,15 +151,27 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, op string, bo
 		h.listDashboards(w, r, body)
 	case opDeleteDashboards:
 		h.deleteDashboards(w, r, body)
+	case opPutMetricStream:
+		h.putMetricStream(w, r, body)
+	case opGetMetricStream:
+		h.getMetricStream(w, r, body)
+	case opListMetricStreams:
+		h.listMetricStreams(w, r, body)
+	case opDeleteMetricStream:
+		h.deleteMetricStream(w, r, body)
+	case opStartMetricStreams:
+		h.startMetricStreams(w, r, body)
+	case opStopMetricStreams:
+		h.stopMetricStreams(w, r, body)
 	case "EnableAlarmActions":
 		h.setAlarmActionsEnabled(w, r, body, true)
 	case "DisableAlarmActions":
 		h.setAlarmActionsEnabled(w, r, body, false)
-	case "TagResource":
+	case opTagResource:
 		h.tagResource(w, r, body)
-	case "UntagResource":
+	case opUntagResource:
 		h.untagResource(w, r, body)
-	case "ListTagsForResource":
+	case opListTagsForResource:
 		h.listTagsForResource(w, r, body)
 	default:
 		writeCBORError(w, http.StatusBadRequest,
