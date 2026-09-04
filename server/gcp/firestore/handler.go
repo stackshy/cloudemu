@@ -83,12 +83,13 @@ type reference string
 
 // Handler serves Firestore REST API requests against a database driver.
 type Handler struct {
-	db dbdriver.Database
+	db   dbdriver.Database
+	txns *transactionRegistry
 }
 
 // New returns a Firestore handler backed by db.
 func New(db dbdriver.Database) *Handler {
-	return &Handler{db: db}
+	return &Handler{db: db, txns: newTransactionRegistry()}
 }
 
 // Matches returns true for /v1/projects/.../databases/.../documents paths.
@@ -187,7 +188,8 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, base, acti
 
 // commitRequest mirrors the subset of Firestore's CommitRequest we accept.
 type commitRequest struct {
-	Writes []writeOp `json:"writes"`
+	Writes      []writeOp `json:"writes"`
+	Transaction string    `json:"transaction,omitempty"`
 }
 
 type writeOp struct {
@@ -275,8 +277,11 @@ type stagedWrite struct {
 func stageKey(table, id string) string { return table + "\x00" + id }
 
 // commit handles POST .../documents:commit — the batch-write endpoint the REST
-// SDK uses for Set / Update / Delete. A `transaction` field, when present, is
-// accepted and applied directly: the in-memory store has no isolation levels.
+// SDK uses for Set / Update / Delete. A `transaction` field, when present,
+// identifies the transaction this commit belongs to: its recorded read-set
+// (populated by batchGet while the transaction was open) is checked for
+// conflicting writes before anything is applied — see
+// checkTransactionConflict.
 //
 // The batch is applied atomically. Phase 1 validates every write's precondition
 // against a working snapshot (an overlay reflecting earlier writes in the same
@@ -287,6 +292,17 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 	var req commitRequest
 
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	// The transaction is terminal after this commit attempt either way: on
+	// success it is done, and on an aborted/conflicting commit the SDK's
+	// RunTransaction begins a brand-new transaction to retry — so the read-set
+	// is captured and discarded up front rather than kept around.
+	reads := h.txns.reads(req.Transaction)
+	h.txns.end(req.Transaction)
+
+	if !h.checkTransactionConflict(w, r, reads) {
 		return
 	}
 
@@ -327,6 +343,52 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 	}
 
 	writeJSON(w, http.StatusOK, out)
+}
+
+// checkTransactionConflict enforces optimistic concurrency for a transactional
+// commit: every document the transaction read (via batchGet, while it was
+// open) must still be in the exact state it was read in — same existence, same
+// stored commit time — or the commit is aborted with HTTP 409/ABORTED so the
+// SDK's RunTransaction retries the whole attempt against fresh data. Without
+// this, concurrent read-modify-write transactions (two clients both
+// incrementing a counter) would silently race and lose updates instead of one
+// being serialized after the other, since applyStaged otherwise persists every
+// commit's writes unconditionally. An empty reads (no transaction, or one that
+// read nothing) is always conflict-free.
+func (h *Handler) checkTransactionConflict(w http.ResponseWriter, r *http.Request, reads map[string]txnRead) bool {
+	for docName, snap := range reads {
+		p, id, perr := splitDocumentName(docName)
+		if perr != nil {
+			continue
+		}
+
+		item, gerr := h.db.GetItem(r.Context(), p.tableKey(), map[string]any{fieldID: id})
+
+		switch {
+		case gerr != nil && !cerrors.IsNotFound(gerr):
+			writeErr(w, gerr)
+			return false
+		case gerr != nil:
+			if snap.existed {
+				return abortTransaction(w, docName)
+			}
+		case !snap.existed || !existingUpdateTime(item).Equal(snap.updateTime):
+			return abortTransaction(w, docName)
+		}
+	}
+
+	return true
+}
+
+// abortTransaction writes the ABORTED response for a transaction commit whose
+// read-set no longer matches the current document state. HTTP 409 is
+// deliberate: the REST client library maps it to gRPC codes.Aborted (the exact
+// code RunTransaction checks) regardless of the JSON body's status string.
+func abortTransaction(w http.ResponseWriter, docName string) bool {
+	writeError(w, http.StatusConflict, "ABORTED",
+		"transaction aborted: document changed since it was read in this transaction: "+docName)
+
+	return false
 }
 
 // trackStaged records sw in the overlay under its document key, appending the
@@ -692,8 +754,12 @@ func cloneStringMap(v any) map[string]any {
 }
 
 // batchGet handles POST .../documents:batchGet — the batched-read endpoint.
+// The Go SDK's DocumentRef.Get / Transaction.Get both route through this
+// endpoint (never the single-document GET verb), so it — not getDocument — is
+// the read path that must feed the transaction registry.
 type batchGetRequest struct {
-	Documents []string `json:"documents"`
+	Documents   []string `json:"documents"`
+	Transaction string   `json:"transaction,omitempty"`
 }
 
 type batchGetResponseEntry struct {
@@ -725,9 +791,13 @@ func (h *Handler) batchGet(w http.ResponseWriter, r *http.Request, _ string) {
 
 		item, gerr := h.db.GetItem(r.Context(), p.tableKey(), map[string]any{fieldID: id})
 		if gerr != nil {
+			h.txns.recordRead(req.Transaction, docName, false, time.Time{})
 			entries = append(entries, batchGetResponseEntry{Missing: docName, ReadTime: now})
+
 			continue
 		}
+
+		h.txns.recordRead(req.Transaction, docName, true, existingUpdateTime(item))
 
 		doc := mapToDocument(item, p, id)
 		entries = append(entries, batchGetResponseEntry{Found: &doc, ReadTime: now})
@@ -1099,6 +1169,13 @@ func (p firestorePath) tableKey() string {
 	return p.namespacePrefix() + p.collection
 }
 
+// documentName returns this location's full Firestore document resource
+// path, for use in a client-facing error message — never the internal,
+// NUL-joined driver table key returned by tableKey.
+func (p firestorePath) documentName() string {
+	return fmt.Sprintf("projects/%s/databases/%s/documents/%s/%s", p.project, p.database, p.collection, p.documentID)
+}
+
 // joinPath joins two path segments with "/", tolerating either being empty.
 func joinPath(a, b string) string {
 	switch {
@@ -1233,7 +1310,16 @@ func (h *Handler) ensureCollection(ctx context.Context, table string) {
 func (h *Handler) getDocument(w http.ResponseWriter, r *http.Request, p firestorePath) {
 	item, err := h.db.GetItem(r.Context(), p.tableKey(), map[string]any{fieldID: p.documentID})
 	if err != nil {
+		// A never-written collection reports NotFound with a message built from
+		// the internal driver table key (project+database+collection, NUL-joined);
+		// craft a clean, path-based message instead of leaking it onto the wire.
+		if cerrors.IsNotFound(err) {
+			writeError(w, http.StatusNotFound, "NOT_FOUND", p.documentName()+" not found")
+			return
+		}
+
 		writeErr(w, err)
+
 		return
 	}
 
@@ -1412,8 +1498,14 @@ func (h *Handler) updateDocument(w http.ResponseWriter, r *http.Request, p fires
 	writeJSON(w, http.StatusOK, mapToDocument(item, p, p.documentID))
 }
 
+// deleteDocument handles the raw DELETE verb (no precondition support — a
+// precondition-guarded delete goes through :commit, see stageDelete). Real
+// Firestore's DeleteDocument is idempotent: deleting a document that does not
+// exist succeeds rather than erroring, so a NotFound from the driver (either
+// "document not found" or, for a never-written collection, "collection ...
+// not found") is swallowed here instead of propagated as a 404.
 func (h *Handler) deleteDocument(w http.ResponseWriter, r *http.Request, p firestorePath) {
-	if err := h.db.DeleteItem(r.Context(), p.tableKey(), map[string]any{fieldID: p.documentID}); err != nil {
+	if err := h.db.DeleteItem(r.Context(), p.tableKey(), map[string]any{fieldID: p.documentID}); err != nil && !cerrors.IsNotFound(err) {
 		writeErr(w, err)
 		return
 	}
@@ -1704,15 +1796,23 @@ func writeError(w http.ResponseWriter, status int, statusCode, msg string) {
 	})
 }
 
+// writeErr maps a driver error to its Firestore wire shape. It surfaces
+// cerrors.Message(err) rather than err.Error(): the latter prepends the
+// internal cloudemu code name ("NotFound: ...") and, for a few driver errors,
+// embeds the raw namespaced driver table key (project+database+collection
+// joined with NUL bytes) — neither of which a real Firestore error message
+// ever contains.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		writeError(w, http.StatusNotFound, "NOT_FOUND", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ALREADY_EXISTS", err.Error())
+		writeError(w, http.StatusConflict, "ALREADY_EXISTS", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL", msg)
 	}
 }

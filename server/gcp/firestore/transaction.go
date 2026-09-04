@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
@@ -20,19 +21,148 @@ type beginTransactionResponse struct {
 	Transaction string `json:"transaction"`
 }
 
-// beginTransaction handles POST .../documents:beginTransaction. The in-memory
-// store has no MVCC, so the returned token is an opaque handle the client
-// threads through its reads and the final :commit; commit applies the writes
-// directly. This is enough for the SDK's RunTransaction to work end-to-end.
-func (*Handler) beginTransaction(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, beginTransactionResponse{Transaction: newTransactionID()})
+// beginTransaction handles POST .../documents:beginTransaction. The returned
+// token is an opaque handle the client threads through its reads (batchGet /
+// runQuery) and the final :commit. commit uses the registry populated by those
+// reads to enforce optimistic concurrency: see transactionRegistry.
+func (h *Handler) beginTransaction(w http.ResponseWriter, _ *http.Request) {
+	id := newTransactionID()
+	h.txns.begin(id)
+	writeJSON(w, http.StatusOK, beginTransactionResponse{Transaction: id})
 }
 
-// rollback handles POST .../documents:rollback. With no pending transactional
-// state to discard it simply acknowledges with an empty body, as the real API
-// does.
-func (*Handler) rollback(w http.ResponseWriter, _ *http.Request) {
+// rollbackRequest mirrors the subset of google.firestore.v1.RollbackRequest we
+// need: the transaction id whose read-set should be discarded.
+type rollbackRequest struct {
+	Transaction string `json:"transaction,omitempty"`
+}
+
+// rollback handles POST .../documents:rollback. There is no pending write
+// state to discard (writes are only staged, never applied, until :commit), but
+// the transaction's tracked read-set is discarded so it cannot leak.
+func (h *Handler) rollback(w http.ResponseWriter, r *http.Request) {
+	var req rollbackRequest
+
+	if r.ContentLength != 0 {
+		_ = decodeJSON(w, r, &req) // best-effort: an empty/malformed body is harmless
+	}
+
+	h.txns.end(req.Transaction)
 	writeJSON(w, http.StatusOK, map[string]any{})
+}
+
+// txnTTL bounds how long an abandoned transaction's read-set is kept before
+// being swept, so a client that begins a transaction but never commits or
+// rolls back (crash, timeout, a RunTransaction retry that abandons a prior
+// attempt's token) cannot leak memory indefinitely.
+const txnTTL = 5 * time.Minute
+
+// txnRead is a document's state as observed by a read within a transaction:
+// whether it existed and, if so, its stored commit time. commit re-checks this
+// against the document's current state (optimistic concurrency), matching real
+// Firestore: a transaction that raced a conflicting write is aborted rather
+// than silently applying a write computed from a stale read.
+type txnRead struct {
+	existed    bool
+	updateTime time.Time
+}
+
+// txnState is one in-flight transaction's read-set plus a creation stamp for
+// TTL sweeping.
+type txnState struct {
+	reads   map[string]txnRead // keyed by full document resource name
+	started time.Time
+}
+
+// transactionRegistry tracks the documents read within each open transaction
+// so commit can detect a conflicting write that landed after the read and
+// abort — without this, concurrent read-modify-write transactions (e.g. two
+// clients both incrementing a counter) silently lose updates instead of one
+// being retried, since the in-memory store otherwise applies every commit's
+// writes unconditionally.
+type transactionRegistry struct {
+	mu    sync.Mutex
+	state map[string]*txnState
+}
+
+func newTransactionRegistry() *transactionRegistry {
+	return &transactionRegistry{state: make(map[string]*txnState)}
+}
+
+// begin opens a fresh, empty read-set for id, sweeping any entries that have
+// outlived txnTTL.
+func (tr *transactionRegistry) begin(id string) {
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+
+	now := time.Now()
+
+	for k, s := range tr.state {
+		if now.Sub(s.started) > txnTTL {
+			delete(tr.state, k)
+		}
+	}
+
+	tr.state[id] = &txnState{reads: make(map[string]txnRead), started: now}
+}
+
+// recordRead notes that docName was observed (existed, updateTime) within
+// transaction id. A blank id is a no-op (the read was not transactional). An id
+// the registry has not seen — e.g. its begin() entry was swept, or a
+// non-SDK caller skipped beginTransaction — gets a read-set lazily created so
+// commit can still validate what it reads.
+func (tr *transactionRegistry) recordRead(id, docName string, existed bool, updateTime time.Time) {
+	if id == "" {
+		return
+	}
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+
+	s, ok := tr.state[id]
+	if !ok {
+		s = &txnState{reads: make(map[string]txnRead), started: time.Now()}
+		tr.state[id] = s
+	}
+
+	s.reads[docName] = txnRead{existed: existed, updateTime: updateTime}
+}
+
+// reads returns a snapshot copy of id's recorded read-set (nil if id is blank
+// or unknown to the registry).
+func (tr *transactionRegistry) reads(id string) map[string]txnRead {
+	if id == "" {
+		return nil
+	}
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+
+	s, ok := tr.state[id]
+	if !ok {
+		return nil
+	}
+
+	out := make(map[string]txnRead, len(s.reads))
+	for k, v := range s.reads {
+		out[k] = v
+	}
+
+	return out
+}
+
+// end discards id's read-set. Called once a transaction resolves — commit
+// (successful or aborted) or rollback — so the registry never grows past the
+// set of currently in-flight transactions (plus stragglers up to txnTTL).
+func (tr *transactionRegistry) end(id string) {
+	if id == "" {
+		return
+	}
+
+	tr.mu.Lock()
+	defer tr.mu.Unlock()
+
+	delete(tr.state, id)
 }
 
 // newTransactionID returns a fresh base64-encoded token. A timestamp-seeded
