@@ -64,15 +64,21 @@ func withProvisioningState(props map[string]any) map[string]any {
 	return props
 }
 
-// mergeResource applies a PATCH body over a stored resource under nil-mask
-// semantics: a top-level field the caller omits (location, tags, properties) is
-// preserved from the stored resource, while a supplied one is merged key-by-key
-// over the stored value. The merge is a fresh resource, so the stored one is not
+// mergeResource applies a PATCH body over a stored resource. location and
+// properties follow nil-mask semantics: a field the caller omits is preserved
+// from the stored resource, a supplied one applies (properties merged
+// key-by-key over the stored value). tags do not merge: real ARM resource-level
+// PATCH (metricAlerts/actionGroups/activityLogAlerts/autoscaleSettings Update,
+// same as the compute/network/loadbalancer Update and UpdateTags operations
+// already fixed elsewhere in this codebase) SETS the tag collection wholesale
+// when the request carries a tags key — a populated map replaces the stored
+// set, an explicit tags:{} wipes it, and an absent tags key leaves the stored
+// set untouched. The merge is a fresh resource, so the stored one is not
 // mutated until the caller commits it.
 func mergeResource(existing *armResource, patch *resourceRequest) *armResource {
 	merged := &armResource{
 		Location:   existing.Location,
-		Tags:       mergeStringMap(existing.Tags, patch.Tags),
+		Tags:       existing.Tags,
 		Properties: mergeAnyMap(existing.Properties, patch.Properties),
 	}
 
@@ -80,22 +86,23 @@ func mergeResource(existing *armResource, patch *resourceRequest) *armResource {
 		merged.Location = patch.Location
 	}
 
+	if patch.Tags != nil {
+		merged.Tags = replacementTags(patch.Tags)
+	}
+
 	return merged
 }
 
-// mergeStringMap overlays overlay onto a copy of base, preserving base keys the
-// overlay omits. Returns nil only when both are nil.
-func mergeStringMap(base, overlay map[string]string) map[string]string {
-	if base == nil && overlay == nil {
+// replacementTags normalizes a PATCH body's tags for wholesale replacement: a
+// populated map is cloned (so the store never aliases the request body), an
+// empty map ({}) wipes the stored set to nil.
+func replacementTags(in map[string]string) map[string]string {
+	if len(in) == 0 {
 		return nil
 	}
 
-	out := make(map[string]string, len(base)+len(overlay))
-	for k, v := range base {
-		out[k] = v
-	}
-
-	for k, v := range overlay {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
 		out[k] = v
 	}
 
