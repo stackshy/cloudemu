@@ -191,7 +191,7 @@ func looksLikeAPIVersion(seg string) bool {
 
 // ServeHTTP routes requests by URL shape.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.HasPrefix(r.URL.Path, invokePathPrefix) {
+	if isInvokeRequest(r) {
 		h.serveInvoke(w, r)
 		return
 	}
