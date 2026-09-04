@@ -211,3 +211,58 @@ func TestSDKGKEGetServerConfig(t *testing.T) {
 		t.Fatal("validNodeVersions empty")
 	}
 }
+
+// TestSDKGKEErrorMessageOmitsCodePrefix proves a GKE error's wire message
+// carries only the human-readable text, not the internal cerrors code-name
+// prefix (e.g. "cluster ... not found", not "NotFound: cluster ... not
+// found") — real GKE never leaks its internal error taxonomy into the message
+// an SDK surfaces to the caller. A black-box audit found every case in
+// writeErr using err.Error() (which includes the "NotFound: "/"AlreadyExists:
+// "/etc. prefix from cerrors.Error.Error()) instead of cerrors.Message(err).
+func TestSDKGKEErrorMessageOmitsCodePrefix(t *testing.T) {
+	svc, project := newSDKClient(t)
+	ctx := context.Background()
+	loc := "us-central1"
+
+	_, err := svc.Projects.Locations.Clusters.Get(parent(project, loc) + "/clusters/does-not-exist").
+		Context(ctx).Do()
+	if err == nil {
+		t.Fatal("clusters.get (missing): want error, got success")
+	}
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != http.StatusNotFound {
+		t.Fatalf("clusters.get (missing): want 404, got %v", err)
+	}
+
+	for _, prefix := range []string{"NotFound:", "AlreadyExists:", "InvalidArgument:", "FailedPrecondition:", "Internal:"} {
+		if strings.Contains(gerr.Message, prefix) {
+			t.Fatalf("error message %q leaks internal code prefix %q", gerr.Message, prefix)
+		}
+	}
+
+	if gerr.Message != `cluster "does-not-exist" not found in "us-central1"` {
+		t.Fatalf("unexpected error message: %q", gerr.Message)
+	}
+}
+
+// TestSDKGKEListNodePoolsMissingClusterNotFound proves nodePools.list on a
+// cluster that doesn't exist 404s, matching real GKE and every other GKE
+// verb that reads a cluster/pool. A black-box audit found the wire handler
+// silently answering an empty collection (200) instead.
+func TestSDKGKEListNodePoolsMissingClusterNotFound(t *testing.T) {
+	svc, project := newSDKClient(t)
+	ctx := context.Background()
+	loc := "us-central1"
+
+	_, err := svc.Projects.Locations.Clusters.NodePools.List(
+		parent(project, loc) + "/clusters/does-not-exist").Context(ctx).Do()
+	if err == nil {
+		t.Fatal("nodePools.list (missing cluster): want 404, got success")
+	}
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != http.StatusNotFound {
+		t.Fatalf("nodePools.list (missing cluster): want 404, got %v", err)
+	}
+}
