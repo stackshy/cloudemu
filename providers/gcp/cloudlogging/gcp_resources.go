@@ -83,27 +83,52 @@ func (m *Mock) ListSinks(_ context.Context, project string) ([]driver.LogSink, e
 	return sinks, nil
 }
 
-// UpdateSink replaces the mutable fields of an existing sink (identity and
-// createTime are preserved).
-func (m *Mock) UpdateSink(_ context.Context, project string, sink *driver.LogSink) (*driver.LogSink, error) {
-	key := resourceKey(project, sink.Name)
+// UpdateSink applies a partial (updateMask-driven) update to an existing sink.
+// Only fields whose Set* flag is true are overwritten; the sink's name and
+// createTime are always preserved, and its writer identity is preserved unless
+// the update carries a replacement. The read-modify-write runs under the store's
+// lock (via Update) so a concurrent GetSink can never observe a torn write.
+func (m *Mock) UpdateSink(_ context.Context, project, name string, update *driver.SinkUpdate) (*driver.LogSink, error) {
+	key := resourceKey(project, name)
 
-	existing, ok := m.sinks.Get(key)
-	if !ok {
-		return nil, errors.Newf(errors.NotFound, "sink %q not found", sink.Name)
+	var result driver.LogSink
+
+	found := m.sinks.Update(key, func(existing *driver.LogSink) *driver.LogSink {
+		updated := *existing
+
+		if update.SetDestination {
+			updated.Destination = update.Destination
+		}
+
+		if update.SetFilter {
+			updated.Filter = update.Filter
+		}
+
+		if update.SetDescription {
+			updated.Description = update.Description
+		}
+
+		if update.SetDisabled {
+			updated.Disabled = update.Disabled
+		}
+
+		if update.SetIncludeChildren {
+			updated.IncludeChildren = update.IncludeChildren
+		}
+
+		if update.WriterIdentity != "" {
+			updated.WriterIdentity = update.WriterIdentity
+		}
+
+		updated.UpdatedAt = m.opts.Clock.Now().UTC()
+		result = updated
+
+		return &updated
+	})
+
+	if !found {
+		return nil, errors.Newf(errors.NotFound, "sink %q not found", name)
 	}
-
-	updated := *existing
-	updated.Destination = sink.Destination
-	updated.Filter = sink.Filter
-	updated.Description = sink.Description
-	updated.Disabled = sink.Disabled
-	updated.IncludeChildren = sink.IncludeChildren
-	updated.UpdatedAt = m.opts.Clock.Now().UTC()
-
-	m.sinks.Set(key, &updated)
-
-	result := updated
 
 	return &result, nil
 }
