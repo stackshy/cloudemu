@@ -263,11 +263,11 @@ func toHealthCheckXML(info *dnsdriver.HealthCheckInfo) healthCheckXML {
 func writeHealthCheckErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NoSuchHealthCheck", err.Error())
+		writeError(w, http.StatusNotFound, "NoSuchHealthCheck", cleanMsg(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidInput", cleanMsg(err))
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalError", cleanMsg(err))
 	}
 }
 

@@ -276,6 +276,27 @@ func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	return &result, nil
 }
 
+// UpdateZoneComment updates a hosted zone's Comment by id — the AWS-only
+// UpdateHostedZoneComment operation, addressed by id rather than name (unlike
+// UpdateZone's ARM-style match-by-name). The server package picks this method
+// up via an optional interface assertion, the same pattern DeleteRecordSet
+// uses for its AWS-only SetIdentifier-addressed delete.
+func (m *Mock) UpdateZoneComment(_ context.Context, id, comment string) (*driver.ZoneInfo, error) {
+	if _, ok := m.zones.Get(id); !ok {
+		return nil, errors.Newf(errors.NotFound, "zone %q not found", id)
+	}
+
+	m.zones.Update(id, func(z driver.ZoneInfo) driver.ZoneInfo {
+		z.Comment = comment
+		return z
+	})
+
+	updated, _ := m.zones.Get(id)
+	result := updated
+
+	return &result, nil
+}
+
 // AssociateVPC adds an Amazon VPC to a private hosted zone's association list.
 // It is idempotent: associating an already-associated VPC is a no-op. Caller
 // validation (the zone must be private) is done at the wire layer, which has

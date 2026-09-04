@@ -106,6 +106,12 @@ type createHostedZoneRequest struct {
 	VPC              *vpcXML              `xml:"VPC"`
 }
 
+// updateHostedZoneCommentRequest is the UpdateHostedZoneComment request body.
+type updateHostedZoneCommentRequest struct {
+	XMLName xml.Name `xml:"UpdateHostedZoneCommentRequest"`
+	Comment string   `xml:"Comment"`
+}
+
 // associateVPCRequest is the AssociateVPCWithHostedZone request body.
 type associateVPCRequest struct {
 	XMLName xml.Name `xml:"AssociateVPCWithHostedZoneRequest"`
@@ -145,6 +151,15 @@ type createHostedZoneResponse struct {
 	DelegationSet delegationSetXML `xml:"DelegationSet"`
 	// VPC is returned only for a private hosted zone created with a VPC.
 	VPC *vpcXML `xml:"VPC,omitempty"`
+}
+
+// updateHostedZoneCommentResponse carries the updated hosted zone back, the
+// same as GetHostedZone but without a DelegationSet — matching real Route 53's
+// UpdateHostedZoneComment response shape.
+type updateHostedZoneCommentResponse struct {
+	XMLName    xml.Name      `xml:"UpdateHostedZoneCommentResponse"`
+	Xmlns      string        `xml:"xmlns,attr"`
+	HostedZone hostedZoneXML `xml:"HostedZone"`
 }
 
 type getHostedZoneResponse struct {

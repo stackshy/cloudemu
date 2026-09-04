@@ -74,7 +74,7 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 		Xmlns:         xmlns,
 		HostedZone:    hz,
 		ChangeInfo:    newChangeInfo(),
-		DelegationSet: delegationSetXML{NameServers: nameServers},
+		DelegationSet: delegationSetXML{NameServers: delegationSetNameServers(nameServers, info.Private)},
 	}
 
 	// A private zone created with a VPC echoes that VPC back at the top level.
@@ -95,8 +95,35 @@ func (h *Handler) seedZoneRecords(r *http.Request, zoneID, zoneName string, name
 		ZoneID: zoneID, Name: zoneName, Type: "SOA", TTL: soaTTL, Values: []string{soaValue},
 	})
 	_, _ = h.dns.CreateRecord(r.Context(), dnsdriver.RecordConfig{
-		ZoneID: zoneID, Name: zoneName, Type: "NS", TTL: nsTTL, Values: nameServers,
+		ZoneID: zoneID, Name: zoneName, Type: "NS", TTL: nsTTL, Values: dottedNameServers(nameServers),
 	})
+}
+
+// dottedNameServers returns nameServers as FQDNs (trailing dot) — the form real
+// Route 53 stores an NS record set's ResourceRecord VALUES in. This is distinct
+// from DelegationSet.NameServers (and the CreateHostedZone/GetHostedZone
+// response), which real Route 53 returns without a trailing dot for a public
+// zone, so the two lists must not share a slice.
+func dottedNameServers(nameServers []string) []string {
+	out := make([]string, len(nameServers))
+	for i, ns := range nameServers {
+		out[i] = ensureTrailingDot(ns)
+	}
+
+	return out
+}
+
+// delegationSetNameServers returns the DelegationSet.NameServers real Route 53
+// exposes for a hosted zone: bare hostnames for a public zone, FQDNs (trailing
+// dot) for a private one. This asymmetry is a real, if inconsistent, Route 53
+// quirk (hashicorp/terraform-provider-aws#14863) that practitioners specifically
+// work around, not a normalization cloudemu should smooth over.
+func delegationSetNameServers(nameServers []string, private bool) []string {
+	if !private {
+		return nameServers
+	}
+
+	return dottedNameServers(nameServers)
 }
 
 func (h *Handler) getHostedZone(w http.ResponseWriter, r *http.Request, id string) {
@@ -109,9 +136,40 @@ func (h *Handler) getHostedZone(w http.ResponseWriter, r *http.Request, id strin
 	wire.WriteXML(w, http.StatusOK, getHostedZoneResponse{
 		Xmlns:         xmlns,
 		HostedZone:    toHostedZoneXML(info),
-		DelegationSet: delegationSetXML{NameServers: nameServersFor(info.ID)},
+		DelegationSet: delegationSetXML{NameServers: delegationSetNameServers(nameServersFor(info.ID), info.Private)},
 		VPCs:          toVPCsXML(info.VPCs),
 	})
+}
+
+// zoneCommentUpdater is the AWS-only extension a Route 53 backend implements to
+// update a hosted zone's Comment by id (UpdateHostedZoneComment). Backends
+// without it report the operation as unsupported, the same fallback pattern
+// deleteRecordSet uses for the SetIdentifier-addressed DeleteRecordSet.
+type zoneCommentUpdater interface {
+	UpdateZoneComment(ctx context.Context, id, comment string) (*dnsdriver.ZoneInfo, error)
+}
+
+// updateHostedZoneComment answers UpdateHostedZoneComment, real Route 53's
+// POST /hostedzone/{id} operation that edits only the zone's Comment.
+func (h *Handler) updateHostedZoneComment(w http.ResponseWriter, r *http.Request, id string) {
+	var req updateHostedZoneCommentRequest
+	if !decodeXML(w, r, &req) {
+		return
+	}
+
+	updater, ok := h.dns.(zoneCommentUpdater)
+	if !ok {
+		writeError(w, http.StatusInternalServerError, "InternalError", "UpdateHostedZoneComment is not supported by this backend")
+		return
+	}
+
+	info, err := updater.UpdateZoneComment(r.Context(), trimZonePrefix(id), req.Comment)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	wire.WriteXML(w, http.StatusOK, updateHostedZoneCommentResponse{Xmlns: xmlns, HostedZone: toHostedZoneXML(info)})
 }
 
 // listHostedZones answers ListHostedZones. Hosted zones are account-global, so
@@ -782,13 +840,13 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsNotFound(err):
 		writeError(w, http.StatusNotFound, "NoSuchHostedZone", cleanMsg(err))
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "HostedZoneAlreadyExists", err.Error())
+		writeError(w, http.StatusConflict, "HostedZoneAlreadyExists", cleanMsg(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidInput", cleanMsg(err))
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusBadRequest, "InvalidChangeBatch", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidChangeBatch", cleanMsg(err))
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalError", cleanMsg(err))
 	}
 }
 
@@ -799,10 +857,10 @@ func writeErr(w http.ResponseWriter, err error) {
 func writeChangeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err), cerrors.IsAlreadyExists(err), cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusBadRequest, "InvalidChangeBatch", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidChangeBatch", cleanMsg(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidInput", cleanMsg(err))
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalError", cleanMsg(err))
 	}
 }
