@@ -21,10 +21,18 @@ func TestSnapshotRoundTripACR(t *testing.T) {
 	_, err = src.CreateRepository(ctx, driver.RepositoryConfig{Name: "app"})
 	require.NoError(t, err)
 
-	_, err = src.PutImage(ctx, &driver.ImageManifest{Repository: "app", Tag: "v1", SizeBytes: 1024})
+	detail, err := src.PutImage(ctx, &driver.ImageManifest{Repository: "app", Tag: "v1", SizeBytes: 1024})
 	require.NoError(t, err)
 
 	require.NoError(t, src.PutLifecyclePolicy(ctx, "app", driver.LifecyclePolicy{}))
+
+	no := false
+	_, err = src.UpdateRepositoryAttributes(ctx, "app", driver.AzureChangeableAttributes{DeleteEnabled: &no})
+	require.NoError(t, err)
+	_, err = src.UpdateTagAttributes(ctx, "app", "v1", driver.AzureChangeableAttributes{WriteEnabled: &no})
+	require.NoError(t, err)
+	_, err = src.UpdateManifestAttributes(ctx, "app", detail.Digest, driver.AzureChangeableAttributes{DeleteEnabled: &no})
+	require.NoError(t, err)
 
 	data, err := src.Snapshot(ctx, true)
 	require.NoError(t, err)
@@ -48,4 +56,45 @@ func TestSnapshotRoundTripACR(t *testing.T) {
 
 	_, err = dst.GetLifecyclePolicy(ctx, "app")
 	require.NoError(t, err)
+
+	repoAttrs, err := dst.GetRepositoryAttributes(ctx, "app")
+	require.NoError(t, err)
+	assert.False(t, *repoAttrs.DeleteEnabled, "repository deleteEnabled=false must survive the round trip")
+
+	tagAttrs, err := dst.GetTagAttributes(ctx, "app", "v1")
+	require.NoError(t, err)
+	assert.False(t, *tagAttrs.WriteEnabled, "tag writeEnabled=false must survive the round trip")
+
+	manifestAttrs, err := dst.GetManifestAttributes(ctx, "app", detail.Digest)
+	require.NoError(t, err)
+	assert.False(t, *manifestAttrs.DeleteEnabled, "manifest deleteEnabled=false must survive the round trip")
+}
+
+// TestSnapshotRestoreDefaultsMissingAttributesToEnabled proves a snapshot
+// taken before changeableAttributes existed (Attrs fields absent from the
+// JSON) restores every resource fully enabled rather than fully locked.
+func TestSnapshotRestoreDefaultsMissingAttributesToEnabled(t *testing.T) {
+	ctx := context.Background()
+	dst, _ := newTestMock()
+
+	legacy := `{"repos":{"app":{"info":{"name":"app","uri":"cloudemu.azurecr.io/app"},` +
+		`"images":{"sha256:legacy":{"detail":{"digest":"sha256:legacy","tags":["v1"]}}}}}}`
+
+	require.NoError(t, dst.Restore(ctx, []byte(legacy)))
+
+	repoAttrs, err := dst.GetRepositoryAttributes(ctx, "app")
+	require.NoError(t, err)
+	assert.True(t, *repoAttrs.DeleteEnabled)
+	assert.True(t, *repoAttrs.WriteEnabled)
+	assert.True(t, *repoAttrs.ListEnabled)
+	assert.True(t, *repoAttrs.ReadEnabled)
+
+	manifestAttrs, err := dst.GetManifestAttributes(ctx, "app", "sha256:legacy")
+	require.NoError(t, err)
+	assert.True(t, *manifestAttrs.DeleteEnabled)
+	assert.True(t, *manifestAttrs.WriteEnabled)
+
+	tagAttrs, err := dst.GetTagAttributes(ctx, "app", "v1")
+	require.NoError(t, err)
+	assert.True(t, *tagAttrs.DeleteEnabled)
 }
