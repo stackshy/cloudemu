@@ -3,6 +3,7 @@ package acr
 import (
 	"context"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -313,4 +314,72 @@ func TestManifestAttributesPreservedAcrossRepush(t *testing.T) {
 	attrs, err := m.GetManifestAttributes(ctx, "app", detail.Digest)
 	require.NoError(t, err)
 	assert.False(t, *attrs.ListEnabled)
+}
+
+// TestConcurrentAttributeUpdatesRaceWithReads is a data-race regression test:
+// Update{Repository,Tag}Attributes mutate rd.attrs / img.attrs under m.mu, and
+// DeleteRepository/ListRepositories/ListImages must read those same fields
+// under the same lock, or -race flags an unsynchronized read racing the
+// concurrent write. It intentionally tolerates NotFound/FailedPrecondition
+// errors from the racing calls — the only thing under test is the absence of
+// a data race, not any particular interleaving's outcome.
+func TestConcurrentAttributeUpdatesRaceWithReads(t *testing.T) {
+	const (
+		workers    = 8
+		iterations = 200
+	)
+
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	createTestRepo(t, m, "app")
+	pushTestImage(t, m, "app", "v1")
+
+	var wg sync.WaitGroup
+
+	// Mutators: PATCH repository- and tag-level changeableAttributes.
+	for i := range workers {
+		wg.Add(1)
+
+		go func(i int) {
+			defer wg.Done()
+
+			for j := range iterations {
+				enabled := (i+j)%2 == 0
+				_, _ = m.UpdateRepositoryAttributes(ctx, "app", driver.AzureChangeableAttributes{ListEnabled: &enabled})
+				_, _ = m.UpdateTagAttributes(ctx, "app", "v1", driver.AzureChangeableAttributes{ListEnabled: &enabled})
+			}
+		}(i)
+	}
+
+	// Readers: exactly the two call paths the fix guards.
+	for range workers {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			for range iterations {
+				_, _ = m.ListRepositories(ctx)
+				_, _ = m.ListImages(ctx, "app")
+			}
+		}()
+	}
+
+	// Deleter: races DeleteRepository's attrs read against the mutators above,
+	// recreating the repository on success so later iterations keep a target.
+	wg.Add(1)
+
+	go func() {
+		defer wg.Done()
+
+		for range iterations {
+			if m.DeleteRepository(ctx, "app", true) == nil {
+				_, _ = m.CreateRepository(ctx, driver.RepositoryConfig{Name: "app"})
+				_, _ = m.PutImage(ctx, &driver.ImageManifest{Repository: "app", Tag: "v1"})
+			}
+		}
+	}()
+
+	wg.Wait()
 }

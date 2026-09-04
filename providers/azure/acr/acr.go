@@ -152,6 +152,9 @@ func (m *Mock) CreateRepository(_ context.Context, cfg driver.RepositoryConfig) 
 
 // DeleteRepository deletes an ACR repository.
 func (m *Mock) DeleteRepository(_ context.Context, name string, force bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "repository %q not found", name)
@@ -187,6 +190,9 @@ func (m *Mock) GetRepository(_ context.Context, name string) (*driver.Repository
 // not locked. A read-locked or write-locked repository still appears here;
 // only listEnabled hides a repository from the catalog.
 func (m *Mock) ListRepositories(_ context.Context) ([]driver.Repository, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	all := m.repos.All()
 	repos := make([]driver.Repository, 0, len(all))
 
@@ -299,6 +305,9 @@ func (m *Mock) GetImage(_ context.Context, repository, reference string) (*drive
 // attribute is not locked. A read-locked or write-locked manifest still
 // appears here; only listEnabled hides a manifest from the listing.
 func (m *Mock) ListImages(_ context.Context, repository string) ([]driver.ImageDetail, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	rd, ok := m.repos.Get(repository)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", repository)
