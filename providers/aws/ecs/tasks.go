@@ -472,7 +472,52 @@ func (m *Mock) networkBindingsFor(networkMode string, mappings []driver.PortMapp
 // way: a repeated StopTask on an already-stopped task must not restart it,
 // matching real ECS's idempotent StopTask (an already-stopped task is returned
 // as-is, never "un-stopping" back to a transient).
+//
+// When the stopped task belongs to a service, real ECS's scheduler notices on
+// its next reconciliation pass and both reflects the drop in the service's
+// running count and launches a replacement to converge back to desiredCount;
+// StopTask reconciles the owning service synchronously to mirror that (see
+// reconcile below).
 func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*driver.Task, error) {
+	return m.stopTask(ctx, cluster, task, reason, true)
+}
+
+// stopTask is StopTask's implementation, parameterized on whether to reconcile
+// the task's owning service afterward. drainService (the service scheduler's
+// own drain, used by DeleteService and UpdateService's redeploy) calls this
+// with reconcile=false: it already owns and re-converges the service's whole
+// state itself, so a second, independent reconciliation here would race it —
+// relaunching a replacement for a task the service is in the middle of
+// deliberately draining.
+func (m *Mock) stopTask(ctx context.Context, cluster, task, reason string, reconcile bool) (*driver.Task, error) {
+	updated, alreadyStopped, err := m.stopTaskLocked(ctx, cluster, task, reason)
+	if err != nil {
+		return nil, err
+	}
+
+	if !alreadyStopped {
+		m.beginStopSettle(updated)
+
+		if reconcile {
+			// Reconciliation may itself place a replacement task (taking
+			// placeMu via reserve), so it must run after stopTaskLocked has
+			// released placeMu below — calling it while still holding placeMu
+			// would deadlock on a non-reentrant mutex.
+			m.reconcileServiceAfterStop(ctx, updated)
+		}
+	}
+
+	out := cloneTask(updated)
+	m.overlayStatus(&out)
+
+	return &out, nil
+}
+
+// stopTaskLocked performs the placeMu-guarded core of stopTask: resolving the
+// task, tearing down its engine backing, releasing any reserved capacity, and
+// flipping it to STOPPED. It returns the stored (post-mutation) task and
+// whether it was already stopped before this call.
+func (m *Mock) stopTaskLocked(ctx context.Context, cluster, task, reason string) (*driver.Task, bool, error) {
 	m.placeMu.Lock()
 	defer m.placeMu.Unlock()
 
@@ -481,14 +526,14 @@ func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*dri
 	// ClusterNotFoundException + InvalidParameterException).
 	want := resolveClusterName(cluster)
 	if !m.clusterExists(want) {
-		return nil, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
+		return nil, false, apiErrf(errors.NotFound, excClusterNotFound, "cluster %q not found", want)
 	}
 
 	// A task that resolves but lives in a different cluster is not visible to this
 	// StopTask, same as a task that does not exist at all: InvalidParameterException.
 	t, ok := m.resolveTask(task)
 	if !ok || clusterNameFromARN(t.ClusterARN) != want {
-		return nil, apiErrf(errors.NotFound, excInvalidParameter, "task %q not found", task)
+		return nil, false, apiErrf(errors.NotFound, excInvalidParameter, "task %q not found", task)
 	}
 
 	// Tear down the backing engine workload (if any) before flipping to STOPPED,
@@ -528,14 +573,7 @@ func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*dri
 
 	m.tasks.Set(updated.ARN, &updated)
 
-	if !alreadyStopped {
-		m.beginStopSettle(&updated)
-	}
-
-	out := cloneTask(&updated)
-	m.overlayStatus(&out)
-
-	return &out, nil
+	return &updated, alreadyStopped, nil
 }
 
 // ListTasks returns tasks in a cluster, optionally filtered by family, desired
