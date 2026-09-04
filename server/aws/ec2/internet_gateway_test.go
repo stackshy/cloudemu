@@ -90,8 +90,14 @@ func TestInternetGatewayAttachmentStateFilter(t *testing.T) {
 		t.Fatalf("AttachInternetGateway: %v", err)
 	}
 
+	// attachment.vpc-id scopes the match to this test's own VPC: the
+	// account/region's seeded default VPC also has an attached (so
+	// attachment.state=available) internet gateway, and AWS filters are ANDed.
 	out, err := c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
-		Filters: []ec2types.Filter{{Name: aws.String("attachment.state"), Values: []string{"available"}}},
+		Filters: []ec2types.Filter{
+			{Name: aws.String("attachment.state"), Values: []string{"available"}},
+			{Name: aws.String("attachment.vpc-id"), Values: []string{vpcID}},
+		},
 	})
 	if err != nil {
 		t.Fatalf("DescribeInternetGateways: %v", err)
@@ -119,14 +125,23 @@ func TestDescribeInternetGatewaysPaginatesAllOnce(t *testing.T) {
 		want[aws.ToString(igw.InternetGateway.InternetGatewayId)] = 0
 	}
 
+	// Scoped to just the 3 gateways created above by id: the account/region's
+	// seeded default VPC also has an internet gateway, which an unfiltered
+	// describe would otherwise page through too.
+	ids := make([]string, 0, len(want))
+	for id := range want {
+		ids = append(ids, id)
+	}
+
 	seen := map[string]int{}
 
 	var token *string
 
 	for {
 		out, err := c.DescribeInternetGateways(ctx, &ec2.DescribeInternetGatewaysInput{
-			MaxResults: aws.Int32(1),
-			NextToken:  token,
+			InternetGatewayIds: ids,
+			MaxResults:         aws.Int32(1),
+			NextToken:          token,
 		})
 		if err != nil {
 			t.Fatalf("DescribeInternetGateways: %v", err)

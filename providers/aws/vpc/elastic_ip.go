@@ -2,11 +2,38 @@ package vpc
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
+
+// eipPublicIPBase is the first octet pair of the RFC 2544 benchmarking range
+// (198.18.0.0/15) elastic IPs are allocated from. Real EIPs are publicly
+// routable addresses; unlike mockPublicIP (used for NAT gateways' private-side
+// address, which is deliberately RFC1918-looking), an Elastic IP must not look
+// like a private address to a caller inspecting it. 198.18.0.0/15 is reserved
+// by IANA for network-device benchmarking, so it is guaranteed non-RFC1918 and
+// safely non-routable, while still spanning enough addresses (two full /16s) to
+// keep the same two-octet spread mockPublicIP uses.
+const eipPublicIPBase = 18
+
+// mockElasticPublicIP deterministically derives a public-looking IPv4 address
+// for an Elastic IP from its allocation id, the same character-sum scheme
+// mockPublicIP uses for private-looking addresses.
+func mockElasticPublicIP(id string) string {
+	var sum int
+	for _, c := range id {
+		sum += int(c)
+	}
+
+	secondOctet := eipPublicIPBase + (sum/(maxOctetValue*maxOctetValue))%2
+	octet3 := (sum / maxOctetValue) % maxOctetValue
+	octet4 := sum % maxOctetValue
+
+	return fmt.Sprintf("198.%d.%d.%d", secondOctet, octet3, octet4)
+}
 
 type eipData struct {
 	AllocationID       string
@@ -28,7 +55,7 @@ func (m *Mock) AllocateAddress(
 
 	eip := &eipData{
 		AllocationID: allocID,
-		PublicIP:     mockPublicIP(allocID),
+		PublicIP:     mockElasticPublicIP(allocID),
 		Tags:         copyTags(cfg.Tags),
 	}
 	m.eips.Set(allocID, eip)

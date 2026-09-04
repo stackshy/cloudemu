@@ -7615,14 +7615,15 @@ func TestInternetGatewayAWS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify gone.
+	// Verify gone: only the account/region's seeded default internet gateway
+	// (attached to the seeded default VPC) remains.
 	igws, err = p.VPC.DescribeInternetGateways(ctx, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 
-	if len(igws) != 0 {
-		t.Errorf("expected 0 igws, got %d", len(igws))
+	if len(igws) != 1 {
+		t.Errorf("expected 1 igw (the seeded default), got %d", len(igws))
 	}
 }
 

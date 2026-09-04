@@ -152,7 +152,7 @@ func (h *Handler) toVpcXML(v *netdriver.VPCInfo) vpcXML {
 		CidrBlock:               v.CIDRBlock,
 		DhcpOptionsID:           nonEmpty(v.DhcpOptionsID, dhcpDefault),
 		InstanceTenancy:         nonEmpty(v.InstanceTenancy, tenancyDefaultXML),
-		IsDefault:               false,
+		IsDefault:               v.IsDefault,
 		OwnerID:                 h.accountID,
 		CidrBlockAssociationSet: vpcCidrAssociationSet(v),
 		Tags:                    toTagItems(v.Tags),
@@ -213,7 +213,7 @@ func vpcFilterMatch(v *netdriver.VPCInfo, f awsquery.Filter) (matched, known boo
 	case filterDHCPOptionsID:
 		return containsString(f.Values, nonEmpty(v.DhcpOptionsID, dhcpDefault)), true
 	case "isDefault", "is-default":
-		return containsString(f.Values, boolFilterValue(false)), true
+		return containsString(f.Values, boolFilterValue(v.IsDefault)), true
 	default:
 		return tagFilterMatch(f.Name, f.Values, v.Tags)
 	}

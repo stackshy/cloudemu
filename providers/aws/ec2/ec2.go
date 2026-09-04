@@ -624,9 +624,11 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 	// One reservation groups every instance launched by this call (AWS r-xxxx).
 	reservationID := idgen.GenerateID(reservationPrefix)
 
-	// Resolve the target subnet once so both the VPC id and the CIDR-scoped
-	// private-IP allocation reuse a single lookup.
-	vpcID, subnetCIDR := m.resolveSubnet(ctx, cfg.SubnetID)
+	// Resolve the target subnet once so the resolved subnet id, the VPC id, and
+	// the CIDR-scoped private-IP allocation all reuse a single lookup. An empty
+	// cfg.SubnetID resolves to the account/region's default subnet, matching
+	// real EC2.
+	subnetID, vpcID, subnetCIDR := m.resolveSubnet(ctx, cfg.SubnetID)
 
 	// Resolve the IamInstanceProfile reference once for the whole batch; every
 	// instance launched by this call shares the same profile association. A
@@ -657,8 +659,8 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 
 		inst := &instanceData{
 			ID: id, ImageID: cfg.ImageID, InstanceType: cfg.InstanceType,
-			State: compute.StatePending, PrivateIP: m.allocatePrivateIP(cfg.SubnetID, subnetCIDR),
-			SubnetID: cfg.SubnetID, VPCID: vpcID,
+			State: compute.StatePending, PrivateIP: m.allocatePrivateIP(subnetID, subnetCIDR),
+			SubnetID: subnetID, VPCID: vpcID,
 			SecurityGroups: sg, Tags: tags,
 			LaunchTime:         m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 			sourceDestCheck:    true,
@@ -719,7 +721,7 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 		// interface. vpcID is non-empty only when the subnet resolved, which is
 		// exactly when the networking mock can place the interface.
 		if vpcID != "" {
-			m.materializePrimaryENI(ctx, id, cfg.SubnetID, sg)
+			m.materializePrimaryENI(ctx, id, subnetID, sg)
 		}
 
 		// Materialize the instance's root EBS volume (and any client-supplied
@@ -808,20 +810,32 @@ func (m *Mock) renderInstancesByID(ids []string) []driver.Instance {
 	return out
 }
 
-// resolveSubnet returns the VPC that owns subnetID and the subnet's CIDR block
-// in a single resolver lookup. Both are "" when there is no subnet, no resolver,
-// or the subnet can't be found.
-func (m *Mock) resolveSubnet(ctx context.Context, subnetID string) (vpcID, cidr string) {
-	if subnetID == "" || m.subnetResolver == nil {
-		return "", ""
+// resolveSubnet returns the subnet a launch actually lands in, the VPC that
+// owns it, and its CIDR block, in a single resolver lookup. When subnetID is
+// "" it resolves to the account/region's default subnet, matching real EC2
+// (an instance launched with no SubnetId lands in the default VPC's default
+// subnet, not with a blank subnet/VPC). resolvedSubnetID, vpcID and cidr are
+// all "" when there is no resolver, no subnet/default subnet found.
+func (m *Mock) resolveSubnet(ctx context.Context, subnetID string) (resolvedSubnetID, vpcID, cidr string) {
+	if m.subnetResolver == nil {
+		return subnetID, "", ""
+	}
+
+	if subnetID == "" {
+		def, ok := m.defaultSubnet(ctx)
+		if !ok {
+			return "", "", ""
+		}
+
+		return def.ID, def.VPCID, def.CIDRBlock
 	}
 
 	subs, err := m.subnetResolver.DescribeSubnets(ctx, []string{subnetID})
 	if err != nil || len(subs) == 0 {
-		return "", ""
+		return subnetID, "", ""
 	}
 
-	return subs[0].VPCID, subs[0].CIDRBlock
+	return subnetID, subs[0].VPCID, subs[0].CIDRBlock
 }
 
 // materializePrimaryENI asks the networking mock to create the instance's eth0

@@ -161,6 +161,7 @@ func (h *Handler) toSubnetXML(s *netdriver.SubnetInfo, region string) subnetXML 
 		AvailableIPCount:    s.AvailableIPAddressCount,
 		AvailabilityZone:    s.AvailabilityZone,
 		AvailabilityZoneID:  zoneIDFor(s.AvailabilityZone),
+		DefaultForAz:        s.IsDefault,
 		MapPublicIPOnLaunch: s.MapPublicIPOnLaunch,
 		OwnerID:             h.accountID,
 		Tags:                toTagItems(s.Tags),
@@ -230,7 +231,7 @@ func subnetFilterMatch(s *netdriver.SubnetInfo, f awsquery.Filter) (matched, kno
 	case filterState:
 		return containsString(f.Values, nonEmpty(s.State, stateAvailable)), true
 	case "default-for-az", "defaultForAz":
-		return containsString(f.Values, boolFilterValue(false)), true
+		return containsString(f.Values, boolFilterValue(s.IsDefault)), true
 	case "map-public-ip-on-launch":
 		return containsString(f.Values, boolFilterValue(s.MapPublicIPOnLaunch)), true
 	default:
