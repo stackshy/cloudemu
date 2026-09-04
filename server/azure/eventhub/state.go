@@ -26,6 +26,18 @@ const (
 	// defaultRetentionDays is Event Hubs' default message retention (Standard tier
 	// tops out at 7 days) reported when a create request omits it.
 	defaultRetentionDays = 7
+	// defaultSKUCapacity is the throughput-unit capacity a namespace reports when a
+	// create request omits sku.capacity; real Azure always returns 1.
+	defaultSKUCapacity = 1
+	// Event-hub property bounds enforced at create time. partitionCount is 1..32 on
+	// the Basic and Standard tiers; messageRetentionInDays is 1 day on Basic and up
+	// to 7 on Standard (higher tiers use retentionDescription and are left
+	// unbounded here).
+	minPartitionCount    = 1
+	maxPartitionCount    = 32
+	minRetentionDays     = 1
+	maxRetentionBasic    = 1
+	maxRetentionStandard = 7
 	// listPageSize is how many entities a list returns before emitting a nextLink.
 	listPageSize = 100
 	// skipParam is the query parameter a paged list request carries to resume at

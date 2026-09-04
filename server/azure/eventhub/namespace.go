@@ -205,7 +205,7 @@ func (h *Handler) checkNameAvailability(w http.ResponseWriter, r *http.Request) 
 
 func normalizeSKU(in *ehSKU) ehSKU {
 	if in == nil || in.Name == "" {
-		return ehSKU{Name: "Standard", Tier: "Standard"}
+		return ehSKU{Name: "Standard", Tier: "Standard", Capacity: defaultCapacity()}
 	}
 
 	out := *in
@@ -213,7 +213,19 @@ func normalizeSKU(in *ehSKU) ehSKU {
 		out.Tier = out.Name
 	}
 
+	// Real Azure always reports a capacity (defaulting to 1 throughput unit); an
+	// omitted capacity in the response causes read-back drift for SDK/CLI/Terraform.
+	if out.Capacity == nil {
+		out.Capacity = defaultCapacity()
+	}
+
 	return out
+}
+
+func defaultCapacity() *int32 {
+	c := int32(defaultSKUCapacity)
+
+	return &c
 }
 
 func toNamespaceResource(ns *namespaceState) namespaceResource {
