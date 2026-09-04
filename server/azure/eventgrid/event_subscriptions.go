@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
@@ -259,10 +260,13 @@ func (h *Handler) getEventSubscription(w http.ResponseWriter, r *http.Request, r
 	azurearm.WriteJSON(w, http.StatusOK, toEventSubscriptionJSON(rp, rule))
 }
 
-// deleteEventSubscription removes the subscription. The SDK's BeginDelete LRO
-// completes on a 200 first response.
+// deleteEventSubscription removes the subscription. Delete is idempotent,
+// matching real ARM and every other delete path in this package: deleting an
+// already-absent subscription (or one whose topic is already gone) still
+// succeeds rather than surfacing the driver's NotFound. The SDK's BeginDelete
+// LRO completes on a 200 first response.
 func (h *Handler) deleteEventSubscription(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.bus.DeleteRule(r.Context(), rp.ResourceName, rp.SubResourceName); err != nil {
+	if err := h.bus.DeleteRule(r.Context(), rp.ResourceName, rp.SubResourceName); err != nil && !cerrors.IsNotFound(err) {
 		azurearm.WriteCErr(w, err)
 		return
 	}

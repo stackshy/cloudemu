@@ -72,10 +72,13 @@ func TestSDKTopicPublicNetworkAccessDefaultsToEnabled(t *testing.T) {
 	}
 }
 
-// TestSDKTopicUpdatePatchMergesTags locks B2: Topics.BeginUpdate (PATCH)
-// succeeds, merges the supplied tags onto the existing ones, and applies the
-// mutable publicNetworkAccess.
-func TestSDKTopicUpdatePatchMergesTags(t *testing.T) {
+// TestSDKTopicUpdatePatchReplacesTags locks B2 (revised): Topics.BeginUpdate
+// (PATCH) succeeds, REPLACES the topic's tag set wholesale with the supplied
+// tags (a pre-existing tag absent from the body is dropped, not merged —
+// matching real Azure's resource-level tag PATCH semantics and this
+// codebase's convention elsewhere, e.g. cosmosaccount/images), and applies
+// the mutable publicNetworkAccess.
+func TestSDKTopicUpdatePatchReplacesTags(t *testing.T) {
 	cf, _ := newEGFactory(t)
 	topics := cf.NewTopicsClient()
 	ctx := context.Background()
@@ -107,8 +110,8 @@ func TestSDKTopicUpdatePatchMergesTags(t *testing.T) {
 		t.Fatalf("Update PollUntilDone: %v", err)
 	}
 
-	if updated.Tags["env"] == nil || *updated.Tags["env"] != "test" {
-		t.Fatalf("update dropped existing tag env: %+v", updated.Tags)
+	if _, ok := updated.Tags["env"]; ok {
+		t.Fatalf("replace PATCH should have dropped the omitted env tag: %+v", updated.Tags)
 	}
 
 	if updated.Tags["team"] == nil || *updated.Tags["team"] != "data" {
@@ -120,13 +123,56 @@ func TestSDKTopicUpdatePatchMergesTags(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 
-	if got.Tags["env"] == nil || got.Tags["team"] == nil {
-		t.Fatalf("Get after patch missing merged tags: %+v", got.Tags)
+	if _, ok := got.Tags["env"]; ok {
+		t.Fatalf("Get after patch should not see the dropped env tag: %+v", got.Tags)
+	}
+
+	if got.Tags["team"] == nil || *got.Tags["team"] != "data" {
+		t.Fatalf("Get after patch missing replaced tag team: %+v", got.Tags)
 	}
 
 	if got.Properties == nil || got.Properties.PublicNetworkAccess == nil ||
 		*got.Properties.PublicNetworkAccess != armeventgrid.PublicNetworkAccessDisabled {
 		t.Fatalf("patch did not apply publicNetworkAccess: %v", got.Properties)
+	}
+}
+
+// TestSDKTopicUpdatePatchOmittedTagsLeavesExisting verifies the other half of
+// the replace contract: a PATCH that omits tags entirely (nil, not an empty
+// map) must leave the topic's existing tags untouched.
+func TestSDKTopicUpdatePatchOmittedTagsLeavesExisting(t *testing.T) {
+	cf, _ := newEGFactory(t)
+	topics := cf.NewTopicsClient()
+	ctx := context.Background()
+
+	createPoller, err := topics.BeginCreateOrUpdate(ctx, testRG, "patch-topic-notags", armeventgrid.Topic{
+		Location: to.Ptr("eastus"),
+		Tags:     map[string]*string{"env": to.Ptr("test")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("create PollUntilDone: %v", err)
+	}
+
+	updPoller, err := topics.BeginUpdate(ctx, testRG, "patch-topic-notags", armeventgrid.TopicUpdateParameters{
+		Properties: &armeventgrid.TopicUpdateParameterProperties{
+			PublicNetworkAccess: to.Ptr(armeventgrid.PublicNetworkAccessDisabled),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Topics.BeginUpdate: %v", err)
+	}
+
+	updated, err := updPoller.PollUntilDone(ctx, nil)
+	if err != nil {
+		t.Fatalf("Update PollUntilDone: %v", err)
+	}
+
+	if updated.Tags["env"] == nil || *updated.Tags["env"] != "test" {
+		t.Fatalf("PATCH with no tags field should preserve existing tags: %+v", updated.Tags)
 	}
 }
 

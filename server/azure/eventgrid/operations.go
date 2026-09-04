@@ -3,6 +3,7 @@ package eventgrid
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -84,9 +85,11 @@ type topicUpdateJSON struct {
 	} `json:"properties,omitempty"`
 }
 
-// updateTopic maps Topics.Update (PATCH) onto UpdateEventBus: it merges the
-// supplied tags onto the topic's existing tags and applies the mutable
-// publicNetworkAccess, returning the updated topic (200).
+// updateTopic maps Topics.Update (PATCH) onto UpdateEventBus: a resource-level
+// tag PATCH replaces the tag set wholesale (matching real Azure and every
+// other resource's Update in this codebase — e.g. cosmosaccount, images), a
+// caller who omits tags entirely leaves the existing set untouched, and the
+// mutable publicNetworkAccess is applied. Returns the updated topic (200).
 func (h *Handler) updateTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body topicUpdateJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -101,7 +104,7 @@ func (h *Handler) updateTopic(w http.ResponseWriter, r *http.Request, rp *azurea
 
 	cfg := ebdriver.EventBusConfig{
 		Name:                rp.ResourceName,
-		Tags:                mergeTags(current.Tags, tagsFromPtr(body.Tags)),
+		Tags:                replaceTagsIfPresent(current.Tags, body.Tags),
 		PublicNetworkAccess: updatePublicNetworkAccess(&body),
 	}
 
@@ -125,23 +128,18 @@ func updatePublicNetworkAccess(body *topicUpdateJSON) string {
 	return body.Properties.PublicNetworkAccess
 }
 
-// mergeTags overlays patch onto base, returning the merged set. A nil result
-// (both empty) leaves UpdateEventBus's existing tags untouched.
-func mergeTags(base, patch map[string]string) map[string]string {
-	if len(base) == 0 && len(patch) == 0 {
-		return nil
+// replaceTagsIfPresent implements Azure's resource-level tag PATCH semantics:
+// when the caller's body includes a tags key at all (even an empty object),
+// the new set REPLACES current wholesale — a tag omitted from the body is
+// dropped, not preserved. When the caller omits tags entirely (nil), current
+// is left untouched. This matches the convention already established
+// elsewhere in this codebase (cosmosaccount, images, storageaccount, ...).
+func replaceTagsIfPresent(current map[string]string, patch map[string]*string) map[string]string {
+	if patch == nil {
+		return current
 	}
 
-	out := make(map[string]string, len(base)+len(patch))
-	for k, v := range base {
-		out[k] = v
-	}
-
-	for k, v := range patch {
-		out[k] = v
-	}
-
-	return out
+	return tagsFromPtr(patch)
 }
 
 func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -154,11 +152,15 @@ func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.
 	azurearm.WriteJSON(w, http.StatusOK, toTopicJSON(rp, info))
 }
 
-// deleteTopic removes the topic. Topics.Delete is an LRO in the SDK whose
-// polling accepts 202/204; returning 204 with no body completes the poller on
-// the first response.
+// deleteTopic removes the topic. Delete is idempotent, matching real ARM and
+// every other delete path in this package (deleteDomain, deleteSystemTopic,
+// deleteDomainTopic, deleteScopedEventSubscription,
+// deleteSystemTopicSubscription): deleting an already-absent topic still
+// succeeds rather than surfacing the driver's NotFound. Topics.Delete is an
+// LRO in the SDK whose polling accepts 202/204; returning 204 with no body
+// completes the poller on the first response.
 func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.bus.DeleteEventBus(r.Context(), rp.ResourceName); err != nil {
+	if err := h.bus.DeleteEventBus(r.Context(), rp.ResourceName); err != nil && !cerrors.IsNotFound(err) {
 		azurearm.WriteCErr(w, err)
 		return
 	}

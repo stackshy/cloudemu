@@ -159,8 +159,10 @@ func TestSDKScopedEventSubscriptionPatch(t *testing.T) {
 	}
 }
 
-// TestSDKSystemTopicPatch drives SystemTopics.BeginUpdate (PATCH): the supplied
-// tag is merged while the pre-existing tag is preserved.
+// TestSDKSystemTopicPatch drives SystemTopics.BeginUpdate (PATCH): the
+// supplied tag set REPLACES the existing tags wholesale (real Azure
+// resource-level tag PATCH semantics), so a tag omitted from the PATCH body
+// is dropped, not preserved.
 func TestSDKSystemTopicPatch(t *testing.T) {
 	cf, _ := newEGFactory(t)
 	st := cf.NewSystemTopicsClient()
@@ -199,14 +201,14 @@ func TestSDKSystemTopicPatch(t *testing.T) {
 	if got.Tags["team"] == nil || *got.Tags["team"] != "a" {
 		t.Fatalf("PATCH did not apply supplied tag: %+v", got.Tags)
 	}
-	if got.Tags["env"] == nil || *got.Tags["env"] != "test" {
-		t.Fatalf("PATCH masked pre-existing tag (nil-mask): %+v", got.Tags)
+	if _, ok := got.Tags["env"]; ok {
+		t.Fatalf("PATCH should have replaced (not merged) the pre-existing tag: %+v", got.Tags)
 	}
 }
 
 // TestSDKDomainPatch drives Domains.BeginUpdate (PATCH): publicNetworkAccess is
-// updated and a supplied tag is merged, while the immutable inputSchema and the
-// pre-existing tag are preserved.
+// updated and the supplied tag set REPLACES the existing tags wholesale, while
+// the immutable inputSchema is preserved.
 func TestSDKDomainPatch(t *testing.T) {
 	cf, _ := newEGFactory(t)
 	dc := cf.NewDomainsClient()
@@ -254,8 +256,8 @@ func TestSDKDomainPatch(t *testing.T) {
 	if got.Tags["team"] == nil || *got.Tags["team"] != "a" {
 		t.Fatalf("PATCH did not apply supplied tag: %+v", got.Tags)
 	}
-	if got.Tags["env"] == nil || *got.Tags["env"] != "test" {
-		t.Fatalf("PATCH masked pre-existing tag (nil-mask): %+v", got.Tags)
+	if _, ok := got.Tags["env"]; ok {
+		t.Fatalf("PATCH should have replaced (not merged) the pre-existing tag: %+v", got.Tags)
 	}
 }
 
