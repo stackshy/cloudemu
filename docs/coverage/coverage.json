@@ -9847,6 +9847,10 @@
           },
           {
             "name": "DescribeDBSubnetGroups"
+          },
+          {
+            "name": "ModifyDBSubnetGroup",
+            "doc": "ModifyDBSubnetGroup replaces the group's subnet membership (real RDS"
           }
         ]
       },

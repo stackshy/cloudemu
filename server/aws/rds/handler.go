@@ -33,6 +33,7 @@ const (
 var rdsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
 	"CreateDBSubnetGroup":                {},
 	"DescribeDBSubnetGroups":             {},
+	"ModifyDBSubnetGroup":                {},
 	"DeleteDBSubnetGroup":                {},
 	"CreateDBInstance":                   {},
 	"DescribeDBInstances":                {},
@@ -182,6 +183,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createDBSubnetGroup(w, r)
 	case "DescribeDBSubnetGroups":
 		h.describeDBSubnetGroups(w, r)
+	case "ModifyDBSubnetGroup":
+		h.modifyDBSubnetGroup(w, r)
 	case "DeleteDBSubnetGroup":
 		h.deleteDBSubnetGroup(w, r)
 	case "CreateDBInstance":

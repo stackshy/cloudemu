@@ -55,7 +55,24 @@ func instanceConfigFromForm(form url.Values) rdsdriver.InstanceConfig {
 		KmsKeyID:             form.Get("KmsKeyId"),
 		DeletionProtection:   formBool(form.Get("DeletionProtection")),
 		Tags:                 parseRDSTags(form),
+
+		BackupRetentionPeriod:      formInt(form.Get("BackupRetentionPeriod")),
+		PreferredBackupWindow:      form.Get("PreferredBackupWindow"),
+		PreferredMaintenanceWindow: form.Get("PreferredMaintenanceWindow"),
+		AutoMinorVersionUpgrade:    autoMinorVersionUpgradeFromForm(form),
 	}
+}
+
+// autoMinorVersionUpgradeFromForm mirrors real CreateDBInstance: the parameter
+// defaults to true when the caller omits it entirely, and to the explicit
+// value otherwise. Terraform always sends it (its own schema default is
+// true), but a raw CLI/SDK call commonly omits it.
+func autoMinorVersionUpgradeFromForm(form url.Values) bool {
+	if v := form.Get("AutoMinorVersionUpgrade"); v != "" {
+		return formBool(v)
+	}
+
+	return true
 }
 
 // parseRDSTags parses RDS-style Tags.member.N.{Key,Value} entries. Some SDK
@@ -172,7 +189,7 @@ func parseInstanceFilters(form url.Values) map[string][]string {
 
 // filterInstances keeps only the instances matching every supplied filter (AND
 // across names, OR within a name's values), mirroring RDS filter semantics for
-// db-instance-id, engine and db-cluster-id.
+// db-instance-id, dbi-resource-id, engine and db-cluster-id.
 func filterInstances(insts []rdsdriver.Instance, filters map[string][]string) []rdsdriver.Instance {
 	if len(filters) == 0 {
 		return insts
@@ -209,6 +226,11 @@ func instanceMatchesFilters(inst *rdsdriver.Instance, filters map[string][]strin
 // instanceFilterField returns the instance field a DescribeDBInstances filter
 // name selects, and whether the name is one RDS models. Real RDS errors on any
 // other name rather than silently matching nothing.
+//
+// dbi-resource-id matters beyond completeness: terraform-provider-aws polls
+// DescribeDBInstances by this filter (the immutable resource id, stable across
+// a rename) right after CreateDBInstance, so rejecting it as unrecognized
+// breaks every aws_db_instance apply.
 func instanceFilterField(inst *rdsdriver.Instance, name string) (field string, known bool) {
 	switch name {
 	case "db-instance-id":
@@ -217,6 +239,8 @@ func instanceFilterField(inst *rdsdriver.Instance, name string) (field string, k
 		return inst.Engine, true
 	case "db-cluster-id":
 		return inst.ClusterID, true
+	case "dbi-resource-id":
+		return inst.DbiResourceID, true
 	default:
 		return "", false
 	}
@@ -277,6 +301,11 @@ func (h *Handler) modifyDBInstance(w http.ResponseWriter, r *http.Request) {
 	if v := form.Get("DeletionProtection"); v != "" {
 		b := formBool(v)
 		input.DeletionProtection = &b
+	}
+
+	if v := form.Get("AutoMinorVersionUpgrade"); v != "" {
+		b := formBool(v)
+		input.AutoMinorVersionUpgrade = &b
 	}
 
 	inst, err := h.db.ModifyInstance(r.Context(), id, input)

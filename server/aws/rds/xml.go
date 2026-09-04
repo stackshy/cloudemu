@@ -105,6 +105,7 @@ type dbInstanceXML struct {
 	StorageEncrypted                      bool                       `xml:"StorageEncrypted"`
 	KmsKeyID                              string                     `xml:"KmsKeyId,omitempty"`
 	DeletionProtection                    bool                       `xml:"DeletionProtection"`
+	AutoMinorVersionUpgrade               bool                       `xml:"AutoMinorVersionUpgrade"`
 	DBParameterGroups                     *dbParameterGroupsXML      `xml:"DBParameterGroups,omitempty"`
 	OptionGroupMemberships                *optionGroupMembershipsXML `xml:"OptionGroupMemberships,omitempty"`
 	VpcSecurityGroups                     *vpcSecurityGroupsXML      `xml:"VpcSecurityGroups,omitempty"`
@@ -178,16 +179,17 @@ type associatedRolesXML struct {
 }
 
 type dbSnapshotXML struct {
-	DBSnapshotIdentifier string      `xml:"DBSnapshotIdentifier"`
-	DBSnapshotArn        string      `xml:"DBSnapshotArn"`
-	DBInstanceIdentifier string      `xml:"DBInstanceIdentifier"`
-	Engine               string      `xml:"Engine,omitempty"`
-	EngineVersion        string      `xml:"EngineVersion,omitempty"`
-	AllocatedStorage     int         `xml:"AllocatedStorage,omitempty"`
-	Status               string      `xml:"Status"`
-	PercentProgress      int         `xml:"PercentProgress"`
-	SnapshotCreateTime   string      `xml:"SnapshotCreateTime,omitempty"`
-	TagList              *tagListXML `xml:"TagList,omitempty"`
+	DBSnapshotIdentifier       string      `xml:"DBSnapshotIdentifier"`
+	DBSnapshotArn              string      `xml:"DBSnapshotArn"`
+	DBInstanceIdentifier       string      `xml:"DBInstanceIdentifier"`
+	Engine                     string      `xml:"Engine,omitempty"`
+	EngineVersion              string      `xml:"EngineVersion,omitempty"`
+	AllocatedStorage           int         `xml:"AllocatedStorage,omitempty"`
+	Status                     string      `xml:"Status"`
+	PercentProgress            int         `xml:"PercentProgress"`
+	SnapshotCreateTime         string      `xml:"SnapshotCreateTime,omitempty"`
+	SourceDBSnapshotIdentifier string      `xml:"SourceDBSnapshotIdentifier,omitempty"`
+	TagList                    *tagListXML `xml:"TagList,omitempty"`
 }
 
 type dbClusterSnapshotXML struct {
@@ -442,6 +444,7 @@ func toInstanceXML(inst *rdsdriver.Instance, resolvedSubnetGroup *dbSubnetGroupX
 		StorageEncrypted:                      inst.StorageEncrypted,
 		KmsKeyID:                              inst.KmsKeyID,
 		DeletionProtection:                    inst.DeletionProtection,
+		AutoMinorVersionUpgrade:               inst.AutoMinorVersionUpgrade,
 		DBParameterGroups:                     toDBParameterGroupsXML(inst.DBParameterGroupName),
 		OptionGroupMemberships:                toOptionGroupMembershipsXML(inst.OptionGroupName),
 		VpcSecurityGroups:                     toVpcSGsXML(inst.VPCSecurityGroups),
@@ -573,16 +576,17 @@ func toAvailabilityZonesXML(azs []string) *availabilityZonesXML {
 
 func toSnapshotXML(snap *rdsdriver.Snapshot) dbSnapshotXML {
 	return dbSnapshotXML{
-		DBSnapshotIdentifier: snap.ID,
-		DBSnapshotArn:        snap.ARN,
-		DBInstanceIdentifier: snap.InstanceID,
-		Engine:               snap.Engine,
-		EngineVersion:        snap.EngineVersion,
-		AllocatedStorage:     snap.AllocatedStorage,
-		Status:               snap.State,
-		PercentProgress:      percentProgressForState(snap.State),
-		SnapshotCreateTime:   snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		TagList:              toTagListXML(snap.Tags),
+		DBSnapshotIdentifier:       snap.ID,
+		DBSnapshotArn:              snap.ARN,
+		DBInstanceIdentifier:       snap.InstanceID,
+		Engine:                     snap.Engine,
+		EngineVersion:              snap.EngineVersion,
+		AllocatedStorage:           snap.AllocatedStorage,
+		Status:                     snap.State,
+		PercentProgress:            percentProgressForState(snap.State),
+		SnapshotCreateTime:         snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		SourceDBSnapshotIdentifier: snap.SourceDBSnapshotIdentifier,
+		TagList:                    toTagListXML(snap.Tags),
 	}
 }
 

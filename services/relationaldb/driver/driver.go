@@ -87,6 +87,18 @@ type InstanceConfig struct {
 	// Servers carries the compute zone id ("1"/"2"/"3"). Empty for AWS/GCP, which
 	// derive region from the endpoint/self-link.
 	Location string
+	// The three fields below are AWS RDS CreateDBInstance attributes; zero/empty
+	// means "use the provider's default", mirroring how AllocatedStorage/
+	// StorageType/InstanceClass above are already defaulted. Other engines leave
+	// them zero.
+	BackupRetentionPeriod      int
+	PreferredBackupWindow      string
+	PreferredMaintenanceWindow string
+	// AutoMinorVersionUpgrade is the AWS RDS CreateDBInstance attribute (real RDS
+	// defaults it to true when the caller omits it — the wire layer, which can
+	// see whether the parameter was present, applies that default before this
+	// field is set). Other engines leave it false/unused.
+	AutoMinorVersionUpgrade bool
 	// StorageEncrypted requests encryption-at-rest on the instance's storage
 	// (AWS RDS StorageEncrypted); false for engines with no such flag.
 	StorageEncrypted bool
@@ -165,7 +177,10 @@ type Instance struct {
 	PreferredMaintenanceWindow string
 	CACertificateIdentifier    string
 	Iops                       int
-	StorageEncrypted           bool
+	// AutoMinorVersionUpgrade echoes the AWS RDS DBInstance attribute; false for
+	// engines with no such concept.
+	AutoMinorVersionUpgrade bool
+	StorageEncrypted        bool
 	// KmsKeyId echoes the KMS key protecting an encrypted instance (AWS RDS
 	// KmsKeyId) on read; empty for unencrypted instances / other engines.
 	KmsKeyID           string
@@ -223,6 +238,9 @@ type ModifyInstanceInput struct {
 	StorageType                string
 	Iops                       int
 	DeletionProtection         *bool
+	// AutoMinorVersionUpgrade updates the AWS RDS DBInstance attribute; nil means
+	// "no change". Other engines ignore it.
+	AutoMinorVersionUpgrade *bool
 	// HighAvailabilityMode updates the Azure Flexible Server HA mode
 	// ("Disabled"/"SameZone"/"ZoneRedundant"); empty means "no change".
 	// StandbyAvailabilityZone updates the standby replica's zone when HA is
@@ -416,6 +434,10 @@ type Snapshot struct {
 	MasterUsername string
 	DBName         string
 	Port           int
+	// SourceDBSnapshotIdentifier is the source snapshot's ARN when this
+	// snapshot was made by CopyDBSnapshot; empty for a snapshot created
+	// directly from an instance (AWS RDS DBSnapshot.SourceDBSnapshotIdentifier).
+	SourceDBSnapshotIdentifier string
 }
 
 // ClusterSnapshotConfig configures a cluster snapshot.
@@ -524,6 +546,7 @@ type SubnetGroupConfig struct {
 	Name        string
 	Description string
 	SubnetIDs   []string
+	Tags        map[string]string
 }
 
 // SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept —
@@ -534,6 +557,11 @@ type SubnetGroupConfig struct {
 type SubnetGroups interface {
 	CreateDBSubnetGroup(ctx context.Context, cfg SubnetGroupConfig) (*SubnetGroup, error)
 	DescribeDBSubnetGroups(ctx context.Context, names []string) ([]SubnetGroup, error)
+	// ModifyDBSubnetGroup replaces the group's subnet membership (real RDS
+	// ModifyDBSubnetGroup requires SubnetIds) and optionally its description
+	// (empty means "no change", mirroring real RDS leaving it as-is when
+	// omitted).
+	ModifyDBSubnetGroup(ctx context.Context, name string, subnetIDs []string, description string) (*SubnetGroup, error)
 	DeleteDBSubnetGroup(ctx context.Context, name string) error
 }
 

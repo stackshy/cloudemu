@@ -12,8 +12,6 @@ import (
 var _ rdsdriver.AdvancedRestore = (*Mock)(nil)
 
 // CopyDBSnapshot clones an existing instance snapshot under a new identifier.
-//
-//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) CopyDBSnapshot(_ context.Context, source, target string, tags map[string]string) (*rdsdriver.Snapshot, error) {
 	if target == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "TargetDBSnapshotIdentifier is required")
@@ -36,6 +34,7 @@ func (m *Mock) CopyDBSnapshot(_ context.Context, source, target string, tags map
 	snap.ARN = snapshotARN(arnRegion(src.ARN, m.opts.Region), m.opts.AccountID, target)
 	snap.State = rdsdriver.SnapshotAvailable
 	snap.CreatedAt = m.opts.Clock.Now().UTC()
+	snap.SourceDBSnapshotIdentifier = src.ARN
 
 	if tags != nil {
 		snap.Tags = copyTags(tags)
@@ -51,8 +50,6 @@ func (m *Mock) CopyDBSnapshot(_ context.Context, source, target string, tags map
 }
 
 // CopyDBClusterSnapshot clones an existing cluster snapshot under a new identifier.
-//
-//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (m *Mock) CopyDBClusterSnapshot(_ context.Context, source, target string, tags map[string]string) (*rdsdriver.ClusterSnapshot, error) {
 	if target == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "TargetDBClusterSnapshotIdentifier is required")
