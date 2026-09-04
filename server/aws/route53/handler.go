@@ -191,6 +191,8 @@ func (h *Handler) serveZone(w http.ResponseWriter, r *http.Request, id string) {
 		h.getHostedZone(w, r, id)
 	case http.MethodDelete:
 		h.deleteHostedZone(w, r, id)
+	case http.MethodPost:
+		h.updateHostedZoneComment(w, r, id)
 	default:
 		writeMethodNotAllowed(w)
 	}
