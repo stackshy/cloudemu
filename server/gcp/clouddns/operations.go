@@ -80,11 +80,14 @@ func validateZoneCreate(w http.ResponseWriter, req *managedZoneJSON) bool {
 	return true
 }
 
+// maxZoneNameLength is Cloud DNS's managed-zone name length cap.
+const maxZoneNameLength = 63
+
 // isValidZoneName reports whether name matches Cloud DNS's managed-zone name
 // grammar [a-z]([-a-z0-9]*[a-z0-9])?: a lowercase-letter start, lowercase
-// alphanumeric or hyphen body, and no trailing hyphen.
+// alphanumeric or hyphen body, no trailing hyphen, and at most 63 characters.
 func isValidZoneName(name string) bool {
-	if name == "" || name[0] < 'a' || name[0] > 'z' {
+	if name == "" || len(name) > maxZoneNameLength || name[0] < 'a' || name[0] > 'z' {
 		return false
 	}
 
@@ -173,9 +176,19 @@ func (h *Handler) listZones(w http.ResponseWriter, r *http.Request, rt route) {
 		return
 	}
 
+	// Cloud DNS's managedZones.list accepts a ?dnsName= filter restricting the
+	// result to zones with exactly that DNS name.
+	dnsNameFilter := r.URL.Query().Get("dnsName")
+
 	out := make([]managedZoneJSON, 0, len(infos))
+
 	for i := range infos {
-		out = append(out, toManagedZoneJSON(&infos[i]))
+		j := toManagedZoneJSON(&infos[i])
+		if dnsNameFilter != "" && j.DNSName != dnsNameFilter {
+			continue
+		}
+
+		out = append(out, j)
 	}
 
 	page, next, ok := paginate(w, r, len(out))
@@ -357,12 +370,31 @@ func (h *Handler) createChange(w http.ResponseWriter, r *http.Request, rt route)
 		return
 	}
 
+	// A batch that names the same (name,type) twice within its own additions or
+	// deletions can never apply cleanly: the driver has no multi-key primitive,
+	// so the first occurrence would land (mutating the zone) before the second
+	// fails — a half-applied "atomic" change. Reject such a batch outright,
+	// before any check that reads store state, so nothing is ever mutated.
+	if name, rtype, dup := duplicateRRSet(req.Deletions); dup {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
+			"the change's deletions list the resource record set "+name+" ("+rtype+") more than once")
+		return
+	}
+
+	if name, rtype, dup := duplicateRRSet(req.Additions); dup {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
+			"the change's additions list the resource record set "+name+" ("+rtype+") more than once")
+		return
+	}
+
+	dnsName := apexDNSName(info)
+
 	// Cloud DNS applies a change atomically: validate the whole batch up front —
 	// deletions resolve and don't strip the apex, additions don't collide, and no
 	// name is left with a CNAME beside another type — before any mutation, so a
 	// bad batch fails cleanly without half-applying.
-	if !h.checkDeletions(w, r, id, apexDNSName(info), &req) ||
-		!h.checkAdditions(w, r, id, &req) ||
+	if !h.checkDeletions(w, r, id, dnsName, &req) ||
+		!h.checkAdditions(w, r, id, dnsName, &req) ||
 		!h.checkCNAME(w, r, id, &req) {
 		return
 	}
@@ -451,7 +483,7 @@ func rrsetDeletionMatches(rec *dnsdriver.RecordInfo, d *resourceRecordSetJSON) b
 // a new one with the SAME name+type in one batch; such an addition is not a real
 // conflict — it replaces a record this same change removes — so exempt additions
 // whose (name,type) also appears in the deletions.
-func (h *Handler) checkAdditions(w http.ResponseWriter, r *http.Request, id string, req *changeJSON) bool {
+func (h *Handler) checkAdditions(w http.ResponseWriter, r *http.Request, id, dnsName string, req *changeJSON) bool {
 	deleting := make(map[string]bool, len(req.Deletions))
 	for i := range req.Deletions {
 		deleting[rrsetKey(req.Deletions[i].Name, req.Deletions[i].Type)] = true
@@ -464,9 +496,17 @@ func (h *Handler) checkAdditions(w http.ResponseWriter, r *http.Request, id stri
 		// has no batch primitive, so a malformed addition caught only at apply
 		// time would land after the deletions — reject it up front so the batch
 		// fails cleanly and the zone is left untouched.
-		if a.Name == "" || a.Type == "" || len(a.Rrdatas) == 0 {
+		if a.Name == "" || a.Type == "" || len(a.Rrdatas) == 0 || a.TTL < 0 {
 			gcprest.WriteError(w, http.StatusBadRequest, "invalid",
-				"an addition must have a name, type, and at least one rrdata")
+				"an addition must have a name, type, a non-negative ttl, and at least one rrdata")
+			return false
+		}
+
+		// Cloud DNS requires every record set's name to be the zone's own DNS
+		// name or a subdomain of it; a name from an unrelated domain is rejected.
+		if !isWithinZone(a.Name, dnsName) {
+			gcprest.WriteError(w, http.StatusBadRequest, "invalid",
+				"the resource record set name "+a.Name+" is not within the managed zone's DNS name "+dnsName)
 			return false
 		}
 
@@ -482,6 +522,34 @@ func (h *Handler) checkAdditions(w http.ResponseWriter, r *http.Request, id stri
 	}
 
 	return true
+}
+
+// isWithinZone reports whether name is the zone's own DNS name or a subdomain
+// of it, matched on label boundaries (not a raw string suffix) so an unrelated
+// domain that merely ends with the same letters — e.g. "evilexample.com."
+// against zone dnsName "example.com." — is correctly rejected.
+func isWithinZone(name, dnsName string) bool {
+	return name == dnsName || strings.HasSuffix(name, "."+dnsName)
+}
+
+// duplicateRRSet returns the name and type of the first (name,type) pair that
+// appears more than once in sets, so a caller can reject a batch whose
+// additions or deletions name the same record set twice — applying such a
+// batch would half-succeed, since the driver has no way to apply two writes to
+// the same key as a single operation.
+func duplicateRRSet(sets []resourceRecordSetJSON) (name, rtype string, dup bool) {
+	seen := make(map[string]bool, len(sets))
+
+	for i := range sets {
+		k := rrsetKey(sets[i].Name, sets[i].Type)
+		if seen[k] {
+			return sets[i].Name, sets[i].Type, true
+		}
+
+		seen[k] = true
+	}
+
+	return "", "", false
 }
 
 // checkCNAME rejects a change that would leave any name with a CNAME record set
