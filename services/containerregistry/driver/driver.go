@@ -27,6 +27,18 @@ type Repository struct {
 	ScanOnPush bool
 }
 
+// ImmutableTagsReservedTag is the reserved Repository.Tags key GCP Artifact
+// Registry uses to persist dockerConfig.immutableTags: the shared Repository
+// struct has no dedicated field for it (ImageTagMutability above is AWS ECR's
+// own, differently-shaped mechanism), so the GCP provider folds the flag into
+// Tags under this key and reads it back to enforce immutableTags on
+// packages.tags write operations. AWS ECR / Azure ACR do not use this key.
+const ImmutableTagsReservedTag = "cloudemu:gcpArImmutableTags"
+
+// ImmutableTagsReservedValue is the Tags value that marks
+// ImmutableTagsReservedTag as enabled.
+const ImmutableTagsReservedValue = "true"
+
 // RepositoryConfig describes a repository to create.
 type RepositoryConfig struct {
 	Name               string

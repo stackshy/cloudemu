@@ -17,7 +17,11 @@
 //	GET    .../repositories/{id}/packages                 — List packages (paged)
 //	GET    .../repositories/{id}/packages/{pkg}           — Get package
 //	GET    .../repositories/{id}/packages/{pkg}/versions  — List versions (paged)
+//	DELETE .../repositories/{id}/packages/{pkg}/versions/{v} — Delete version
 //	GET    .../repositories/{id}/packages/{pkg}/tags      — List tags (paged)
+//	POST   .../packages/{pkg}/tags?tagId={id}             — Create tag
+//	PATCH  .../packages/{pkg}/tags/{id}                   — Patch tag (blocked by immutableTags)
+//	DELETE .../packages/{pkg}/tags/{id}                   — Delete tag (blocked by immutableTags)
 //	GET    .../repositories/{id}/files                    — List files (paged)
 //
 // The driver has no location dimension, so {l} is accepted and echoed but not

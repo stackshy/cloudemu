@@ -485,6 +485,39 @@ func TestTagImageEmptyTagRejected(t *testing.T) {
 	assert.Contains(t, err.Error(), "empty")
 }
 
+func TestUntagImage(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	createTestRepo(t, m, "untag-repo")
+	img := pushTestImage(t, m, "untag-repo", "v1")
+	require.NoError(t, m.TagImage(ctx, "untag-repo", "v1", "latest"))
+
+	t.Run("removes only the given tag", func(t *testing.T) {
+		require.NoError(t, m.UntagImage(ctx, "untag-repo", img.Digest, "latest"))
+
+		detail, err := m.GetImage(ctx, "untag-repo", img.Digest)
+		require.NoError(t, err)
+		assert.Contains(t, detail.Tags, "v1")
+		assert.NotContains(t, detail.Tags, "latest")
+	})
+
+	t.Run("tag not found", func(t *testing.T) {
+		err := m.UntagImage(ctx, "untag-repo", img.Digest, "missing")
+		require.Error(t, err)
+	})
+
+	t.Run("image not found", func(t *testing.T) {
+		err := m.UntagImage(ctx, "untag-repo", "sha256:nonexistent", "v1")
+		require.Error(t, err)
+	})
+
+	t.Run("repository not found", func(t *testing.T) {
+		err := m.UntagImage(ctx, "nonexistent", img.Digest, "v1")
+		require.Error(t, err)
+	})
+}
+
 func TestImageTagMutability(t *testing.T) {
 	tests := []struct {
 		name       string
