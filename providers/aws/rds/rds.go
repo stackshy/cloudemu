@@ -1274,6 +1274,9 @@ func (m *Mock) CreateSnapshot(_ context.Context, cfg rdsdriver.SnapshotConfig) (
 		MasterUsername: inst.MasterUsername,
 		DBName:         inst.DBName,
 		Port:           inst.Port,
+		InstanceClass:  inst.InstanceClass,
+		StorageType:    inst.StorageType,
+		Iops:           inst.Iops,
 	}
 
 	now := m.opts.Clock.Now()
@@ -1361,12 +1364,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "DB instance %q already exists", input.NewInstanceID)
 	}
 
-	instanceClass := input.InstanceClass
-	if instanceClass == "" {
-		instanceClass = defaultInstanceClass
-	}
-
-	username, dbName, port := m.restoreAttrsFromSnapshot(&snap, input.Port)
+	defaults := m.restoreAttrsFromSnapshot(&snap, &input)
 
 	password := m.rootPasswords[snap.InstanceID]
 
@@ -1376,13 +1374,14 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		ARN:                        instanceARN(region, m.opts.AccountID, input.NewInstanceID),
 		Engine:                     snap.Engine,
 		EngineVersion:              snap.EngineVersion,
-		InstanceClass:              instanceClass,
+		InstanceClass:              defaults.instanceClass,
 		AllocatedStorage:           snap.AllocatedStorage,
-		StorageType:                defaultStorageType,
-		MasterUsername:             username,
-		DBName:                     dbName,
+		StorageType:                defaults.storageType,
+		Iops:                       defaults.iops,
+		MasterUsername:             defaults.username,
+		DBName:                     defaults.dbName,
 		Endpoint:                   endpointFor(input.NewInstanceID, region, "abcd1234"),
-		Port:                       port,
+		Port:                       defaults.port,
 		State:                      rdsdriver.StateAvailable,
 		DbiResourceID:              resourceID("db-", input.NewInstanceID),
 		BackupRetentionPeriod:      defaultBackupRetention,
@@ -1403,7 +1402,7 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 	restoreCfg := rdsdriver.InstanceConfig{
 		ID:                 input.NewInstanceID,
 		Engine:             snap.Engine,
-		MasterUsername:     username,
+		MasterUsername:     defaults.username,
 		MasterUserPassword: password,
 	}
 	if err := dbengine.Provision(ctx, m.opts.DatabaseEngine, &inst, &restoreCfg); err != nil {
@@ -1420,58 +1419,116 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 	return &out, nil
 }
 
-// restoreAttrsFromSnapshot resolves the master login, DBName, and port for an
-// instance being restored from snap, preferring the snapshot's own captured
-// metadata over a live source-instance lookup. This matches real RDS: a
-// snapshot is a self-contained point-in-time image, so a restore reflects the
-// source's shape AT SNAPSHOT TIME even if the source instance has since been
-// deleted or modified. Older snapshots taken before these fields were
-// captured fall back to a live source-instance lookup, then engine defaults.
-// requestedPort is the caller-supplied Port input, which always wins when set.
-func (m *Mock) restoreAttrsFromSnapshot(snap *rdsdriver.Snapshot, requestedPort int) (username, dbName string, port int) {
-	username = snap.MasterUsername
-	dbName = snap.DBName
-	port = requestedPort
-
-	if port == 0 {
-		port = snap.Port
-	}
-
-	if username == "" || dbName == "" || port == 0 {
-		username, dbName, port = m.fallbackRestoreAttrsFromSource(snap.InstanceID, username, dbName, port)
-	}
-
-	if port == 0 {
-		port = defaultPortFor(snap.Engine)
-	}
-
-	return username, dbName, port
+// restoreDefaults holds the per-instance attributes a snapshot restore
+// resolves: the caller's request override wins, else the snapshot's own
+// captured value, else (for snapshots predating that capture) a live
+// source-instance lookup, else an engine/global default.
+type restoreDefaults struct {
+	username      string
+	dbName        string
+	port          int
+	instanceClass string
+	storageType   string
+	iops          int
 }
 
-// fallbackRestoreAttrsFromSource fills in any still-missing username/dbName/port
-// from a live lookup of the snapshot's source instance, for snapshots taken
-// before that metadata was captured on the snapshot itself.
-func (m *Mock) fallbackRestoreAttrsFromSource(
-	sourceID, username, dbName string, port int,
-) (resolvedUsername, resolvedDBName string, resolvedPort int) {
+// restoreAttrsFromSnapshot resolves the master login, DBName, port,
+// instance class, storage type, and IOPS for an instance being restored from
+// snap, preferring the snapshot's own captured metadata over a live
+// source-instance lookup. This matches real RDS: a snapshot is a
+// self-contained point-in-time image, so a restore reflects the source's
+// shape AT SNAPSHOT TIME even if the source instance has since been deleted
+// or modified — e.g. the RestoreDBInstanceFromDBSnapshot docs default
+// DBInstanceClass to "the same DBInstanceClass as the original DB instance"
+// and Iops to "the IOPS value ... taken from the backup" when omitted. Older
+// snapshots taken before these fields were captured fall back to a live
+// source-instance lookup, then engine/global defaults. Fields explicitly set
+// on input always win.
+func (m *Mock) restoreAttrsFromSnapshot(snap *rdsdriver.Snapshot, input *rdsdriver.RestoreInstanceInput) restoreDefaults {
+	d := restoreDefaults{
+		username:      snap.MasterUsername,
+		dbName:        snap.DBName,
+		port:          input.Port,
+		instanceClass: input.InstanceClass,
+		storageType:   input.StorageType,
+		iops:          input.Iops,
+	}
+
+	d.fillFromSnapshot(snap)
+
+	if d.username == "" || d.dbName == "" || d.port == 0 || d.instanceClass == "" {
+		m.fallbackRestoreAttrsFromSource(snap.InstanceID, &d)
+	}
+
+	d.fillDefaults(snap.Engine)
+
+	return d
+}
+
+// fillFromSnapshot backfills any still-zero-valued field from the snapshot's
+// own captured metadata.
+func (d *restoreDefaults) fillFromSnapshot(snap *rdsdriver.Snapshot) {
+	if d.port == 0 {
+		d.port = snap.Port
+	}
+
+	if d.instanceClass == "" {
+		d.instanceClass = snap.InstanceClass
+	}
+
+	if d.storageType == "" {
+		d.storageType = snap.StorageType
+	}
+
+	if d.iops == 0 {
+		d.iops = snap.Iops
+	}
+}
+
+// fillDefaults backfills any still-zero-valued field with the emulator's
+// engine/global defaults, the last resort after the snapshot capture and the
+// live-source fallback have both been tried.
+func (d *restoreDefaults) fillDefaults(engine string) {
+	if d.port == 0 {
+		d.port = defaultPortFor(engine)
+	}
+
+	if d.instanceClass == "" {
+		d.instanceClass = defaultInstanceClass
+	}
+
+	if d.storageType == "" {
+		d.storageType = defaultStorageType
+	}
+}
+
+// fallbackRestoreAttrsFromSource fills in any still-missing
+// username/dbName/port/instanceClass from a live lookup of the snapshot's
+// source instance, for snapshots taken before that metadata was captured on
+// the snapshot itself. storageType/iops are NOT backfilled from a live
+// source lookup: real RDS ties both to the backup captured AT SNAPSHOT TIME,
+// and a since-modified live source is not that backup.
+func (m *Mock) fallbackRestoreAttrsFromSource(sourceID string, d *restoreDefaults) {
 	src, ok := m.instances.Get(sourceID)
 	if !ok {
-		return username, dbName, port
+		return
 	}
 
-	if username == "" {
-		username = src.MasterUsername
+	if d.username == "" {
+		d.username = src.MasterUsername
 	}
 
-	if dbName == "" {
-		dbName = src.DBName
+	if d.dbName == "" {
+		d.dbName = src.DBName
 	}
 
-	if port == 0 {
-		port = src.Port
+	if d.port == 0 {
+		d.port = src.Port
 	}
 
-	return username, dbName, port
+	if d.instanceClass == "" {
+		d.instanceClass = src.InstanceClass
+	}
 }
 
 // CreateClusterSnapshot snapshots a cluster.
@@ -1503,6 +1560,11 @@ func (m *Mock) CreateClusterSnapshot(
 		State:         rdsdriver.SnapshotAvailable,
 		CreatedAt:     m.opts.Clock.Now().UTC(),
 		Tags:          copyTags(cfg.Tags),
+		// Captured so the snapshot is a self-contained restore point: without
+		// it, RestoreClusterFromSnapshot would leave the restored cluster with
+		// the Go zero value instead of the source's actual shape.
+		AllocatedStorage: cluster.AllocatedStorage,
+		EngineMode:       cluster.EngineMode,
 	}
 
 	m.clusterSnapshots.Set(cfg.ID, snap)
@@ -1581,19 +1643,36 @@ func (m *Mock) RestoreClusterFromSnapshot(
 	// database is reachable and future members provision consistently.
 	creds := m.clusterCreds[snap.ClusterID]
 
+	// AllocatedStorage/EngineMode fall back to CreateCluster's own defaults for
+	// snapshots taken before these fields were captured, rather than leaving
+	// the restored cluster with the Go zero value.
+	allocatedStorage := snap.AllocatedStorage
+	if allocatedStorage == 0 {
+		allocatedStorage = auroraAllocatedStorage
+	}
+
+	engineMode := snap.EngineMode
+	if engineMode == "" {
+		engineMode = defaultEngineMode
+	}
+
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 	cluster := rdsdriver.Cluster{
-		ID:             input.NewClusterID,
-		ARN:            clusterARN(region, m.opts.AccountID, input.NewClusterID),
-		Engine:         snap.Engine,
-		EngineVersion:  snap.EngineVersion,
-		MasterUsername: creds.user,
-		Endpoint:       endpointFor(input.NewClusterID, region, "cluster"),
-		ReaderEndpoint: endpointFor(input.NewClusterID, region, "cluster-ro"),
-		Port:           defaultPortFor(snap.Engine),
-		State:          rdsdriver.StateAvailable,
-		CreatedAt:      m.opts.Clock.Now().UTC(),
-		Tags:           copyTags(input.Tags),
+		ID:                  input.NewClusterID,
+		ARN:                 clusterARN(region, m.opts.AccountID, input.NewClusterID),
+		Engine:              snap.Engine,
+		EngineVersion:       snap.EngineVersion,
+		MasterUsername:      creds.user,
+		Endpoint:            endpointFor(input.NewClusterID, region, "cluster"),
+		ReaderEndpoint:      endpointFor(input.NewClusterID, region, "cluster-ro"),
+		Port:                defaultPortFor(snap.Engine),
+		State:               rdsdriver.StateAvailable,
+		AllocatedStorage:    allocatedStorage,
+		EngineMode:          engineMode,
+		DBClusterResourceID: resourceID("cluster-", input.NewClusterID),
+		AvailabilityZones:   availabilityZones(region),
+		CreatedAt:           m.opts.Clock.Now().UTC(),
+		Tags:                copyTags(input.Tags),
 	}
 
 	// Provision the shared database keyed and named by the new cluster id (an

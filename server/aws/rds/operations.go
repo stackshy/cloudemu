@@ -777,6 +777,8 @@ func (h *Handler) restoreInstanceFromSnapshot(w http.ResponseWriter, r *http.Req
 		PubliclyAccessible:      formBool(form.Get("PubliclyAccessible")),
 		DeletionProtection:      formBool(form.Get("DeletionProtection")),
 		SubnetGroupName:         form.Get("DBSubnetGroupName"),
+		StorageType:             form.Get("StorageType"),
+		Iops:                    formInt(form.Get("Iops")),
 	}
 
 	inst, err := h.db.RestoreInstanceFromSnapshot(r.Context(), input)
