@@ -357,6 +357,43 @@ func (m *Mock) TagImage(_ context.Context, repository, sourceRef, targetTag stri
 	return nil
 }
 
+// UntagImage removes a single tag from an image, leaving the image (and its
+// other tags) intact. This is a GCP-specific extension, not part of the
+// shared driver.ContainerRegistry interface: Artifact Registry's native
+// packages.tags.delete removes just the tag, whereas the shared interface's
+// DeleteImage removes the whole image (AWS ECR / Azure ACR have no equivalent
+// "delete a single tag" operation). The GCP wire handler reaches it through an
+// optional interface assertion, the same pattern used by UpdateRepository.
+func (m *Mock) UntagImage(_ context.Context, repository, digest, tag string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	rd, ok := m.repos.Get(repository)
+	if !ok {
+		return errors.Newf(errors.NotFound, "repository %q not found", repository)
+	}
+
+	removed := false
+
+	updated := rd.images.Update(digest, func(img *imageData) *imageData {
+		filtered := removeTag(img.detail.Tags, tag)
+		removed = len(filtered) != len(img.detail.Tags)
+		img.detail.Tags = filtered
+
+		return img
+	})
+
+	if !updated {
+		return errors.Newf(errors.NotFound, "image %q not found in repository %q", digest, repository)
+	}
+
+	if !removed {
+		return errors.Newf(errors.NotFound, "tag %q not found on image %q in repository %q", tag, digest, repository)
+	}
+
+	return nil
+}
+
 // PutLifecyclePolicy sets a cleanup policy on an Artifact Registry repository.
 func (m *Mock) PutLifecyclePolicy(_ context.Context, repository string, policy driver.LifecyclePolicy) error {
 	m.mu.Lock()
