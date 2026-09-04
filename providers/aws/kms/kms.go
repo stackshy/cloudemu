@@ -98,9 +98,18 @@ func New(opts *config.Options) *Mock {
 
 // newKeyID returns a UUID-shaped key identifier. It is derived from the shared
 // id counter, so it is unique and deterministic under a fake clock/reset.
-func newKeyID() string {
+// Multi-Region keys use real KMS's "mrk-" convention: the same UUID with its
+// dashes removed and an "mrk-" prefix, so callers that branch on the prefix
+// (a common real-world pattern for detecting multi-Region keys) see it.
+func newKeyID(multiRegion bool) string {
 	n := idgen.GenerateID("")
-	return fmt.Sprintf("%s-0000-4000-8000-%012s", n, n)
+	id := fmt.Sprintf("%s-0000-4000-8000-%012s", n, n)
+
+	if multiRegion {
+		return "mrk-" + strings.ReplaceAll(id, "-", "")
+	}
+
+	return id
 }
 
 func (m *Mock) keyARN(ctx context.Context, keyID string) string {
