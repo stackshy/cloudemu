@@ -57,7 +57,11 @@ type armDatabaseProps struct {
 	CurrentServiceObjectiveName string  `json:"currentServiceObjectiveName,omitempty"`
 	CurrentSKU                  *armSKU `json:"currentSku,omitempty"`
 	ZoneRedundant               *bool   `json:"zoneRedundant,omitempty"`
-	ElasticPoolID               string  `json:"elasticPoolId,omitempty"`
+	// ElasticPoolID is a pointer (not a plain string) so a PATCH can distinguish
+	// an omitted field from an explicit "" — real Azure SQL removes a database
+	// from its elastic pool when elasticPoolId is set to "" in the request body,
+	// which must not be conflated with the field being absent (leave unchanged).
+	ElasticPoolID *string `json:"elasticPoolId,omitempty"`
 }
 
 // armList is the ARM list-response envelope.
@@ -97,6 +101,14 @@ func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath, status str
 		status = dbStatusOnline
 	}
 
+	// Echo elasticPoolId only when the database is actually in a pool, matching
+	// the historical omitempty-on-empty-string behavior: a standalone database's
+	// response carries no elasticPoolId field at all.
+	var elasticPoolID *string
+	if db.ElasticPoolID != "" {
+		elasticPoolID = &db.ElasticPoolID
+	}
+
 	return armDatabase{
 		ID:       armDatabaseID(rp.Subscription, rp.ResourceGroup, db.Server, db.Name),
 		Name:     db.Name,
@@ -111,7 +123,7 @@ func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath, status str
 			CurrentServiceObjectiveName: db.SKUName,
 			CurrentSKU:                  &armSKU{Name: db.SKUName, Tier: db.SKUTier, Capacity: db.SKUCapacity},
 			ZoneRedundant:               &zoneRedundant,
-			ElasticPoolID:               db.ElasticPoolID,
+			ElasticPoolID:               elasticPoolID,
 		},
 	}
 }
