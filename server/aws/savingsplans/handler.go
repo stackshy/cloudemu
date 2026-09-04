@@ -211,10 +211,20 @@ func (h *Handler) describeOfferingRates(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	ids := toSet(req.SavingsPlanOfferingIDs)
+
 	rates := make([]map[string]any, 0, len(h.store.offerings))
 
 	for i := range h.store.offerings {
-		rates = append(rates, offeringRateToWire(&h.store.offerings[i]))
+		o := &h.store.offerings[i]
+
+		if len(ids) > 0 {
+			if _, ok := ids[o.id]; !ok {
+				continue
+			}
+		}
+
+		rates = append(rates, offeringRateToWire(o))
 	}
 
 	wire.WriteJSON(w, map[string]any{"searchResults": rates})
