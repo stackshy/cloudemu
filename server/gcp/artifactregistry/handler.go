@@ -6,7 +6,8 @@
 //
 // Coverage (v1 REST):
 //
-//	POST   .../repositories?repositoryId={id}              — Create repo (async)
+//	POST   .../repositories?repositoryId={id}              — Create repo (async;
+//	                                                         repository_id alias)
 //	GET    .../repositories/{id}                           — Get repo
 //	GET    .../repositories                                — List repos (paged)
 //	PATCH  .../repositories/{id}                           — Update labels/description/mode
