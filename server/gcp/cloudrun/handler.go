@@ -541,15 +541,23 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 	})
 }
 
+// writeErr maps a driver error to its wire envelope. The message is always
+// cerrors.Message(err), never err.Error() — the latter would bake cloudemu's
+// internal code-name prefix (e.g. "NotFound: ") into the message a real
+// client sees, which no real Cloud Run response ever does.
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		writeError(w, http.StatusNotFound, "NOT_FOUND", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ALREADY_EXISTS", err.Error())
+		writeError(w, http.StatusConflict, "ALREADY_EXISTS", msg)
+	case cerrors.IsFailedPrecondition(err):
+		writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL", msg)
 	}
 }
