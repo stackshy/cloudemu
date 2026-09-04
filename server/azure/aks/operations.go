@@ -3,6 +3,7 @@ package aks
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
@@ -399,9 +400,24 @@ func (h *Handler) listClusterCredentials(w http.ResponseWriter, r *http.Request,
 
 	azurearm.WriteJSON(w, http.StatusOK, armCredentialResults{
 		Kubeconfigs: []armCredentialResult{
-			{Name: rp.SubResource, Value: kubeconfig},
+			{Name: credentialName(rp.SubResource), Value: kubeconfig},
 		},
 	})
+}
+
+// credentialName maps the listCluster*Credential action verb onto the
+// kubeconfig entry name real AKS returns in kubeconfigs[].name. Real Azure
+// uses the short "clusterAdmin" / "clusterUser" / "clusterMonitoringUser"
+// forms, not the ARM action-path segment itself.
+func credentialName(action string) string {
+	switch {
+	case strings.EqualFold(action, "listClusterAdminCredential"):
+		return "clusterAdmin"
+	case strings.EqualFold(action, "listClusterMonitoringUserCredential"):
+		return "clusterMonitoringUser"
+	default:
+		return "clusterUser"
+	}
 }
 
 func (h *Handler) rotateClusterCertificates(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
