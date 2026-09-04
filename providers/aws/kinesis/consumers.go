@@ -25,11 +25,12 @@ func (m *Mock) RegisterStreamConsumer(ctx context.Context, streamARN, consumerNa
 		return nil, errInUse("consumer %q already exists on the stream", consumerName)
 	}
 
+	createdAt := m.now()
 	c := &driver.Consumer{
 		ConsumerName:              consumerName,
-		ConsumerARN:               m.consumerARN(ctx, sd.desc.StreamName, consumerName),
+		ConsumerARN:               m.consumerARN(ctx, sd.desc.StreamName, consumerName, createdAt),
 		ConsumerStatus:            driver.ConsumerActive,
-		ConsumerCreationTimestamp: m.now(),
+		ConsumerCreationTimestamp: createdAt,
 		StreamARN:                 sd.desc.StreamARN,
 	}
 	sd.consumers[consumerName] = c

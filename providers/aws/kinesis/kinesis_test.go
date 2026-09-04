@@ -2,6 +2,9 @@ package kinesis_test
 
 import (
 	"context"
+	"regexp"
+	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -355,5 +358,57 @@ func TestExpiredIteratorForMissingShard(t *testing.T) {
 	apiErr, ok := err.(*driver.APIError)
 	if !ok || apiErr.Exception != driver.ExExpiredIterator {
 		t.Fatalf("missing shard should be ExpiredIteratorException, got %v", err)
+	}
+}
+
+// TestConsumerARNCarriesCreationTimestamp verifies the enhanced-fan-out consumer
+// ARN ends with the creation timestamp (Unix seconds) as real Kinesis does — the
+// documented Consumer.ConsumerARN pattern requires a trailing ":[0-9]+" — and
+// that recreating a consumer with the same name at a later time yields a distinct
+// ARN.
+func TestConsumerARNCarriesCreationTimestamp(t *testing.T) {
+	ctx := context.Background()
+	m, clk := newMockClock(t)
+
+	if err := m.CreateStream(ctx, driver.CreateStreamInput{StreamName: "s", ShardCount: 1}); err != nil {
+		t.Fatalf("CreateStream: %v", err)
+	}
+
+	sum, err := m.DescribeStreamSummary(ctx, "s", "")
+	if err != nil {
+		t.Fatalf("DescribeStreamSummary: %v", err)
+	}
+
+	arnPattern := regexp.MustCompile(`^arn:aws:kinesis:.*:\d{12}:stream/s/consumer/c:[0-9]+$`)
+
+	c1, err := m.RegisterStreamConsumer(ctx, sum.StreamARN, "c")
+	if err != nil {
+		t.Fatalf("RegisterStreamConsumer: %v", err)
+	}
+
+	if !arnPattern.MatchString(c1.ConsumerARN) {
+		t.Fatalf("ConsumerARN %q does not match the AWS pattern", c1.ConsumerARN)
+	}
+
+	wantSuffix := ":" + strconv.FormatInt(c1.ConsumerCreationTimestamp.Unix(), 10)
+	if !strings.HasSuffix(c1.ConsumerARN, wantSuffix) {
+		t.Fatalf("ConsumerARN %q should end with the creation timestamp %q", c1.ConsumerARN, wantSuffix)
+	}
+
+	// Deregister, advance the clock, and recreate the same-named consumer: the
+	// timestamp suffix must make the new ARN distinct.
+	if err := m.DeregisterStreamConsumer(ctx, sum.StreamARN, "c", ""); err != nil {
+		t.Fatalf("DeregisterStreamConsumer: %v", err)
+	}
+
+	clk.Advance(time.Minute)
+
+	c2, err := m.RegisterStreamConsumer(ctx, sum.StreamARN, "c")
+	if err != nil {
+		t.Fatalf("re-RegisterStreamConsumer: %v", err)
+	}
+
+	if c2.ConsumerARN == c1.ConsumerARN {
+		t.Fatalf("recreated consumer reused the ARN %q; real Kinesis mints a new one", c2.ConsumerARN)
 	}
 }

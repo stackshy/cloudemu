@@ -131,9 +131,13 @@ func (m *Mock) streamARN(ctx context.Context, name string) string {
 	return idgen.AWSARN("kinesis", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "stream/"+name)
 }
 
-func (m *Mock) consumerARN(ctx context.Context, streamName, consumerName string) string {
+// consumerARN builds an enhanced-fan-out consumer ARN. Real Kinesis appends the
+// consumer's creation timestamp (Unix seconds) to the ARN — the documented
+// Consumer.ConsumerARN pattern ends in ":[0-9]+" — so that recreating a consumer
+// with the same name yields a distinct ARN.
+func (m *Mock) consumerARN(ctx context.Context, streamName, consumerName string, createdAt time.Time) string {
 	return idgen.AWSARN("kinesis", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID,
-		"stream/"+streamName+"/consumer/"+consumerName)
+		fmt.Sprintf("stream/%s/consumer/%s:%d", streamName, consumerName, createdAt.Unix()))
 }
 
 func (m *Mock) now() time.Time {
