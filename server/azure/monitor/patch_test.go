@@ -11,11 +11,16 @@ import (
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
-// TestSDKMetricAlertPatchMergesAndPreserves is the load-bearing regression for
-// the PATCH BLOCKER: the armmonitor MetricAlertsClient.Update issues an HTTP
-// PATCH, which the handler used to reject with 405. It must return 200, apply
-// the supplied fields, and preserve fields the patch omits.
-func TestSDKMetricAlertPatchMergesAndPreserves(t *testing.T) {
+// TestSDKMetricAlertPatchPreservesPropertiesReplacesTags is the load-bearing
+// regression for two fixes: the PATCH BLOCKER (armmonitor MetricAlertsClient.
+// Update issues an HTTP PATCH, which the handler used to reject with 405, and
+// must apply supplied properties while preserving omitted ones) and the
+// tags-replace fix (real ARM resource-level PATCH SETS the tag collection
+// wholesale when the request carries a tags key — the same convention already
+// fixed for compute/network/loadbalancer Update and UpdateTags operations
+// elsewhere in this codebase — so a patch naming only "env" must drop the
+// pre-existing "team" tag, not merge alongside it).
+func TestSDKMetricAlertPatchPreservesPropertiesReplacesTags(t *testing.T) {
 	client := newInsightsServer(t).metricAlerts(t)
 	ctx := context.Background()
 
@@ -27,8 +32,9 @@ func TestSDKMetricAlertPatchMergesAndPreserves(t *testing.T) {
 		t.Fatalf("CreateOrUpdate: %v", err)
 	}
 
-	// PATCH only severity and one tag; description, scopes, criteria and the
-	// other tag must survive.
+	// PATCH severity and a tag set naming only "env"; description, scopes and
+	// criteria (properties the patch omits) must survive, but the tag set must
+	// become exactly what the patch supplied — "team" must NOT survive.
 	patched, err := client.Update(ctx, "rg-1", "cpu", armmonitor.MetricAlertResourcePatch{
 		Tags:       map[string]*string{"env": to.Ptr("staging")},
 		Properties: &armmonitor.MetricAlertPropertiesPatch{Severity: to.Ptr[int32](1)},
@@ -49,12 +55,39 @@ func TestSDKMetricAlertPatchMergesAndPreserves(t *testing.T) {
 		t.Fatal("criteria dropped by patch (omitted field not preserved)")
 	}
 
-	if got := deref(patched.Tags["team"]); got != "payments" {
-		t.Fatalf("tag team = %q, want preserved 'payments'", got)
+	if _, ok := patched.Tags["team"]; ok {
+		t.Fatalf("tags = %v, want wholesale replace (pre-existing 'team' must not survive)", patched.Tags)
 	}
 
 	if got := deref(patched.Tags["env"]); got != "staging" {
 		t.Fatalf("tag env = %q, want updated 'staging'", got)
+	}
+}
+
+// TestSDKMetricAlertPatchOmittedTagsPreserved covers the other half of the
+// tags-replace fix: a PATCH whose body carries no tags key at all (Tags left
+// nil) must leave the stored tag set untouched, distinguishing "omitted" from
+// an explicit empty replacement.
+func TestSDKMetricAlertPatchOmittedTagsPreserved(t *testing.T) {
+	client := newInsightsServer(t).metricAlerts(t)
+	ctx := context.Background()
+
+	create := metricAlertResource(80)
+	create.Tags = map[string]*string{"team": to.Ptr("payments")}
+
+	if _, err := client.CreateOrUpdate(ctx, "rg-1", "cpu", create, nil); err != nil {
+		t.Fatalf("CreateOrUpdate: %v", err)
+	}
+
+	patched, err := client.Update(ctx, "rg-1", "cpu", armmonitor.MetricAlertResourcePatch{
+		Properties: &armmonitor.MetricAlertPropertiesPatch{Severity: to.Ptr[int32](1)},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Update (PATCH): %v", err)
+	}
+
+	if got := deref(patched.Tags["team"]); got != "payments" {
+		t.Fatalf("tag team = %q, want preserved 'payments' (tags key omitted from PATCH body)", got)
 	}
 }
 
