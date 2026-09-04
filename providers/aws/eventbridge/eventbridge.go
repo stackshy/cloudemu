@@ -2,6 +2,7 @@
 package eventbridge
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -172,12 +173,13 @@ func (m *Mock) CreateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 	}
 
 	info := driver.EventBusInfo{
-		Name:      cfg.Name,
-		Scope:     cfg.Scope,
-		ARN:       busARN,
-		State:     activeBusState,
-		CreatedAt: m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:      tags,
+		Name:        cfg.Name,
+		Scope:       cfg.Scope,
+		ARN:         busARN,
+		State:       activeBusState,
+		CreatedAt:   m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:        tags,
+		Description: cfg.Description,
 	}
 
 	bd := &busData{
@@ -263,10 +265,17 @@ func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule,
 	// typo'd pattern (e.g. a non-array leaf) would store "successfully" and then
 	// silently match nothing, so targets never fire — the worst failure mode for
 	// an event-driven app.
-	if cfg.EventPattern != "" {
-		if err := eventmatch.ValidatePattern(cfg.EventPattern); err != nil {
+	pattern := cfg.EventPattern
+	if pattern != "" {
+		if err := eventmatch.ValidatePattern(pattern); err != nil {
 			return nil, errors.New(errors.InvalidArgument, err.Error())
 		}
+		// Real EventBridge normalizes the stored pattern to compact JSON (no
+		// insignificant whitespace), so DescribeRule/ListRules echo it back
+		// reformatted rather than verbatim. compactPattern falls back to the
+		// original string on error, but ValidatePattern above already proved
+		// it's well-formed JSON.
+		pattern = compactPattern(pattern)
 	}
 
 	state := cfg.State
@@ -278,7 +287,7 @@ func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule,
 		Name:               cfg.Name,
 		EventBus:           busName,
 		Description:        cfg.Description,
-		EventPattern:       cfg.EventPattern,
+		EventPattern:       pattern,
 		ScheduleExpression: cfg.ScheduleExpression,
 		RoleARN:            cfg.RoleARN,
 		State:              state,
@@ -692,9 +701,12 @@ func (m *Mock) reservedVars(rule *driver.Rule, event *driver.Event, envelope []b
 }
 
 // ruleARN builds the EventBridge rule ARN, matching the wire handler's format.
+// Real EventBridge omits the bus segment for a rule on the default bus
+// ("arn:...:rule/<rule>") and includes it only for a custom-bus rule
+// ("arn:...:rule/<bus>/<rule>") — see the PutRule API's sample response.
 func (m *Mock) ruleARN(bus, rule string) string {
-	if bus == "" {
-		bus = defaultBusName
+	if bus == "" || bus == defaultBusName {
+		return "arn:aws:events:" + m.opts.Region + ":" + m.opts.AccountID + ":rule/" + rule
 	}
 
 	return "arn:aws:events:" + m.opts.Region + ":" + m.opts.AccountID + ":rule/" + bus + "/" + rule
@@ -809,6 +821,20 @@ func generateEventID(event *driver.Event, now time.Time, index int) string {
 	hash := sha256.Sum256([]byte(data))
 
 	return fmt.Sprintf("%x", hash[:16])
+}
+
+// compactPattern strips insignificant whitespace from an event pattern JSON
+// string, matching real EventBridge's normalization of the stored pattern
+// (DescribeRule/ListRules echo it back compacted, not verbatim). Key order is
+// preserved — json.Compact only removes whitespace, it does not re-encode or
+// reorder. Falls back to the original string if it isn't valid JSON.
+func compactPattern(pattern string) string {
+	var buf bytes.Buffer
+	if err := json.Compact(&buf, []byte(pattern)); err != nil {
+		return pattern
+	}
+
+	return buf.String()
 }
 
 // matchesPattern reports whether an event satisfies an EventBridge event

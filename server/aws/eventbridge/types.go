@@ -3,6 +3,7 @@ package eventbridge
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 	"time"
 
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
@@ -93,6 +94,10 @@ type putEventsEntry struct {
 	Detail       string   `json:"Detail"`
 	EventBusName string   `json:"EventBusName"`
 	Resources    []string `json:"Resources"`
+	// Time is the caller-supplied event timestamp (Unix epoch seconds, the AWS
+	// JSON protocol's timestamp wire form). Real EventBridge uses the time of
+	// the PutEvents call when omitted, matching a nil pointer here.
+	Time *float64 `json:"Time"`
 }
 
 type putEventsRequest struct {
@@ -194,11 +199,22 @@ type testEventPatternResponse struct {
 
 // --- helpers ---
 
+// eventBusARNInfix is the fixed segment separating an event bus ARN's account
+// ID from the bus name, e.g. "arn:aws:events:us-east-1:123456789012:event-bus/my-bus".
+const eventBusARNInfix = ":event-bus/"
+
 // busNameOrDefault resolves an optional EventBusName to the driver-facing bus
-// name, mirroring the driver's default-bus behavior.
+// name, mirroring the driver's default-bus behavior. Real EventBridge accepts
+// either the bus name or its ARN in every EventBusName-shaped parameter (see
+// e.g. the DescribeEventBus API's Name parameter: "The name or ARN of the
+// event bus..."), so an ARN is resolved to the bus name it references.
 func busNameOrDefault(name string) string {
 	if name == "" {
 		return defaultBusName
+	}
+
+	if idx := strings.LastIndex(name, eventBusARNInfix); idx != -1 {
+		return name[idx+len(eventBusARNInfix):]
 	}
 
 	return name
@@ -230,12 +246,14 @@ func epochSeconds(iso string) float64 {
 
 // ruleARN synthesizes an EventBridge rule ARN. The driver's Rule carries no
 // ARN, so we derive a stable identifier the SDK can round-trip. Real
-// EventBridge rule ARNs are "arn:aws:events:<region>:<account>:rule/<bus>/<rule>";
-// region/account aren't threaded into this handler, so they're left as
-// placeholders that keep the ARN shape recognizable.
+// EventBridge omits the bus segment for a rule on the default bus
+// ("arn:aws:events:<region>:<account>:rule/<rule>") and includes it only for
+// a custom-bus rule ("arn:aws:events:<region>:<account>:rule/<bus>/<rule>") —
+// see the PutRule API's sample response, which has no bus segment for a
+// default-bus rule.
 func (h *Handler) ruleARN(bus, rule string) string {
-	if bus == "" {
-		bus = defaultBusName
+	if bus == "" || bus == defaultBusName {
+		return "arn:aws:events:" + h.region + ":" + h.accountID + ":rule/" + rule
 	}
 
 	return "arn:aws:events:" + h.region + ":" + h.accountID + ":rule/" + bus + "/" + rule
@@ -288,6 +306,18 @@ func isValidDetail(detail string) bool {
 	var obj map[string]json.RawMessage
 
 	return json.Unmarshal([]byte(detail), &obj) == nil
+}
+
+// entryTime converts a PutEvents entry's optional wire-form timestamp (Unix
+// epoch seconds) to a time.Time. A nil entry (the caller omitted Time) yields
+// the zero time, which the driver defaults to the PutEvents call's own time —
+// matching real EventBridge's "if no time stamp is provided" behavior.
+func entryTime(epochSeconds *float64) time.Time {
+	if epochSeconds == nil {
+		return time.Time{}
+	}
+
+	return time.Unix(int64(*epochSeconds), 0).UTC()
 }
 
 func toTargetJSON(t *ebdriver.Target) targetJSON {

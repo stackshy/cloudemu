@@ -394,7 +394,8 @@ func TestGetRulePortable(t *testing.T) {
 	assert.Equal(t, "gr-bus", rule.EventBus)
 	assert.Equal(t, "test rule", rule.Description)
 	assert.Equal(t, "ENABLED", rule.State)
-	assert.Equal(t, `{"source": ["my.app"]}`, rule.EventPattern)
+	// EventPattern is stored compacted, matching real EventBridge normalization.
+	assert.Equal(t, `{"source":["my.app"]}`, rule.EventPattern)
 }
 
 func TestListRulesPortable(t *testing.T) {
