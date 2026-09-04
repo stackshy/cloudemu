@@ -60,8 +60,43 @@ func (m *Mock) CreateDBSubnetGroup(
 		ARN:         idgen.AWSARN("rds", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "subgrp:"+cfg.Name),
 	}
 	m.subnetGroups.Set(cfg.Name, sg)
+	m.setGroupTags(sg.ARN, copyTags(cfg.Tags))
 
 	return &sg, nil
+}
+
+// ModifyDBSubnetGroup replaces the group's subnet membership and (when
+// non-empty) its description, then re-resolves VpcId from the new members —
+// mirroring CreateDBSubnetGroup, since real RDS lets the members move to a
+// different VPC's subnets.
+func (m *Mock) ModifyDBSubnetGroup(
+	ctx context.Context, name string, subnetIDs []string, description string,
+) (*rdsdriver.SubnetGroup, error) {
+	if len(subnetIDs) == 0 {
+		return nil, cerrors.New(cerrors.InvalidArgument, "at least one subnet is required")
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	sg, ok := m.subnetGroups.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound,
+			"DBSubnetGroupNotFoundFault: db subnet group %q not found", name)
+	}
+
+	sg.SubnetIDs = append([]string(nil), subnetIDs...)
+	sg.VPCID = m.resolveVPCID(ctx, subnetIDs)
+
+	if description != "" {
+		sg.Description = description
+	}
+
+	m.subnetGroups.Set(name, sg)
+
+	out := sg
+
+	return &out, nil
 }
 
 // DescribeDBSubnetGroups returns the named groups, or all of them when no

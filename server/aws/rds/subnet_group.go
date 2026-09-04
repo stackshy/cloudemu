@@ -34,6 +34,13 @@ type createDBSubnetGroupResponse struct {
 	Metadata responseMetadata    `xml:"ResponseMetadata"`
 }
 
+type modifyDBSubnetGroupResponse struct {
+	XMLName  xml.Name            `xml:"ModifyDBSubnetGroupResponse"`
+	Xmlns    string              `xml:"xmlns,attr"`
+	Result   dbSubnetGroupResult `xml:"ModifyDBSubnetGroupResult"`
+	Metadata responseMetadata    `xml:"ResponseMetadata"`
+}
+
 type describeDBSubnetGroupsResponse struct {
 	XMLName  xml.Name         `xml:"DescribeDBSubnetGroupsResponse"`
 	Xmlns    string           `xml:"xmlns,attr"`
@@ -73,6 +80,7 @@ func (h *Handler) createDBSubnetGroup(w http.ResponseWriter, r *http.Request) {
 		Name:        r.Form.Get("DBSubnetGroupName"),
 		Description: r.Form.Get("DBSubnetGroupDescription"),
 		SubnetIDs:   awsquery.ListStrings(r.Form, "SubnetIds.SubnetIdentifier"),
+		Tags:        parseRDSTags(r.Form),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -118,6 +126,29 @@ func (h *Handler) describeDBSubnetGroups(w http.ResponseWriter, r *http.Request)
 	awsquery.WriteXMLResponse(w, describeDBSubnetGroupsResponse{
 		Xmlns:    Namespace,
 		Result:   subnetGroupsList{Marker: page.NextPageToken, DBSubnetGroups: out},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) modifyDBSubnetGroup(w http.ResponseWriter, r *http.Request) {
+	store, ok := h.subnetGroups()
+	if !ok {
+		writeUnsupported(w, "DB subnet groups")
+		return
+	}
+
+	sg, err := store.ModifyDBSubnetGroup(r.Context(),
+		r.Form.Get("DBSubnetGroupName"),
+		awsquery.ListStrings(r.Form, "SubnetIds.SubnetIdentifier"),
+		r.Form.Get("DBSubnetGroupDescription"))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyDBSubnetGroupResponse{
+		Xmlns:    Namespace,
+		Result:   dbSubnetGroupResult{DBSubnetGroup: toSubnetGroupXML(sg)},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

@@ -87,6 +87,25 @@ type InstanceConfig struct {
 	// Servers carries the compute zone id ("1"/"2"/"3"). Empty for AWS/GCP, which
 	// derive region from the endpoint/self-link.
 	Location string
+	// PreferredBackupWindow/PreferredMaintenanceWindow are AWS RDS
+	// CreateDBInstance attributes; empty means "use the provider's default",
+	// mirroring how AllocatedStorage/StorageType/InstanceClass above are
+	// already defaulted. Other engines leave them empty.
+	PreferredBackupWindow      string
+	PreferredMaintenanceWindow string
+	// BackupRetentionPeriod is the AWS RDS CreateDBInstance attribute. Unlike
+	// the two window fields above, 0 is a meaningful explicit value (it
+	// disables automated backups — terraform-provider-aws's schema default is
+	// 0), so it cannot be treated as "unset". Real RDS defaults it to 1 only
+	// when the caller omits the parameter entirely — the wire layer, which can
+	// see whether the parameter was present, applies that default before this
+	// field is set. Other engines leave it zero/unused.
+	BackupRetentionPeriod int
+	// AutoMinorVersionUpgrade is the AWS RDS CreateDBInstance attribute (real RDS
+	// defaults it to true when the caller omits it — the wire layer, which can
+	// see whether the parameter was present, applies that default before this
+	// field is set). Other engines leave it false/unused.
+	AutoMinorVersionUpgrade bool
 	// StorageEncrypted requests encryption-at-rest on the instance's storage
 	// (AWS RDS StorageEncrypted); false for engines with no such flag.
 	StorageEncrypted bool
@@ -165,7 +184,10 @@ type Instance struct {
 	PreferredMaintenanceWindow string
 	CACertificateIdentifier    string
 	Iops                       int
-	StorageEncrypted           bool
+	// AutoMinorVersionUpgrade echoes the AWS RDS DBInstance attribute; false for
+	// engines with no such concept.
+	AutoMinorVersionUpgrade bool
+	StorageEncrypted        bool
 	// KmsKeyId echoes the KMS key protecting an encrypted instance (AWS RDS
 	// KmsKeyId) on read; empty for unencrypted instances / other engines.
 	KmsKeyID           string
@@ -223,6 +245,9 @@ type ModifyInstanceInput struct {
 	StorageType                string
 	Iops                       int
 	DeletionProtection         *bool
+	// AutoMinorVersionUpgrade updates the AWS RDS DBInstance attribute; nil means
+	// "no change". Other engines ignore it.
+	AutoMinorVersionUpgrade *bool
 	// HighAvailabilityMode updates the Azure Flexible Server HA mode
 	// ("Disabled"/"SameZone"/"ZoneRedundant"); empty means "no change".
 	// StandbyAvailabilityZone updates the standby replica's zone when HA is
@@ -416,6 +441,11 @@ type Snapshot struct {
 	MasterUsername string
 	DBName         string
 	Port           int
+	// SourceDBSnapshotIdentifier is the AWS RDS DBSnapshot attribute that "only
+	// has a value in the case of a cross-account or cross-Region copy" (per the
+	// AWS API docs). cloudemu models only same-account/same-region copies, so
+	// this stays empty on every snapshot, including ones made by CopyDBSnapshot.
+	SourceDBSnapshotIdentifier string
 }
 
 // ClusterSnapshotConfig configures a cluster snapshot.
@@ -464,6 +494,18 @@ type RestoreInstanceInput struct {
 	// the snapshot was taken from, not the engine default.
 	Port int
 	Tags map[string]string
+	// AutoMinorVersionUpgrade is the AWS RDS RestoreDBInstanceFromDBSnapshot
+	// attribute; real RDS defaults it to true when the caller omits it — the
+	// wire layer, which can see whether the parameter was present, applies
+	// that default before this field is set (mirroring InstanceConfig's field
+	// of the same name).
+	AutoMinorVersionUpgrade bool
+	MultiAZ                 bool
+	PubliclyAccessible      bool
+	DeletionProtection      bool
+	// SubnetGroupName is the AWS RDS RestoreDBInstanceFromDBSnapshot
+	// DBSubnetGroupName attribute; empty means the account/region default VPC.
+	SubnetGroupName string
 }
 
 // RestoreClusterInput configures restoring a cluster from a snapshot.
@@ -524,6 +566,7 @@ type SubnetGroupConfig struct {
 	Name        string
 	Description string
 	SubnetIDs   []string
+	Tags        map[string]string
 }
 
 // SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept —
@@ -534,6 +577,11 @@ type SubnetGroupConfig struct {
 type SubnetGroups interface {
 	CreateDBSubnetGroup(ctx context.Context, cfg SubnetGroupConfig) (*SubnetGroup, error)
 	DescribeDBSubnetGroups(ctx context.Context, names []string) ([]SubnetGroup, error)
+	// ModifyDBSubnetGroup replaces the group's subnet membership (real RDS
+	// ModifyDBSubnetGroup requires SubnetIds) and optionally its description
+	// (empty means "no change", mirroring real RDS leaving it as-is when
+	// omitted).
+	ModifyDBSubnetGroup(ctx context.Context, name string, subnetIDs []string, description string) (*SubnetGroup, error)
 	DeleteDBSubnetGroup(ctx context.Context, name string) error
 }
 

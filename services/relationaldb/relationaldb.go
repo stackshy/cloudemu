@@ -272,6 +272,8 @@ func (db *DB) DeleteSnapshot(ctx context.Context, id string) error {
 }
 
 // RestoreInstanceFromSnapshot creates a new instance from a snapshot.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (db *DB) RestoreInstanceFromSnapshot(
 	ctx context.Context, input driver.RestoreInstanceInput,
 ) (*driver.Instance, error) {

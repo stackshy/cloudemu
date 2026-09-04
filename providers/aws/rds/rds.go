@@ -454,6 +454,22 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 		engineVersion = defaultEngineVersion(cfg.Engine)
 	}
 
+	// BackupRetentionPeriod is NOT defaulted here: unlike AllocatedStorage/
+	// StorageType/InstanceClass above, 0 is a meaningful explicit value (it
+	// disables automated backups). The wire layer, which can see whether the
+	// caller supplied the parameter at all, applies the AWS default (1) before
+	// this field is set — mirroring AutoMinorVersionUpgrade below. A direct Go
+	// library caller who wants the default must set it explicitly.
+	backupWindow := cfg.PreferredBackupWindow
+	if backupWindow == "" {
+		backupWindow = defaultBackupWindow
+	}
+
+	maintenanceWindow := cfg.PreferredMaintenanceWindow
+	if maintenanceWindow == "" {
+		maintenanceWindow = defaultMaintenanceWindow
+	}
+
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 
 	return rdsdriver.Instance{
@@ -478,10 +494,11 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 		ClusterID:                  cfg.ClusterID,
 		AvailabilityZone:           cfg.AvailabilityZone,
 		DbiResourceID:              resourceID("db-", cfg.ID),
-		BackupRetentionPeriod:      defaultBackupRetention,
-		PreferredBackupWindow:      defaultBackupWindow,
-		PreferredMaintenanceWindow: defaultMaintenanceWindow,
+		BackupRetentionPeriod:      cfg.BackupRetentionPeriod,
+		PreferredBackupWindow:      backupWindow,
+		PreferredMaintenanceWindow: maintenanceWindow,
 		CACertificateIdentifier:    defaultCACertIdentifier,
+		AutoMinorVersionUpgrade:    cfg.AutoMinorVersionUpgrade,
 		StorageEncrypted:           cfg.StorageEncrypted,
 		KmsKeyID:                   resolveKMSKeyID(cfg.StorageEncrypted, cfg.KmsKeyID),
 		DeletionProtection:         cfg.DeletionProtection,
@@ -748,6 +765,10 @@ func applyImmediateMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanc
 
 	if input.DeletionProtection != nil {
 		inst.DeletionProtection = *input.DeletionProtection
+	}
+
+	if input.AutoMinorVersionUpgrade != nil {
+		inst.AutoMinorVersionUpgrade = *input.AutoMinorVersionUpgrade
 	}
 
 	if input.Tags != nil {
@@ -1319,6 +1340,8 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 // RestoreInstanceFromSnapshot creates a new instance from a snapshot and backs
 // it with a real database (when an engine is wired in) so the restored endpoint
 // is reachable, not a synthetic host that resolves to nothing.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) RestoreInstanceFromSnapshot(
 	ctx context.Context, input rdsdriver.RestoreInstanceInput,
 ) (*rdsdriver.Instance, error) {
@@ -1349,20 +1372,30 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 	inst := rdsdriver.Instance{
-		ID:               input.NewInstanceID,
-		ARN:              instanceARN(region, m.opts.AccountID, input.NewInstanceID),
-		Engine:           snap.Engine,
-		EngineVersion:    snap.EngineVersion,
-		InstanceClass:    instanceClass,
-		AllocatedStorage: snap.AllocatedStorage,
-		StorageType:      defaultStorageType,
-		MasterUsername:   username,
-		DBName:           dbName,
-		Endpoint:         endpointFor(input.NewInstanceID, region, "abcd1234"),
-		Port:             port,
-		State:            rdsdriver.StateAvailable,
-		CreatedAt:        m.opts.Clock.Now().UTC(),
-		Tags:             copyTags(input.Tags),
+		ID:                         input.NewInstanceID,
+		ARN:                        instanceARN(region, m.opts.AccountID, input.NewInstanceID),
+		Engine:                     snap.Engine,
+		EngineVersion:              snap.EngineVersion,
+		InstanceClass:              instanceClass,
+		AllocatedStorage:           snap.AllocatedStorage,
+		StorageType:                defaultStorageType,
+		MasterUsername:             username,
+		DBName:                     dbName,
+		Endpoint:                   endpointFor(input.NewInstanceID, region, "abcd1234"),
+		Port:                       port,
+		State:                      rdsdriver.StateAvailable,
+		DbiResourceID:              resourceID("db-", input.NewInstanceID),
+		BackupRetentionPeriod:      defaultBackupRetention,
+		PreferredBackupWindow:      defaultBackupWindow,
+		PreferredMaintenanceWindow: defaultMaintenanceWindow,
+		CACertificateIdentifier:    defaultCACertIdentifier,
+		AutoMinorVersionUpgrade:    input.AutoMinorVersionUpgrade,
+		MultiAZ:                    input.MultiAZ,
+		PubliclyAccessible:         input.PubliclyAccessible,
+		DeletionProtection:         input.DeletionProtection,
+		SubnetGroupName:            input.SubnetGroupName,
+		CreatedAt:                  m.opts.Clock.Now().UTC(),
+		Tags:                       copyTags(input.Tags),
 	}
 
 	// Provision the restored instance's OWN database (keyed by the new id, so it
