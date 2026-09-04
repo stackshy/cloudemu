@@ -41,11 +41,12 @@ const errNonExistentQueue = "QueueDoesNotExist"
 // "error.code" (botocore sqs/2012-11-05/service-2.json); "Sender" marks a
 // client-fault error, matching every code below.
 const (
-	errQueryCodeNonExistentQueue    = "AWS.SimpleQueueService.NonExistentQueue;Sender"
-	errQueryCodeQueueAlreadyExists  = "QueueAlreadyExists;Sender"
-	errQueryCodeEmptyBatchRequest   = "AWS.SimpleQueueService.EmptyBatchRequest;Sender"
-	errQueryCodeTooManyBatchEntries = "AWS.SimpleQueueService.TooManyEntriesInBatchRequest;Sender"
-	errQueryCodeBatchIDsNotDistinct = "AWS.SimpleQueueService.BatchEntryIdsNotDistinct;Sender"
+	errQueryCodeNonExistentQueue     = "AWS.SimpleQueueService.NonExistentQueue;Sender"
+	errQueryCodeQueueAlreadyExists   = "QueueAlreadyExists;Sender"
+	errQueryCodeEmptyBatchRequest    = "AWS.SimpleQueueService.EmptyBatchRequest;Sender"
+	errQueryCodeTooManyBatchEntries  = "AWS.SimpleQueueService.TooManyEntriesInBatchRequest;Sender"
+	errQueryCodeBatchIDsNotDistinct  = "AWS.SimpleQueueService.BatchEntryIdsNotDistinct;Sender"
+	errQueryCodeUnsupportedOperation = "AWS.SimpleQueueService.UnsupportedOperation;Sender"
 )
 
 // Handler serves SQS JSON-RPC requests against a messagequeue.MessageQueue
@@ -923,7 +924,8 @@ func writeMoveTaskErr(w http.ResponseWriter, err error) {
 	case cerrors.IsNotFound(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
 	case cerrors.IsFailedPrecondition(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "UnsupportedOperation", err.Error())
+		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest,
+			"UnsupportedOperation", errQueryCodeUnsupportedOperation, err.Error())
 	case cerrors.IsInvalidArgument(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
 	default:
