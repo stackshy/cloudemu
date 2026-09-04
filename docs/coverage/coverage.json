@@ -139,7 +139,30 @@
         "name": "CreateStage"
       },
       {
+        "name": "DeleteDeployment",
+        "doc": "DeleteDeployment removes a deployment. It fails with a FailedPrecondition"
+      },
+      {
+        "name": "DeleteIntegration"
+      },
+      {
+        "name": "DeleteMethod"
+      },
+      {
+        "name": "DeleteResource",
+        "doc": "DeleteResource removes a resource and its whole descendant subtree, as"
+      },
+      {
         "name": "DeleteRestAPI"
+      },
+      {
+        "name": "DeleteStage"
+      },
+      {
+        "name": "GetDeployment"
+      },
+      {
+        "name": "GetDeployments"
       },
       {
         "name": "GetIntegration"
@@ -161,6 +184,9 @@
       },
       {
         "name": "GetStage"
+      },
+      {
+        "name": "GetStages"
       },
       {
         "name": "InvokeRoute",

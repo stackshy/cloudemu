@@ -187,24 +187,51 @@ func (h *Handler) serveAPISub(w http.ResponseWriter, r *http.Request, id, sub st
 	case subResources:
 		h.getResources(w, r, id)
 	case subDeployments:
-		h.createDeployment(w, r, id)
+		h.serveDeployments(w, r, id)
 	case subStages:
-		h.createStage(w, r, id)
+		h.serveStages(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
 	}
 }
 
-// serveAPISubItem handles /restapis/{id}/resources/{resourceId} and
-// /restapis/{id}/stages/{stageName}.
+// serveDeployments handles /restapis/{id}/deployments: GET=GetDeployments,
+// POST=CreateDeployment.
+func (h *Handler) serveDeployments(w http.ResponseWriter, r *http.Request, id string) {
+	switch r.Method {
+	case http.MethodGet:
+		h.getDeployments(w, r, id)
+	case http.MethodPost:
+		h.createDeployment(w, r, id)
+	default:
+		writeMethodNotAllowed(w)
+	}
+}
+
+// serveStages handles /restapis/{id}/stages: GET=GetStages, POST=CreateStage.
+func (h *Handler) serveStages(w http.ResponseWriter, r *http.Request, id string) {
+	switch r.Method {
+	case http.MethodGet:
+		h.getStages(w, r, id)
+	case http.MethodPost:
+		h.createStage(w, r, id)
+	default:
+		writeMethodNotAllowed(w)
+	}
+}
+
+// serveAPISubItem handles /restapis/{id}/resources/{resourceId},
+// /restapis/{id}/deployments/{deploymentId} and /restapis/{id}/stages/{stageName}.
 func (h *Handler) serveAPISubItem(w http.ResponseWriter, r *http.Request, segs []string) {
 	id, sub, item := segs[0], segs[1], segs[2]
 
 	switch sub {
 	case subResources:
 		h.serveResourceItem(w, r, id, item)
+	case subDeployments:
+		h.serveDeploymentItem(w, r, id, item)
 	case subStages:
-		h.getStage(w, r, id, item)
+		h.serveStageItem(w, r, id, item)
 	default:
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
 	}
@@ -255,6 +282,13 @@ func (h *Handler) serveResourceItem(w http.ResponseWriter, r *http.Request, id, 
 		}
 
 		writeJSON(w, http.StatusCreated, toResourceResponse(res))
+	case http.MethodDelete:
+		if err := h.ag.DeleteResource(r.Context(), id, resourceID); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
 	default:
 		writeMethodNotAllowed(w)
 	}
@@ -289,6 +323,13 @@ func (h *Handler) serveMethod(w http.ResponseWriter, r *http.Request, segs []str
 		}
 
 		writeJSON(w, http.StatusOK, toMethodResponse(mth))
+	case http.MethodDelete:
+		if err := h.ag.DeleteMethod(r.Context(), id, resourceID, httpMethod); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
 	default:
 		writeMethodNotAllowed(w)
 	}
@@ -330,9 +371,41 @@ func (h *Handler) serveIntegration(w http.ResponseWriter, r *http.Request, segs 
 		}
 
 		writeJSON(w, http.StatusOK, toIntegrationResponse(ig))
+	case http.MethodDelete:
+		if err := h.ag.DeleteIntegration(r.Context(), id, resourceID, httpMethod); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
 	default:
 		writeMethodNotAllowed(w)
 	}
+}
+
+func (h *Handler) getDeployments(w http.ResponseWriter, r *http.Request, id string) {
+	deps, err := h.ag.GetDeployments(r.Context(), id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := listDeploymentsResponse{Item: make([]deploymentResponse, 0, len(deps))}
+	for i := range deps {
+		out.Item = append(out.Item, toDeploymentResponse(&deps[i]))
+	}
+
+	writeJSON(w, http.StatusOK, out)
+}
+
+// serveDeploymentItem handles /restapis/{id}/deployments/{deploymentId}:
+// GET=GetDeployment, DELETE=DeleteDeployment.
+func (h *Handler) serveDeploymentItem(w http.ResponseWriter, r *http.Request, id, deploymentID string) {
+	serveGetDelete(w, r,
+		func() (*driver.Deployment, error) { return h.ag.GetDeployment(r.Context(), id, deploymentID) },
+		func() error { return h.ag.DeleteDeployment(r.Context(), id, deploymentID) },
+		toDeploymentResponse,
+	)
 }
 
 func (h *Handler) createDeployment(w http.ResponseWriter, r *http.Request, id string) {
@@ -354,9 +427,7 @@ func (h *Handler) createDeployment(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, deploymentResponse{
-		ID: dep.ID, Description: dep.Description, CreatedDate: dep.CreatedDate,
-	})
+	writeJSON(w, http.StatusCreated, toDeploymentResponse(dep))
 }
 
 func (h *Handler) createStage(w http.ResponseWriter, r *http.Request, id string) {
@@ -382,19 +453,56 @@ func (h *Handler) createStage(w http.ResponseWriter, r *http.Request, id string)
 	writeJSON(w, http.StatusCreated, toStageResponse(st))
 }
 
-func (h *Handler) getStage(w http.ResponseWriter, r *http.Request, id, stageName string) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-
-	st, err := h.ag.GetStage(r.Context(), id, stageName)
+func (h *Handler) getStages(w http.ResponseWriter, r *http.Request, id string) {
+	stages, err := h.ag.GetStages(r.Context(), id)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toStageResponse(st))
+	out := listStagesResponse{Item: make([]stageResponse, 0, len(stages))}
+	for i := range stages {
+		out.Item = append(out.Item, toStageResponse(&stages[i]))
+	}
+
+	writeJSON(w, http.StatusOK, out)
+}
+
+// serveStageItem handles /restapis/{id}/stages/{stageName}: GET=GetStage,
+// DELETE=DeleteStage.
+func (h *Handler) serveStageItem(w http.ResponseWriter, r *http.Request, id, stageName string) {
+	serveGetDelete(w, r,
+		func() (*driver.Stage, error) { return h.ag.GetStage(r.Context(), id, stageName) },
+		func() error { return h.ag.DeleteStage(r.Context(), id, stageName) },
+		toStageResponse,
+	)
+}
+
+// serveGetDelete handles the common GET-one/DELETE-one shape shared by the
+// deployment and stage item routes: GET renders get()'s result with render,
+// DELETE calls del(), and any other method is rejected.
+func serveGetDelete[T, R any](
+	w http.ResponseWriter, r *http.Request, get func() (T, error), del func() error, render func(T) R,
+) {
+	switch r.Method {
+	case http.MethodGet:
+		v, err := get()
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, render(v))
+	case http.MethodDelete:
+		if err := del(); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
+	default:
+		writeMethodNotAllowed(w)
+	}
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -433,7 +541,7 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "NotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
 		writeError(w, http.StatusConflict, "ConflictException", msg)
-	case cerrors.IsInvalidArgument(err):
+	case cerrors.IsInvalidArgument(err), cerrors.IsFailedPrecondition(err):
 		writeError(w, http.StatusBadRequest, "BadRequestException", msg)
 	default:
 		writeError(w, http.StatusInternalServerError, "ApiGatewayException", msg)

@@ -51,6 +51,32 @@ func (m *Mock) GetMethod(_ context.Context, restAPIID, resourceID, httpMethod st
 	return mth, nil
 }
 
+// DeleteMethod removes a resource's configured method (and its integration,
+// if any).
+func (m *Mock) DeleteMethod(_ context.Context, restAPIID, resourceID, httpMethod string) error {
+	ad, err := m.getAPI(restAPIID)
+	if err != nil {
+		return err
+	}
+
+	ad.mu.Lock()
+	defer ad.mu.Unlock()
+
+	res, ok := ad.resources[resourceID]
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+	}
+
+	method := normalizeMethod(httpMethod)
+	if _, ok := res.Methods[method]; !ok {
+		return cerrors.Newf(cerrors.NotFound, "Invalid method identifier specified %s", method)
+	}
+
+	delete(res.Methods, method)
+
+	return nil
+}
+
 // PutIntegration wires a method to a backend integration (AWS_PROXY/AWS to a
 // Lambda invocation ARN, or another supported type).
 func (m *Mock) PutIntegration(
@@ -105,6 +131,37 @@ func (m *Mock) GetIntegration(_ context.Context, restAPIID, resourceID, httpMeth
 	}
 
 	return mth.Integration, nil
+}
+
+// DeleteIntegration removes a method's integration.
+func (m *Mock) DeleteIntegration(_ context.Context, restAPIID, resourceID, httpMethod string) error {
+	ad, err := m.getAPI(restAPIID)
+	if err != nil {
+		return err
+	}
+
+	ad.mu.Lock()
+	defer ad.mu.Unlock()
+
+	res, ok := ad.resources[resourceID]
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+	}
+
+	method := normalizeMethod(httpMethod)
+
+	mth, ok := res.Methods[method]
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "Invalid method identifier specified %s", method)
+	}
+
+	if mth.Integration == nil {
+		return cerrors.New(cerrors.NotFound, "No integration defined for method")
+	}
+
+	mth.Integration = nil
+
+	return nil
 }
 
 // lookupMethod resolves a method and returns a deep copy safe to use after the
