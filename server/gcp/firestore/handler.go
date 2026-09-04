@@ -1044,7 +1044,7 @@ func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, base string) 
 
 	node, ferr := buildFilterNode(req.StructuredQuery.Where)
 	if ferr != nil {
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", ferr.Error())
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", cerrors.Message(ferr))
 		return
 	}
 

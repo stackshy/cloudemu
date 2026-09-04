@@ -3,6 +3,7 @@ package iam_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"google.golang.org/api/googleapi"
@@ -38,6 +39,58 @@ func TestSDKGCPIAMRoleNotFoundIsTyped(t *testing.T) {
 	).Context(context.Background()).Do()
 
 	assertGoogleAPIError(t, err, 404)
+}
+
+// assertNoCodePrefix fails if msg contains one of cloudemu's internal
+// canonical error-code names followed by a colon — the shape err.Error()
+// produces for a *cerrors.Error, as opposed to cerrors.Message(err). Real IAM
+// never prefixes its error messages with an internal error-taxonomy name.
+func assertNoCodePrefix(t *testing.T, msg string) {
+	t.Helper()
+
+	for _, prefix := range []string{"NotFound:", "AlreadyExists:", "InvalidArgument:", "FailedPrecondition:", "Internal:"} {
+		if strings.Contains(msg, prefix) {
+			t.Errorf("wire error message %q leaks internal code prefix %q", msg, prefix)
+		}
+	}
+}
+
+// TestSDKGCPIAMErrorMessagesOmitCodePrefix guards writeCErr (server/gcp/iam)
+// against baking the internal cerrors code name into the wire message.
+func TestSDKGCPIAMErrorMessagesOmitCodePrefix(t *testing.T) {
+	svc := newSDKService(t)
+	ctx := context.Background()
+
+	t.Run("NotFound role", func(t *testing.T) {
+		_, err := svc.Projects.Roles.Get(
+			"projects/" + testProject + "/roles/no-such-role",
+		).Context(ctx).Do()
+
+		var gErr *googleapi.Error
+		if !errors.As(err, &gErr) {
+			t.Fatalf("expected a googleapi.Error, got %T: %v", err, err)
+		}
+		assertNoCodePrefix(t, gErr.Message)
+	})
+
+	t.Run("AlreadyExists service account", func(t *testing.T) {
+		parent := "projects/" + testProject
+		if _, err := svc.Projects.ServiceAccounts.Create(parent, &iamv1.CreateServiceAccountRequest{
+			AccountId: "errmsg-dupe",
+		}).Context(ctx).Do(); err != nil {
+			t.Fatalf("first Create: %v", err)
+		}
+
+		_, err := svc.Projects.ServiceAccounts.Create(parent, &iamv1.CreateServiceAccountRequest{
+			AccountId: "errmsg-dupe",
+		}).Context(ctx).Do()
+
+		var gErr *googleapi.Error
+		if !errors.As(err, &gErr) {
+			t.Fatalf("expected a googleapi.Error, got %T: %v", err, err)
+		}
+		assertNoCodePrefix(t, gErr.Message)
+	})
 }
 
 func TestSDKGCPIAMKeyNotFoundIsTyped(t *testing.T) {

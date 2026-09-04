@@ -131,7 +131,7 @@ func (h *Handler) aggregationMatches(r *http.Request, base string, q *structured
 
 	node, ferr := buildFilterNode(q.Where)
 	if ferr != nil {
-		return nil, cerrors.New(cerrors.InvalidArgument, ferr.Error())
+		return nil, cerrors.New(cerrors.InvalidArgument, cerrors.Message(ferr))
 	}
 
 	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: p.tableKey(), Limit: allResults})

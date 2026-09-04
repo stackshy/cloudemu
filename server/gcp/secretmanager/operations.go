@@ -458,7 +458,7 @@ func (h *Handler) mutateVersion(w http.ResponseWriter, r *http.Request, rt route
 		// shared gcprest mapping would turn it into 409, so answer 400 locally
 		// without altering that cross-cutting mapping.
 		if cerrors.IsFailedPrecondition(err) {
-			gcprest.WriteError(w, http.StatusBadRequest, "failedPrecondition", err.Error())
+			gcprest.WriteError(w, http.StatusBadRequest, "failedPrecondition", cerrors.Message(err))
 			return
 		}
 

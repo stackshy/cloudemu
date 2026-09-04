@@ -328,18 +328,20 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		writeError(w, http.StatusNotFound, "NOT_FOUND", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ALREADY_EXISTS", err.Error())
+		writeError(w, http.StatusConflict, "ALREADY_EXISTS", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", msg)
 	case cerrors.IsFailedPrecondition(err):
 		// Google's canonical error mapping puts FAILED_PRECONDITION at HTTP 400
 		// (e.g. Cloud SQL's deletion-protection guard), not 409.
-		writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", err.Error())
+		writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL", msg)
 	}
 }
