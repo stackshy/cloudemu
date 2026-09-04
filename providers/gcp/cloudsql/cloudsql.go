@@ -773,6 +773,7 @@ func (m *Mock) DescribeSnapshots(
 
 	out := make([]rdsdriver.Snapshot, 0, len(all))
 
+	//nolint:gocritic // materializing the result slice requires copying each value; pointers/indexing would leak store internals.
 	for _, snap := range all {
 		if instanceID != "" && snap.InstanceID != instanceID {
 			continue
