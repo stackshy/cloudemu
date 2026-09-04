@@ -316,6 +316,8 @@ func TestAttachVolumeCrossAZRejected(t *testing.T) {
 	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidVolume.ZoneMismatch" {
 		t.Fatalf("cross-AZ AttachVolume error = %v, want InvalidVolume.ZoneMismatch", err)
 	}
+
+	assertNoLeakedPrefix(t, apiErr.ErrorMessage())
 }
 
 // TestDeleteAttachedVolumeReturnsVolumeInUse pins that deleting an attached
@@ -359,6 +361,8 @@ func TestDeleteAttachedVolumeReturnsVolumeInUse(t *testing.T) {
 	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "VolumeInUse" {
 		t.Fatalf("DeleteVolume(attached) error = %v, want VolumeInUse", err)
 	}
+
+	assertNoLeakedPrefix(t, apiErr.ErrorMessage())
 }
 
 // TestAttachAlreadyAttachedVolumeReturnsVolumeInUse pins that attaching a volume
@@ -407,4 +411,107 @@ func TestAttachAlreadyAttachedVolumeReturnsVolumeInUse(t *testing.T) {
 	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "VolumeInUse" {
 		t.Fatalf("AttachVolume(already attached) error = %v, want VolumeInUse", err)
 	}
+
+	assertNoLeakedPrefix(t, apiErr.ErrorMessage())
+}
+
+// TestAttachVolumeToTerminatedInstanceRejected pins that attaching a volume to
+// a terminated instance is rejected with IncorrectInstanceState (a volume can
+// only attach to a running or stopped instance), with a clean message — no
+// "IncorrectInstanceState:" prefix leaked from the internal error type.
+func TestAttachVolumeToTerminatedInstanceRejected(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:  aws.String("ami-123"),
+		MinCount: aws.Int32(1),
+		MaxCount: aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	if _, err := client.TerminateInstances(ctx, &ec2.TerminateInstancesInput{
+		InstanceIds: []string{instID},
+	}); err != nil {
+		t.Fatalf("TerminateInstances: %v", err)
+	}
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(10),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+
+	_, err = client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId:   vol.VolumeId,
+		InstanceId: aws.String(instID),
+		Device:     aws.String("/dev/sdf"),
+	})
+	if err == nil {
+		t.Fatal("AttachVolume(terminated instance) succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "IncorrectInstanceState" {
+		t.Fatalf("AttachVolume(terminated instance) error = %v, want IncorrectInstanceState", err)
+	}
+
+	assertNoLeakedPrefix(t, apiErr.ErrorMessage())
+}
+
+// TestDetachVolumeWrongInstanceRejected pins that detaching a volume while
+// naming an instance it isn't actually attached to is rejected with
+// InvalidAttachment.NotFound, with a clean message — no
+// "InvalidAttachment.NotFound:" prefix leaked from the internal error type.
+func TestDetachVolumeWrongInstanceRejected(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	run, err := client.RunInstances(ctx, &ec2.RunInstancesInput{
+		ImageId:  aws.String("ami-123"),
+		MinCount: aws.Int32(1),
+		MaxCount: aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("RunInstances: %v", err)
+	}
+
+	instID := aws.ToString(run.Instances[0].InstanceId)
+
+	vol, err := client.CreateVolume(ctx, &ec2.CreateVolumeInput{
+		AvailabilityZone: aws.String("us-east-1a"),
+		Size:             aws.Int32(10),
+	})
+	if err != nil {
+		t.Fatalf("CreateVolume: %v", err)
+	}
+
+	if _, err := client.AttachVolume(ctx, &ec2.AttachVolumeInput{
+		VolumeId:   vol.VolumeId,
+		InstanceId: aws.String(instID),
+		Device:     aws.String("/dev/sdf"),
+	}); err != nil {
+		t.Fatalf("AttachVolume: %v", err)
+	}
+
+	_, err = client.DetachVolume(ctx, &ec2.DetachVolumeInput{
+		VolumeId:   vol.VolumeId,
+		InstanceId: aws.String("i-doesnotexist"),
+	})
+	if err == nil {
+		t.Fatal("DetachVolume(wrong instance) succeeded, want error")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "InvalidAttachment.NotFound" {
+		t.Fatalf("DetachVolume(wrong instance) error = %v, want InvalidAttachment.NotFound", err)
+	}
+
+	assertNoLeakedPrefix(t, apiErr.ErrorMessage())
 }

@@ -287,8 +287,10 @@ func (h *Handler) attachNetworkInterface(w http.ResponseWriter, r *http.Request)
 
 // writeENIAttachErr maps an already-attached interface to InvalidNetworkInterface.InUse
 // (real EC2's code), falling back to the shared ENI error mapping otherwise.
+// Matched on the driver's clean message text — "is already attached to
+// instance" appears only in this case.
 func writeENIAttachErr(w http.ResponseWriter, err error) {
-	if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "InvalidNetworkInterface.InUse:") {
+	if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "is already attached to instance") {
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkInterface.InUse", cerrors.Message(err))
 		return
 	}
@@ -376,9 +378,10 @@ func (h *Handler) modifyNetworkInterfaceAttribute(w http.ResponseWriter, r *http
 
 // writeENIDeleteErr maps a delete-while-attached interface to
 // InvalidNetworkInterface.InUse (real EC2's code), falling back to the shared ENI
-// error mapping otherwise.
+// error mapping otherwise. Matched on the driver's clean message text —
+// "is currently in use and cannot be deleted" appears only in this case.
 func writeENIDeleteErr(w http.ResponseWriter, err error) {
-	if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "InvalidNetworkInterface.InUse:") {
+	if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "is currently in use and cannot be deleted") {
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidNetworkInterface.InUse", cerrors.Message(err))
 		return
 	}

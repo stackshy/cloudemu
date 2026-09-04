@@ -99,6 +99,8 @@ func TestDefaultSecurityGroupOverWire(t *testing.T) {
 	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "Client.CannotDelete" {
 		t.Fatalf("delete error = %v, want Client.CannotDelete", err)
 	}
+
+	assertNoLeakedPrefix(t, apiErr.ErrorMessage())
 }
 
 // TestCreateSecurityGroupReturnsTags pins that CreateSecurityGroup echoes the

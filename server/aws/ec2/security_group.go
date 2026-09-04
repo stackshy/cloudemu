@@ -189,7 +189,10 @@ func (h *Handler) deleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	if err := h.vpc.DeleteSecurityGroup(r.Context(), id); err != nil {
 		// The default security group is non-deletable: EC2 answers a distinct
 		// Client.CannotDelete code rather than the generic DependencyViolation.
-		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "CannotDelete:") {
+		// Matched on the driver's clean message text — "cannot be deleted"
+		// appears only in this case (the in-use/referenced case says "is in
+		// use by", not "cannot be deleted").
+		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "cannot be deleted") {
 			awsquery.WriteXMLError(w, http.StatusBadRequest, "Client.CannotDelete", cerrors.Message(err))
 			return
 		}

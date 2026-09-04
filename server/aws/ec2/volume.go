@@ -285,21 +285,23 @@ func (h *Handler) attachVolume(w http.ResponseWriter, r *http.Request) {
 	if err := h.compute.AttachVolume(r.Context(), volID, instID, device); err != nil {
 		// A volume and the instance it attaches to must share an Availability
 		// Zone; real EC2 answers InvalidVolume.ZoneMismatch for a cross-AZ attach.
-		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "ZoneMismatch:") {
+		// Matched on the driver's clean message text (no internal code prefix) —
+		// "is in availability zone" appears only in this case.
+		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "is in availability zone") {
 			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidVolume.ZoneMismatch", cerrors.Message(err))
 			return
 		}
 
 		// A volume already attached to an instance cannot be re-attached; real
 		// EC2 answers VolumeInUse rather than the generic IncorrectState.
-		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "VolumeInUse:") {
+		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "is already attached to instance") {
 			awsquery.WriteXMLError(w, http.StatusBadRequest, "VolumeInUse", cerrors.Message(err))
 			return
 		}
 
 		// A volume can only attach to a running/stopped instance; attaching to a
 		// terminated or pending instance is IncorrectInstanceState.
-		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "IncorrectInstanceState:") {
+		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "can only attach to a running or stopped instance") {
 			awsquery.WriteXMLError(w, http.StatusBadRequest, "IncorrectInstanceState", cerrors.Message(err))
 			return
 		}
@@ -336,8 +338,11 @@ func (h *Handler) detachVolume(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.compute.DetachVolume(r.Context(), volID, instID, device); err != nil {
 		// The named instance/device did not match the volume's actual
-		// attachment; real EC2 answers InvalidAttachment.NotFound.
-		if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "InvalidAttachment.NotFound:") {
+		// attachment; real EC2 answers InvalidAttachment.NotFound. Matched on
+		// the driver's clean message text — "is not attached to instance"
+		// appears only in this case (distinct from the plain "is not
+		// attached" DetachVolume uses when the volume isn't attached at all).
+		if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "is not attached to instance") {
 			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAttachment.NotFound", cerrors.Message(err))
 			return
 		}

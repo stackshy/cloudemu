@@ -1379,7 +1379,7 @@ const (
 // SourceDestCheck) that real EC2 permits on a running instance and that are not
 // part of the portable Compute driver. Unlike ModifyInstance it does not
 // require the instance to be stopped.
-func (m *Mock) SetInstanceAttribute(_ context.Context, instanceID, name, value string) error {
+func (m *Mock) SetInstanceAttribute(ctx context.Context, instanceID, name, value string) error {
 	inst, ok := m.instances.Get(instanceID)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "instance %q not found", instanceID)
@@ -1392,7 +1392,15 @@ func (m *Mock) SetInstanceAttribute(_ context.Context, instanceID, name, value s
 	case attrDisableAPITermination:
 		inst.disableAPITermination = parseBool(value)
 	case attrSourceDestCheck:
-		inst.sourceDestCheck = parseBool(value)
+		sourceDestCheck := parseBool(value)
+		inst.sourceDestCheck = sourceDestCheck
+
+		// The networking mock's primary-ENI copy of this flag is what
+		// DescribeInstances/DescribeNetworkInterfaces actually report; keep
+		// it in step so the two describe paths never disagree.
+		if m.networking != nil {
+			_ = m.networking.SetPrimaryNetworkInterfaceSourceDestCheck(ctx, instanceID, sourceDestCheck)
+		}
 	case attrEbsOptimized:
 		inst.ebsOptimized = parseBool(value)
 	case attrDisableAPIStop:
@@ -1654,7 +1662,7 @@ func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device stri
 
 	if state := inst.readState(); state != compute.StateRunning && state != compute.StateStopped {
 		return cerrors.Newf(cerrors.FailedPrecondition,
-			"IncorrectInstanceState: instance %q is in state %q; a volume can only attach to a running or stopped instance",
+			"instance %q is in state %q; a volume can only attach to a running or stopped instance",
 			instanceID, state)
 	}
 
@@ -1673,7 +1681,7 @@ func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device stri
 	found := m.volumes.Update(volumeID, func(v *driver.VolumeInfo) *driver.VolumeInfo {
 		if v.State == stateInUse {
 			attachErr = cerrors.Newf(cerrors.FailedPrecondition,
-				"VolumeInUse: volume %q is attached to instance %q", volumeID, v.AttachedTo)
+				"volume %q is already attached to instance %q", volumeID, v.AttachedTo)
 
 			return v
 		}
@@ -1682,7 +1690,7 @@ func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device stri
 		// (real EC2 InvalidVolume.ZoneMismatch); an explicit cross-AZ volume mismatches.
 		if v.AvailabilityZone != "" && v.AvailabilityZone != instZone {
 			attachErr = cerrors.Newf(cerrors.FailedPrecondition,
-				"ZoneMismatch: volume %q is in availability zone %q but instance %q is in %q",
+				"volume %q is in availability zone %q but instance %q is in %q",
 				volumeID, v.AvailabilityZone, instanceID, instZone)
 
 			return v
@@ -1718,7 +1726,7 @@ func (m *Mock) DetachVolume(_ context.Context, volumeID, instanceID, device stri
 
 		if (instanceID != "" && instanceID != v.AttachedTo) || (device != "" && device != v.Device) {
 			detachErr = cerrors.Newf(cerrors.NotFound,
-				"InvalidAttachment.NotFound: volume %q is not attached to instance %q as device %q",
+				"volume %q is not attached to instance %q as device %q",
 				volumeID, instanceID, device)
 
 			return v

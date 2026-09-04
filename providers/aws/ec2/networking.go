@@ -15,6 +15,14 @@ type Networking interface {
 	// unassociated — matching real EC2, which disassociates (does not release)
 	// an instance's EIPs when it is terminated.
 	DisassociateInstanceAddresses(ctx context.Context, instanceID string) error
+	// SetPrimaryNetworkInterfaceSourceDestCheck mirrors
+	// ModifyInstanceAttribute(SourceDestCheck) onto the instance's primary
+	// (eth0) ENI. Real EC2 has exactly one source/dest-check flag, reported
+	// both by DescribeInstanceAttribute and embedded in
+	// DescribeInstances/DescribeNetworkInterfaces; without this the two
+	// stores diverge and a NAT-instance-shaped Terraform config never
+	// converges. A no-op when the instance has no primary ENI to update.
+	SetPrimaryNetworkInterfaceSourceDestCheck(ctx context.Context, instanceID string, value bool) error
 }
 
 // SetNetworking wires the networking mock in. Without it an instance launches

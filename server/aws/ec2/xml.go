@@ -144,18 +144,23 @@ type operatorXML struct {
 // DescribeInstances responses. We populate only the fields the SDK reliably
 // consumes and real apps actually read; unused AWS fields are omitted.
 type instanceXML struct {
-	InstanceID          string                   `xml:"instanceId"`
-	ImageID             string                   `xml:"imageId"`
-	State               instanceState            `xml:"instanceState"`
-	InstanceType        string                   `xml:"instanceType"`
-	LaunchTime          string                   `xml:"launchTime,omitempty"`
-	SubnetID            string                   `xml:"subnetId,omitempty"`
-	VPCID               string                   `xml:"vpcId,omitempty"`
-	PrivateIP           string                   `xml:"privateIpAddress,omitempty"`
-	PublicIP            string                   `xml:"ipAddress,omitempty"`
-	PrivateDNSName      string                   `xml:"privateDnsName,omitempty"`
-	PublicDNSName       string                   `xml:"dnsName,omitempty"`
-	KeyName             string                   `xml:"keyName,omitempty"`
+	InstanceID     string        `xml:"instanceId"`
+	ImageID        string        `xml:"imageId"`
+	State          instanceState `xml:"instanceState"`
+	InstanceType   string        `xml:"instanceType"`
+	LaunchTime     string        `xml:"launchTime,omitempty"`
+	SubnetID       string        `xml:"subnetId,omitempty"`
+	VPCID          string        `xml:"vpcId,omitempty"`
+	PrivateIP      string        `xml:"privateIpAddress,omitempty"`
+	PublicIP       string        `xml:"ipAddress,omitempty"`
+	PrivateDNSName string        `xml:"privateDnsName,omitempty"`
+	PublicDNSName  string        `xml:"dnsName,omitempty"`
+	KeyName        string        `xml:"keyName,omitempty"`
+	// SourceDestCheck mirrors the primary network interface's flag at the
+	// top level too — real EC2 reports it both places, and
+	// aws-sdk-go-v2/terraform-provider-aws read the top-level field, not
+	// the nested networkInterfaceSet entry.
+	SourceDestCheck     bool                     `xml:"sourceDestCheck"`
 	AmiLaunchIndex      int                      `xml:"amiLaunchIndex"`
 	Architecture        string                   `xml:"architecture,omitempty"`
 	RootDeviceType      string                   `xml:"rootDeviceType,omitempty"`

@@ -36,14 +36,15 @@ type releaseAddressResponseXML struct {
 }
 
 type addressXML struct {
-	PublicIP                string `xml:"publicIp"`
-	AllocationID            string `xml:"allocationId"`
-	AssociationID           string `xml:"associationId,omitempty"`
-	InstanceID              string `xml:"instanceId,omitempty"`
-	NetworkInterfaceID      string `xml:"networkInterfaceId,omitempty"`
-	NetworkInterfaceOwnerID string `xml:"networkInterfaceOwnerId,omitempty"`
-	PrivateIPAddress        string `xml:"privateIpAddress,omitempty"`
-	Domain                  string `xml:"domain"`
+	PublicIP                string    `xml:"publicIp"`
+	AllocationID            string    `xml:"allocationId"`
+	AssociationID           string    `xml:"associationId,omitempty"`
+	InstanceID              string    `xml:"instanceId,omitempty"`
+	NetworkInterfaceID      string    `xml:"networkInterfaceId,omitempty"`
+	NetworkInterfaceOwnerID string    `xml:"networkInterfaceOwnerId,omitempty"`
+	PrivateIPAddress        string    `xml:"privateIpAddress,omitempty"`
+	Domain                  string    `xml:"domain"`
+	Tags                    []tagItem `xml:"tagSet>item,omitempty"`
 }
 
 type describeAddressesResponseXML struct {
@@ -152,6 +153,7 @@ func (h *Handler) describeAddresses(w http.ResponseWriter, r *http.Request) {
 			NetworkInterfaceID: eips[i].NetworkInterfaceID,
 			PrivateIPAddress:   eips[i].PrivateIP,
 			Domain:             domainVPC,
+			Tags:               toTagItems(eips[i].Tags),
 		}
 
 		// networkInterfaceOwnerId only surfaces for an ENI-bound EIP; it is the

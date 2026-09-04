@@ -23,6 +23,18 @@ var leakedPrefixes = []string{ //nolint:gochecknoglobals // shared test fixture
 	"DependencyViolation:",
 	"PermissionDenied:",
 	"Internal:",
+	// Driver-baked sub-codes: some wire handlers used to match on a
+	// substring the driver embedded in the message itself (rather than the
+	// canonical cerrors.Code) to pick the exact AWS error CODE, and left
+	// that substring sitting in the human-facing message too. The AWS code
+	// is set separately at the wire layer, so none of these should ever
+	// appear in <Message>.
+	"ZoneMismatch:",
+	"VolumeInUse:",
+	"IncorrectInstanceState:",
+	"InvalidAttachment.NotFound:",
+	"CannotDelete:",
+	"InvalidNetworkInterface.InUse:",
 }
 
 func apiMessage(t *testing.T, err error) string {

@@ -909,6 +909,16 @@ func instanceXMLFor(
 	}
 
 	xi.NetworkInterfaces = instanceENIs(inst, xi.Groups, enis)
+	// Real EC2 mirrors the primary interface's source/dest-check flag at the
+	// top level of the Instance element too; aws-sdk-go-v2 and
+	// terraform-provider-aws read that top-level field, not the nested
+	// networkInterfaceSet entry. instanceENIs orders eth0 (device index 0)
+	// first, so [0] is always the primary interface when one exists.
+	xi.SourceDestCheck = true
+	if len(xi.NetworkInterfaces) > 0 {
+		xi.SourceDestCheck = xi.NetworkInterfaces[0].SourceDestCheck
+	}
+
 	xi.BlockDeviceMappings = instanceBlockDevices(vols)
 
 	for k, v := range inst.Tags {
