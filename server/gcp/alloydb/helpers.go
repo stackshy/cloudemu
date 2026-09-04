@@ -36,17 +36,19 @@ func writeError(w http.ResponseWriter, status int, gcpStatus, msg string) {
 
 // writeCErr maps a CloudEmu canonical error to the matching GCP HTTP status.
 func writeCErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		writeError(w, http.StatusNotFound, "NOT_FOUND", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ALREADY_EXISTS", err.Error())
+		writeError(w, http.StatusConflict, "ALREADY_EXISTS", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", msg)
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", err.Error())
+		writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL", msg)
 	}
 }
 

@@ -247,7 +247,7 @@ func (h *Handler) predict(w http.ResponseWriter, r *http.Request, endpoint strin
 		// has no deployed models; the shared codec maps FailedPrecondition to 409,
 		// so surface the 400 here to match the wire contract.
 		if cerrors.IsFailedPrecondition(err) {
-			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", err.Error())
+			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", cerrors.Message(err))
 
 			return
 		}

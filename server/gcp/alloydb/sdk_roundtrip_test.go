@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -221,6 +222,47 @@ func assertStatus(t *testing.T, err error, want int) {
 
 	if gerr.Code != want {
 		t.Errorf("status: got %d, want %d", gerr.Code, want)
+	}
+}
+
+// TestSDKAlloyDBErrorMessagesOmitCodePrefix guards writeCErr
+// (server/gcp/alloydb) against baking cloudemu's internal cerrors code name
+// (e.g. "NotFound: ...", "AlreadyExists: ...") into the wire error message an
+// SDK caller sees. Real AlloyDB never prefixes its error messages with an
+// internal error-taxonomy name.
+func TestSDKAlloyDBErrorMessagesOmitCodePrefix(t *testing.T) {
+	svc := newSDKClient(t)
+	ctx := context.Background()
+
+	t.Run("NotFound Clusters.Get", func(t *testing.T) {
+		_, err := svc.Projects.Locations.Clusters.Get(parent() + "/clusters/ghost-msg").Context(ctx).Do()
+		assertNoCodePrefixOnAPIError(t, err)
+	})
+
+	if _, err := svc.Projects.Locations.Clusters.Create(parent(), &alloydb.Cluster{}).
+		ClusterId("dup-msg").Context(ctx).Do(); err != nil {
+		t.Fatalf("Clusters.Create: %v", err)
+	}
+
+	t.Run("AlreadyExists Clusters.Create duplicate", func(t *testing.T) {
+		_, err := svc.Projects.Locations.Clusters.Create(parent(), &alloydb.Cluster{}).
+			ClusterId("dup-msg").Context(ctx).Do()
+		assertNoCodePrefixOnAPIError(t, err)
+	})
+}
+
+func assertNoCodePrefixOnAPIError(t *testing.T, err error) {
+	t.Helper()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) {
+		t.Fatalf("expected a googleapi.Error, got %T: %v", err, err)
+	}
+
+	for _, prefix := range []string{"NotFound:", "AlreadyExists:", "InvalidArgument:", "FailedPrecondition:", "Internal:"} {
+		if strings.Contains(gerr.Message, prefix) {
+			t.Errorf("wire error message %q leaks internal code prefix %q", gerr.Message, prefix)
+		}
 	}
 }
 

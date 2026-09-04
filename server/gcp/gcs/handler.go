@@ -1840,19 +1840,21 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "notFound", err.Error())
+		writeError(w, http.StatusNotFound, "notFound", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "conflict", err.Error())
+		writeError(w, http.StatusConflict, "conflict", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "invalid", err.Error())
+		writeError(w, http.StatusBadRequest, "invalid", msg)
 	case cerrors.IsFailedPrecondition(err):
 		// Real GCS refuses to delete a non-empty bucket with 409 conflict,
 		// not a 5xx (which would trigger client retry backoff).
-		writeError(w, http.StatusConflict, "conflict", err.Error())
+		writeError(w, http.StatusConflict, "conflict", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "internalError", err.Error())
+		writeError(w, http.StatusInternalServerError, "internalError", msg)
 	}
 }
 
