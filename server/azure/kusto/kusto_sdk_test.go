@@ -85,6 +85,155 @@ func TestSDKKustoLifecycle(t *testing.T) {
 	deleteCluster(t, ctx, clusters)
 }
 
+// TestSDKKustoClusterComputedDefaults verifies a cluster created without a
+// properties block still reports the computed property defaults real Azure
+// always echoes on GET (engineType=V3, publicNetworkAccess=Enabled,
+// enableAutoStop=true, enableStreamingIngest/DiskEncryption/DoubleEncryption/
+// Purge=false), and that the returned id uses the capitalized Clusters segment.
+func TestSDKKustoClusterComputedDefaults(t *testing.T) {
+	ts := newServer(t)
+	ctx := context.Background()
+
+	clusters, err := armkusto.NewClustersClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewClustersClient: %v", err)
+	}
+
+	poller, err := clusters.BeginCreateOrUpdate(ctx, rgName, clusterName, armkusto.Cluster{
+		Location: to.Ptr("eastus"),
+		SKU: &armkusto.AzureSKU{
+			Name: to.Ptr(armkusto.AzureSKUNameStandardD11V2),
+			Tier: to.Ptr(armkusto.AzureSKUTierStandard),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate cluster: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("poll cluster create: %v", err)
+	}
+
+	got, err := clusters.Get(ctx, rgName, clusterName, nil)
+	if err != nil {
+		t.Fatalf("Get cluster: %v", err)
+	}
+
+	p := got.Properties
+	if p == nil {
+		t.Fatal("cluster properties nil")
+	}
+
+	if p.EngineType == nil || *p.EngineType != armkusto.EngineTypeV3 {
+		t.Errorf("engineType = %v, want V3", p.EngineType)
+	}
+
+	if p.PublicNetworkAccess == nil || *p.PublicNetworkAccess != armkusto.PublicNetworkAccessEnabled {
+		t.Errorf("publicNetworkAccess = %v, want Enabled", p.PublicNetworkAccess)
+	}
+
+	if p.EnableAutoStop == nil || !*p.EnableAutoStop {
+		t.Errorf("enableAutoStop = %v, want true", p.EnableAutoStop)
+	}
+
+	for name, ptr := range map[string]*bool{
+		"enableStreamingIngest":  p.EnableStreamingIngest,
+		"enableDiskEncryption":   p.EnableDiskEncryption,
+		"enableDoubleEncryption": p.EnableDoubleEncryption,
+		"enablePurge":            p.EnablePurge,
+	} {
+		if ptr == nil || *ptr {
+			t.Errorf("%s = %v, want false", name, ptr)
+		}
+	}
+
+	if got.ID == nil || !strings.Contains(*got.ID, "/Microsoft.Kusto/Clusters/") {
+		t.Errorf("cluster id = %v, want a capitalized /Microsoft.Kusto/Clusters/ segment", got.ID)
+	}
+}
+
+// TestSDKKustoClusterExplicitPropertiesPreserved verifies that explicit,
+// non-default property values supplied on create are preserved verbatim on the
+// create response AND a subsequent GET — never overwritten by the computed
+// defaults. This guards the pointer + omitempty "unset vs explicit false"
+// distinction across all seven property fields, including enableDoubleEncryption.
+func TestSDKKustoClusterExplicitPropertiesPreserved(t *testing.T) {
+	ts := newServer(t)
+	ctx := context.Background()
+
+	clusters, err := armkusto.NewClustersClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewClustersClient: %v", err)
+	}
+
+	poller, err := clusters.BeginCreateOrUpdate(ctx, rgName, clusterName, armkusto.Cluster{
+		Location: to.Ptr("eastus"),
+		SKU: &armkusto.AzureSKU{
+			Name: to.Ptr(armkusto.AzureSKUNameStandardD11V2),
+			Tier: to.Ptr(armkusto.AzureSKUTierStandard),
+		},
+		Properties: &armkusto.ClusterProperties{
+			EngineType:             to.Ptr(armkusto.EngineTypeV2),
+			PublicNetworkAccess:    to.Ptr(armkusto.PublicNetworkAccessDisabled),
+			EnableAutoStop:         to.Ptr(false),
+			EnableDiskEncryption:   to.Ptr(true),
+			EnablePurge:            to.Ptr(true),
+			EnableStreamingIngest:  to.Ptr(true),
+			EnableDoubleEncryption: to.Ptr(true),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate cluster: %v", err)
+	}
+
+	created, err := poller.PollUntilDone(ctx, nil)
+	if err != nil {
+		t.Fatalf("poll cluster create: %v", err)
+	}
+
+	assertExplicitProps(t, "create", created.Properties)
+
+	got, err := clusters.Get(ctx, rgName, clusterName, nil)
+	if err != nil {
+		t.Fatalf("Get cluster: %v", err)
+	}
+
+	assertExplicitProps(t, "get", got.Properties)
+}
+
+// assertExplicitProps checks that every property carries the explicit
+// non-default value supplied on create, proving defaults did not clobber it.
+func assertExplicitProps(t *testing.T, phase string, p *armkusto.ClusterProperties) {
+	t.Helper()
+
+	if p == nil {
+		t.Fatalf("%s: cluster properties nil", phase)
+	}
+
+	if p.EngineType == nil || *p.EngineType != armkusto.EngineTypeV2 {
+		t.Errorf("%s: engineType = %v, want V2", phase, p.EngineType)
+	}
+
+	if p.PublicNetworkAccess == nil || *p.PublicNetworkAccess != armkusto.PublicNetworkAccessDisabled {
+		t.Errorf("%s: publicNetworkAccess = %v, want Disabled", phase, p.PublicNetworkAccess)
+	}
+
+	if p.EnableAutoStop == nil || *p.EnableAutoStop {
+		t.Errorf("%s: enableAutoStop = %v, want false", phase, p.EnableAutoStop)
+	}
+
+	for name, ptr := range map[string]*bool{
+		"enableDiskEncryption":   p.EnableDiskEncryption,
+		"enablePurge":            p.EnablePurge,
+		"enableStreamingIngest":  p.EnableStreamingIngest,
+		"enableDoubleEncryption": p.EnableDoubleEncryption,
+	} {
+		if ptr == nil || !*ptr {
+			t.Errorf("%s: %s = %v, want true", phase, name, ptr)
+		}
+	}
+}
+
 func createCluster(t *testing.T, ctx context.Context, c *armkusto.ClustersClient) {
 	t.Helper()
 
@@ -207,6 +356,10 @@ func createDatabase(t *testing.T, ctx context.Context, c *armkusto.DatabasesClie
 
 	if rw.Properties == nil || rw.Properties.SoftDeletePeriod == nil || *rw.Properties.SoftDeletePeriod != "P30D" {
 		t.Fatalf("softDeletePeriod = %v, want P30D", rw.Properties)
+	}
+
+	if rw.ID == nil || !strings.Contains(*rw.ID, "/Clusters/") || !strings.Contains(*rw.ID, "/Databases/") {
+		t.Fatalf("database id = %v, want capitalized /Clusters/.../Databases/ segments", rw.ID)
 	}
 }
 

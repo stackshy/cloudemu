@@ -28,6 +28,19 @@ const (
 	kustoHost = ".kusto.windows.net"
 	// ingestPrefix is prepended to the cluster host for the data-ingestion URI.
 	ingestPrefix = "ingest-"
+
+	// Real Azure always echoes these cluster property defaults on GET, even when a
+	// create request omits them, so an SDK/Terraform user reading engineType /
+	// publicNetworkAccess / enableAutoStop never sees an empty value.
+	defaultEngineType          = "V3"
+	publicNetworkAccessEnabled = "Enabled"
+
+	// idSegClusters / idSegDatabases are the resource-type segments as they appear
+	// in a returned ARM resource id. Real Azure spells them capitalized in the id
+	// and type (Microsoft.Kusto/Clusters, .../Databases) even though the request
+	// URL path uses lowercase.
+	idSegClusters  = "Clusters"
+	idSegDatabases = "Databases"
 )
 
 type clusterState struct {
