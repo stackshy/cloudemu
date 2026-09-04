@@ -21,6 +21,7 @@ import (
 	streamtypes "github.com/aws/aws-sdk-go-v2/service/dynamodbstreams/types"
 	"github.com/aws/smithy-go"
 	"github.com/stackshy/cloudemu/v2"
+	ddbprovider "github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -460,6 +461,39 @@ func TestStreamsRouteDisjointFromControlPlane(t *testing.T) {
 	ls, err := streams.ListStreams(context.Background(), &dynamodbstreams.ListStreamsInput{})
 	require.NoError(t, err)
 	require.Len(t, ls.Streams, 1)
+}
+
+// TestStreamsShardIDMeetsRealAWSShapeMinLength guards against a regression
+// where the emulator's ShardId is too short for the AWS SDK/CLI's own
+// client-side request-shape validation — real DynamoDB Streams requires a
+// ShardId of at least 28 characters
+// ("shardId-<20-digit-epoch-ms>-<8-hex-char-suffix>"). A too-short ShardId
+// round-trips fine through this in-process test (which, unlike a real
+// SDK/CLI, never runs client-side shape validation), but would silently make
+// GetShardIterator/GetRecords uncallable by any real caller. It also asserts
+// the wire-layer DescribeStream ShardId is the same exported
+// providers/aws/dynamodb.StreamShardID the provider's own
+// driver.StreamIterator.ShardID carries, so the two can never independently
+// drift apart again.
+func TestStreamsShardIDMeetsRealAWSShapeMinLength(t *testing.T) {
+	t.Parallel()
+
+	const minAWSShardIDLength = 28
+
+	ddb, streams := newStreamsEnv(t)
+	arn := createStreamTable(t, ddb, "orders", ddbtypes.StreamViewTypeNewImage)
+
+	desc, err := streams.DescribeStream(context.Background(), &dynamodbstreams.DescribeStreamInput{
+		StreamArn: aws.String(arn),
+	})
+	require.NoError(t, err)
+	require.Len(t, desc.StreamDescription.Shards, 1)
+
+	shardID := aws.ToString(desc.StreamDescription.Shards[0].ShardId)
+	assert.GreaterOrEqual(t, len(shardID), minAWSShardIDLength,
+		"ShardId %q is shorter than AWS's real minimum length; the AWS SDK/CLI's "+
+			"own client-side validation would reject GetShardIterator before it is ever sent", shardID)
+	assert.Equal(t, ddbprovider.StreamShardID, shardID)
 }
 
 // assertS asserts a stream AttributeValue is a string with the expected value.

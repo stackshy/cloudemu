@@ -25,14 +25,56 @@ const targetPrefix = "DynamoDB_20120810."
 const listTablesMaxPageSize = 100
 
 const (
-	keyTypeHash        = "HASH"
-	keyTypeRange       = "RANGE"
-	projectionAll      = "ALL"
-	projectionInclude  = "INCLUDE"
-	statusEnabled      = "ENABLED"
-	statusDisabled     = "DISABLED"
-	billingProvisioned = "PROVISIONED"
+	keyTypeHash          = "HASH"
+	keyTypeRange         = "RANGE"
+	projectionAll        = "ALL"
+	projectionInclude    = "INCLUDE"
+	statusEnabled        = "ENABLED"
+	statusDisabled       = "DISABLED"
+	billingProvisioned   = "PROVISIONED"
+	billingPayPerRequest = "PAY_PER_REQUEST"
 )
+
+// minProvisionedCapacity is the lowest ReadCapacityUnits/WriteCapacityUnits AWS
+// accepts on a PROVISIONED table or index.
+const minProvisionedCapacity = 1
+
+// validateProvisionedThroughput enforces AWS's cross-field rule between an
+// already-defaulted BillingMode and the ProvisionedThroughput that would result
+// from applying a request: PROVISIONED requires both RCU and WCU to be at
+// least 1, and PAY_PER_REQUEST forbids either being set. AWS rejects a
+// violation with a ValidationException carrying the wording matched here.
+func validateProvisionedThroughput(billingMode string, rcu, wcu int64) error {
+	if billingMode == billingPayPerRequest {
+		if rcu != 0 || wcu != 0 {
+			return cerrors.New(cerrors.InvalidArgument,
+				"One or more parameter values were invalid: "+
+					"Neither ReadCapacityUnits nor WriteCapacityUnits can be specified when BillingMode is PAY_PER_REQUEST")
+		}
+
+		return nil
+	}
+
+	if rcu == 0 && wcu == 0 {
+		return cerrors.New(cerrors.InvalidArgument,
+			"One or more parameter values were invalid: "+
+				"ProvisionedThroughput must be specified when BillingMode is not PAY_PER_REQUEST")
+	}
+
+	if rcu < minProvisionedCapacity {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"1 validation error detected: Value '%d' at 'provisionedThroughput.readCapacityUnits' "+
+				"failed to satisfy constraint: Member must have value greater than or equal to 1", rcu)
+	}
+
+	if wcu < minProvisionedCapacity {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"1 validation error detected: Value '%d' at 'provisionedThroughput.writeCapacityUnits' "+
+				"failed to satisfy constraint: Member must have value greater than or equal to 1", wcu)
+	}
+
+	return nil
+}
 
 // Query/Scan Select modes controlling which attributes (or only the counts) the
 // result carries.
@@ -291,6 +333,17 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := validateCreateTableSchema(&req); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	effectiveBilling := req.BillingMode
+	if effectiveBilling == "" {
+		effectiveBilling = billingProvisioned
+	}
+
+	if err := validateProvisionedThroughput(effectiveBilling,
+		req.ProvisionedThroughput.ReadCapacityUnits, req.ProvisionedThroughput.WriteCapacityUnits); err != nil {
 		writeErr(w, err)
 		return
 	}
