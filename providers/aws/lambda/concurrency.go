@@ -7,11 +7,23 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/serverless/driver"
 )
 
+// accountConcurrentExecutionLimit and minUnreservedConcurrentExecutions mirror
+// real Lambda's default per-account concurrency budget: a 1000-execution pool
+// shared by every function, of which at least 100 must always stay unreserved
+// (available to functions with no reserved concurrency configured). See
+// https://docs.aws.amazon.com/lambda/latest/dg/lambda-concurrency.html
+const (
+	accountConcurrentExecutionLimit   = 1000
+	minUnreservedConcurrentExecutions = 100
+)
+
 // PutFunctionConcurrency sets reserved concurrency for a function. Real Lambda
 // blocks lowering reserved concurrency below the sum of provisioned
 // concurrency already configured across the function's versions/aliases (see
 // DeleteFunctionConcurrency for the same guard on full removal), since
-// provisioned concurrency is carved out of the reserved budget.
+// provisioned concurrency is carved out of the reserved budget. It also blocks
+// a reservation that would push the account's shared unreserved-concurrency
+// pool below its 100-execution minimum, exactly as real Lambda does.
 func (m *Mock) PutFunctionConcurrency(_ context.Context, cfg driver.ConcurrencyConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -27,6 +39,15 @@ func (m *Mock) PutFunctionConcurrency(_ context.Context, cfg driver.ConcurrencyC
 				"configured for function %s", cfg.ReservedConcurrentExecutions, provisioned, cfg.FunctionName)
 	}
 
+	otherReserved := m.sumReservedConcurrencyExcept(cfg.FunctionName)
+	unreserved := accountConcurrentExecutionLimit - otherReserved - cfg.ReservedConcurrentExecutions
+
+	if unreserved < minUnreservedConcurrentExecutions {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"Specified ReservedConcurrentExecutions for function decreases account's UnreservedConcurrentExecution "+
+				"below its minimum value of [%d].", minUnreservedConcurrentExecutions)
+	}
+
 	fd.concurrency = &driver.ConcurrencyConfig{
 		FunctionName:                 cfg.FunctionName,
 		ReservedConcurrentExecutions: cfg.ReservedConcurrentExecutions,
@@ -34,6 +55,29 @@ func (m *Mock) PutFunctionConcurrency(_ context.Context, cfg driver.ConcurrencyC
 	m.funcs.Set(cfg.FunctionName, fd)
 
 	return nil
+}
+
+// sumReservedConcurrencyExcept totals ReservedConcurrentExecutions across every
+// function in the account other than excludeName, so PutFunctionConcurrency can
+// check the candidate value against the account's shared unreserved pool
+// without double-counting the function being updated.
+func (m *Mock) sumReservedConcurrencyExcept(excludeName string) int {
+	total := 0
+
+	for _, name := range m.funcs.Keys() {
+		if name == excludeName {
+			continue
+		}
+
+		fd, ok := m.funcs.Get(name)
+		if !ok || fd.concurrency == nil {
+			continue
+		}
+
+		total += fd.concurrency.ReservedConcurrentExecutions
+	}
+
+	return total
 }
 
 // GetFunctionConcurrency retrieves the concurrency configuration for a function.
