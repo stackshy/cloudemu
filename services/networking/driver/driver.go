@@ -29,6 +29,12 @@ type VPCInfo struct {
 	// InstanceTenancy is the default tenancy of instances launched into the VPC
 	// ("default" or "dedicated"). An AWS concept; Azure and GCP leave it empty.
 	InstanceTenancy string
+	// IsDefault marks the account/region's auto-created default VPC (AWS only;
+	// Azure and GCP have no equivalent concept and leave it false). Real EC2
+	// gives every region one on account creation, with `default = true` visible
+	// via DescribeVpcs and matched by tools like Terraform's
+	// `data "aws_vpc" "default"`.
+	IsDefault bool
 }
 
 // SubnetConfig describes a subnet to create.
@@ -59,6 +65,10 @@ type SubnetInfo struct {
 	// endpoints). Populated by the provider on Create/Describe; DescribeSubnets
 	// returns it as availableIpAddressCount, which IaC tools read for drift.
 	AvailableIPAddressCount int
+	// IsDefault marks a subnet auto-created in the account/region's default VPC
+	// (AWS only). Real EC2 reports this as defaultForAz on DescribeSubnets, and
+	// RunInstances with no SubnetId lands in a subnet where this is true.
+	IsDefault bool
 }
 
 // SecurityGroupConfig describes a security group to create.

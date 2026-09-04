@@ -521,6 +521,13 @@ func (h *Handler) applyInstanceAttributes(r *http.Request, id string) error {
 		attrDisableAPIStop, attrInstanceInitiatedShutdownBehavior,
 	} {
 		if v := r.Form.Get(attrForm(name) + ".Value"); v != "" {
+			// UserData.Value arrives base64-encoded, same as RunInstances' UserData
+			// param; decode it so the mock always stores the raw content and
+			// DescribeInstanceAttribute's re-encode round-trips correctly.
+			if name == attrUserData {
+				v = decodeUserData(v)
+			}
+
 			if err := attributer.SetInstanceAttribute(r.Context(), id, name, v); err != nil {
 				return err
 			}
@@ -598,7 +605,11 @@ func setInstanceAttributeField(resp *describeInstanceAttributeResponse, attr, va
 	case attrInstanceType:
 		resp.InstanceType = &attributeValueXML{Value: val}
 	case attrUserData:
-		resp.UserData = &attributeValueXML{Value: val}
+		// Real EC2 returns UserData base64-encoded; the mock stores it decoded
+		// (matching RunInstances' UserData param), so re-encode at the wire
+		// boundary. An empty val leaves Value "" and omitempty drops the
+		// nested <value> element entirely (see attributeValueXML).
+		resp.UserData = &attributeValueXML{Value: encodeUserData(val)}
 	}
 }
 
@@ -683,6 +694,18 @@ func decodeUserData(s string) string {
 	}
 
 	return s
+}
+
+// encodeUserData base64-encodes decoded UserData for the wire, the inverse of
+// decodeUserData. An empty string stays empty rather than becoming the
+// (non-empty) base64 encoding of zero bytes, so an unset UserData still reports
+// as empty over the wire.
+func encodeUserData(s string) string {
+	if s == "" {
+		return ""
+	}
+
+	return base64.StdEncoding.EncodeToString([]byte(s))
 }
 
 // instanceCount returns how many instances RunInstances should launch.

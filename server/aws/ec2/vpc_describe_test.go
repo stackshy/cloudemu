@@ -111,7 +111,14 @@ func TestDescribeVpcsPaginates(t *testing.T) {
 		want[mkVPC(ctx, t, c, cidr)] = true
 	}
 
-	first, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{MaxResults: aws.Int32(1)})
+	// Scoped to just the 3 VPCs created above by id: the account/region's seeded
+	// default VPC would otherwise also be paged through by an unfiltered describe.
+	ids := make([]string, 0, len(want))
+	for id := range want {
+		ids = append(ids, id)
+	}
+
+	first, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: ids, MaxResults: aws.Int32(1)})
 	if err != nil {
 		t.Fatalf("DescribeVpcs(page1): %v", err)
 	}
@@ -128,7 +135,7 @@ func TestDescribeVpcsPaginates(t *testing.T) {
 	token := first.NextToken
 
 	for token != nil && aws.ToString(token) != "" {
-		next, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{MaxResults: aws.Int32(1), NextToken: token})
+		next, err := c.DescribeVpcs(ctx, &ec2.DescribeVpcsInput{VpcIds: ids, MaxResults: aws.Int32(1), NextToken: token})
 		if err != nil {
 			t.Fatalf("DescribeVpcs(page): %v", err)
 		}

@@ -660,9 +660,11 @@ func TestIPAMFullProvider(t *testing.T) {
 		t.Fatalf("CreateIpam default RD: %v %+v", err, ipam)
 	}
 
-	// Resource CIDRs + history derive from the VPC/subnet.
+	// Resource CIDRs + history derive from every VPC/subnet: the VPC+subnet
+	// created here, plus the seeded account/region default VPC and its 3
+	// default subnets (1+1 + 1+3 = 6).
 	rc, err := m.GetIpamResourceCidrs(ctx, ipam.PrivateDefaultScopeID, "")
-	if err != nil || len(rc) != 2 {
+	if err != nil || len(rc) != 6 {
 		t.Fatalf("GetIpamResourceCidrs: %v %+v", err, rc)
 	}
 
@@ -694,7 +696,8 @@ func TestIPAMFullProvider(t *testing.T) {
 		t.Fatalf("GetIpamDiscoveredAccounts: %+v", accts)
 	}
 
-	if dcidrs, _ := m.GetIpamDiscoveredResourceCidrs(ctx, ipam.DefaultResourceDiscoveryID, ""); len(dcidrs) != 2 {
+	// Same 6 resources as GetIpamResourceCidrs above (discovery is unfiltered).
+	if dcidrs, _ := m.GetIpamDiscoveredResourceCidrs(ctx, ipam.DefaultResourceDiscoveryID, ""); len(dcidrs) != 6 {
 		t.Fatalf("GetIpamDiscoveredResourceCidrs: %+v", dcidrs)
 	}
 

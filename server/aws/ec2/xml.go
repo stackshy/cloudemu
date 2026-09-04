@@ -256,8 +256,15 @@ type attributeBooleanValueXML struct {
 	Value bool `xml:"value"`
 }
 
+// attributeValueXML carries a single string instance attribute. Value uses
+// omitempty so an empty attribute (notably userData that was never set) marshals
+// as a bare <userData></userData> with no nested <value> element — matching real
+// EC2, whose XML decoder then leaves the SDK's AttributeValue.Value pointer nil
+// rather than pointing at "". Without this, terraform-provider-aws's read path
+// (which only skips re-hashing user_data when Value is nil) re-hashes the
+// already-hashed state value on every refresh, producing a permanent plan diff.
 type attributeValueXML struct {
-	Value string `xml:"value"`
+	Value string `xml:"value,omitempty"`
 }
 
 // describeInstanceAttributeResponse carries exactly one requested attribute

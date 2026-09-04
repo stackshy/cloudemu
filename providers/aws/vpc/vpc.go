@@ -28,6 +28,9 @@ const (
 	// above any real subnet (the widest EC2 allows is a /16, 16 host bits) yet
 	// keeps 1<<hostBits within int range on every platform.
 	maxSubnetHostBits = 30
+	// stateAvailable is the "ready for use" state name shared by VPCs, subnets,
+	// and most VPC resources.
+	stateAvailable = "available"
 )
 
 // VPC IPv4 CIDR netmask bounds. EC2 requires a VPC block between a /16 and a
@@ -194,6 +197,9 @@ type vpcData struct {
 	EnableDNSHostnames bool
 	DhcpOptionsID      string
 	InstanceTenancy    string
+	// IsDefault marks the account/region's auto-created default VPC. See
+	// driver.VPCInfo.IsDefault.
+	IsDefault bool
 }
 
 type subnetData struct {
@@ -204,6 +210,9 @@ type subnetData struct {
 	State               string
 	Tags                map[string]string
 	MapPublicIPOnLaunch bool
+	// IsDefault marks a default subnet of the default VPC. See
+	// driver.SubnetInfo.IsDefault.
+	IsDefault bool
 }
 
 type sgData struct {
@@ -221,7 +230,7 @@ type sgData struct {
 
 // New creates a new VPC mock with the given configuration options.
 func New(opts *config.Options) *Mock {
-	return &Mock{
+	m := &Mock{
 		vpcs:           memstore.New[*vpcData](),
 		subnets:        memstore.New[*subnetData](),
 		securityGroups: memstore.New[*sgData](),
@@ -284,6 +293,91 @@ func New(opts *config.Options) *Mock {
 		eniIPCounters:         map[string]int{},
 
 		opts: opts,
+	}
+
+	m.seedDefaultVPC()
+
+	return m
+}
+
+// defaultVPCCIDR is the CIDR block real EC2 gives the default VPC it
+// auto-creates in every region on account creation.
+const defaultVPCCIDR = "172.31.0.0/16"
+
+// defaultSubnetCIDRs are the default VPC's per-AZ /20 default subnets, matching
+// real EC2's split of 172.31.0.0/16.
+//
+//nolint:gochecknoglobals // read-only seed data, never mutated after init
+var defaultSubnetCIDRs = []string{"172.31.0.0/20", "172.31.16.0/20", "172.31.32.0/20"}
+
+// defaultSubnetAZs names the zones the seeded default subnets land in.
+// cloudemu models a single implicit account/region per Mock rather than
+// partitioning state by region, and "us-east-1" is the fallback region already
+// used wherever a caller's request carries no explicit one (see
+// server/aws/ec2's regionFromRequest), so the default subnets reuse that
+// region's zone names for consistency with the rest of the emulator.
+//
+//nolint:gochecknoglobals // read-only seed data, never mutated after init
+var defaultSubnetAZs = []string{"us-east-1a", "us-east-1b", "us-east-1c"}
+
+// seedDefaultVPC gives the account/region its default VPC, matching what every
+// real AWS account has from creation: a 172.31.0.0/16 VPC with default=true,
+// one /20 default subnet per AZ (mapPublicIpOnLaunch on), a default security
+// group, a default network ACL, a main route table, and an attached internet
+// gateway with a 0.0.0.0/0 route (the default VPC is public by default, unlike
+// a VPC created via CreateVPC). Terraform's `data "aws_vpc" "default" {}` and a
+// RunInstances call that omits a subnet both depend on this existing without
+// the caller having to create it.
+//
+// Called once from New(), before the Mock is handed to any caller, so no
+// locking is needed here: nothing else can observe the stores mid-seed.
+func (m *Mock) seedDefaultVPC() {
+	vpcID := idgen.GenerateID("vpc-")
+
+	m.vpcs.Set(vpcID, &vpcData{
+		ID:               vpcID,
+		CIDRBlock:        defaultVPCCIDR,
+		State:            stateAvailable,
+		Tags:             map[string]string{},
+		EnableDNSSupport: true,
+		InstanceTenancy:  tenancyDefault,
+		IsDefault:        true,
+	})
+
+	m.createDefaultSecurityGroup(vpcID)
+	m.createDefaultNetworkACL(vpcID)
+	rtID := m.createMainRouteTable(vpcID, defaultVPCCIDR)
+
+	for i, cidr := range defaultSubnetCIDRs {
+		subID := idgen.GenerateID("subnet-")
+		m.subnets.Set(subID, &subnetData{
+			ID:                  subID,
+			VPCID:               vpcID,
+			CIDRBlock:           cidr,
+			AvailabilityZone:    defaultSubnetAZs[i],
+			State:               stateAvailable,
+			Tags:                map[string]string{},
+			MapPublicIPOnLaunch: true,
+			IsDefault:           true,
+		})
+		m.associateDefaultNetworkACL(vpcID, subID)
+	}
+
+	igwID := idgen.GenerateID("igw-")
+	m.igws.Set(igwID, &igwData{
+		ID:    igwID,
+		VpcID: vpcID,
+		State: IGWStateAttached,
+		Tags:  map[string]string{},
+	})
+
+	if rt, ok := m.routeTables.Get(rtID); ok {
+		rt.Routes = append(rt.Routes, driver.Route{
+			DestinationCIDR: "0.0.0.0/0",
+			TargetID:        igwID,
+			TargetType:      RouteTargetGateway,
+			State:           "active",
+		})
 	}
 }
 
@@ -351,10 +445,13 @@ func (m *Mock) createDefaultSecurityGroup(vpcID string) {
 }
 
 // createMainRouteTable gives the new VPC the route table EC2 creates for it,
-// carrying the local route and an implicit main association. Callers list a
-// VPC's route tables during teardown and skip the main one, so its absence is
-// visible: it makes every VPC look like it has one fewer table than it does.
-func (m *Mock) createMainRouteTable(vpcID, cidr string) {
+// carrying the local route and an implicit main association, and returns its
+// id so a caller that needs to add further routes (the default VPC's public
+// route to its internet gateway) does not have to look it back up. Callers
+// list a VPC's route tables during teardown and skip the main one, so its
+// absence is visible: it makes every VPC look like it has one fewer table than
+// it does.
+func (m *Mock) createMainRouteTable(vpcID, cidr string) string {
 	rtID := idgen.GenerateID("rtb-")
 
 	m.routeTables.Set(rtID, &routeTableData{
@@ -375,6 +472,8 @@ func (m *Mock) createMainRouteTable(vpcID, cidr string) {
 		RouteTableID: rtID,
 		Main:         true,
 	})
+
+	return rtID
 }
 
 // DeleteVPC deletes the VPC with the given ID.
@@ -1205,6 +1304,7 @@ func toVPCInfo(v *vpcData) driver.VPCInfo {
 		EnableDNSHostnames: v.EnableDNSHostnames,
 		DhcpOptionsID:      v.DhcpOptionsID,
 		InstanceTenancy:    v.InstanceTenancy,
+		IsDefault:          v.IsDefault,
 	}
 }
 
@@ -1217,6 +1317,7 @@ func toSubnetInfo(s *subnetData) driver.SubnetInfo {
 		State:               s.State,
 		Tags:                copyTags(s.Tags),
 		MapPublicIPOnLaunch: s.MapPublicIPOnLaunch,
+		IsDefault:           s.IsDefault,
 	}
 }
 

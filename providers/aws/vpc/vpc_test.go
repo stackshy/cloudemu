@@ -2,6 +2,7 @@ package vpc
 
 import (
 	"context"
+	"net"
 	"testing"
 	"time"
 
@@ -123,9 +124,19 @@ func TestDescribeVPCs(t *testing.T) {
 	v2 := createTestVPC(m)
 
 	t.Run("all", func(t *testing.T) {
+		// DescribeVPCs(nil) also returns the account/region's seeded default VPC,
+		// so this checks both created VPCs are present rather than an exact count.
 		vpcs, err := m.DescribeVPCs(ctx, nil)
 		requireNoError(t, err)
-		assertEqual(t, 2, len(vpcs))
+
+		ids := map[string]bool{}
+		for _, v := range vpcs {
+			ids[v.ID] = true
+		}
+
+		if !ids[v1.ID] || !ids[v2.ID] {
+			t.Fatalf("DescribeVPCs(nil) = %v, want both %s and %s present", vpcs, v1.ID, v2.ID)
+		}
 	})
 
 	t.Run("by ID", func(t *testing.T) {
@@ -201,12 +212,23 @@ func TestDescribeSubnets(t *testing.T) {
 	ctx := context.Background()
 	v := createTestVPC(m)
 	s1, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
-	_, _ = m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.2.0/24"})
+	s2, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.2.0/24"})
 
 	t.Run("all", func(t *testing.T) {
+		// DescribeSubnets(nil) also returns the seeded default VPC's default
+		// subnets, so this checks both created subnets are present rather than an
+		// exact count.
 		subnets, err := m.DescribeSubnets(ctx, nil)
 		requireNoError(t, err)
-		assertEqual(t, 2, len(subnets))
+
+		ids := map[string]bool{}
+		for _, s := range subnets {
+			ids[s.ID] = true
+		}
+
+		if !ids[s1.ID] || !ids[s2.ID] {
+			t.Fatalf("DescribeSubnets(nil) = %v, want both %s and %s present", subnets, s1.ID, s2.ID)
+		}
 	})
 
 	t.Run("by ID", func(t *testing.T) {
@@ -296,9 +318,11 @@ func TestCreateVPCCreatesDefaultSecurityGroup(t *testing.T) {
 	ctx := context.Background()
 	v := createTestVPC(m)
 
+	// One default SG for the VPC just created, plus one for the seeded default
+	// VPC every account/region starts with.
 	sgs, err := m.DescribeSecurityGroups(ctx, nil)
 	requireNoError(t, err)
-	assertEqual(t, 1, len(sgs))
+	assertEqual(t, 2, len(sgs))
 
 	sg := defaultSG(t, m, v.ID)
 	assertEqual(t, defaultSGName, sg.Name)
@@ -341,9 +365,11 @@ func TestDeleteVPCRemovesDefaultSecurityGroup(t *testing.T) {
 
 	requireNoError(t, m.DeleteVPC(ctx, v.ID))
 
+	// Only the seeded default VPC's own default SG remains; the deleted VPC's
+	// default SG went with it.
 	sgs, err := m.DescribeSecurityGroups(ctx, nil)
 	requireNoError(t, err)
-	assertEqual(t, 0, len(sgs))
+	assertEqual(t, 1, len(sgs))
 }
 
 // TestDeleteVPCBlocksOnDependencies walks the resource types real EC2 refuses to
@@ -459,8 +485,9 @@ func TestDescribeSecurityGroups(t *testing.T) {
 	t.Run("all", func(t *testing.T) {
 		sgs, err := m.DescribeSecurityGroups(ctx, nil)
 		requireNoError(t, err)
-		// sg1 + sg2 + the VPC's auto-created default security group.
-		assertEqual(t, 3, len(sgs))
+		// sg1 + sg2 + the VPC's auto-created default security group + the seeded
+		// default VPC's own default security group.
+		assertEqual(t, 4, len(sgs))
 	})
 
 	t.Run("by ID", func(t *testing.T) {
@@ -1144,6 +1171,11 @@ func TestInternetGateway(t *testing.T) {
 	ctx := context.Background()
 	v := createTestVPC(m)
 
+	// The seeded default VPC's own attached internet gateway also exists from
+	// Mock construction, so subtests below track this IGW by the id "create IGW"
+	// returns rather than indexing a bare describe-all list.
+	var igwID string
+
 	t.Run("create IGW", func(t *testing.T) {
 		igw, err := m.CreateInternetGateway(ctx, driver.InternetGatewayConfig{
 			Tags: map[string]string{"env": "test"},
@@ -1151,43 +1183,41 @@ func TestInternetGateway(t *testing.T) {
 		requireNoError(t, err)
 		assertNotEmpty(t, igw.ID)
 		assertEqual(t, "detached", igw.State)
+		igwID = igw.ID
 	})
 
 	t.Run("describe IGWs", func(t *testing.T) {
-		igws, err := m.DescribeInternetGateways(ctx, nil)
+		igws, err := m.DescribeInternetGateways(ctx, []string{igwID})
 		requireNoError(t, err)
 		assertEqual(t, 1, len(igws))
 		assertEqual(t, "detached", igws[0].State)
 	})
 
 	t.Run("attach IGW to VPC", func(t *testing.T) {
-		igws, _ := m.DescribeInternetGateways(ctx, nil)
-		err := m.AttachInternetGateway(ctx, igws[0].ID, v.ID)
+		err := m.AttachInternetGateway(ctx, igwID, v.ID)
 		requireNoError(t, err)
 
-		igws, _ = m.DescribeInternetGateways(ctx, []string{igws[0].ID})
+		igws, _ := m.DescribeInternetGateways(ctx, []string{igwID})
 		assertEqual(t, 1, len(igws))
 		assertEqual(t, "attached", igws[0].State)
 		assertEqual(t, v.ID, igws[0].VpcID)
 	})
 
 	t.Run("detach IGW from VPC", func(t *testing.T) {
-		igws, _ := m.DescribeInternetGateways(ctx, nil)
-		err := m.DetachInternetGateway(ctx, igws[0].ID, v.ID)
+		err := m.DetachInternetGateway(ctx, igwID, v.ID)
 		requireNoError(t, err)
 
-		igws, _ = m.DescribeInternetGateways(ctx, []string{igws[0].ID})
+		igws, _ := m.DescribeInternetGateways(ctx, []string{igwID})
 		assertEqual(t, 1, len(igws))
 		assertEqual(t, "detached", igws[0].State)
 	})
 
 	t.Run("delete IGW", func(t *testing.T) {
-		igws, _ := m.DescribeInternetGateways(ctx, nil)
-		err := m.DeleteInternetGateway(ctx, igws[0].ID)
+		err := m.DeleteInternetGateway(ctx, igwID)
 		requireNoError(t, err)
 
-		igws, _ = m.DescribeInternetGateways(ctx, nil)
-		assertEqual(t, 0, len(igws))
+		_, err = m.DescribeInternetGateways(ctx, []string{igwID})
+		assertError(t, err, true)
 	})
 
 	t.Run("delete nonexistent IGW", func(t *testing.T) {
@@ -1303,6 +1333,29 @@ func TestElasticIP(t *testing.T) {
 		requireNoError(t, err)
 		assertEqual(t, 0, len(eips))
 	})
+}
+
+// TestAllocateAddressPublicIPNotPrivate pins that an allocated Elastic IP looks
+// like a real public address, not an RFC1918 private one. Real EIPs are always
+// publicly routable; a caller inspecting AllocateAddress's PublicIp and seeing
+// 10./172.16-31./192.168.x sees an obviously wrong value.
+func TestAllocateAddressPublicIPNotPrivate(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	for range 10 {
+		eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{})
+		requireNoError(t, err)
+
+		ip := net.ParseIP(eip.PublicIP)
+		if ip == nil {
+			t.Fatalf("PublicIP %q is not a valid IP", eip.PublicIP)
+		}
+
+		if ip.IsPrivate() {
+			t.Fatalf("PublicIP %q is RFC1918 private, want a public-looking address", eip.PublicIP)
+		}
+	}
 }
 
 func TestAssociateAddressNetworkInterface(t *testing.T) {
