@@ -148,9 +148,25 @@ func parseRoute(urlPath string) (route, bool) {
 
 // Matches claims Eventarc v1 trigger paths. Disjoint from the other
 // /v1/projects/ GCP handlers, so registration order is unconstrained.
-func (*Handler) Matches(r *http.Request) bool {
-	_, ok := parseRoute(r.URL.Path)
-	return ok
+//
+// An /operations/{op} path is claimed only when this handler has no shared
+// LRO registry (a standalone package server, which must answer its own polls).
+// In an assembled server h.ops is the same *lro.Registry the shared poller
+// consults, and that poller is registered ahead of this handler, so it always
+// wins first-match-wins routing for every verb (GET/cancel/DELETE) on every
+// operation name, known or not — this handler never needs to (and, per this
+// guard, no longer does) answer for operations it didn't create.
+func (h *Handler) Matches(r *http.Request) bool {
+	rt, ok := parseRoute(r.URL.Path)
+	if !ok {
+		return false
+	}
+
+	if rt.operation != "" && h.ops != nil {
+		return false
+	}
+
+	return true
 }
 
 // ServeHTTP dispatches on method and path shape.

@@ -81,7 +81,15 @@ func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
 // Matches claims /v1/projects/{p}/locations/{l}/{clusters|backups|operations}
 // paths. Everything else under /v1/projects/ falls through to other GCP
 // handlers.
-func (*Handler) Matches(r *http.Request) bool {
+//
+// An /operations/{op} path is claimed only when this handler has no shared LRO
+// registry (a standalone package server, which must answer its own polls). In
+// an assembled server h.ops is the same *lro.Registry the shared poller
+// consults, and that poller is registered ahead of this handler, so it always
+// wins first-match-wins routing for every verb (GET/cancel/DELETE) on every
+// operation name, known or not — this handler never needs to (and, per this
+// guard, no longer does) answer for operations it didn't create.
+func (h *Handler) Matches(r *http.Request) bool {
 	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
 		return false
 	}
@@ -94,7 +102,9 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch collectionOf(parts[idxCollection]) {
-	case collectionClusters, collectionBackups, collectionOperations:
+	case collectionOperations:
+		return h.ops == nil
+	case collectionClusters, collectionBackups:
 		return true
 	default:
 		return false
