@@ -2,6 +2,7 @@ package aks
 
 import (
 	"context"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -353,6 +354,83 @@ func TestListClustersAcrossResourceGroups(t *testing.T) {
 	rgA, err := m.ListClustersByResourceGroup(ctx, "rg-a")
 	requireNoError(t, err)
 	assertEqual(t, 1, len(rgA))
+}
+
+// TestListOrderingIsDeterministic guards against memstore.Store's randomized
+// map iteration leaking into list responses: a caller GETting/Listing the
+// same unchanged state repeatedly must see agent pools, clusters, and
+// maintenance configs in the same order every time, matching real ARM
+// listings. Without the name-sort in ListAgentPools/ListClusters/
+// ListClustersByResourceGroup/ListMaintenanceConfigs, this reordered on
+// almost every call and looked like spurious drift to a caller diffing
+// successive reads (e.g. Terraform comparing agentPoolProfiles).
+func TestListOrderingIsDeterministic(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateOrUpdateCluster(ctx, ClusterInput{ResourceGroup: "rg-a", Name: "zzz"})
+	requireNoError(t, err)
+	_, err = m.CreateOrUpdateCluster(ctx, ClusterInput{ResourceGroup: "rg-a", Name: "aaa"})
+	requireNoError(t, err)
+	_, err = m.CreateOrUpdateCluster(ctx, ClusterInput{ResourceGroup: "rg-b", Name: "mmm"})
+	requireNoError(t, err)
+
+	poolNames := []string{"pzzz", "paaa", "pmmm", "pbbb", "pyyy", "pccc"}
+	for _, n := range poolNames {
+		_, err := m.CreateOrUpdateAgentPool(ctx, "rg-a", "zzz", AgentPoolInput{Name: n, Mode: "User"})
+		requireNoError(t, err)
+	}
+
+	for _, n := range []string{"mzzz", "maaa", "mmmm"} {
+		_, err := m.CreateOrUpdateMaintenanceConfig(ctx, "rg-a", "zzz", n, nil)
+		requireNoError(t, err)
+	}
+
+	wantPoolOrder := sortedOrder(poolNames)
+	wantClusterOrder := "rg-a/aaa,rg-a/zzz,rg-b/mmm,"
+	wantRGClusterOrder := "aaa,zzz,"
+	wantMaintOrder := "maaa,mmmm,mzzz,"
+
+	for i := 0; i < 20; i++ {
+		pools, err := m.ListAgentPools(ctx, "rg-a", "zzz")
+		requireNoError(t, err)
+		assertEqual(t, wantPoolOrder, namesOf(pools, func(p AgentPool) string { return p.Name }))
+
+		clusters, err := m.ListClusters(ctx)
+		requireNoError(t, err)
+		assertEqual(t, wantClusterOrder,
+			namesOf(clusters, func(c ManagedCluster) string { return c.ResourceGroup + "/" + c.Name }))
+
+		rgClusters, err := m.ListClustersByResourceGroup(ctx, "rg-a")
+		requireNoError(t, err)
+		assertEqual(t, wantRGClusterOrder, namesOf(rgClusters, func(c ManagedCluster) string { return c.Name }))
+
+		configs, err := m.ListMaintenanceConfigs(ctx, "rg-a", "zzz")
+		requireNoError(t, err)
+		assertEqual(t, wantMaintOrder, namesOf(configs, func(c MaintenanceConfig) string { return c.Name }))
+	}
+}
+
+func sortedOrder(names []string) string {
+	sorted := make([]string, len(names))
+	copy(sorted, names)
+	sort.Strings(sorted)
+
+	var out string
+	for _, n := range sorted {
+		out += n + ","
+	}
+
+	return out
+}
+
+func namesOf[T any](items []T, key func(T) string) string {
+	var out string
+	for _, it := range items {
+		out += key(it) + ","
+	}
+
+	return out
 }
 
 // Hand-rolled helpers per CLAUDE.md.

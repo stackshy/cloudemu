@@ -843,7 +843,8 @@ func (m *Mock) DeleteCluster(_ context.Context, rg, name string) error {
 	return nil
 }
 
-// ListClustersByResourceGroup returns all clusters in a resource group.
+// ListClustersByResourceGroup returns all clusters in a resource group,
+// sorted by name for a stable listing order (see sortClustersByName).
 func (m *Mock) ListClustersByResourceGroup(_ context.Context, rg string) ([]ManagedCluster, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -858,10 +859,14 @@ func (m *Mock) ListClustersByResourceGroup(_ context.Context, rg string) ([]Mana
 		out = append(out, c)
 	}
 
+	sortClustersByName(out)
+
 	return out, nil
 }
 
-// ListClusters returns all managed clusters across all resource groups.
+// ListClusters returns all managed clusters across all resource groups,
+// sorted by resource group then name for a stable listing order (see
+// sortClustersByName).
 func (m *Mock) ListClusters(_ context.Context) ([]ManagedCluster, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -874,7 +879,25 @@ func (m *Mock) ListClusters(_ context.Context) ([]ManagedCluster, error) {
 		out = append(out, c)
 	}
 
+	sortClustersByName(out)
+
 	return out, nil
+}
+
+// sortClustersByName orders a cluster list deterministically by resource
+// group then name. memstore.Store.Filter/All return a Go map, whose
+// iteration order is randomized on every call; without this sort, two GET
+// calls with no intervening writes could return the same clusters in a
+// different order, which real ARM listings never do and which looks like
+// spurious drift to a caller diffing successive reads (e.g. Terraform).
+func sortClustersByName(clusters []ManagedCluster) {
+	sort.Slice(clusters, func(i, j int) bool {
+		if clusters[i].ResourceGroup != clusters[j].ResourceGroup {
+			return clusters[i].ResourceGroup < clusters[j].ResourceGroup
+		}
+
+		return clusters[i].Name < clusters[j].Name
+	})
 }
 
 // RotateClusterCertificates is a stub that simply marks the cluster updated.
@@ -1067,7 +1090,10 @@ func (m *Mock) systemPoolCount(rg, cluster string) int {
 	return len(all)
 }
 
-// ListAgentPools returns all pools attached to a cluster.
+// ListAgentPools returns all pools attached to a cluster, sorted by name for
+// a stable listing order. toARMCluster calls this on every cluster GET/List
+// to render properties.agentPoolProfiles, so an unstable order here would
+// also make the cluster's inline pool list reorder between reads.
 //
 //nolint:dupl // sub-resource lists are intentionally typed; sharing via generics adds noise.
 func (m *Mock) ListAgentPools(_ context.Context, rg, cluster string) ([]AgentPool, error) {
@@ -1087,6 +1113,8 @@ func (m *Mock) ListAgentPools(_ context.Context, rg, cluster string) ([]AgentPoo
 	for _, p := range all {
 		out = append(out, p)
 	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 
 	return out, nil
 }
@@ -1176,6 +1204,8 @@ func (m *Mock) ListMaintenanceConfigs(_ context.Context, rg, cluster string) ([]
 	for _, mc := range all {
 		out = append(out, mc)
 	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 
 	return out, nil
 }
