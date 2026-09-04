@@ -132,7 +132,7 @@ func TestSDKStorageAccountList(t *testing.T) {
 	ctx := context.Background()
 	client := newAccountsClient(t)
 
-	for _, name := range []string{"acctA", "acctB"} {
+	for _, name := range []string{"accta", "acctb"} {
 		poller, err := client.BeginCreate(ctx, "rg-1", name, armstorage.AccountCreateParameters{
 			Location: to.Ptr("eastus"),
 			Kind:     to.Ptr(armstorage.KindBlockBlobStorage),
@@ -168,7 +168,7 @@ func TestSDKStorageAccountList(t *testing.T) {
 		}
 		return out, nil
 	})
-	assert.ElementsMatch(t, []string{"acctA", "acctB"}, subNames, "subscription-scoped list must return both accounts")
+	assert.ElementsMatch(t, []string{"accta", "acctb"}, subNames, "subscription-scoped list must return both accounts")
 
 	// Resource-group-scoped list.
 	rgPager := client.NewListByResourceGroupPager("rg-1", nil)
@@ -183,7 +183,7 @@ func TestSDKStorageAccountList(t *testing.T) {
 		}
 		return out, nil
 	})
-	assert.ElementsMatch(t, []string{"acctA", "acctB"}, rgNames, "resource-group-scoped list must return both accounts")
+	assert.ElementsMatch(t, []string{"accta", "acctb"}, rgNames, "resource-group-scoped list must return both accounts")
 }
 
 // Storage account create-or-update is a long-running operation in the ARM SDK:
@@ -197,7 +197,7 @@ func TestSDKStorageAccountCreateReturns200LROContract(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	url := ts.URL + "/subscriptions/sub-1/resourceGroups/rg-1/providers/" +
-		"Microsoft.Storage/storageAccounts/acct-status?api-version=2023-01-01"
+		"Microsoft.Storage/storageAccounts/acctstatus?api-version=2023-01-01"
 	body := `{"location":"westus2","kind":"StorageV2","sku":{"name":"Standard_LRS"}}`
 
 	put := func() int {

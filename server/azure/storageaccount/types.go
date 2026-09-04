@@ -137,6 +137,23 @@ type armRegenerateKey struct {
 	KeyName string `json:"keyName"`
 }
 
+// armCheckNameAvailabilityReq is the checkNameAvailability request body:
+// armstorage's AccountCheckNameAvailabilityParameters marshals to these JSON
+// field names ("type" is always "Microsoft.Storage/storageAccounts" and
+// unused here).
+type armCheckNameAvailabilityReq struct {
+	Name string `json:"name"`
+	Type string `json:"type,omitempty"`
+}
+
+// armCheckNameAvailabilityResult is the checkNameAvailability response:
+// armstorage's CheckNameAvailabilityResult shape.
+type armCheckNameAvailabilityResult struct {
+	Message       string `json:"message,omitempty"`
+	NameAvailable bool   `json:"nameAvailable"`
+	Reason        string `json:"reason,omitempty"`
+}
+
 // armBlobServiceProperties is the ARM wire shape for the storage-account Blob
 // service properties sub-resource (…/blobServices/default), returned by both
 // BlobServicesClient.SetServiceProperties and .GetServiceProperties.
