@@ -13,7 +13,7 @@ import (
 )
 
 func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *route) {
-	repoID := r.URL.Query().Get("repositoryId")
+	repoID := repositoryIDParam(r)
 
 	var body repositoryJSON
 	if !gcprest.DecodeJSON(w, r, &body) {
@@ -31,6 +31,19 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *r
 
 	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, repoID,
 		typedResponse(repositoryTypeURL, toRepositoryJSON(rt.project, rt.location, repo, 0))))
+}
+
+// repositoryIDParam reads the create-repository id from the request query. The
+// google.golang.org/api client sends it as the JSON/camelCase name
+// (repositoryId); the Terraform google provider and gcloud send the proto
+// snake_case name (repository_id). Real Artifact Registry accepts either, so the
+// handler honors both, preferring camelCase when present.
+func repositoryIDParam(r *http.Request) string {
+	if id := r.URL.Query().Get("repositoryId"); id != "" {
+		return id
+	}
+
+	return r.URL.Query().Get("repository_id")
 }
 
 // reservedTagsFrom folds the GCP-only Repository fields (format, description,
