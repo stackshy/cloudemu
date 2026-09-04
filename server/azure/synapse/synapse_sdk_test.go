@@ -248,6 +248,86 @@ func sqlLifecycle(t *testing.T, ctx context.Context, ts *httptest.Server) {
 	}
 }
 
+// TestSDKSQLPoolPartialUpdate drives the real armsynapse SQLPoolsClient.BeginUpdate
+// (PATCH, SqlPoolPatchInfo) and asserts ARM partial-update semantics: a patch that
+// carries only tags must leave the SKU, collation and maxSizeBytes untouched, and a
+// patch of a pool that does not exist must be a 404, never an implicit create.
+func TestSDKSQLPoolPartialUpdate(t *testing.T) {
+	ts := newServer(t)
+	ctx := context.Background()
+
+	const poolName = "dwpool"
+
+	wsClient, err := armsynapse.NewWorkspacesClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewWorkspacesClient: %v", err)
+	}
+
+	createWorkspace(t, ctx, wsClient)
+
+	c, err := armsynapse.NewSQLPoolsClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewSQLPoolsClient: %v", err)
+	}
+
+	createPoller, err := c.BeginCreate(ctx, rgName, wsName, poolName, armsynapse.SQLPool{
+		Location: to.Ptr("eastus"),
+		SKU:      &armsynapse.SKU{Name: to.Ptr("DW100c"), Tier: to.Ptr("DataWarehouse")},
+		Properties: &armsynapse.SQLPoolResourceProperties{
+			Collation:    to.Ptr("SQL_Latin1_General_CP1_CI_AS"),
+			MaxSizeBytes: to.Ptr[int64](263882790666240),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate SQL pool: %v", err)
+	}
+
+	if _, err := createPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("poll SQL pool create: %v", err)
+	}
+
+	// PATCH with tags only: the SKU/collation/maxSizeBytes must survive.
+	updPoller, err := c.BeginUpdate(ctx, rgName, wsName, poolName, armsynapse.SQLPoolPatchInfo{
+		Tags: map[string]*string{"env": to.Ptr("prod")},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginUpdate SQL pool: %v", err)
+	}
+
+	if _, err := updPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("poll SQL pool update: %v", err)
+	}
+
+	got, err := c.Get(ctx, rgName, wsName, poolName, nil)
+	if err != nil {
+		t.Fatalf("Get SQL pool: %v", err)
+	}
+
+	if got.SKU == nil || got.SKU.Name == nil || *got.SKU.Name != "DW100c" {
+		t.Fatalf("partial patch clobbered SKU: got %v, want DW100c preserved", got.SKU)
+	}
+
+	if got.Properties == nil || got.Properties.Collation == nil ||
+		*got.Properties.Collation != "SQL_Latin1_General_CP1_CI_AS" {
+		t.Fatalf("partial patch clobbered collation: got %v", got.Properties)
+	}
+
+	if got.Properties.MaxSizeBytes == nil || *got.Properties.MaxSizeBytes != 263882790666240 {
+		t.Fatalf("partial patch clobbered maxSizeBytes: got %v", got.Properties)
+	}
+
+	if got.Tags["env"] == nil || *got.Tags["env"] != "prod" {
+		t.Fatalf("patch tags = %v, want env=prod", got.Tags)
+	}
+
+	// PATCH of a non-existent pool must be a 404, not an implicit create.
+	if _, err := c.BeginUpdate(ctx, rgName, wsName, "ghostpool", armsynapse.SQLPoolPatchInfo{
+		Tags: map[string]*string{"a": to.Ptr("b")},
+	}, nil); err == nil {
+		t.Fatal("BeginUpdate of a non-existent SQL pool returned nil error, want 404")
+	}
+}
+
 func pausePool(t *testing.T, ctx context.Context, c *armsynapse.SQLPoolsClient, name string) *string {
 	t.Helper()
 
