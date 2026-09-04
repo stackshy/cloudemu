@@ -304,21 +304,23 @@ func validateParameterName(name string) error {
 	return nil
 }
 
-// PutParameter creates a new parameter or, when Overwrite is set, appends a new
-// version to an existing one.
+// validatePutParameter checks the tier-independent PutParameter inputs (name,
+// Overwrite/Tags conflict, Type, and AllowedPattern) up front, before any store
+// lookup or tier resolution. Value size is validated separately once the tier
+// is known.
 //
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
+//nolint:gocritic // hugeParam: mirrors the PutParameter signature.
+func validatePutParameter(cfg driver.PutConfig) error {
 	if cfg.Name == "" {
-		return 0, "", errors.New(errors.InvalidArgument, "parameter name is required")
+		return errors.New(errors.InvalidArgument, "parameter name is required")
 	}
 
 	if err := validateParameterName(cfg.Name); err != nil {
-		return 0, "", err
+		return err
 	}
 
 	if cfg.Overwrite && len(cfg.Tags) > 0 {
-		return 0, "", driver.ErrTagsWithOverwrite
+		return driver.ErrTagsWithOverwrite
 	}
 
 	// An explicitly set Type must be one AWS recognizes; an unrecognized value
@@ -326,12 +328,24 @@ func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 	// omitted Type is allowed here: it defaults to String on create and retains
 	// the existing type on Overwrite.
 	if cfg.Type != "" && !validType(cfg.Type) {
-		return 0, "", driver.ErrUnsupportedType
+		return driver.ErrUnsupportedType
 	}
 
 	// AllowedPattern (if set) must be a valid regexp and the Value must match it.
 	// This is independent of the parameter type, so validate it up front.
 	if err := validateAllowedPattern(cfg.AllowedPattern, cfg.Value); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// PutParameter creates a new parameter or, when Overwrite is set, appends a new
+// version to an existing one.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
+	if err := validatePutParameter(cfg); err != nil {
 		return 0, "", err
 	}
 

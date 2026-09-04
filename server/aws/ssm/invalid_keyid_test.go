@@ -118,6 +118,90 @@ func TestSDKGetParameterDisabledKMSKeyIsInvalidKeyID(t *testing.T) {
 	}
 }
 
+// TestSDKGetParametersBatchDisabledKMSKeyIsInvalidKeyID is a real-user e2e
+// regression: the batch GetParameters read of a SecureString whose KMS key has
+// been disabled must surface the distinct InvalidKeyId client error (400), the
+// same as the single GetParameter path, not a generic 500 leaking the KMS
+// failure message.
+func TestSDKGetParametersBatchDisabledKMSKeyIsInvalidKeyID(t *testing.T) {
+	ssmClient, kmsClient := newSSMAndKMSClients(t)
+	ctx := context.Background()
+
+	key, err := kmsClient.CreateKey(ctx, &awskms.CreateKeyInput{})
+	if err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+
+	keyID := aws.ToString(key.KeyMetadata.KeyId)
+
+	if _, err := ssmClient.PutParameter(ctx, &awsssm.PutParameterInput{
+		Name:  aws.String("/secure/batch"),
+		Value: aws.String("s1"),
+		Type:  ssmtypes.ParameterTypeSecureString,
+		KeyId: aws.String(keyID),
+	}); err != nil {
+		t.Fatalf("PutParameter: %v", err)
+	}
+
+	if _, err := kmsClient.DisableKey(ctx, &awskms.DisableKeyInput{KeyId: aws.String(keyID)}); err != nil {
+		t.Fatalf("DisableKey: %v", err)
+	}
+
+	_, err = ssmClient.GetParameters(ctx, &awsssm.GetParametersInput{
+		Names:          []string{"/secure/batch"},
+		WithDecryption: aws.Bool(true),
+	})
+	if err == nil {
+		t.Fatal("GetParameters(WithDecryption) with disabled key: expected error, got nil")
+	}
+
+	if code := apiErrorCode(t, err); code != "InvalidKeyId" {
+		t.Fatalf("error code = %q, want InvalidKeyId", code)
+	}
+}
+
+// TestSDKGetParametersByPathDisabledKMSKeyIsInvalidKeyID is a real-user e2e
+// regression: a recursive GetParametersByPath read that decrypts a SecureString
+// whose KMS key has been disabled must surface the distinct InvalidKeyId client
+// error (400), not a generic 500 leaking the KMS failure message.
+func TestSDKGetParametersByPathDisabledKMSKeyIsInvalidKeyID(t *testing.T) {
+	ssmClient, kmsClient := newSSMAndKMSClients(t)
+	ctx := context.Background()
+
+	key, err := kmsClient.CreateKey(ctx, &awskms.CreateKeyInput{})
+	if err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+
+	keyID := aws.ToString(key.KeyMetadata.KeyId)
+
+	if _, err := ssmClient.PutParameter(ctx, &awsssm.PutParameterInput{
+		Name:  aws.String("/secure/tree/leaf"),
+		Value: aws.String("s1"),
+		Type:  ssmtypes.ParameterTypeSecureString,
+		KeyId: aws.String(keyID),
+	}); err != nil {
+		t.Fatalf("PutParameter: %v", err)
+	}
+
+	if _, err := kmsClient.DisableKey(ctx, &awskms.DisableKeyInput{KeyId: aws.String(keyID)}); err != nil {
+		t.Fatalf("DisableKey: %v", err)
+	}
+
+	_, err = ssmClient.GetParametersByPath(ctx, &awsssm.GetParametersByPathInput{
+		Path:           aws.String("/secure/tree"),
+		Recursive:      aws.Bool(true),
+		WithDecryption: aws.Bool(true),
+	})
+	if err == nil {
+		t.Fatal("GetParametersByPath(WithDecryption) with disabled key: expected error, got nil")
+	}
+
+	if code := apiErrorCode(t, err); code != "InvalidKeyId" {
+		t.Fatalf("error code = %q, want InvalidKeyId", code)
+	}
+}
+
 // TestSDKListTagsForResourceStableOrder is a real-user e2e regression: real
 // ListTagsForResource returns a stable tag order across repeated reads of
 // unchanged state. Before the fix, ranging the tags map directly (unsorted)
