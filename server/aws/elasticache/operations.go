@@ -12,6 +12,24 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
+// optionalBool reads a boolean form flag, returning nil when the caller omitted
+// it entirely so the backend can apply the real ElastiCache default rather than
+// coercing an absent flag to false. A present but unparseable value is treated
+// as false, matching how the query protocol coerces malformed booleans.
+func optionalBool(form url.Values, key string) *bool {
+	raw := form.Get(key)
+	if raw == "" {
+		return nil
+	}
+
+	b, err := strconv.ParseBool(raw)
+	if err != nil {
+		b = false
+	}
+
+	return &b
+}
+
 // parseTags parses ElastiCache-style Tags.Tag.N.{Key,Value} entries.
 func parseTags(form url.Values) map[string]string {
 	indices := awsquery.CollectIndices(form, "Tags.Tag")
@@ -47,17 +65,18 @@ func (h *Handler) createCacheCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := cachedriver.CacheConfig{
-		Name:               form.Get("CacheClusterId"),
-		NodeType:           form.Get("CacheNodeType"),
-		Engine:             form.Get("Engine"),
-		EngineVersion:      form.Get("EngineVersion"),
-		NumCacheNodes:      nodes,
-		Port:               port,
-		SubnetGroupName:    form.Get("CacheSubnetGroupName"),
-		ParameterGroupName: form.Get("CacheParameterGroupName"),
-		Tags:               parseTags(form),
-		SnapshotName:       form.Get("SnapshotName"),
-		SnapshotArns:       awsquery.ListStrings(form, "SnapshotArns.SnapshotArn"),
+		Name:                    form.Get("CacheClusterId"),
+		NodeType:                form.Get("CacheNodeType"),
+		Engine:                  form.Get("Engine"),
+		EngineVersion:           form.Get("EngineVersion"),
+		NumCacheNodes:           nodes,
+		Port:                    port,
+		SubnetGroupName:         form.Get("CacheSubnetGroupName"),
+		ParameterGroupName:      form.Get("CacheParameterGroupName"),
+		Tags:                    parseTags(form),
+		SnapshotName:            form.Get("SnapshotName"),
+		SnapshotArns:            awsquery.ListStrings(form, "SnapshotArns.SnapshotArn"),
+		AutoMinorVersionUpgrade: optionalBool(form, "AutoMinorVersionUpgrade"),
 	}
 
 	info, err := h.cache.CreateCache(r.Context(), cfg)
@@ -93,10 +112,11 @@ func (h *Handler) modifyCacheCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	info, err := mod.ModifyCache(r.Context(), cachedriver.ModifyCacheConfig{
-		Name:          r.Form.Get("CacheClusterId"),
-		NodeType:      r.Form.Get("CacheNodeType"),
-		EngineVersion: r.Form.Get("EngineVersion"),
-		NumCacheNodes: nodes,
+		Name:                    r.Form.Get("CacheClusterId"),
+		NodeType:                r.Form.Get("CacheNodeType"),
+		EngineVersion:           r.Form.Get("EngineVersion"),
+		NumCacheNodes:           nodes,
+		AutoMinorVersionUpgrade: optionalBool(r.Form, "AutoMinorVersionUpgrade"),
 	})
 	if err != nil {
 		writeErr(w, err)

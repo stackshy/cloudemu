@@ -63,6 +63,20 @@ type CacheInfo struct {
 	NumCacheNodes   int
 	SubnetGroupName string
 
+	// ReplicationGroupID is set on a cache cluster that is a member node of an
+	// AWS ElastiCache replication group ("<groupId>-001", "<groupId>-002", …);
+	// empty for a standalone cluster. Real ElastiCache exposes each member as a
+	// describable single-node cache cluster carrying this back-reference, so IaC
+	// that manages a replication group can read the members. AWS-only.
+	ReplicationGroupID string
+
+	// AutoMinorVersionUpgrade is the AWS ElastiCache flag controlling automatic
+	// minor engine upgrades, echoed back on Describe. Real ElastiCache defaults
+	// it to true, and terraform-provider-aws's schema default is also true, so
+	// the backend must resolve and report it or the caller sees a perpetual diff
+	// (config true vs. an absent/false read). AWS-only.
+	AutoMinorVersionUpgrade bool
+
 	// ParameterGroupName is the custom AWS ElastiCache cache parameter group
 	// attached to the cluster, echoed back on Describe so IaC that references a
 	// custom group converges. Empty means the backend reports the engine's
@@ -128,6 +142,12 @@ type CacheConfig struct {
 	// 6379, Memcached 11211). AWS-only and left zero by other callers.
 	Port int
 
+	// AutoMinorVersionUpgrade requests the AWS ElastiCache automatic-minor-upgrade
+	// flag. A pointer so an omitted parameter (nil) can be defaulted to the real
+	// ElastiCache default (true) rather than coerced to false. AWS-only and left
+	// nil by other callers.
+	AutoMinorVersionUpgrade *bool
+
 	// ParameterGroupName names a custom AWS ElastiCache cache parameter group
 	// to attach; empty means the backend reports the engine's default
 	// (default.<family>). AWS-only and left empty by other callers.
@@ -176,6 +196,10 @@ type ModifyCacheConfig struct {
 	// NumCacheNodes rescales a Memcached cluster; zero leaves the node count
 	// unchanged. The backend re-validates it against the cluster's engine.
 	NumCacheNodes int
+
+	// AutoMinorVersionUpgrade updates the automatic-minor-upgrade flag; nil
+	// leaves the stored value unchanged.
+	AutoMinorVersionUpgrade *bool
 }
 
 // Cache is the interface that cache provider implementations must satisfy.

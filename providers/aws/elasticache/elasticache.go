@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"maps"
 	"path"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -147,6 +148,16 @@ func cloneTags(in map[string]string) map[string]string {
 	}
 
 	return out
+}
+
+// boolOrDefault returns *p when p is non-nil, otherwise def. It resolves an
+// optional wire flag (nil = caller omitted it) to a concrete stored value.
+func boolOrDefault(p *bool, def bool) bool {
+	if p != nil {
+		return *p
+	}
+
+	return def
 }
 
 // cacheARN builds an ElastiCache cluster ARN in the given region.
@@ -308,19 +319,20 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	tags := cloneTags(cfg.Tags)
 
 	info := driver.CacheInfo{
-		Name:               cfg.Name,
-		Scope:              cfg.Scope,
-		NodeType:           nodeType,
-		Engine:             engine,
-		EngineVersion:      engineVersion,
-		Status:             statusAvailable,
-		Endpoint:           endpoint,
-		ARN:                m.cacheARN(region, cfg.Name),
-		CreatedAt:          m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		Tags:               tags,
-		NumCacheNodes:      numNodes,
-		SubnetGroupName:    cfg.SubnetGroupName,
-		ParameterGroupName: cfg.ParameterGroupName,
+		Name:                    cfg.Name,
+		Scope:                   cfg.Scope,
+		NodeType:                nodeType,
+		Engine:                  engine,
+		EngineVersion:           engineVersion,
+		Status:                  statusAvailable,
+		Endpoint:                endpoint,
+		ARN:                     m.cacheARN(region, cfg.Name),
+		CreatedAt:               m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		Tags:                    tags,
+		NumCacheNodes:           numNodes,
+		SubnetGroupName:         cfg.SubnetGroupName,
+		ParameterGroupName:      cfg.ParameterGroupName,
+		AutoMinorVersionUpgrade: boolOrDefault(cfg.AutoMinorVersionUpgrade, true),
 	}
 
 	// Opt-in: back the cache with a real server, replacing the synthetic
@@ -379,6 +391,10 @@ func (m *Mock) ModifyCache(_ context.Context, cfg driver.ModifyCacheConfig) (*dr
 		cd.info.NumCacheNodes = cfg.NumCacheNodes
 	}
 
+	if cfg.AutoMinorVersionUpgrade != nil {
+		cd.info.AutoMinorVersionUpgrade = *cfg.AutoMinorVersionUpgrade
+	}
+
 	m.caches.Set(cfg.Name, cd)
 
 	// Under AsyncSettle a modified cluster briefly reports modifying before
@@ -429,9 +445,19 @@ func (m *Mock) DeleteCache(ctx context.Context, name string) error {
 }
 
 // GetCache retrieves information about an ElastiCache cluster.
+//
+// A name that is not a standalone cluster may still be a member node of a
+// replication group ("<groupId>-001", …); real ElastiCache describes those as
+// single-node cache clusters, so fall back to synthesizing the member from its
+// group before reporting not-found. IaC that manages a replication group reads
+// each member back this way.
 func (m *Mock) GetCache(_ context.Context, name string) (*driver.CacheInfo, error) {
 	cd, ok := m.caches.Get(name)
 	if !ok {
+		if info, found := m.lookupMember(name); found {
+			return &info, nil
+		}
+
 		return nil, errors.Newf(errors.NotFound, "cache %q not found", name)
 	}
 
@@ -441,7 +467,63 @@ func (m *Mock) GetCache(_ context.Context, name string) (*driver.CacheInfo, erro
 	return &result, nil
 }
 
-// ListCaches lists all ElastiCache clusters.
+// lookupMember returns the synthesized cache-cluster view of a replication-group
+// member node named memberID, together with whether any group owns it. Members
+// are derived from their group on the fly rather than stored, so the view stays
+// consistent as the group is modified or deleted.
+func (m *Mock) lookupMember(memberID string) (driver.CacheInfo, bool) {
+	groups := m.replicationGroups.SortedValues()
+	for i := range groups {
+		if slices.Contains(groups[i].MemberClusters, memberID) {
+			return m.memberCacheInfo(&groups[i], memberID), true
+		}
+	}
+
+	return driver.CacheInfo{}, false
+}
+
+// memberCacheInfo synthesizes the CacheCluster view of a replication-group
+// member node. It carries the group's engine/version/node-type, its own per-node
+// endpoint, and a back-reference to the group, matching how real ElastiCache
+// exposes a replication group's members through DescribeCacheClusters.
+func (m *Mock) memberCacheInfo(rg *driver.ReplicationGroup, memberID string) driver.CacheInfo {
+	region := arnRegion(rg.ARN, m.opts.Region)
+
+	engine := rg.Engine
+	if engine == "" {
+		engine = defaultEngine
+	}
+
+	engineVersion := rg.EngineVersion
+	if engineVersion == "" {
+		engineVersion = defaultEngineVersion(engine)
+	}
+
+	port := rg.PrimaryPort
+	if port == 0 {
+		port = defaultRedisPort
+	}
+
+	return driver.CacheInfo{
+		Name:                    memberID,
+		NodeType:                rg.NodeType,
+		Engine:                  engine,
+		EngineVersion:           engineVersion,
+		Status:                  m.settleRGStatus(rg.ID, rg.Status),
+		Endpoint:                clusterEndpoint(memberID, region, engine, port),
+		ARN:                     m.cacheARN(region, memberID),
+		NumCacheNodes:           1,
+		SubnetGroupName:         rg.SubnetGroupName,
+		ReplicationGroupID:      rg.ID,
+		AutoMinorVersionUpgrade: true,
+	}
+}
+
+// ListCaches lists all ElastiCache clusters. Replication-group member nodes are
+// included as individual single-node cache clusters, matching real ElastiCache
+// (DescribeCacheClusters returns them alongside standalone clusters). The result
+// is sorted by cluster id so the wire order is deterministic (no map-iteration
+// randomness) and matches the id-ordered listing AWS returns.
 func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.CacheInfo, error) {
 	all := m.caches.SortedValues()
 
@@ -456,6 +538,22 @@ func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.Cache
 		info.Status = m.settleCacheStatus(info.Name, info.Status)
 		caches = append(caches, info)
 	}
+
+	groups := m.replicationGroups.SortedValues()
+	for i := range groups {
+		for _, memberID := range groups[i].MemberClusters {
+			member := m.memberCacheInfo(&groups[i], memberID)
+			if !member.Scope.Matches(filter) {
+				continue
+			}
+
+			caches = append(caches, member)
+		}
+	}
+
+	slices.SortFunc(caches, func(a, b driver.CacheInfo) int {
+		return strings.Compare(a.Name, b.Name)
+	})
 
 	return caches, nil
 }
