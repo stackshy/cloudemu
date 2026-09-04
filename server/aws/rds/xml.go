@@ -79,25 +79,27 @@ type vpcSecurityGroupsXML struct {
 }
 
 type dbInstanceXML struct {
-	DBInstanceIdentifier                  string                     `xml:"DBInstanceIdentifier"`
-	DBInstanceArn                         string                     `xml:"DBInstanceArn"`
-	Engine                                string                     `xml:"Engine,omitempty"`
-	EngineVersion                         string                     `xml:"EngineVersion,omitempty"`
-	DBInstanceClass                       string                     `xml:"DBInstanceClass,omitempty"`
-	DBInstanceStatus                      string                     `xml:"DBInstanceStatus"`
-	MasterUsername                        string                     `xml:"MasterUsername,omitempty"`
-	DBName                                string                     `xml:"DBName,omitempty"`
-	AllocatedStorage                      int                        `xml:"AllocatedStorage,omitempty"`
-	StorageType                           string                     `xml:"StorageType,omitempty"`
-	Endpoint                              *endpointXML               `xml:"Endpoint,omitempty"`
-	MultiAZ                               bool                       `xml:"MultiAZ"`
-	PubliclyAccessible                    bool                       `xml:"PubliclyAccessible"`
-	AvailabilityZone                      string                     `xml:"AvailabilityZone,omitempty"`
-	DBClusterIdentifier                   string                     `xml:"DBClusterIdentifier,omitempty"`
-	DBSubnetGroup                         *dbSubnetGroupXML          `xml:"DBSubnetGroup,omitempty"`
-	InstanceCreateTime                    string                     `xml:"InstanceCreateTime,omitempty"`
-	DbiResourceID                         string                     `xml:"DbiResourceId,omitempty"`
-	BackupRetentionPeriod                 int                        `xml:"BackupRetentionPeriod,omitempty"`
+	DBInstanceIdentifier string            `xml:"DBInstanceIdentifier"`
+	DBInstanceArn        string            `xml:"DBInstanceArn"`
+	Engine               string            `xml:"Engine,omitempty"`
+	EngineVersion        string            `xml:"EngineVersion,omitempty"`
+	DBInstanceClass      string            `xml:"DBInstanceClass,omitempty"`
+	DBInstanceStatus     string            `xml:"DBInstanceStatus"`
+	MasterUsername       string            `xml:"MasterUsername,omitempty"`
+	DBName               string            `xml:"DBName,omitempty"`
+	AllocatedStorage     int               `xml:"AllocatedStorage,omitempty"`
+	StorageType          string            `xml:"StorageType,omitempty"`
+	Endpoint             *endpointXML      `xml:"Endpoint,omitempty"`
+	MultiAZ              bool              `xml:"MultiAZ"`
+	PubliclyAccessible   bool              `xml:"PubliclyAccessible"`
+	AvailabilityZone     string            `xml:"AvailabilityZone,omitempty"`
+	DBClusterIdentifier  string            `xml:"DBClusterIdentifier,omitempty"`
+	DBSubnetGroup        *dbSubnetGroupXML `xml:"DBSubnetGroup,omitempty"`
+	InstanceCreateTime   string            `xml:"InstanceCreateTime,omitempty"`
+	DbiResourceID        string            `xml:"DbiResourceId,omitempty"`
+	// BackupRetentionPeriod is NOT omitempty: 0 is a meaningful, real value
+	// (automated backups disabled), and real RDS always emits the element.
+	BackupRetentionPeriod                 int                        `xml:"BackupRetentionPeriod"`
 	PreferredBackupWindow                 string                     `xml:"PreferredBackupWindow,omitempty"`
 	PreferredMaintenanceWindow            string                     `xml:"PreferredMaintenanceWindow,omitempty"`
 	CACertificateIdentifier               string                     `xml:"CACertificateIdentifier,omitempty"`

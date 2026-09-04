@@ -56,12 +56,17 @@ func instanceConfigFromForm(form url.Values) rdsdriver.InstanceConfig {
 		DeletionProtection:   formBool(form.Get("DeletionProtection")),
 		Tags:                 parseRDSTags(form),
 
-		BackupRetentionPeriod:      formInt(form.Get("BackupRetentionPeriod")),
+		BackupRetentionPeriod:      backupRetentionPeriodFromForm(form),
 		PreferredBackupWindow:      form.Get("PreferredBackupWindow"),
 		PreferredMaintenanceWindow: form.Get("PreferredMaintenanceWindow"),
 		AutoMinorVersionUpgrade:    autoMinorVersionUpgradeFromForm(form),
 	}
 }
+
+// defaultBackupRetentionPeriod mirrors providers/aws/rds's own default: real
+// RDS CreateDBInstance defaults BackupRetentionPeriod to 1 when the caller
+// omits the parameter entirely.
+const defaultBackupRetentionPeriod = 1
 
 // autoMinorVersionUpgradeFromForm mirrors real CreateDBInstance: the parameter
 // defaults to true when the caller omits it entirely, and to the explicit
@@ -73,6 +78,20 @@ func autoMinorVersionUpgradeFromForm(form url.Values) bool {
 	}
 
 	return true
+}
+
+// backupRetentionPeriodFromForm mirrors autoMinorVersionUpgradeFromForm: real
+// CreateDBInstance defaults BackupRetentionPeriod to 1 when the caller omits
+// the parameter entirely. An explicit "0" is meaningful — it disables
+// automated backups, and terraform-provider-aws's schema default is 0, so it
+// ALWAYS sends an explicit 0 rather than omitting the parameter — and must be
+// preserved rather than coerced to the default.
+func backupRetentionPeriodFromForm(form url.Values) int {
+	if v := form.Get("BackupRetentionPeriod"); v != "" {
+		return formInt(v)
+	}
+
+	return defaultBackupRetentionPeriod
 }
 
 // parseRDSTags parses RDS-style Tags.member.N.{Key,Value} entries. Some SDK
@@ -748,11 +767,16 @@ func (h *Handler) restoreInstanceFromSnapshot(w http.ResponseWriter, r *http.Req
 	form := r.Form
 
 	input := rdsdriver.RestoreInstanceInput{
-		NewInstanceID: form.Get("DBInstanceIdentifier"),
-		SnapshotID:    form.Get("DBSnapshotIdentifier"),
-		InstanceClass: form.Get("DBInstanceClass"),
-		Port:          formInt(form.Get("Port")),
-		Tags:          parseRDSTags(form),
+		NewInstanceID:           form.Get("DBInstanceIdentifier"),
+		SnapshotID:              form.Get("DBSnapshotIdentifier"),
+		InstanceClass:           form.Get("DBInstanceClass"),
+		Port:                    formInt(form.Get("Port")),
+		Tags:                    parseRDSTags(form),
+		AutoMinorVersionUpgrade: autoMinorVersionUpgradeFromForm(form),
+		MultiAZ:                 formBool(form.Get("MultiAZ")),
+		PubliclyAccessible:      formBool(form.Get("PubliclyAccessible")),
+		DeletionProtection:      formBool(form.Get("DeletionProtection")),
+		SubnetGroupName:         form.Get("DBSubnetGroupName"),
 	}
 
 	inst, err := h.db.RestoreInstanceFromSnapshot(r.Context(), input)

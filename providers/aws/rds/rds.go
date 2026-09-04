@@ -454,11 +454,12 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 		engineVersion = defaultEngineVersion(cfg.Engine)
 	}
 
-	backupRetention := cfg.BackupRetentionPeriod
-	if backupRetention == 0 {
-		backupRetention = defaultBackupRetention
-	}
-
+	// BackupRetentionPeriod is NOT defaulted here: unlike AllocatedStorage/
+	// StorageType/InstanceClass above, 0 is a meaningful explicit value (it
+	// disables automated backups). The wire layer, which can see whether the
+	// caller supplied the parameter at all, applies the AWS default (1) before
+	// this field is set — mirroring AutoMinorVersionUpgrade below. A direct Go
+	// library caller who wants the default must set it explicitly.
 	backupWindow := cfg.PreferredBackupWindow
 	if backupWindow == "" {
 		backupWindow = defaultBackupWindow
@@ -493,7 +494,7 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 		ClusterID:                  cfg.ClusterID,
 		AvailabilityZone:           cfg.AvailabilityZone,
 		DbiResourceID:              resourceID("db-", cfg.ID),
-		BackupRetentionPeriod:      backupRetention,
+		BackupRetentionPeriod:      cfg.BackupRetentionPeriod,
 		PreferredBackupWindow:      backupWindow,
 		PreferredMaintenanceWindow: maintenanceWindow,
 		CACertificateIdentifier:    defaultCACertIdentifier,
@@ -1339,6 +1340,8 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 // RestoreInstanceFromSnapshot creates a new instance from a snapshot and backs
 // it with a real database (when an engine is wired in) so the restored endpoint
 // is reachable, not a synthetic host that resolves to nothing.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) RestoreInstanceFromSnapshot(
 	ctx context.Context, input rdsdriver.RestoreInstanceInput,
 ) (*rdsdriver.Instance, error) {
@@ -1386,7 +1389,11 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		PreferredBackupWindow:      defaultBackupWindow,
 		PreferredMaintenanceWindow: defaultMaintenanceWindow,
 		CACertificateIdentifier:    defaultCACertIdentifier,
-		AutoMinorVersionUpgrade:    true,
+		AutoMinorVersionUpgrade:    input.AutoMinorVersionUpgrade,
+		MultiAZ:                    input.MultiAZ,
+		PubliclyAccessible:         input.PubliclyAccessible,
+		DeletionProtection:         input.DeletionProtection,
+		SubnetGroupName:            input.SubnetGroupName,
 		CreatedAt:                  m.opts.Clock.Now().UTC(),
 		Tags:                       copyTags(input.Tags),
 	}
