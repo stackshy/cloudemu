@@ -171,7 +171,7 @@ func (h *Handler) getGroupPolicy(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, getGroupPolicyResponse{
 		Xmlns: Namespace,
 		Result: getGroupPolicyResult{
-			GroupName: groupName, PolicyName: policyName, PolicyDocument: doc,
+			GroupName: groupName, PolicyName: policyName, PolicyDocument: encodePolicyDocument(doc),
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})

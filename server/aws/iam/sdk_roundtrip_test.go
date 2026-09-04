@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -417,7 +418,9 @@ func TestSDKIAMPolicyVersionLifecycle(t *testing.T) {
 		t.Fatalf("expected new default v2, got %+v", created.PolicyVersion)
 	}
 
-	// GetPolicyVersion round-trips the stored document.
+	// GetPolicyVersion round-trips the stored document. Real IAM URL-encodes the
+	// document on every read path and the SDK does not decode it for the caller,
+	// so it must be unescaped before comparing against the plain JSON we sent.
 	gotVer, err := client.GetPolicyVersion(ctx, &iam.GetPolicyVersionInput{
 		PolicyArn: aws.String(arn), VersionId: aws.String("v2"),
 	})
@@ -425,8 +428,13 @@ func TestSDKIAMPolicyVersionLifecycle(t *testing.T) {
 		t.Fatalf("GetPolicyVersion: %v", err)
 	}
 
-	if aws.ToString(gotVer.PolicyVersion.Document) != docV2 {
-		t.Fatalf("GetPolicyVersion document mismatch: %q", aws.ToString(gotVer.PolicyVersion.Document))
+	gotDoc, err := url.QueryUnescape(aws.ToString(gotVer.PolicyVersion.Document))
+	if err != nil {
+		t.Fatalf("GetPolicyVersion document not URL-decodable: %v", err)
+	}
+
+	if gotDoc != docV2 {
+		t.Fatalf("GetPolicyVersion document mismatch: %q", gotDoc)
 	}
 
 	// GetPolicy reflects the new default, then tracks SetDefaultPolicyVersion.

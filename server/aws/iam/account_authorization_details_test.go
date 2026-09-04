@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net/url"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -165,9 +166,16 @@ func assertRoleDetail(t *testing.T, roles []iamtypes.RoleDetail, policyArn strin
 		t.Fatalf("role RolePolicyList = %+v, want one inline-s3", r.RolePolicyList)
 	}
 
-	// The inline document must round-trip back to valid JSON via the SDK.
+	// Real IAM URL-encodes policy documents on every read path; the SDK does not
+	// decode this for the caller, so the document must be unescaped before it is
+	// valid JSON again.
+	decoded, err := url.QueryUnescape(aws.ToString(r.RolePolicyList[0].PolicyDocument))
+	if err != nil {
+		t.Fatalf("inline RolePolicy document not URL-decodable: %v", err)
+	}
+
 	var obj map[string]any
-	if err := json.Unmarshal([]byte(aws.ToString(r.RolePolicyList[0].PolicyDocument)), &obj); err != nil {
+	if err := json.Unmarshal([]byte(decoded), &obj); err != nil {
 		t.Fatalf("inline RolePolicy document not valid JSON: %v", err)
 	}
 

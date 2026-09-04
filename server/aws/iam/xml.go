@@ -2,9 +2,30 @@ package iam
 
 import (
 	"encoding/xml"
+	"net/url"
+	"strings"
 
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
+
+// encodePolicyDocument percent-encodes a policy/assume-role-policy JSON
+// document the way real IAM does on every read path (GetRole, ListRoles,
+// GetPolicyVersion, GetRolePolicy/GetUserPolicy/GetGroupPolicy,
+// GetAccountAuthorizationDetails, ...): RFC 3986 percent-encoding with the
+// space character escaped as %20 rather than "+". url.QueryEscape already
+// percent-encodes every byte outside the unreserved set, but — being tuned
+// for "application/x-www-form-urlencoded" query strings — represents space
+// as "+"; the trailing replace corrects that one divergence. Client SDKs
+// (e.g. botocore's json_decode_policies) undo this with a plain percent
+// decode, which does not treat "+" as space, so leaving it unescaped would
+// corrupt any document containing one.
+func encodePolicyDocument(doc string) string {
+	if doc == "" {
+		return doc
+	}
+
+	return strings.ReplaceAll(url.QueryEscape(doc), "+", "%20")
+}
 
 // Every IAM query-protocol response is wrapped in <FooResponse xmlns="..."> with a
 // <FooResult> child and a trailing <ResponseMetadata><RequestId>...</RequestId>
@@ -80,7 +101,7 @@ func toRoleXML(r *iamdriver.RoleInfo) roleXML {
 		Description:              r.Description,
 		CreateDate:               r.CreatedAt,
 		MaxSessionDuration:       r.MaxSessionDuration,
-		AssumeRolePolicyDocument: r.AssumeRolePolicyDoc,
+		AssumeRolePolicyDocument: encodePolicyDocument(r.AssumeRolePolicyDoc),
 		Tags:                     toTagsXML(r.Tags),
 	}
 }
@@ -148,7 +169,7 @@ func toPolicyVersionXML(v *iamdriver.PolicyVersionInfo, includeDocument bool) po
 	}
 
 	if includeDocument {
-		out.Document = v.PolicyDocument
+		out.Document = encodePolicyDocument(v.PolicyDocument)
 	}
 
 	return out

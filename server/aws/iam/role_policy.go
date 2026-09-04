@@ -87,7 +87,7 @@ func (h *Handler) getRolePolicy(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, getRolePolicyResponse{
 		Xmlns: Namespace,
 		Result: getRolePolicyResult{
-			RoleName: roleName, PolicyName: policyName, PolicyDocument: doc,
+			RoleName: roleName, PolicyName: policyName, PolicyDocument: encodePolicyDocument(doc),
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
