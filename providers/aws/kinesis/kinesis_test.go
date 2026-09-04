@@ -412,3 +412,68 @@ func TestConsumerARNCarriesCreationTimestamp(t *testing.T) {
 		t.Fatalf("recreated consumer reused the ARN %q; real Kinesis mints a new one", c2.ConsumerARN)
 	}
 }
+
+// TestConsumerARNUniqueSameSecond drives register/deregister/re-register cycles
+// for one consumer name under the REAL wall-clock — the realistic case a fake
+// clock advanced a full minute never exercises. Because cloudemu registers
+// instantly, many cycles land in the same wall-clock second; every ARN must still
+// be distinct (and each a valid AWS consumer ARN), so IAM/terraform/e2e loops that
+// key off the ARN never see a stale reuse.
+func TestConsumerARNUniqueSameSecond(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t) // real clock: same-second cycles are the whole point
+
+	if err := m.CreateStream(ctx, driver.CreateStreamInput{StreamName: "s", ShardCount: 1}); err != nil {
+		t.Fatalf("CreateStream: %v", err)
+	}
+
+	sum, err := m.DescribeStreamSummary(ctx, "s", "")
+	if err != nil {
+		t.Fatalf("DescribeStreamSummary: %v", err)
+	}
+
+	arnPattern := regexp.MustCompile(`^arn:aws:kinesis:.*:\d{12}:stream/s/consumer/c:[0-9]+$`)
+	seen := make(map[string]struct{})
+
+	const cycles = 50
+
+	var prevSuffix int64
+
+	for i := 0; i < cycles; i++ {
+		c, regErr := m.RegisterStreamConsumer(ctx, sum.StreamARN, "c")
+		if regErr != nil {
+			t.Fatalf("RegisterStreamConsumer (cycle %d): %v", i, regErr)
+		}
+
+		if !arnPattern.MatchString(c.ConsumerARN) {
+			t.Fatalf("cycle %d: ConsumerARN %q does not match the AWS pattern", i, c.ConsumerARN)
+		}
+
+		if _, dup := seen[c.ConsumerARN]; dup {
+			t.Fatalf("cycle %d: duplicate ConsumerARN %q across same-second re-registrations", i, c.ConsumerARN)
+		}
+
+		seen[c.ConsumerARN] = struct{}{}
+
+		// The suffix (and thus ConsumerCreationTimestamp) must be strictly
+		// increasing so a delete+re-register always yields a greater ARN.
+		suffix := c.ConsumerCreationTimestamp.Unix()
+		if i > 0 && suffix <= prevSuffix {
+			t.Fatalf("cycle %d: suffix %d not strictly greater than previous %d", i, suffix, prevSuffix)
+		}
+
+		prevSuffix = suffix
+
+		if !strings.HasSuffix(c.ConsumerARN, ":"+strconv.FormatInt(suffix, 10)) {
+			t.Fatalf("cycle %d: ARN %q suffix disagrees with ConsumerCreationTimestamp %d", i, c.ConsumerARN, suffix)
+		}
+
+		if derErr := m.DeregisterStreamConsumer(ctx, sum.StreamARN, "c", ""); derErr != nil {
+			t.Fatalf("DeregisterStreamConsumer (cycle %d): %v", i, derErr)
+		}
+	}
+
+	if len(seen) != cycles {
+		t.Fatalf("expected %d distinct ARNs, got %d", cycles, len(seen))
+	}
+}
