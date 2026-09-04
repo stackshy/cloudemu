@@ -137,7 +137,7 @@ func (h *Handler) putRule(w http.ResponseWriter, r *http.Request) {
 
 	rule, err := h.bus.PutRule(r.Context(), &ebdriver.RuleConfig{
 		Name:               req.Name,
-		EventBus:           req.EventBusName,
+		EventBus:           busNameOrDefault(req.EventBusName),
 		Description:        req.Description,
 		EventPattern:       req.EventPattern,
 		ScheduleExpression: req.ScheduleExpression,
