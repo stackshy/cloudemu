@@ -6770,11 +6770,32 @@
         ]
       },
       {
+        "name": "ListenerAttributeStore",
+        "doc": "ListenerAttributeStore is implemented by drivers that store per-listener",
+        "operations": [
+          {
+            "name": "GetListenerAttributes"
+          },
+          {
+            "name": "ModifyListenerAttributes"
+          }
+        ]
+      },
+      {
         "name": "ListenerGetter",
         "doc": "ListenerGetter is implemented by drivers that can fetch a single listener by",
         "operations": [
           {
             "name": "GetListener"
+          }
+        ]
+      },
+      {
+        "name": "RuleGetter",
+        "doc": "RuleGetter is implemented by drivers that can fetch a single listener rule",
+        "operations": [
+          {
+            "name": "GetRule"
           }
         ]
       },

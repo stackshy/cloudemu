@@ -21,13 +21,14 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // and *config.Options are intentionally not serialized: a restored load balancer
 // reports its stored (final) state immediately.
 type elbSnapshot struct {
-	LBs       json.RawMessage                   `json:"lbs,omitempty"`
-	TargetGrp json.RawMessage                   `json:"targetGroups,omitempty"`
-	Listeners json.RawMessage                   `json:"listeners,omitempty"`
-	Rules     json.RawMessage                   `json:"rules,omitempty"`
-	Health    map[string][]targetHealthSnapshot `json:"health,omitempty"`
-	Attrs     map[string]driver.LBAttributes    `json:"attrs,omitempty"`
-	TGAttrs   map[string]map[string]string      `json:"tgAttrs,omitempty"`
+	LBs          json.RawMessage                   `json:"lbs,omitempty"`
+	TargetGrp    json.RawMessage                   `json:"targetGroups,omitempty"`
+	Listeners    json.RawMessage                   `json:"listeners,omitempty"`
+	Rules        json.RawMessage                   `json:"rules,omitempty"`
+	Health       map[string][]targetHealthSnapshot `json:"health,omitempty"`
+	Attrs        map[string]driver.LBAttributes    `json:"attrs,omitempty"`
+	TGAttrs      map[string]map[string]string      `json:"tgAttrs,omitempty"`
+	ListenerAttr map[string]map[string]string      `json:"listenerAttrs,omitempty"`
 }
 
 // targetHealthSnapshot promotes one (targetKey -> *TargetHealth) entry to an
@@ -127,6 +128,15 @@ func (m *Mock) snapshotAttrs(snap *elbSnapshot) {
 		}
 	}
 	m.tgAttrsMu.RUnlock()
+
+	m.listenerAttrsMu.RLock()
+	if len(m.listenerAttrs) > 0 {
+		snap.ListenerAttr = make(map[string]map[string]string, len(m.listenerAttrs))
+		for k, v := range m.listenerAttrs {
+			snap.ListenerAttr[k] = v
+		}
+	}
+	m.listenerAttrsMu.RUnlock()
 }
 
 // Restore rebuilds the mock's state under the original identities: every ARN and
@@ -205,5 +215,13 @@ func (m *Mock) restoreAttrs(snap *elbSnapshot) {
 			m.tgAttrs[k] = v
 		}
 		m.tgAttrsMu.Unlock()
+	}
+
+	if len(snap.ListenerAttr) > 0 {
+		m.listenerAttrsMu.Lock()
+		for k, v := range snap.ListenerAttr {
+			m.listenerAttrs[k] = v
+		}
+		m.listenerAttrsMu.Unlock()
 	}
 }

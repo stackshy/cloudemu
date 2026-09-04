@@ -245,6 +245,7 @@ func (h *Handler) createListener(w http.ResponseWriter, r *http.Request) {
 		DefaultActions: parseActions(form, "DefaultActions.member"),
 		SslPolicy:      form.Get("SslPolicy"),
 		Certificates:   parseCertificates(form, "Certificates.member"),
+		Tags:           awsquery.FlatTags(form, "Tags.member"),
 	}
 
 	li, err := h.lb.CreateListener(r.Context(), cfg)
@@ -333,6 +334,7 @@ func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
 		Priority:    formInt(form.Get("Priority")),
 		Conditions:  parseConditions(form, "Conditions.member"),
 		Actions:     parseActions(form, "Actions.member"),
+		Tags:        awsquery.FlatTags(form, "Tags.member"),
 	}
 
 	rule, err := h.lb.CreateRule(r.Context(), cfg)
@@ -348,10 +350,30 @@ func (h *Handler) createRule(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+//nolint:dupl // structurally mirrors describeListeners' ARN/filter pattern by design.
 func (h *Handler) describeRules(w http.ResponseWriter, r *http.Request) {
 	listenerARN := r.Form.Get("ListenerArn")
+	wanted := awsquery.ListStrings(r.Form, "RuleArns.member")
 
-	rules, err := h.lb.DescribeRules(r.Context(), listenerARN)
+	// ListenerArn and RuleArns are alternative, both-optional filters (mirroring
+	// DescribeListeners' LoadBalancerArn/ListenerArns pair above). A
+	// DescribeRules called with only RuleArns — as Terraform's
+	// aws_lb_listener_rule read does — must resolve those rules directly by
+	// ARN, not fall through to a listener existence check on an empty ARN.
+	var (
+		rules []lbdriver.RuleInfo
+		err   error
+	)
+
+	if listenerARN == "" && len(wanted) > 0 {
+		rules, err = h.rulesByARN(r.Context(), wanted)
+	} else {
+		rules, err = h.lb.DescribeRules(r.Context(), listenerARN)
+		if err == nil && len(wanted) > 0 {
+			rules = filterRules(rules, wanted)
+		}
+	}
+
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -774,6 +796,47 @@ func filterListeners(lis []lbdriver.ListenerInfo, wanted []string) []lbdriver.Li
 	for i := range lis {
 		if _, ok := set[lis[i].ARN]; ok {
 			out = append(out, lis[i])
+		}
+	}
+
+	return out
+}
+
+// rulesByARN resolves the named rules directly by ARN (used when DescribeRules
+// is called with RuleArns and no ListenerArn). A rule ARN that does not exist
+// yields RuleNotFound.
+func (h *Handler) rulesByARN(ctx context.Context, arns []string) ([]lbdriver.RuleInfo, error) {
+	getter, ok := h.lb.(lbdriver.RuleGetter)
+	if !ok {
+		return nil, cerrors.New(cerrors.NotFound, "rule lookup by ARN is not supported")
+	}
+
+	out := make([]lbdriver.RuleInfo, 0, len(arns))
+
+	for _, arn := range arns {
+		rule, err := getter.GetRule(ctx, arn)
+		if err != nil {
+			return nil, err
+		}
+
+		out = append(out, *rule)
+	}
+
+	return out, nil
+}
+
+// filterRules keeps only rules whose ARN is in wanted.
+func filterRules(rules []lbdriver.RuleInfo, wanted []string) []lbdriver.RuleInfo {
+	set := make(map[string]struct{}, len(wanted))
+	for _, w := range wanted {
+		set[w] = struct{}{}
+	}
+
+	out := rules[:0]
+
+	for i := range rules {
+		if _, ok := set[rules[i].ARN]; ok {
+			out = append(out, rules[i])
 		}
 	}
 

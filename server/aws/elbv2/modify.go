@@ -203,16 +203,26 @@ func (h *Handler) setSubnets(w http.ResponseWriter, r *http.Request) {
 	}
 
 	subnets := awsquery.ListStrings(r.Form, "Subnets.member")
+	lbARN := r.Form.Get("LoadBalancerArn")
 
-	got, err := mod.SetSubnets(r.Context(), r.Form.Get("LoadBalancerArn"), subnets)
+	got, err := mod.SetSubnets(r.Context(), lbARN, subnets)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
+	// Re-read the load balancer for the per-subnet zone mapping SetSubnets just
+	// resolved: the driver method returns only the subnet id list, so the zone
+	// each one sits in comes from the stored LBInfo, the same source
+	// DescribeLoadBalancers reports it from.
+	var subnetAZs map[string]string
+	if lbs, dErr := h.lb.DescribeLoadBalancers(r.Context(), []string{lbARN}); dErr == nil && len(lbs) > 0 {
+		subnetAZs = lbs[0].SubnetAZs
+	}
+
 	az := &availabilityZonesXML{}
 	for _, s := range got {
-		az.Member = append(az.Member, availabilityZoneXML{ZoneName: zoneNameForSubnet(), SubnetID: s})
+		az.Member = append(az.Member, availabilityZoneXML{ZoneName: zoneNameForSubnet(subnetAZs, s), SubnetID: s})
 	}
 
 	awsquery.WriteXMLResponse(w, setSubnetsResponse{
