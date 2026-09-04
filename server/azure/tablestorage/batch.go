@@ -41,7 +41,7 @@ func (h *Handler) batch(w http.ResponseWriter, r *http.Request) {
 
 	ops, table, err := parseBatch(w, r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidInput", cerrors.Message(err))
 		return
 	}
 
