@@ -240,6 +240,10 @@ func applyClusterDefaults(p *clusterProperties) {
 		p.EnableDiskEncryption = boolPtr(false)
 	}
 
+	if p.EnableDoubleEncryption == nil {
+		p.EnableDoubleEncryption = boolPtr(false)
+	}
+
 	if p.EnablePurge == nil {
 		p.EnablePurge = boolPtr(false)
 	}
