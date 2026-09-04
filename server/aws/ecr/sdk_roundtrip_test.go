@@ -68,6 +68,11 @@ func TestSDKECRRepositoryPolicy(t *testing.T) {
 		t.Fatalf("SetRepositoryPolicy echoed %q", aws.ToString(set.PolicyText))
 	}
 
+	// Real ECR echoes registryId on every repository-policy response.
+	if aws.ToString(set.RegistryId) != "123456789012" {
+		t.Fatalf("SetRepositoryPolicy registryId = %q, want 123456789012", aws.ToString(set.RegistryId))
+	}
+
 	got, err := client.GetRepositoryPolicy(ctx, &awsecr.GetRepositoryPolicyInput{
 		RepositoryName: aws.String("policy-repo"),
 	})
@@ -79,10 +84,19 @@ func TestSDKECRRepositoryPolicy(t *testing.T) {
 		t.Fatalf("GetRepositoryPolicy = %q", aws.ToString(got.PolicyText))
 	}
 
-	if _, err := client.DeleteRepositoryPolicy(ctx, &awsecr.DeleteRepositoryPolicyInput{
+	if aws.ToString(got.RegistryId) != "123456789012" {
+		t.Fatalf("GetRepositoryPolicy registryId = %q, want 123456789012", aws.ToString(got.RegistryId))
+	}
+
+	del, err := client.DeleteRepositoryPolicy(ctx, &awsecr.DeleteRepositoryPolicyInput{
 		RepositoryName: aws.String("policy-repo"),
-	}); err != nil {
+	})
+	if err != nil {
 		t.Fatalf("DeleteRepositoryPolicy: %v", err)
+	}
+
+	if aws.ToString(del.RegistryId) != "123456789012" {
+		t.Fatalf("DeleteRepositoryPolicy registryId = %q, want 123456789012", aws.ToString(del.RegistryId))
 	}
 }
 

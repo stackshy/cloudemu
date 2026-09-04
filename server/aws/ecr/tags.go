@@ -3,6 +3,7 @@ package ecr
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -119,6 +120,11 @@ func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 	for k, v := range tags {
 		out = append(out, ecrTag{Key: k, Value: v})
 	}
+
+	// Deterministic order: a Go map iterates in randomized order, so without
+	// this a repeat ListTagsForResource call on unchanged tags returns them in
+	// a different order every time.
+	sort.Slice(out, func(i, j int) bool { return out[i].Key < out[j].Key })
 
 	wire.WriteJSON(w, map[string]any{"tags": out})
 }

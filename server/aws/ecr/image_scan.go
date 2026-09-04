@@ -54,6 +54,7 @@ func (h *Handler) startImageScan(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, map[string]any{
+		"registryId":      h.registryIDFor(r, req.RepositoryName),
 		"repositoryName":  req.RepositoryName,
 		"imageId":         req.ImageID.response(),
 		"imageScanStatus": map[string]any{"status": res.Status},
@@ -73,6 +74,7 @@ func (h *Handler) describeImageScanFindings(w http.ResponseWriter, r *http.Reque
 	}
 
 	wire.WriteJSON(w, map[string]any{
+		"registryId":      h.registryIDFor(r, req.RepositoryName),
 		"repositoryName":  req.RepositoryName,
 		"imageId":         req.ImageID.response(),
 		"imageScanStatus": map[string]any{"status": res.Status},
@@ -80,4 +82,17 @@ func (h *Handler) describeImageScanFindings(w http.ResponseWriter, r *http.Reque
 			"findingSeverityCounts": res.FindingCounts,
 		},
 	})
+}
+
+// registryIDFor returns the owning registryId (real ECR echoes it on every
+// image-scanning response), or "" if the repository lookup fails — which
+// cannot happen here since StartImageScan/GetImageScanResults above already
+// succeeded against the same repository.
+func (h *Handler) registryIDFor(r *http.Request, repositoryName string) string {
+	repo, err := h.registry.GetRepository(r.Context(), repositoryName)
+	if err != nil {
+		return ""
+	}
+
+	return repo.RegistryID
 }
