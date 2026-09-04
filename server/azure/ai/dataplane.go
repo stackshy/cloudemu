@@ -340,12 +340,12 @@ func codeForStatus(status int) string {
 func dpCErr(w http.ResponseWriter, err error) {
 	switch {
 	case errors.IsNotFound(err):
-		dpErr(w, http.StatusNotFound, err.Error())
+		dpErr(w, http.StatusNotFound, errors.Message(err))
 	case errors.IsInvalidArgument(err):
-		dpErr(w, http.StatusBadRequest, err.Error())
+		dpErr(w, http.StatusBadRequest, errors.Message(err))
 	case errors.IsAlreadyExists(err), errors.IsFailedPrecondition(err):
-		dpErr(w, http.StatusConflict, err.Error())
+		dpErr(w, http.StatusConflict, errors.Message(err))
 	default:
-		dpErr(w, http.StatusInternalServerError, err.Error())
+		dpErr(w, http.StatusInternalServerError, errors.Message(err))
 	}
 }

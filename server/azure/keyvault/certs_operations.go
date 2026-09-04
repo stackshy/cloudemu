@@ -29,15 +29,15 @@ func writeJSONStatus(w http.ResponseWriter, status int, v any) {
 func writeCertErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeErr(w, http.StatusNotFound, "CertificateNotFound", err.Error())
+		writeErr(w, http.StatusNotFound, "CertificateNotFound", cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err) && strings.Contains(err.Error(), "deleted but recoverable"):
-		writeErrInner(w, http.StatusConflict, "Conflict", err.Error(), "ObjectIsDeletedButRecoverable")
+		writeErrInner(w, http.StatusConflict, "Conflict", cerrors.Message(err), "ObjectIsDeletedButRecoverable")
 	case cerrors.IsAlreadyExists(err):
-		writeErr(w, http.StatusConflict, "Conflict", err.Error())
+		writeErr(w, http.StatusConflict, "Conflict", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		writeErr(w, http.StatusBadRequest, "BadParameter", err.Error())
+		writeErr(w, http.StatusBadRequest, "BadParameter", cerrors.Message(err))
 	default:
-		writeErr(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeErr(w, http.StatusInternalServerError, "InternalServerError", cerrors.Message(err))
 	}
 }
 

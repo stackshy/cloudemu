@@ -371,7 +371,7 @@ func (h *Handler) createVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 		// answers 400 InUseSubnetCannotBeDeleted, not the generic 409 WriteCErr
 		// would emit for FailedPrecondition.
 		if cerrors.IsFailedPrecondition(err) {
-			azurearm.WriteError(w, http.StatusBadRequest, "InUseSubnetCannotBeDeleted", err.Error())
+			azurearm.WriteError(w, http.StatusBadRequest, "InUseSubnetCannotBeDeleted", cerrors.Message(err))
 			return
 		}
 
@@ -1545,7 +1545,7 @@ func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		// A public IP still bound to a NIC/NAT gateway: ARM answers 400 with
 		// this specific code, not the generic 409 WriteCErr would emit.
 		if cerrors.IsFailedPrecondition(err) {
-			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted", err.Error())
+			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted", cerrors.Message(err))
 			return
 		}
 

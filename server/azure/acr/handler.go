@@ -213,12 +213,12 @@ func writeErr(w http.ResponseWriter, status int, code, msg string) {
 func writeCErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeErr(w, http.StatusNotFound, "NAME_UNKNOWN", err.Error())
+		writeErr(w, http.StatusNotFound, "NAME_UNKNOWN", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		writeErr(w, http.StatusBadRequest, "INVALID_REQUEST", err.Error())
+		writeErr(w, http.StatusBadRequest, "INVALID_REQUEST", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
-		writeErr(w, http.StatusConflict, "DENIED", err.Error())
+		writeErr(w, http.StatusConflict, "DENIED", cerrors.Message(err))
 	default:
-		writeErr(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeErr(w, http.StatusInternalServerError, "INTERNAL", cerrors.Message(err))
 	}
 }

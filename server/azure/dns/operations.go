@@ -186,7 +186,7 @@ func (h *Handler) createOrUpdateRecordSet(w http.ResponseWriter, r *http.Request
 			// HTTP 412, not the 409 azurearm.WriteCErr maps FailedPrecondition to
 			// for other ARM resources — real Azure DNS, and the armdns SDK's
 			// poller, expect 412 specifically for a stale/mismatched etag.
-			azurearm.WriteError(w, http.StatusPreconditionFailed, "PreconditionFailed", err.Error())
+			azurearm.WriteError(w, http.StatusPreconditionFailed, "PreconditionFailed", cerrors.Message(err))
 			return
 		}
 
@@ -374,7 +374,7 @@ func (h *Handler) deleteRecordSet(w http.ResponseWriter, r *http.Request, rp *az
 		if cerrors.IsFailedPrecondition(derr) {
 			// See createOrUpdateRecordSet: an etag precondition failure is 412,
 			// not the 409 azurearm.WriteCErr maps FailedPrecondition to.
-			azurearm.WriteError(w, http.StatusPreconditionFailed, "PreconditionFailed", derr.Error())
+			azurearm.WriteError(w, http.StatusPreconditionFailed, "PreconditionFailed", cerrors.Message(derr))
 			return
 		}
 

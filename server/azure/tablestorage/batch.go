@@ -309,7 +309,7 @@ func writeBatchFailure(w http.ResponseWriter, err error) {
 	status, code := mapErr(err)
 
 	cs := buildChangeset(func(cw *multipart.Writer) {
-		writeOpPart(cw, opErrorResponse(idx, status, code, err.Error()))
+		writeOpPart(cw, opErrorResponse(idx, status, code, cerrors.Message(err)))
 	})
 
 	writeBatchEnvelope(w, cs)
