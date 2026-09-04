@@ -11,7 +11,7 @@ const sampleRate = "0.0464"
 // offering. The rate quotes the offering's discounted hourly price alongside the
 // parent offering's terms.
 func offeringRateToWire(o *offering) map[string]any {
-	return map[string]any{
+	out := map[string]any{
 		"operation":   o.operation,
 		"productType": firstProduct(o.productTypes),
 		"rate":        sampleRate,
@@ -26,10 +26,18 @@ func offeringRateToWire(o *offering) map[string]any {
 			"durationSeconds": o.durationSecs,
 			"currency":        currencyUSD,
 		},
-		"properties": []map[string]any{
-			{"name": "instanceFamily", "value": o.ec2Family},
-		},
 	}
+
+	// instanceFamily only applies to EC2Instance-type offerings; Compute and
+	// SageMaker offerings carry no instance family, so the property is omitted
+	// rather than emitted with an empty value.
+	if o.ec2Family != "" {
+		out["properties"] = []map[string]any{
+			{"name": "instanceFamily", "value": o.ec2Family},
+		}
+	}
+
+	return out
 }
 
 // planRatesFor renders a representative SavingsPlanRate set for a purchased plan.

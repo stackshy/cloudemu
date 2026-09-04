@@ -146,8 +146,8 @@ func TestLineItems_FractionalCoverageDivergenceCase(t *testing.T) {
 	}
 
 	hourly := pricing.Monthly("azure", "compute", "Instance", "Standard_D2s_v3", "eastus", nil) / hoursPerMonth
-	lineCost := hourly * 24               // each VM's cost for the 24h bucket
-	budget := 1.5 * lineCost              // covers vm-a fully + half of vm-b
+	lineCost := hourly * 24  // each VM's cost for the 24h bucket
+	budget := 1.5 * lineCost // covers vm-a fully + half of vm-b
 	commitments := []Commitment{{ID: "c-1", Kind: KindSavingsPlan, HourlyCommitmentUSD: 1.5 * hourly, Start: start, End: end}}
 
 	lines, err := LineItems(context.Background(), fakeInventory{res: res}, commitments, start, end, 24*time.Hour)

@@ -172,7 +172,9 @@ func (s *store) findOffering(id string) (*offering, bool) {
 func (s *store) create(in *createInput) (string, error) {
 	off, ok := s.findOffering(in.savingsPlanOfferingID)
 	if !ok {
-		return "", cerrors.Newf(cerrors.InvalidArgument, "offering not found: %s", in.savingsPlanOfferingID)
+		// CreateSavingsPlan documents ResourceNotFoundException (not
+		// ValidationException) for an unknown savingsPlanOfferingId.
+		return "", cerrors.Newf(cerrors.NotFound, "offering not found: %s", in.savingsPlanOfferingID)
 	}
 
 	if in.commitment == "" {
