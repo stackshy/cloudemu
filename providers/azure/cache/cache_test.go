@@ -496,3 +496,39 @@ func TestIncrPreservesTTL(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, ttl > 0)
 }
+
+func TestCreateCacheAppliesAzureDefaults(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	// A create that omits enableNonSslPort and publicNetworkAccess must persist
+	// the Azure schema defaults (false / "Enabled"), not leave them unset — real
+	// Azure returns them on every cache.
+	info, err := m.CreateCache(ctx, driver.CacheConfig{Name: "defaults"})
+	require.NoError(t, err)
+	require.NotNil(t, info.EnableNonSSLPort)
+	assert.False(t, *info.EnableNonSSLPort)
+	assert.Equal(t, "Enabled", info.PublicNetworkAccess)
+
+	got, err := m.GetCache(ctx, "defaults")
+	require.NoError(t, err)
+	require.NotNil(t, got.EnableNonSSLPort)
+	assert.False(t, *got.EnableNonSSLPort)
+	assert.Equal(t, "Enabled", got.PublicNetworkAccess)
+}
+
+func TestCreateCacheKeepsExplicitProperties(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	enabled := true
+	info, err := m.CreateCache(ctx, driver.CacheConfig{
+		Name:                "explicit",
+		EnableNonSSLPort:    &enabled,
+		PublicNetworkAccess: "Disabled",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, info.EnableNonSSLPort)
+	assert.True(t, *info.EnableNonSSLPort)
+	assert.Equal(t, "Disabled", info.PublicNetworkAccess)
+}
