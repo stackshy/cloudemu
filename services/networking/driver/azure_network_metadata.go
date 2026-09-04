@@ -17,6 +17,13 @@ import "context"
 type AzureVNetMetadata struct {
 	Location        string
 	AddressPrefixes []string
+	// ResourceGUID is the persisted identifier ARM reports as
+	// properties.resourceGuid — stable for the resource's lifetime and
+	// regenerated only if it is deleted and recreated. The provider assigns it
+	// on first PutAzureVNetMetadata and preserves it across every later PUT;
+	// callers building a metadata value to store should leave it empty and let
+	// the provider fill it in.
+	ResourceGUID string
 }
 
 // AzureNSGRule is one Azure network-security-group security rule, with the
@@ -49,6 +56,13 @@ type AzureNSGRule struct {
 type AzureNSGMetadata struct {
 	Location      string
 	SecurityRules []AzureNSGRule
+	// ResourceGUID is the persisted identifier ARM reports as
+	// properties.resourceGuid — stable for the resource's lifetime and
+	// regenerated only if it is deleted and recreated. The provider assigns it
+	// on first PutAzureNSGMetadata and preserves it across every later PUT;
+	// callers building a metadata value to store should leave it empty and let
+	// the provider fill it in.
+	ResourceGUID string
 }
 
 // AzureRoute is one Azure route-table route, with the name / next-hop shape the

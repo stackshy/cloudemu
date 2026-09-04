@@ -334,6 +334,11 @@ type ElasticIP struct {
 	IdleTimeoutMinutes int
 	DNSDomainNameLabel string
 	DNSFQDN            string
+	// ResourceGUID is the Azure-only persisted identifier ARM reports as
+	// properties.resourceGuid on a publicIPAddresses resource — stable for the
+	// address's lifetime, regenerated only on release + re-allocation. Empty
+	// for AWS and GCP.
+	ResourceGUID string
 }
 
 // AssociateAddressInput carries the target of an AssociateAddress call. Exactly

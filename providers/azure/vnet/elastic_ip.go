@@ -20,6 +20,11 @@ type eipData struct {
 	IdleTimeoutMinutes int
 	DNSDomainNameLabel string
 	DNSFQDN            string
+	// ResourceGUID is the Azure-only persisted identifier (ARM
+	// properties.resourceGuid), assigned once in AllocateAddress and preserved
+	// across every UpdateAzurePublicIP, matching how network interfaces
+	// preserve theirs.
+	ResourceGUID string
 }
 
 // defaultFQDNRegion is the region segment used to build a mock DNS FQDN for a
@@ -57,6 +62,7 @@ func (m *Mock) AllocateAddress(
 		Zones:              append([]string(nil), cfg.Zones...),
 		IdleTimeoutMinutes: cfg.IdleTimeoutMinutes,
 		DNSDomainNameLabel: cfg.DNSDomainNameLabel,
+		ResourceGUID:       generateGUID(),
 	}
 
 	if cfg.DNSDomainNameLabel != "" {
@@ -247,5 +253,6 @@ func toEIPInfo(eip *eipData) driver.ElasticIP {
 		IdleTimeoutMinutes: eip.IdleTimeoutMinutes,
 		DNSDomainNameLabel: eip.DNSDomainNameLabel,
 		DNSFQDN:            eip.DNSFQDN,
+		ResourceGUID:       eip.ResourceGUID,
 	}
 }

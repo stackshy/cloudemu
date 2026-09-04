@@ -31,6 +31,9 @@ type vnetResponseProps struct {
 	ProvisioningState string           `json:"provisioningState"`
 	AddressSpace      *addressSpace    `json:"addressSpace,omitempty"`
 	Subnets           []subnetResponse `json:"subnets,omitempty"`
+	// ResourceGUID is ARM's persisted resource identifier, stable for the
+	// VNet's lifetime.
+	ResourceGUID string `json:"resourceGuid,omitempty"`
 }
 
 type vnetListResponse struct {
@@ -119,6 +122,9 @@ type nsgResponseProps struct {
 	// publicIPConfigurationRef's NIC scan).
 	Subnets           []armIDRef `json:"subnets,omitempty"`
 	NetworkInterfaces []armIDRef `json:"networkInterfaces,omitempty"`
+	// ResourceGUID is ARM's persisted resource identifier, stable for the
+	// NSG's lifetime.
+	ResourceGUID string `json:"resourceGuid,omitempty"`
 }
 
 // securityRuleListResponse is the collection envelope for the securityRules
@@ -209,6 +215,9 @@ type publicIPRespProps struct {
 	// PublicIPPrefix echoes the prefix this public IP was created from, when one
 	// was supplied on the create.
 	PublicIPPrefix *armIDRef `json:"publicIPPrefix,omitempty"`
+	// ResourceGUID is ARM's persisted resource identifier, stable for the
+	// address's lifetime.
+	ResourceGUID string `json:"resourceGuid,omitempty"`
 }
 
 type publicIPDNSSettings struct {
