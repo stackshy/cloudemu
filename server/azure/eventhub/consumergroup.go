@@ -95,6 +95,14 @@ func (h *Handler) deleteConsumerGroup(w http.ResponseWriter, ep ehPath, eh, name
 		return
 	}
 
+	// The built-in $Default consumer group cannot be deleted; real Azure rejects
+	// the request rather than removing it.
+	if eq(name, defaultConsumerGroup) {
+		azurearm.WriteError(w, http.StatusBadRequest, "BadRequest",
+			"The default consumer group '$Default' cannot be deleted.")
+		return
+	}
+
 	if _, ok := rec.ConsumerGroups[name]; !ok {
 		w.WriteHeader(http.StatusNoContent)
 		return
