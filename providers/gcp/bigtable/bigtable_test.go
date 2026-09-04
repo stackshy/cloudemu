@@ -385,6 +385,35 @@ func TestUpdateClusterAutoscalingDoesNotAlias(t *testing.T) {
 	}
 }
 
+func TestCreateAutoscalingClusterSeedsServeNodesFromMinimum(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	inst := mustInstance(t, m, "app")
+
+	// An autoscaling cluster reports serveNodes as its current node count, which
+	// starts at the configured minimum. Real Bigtable never returns 0 here.
+	name := inst + "/clusters/auto"
+	if _, _, err := m.CreateCluster(ctx, btdriver.CreateClusterConfig{
+		Name: name, Location: "us-east1-b",
+		Autoscaling: &btdriver.Autoscaling{MinServeNodes: 2, MaxServeNodes: 10, CPUTargetPct: 60},
+	}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	got, err := m.GetCluster(ctx, name)
+	if err != nil {
+		t.Fatalf("GetCluster: %v", err)
+	}
+
+	if got.ServeNodes != 2 {
+		t.Fatalf("autoscaling serveNodes: got %d, want 2 (the minimum)", got.ServeNodes)
+	}
+
+	if got.Autoscaling == nil || got.Autoscaling.MinServeNodes != 2 {
+		t.Fatalf("autoscaling config lost: %+v", got.Autoscaling)
+	}
+}
+
 func TestTestIamPermissionsIntersectsPolicy(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

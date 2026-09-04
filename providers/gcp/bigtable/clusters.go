@@ -31,7 +31,15 @@ func (m *Mock) putClusterLocked(cfg btdriver.CreateClusterConfig) error {
 	}
 
 	serve := cfg.ServeNodes
-	if serve == 0 && cfg.Autoscaling == nil {
+
+	switch {
+	case cfg.Autoscaling != nil:
+		// serveNodes is output-only for an autoscaling cluster: it reflects the
+		// current node count, which starts at the configured minimum. Real
+		// Bigtable never reports 0 here, so seed it from the autoscaling floor
+		// rather than leaving the field empty.
+		serve = cfg.Autoscaling.MinServeNodes
+	case serve == 0:
 		serve = defaultServeNodes
 	}
 
