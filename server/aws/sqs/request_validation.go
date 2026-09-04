@@ -33,14 +33,14 @@ const (
 // and reports false when the batch is rejected, so callers enqueue nothing.
 func validateBatchEntryIDs(w http.ResponseWriter, ids []string) bool {
 	if len(ids) == 0 {
-		wire.WriteJSONError(w, http.StatusBadRequest, "EmptyBatchRequest",
+		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest, "EmptyBatchRequest", errQueryCodeEmptyBatchRequest,
 			"The batch request doesn't contain any entries.")
 
 		return false
 	}
 
 	if len(ids) > maxBatchEntries {
-		wire.WriteJSONError(w, http.StatusBadRequest, "TooManyEntriesInBatchRequest",
+		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest, "TooManyEntriesInBatchRequest", errQueryCodeTooManyBatchEntries,
 			fmt.Sprintf("Maximum number of entries per request are %d. You have sent %d.", maxBatchEntries, len(ids)))
 
 		return false
@@ -50,7 +50,7 @@ func validateBatchEntryIDs(w http.ResponseWriter, ids []string) bool {
 
 	for _, id := range ids {
 		if _, dup := seen[id]; dup {
-			wire.WriteJSONError(w, http.StatusBadRequest, "BatchEntryIdsNotDistinct",
+			wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest, "BatchEntryIdsNotDistinct", errQueryCodeBatchIDsNotDistinct,
 				fmt.Sprintf("Id %s repeated.", id))
 
 			return false

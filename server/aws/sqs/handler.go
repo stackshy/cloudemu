@@ -22,15 +22,31 @@ import (
 
 const targetPrefix = "AmazonSQS."
 
-// errNonExistentQueue is the __type value for a missing queue. Modern SQS speaks
-// AwsJson1_0, where the SDK resolves the error shape from __type: "QueueDoesNotExist"
-// is the modeled shape name, so it deserializes into the typed sqs types
-// QueueDoesNotExist that the aws-sdk-go-v2 / Terraform delete waiter matches on
-// (via errs.IsA and ErrorCode()=="QueueDoesNotExist"). Do NOT change this to the
-// legacy query-protocol code "AWS.SimpleQueueService.NonExistentQueue" — as a JSON
-// __type it matches no modeled shape, dropping the SDK back to a generic error the
-// waiter does not recognize, so destroy hangs.
+// errNonExistentQueue is the __type value for a missing queue: "QueueDoesNotExist"
+// is the modeled AwsJson1_0 shape name, letting the SDK deserialize the body into
+// the typed sqs types.QueueDoesNotExist exception. SQS additionally carries the
+// "awsQueryCompatible" trait (it spoke the legacy Query/XML protocol before
+// migrating to AwsJson1_0), so aws-sdk-go-v2 also reads an X-Amzn-Query-Error
+// response header and uses it to override ErrorCode() back to the original
+// Query-protocol code. Tools that match on that legacy code — including
+// terraform-provider-aws's SQS delete/create waiters (errCodeQueueDoesNotExist =
+// "AWS.SimpleQueueService.NonExistentQueue") — need both: the __type for the SDK
+// to build the typed exception, and the header for ErrorCode() to resolve to the
+// code they actually check. See errQueryCodeNonExistentQueue.
 const errNonExistentQueue = "QueueDoesNotExist"
+
+// SQS's awsQueryCompatible legacy Query-protocol error codes, carried in the
+// X-Amzn-Query-Error response header alongside each JSON __type (see
+// errNonExistentQueue). Sourced from the SQS service model's per-shape
+// "error.code" (botocore sqs/2012-11-05/service-2.json); "Sender" marks a
+// client-fault error, matching every code below.
+const (
+	errQueryCodeNonExistentQueue    = "AWS.SimpleQueueService.NonExistentQueue;Sender"
+	errQueryCodeQueueAlreadyExists  = "QueueAlreadyExists;Sender"
+	errQueryCodeEmptyBatchRequest   = "AWS.SimpleQueueService.EmptyBatchRequest;Sender"
+	errQueryCodeTooManyBatchEntries = "AWS.SimpleQueueService.TooManyEntriesInBatchRequest;Sender"
+	errQueryCodeBatchIDsNotDistinct = "AWS.SimpleQueueService.BatchEntryIdsNotDistinct;Sender"
+)
 
 // Handler serves SQS JSON-RPC requests against a messagequeue.MessageQueue
 // driver.
@@ -170,8 +186,8 @@ func (h *Handler) getQueueURL(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	wire.WriteJSONError(w, http.StatusBadRequest,
-		errNonExistentQueue, "queue not found: "+req.QueueName)
+	wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest,
+		errNonExistentQueue, errQueryCodeNonExistentQueue, "queue not found: "+req.QueueName)
 }
 
 func (h *Handler) listQueues(w http.ResponseWriter, r *http.Request) {
@@ -1141,9 +1157,9 @@ func (h *Handler) purgeQueue(w http.ResponseWriter, r *http.Request) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, errNonExistentQueue, err.Error())
+		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest, errNonExistentQueue, errQueryCodeNonExistentQueue, err.Error())
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "QueueNameExists", err.Error())
+		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest, "QueueNameExists", errQueryCodeQueueAlreadyExists, err.Error())
 	case cerrors.IsInvalidArgument(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
 	default:

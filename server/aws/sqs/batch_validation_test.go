@@ -36,8 +36,12 @@ func TestSDKSendMessageBatchDuplicateIDs(t *testing.T) {
 			{Id: aws.String("a"), MessageBody: aws.String("body-b")},
 		},
 	})
-	if code := apiErrorCode(t, err); code != "BatchEntryIdsNotDistinct" {
-		t.Fatalf("error code = %q, want BatchEntryIdsNotDistinct", code)
+	// SQS carries the "awsQueryCompatible" trait: aws-sdk-go-v2 overrides
+	// ErrorCode() to the legacy Query-protocol code from the X-Amzn-Query-Error
+	// header, not the AwsJson1_0 shape name.
+	const wantCode = "AWS.SimpleQueueService.BatchEntryIdsNotDistinct"
+	if code := apiErrorCode(t, err); code != wantCode {
+		t.Fatalf("error code = %q, want %s", code, wantCode)
 	}
 
 	// The batch must enqueue nothing.
@@ -73,8 +77,11 @@ func TestSDKSendMessageBatchTooManyEntries(t *testing.T) {
 		QueueUrl: aws.String(url),
 		Entries:  entries,
 	})
-	if code := apiErrorCode(t, err); code != "TooManyEntriesInBatchRequest" {
-		t.Fatalf("error code = %q, want TooManyEntriesInBatchRequest", code)
+	// See TestSDKSendMessageBatchDuplicateIDs: ErrorCode() resolves to the
+	// awsQueryCompatible legacy code, not the AwsJson1_0 shape name.
+	const wantCode = "AWS.SimpleQueueService.TooManyEntriesInBatchRequest"
+	if code := apiErrorCode(t, err); code != wantCode {
+		t.Fatalf("error code = %q, want %s", code, wantCode)
 	}
 }
 
@@ -85,28 +92,32 @@ func TestSDKSendMessageBatchEmpty(t *testing.T) {
 	ctx := context.Background()
 	url := mustCreateQueue(t, client, "empty-batch")
 
+	// See TestSDKSendMessageBatchDuplicateIDs: ErrorCode() resolves to the
+	// awsQueryCompatible legacy code, not the AwsJson1_0 shape name.
+	const wantCode = "AWS.SimpleQueueService.EmptyBatchRequest"
+
 	_, sendErr := client.SendMessageBatch(ctx, &awssqs.SendMessageBatchInput{
 		QueueUrl: aws.String(url),
 		Entries:  []types.SendMessageBatchRequestEntry{},
 	})
-	if code := apiErrorCode(t, sendErr); code != "EmptyBatchRequest" {
-		t.Fatalf("SendMessageBatch error code = %q, want EmptyBatchRequest", code)
+	if code := apiErrorCode(t, sendErr); code != wantCode {
+		t.Fatalf("SendMessageBatch error code = %q, want %s", code, wantCode)
 	}
 
 	_, delErr := client.DeleteMessageBatch(ctx, &awssqs.DeleteMessageBatchInput{
 		QueueUrl: aws.String(url),
 		Entries:  []types.DeleteMessageBatchRequestEntry{},
 	})
-	if code := apiErrorCode(t, delErr); code != "EmptyBatchRequest" {
-		t.Fatalf("DeleteMessageBatch error code = %q, want EmptyBatchRequest", code)
+	if code := apiErrorCode(t, delErr); code != wantCode {
+		t.Fatalf("DeleteMessageBatch error code = %q, want %s", code, wantCode)
 	}
 
 	_, visErr := client.ChangeMessageVisibilityBatch(ctx, &awssqs.ChangeMessageVisibilityBatchInput{
 		QueueUrl: aws.String(url),
 		Entries:  []types.ChangeMessageVisibilityBatchRequestEntry{},
 	})
-	if code := apiErrorCode(t, visErr); code != "EmptyBatchRequest" {
-		t.Fatalf("ChangeMessageVisibilityBatch error code = %q, want EmptyBatchRequest", code)
+	if code := apiErrorCode(t, visErr); code != wantCode {
+		t.Fatalf("ChangeMessageVisibilityBatch error code = %q, want %s", code, wantCode)
 	}
 }
 
