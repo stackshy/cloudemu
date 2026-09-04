@@ -1,6 +1,7 @@
 package acr
 
 import (
+	"sort"
 	"strings"
 
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -153,7 +154,8 @@ func toManifestAttribute(img *crdriver.ImageDetail, attrs changeableAttributes) 
 
 // toManifestAttributes renders images (already filtered for listEnabled by the
 // driver's ListImages) into wire form, resolving each manifest's real
-// changeableAttributes via attrsFor.
+// changeableAttributes via attrsFor. The result is sorted by digest for a
+// stable, deterministic list order across calls.
 func toManifestAttributes(
 	images []crdriver.ImageDetail, attrsFor func(digest string) changeableAttributes,
 ) []manifestAttributes {
@@ -161,6 +163,8 @@ func toManifestAttributes(
 	for i := range images {
 		out = append(out, toManifestAttribute(&images[i], attrsFor(images[i].Digest)))
 	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].Digest < out[j].Digest })
 
 	return out
 }
@@ -197,7 +201,8 @@ func countTags(images []crdriver.ImageDetail) int {
 // toTagAttributes renders every tag on images (already filtered for
 // manifest-level listEnabled by the driver's ListImages) into wire form,
 // resolving each tag's real changeableAttributes via attrsFor and dropping any
-// tag whose own listEnabled is false.
+// tag whose own listEnabled is false. The result is sorted by tag name for a
+// stable, deterministic list order across calls.
 func toTagAttributes(
 	images []crdriver.ImageDetail, attrsFor func(tag string) changeableAttributes,
 ) []tagAttributes {
@@ -225,6 +230,8 @@ func toTagAttributes(
 			})
 		}
 	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 
 	return out
 }

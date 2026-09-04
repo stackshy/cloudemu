@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"sort"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -232,7 +233,8 @@ func (m *Mock) DeleteRegistry(_ context.Context, rg, name string) error {
 }
 
 // ListRegistries returns registries in a resource group, or across the whole
-// subscription when rg is empty.
+// subscription when rg is empty, sorted by name for a stable, deterministic
+// list order across calls (map iteration order is otherwise randomized).
 func (m *Mock) ListRegistries(_ context.Context, rg string) ([]driver.AzureRegistry, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -247,6 +249,8 @@ func (m *Mock) ListRegistries(_ context.Context, rg string) ([]driver.AzureRegis
 
 		out = append(out, rd.reg)
 	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 
 	return out, nil
 }
@@ -312,24 +316,53 @@ func (m *Mock) RegenerateRegistryCredential(
 	}, nil
 }
 
-// ListRegistryUsages returns the registry's quota usages.
+// ListRegistryUsages returns the registry's quota usages, using the included
+// storage and webhook-count limits for the registry's actual SKU tier (see
+// https://learn.microsoft.com/azure/container-registry/container-registry-skus):
+// Basic 10 GiB / 2 webhooks, Standard 100 GiB / 10 webhooks, Premium 500 GiB /
+// 500 webhooks.
 func (m *Mock) ListRegistryUsages(_ context.Context, rg, name string) ([]driver.AzureRegistryUsage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.registries.Has(registryStoreKey(rg, name)) {
+	rd, ok := m.registries.Get(registryStoreKey(rg, name))
+	if !ok {
 		return nil, errors.Newf(errors.NotFound, "registry %q not found in resource group %q", name, rg)
 	}
 
-	const storageLimitBytes = 536870912000 // 500 GiB, the Standard-SKU included storage.
+	storageLimit, webhookLimit := skuUsageLimits(rd.reg.SKUName)
 
 	return []driver.AzureRegistryUsage{
-		{Name: "Size", Limit: storageLimitBytes, CurrentValue: 0, Unit: "Bytes"},
-		{Name: "Webhooks", Limit: webhookQuota, CurrentValue: int64(m.countSubResources(m.webhooks.Keys(), rg, name)), Unit: "Count"},
+		{Name: "Size", Limit: storageLimit, CurrentValue: 0, Unit: "Bytes"},
+		{Name: "Webhooks", Limit: webhookLimit, CurrentValue: int64(m.countSubResources(m.webhooks.Keys(), rg, name)), Unit: "Count"},
 	}, nil
 }
 
-const webhookQuota = 100
+const (
+	gibBytes = 1 << 30
+
+	basicStorageLimitGiB    = 10
+	standardStorageLimitGiB = 100
+	premiumStorageLimitGiB  = 500
+
+	basicWebhookLimit    = 2
+	standardWebhookLimit = 10
+	premiumWebhookLimit  = 500
+)
+
+// skuUsageLimits returns the included storage (bytes) and webhook-count
+// limits for a registry's SKU. An unrecognized SKU falls back to Standard's
+// limits, matching defaultRegistrySKU.
+func skuUsageLimits(sku string) (storageBytes, webhookLimit int64) {
+	switch sku {
+	case "Basic":
+		return basicStorageLimitGiB * gibBytes, basicWebhookLimit
+	case "Premium":
+		return premiumStorageLimitGiB * gibBytes, premiumWebhookLimit
+	default:
+		return standardStorageLimitGiB * gibBytes, standardWebhookLimit
+	}
+}
 
 func (*Mock) countSubResources(keys []string, rg, registry string) int {
 	prefix := rg + "/" + registry + "/"
@@ -476,7 +509,8 @@ func (m *Mock) DeleteWebhook(_ context.Context, rg, registry, name string) error
 	return nil
 }
 
-// ListWebhooks returns all webhooks on a registry.
+// ListWebhooks returns all webhooks on a registry, sorted by name for a
+// stable, deterministic list order across calls.
 //
 //nolint:dupl // webhook and replication sub-resource lists are intentionally typed; sharing via generics adds noise.
 func (m *Mock) ListWebhooks(_ context.Context, rg, registry string) ([]driver.AzureWebhook, error) {
@@ -496,6 +530,8 @@ func (m *Mock) ListWebhooks(_ context.Context, rg, registry string) ([]driver.Az
 			out = append(out, *wh)
 		}
 	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 
 	return out, nil
 }
@@ -596,7 +632,8 @@ func (m *Mock) DeleteReplication(_ context.Context, rg, registry, name string) e
 	return nil
 }
 
-// ListReplications returns all replications on a registry.
+// ListReplications returns all replications on a registry, sorted by name for
+// a stable, deterministic list order across calls.
 //
 //nolint:dupl // webhook and replication sub-resource lists are intentionally typed; sharing via generics adds noise.
 func (m *Mock) ListReplications(_ context.Context, rg, registry string) ([]driver.AzureReplication, error) {
@@ -616,6 +653,8 @@ func (m *Mock) ListReplications(_ context.Context, rg, registry string) ([]drive
 			out = append(out, *rep)
 		}
 	}
+
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 
 	return out, nil
 }

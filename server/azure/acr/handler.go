@@ -25,12 +25,22 @@
 //	GET    /acr/v1/{name}/_manifests           — list manifests
 //	GET    /acr/v1/{name}/_manifests/{digest}  — manifest properties
 //	PATCH  /acr/v1/{name}/_manifests/{digest}  — update manifest changeableAttributes
+//	GET    /v2/{name}/manifests/{reference}    — manifest content (azcontainerregistry's
+//	                                              GetManifest hits this OCI-distribution path,
+//	                                              not /acr/v1 — see dataplane_manifest.go)
+//	DELETE /v2/{name}/manifests/{reference}    — delete manifest (azcontainerregistry's
+//	                                              DeleteManifest; same path family)
 //	POST   /oauth2/exchange                    — AAD token -> ACR refresh token
 //	POST   /oauth2/token                       — ACR refresh token -> ACR access token
 //
 // The changeableAttributes lock (deleteEnabled/writeEnabled/listEnabled) is
 // enforced against mutations and listings; readEnabled is stored and reported
 // but not enforced (see providers/azure/acr for the rationale).
+//
+// PUT /v2/{name}/manifests/{reference} (image push) is intentionally not
+// modeled: cloudemu has no real OCI blob storage, matching the same
+// documented boundary as AWS ECR / GCP Artifact Registry. It returns a clean
+// 405 rather than falling through to an unrelated handler.
 package acr
 
 import (
@@ -61,12 +71,20 @@ func New(reg crdriver.ContainerRegistry) *Handler {
 	return &Handler{registry: reg}
 }
 
-// Matches claims /acr/v1/ data-plane requests and the two challenge-auth token
-// endpoints. Disjoint from ARM (/subscriptions/…) and registered before the
-// blob storage REST fallback.
+// Matches claims /acr/v1/ data-plane requests, the OCI-distribution
+// /v2/{name}/manifests/{reference} manifest-content path, and the two
+// challenge-auth token endpoints. Disjoint from ARM (/subscriptions/…) and
+// registered before the blob storage REST fallback (whose broad
+// {container}/{blob}-shaped matching would otherwise silently swallow an
+// unclaimed /v2/… path and answer it with a nonsensical blob-storage error).
 func (*Handler) Matches(r *http.Request) bool {
-	return strings.HasPrefix(r.URL.Path, pathPrefix) ||
-		r.URL.Path == oauthExchangePath || r.URL.Path == oauthTokenPath
+	if strings.HasPrefix(r.URL.Path, pathPrefix) || r.URL.Path == oauthExchangePath || r.URL.Path == oauthTokenPath {
+		return true
+	}
+
+	_, _, ok := parseV2ManifestPath(r.URL.Path)
+
+	return ok
 }
 
 // ServeHTTP routes on the path tail and method.
@@ -77,6 +95,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	case oauthTokenPath:
 		serveOAuthToken(w, r)
+		return
+	}
+
+	if repo, reference, ok := parseV2ManifestPath(r.URL.Path); ok {
+		if r.Header.Get("Authorization") == "" {
+			challenge(w, repo)
+			return
+		}
+
+		h.serveV2Manifest(w, r, repo, reference)
+
 		return
 	}
 
