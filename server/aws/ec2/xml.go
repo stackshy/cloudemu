@@ -108,6 +108,7 @@ type instanceENIXML struct {
 	MacAddress         string                   `xml:"macAddress,omitempty"`
 	PrivateIP          string                   `xml:"privateIpAddress,omitempty"`
 	Status             string                   `xml:"status,omitempty"`
+	SourceDestCheck    bool                     `xml:"sourceDestCheck"`
 	Groups             []groupItem              `xml:"groupSet>item,omitempty"`
 	Attachment         instanceENIAttachmentXML `xml:"attachment"`
 }

@@ -113,7 +113,7 @@ func toPlacementGroupXML(pg *computedriver.PlacementGroup) placementGroupXML {
 
 func writePlacementGroupErr(w http.ResponseWriter, err error) {
 	if cerrors.IsAlreadyExists(err) {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidPlacementGroup.Duplicate", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidPlacementGroup.Duplicate", cerrors.Message(err))
 		return
 	}
 

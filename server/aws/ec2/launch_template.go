@@ -354,7 +354,7 @@ func toLaunchTemplateDataXML(cfg computedriver.InstanceConfig) launchTemplateDat
 func writeLaunchTemplateErr(w http.ResponseWriter, err error) {
 	if cerrors.IsAlreadyExists(err) {
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
-			"InvalidLaunchTemplateName.AlreadyExistsException", err.Error())
+			"InvalidLaunchTemplateName.AlreadyExistsException", cerrors.Message(err))
 
 		return
 	}

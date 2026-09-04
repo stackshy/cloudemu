@@ -33,6 +33,10 @@ const (
 	filterName               = "name"
 	filterRootDeviceType     = "root-device-type"
 	filterVirtualizationType = "virtualization-type"
+	filterAttachmentDevice   = "attachment.device"
+	filterAttachmentInstance = "attachment.instance-id"
+	filterAttachmentStatus   = "attachment.status"
+	filterAttachmentDOT      = "attachment.delete-on-termination"
 )
 
 type volumeAttachmentXML struct {
@@ -146,7 +150,7 @@ func (h *Handler) deleteVolume(w http.ResponseWriter, r *http.Request) {
 		// An attached volume cannot be deleted; real EC2 answers VolumeInUse
 		// rather than the generic IncorrectState.
 		if cerrors.IsFailedPrecondition(err) {
-			awsquery.WriteXMLError(w, http.StatusBadRequest, "VolumeInUse", err.Error())
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "VolumeInUse", cerrors.Message(err))
 			return
 		}
 
@@ -204,7 +208,8 @@ func validateVolumeFilters(filters []awsquery.Filter) error {
 
 		switch f.Name {
 		case filterVolumeID, filterStatus, filterAvailabilityZone, filterVolumeType,
-			filterEncrypted, filterSnapshotID, filterSize:
+			filterEncrypted, filterSnapshotID, filterSize,
+			filterAttachmentDevice, filterAttachmentInstance, filterAttachmentStatus, filterAttachmentDOT:
 		default:
 			return newInvalidParameterErr("The filter '" + f.Name + "' is invalid")
 		}
@@ -243,6 +248,30 @@ func volumeMatchesFilter(v *computedriver.VolumeInfo, f awsquery.Filter) bool {
 		return containsString(f.Values, v.SnapshotID)
 	case filterSize:
 		return containsString(f.Values, strconv.Itoa(v.Size))
+	case filterAttachmentDevice, filterAttachmentInstance, filterAttachmentStatus, filterAttachmentDOT:
+		return volumeMatchesAttachmentFilter(v, f)
+	default:
+		return false
+	}
+}
+
+// volumeMatchesAttachmentFilter matches the attachment.* filters, which all
+// share the precondition that the volume must actually be attached — an
+// unattached volume matches none of them.
+func volumeMatchesAttachmentFilter(v *computedriver.VolumeInfo, f awsquery.Filter) bool {
+	if v.AttachedTo == "" {
+		return false
+	}
+
+	switch f.Name {
+	case filterAttachmentDevice:
+		return containsString(f.Values, v.Device)
+	case filterAttachmentInstance:
+		return containsString(f.Values, v.AttachedTo)
+	case filterAttachmentStatus:
+		return containsString(f.Values, "attached")
+	case filterAttachmentDOT:
+		return containsString(f.Values, boolFilterValue(v.DeleteOnTermination))
 	default:
 		return false
 	}
@@ -257,21 +286,21 @@ func (h *Handler) attachVolume(w http.ResponseWriter, r *http.Request) {
 		// A volume and the instance it attaches to must share an Availability
 		// Zone; real EC2 answers InvalidVolume.ZoneMismatch for a cross-AZ attach.
 		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "ZoneMismatch:") {
-			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidVolume.ZoneMismatch", err.Error())
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidVolume.ZoneMismatch", cerrors.Message(err))
 			return
 		}
 
 		// A volume already attached to an instance cannot be re-attached; real
 		// EC2 answers VolumeInUse rather than the generic IncorrectState.
 		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "VolumeInUse:") {
-			awsquery.WriteXMLError(w, http.StatusBadRequest, "VolumeInUse", err.Error())
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "VolumeInUse", cerrors.Message(err))
 			return
 		}
 
 		// A volume can only attach to a running/stopped instance; attaching to a
 		// terminated or pending instance is IncorrectInstanceState.
 		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "IncorrectInstanceState:") {
-			awsquery.WriteXMLError(w, http.StatusBadRequest, "IncorrectInstanceState", err.Error())
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "IncorrectInstanceState", cerrors.Message(err))
 			return
 		}
 
@@ -309,7 +338,7 @@ func (h *Handler) detachVolume(w http.ResponseWriter, r *http.Request) {
 		// The named instance/device did not match the volume's actual
 		// attachment; real EC2 answers InvalidAttachment.NotFound.
 		if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "InvalidAttachment.NotFound:") {
-			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAttachment.NotFound", err.Error())
+			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAttachment.NotFound", cerrors.Message(err))
 			return
 		}
 

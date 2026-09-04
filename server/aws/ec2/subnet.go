@@ -248,7 +248,7 @@ func writeSubnetErr(w http.ResponseWriter, err error) {
 // shared subnet error mapping otherwise.
 func writeCreateSubnetErr(w http.ResponseWriter, err error) {
 	if cerrors.IsAlreadyExists(err) {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSubnet.Conflict", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSubnet.Conflict", cerrors.Message(err))
 		return
 	}
 

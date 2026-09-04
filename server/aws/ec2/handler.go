@@ -472,7 +472,11 @@ func (h *Handler) routeVPC(w http.ResponseWriter, r *http.Request, action string
 		return true
 	}
 
-	return h.routeVPCRouteTable(w, r, action)
+	if h.routeVPCRouteTable(w, r, action) {
+		return true
+	}
+
+	return h.routeVPCAddress(w, r, action)
 }
 
 func (h *Handler) routeVPCResource(w http.ResponseWriter, r *http.Request, action string) bool {
@@ -489,12 +493,25 @@ func (h *Handler) routeVPCResource(w http.ResponseWriter, r *http.Request, actio
 		h.describeVpcs(w, r)
 	case "DescribeAvailabilityZones":
 		h.describeAvailabilityZones(w, r)
+	default:
+		return false
+	}
+
+	return true
+}
+
+// routeVPCAddress dispatches Elastic IP actions. Split out of
+// routeVPCResource to keep that dispatch table's cyclomatic complexity down.
+func (h *Handler) routeVPCAddress(w http.ResponseWriter, r *http.Request, action string) bool {
+	switch action {
 	case "AllocateAddress":
 		h.allocateAddress(w, r)
 	case "ReleaseAddress":
 		h.releaseAddress(w, r)
 	case "DescribeAddresses":
 		h.describeAddresses(w, r)
+	case "DescribeAddressesAttribute":
+		h.describeAddressesAttribute(w, r)
 	case "AssociateAddress":
 		h.associateAddress(w, r)
 	case "DisassociateAddress":

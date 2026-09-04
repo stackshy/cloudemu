@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -85,7 +86,7 @@ func (h *Handler) deleteFlowLogs(w http.ResponseWriter, r *http.Request) {
 		if err := h.vpc.DeleteFlowLog(r.Context(), id); err != nil {
 			item := unsuccessfulItemXML{ResourceID: id}
 			item.Error.Code = "InvalidFlowLogId.NotFound"
-			item.Error.Message = err.Error()
+			item.Error.Message = cerrors.Message(err)
 			unsuccessful = append(unsuccessful, item)
 		}
 	}
