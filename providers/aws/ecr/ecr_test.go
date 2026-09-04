@@ -711,6 +711,106 @@ func TestLifecyclePolicyNoPolicy(t *testing.T) {
 	assert.Equal(t, 0, len(expired))
 }
 
+// TestPreviewLifecyclePolicy exercises PreviewLifecyclePolicy's detail beyond
+// what EvaluateLifecyclePolicy exposes: which rule matched each expiring
+// image, and that a higher-priority rule's matches are excluded from a
+// lower-priority rule's counting pool rather than double-counted.
+func TestPreviewLifecyclePolicy(t *testing.T) {
+	m, fc := newTestMock()
+	ctx := context.Background()
+
+	createTestRepo(t, m, "preview-repo")
+
+	// Priority 1 matches "prod-*" tags and keeps only the newest one, so it
+	// expires prod-1 and prod-2 (both older than prod-3). Priority 2 matches
+	// everything and keeps 3. Without excluding rule 1's matches from rule 2's
+	// pool, rule 2 would see all 4 images (3 prod-* plus "other") and
+	// additionally re-expire prod-1 or prod-2; with exclusion it sees only the
+	// 2 remaining images (prod-3, other) and expires nothing more, since 2 is
+	// not more than 3.
+	policy := driver.LifecyclePolicy{
+		Rules: []driver.LifecycleRule{
+			{
+				Priority:   1,
+				TagStatus:  "tagged",
+				TagPattern: "prod-*",
+				CountType:  "imageCountMoreThan",
+				CountValue: 1,
+				Action:     "expire",
+			},
+			{
+				Priority:   2,
+				TagStatus:  "any",
+				CountType:  "imageCountMoreThan",
+				CountValue: 3,
+				Action:     "expire",
+			},
+		},
+	}
+
+	require.NoError(t, m.PutLifecyclePolicy(ctx, "preview-repo", policy))
+
+	prod1 := pushTestImage(t, m, "preview-repo", "prod-1")
+	fc.Advance(time.Minute)
+	prod2 := pushTestImage(t, m, "preview-repo", "prod-2")
+	fc.Advance(time.Minute)
+	pushTestImage(t, m, "preview-repo", "prod-3")
+	fc.Advance(time.Minute)
+	pushTestImage(t, m, "preview-repo", "other")
+
+	results, text, err := m.PreviewLifecyclePolicy(ctx, "preview-repo", nil)
+	require.NoError(t, err)
+	assert.Empty(t, text) // no Document was set via PutLifecyclePolicy's driver.LifecyclePolicy directly
+
+	require.Len(t, results, 2)
+
+	byDigest := map[string]driver.LifecyclePreviewResult{}
+	for _, r := range results {
+		byDigest[r.Digest] = r
+	}
+
+	got1, ok1 := byDigest[prod1.Digest]
+	require.True(t, ok1, "prod-1 should be in the expiring set")
+	assert.Equal(t, []string{"prod-1"}, got1.Tags)
+	assert.Equal(t, 1, got1.AppliedRulePriority)
+
+	got2, ok2 := byDigest[prod2.Digest]
+	require.True(t, ok2, "prod-2 should be in the expiring set")
+	assert.Equal(t, []string{"prod-2"}, got2.Tags)
+	assert.Equal(t, 1, got2.AppliedRulePriority)
+
+	t.Run("override policy does not persist", func(t *testing.T) {
+		override := driver.LifecyclePolicy{
+			Rules: []driver.LifecycleRule{
+				{Priority: 1, TagStatus: "any", CountType: "imageCountMoreThan", CountValue: 0, Action: "expire"},
+			},
+		}
+
+		results, _, err := m.PreviewLifecyclePolicy(ctx, "preview-repo", &override)
+		require.NoError(t, err)
+		assert.Len(t, results, 4) // every image expires under the override's countValue 0
+
+		// The stored policy is untouched: re-running without an override still
+		// reports just the two prod-* excess images.
+		results, _, err = m.PreviewLifecyclePolicy(ctx, "preview-repo", nil)
+		require.NoError(t, err)
+		assert.Len(t, results, 2)
+	})
+
+	t.Run("no policy and no override", func(t *testing.T) {
+		createTestRepo(t, m, "preview-no-policy-repo")
+
+		_, _, err := m.PreviewLifecyclePolicy(ctx, "preview-no-policy-repo", nil)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "no lifecycle policy")
+	})
+
+	t.Run("missing repository", func(t *testing.T) {
+		_, _, err := m.PreviewLifecyclePolicy(ctx, "ghost-repo", nil)
+		require.Error(t, err)
+	})
+}
+
 func TestImageScan(t *testing.T) {
 	m, _ := newTestMock()
 	ctx := context.Background()

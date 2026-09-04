@@ -91,6 +91,21 @@ type LifecyclePolicy struct {
 	Document string
 }
 
+// LifecyclePreviewResult describes one image a lifecycle policy evaluation
+// would expire, with enough detail to render AWS ECR's
+// GetLifecyclePolicyPreview response (imageDigest/imageTags/imagePushedAt/
+// appliedRulePriority). AWS-specific — Azure ACR and GCP Artifact Registry
+// have no lifecycle-preview API — so it is not part of the ContainerRegistry
+// interface below; the AWS provider exposes a PreviewLifecyclePolicy method
+// that the ECR wire handler reaches via type assertion (see
+// providers/aws/ecr and server/aws/ecr).
+type LifecyclePreviewResult struct {
+	Digest              string
+	Tags                []string
+	PushedAt            string
+	AppliedRulePriority int
+}
+
 // ScanResult represents an image vulnerability scan result.
 type ScanResult struct {
 	Repository    string
