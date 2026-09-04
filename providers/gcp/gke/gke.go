@@ -834,10 +834,16 @@ func (m *Mock) GetNodePool(_ context.Context, location, clusterName, name string
 	return &out, nil
 }
 
-// ListNodePools returns all node pools in a cluster.
+// ListNodePools returns all node pools in a cluster. Real GKE 404s
+// nodePools.list on a nonexistent cluster rather than answering an empty
+// collection, so the cluster's presence is checked first.
 func (m *Mock) ListNodePools(_ context.Context, location, clusterName string) ([]NodePool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	if !m.clusters.Has(clusterKey(location, clusterName)) {
+		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found in %q", clusterName, location)
+	}
 
 	prefix := location + "/" + clusterName + "/"
 	all := m.nodePools.All()

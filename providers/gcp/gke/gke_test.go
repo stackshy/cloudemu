@@ -276,6 +276,32 @@ func TestNodePoolErrorPaths(t *testing.T) {
 	}
 }
 
+// TestListNodePoolsMissingCluster covers a real-user e2e divergence found via
+// black-box audit: ListNodePools on a cluster that doesn't exist used to
+// answer an empty collection (200) instead of 404, unlike GetCluster,
+// GetNodePool, CreateNodePool, and DeleteNodePool, which all correctly 404 on
+// a missing cluster/pool. Real GKE 404s nodePools.list on a nonexistent
+// cluster too.
+func TestListNodePoolsMissingCluster(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	if _, err := m.ListNodePools(ctx, "us-central1", "does-not-exist"); err == nil {
+		t.Fatal("expected NotFound when listing node pools of a missing cluster")
+	}
+
+	// A real cluster's pools still list correctly once it exists.
+	_, _, err := m.CreateCluster(ctx, &CreateClusterInput{Name: "real", Location: "us-central1"})
+	requireNoError(t, err)
+
+	pools, err := m.ListNodePools(ctx, "us-central1", "real")
+	requireNoError(t, err)
+
+	if len(pools) != 1 {
+		t.Fatalf("got %d pools, want 1 (default-pool)", len(pools))
+	}
+}
+
 func TestOperations(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
