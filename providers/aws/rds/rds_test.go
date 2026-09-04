@@ -262,6 +262,114 @@ func TestRestoreFromSnapshotAfterSourceDeleted(t *testing.T) {
 	assertEqual(t, nonDefaultPort, restored.Port)
 }
 
+// TestRestoreFromSnapshotReproducesCapturedInstanceShape guards that
+// RestoreDBInstanceFromDBSnapshot reproduces the source instance's
+// DBInstanceClass, StorageType, and Iops from the snapshot rather than
+// falling back to the emulator's generic defaults. Per the AWS API docs,
+// DBInstanceClass "Default: The same DBInstanceClass as the original DB
+// instance" and Iops "If this parameter isn't specified, the IOPS value is
+// taken from the backup." Before this fix, a restore always reported
+// defaultInstanceClass/defaultStorageType/zero Iops regardless of what the
+// source instance actually had.
+func TestRestoreFromSnapshotReproducesCapturedInstanceShape(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	const nonDefaultIops = 3000
+
+	_, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID:               "shape-src",
+		Engine:           "mysql",
+		InstanceClass:    "db.m5.large", // deliberately NOT the emulator default (db.t3.micro)
+		AllocatedStorage: 200,
+		StorageType:      "io1",
+	})
+	requireNoError(t, err)
+
+	// Iops is a ModifyDBInstance-only attribute (CreateDBInstance's own path
+	// doesn't model it separately from StorageType).
+	_, err = m.ModifyInstance(ctx, "shape-src", rdsdriver.ModifyInstanceInput{Iops: nonDefaultIops, ApplyImmediately: true})
+	requireNoError(t, err)
+
+	_, err = m.CreateSnapshot(ctx, rdsdriver.SnapshotConfig{
+		ID:         "shape-snap",
+		InstanceID: "shape-src",
+	})
+	requireNoError(t, err)
+
+	// The source instance being deleted first pins that the snapshot itself
+	// (not a live source lookup) captured the shape.
+	requireNoError(t, m.DeleteInstance(ctx, "shape-src"))
+
+	restored, err := m.RestoreInstanceFromSnapshot(ctx, rdsdriver.RestoreInstanceInput{
+		NewInstanceID: "shape-restored",
+		SnapshotID:    "shape-snap",
+	})
+	requireNoError(t, err)
+
+	assertEqual(t, "db.m5.large", restored.InstanceClass)
+	assertEqual(t, "io1", restored.StorageType)
+	assertEqual(t, nonDefaultIops, restored.Iops)
+	assertEqual(t, 200, restored.AllocatedStorage)
+
+	// An explicit restore-request override still wins over the snapshot.
+	_, err = m.CreateInstance(ctx, rdsdriver.InstanceConfig{
+		ID:               "shape-src2",
+		Engine:           "mysql",
+		InstanceClass:    "db.m5.large",
+		AllocatedStorage: 200,
+	})
+	requireNoError(t, err)
+
+	_, err = m.CreateSnapshot(ctx, rdsdriver.SnapshotConfig{ID: "shape-snap2", InstanceID: "shape-src2"})
+	requireNoError(t, err)
+
+	overridden, err := m.RestoreInstanceFromSnapshot(ctx, rdsdriver.RestoreInstanceInput{
+		NewInstanceID: "shape-restored2",
+		SnapshotID:    "shape-snap2",
+		InstanceClass: "db.r5.xlarge",
+	})
+	requireNoError(t, err)
+
+	assertEqual(t, "db.r5.xlarge", overridden.InstanceClass)
+}
+
+// TestClusterRestoreFromSnapshotReproducesCapturedShape guards that
+// RestoreDBClusterFromSnapshot reproduces the source cluster's
+// AllocatedStorage and EngineMode from the snapshot instead of leaving the
+// restored cluster with the Go zero value.
+func TestClusterRestoreFromSnapshotReproducesCapturedShape(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	const nonDefaultStorage = 123
+
+	_, err := m.CreateCluster(ctx, rdsdriver.ClusterConfig{
+		ID:               "shape-src-cluster",
+		Engine:           "aurora-postgresql",
+		EngineMode:       "serverless",
+		AllocatedStorage: nonDefaultStorage,
+	})
+	requireNoError(t, err)
+
+	_, err = m.CreateClusterSnapshot(ctx, rdsdriver.ClusterSnapshotConfig{
+		ID:        "shape-csnap",
+		ClusterID: "shape-src-cluster",
+	})
+	requireNoError(t, err)
+
+	requireNoError(t, m.DeleteCluster(ctx, "shape-src-cluster"))
+
+	restored, err := m.RestoreClusterFromSnapshot(ctx, rdsdriver.RestoreClusterInput{
+		NewClusterID: "shape-restored-cluster",
+		SnapshotID:   "shape-csnap",
+	})
+	requireNoError(t, err)
+
+	assertEqual(t, nonDefaultStorage, restored.AllocatedStorage)
+	assertEqual(t, "serverless", restored.EngineMode)
+}
+
 func TestClusterSnapshotAndRestore(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

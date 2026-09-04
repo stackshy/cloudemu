@@ -446,6 +446,16 @@ type Snapshot struct {
 	// AWS API docs). cloudemu models only same-account/same-region copies, so
 	// this stays empty on every snapshot, including ones made by CopyDBSnapshot.
 	SourceDBSnapshotIdentifier string
+	// InstanceClass / StorageType / Iops capture the source instance's shape at
+	// snapshot time so RestoreInstanceFromSnapshot can reproduce it, matching the
+	// AWS RestoreDBInstanceFromDBSnapshot docs: DBInstanceClass "Default: The
+	// same DBInstanceClass as the original DB instance" and Iops "If this
+	// parameter isn't specified, the IOPS value is taken from the backup."
+	// Empty/zero on snapshots created before this capture existed; restore falls
+	// back to a live source-instance lookup in that case.
+	InstanceClass string
+	StorageType   string
+	Iops          int
 }
 
 // ClusterSnapshotConfig configures a cluster snapshot.
@@ -482,6 +492,14 @@ type ClusterSnapshot struct {
 	DatabaseName   string
 	CreatedAt      time.Time
 	Tags           map[string]string
+	// AllocatedStorage / EngineMode capture the source cluster's shape at
+	// snapshot time so RestoreDBClusterFromSnapshot can reproduce it instead of
+	// leaving the restored cluster with the Go zero value. Zero/empty on
+	// snapshots created before this capture existed; restore falls back to the
+	// same defaults CreateCluster applies. AllocatedStorage is RDS/Aurora-only
+	// (echoes the AWS Aurora DBCluster attribute); zero for Redshift.
+	AllocatedStorage int
+	EngineMode       string
 }
 
 // RestoreInstanceInput configures restoring an instance from a snapshot.
@@ -506,6 +524,11 @@ type RestoreInstanceInput struct {
 	// SubnetGroupName is the AWS RDS RestoreDBInstanceFromDBSnapshot
 	// DBSubnetGroupName attribute; empty means the account/region default VPC.
 	SubnetGroupName string
+	// StorageType / Iops override the snapshot-captured values when set. Real
+	// RDS docs: Iops "If this parameter isn't specified, the IOPS value is
+	// taken from the backup."
+	StorageType string
+	Iops        int
 }
 
 // RestoreClusterInput configures restoring a cluster from a snapshot.

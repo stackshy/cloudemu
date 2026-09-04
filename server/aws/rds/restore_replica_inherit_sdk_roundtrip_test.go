@@ -90,3 +90,58 @@ func TestSDKRDSRestoreFromSnapshotInheritsSourceAttributes(t *testing.T) {
 			restored.DBInstance.Endpoint)
 	}
 }
+
+// TestSDKRDSRestoreFromSnapshotInheritsInstanceClassAndStorage guards that
+// RestoreDBInstanceFromDBSnapshot reproduces the source instance's
+// DBInstanceClass and AllocatedStorage from the snapshot rather than
+// defaulting them, matching the API docs: DBInstanceClass "Default: The same
+// DBInstanceClass as the original DB instance." Before this fix, a restore
+// always came back with the emulator's generic default class (db.t3.micro)
+// regardless of what the source instance actually used.
+func TestSDKRDSRestoreFromSnapshotInheritsInstanceClassAndStorage(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateDBInstance(ctx, &awsrds.CreateDBInstanceInput{
+		DBInstanceIdentifier: aws.String("restore-class-src"),
+		Engine:               aws.String("mysql"),
+		DBInstanceClass:      aws.String("db.m5.large"), // NOT the emulator default
+		AllocatedStorage:     aws.Int32(250),
+	}); err != nil {
+		t.Fatalf("CreateDBInstance: %v", err)
+	}
+
+	if _, err := client.CreateDBSnapshot(ctx, &awsrds.CreateDBSnapshotInput{
+		DBSnapshotIdentifier: aws.String("restore-class-snap"),
+		DBInstanceIdentifier: aws.String("restore-class-src"),
+	}); err != nil {
+		t.Fatalf("CreateDBSnapshot: %v", err)
+	}
+
+	// The snapshot must be a self-contained restore point, independent of the
+	// live source instance.
+	if _, err := client.DeleteDBInstance(ctx, &awsrds.DeleteDBInstanceInput{
+		DBInstanceIdentifier:   aws.String("restore-class-src"),
+		SkipFinalSnapshot:      aws.Bool(true),
+		DeleteAutomatedBackups: aws.Bool(true),
+	}); err != nil {
+		t.Fatalf("DeleteDBInstance: %v", err)
+	}
+
+	restored, err := client.RestoreDBInstanceFromDBSnapshot(ctx,
+		&awsrds.RestoreDBInstanceFromDBSnapshotInput{
+			DBInstanceIdentifier: aws.String("restore-class-restored"),
+			DBSnapshotIdentifier: aws.String("restore-class-snap"),
+		})
+	if err != nil {
+		t.Fatalf("RestoreDBInstanceFromDBSnapshot: %v", err)
+	}
+
+	if got := aws.ToString(restored.DBInstance.DBInstanceClass); got != "db.m5.large" {
+		t.Fatalf("restored DBInstanceClass = %q, want db.m5.large (inherited from the snapshot)", got)
+	}
+
+	if got := aws.ToInt32(restored.DBInstance.AllocatedStorage); got != 250 {
+		t.Fatalf("restored AllocatedStorage = %d, want 250 (inherited from the snapshot)", got)
+	}
+}
