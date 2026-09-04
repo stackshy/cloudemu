@@ -1425,14 +1425,14 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NotFound", err.Error())
+		writeError(w, http.StatusNotFound, "NotFound", cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "Conflict", err.Error())
+		writeError(w, http.StatusConflict, "Conflict", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "BadRequest", err.Error())
+		writeError(w, http.StatusBadRequest, "BadRequest", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusPreconditionFailed, "PreconditionFailed", err.Error())
+		writeError(w, http.StatusPreconditionFailed, "PreconditionFailed", cerrors.Message(err))
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalServerError", cerrors.Message(err))
 	}
 }

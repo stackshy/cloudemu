@@ -197,7 +197,7 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 // writeErr maps CloudEmu canonical errors to Azure Table HTTP errors.
 func writeErr(w http.ResponseWriter, err error) {
 	status, code := mapErr(err)
-	writeError(w, status, code, err.Error())
+	writeError(w, status, code, cerrors.Message(err))
 }
 
 // mapErr maps a CloudEmu canonical error to its Azure Table HTTP status + code.

@@ -555,7 +555,7 @@ func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request, queue st
 		// The queue was already resolved, so a NotFound here means the message or
 		// its pop receipt did not match — Azure returns 404 MessageNotFound.
 		if cerrors.IsNotFound(err) {
-			writeError(w, http.StatusNotFound, "MessageNotFound", err.Error())
+			writeError(w, http.StatusNotFound, "MessageNotFound", cerrors.Message(err))
 			return
 		}
 
@@ -607,7 +607,7 @@ func (h *Handler) updateMessage(w http.ResponseWriter, r *http.Request, queue, m
 		// The queue was already resolved, so a NotFound here means the message
 		// or its pop receipt did not match.
 		if cerrors.IsNotFound(err) {
-			writeError(w, http.StatusNotFound, "MessageNotFound", err.Error())
+			writeError(w, http.StatusNotFound, "MessageNotFound", cerrors.Message(err))
 			return
 		}
 
@@ -809,12 +809,12 @@ func writeQueryParameterRangeError(w http.ResponseWriter, name, value string, mi
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "QueueNotFound", err.Error())
+		writeError(w, http.StatusNotFound, "QueueNotFound", cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "QueueAlreadyExists", err.Error())
+		writeError(w, http.StatusConflict, "QueueAlreadyExists", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidInput", cerrors.Message(err))
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalError", cerrors.Message(err))
 	}
 }

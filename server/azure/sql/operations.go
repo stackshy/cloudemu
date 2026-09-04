@@ -271,11 +271,11 @@ func (h *Handler) writeDatabaseNotFound(
 	// Server exists: a Copy/PointInTimeRestore whose sourceDatabaseId is set
 	// resolved the source before the pool check, so the NotFound is the source.
 	if cfg != nil && cfg.SourceDatabaseID != "" {
-		azurearm.WriteError(w, http.StatusNotFound, "SourceDatabaseNotFound", err.Error())
+		azurearm.WriteError(w, http.StatusNotFound, "SourceDatabaseNotFound", cerrors.Message(err))
 		return
 	}
 
-	azurearm.WriteError(w, http.StatusBadRequest, "TargetElasticPoolDoesNotExist", err.Error())
+	azurearm.WriteError(w, http.StatusBadRequest, "TargetElasticPoolDoesNotExist", cerrors.Message(err))
 }
 
 // mergeDatabaseFields overlays the non-empty fields of cfg (and body's

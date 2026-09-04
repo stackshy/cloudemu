@@ -155,26 +155,28 @@ func WriteError(w http.ResponseWriter, status int, code, msg string) {
 // Azure returns when a child resource (e.g. a database under a server) is
 // created while its parent does not exist.
 func WriteParentNotFound(w http.ResponseWriter, err error) {
-	WriteError(w, http.StatusNotFound, "ParentResourceNotFound", err.Error())
+	WriteError(w, http.StatusNotFound, "ParentResourceNotFound", cerrors.Message(err))
 }
 
 // WriteCErr maps a CloudEmu canonical error to the matching ARM HTTP status
 // and code. Used by handlers so error mapping is consistent across services.
 func WriteCErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		WriteError(w, http.StatusNotFound, "ResourceNotFound", err.Error())
+		WriteError(w, http.StatusNotFound, "ResourceNotFound", msg)
 	case cerrors.IsAlreadyExists(err):
-		WriteError(w, http.StatusConflict, "Conflict", err.Error())
+		WriteError(w, http.StatusConflict, "Conflict", msg)
 	case cerrors.IsInvalidArgument(err):
-		WriteError(w, http.StatusBadRequest, "InvalidParameter", err.Error())
+		WriteError(w, http.StatusBadRequest, "InvalidParameter", msg)
 	case cerrors.IsFailedPrecondition(err):
-		WriteError(w, http.StatusConflict, "PreconditionFailed", err.Error())
+		WriteError(w, http.StatusConflict, "PreconditionFailed", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
 		// e.g. a subnet with no free private IP — ARM answers 400, not 500.
-		WriteError(w, http.StatusBadRequest, "InvalidParameter", err.Error())
+		WriteError(w, http.StatusBadRequest, "InvalidParameter", msg)
 	default:
-		WriteError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		WriteError(w, http.StatusInternalServerError, "InternalError", msg)
 	}
 }
 

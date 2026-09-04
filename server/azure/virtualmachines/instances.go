@@ -98,7 +98,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	// silently succeeding.
 	nicRefs, err := h.validateNICs(r.Context(), req.Properties.NetworkProfile)
 	if err != nil {
-		azurearm.WriteError(w, http.StatusBadRequest, "NetworkInterfaceNotFound", err.Error())
+		azurearm.WriteError(w, http.StatusBadRequest, "NetworkInterfaceNotFound", cerrors.Message(err))
 		return
 	}
 
