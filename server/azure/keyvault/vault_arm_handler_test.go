@@ -212,6 +212,133 @@ func TestVaultARMScopeMismatch(t *testing.T) {
 	}
 }
 
+// TestVaultARMUpdatePartialMerge exercises PATCH — Vaults.Update. Unlike PUT,
+// a PATCH carrying only one property must merge onto the stored vault rather
+// than replacing it: every other property (tenantId, sku, accessPolicies,
+// soft-delete flags) must survive untouched.
+func TestVaultARMUpdatePartialMerge(t *testing.T) {
+	ts := newVaultServer(t)
+	base := ts.URL
+
+	status, _ := doJSON(t, http.MethodPut, vaultURL(base, vaultSub, vaultRG, "vault-patch"), vaultCreateBody())
+	if status != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", status)
+	}
+
+	patchBody := map[string]any{
+		"properties": map[string]any{
+			"enabledForDeployment": true,
+		},
+	}
+
+	status, patched := doJSON(t, http.MethodPatch, vaultURL(base, vaultSub, vaultRG, "vault-patch"), patchBody)
+	if status != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200; body=%v", status, patched)
+	}
+
+	props, _ := patched["properties"].(map[string]any)
+	if props == nil {
+		t.Fatalf("no properties in patch response: %v", patched)
+	}
+
+	if props["enabledForDeployment"] != true {
+		t.Errorf("enabledForDeployment = %v, want true", props["enabledForDeployment"])
+	}
+
+	// Fields the PATCH body never mentioned must be untouched.
+	if props["tenantId"] != "11111111-1111-1111-1111-111111111111" {
+		t.Errorf("patch dropped tenantId: %v", props["tenantId"])
+	}
+
+	if sku, _ := props["sku"].(map[string]any); sku == nil || sku["name"] != "premium" {
+		t.Errorf("patch dropped sku: %v", props["sku"])
+	}
+
+	if pol, _ := props["accessPolicies"].([]any); len(pol) != 1 {
+		t.Errorf("patch dropped accessPolicies: %v", props["accessPolicies"])
+	}
+
+	if props["enablePurgeProtection"] != true {
+		t.Errorf("patch dropped enablePurgeProtection: %v", props["enablePurgeProtection"])
+	}
+
+	if tags, _ := patched["tags"].(map[string]any); tags["env"] != "test" {
+		t.Errorf("patch dropped untouched tags: %v", patched["tags"])
+	}
+
+	// A GET afterward must reflect the same merged state.
+	status, got := doJSON(t, http.MethodGet, vaultURL(base, vaultSub, vaultRG, "vault-patch"), nil)
+	if status != http.StatusOK {
+		t.Fatalf("get status = %d, want 200", status)
+	}
+
+	gp, _ := got["properties"].(map[string]any)
+	if gp["enabledForDeployment"] != true {
+		t.Errorf("get after patch enabledForDeployment = %v, want true", gp["enabledForDeployment"])
+	}
+}
+
+// TestVaultARMUpdateTagsFullReplace confirms a PATCH carrying tags replaces
+// the whole tag set (real ARM PATCH semantics), while properties it does not
+// mention stay untouched.
+func TestVaultARMUpdateTagsFullReplace(t *testing.T) {
+	ts := newVaultServer(t)
+	base := ts.URL
+
+	status, _ := doJSON(t, http.MethodPut, vaultURL(base, vaultSub, vaultRG, "vault-tags"), vaultCreateBody())
+	if status != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", status)
+	}
+
+	status, patched := doJSON(t, http.MethodPatch, vaultURL(base, vaultSub, vaultRG, "vault-tags"),
+		map[string]any{"tags": map[string]any{"team": "core"}})
+	if status != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200", status)
+	}
+
+	tags, _ := patched["tags"].(map[string]any)
+	if len(tags) != 1 || tags["team"] != "core" {
+		t.Fatalf("patched tags = %v, want exactly {team: core}", patched["tags"])
+	}
+
+	props, _ := patched["properties"].(map[string]any)
+	if props["tenantId"] != "11111111-1111-1111-1111-111111111111" {
+		t.Errorf("tags-only patch dropped tenantId: %v", props["tenantId"])
+	}
+}
+
+// TestVaultARMUpdateMissingVaultIs404 confirms PATCH on a vault name that was
+// never created 404s the same way GET/DELETE do.
+func TestVaultARMUpdateMissingVaultIs404(t *testing.T) {
+	ts := newVaultServer(t)
+	base := ts.URL
+
+	status, _ := doJSON(t, http.MethodPatch, vaultURL(base, vaultSub, vaultRG, "no-such-vault"),
+		map[string]any{"tags": map[string]any{"a": "b"}})
+	if status != http.StatusNotFound {
+		t.Errorf("patch-missing status = %d, want 404", status)
+	}
+}
+
+// TestVaultARMUpdateScopeMismatchIs404 mirrors TestVaultARMScopeMismatch for
+// PATCH: a vault addressed through the wrong resource group must 404 rather
+// than silently updating (or relocating) it.
+func TestVaultARMUpdateScopeMismatchIs404(t *testing.T) {
+	ts := newVaultServer(t)
+	base := ts.URL
+
+	status, _ := doJSON(t, http.MethodPut, vaultURL(base, vaultSub, vaultRG, "vault-scope-patch"), vaultCreateBody())
+	if status != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201", status)
+	}
+
+	status, _ = doJSON(t, http.MethodPatch, vaultURL(base, vaultSub, "other-rg", "vault-scope-patch"),
+		map[string]any{"tags": map[string]any{"a": "b"}})
+	if status != http.StatusNotFound {
+		t.Errorf("cross-rg patch status = %d, want 404", status)
+	}
+}
+
 // TestVaultARMUnmodeledPropertyPreserved exercises #409 gap #4 through the vault
 // resource: an unmodeled request property under properties survives PUT->GET via
 // the server's echoUnmodeledProperties overlay.

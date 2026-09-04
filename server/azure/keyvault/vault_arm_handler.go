@@ -13,6 +13,7 @@
 //
 //	PUT    .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.BeginCreateOrUpdate (LRO, completes inline)
 //	GET    .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.Get
+//	PATCH  .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.Update (partial merge, not a full replace)
 //	DELETE .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.Delete
 //	GET    .../resourceGroups/{rg}/providers/Microsoft.KeyVault/vaults — Vaults.ListByResourceGroup
 //	GET    .../subscriptions/{sub}/providers/Microsoft.KeyVault/vaults  — Vaults.ListBySubscription
@@ -75,6 +76,8 @@ func (h *VaultARMHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getVault(w, r, &rp)
 	case http.MethodDelete:
 		h.deleteVault(w, r, &rp)
+	case http.MethodPatch:
+		h.updateVault(w, r, &rp)
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
