@@ -812,13 +812,17 @@ func applyMutableConfig(inst *instanceData, cfg driver.InstanceConfig, instanceI
 	}
 }
 
-// PatchInstance applies an ARM PATCH Update (BeginUpdate) merge-patch to an
-// existing instance. Only the fields the request supplied are applied: a
-// non-empty VMSize resizes the VM, a non-nil Tags map is MERGED into the
-// existing tags (adding/overwriting supplied keys, leaving omitted keys —
-// including the internal ARM-name tag — in place), and a non-nil Identity
-// replaces the identity block. Everything else (priority, licenseType, image,
-// zones, …) is left untouched, unlike UpdateInstance's full-config replace.
+// PatchInstance applies an ARM PATCH Update (BeginUpdate) to an existing
+// instance. Only the fields the request supplied are applied: a non-empty
+// VMSize resizes the VM, a non-nil Identity replaces the identity block, and a
+// non-nil Tags map REPLACES the existing tags wholesale — real Azure's PATCH
+// tags is a full replace, not a merge, despite PATCH otherwise reading as a
+// merge-patch (this is a well-documented Azure Compute quirk; see the sibling
+// SQL-VM UpdateTags). The internal ARM-name tag is preserved across the
+// replace since it is never part of the caller-supplied patch.Tags and
+// findByName depends on it surviving a tag PATCH. Everything else (priority,
+// licenseType, image, zones, …) is left untouched, unlike UpdateInstance's
+// full-config replace.
 func (m *Mock) PatchInstance(_ context.Context, instanceID string, patch driver.AzureVMPatch) error {
 	ok := m.instances.Update(instanceID, func(inst *instanceData) *instanceData {
 		if patch.VMSize != "" {
@@ -826,12 +830,11 @@ func (m *Mock) PatchInstance(_ context.Context, instanceID string, patch driver.
 		}
 
 		if patch.Tags != nil {
-			if inst.Tags == nil {
-				inst.Tags = make(map[string]string, len(patch.Tags))
-			}
+			armName := inst.Tags[armNameTag]
+			inst.Tags = copyTags(patch.Tags)
 
-			for k, v := range patch.Tags {
-				inst.Tags[k] = v
+			if armName != "" {
+				inst.Tags[armNameTag] = armName
 			}
 		}
 
