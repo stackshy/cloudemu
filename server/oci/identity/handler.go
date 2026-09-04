@@ -329,7 +329,8 @@ func paginate[T any](items []T, r *http.Request) (window []T, next string) {
 	}
 
 	if offset >= len(items) {
-		return nil, ""
+		// items[:0] rather than nil: an empty page is [] on the wire, not null.
+		return items[:0], ""
 	}
 
 	end := min(offset+ocirest.Limit(r), len(items))
