@@ -58,8 +58,13 @@ func TestSDKSQSCreateQueueIdempotent(t *testing.T) {
 		QueueName:  aws.String("idem-q"),
 		Attributes: map[string]string{"VisibilityTimeout": "99"},
 	})
-	if code := apiErrorCode(t, err); code != "QueueNameExists" {
-		t.Fatalf("re-create with different attributes: error code = %q, want QueueNameExists", code)
+	// SQS carries the "awsQueryCompatible" trait: aws-sdk-go-v2 overrides
+	// ErrorCode() to the legacy Query-protocol code ("QueueAlreadyExists") from
+	// the X-Amzn-Query-Error header, not the AwsJson1_0 shape name
+	// ("QueueNameExists").
+	const wantCode = "QueueAlreadyExists"
+	if code := apiErrorCode(t, err); code != wantCode {
+		t.Fatalf("re-create with different attributes: error code = %q, want %s", code, wantCode)
 	}
 }
 
