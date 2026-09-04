@@ -71,6 +71,84 @@ const (
 	maxTimeoutSecs = 900
 )
 
+// validRuntimes is the set of Runtime identifiers the real Lambda CreateFunction/
+// UpdateFunctionConfiguration API enum accepts (current GA runtimes plus older
+// values the service still allows on an existing function). An unrecognized
+// value is rejected with InvalidParameterValueException, matching real Lambda's
+// "Member must satisfy enum value set" error for the `runtime` parameter. See
+// https://docs.aws.amazon.com/lambda/latest/api/API_CreateFunction.html
+//
+//nolint:gochecknoglobals // read-only lookup table, never mutated.
+var validRuntimes = map[string]bool{
+	"nodejs":          true,
+	"nodejs4.3":       true,
+	"nodejs6.10":      true,
+	"nodejs8.10":      true,
+	"nodejs10.x":      true,
+	"nodejs12.x":      true,
+	"nodejs14.x":      true,
+	"nodejs16.x":      true,
+	"nodejs18.x":      true,
+	"nodejs20.x":      true,
+	"nodejs22.x":      true,
+	"java8":           true,
+	"java8.al2":       true,
+	"java11":          true,
+	"java17":          true,
+	"java21":          true,
+	"python2.7":       true,
+	"python3.6":       true,
+	"python3.7":       true,
+	"python3.8":       true,
+	"python3.9":       true,
+	"python3.10":      true,
+	"python3.11":      true,
+	"python3.12":      true,
+	"python3.13":      true,
+	"dotnetcore1.0":   true,
+	"dotnetcore2.0":   true,
+	"dotnetcore2.1":   true,
+	"dotnetcore3.1":   true,
+	"dotnetcore6.0":   true,
+	"dotnet6":         true,
+	"dotnet8":         true,
+	"nodejs4.3-edge":  true,
+	"go1.x":           true,
+	"ruby2.5":         true,
+	"ruby2.7":         true,
+	"ruby3.2":         true,
+	"ruby3.3":         true,
+	"provided":        true,
+	"provided.al2":    true,
+	"provided.al2023": true,
+}
+
+// validateRuntime rejects a Runtime value that isn't one of the real Lambda
+// enum's identifiers. An empty Runtime is allowed through (container-image
+// PackageType functions omit it), matching real Lambda.
+func validateRuntime(runtime string) error {
+	if runtime == "" || validRuntimes[runtime] {
+		return nil
+	}
+
+	return cerrors.Newf(cerrors.InvalidArgument,
+		"value '%s' at 'runtime' failed to satisfy constraint: Member must satisfy enum value set: [%s]",
+		runtime, strings.Join(sortedRuntimeNames(), ", "))
+}
+
+// sortedRuntimeNames returns validRuntimes' keys in a stable order so the
+// error message above (and any test asserting on it) is deterministic.
+func sortedRuntimeNames() []string {
+	names := make([]string, 0, len(validRuntimes))
+	for r := range validRuntimes {
+		names = append(names, r)
+	}
+
+	sort.Strings(names)
+
+	return names
+}
+
 type versionData struct {
 	config     driver.FunctionConfig
 	version    string
@@ -219,6 +297,10 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		return nil, err
 	}
 
+	if err := validateRuntime(cfg.Runtime); err != nil {
+		return nil, err
+	}
+
 	arn := idgen.AWSARN("lambda", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "function:"+cfg.Name)
 	info := driver.FunctionInfo{
 		Name: cfg.Name, ARN: arn, Runtime: cfg.Runtime, Handler: cfg.Handler,
@@ -320,6 +402,19 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 
 	info := fd.info
 	applyConfigUpdates(&info, cfg)
+
+	// Validate the merged (existing + requested) Memory/Timeout/Runtime against
+	// the same real-Lambda constraints CreateFunction enforces before committing
+	// anything, so a rejected update leaves the function's prior configuration
+	// untouched rather than partially applying an invalid value.
+	if err := validateFunctionLimits(info.Memory, info.Timeout); err != nil {
+		return nil, err
+	}
+
+	if err := validateRuntime(info.Runtime); err != nil {
+		return nil, err
+	}
+
 	info.LastModified = m.opts.Clock.Now().UTC().Format(time.RFC3339)
 	// Every update — configuration or code — mints a new revision, matching the
 	// RevisionId Terraform reads to detect drift.
