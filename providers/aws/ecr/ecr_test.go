@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	"github.com/stretchr/testify/assert"
@@ -558,12 +559,12 @@ func TestImageTagMutability(t *testing.T) {
 		expectErr  bool
 	}{
 		{
-			name:       "MUTABLE allows duplicate tags",
+			name:       "MUTABLE allows moving a tag to different image content",
 			mutability: "MUTABLE",
 			expectErr:  false,
 		},
 		{
-			name:       "IMMUTABLE rejects duplicate tags",
+			name:       "IMMUTABLE rejects moving a tag to different image content",
 			mutability: "IMMUTABLE",
 			expectErr:  true,
 		},
@@ -580,20 +581,60 @@ func TestImageTagMutability(t *testing.T) {
 			})
 			require.NoError(t, err)
 
+			// Distinct manifest content so the two pushes content-address to
+			// distinct digests, exercising a genuine tag MOVE rather than a
+			// byte-identical re-push (which is ImageAlreadyExistsException
+			// regardless of mutability — see TestPutImageIdenticalRepush).
 			_, err = m.PutImage(ctx, &driver.ImageManifest{
-				Repository: "my-repo", Tag: "v1", SizeBytes: 100,
+				Repository: "my-repo", Tag: "v1", SizeBytes: 100, Manifest: `{"v":1}`,
 			})
 			require.NoError(t, err)
 
 			_, err = m.PutImage(ctx, &driver.ImageManifest{
-				Repository: "my-repo", Tag: "v1", SizeBytes: 200,
+				Repository: "my-repo", Tag: "v1", SizeBytes: 200, Manifest: `{"v":2}`,
 			})
 
 			if tc.expectErr {
 				require.Error(t, err)
+				assert.True(t, cerrors.IsFailedPrecondition(err))
 			} else {
 				require.NoError(t, err)
 			}
+		})
+	}
+}
+
+// TestPutImageIdenticalRepush covers real ECR's ImageAlreadyExistsException: a
+// byte-identical re-push of a tag's current image is a no-op and is rejected
+// on BOTH mutability settings, since it is a distinct case from
+// ImageTagAlreadyExistsException (which only fires when the tag would move to
+// a different digest on an IMMUTABLE repository).
+func TestPutImageIdenticalRepush(t *testing.T) {
+	for _, mutability := range []string{"MUTABLE", "IMMUTABLE"} {
+		t.Run(mutability, func(t *testing.T) {
+			m, _ := newTestMock()
+			ctx := context.Background()
+
+			_, err := m.CreateRepository(ctx, driver.RepositoryConfig{
+				Name:               "my-repo",
+				ImageTagMutability: mutability,
+			})
+			require.NoError(t, err)
+
+			manifest := &driver.ImageManifest{
+				Repository: "my-repo", Tag: "v1", SizeBytes: 100, Manifest: `{"v":1}`,
+			}
+
+			_, err = m.PutImage(ctx, manifest)
+			require.NoError(t, err)
+
+			_, err = m.PutImage(ctx, manifest)
+			require.Error(t, err)
+			assert.True(t, cerrors.IsAlreadyExists(err))
+
+			var ex interface{ ECRException() string }
+			require.ErrorAs(t, err, &ex)
+			assert.Equal(t, "ImageAlreadyExistsException", ex.ECRException())
 		})
 	}
 }

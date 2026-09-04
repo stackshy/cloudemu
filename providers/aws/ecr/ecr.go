@@ -240,11 +240,12 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", manifest.Repository)
 	}
 
-	if err := checkTagMutability(rd, manifest.Tag); err != nil {
+	digest := resolveDigest(manifest)
+
+	if err := checkTagMutability(rd, manifest.Tag, digest); err != nil {
 		return nil, err
 	}
 
-	digest := resolveDigest(manifest)
 	img := m.storeImage(rd, manifest, digest)
 
 	rd.info.ImageCount = rd.images.Len()
@@ -386,7 +387,7 @@ func (m *Mock) TagImage(_ context.Context, repository, sourceRef, targetTag stri
 		return errors.Newf(errors.NotFound, "image %q not found in repository %q", sourceRef, repository)
 	}
 
-	if err := checkTagMutability(rd, targetTag); err != nil {
+	if err := checkTagMutability(rd, targetTag, img.detail.Digest); err != nil {
 		return err
 	}
 
@@ -583,26 +584,52 @@ func findImage(rd *repoData, reference string) *imageData {
 	return nil
 }
 
-// checkTagMutability validates that a tag can be overwritten.
-func checkTagMutability(rd *repoData, tag string) error {
-	if tag == "" || rd.tagMutability != immutableTag {
+// checkTagMutability validates that tag can be (re)assigned to digest.
+//
+// Real ECR distinguishes two cases when a tag is already in use:
+//   - the tag already points at this EXACT digest (a byte-identical re-push,
+//     or a redundant re-tag) — this is ImageAlreadyExistsException regardless
+//     of the repository's tag mutability setting, since nothing would change.
+//   - the tag points at a DIFFERENT digest — this only fails, with
+//     ImageTagAlreadyExistsException, on an IMMUTABLE repository; a MUTABLE
+//     repository allows the tag to move.
+func checkTagMutability(rd *repoData, tag, digest string) error {
+	if tag == "" {
 		return nil
 	}
 
+	existing := digestForTag(rd, tag)
+	if existing == "" {
+		return nil
+	}
+
+	if existing == digest {
+		return apiErrExistsf(excImageAlreadyExists,
+			"image already exists with tag %q in repository", tag)
+	}
+
+	if rd.tagMutability != immutableTag {
+		return nil
+	}
+
+	return errors.Newf(
+		errors.FailedPrecondition,
+		"tag %q already exists and repository has IMMUTABLE tag mutability",
+		tag,
+	)
+}
+
+// digestForTag returns the digest of the image currently carrying tag, or ""
+// if no image in the repository has that tag.
+func digestForTag(rd *repoData, tag string) string {
 	all := rd.images.All()
-	for _, img := range all {
-		for _, t := range img.detail.Tags {
-			if t == tag {
-				return errors.Newf(
-					errors.FailedPrecondition,
-					"tag %q already exists and repository has IMMUTABLE tag mutability",
-					tag,
-				)
-			}
+	for digest, img := range all {
+		if hasTag(img.detail.Tags, tag) {
+			return digest
 		}
 	}
 
-	return nil
+	return ""
 }
 
 // resolveDigest returns the image digest. When the client supplies an explicit

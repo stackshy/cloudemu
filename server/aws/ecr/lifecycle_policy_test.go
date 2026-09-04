@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -198,6 +199,35 @@ func TestSDKECRDeleteLifecyclePolicyNoPolicy(t *testing.T) {
 	var lcNotFound *ecrtypes.LifecyclePolicyNotFoundException
 	if !errors.As(err, &lcNotFound) {
 		t.Fatalf("delete with no policy: want LifecyclePolicyNotFoundException, got %v", err)
+	}
+}
+
+// TestSDKECRGetLifecyclePolicyNoPolicyMessage guards against the internal
+// cloudemu error-code taxonomy ("NotFound: ...") leaking into the exception
+// message ECR clients see. writeLifecyclePolicyResult must use the plain
+// human-readable message, matching every other ECR error path.
+func TestSDKECRGetLifecyclePolicyNoPolicyMessage(t *testing.T) {
+	client := newECRClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateRepository(ctx, &awsecr.CreateRepositoryInput{
+		RepositoryName: aws.String("msg-lc-repo"),
+	}); err != nil {
+		t.Fatalf("CreateRepository: %v", err)
+	}
+
+	_, err := client.GetLifecyclePolicy(ctx, &awsecr.GetLifecyclePolicyInput{
+		RepositoryName: aws.String("msg-lc-repo"),
+	})
+
+	var lcNotFound *ecrtypes.LifecyclePolicyNotFoundException
+	if !errors.As(err, &lcNotFound) {
+		t.Fatalf("GetLifecyclePolicy: want LifecyclePolicyNotFoundException, got %v", err)
+	}
+
+	msg := aws.ToString(lcNotFound.Message)
+	if strings.Contains(msg, "NotFound:") {
+		t.Fatalf("LifecyclePolicyNotFoundException message leaks internal code prefix: %q", msg)
 	}
 }
 

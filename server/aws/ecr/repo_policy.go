@@ -10,10 +10,12 @@ import (
 
 // repoPolicyManager is the AWS-specific ECR repository-policy surface, asserted
 // against the provider (not part of the portable ContainerRegistry driver).
+// Each method returns the owning registryId alongside the policy text: real
+// ECR echoes registryId on every repository-policy response.
 type repoPolicyManager interface {
-	SetRepositoryPolicy(ctx context.Context, repository, policyText string) (string, error)
-	GetRepositoryPolicy(ctx context.Context, repository string) (string, error)
-	DeleteRepositoryPolicy(ctx context.Context, repository string) (string, error)
+	SetRepositoryPolicy(ctx context.Context, repository, policyText string) (registryID, policy string, err error)
+	GetRepositoryPolicy(ctx context.Context, repository string) (registryID, policy string, err error)
+	DeleteRepositoryPolicy(ctx context.Context, repository string) (registryID, policy string, err error)
 }
 
 func (h *Handler) repoPolicyMgr() (repoPolicyManager, bool) {
@@ -38,13 +40,15 @@ func (h *Handler) setRepositoryPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	policy, err := mgr.SetRepositoryPolicy(r.Context(), req.RepositoryName, req.PolicyText)
+	registryID, policy, err := mgr.SetRepositoryPolicy(r.Context(), req.RepositoryName, req.PolicyText)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"repositoryName": req.RepositoryName, "policyText": policy})
+	wire.WriteJSON(w, map[string]any{
+		"registryId": registryID, "repositoryName": req.RepositoryName, "policyText": policy,
+	})
 }
 
 func (h *Handler) getRepositoryPolicy(w http.ResponseWriter, r *http.Request) {
@@ -62,10 +66,11 @@ func (h *Handler) deleteRepositoryPolicy(w http.ResponseWriter, r *http.Request)
 }
 
 // runRepoPolicyOp runs a repository-name-only policy operation (get or delete)
-// and writes the resulting policyText, sharing the manager guard, request
-// decode, and error mapping between the two handlers.
+// and writes the resulting registryId/policyText, sharing the manager guard,
+// request decode, and error mapping between the two handlers.
 func (h *Handler) runRepoPolicyOp(
-	w http.ResponseWriter, r *http.Request, op func(repoPolicyManager, context.Context, string) (string, error),
+	w http.ResponseWriter, r *http.Request,
+	op func(repoPolicyManager, context.Context, string) (registryID, policy string, err error),
 ) {
 	mgr, ok := h.repoPolicyMgr()
 	if !ok {
@@ -81,11 +86,13 @@ func (h *Handler) runRepoPolicyOp(
 		return
 	}
 
-	policy, err := op(mgr, r.Context(), req.RepositoryName)
+	registryID, policy, err := op(mgr, r.Context(), req.RepositoryName)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"repositoryName": req.RepositoryName, "policyText": policy})
+	wire.WriteJSON(w, map[string]any{
+		"registryId": registryID, "repositoryName": req.RepositoryName, "policyText": policy,
+	})
 }

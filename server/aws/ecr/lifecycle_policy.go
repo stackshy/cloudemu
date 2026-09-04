@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
@@ -107,7 +108,7 @@ func (h *Handler) writeLifecyclePolicyResult(
 			return
 		}
 
-		wire.WriteJSONError(w, http.StatusBadRequest, "LifecyclePolicyNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "LifecyclePolicyNotFoundException", cerrors.Message(err))
 
 		return
 	}
