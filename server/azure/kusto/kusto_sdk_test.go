@@ -85,6 +85,72 @@ func TestSDKKustoLifecycle(t *testing.T) {
 	deleteCluster(t, ctx, clusters)
 }
 
+// TestSDKKustoClusterComputedDefaults verifies a cluster created without a
+// properties block still reports the computed property defaults real Azure
+// always echoes on GET (engineType=V3, publicNetworkAccess=Enabled,
+// enableAutoStop=true, enableStreamingIngest/DiskEncryption/Purge=false), and
+// that the returned resource id uses the capitalized Clusters segment.
+func TestSDKKustoClusterComputedDefaults(t *testing.T) {
+	ts := newServer(t)
+	ctx := context.Background()
+
+	clusters, err := armkusto.NewClustersClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewClustersClient: %v", err)
+	}
+
+	poller, err := clusters.BeginCreateOrUpdate(ctx, rgName, clusterName, armkusto.Cluster{
+		Location: to.Ptr("eastus"),
+		SKU: &armkusto.AzureSKU{
+			Name: to.Ptr(armkusto.AzureSKUNameStandardD11V2),
+			Tier: to.Ptr(armkusto.AzureSKUTierStandard),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate cluster: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("poll cluster create: %v", err)
+	}
+
+	got, err := clusters.Get(ctx, rgName, clusterName, nil)
+	if err != nil {
+		t.Fatalf("Get cluster: %v", err)
+	}
+
+	p := got.Properties
+	if p == nil {
+		t.Fatal("cluster properties nil")
+	}
+
+	if p.EngineType == nil || *p.EngineType != armkusto.EngineTypeV3 {
+		t.Errorf("engineType = %v, want V3", p.EngineType)
+	}
+
+	if p.PublicNetworkAccess == nil || *p.PublicNetworkAccess != armkusto.PublicNetworkAccessEnabled {
+		t.Errorf("publicNetworkAccess = %v, want Enabled", p.PublicNetworkAccess)
+	}
+
+	if p.EnableAutoStop == nil || !*p.EnableAutoStop {
+		t.Errorf("enableAutoStop = %v, want true", p.EnableAutoStop)
+	}
+
+	for name, ptr := range map[string]*bool{
+		"enableStreamingIngest": p.EnableStreamingIngest,
+		"enableDiskEncryption":  p.EnableDiskEncryption,
+		"enablePurge":           p.EnablePurge,
+	} {
+		if ptr == nil || *ptr {
+			t.Errorf("%s = %v, want false", name, ptr)
+		}
+	}
+
+	if got.ID == nil || !strings.Contains(*got.ID, "/Microsoft.Kusto/Clusters/") {
+		t.Errorf("cluster id = %v, want a capitalized /Microsoft.Kusto/Clusters/ segment", got.ID)
+	}
+}
+
 func createCluster(t *testing.T, ctx context.Context, c *armkusto.ClustersClient) {
 	t.Helper()
 
@@ -207,6 +273,10 @@ func createDatabase(t *testing.T, ctx context.Context, c *armkusto.DatabasesClie
 
 	if rw.Properties == nil || rw.Properties.SoftDeletePeriod == nil || *rw.Properties.SoftDeletePeriod != "P30D" {
 		t.Fatalf("softDeletePeriod = %v, want P30D", rw.Properties)
+	}
+
+	if rw.ID == nil || !strings.Contains(*rw.ID, "/Clusters/") || !strings.Contains(*rw.ID, "/Databases/") {
+		t.Fatalf("database id = %v, want capitalized /Clusters/.../Databases/ segments", rw.ID)
 	}
 }
 

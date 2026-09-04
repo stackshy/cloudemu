@@ -220,7 +220,7 @@ func toDatabaseResource(c *clusterState, db *databaseState) databaseResource {
 	props := db.Properties
 	props.ProvisioningState = provisioningSucceeded
 
-	resourceType := segClusters + "/" + c.Name + "/" + segDatabases
+	resourceType := idSegClusters + "/" + c.Name + "/" + idSegDatabases
 
 	return databaseResource{
 		ID:         azurearm.BuildResourceID(c.Subscription, c.ResourceGroup, providerName, resourceType, db.Name),
