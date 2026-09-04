@@ -89,6 +89,69 @@ func TestSDKClientRequestTokenIdempotent(t *testing.T) {
 	}
 }
 
+// TestSDKCreateSecretClientRequestTokenIdempotent guards a real-user e2e
+// finding: a CreateSecret call retried with the same ClientRequestToken and
+// identical content (e.g. an SDK auto-retry after a lost response) must be a
+// no-op that returns the already-created secret, not ResourceExistsException —
+// the whole reason the client token exists is to make CreateSecret safe to
+// retry. Retrying with the same token but different content must still fail,
+// since the already-created version can't be modified in place.
+func TestSDKCreateSecretClientRequestTokenIdempotent(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	const token = "22222222-2222-2222-2222-222222222222"
+
+	first, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("create-idem"), SecretString: aws.String("v1"),
+		ClientRequestToken: aws.String(token),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret(first): %v", err)
+	}
+
+	// Retry: same name, same token, same content -> idempotent no-op, same ARN
+	// and VersionId.
+	second, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("create-idem"), SecretString: aws.String("v1"),
+		ClientRequestToken: aws.String(token),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret(retry): %v", err)
+	}
+
+	if aws.ToString(second.ARN) != aws.ToString(first.ARN) {
+		t.Fatalf("retry ARN = %q, want the original %q", aws.ToString(second.ARN), aws.ToString(first.ARN))
+	}
+
+	if aws.ToString(second.VersionId) != token {
+		t.Fatalf("retry VersionId = %q, want the ClientRequestToken %q", aws.ToString(second.VersionId), token)
+	}
+
+	// Only one version was created (the retry did not append a second).
+	list, err := client.ListSecretVersionIds(ctx, &awssm.ListSecretVersionIdsInput{
+		SecretId: aws.String("create-idem"), IncludeDeprecated: aws.Bool(true),
+	})
+	if err != nil {
+		t.Fatalf("ListSecretVersionIds: %v", err)
+	}
+
+	if len(list.Versions) != 1 {
+		t.Fatalf("version count = %d, want 1 (idempotent retry did not add a version)", len(list.Versions))
+	}
+
+	// Same token, different content: a genuine conflict, still ResourceExistsException.
+	_, err = client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("create-idem"), SecretString: aws.String("different"),
+		ClientRequestToken: aws.String(token),
+	})
+
+	var exists *smtypes.ResourceExistsException
+	if !errors.As(err, &exists) {
+		t.Fatalf("reused token + different content: got %v, want ResourceExistsException", err)
+	}
+}
+
 // TestSDKVersionIdIsUUID guards F9: version ids are 36-char UUIDs, not counter
 // ids.
 func TestSDKVersionIdIsUUID(t *testing.T) {
@@ -371,6 +434,50 @@ func TestSDKSecretARNSuffixResolvesByName(t *testing.T) {
 
 	if aws.ToString(byARN.SecretString) != "v" {
 		t.Fatalf("value by ARN = %q, want v", aws.ToString(byARN.SecretString))
+	}
+}
+
+// TestSDKRecreatedSecretGetsFreshARN guards a real-user e2e finding: real
+// Secrets Manager draws a new random ARN suffix on every CreateSecret, so a
+// secret force-deleted and recreated under the same name gets a different ARN
+// (the whole point of the suffix — an old ARN a caller cached, e.g. in an IAM
+// policy or Terraform state, must never resolve to the unrelated new secret).
+func TestSDKRecreatedSecretGetsFreshARN(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	first, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("recreate-me"), SecretString: aws.String("v1"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret(first): %v", err)
+	}
+
+	if _, err := client.DeleteSecret(ctx, &awssm.DeleteSecretInput{
+		SecretId: aws.String("recreate-me"), ForceDeleteWithoutRecovery: aws.Bool(true),
+	}); err != nil {
+		t.Fatalf("DeleteSecret: %v", err)
+	}
+
+	second, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{
+		Name: aws.String("recreate-me"), SecretString: aws.String("v2"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecret(second): %v", err)
+	}
+
+	if aws.ToString(first.ARN) == aws.ToString(second.ARN) {
+		t.Fatalf("recreated secret kept the same ARN %q, want a fresh suffix", aws.ToString(second.ARN))
+	}
+
+	// The new secret is reachable by its own fresh ARN.
+	byNewARN, err := client.GetSecretValue(ctx, &awssm.GetSecretValueInput{SecretId: second.ARN})
+	if err != nil {
+		t.Fatalf("GetSecretValue(new ARN): %v", err)
+	}
+
+	if aws.ToString(byNewARN.SecretString) != "v2" {
+		t.Fatalf("value by new ARN = %q, want v2", aws.ToString(byNewARN.SecretString))
 	}
 }
 

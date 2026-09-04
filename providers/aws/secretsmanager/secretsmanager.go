@@ -163,23 +163,16 @@ func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value 
 	}
 
 	if existing, ok := m.secrets.Get(cfg.Name); ok {
-		existing.mu.RLock()
-		scheduledForDeletion := !existing.deletedAt.IsZero()
-		existing.mu.RUnlock()
-
-		if scheduledForDeletion {
-			return nil, errors.New(errors.FailedPrecondition,
-				"a secret with this name is already scheduled for deletion")
-		}
-
-		return nil, errors.Newf(errors.AlreadyExists, "secret %q already exists", cfg.Name)
+		return m.createSecretConflict(ctx, existing, cfg, value)
 	}
 
 	now := m.opts.Clock.Now().UTC().Format(time.RFC3339)
-	// The ARN resource segment ends with a deterministic 6-char suffix
-	// (:secret:<name>-<suffix>), matching real Secrets Manager. resolveSecretID
-	// on the wire side strips it, so lookups by the friendly name still resolve.
-	suffix := idgen.SecretARNSuffix(m.opts.Region + ":" + m.opts.AccountID + ":" + cfg.Name)
+	// The ARN resource segment ends with a fresh random 6-char suffix
+	// (:secret:<name>-<suffix>), matching real Secrets Manager: a secret deleted
+	// and recreated under the same name gets a different ARN, so a reference to
+	// the old ARN never resolves to the new secret. resolveSecretID on the wire
+	// side strips it, so lookups by the friendly name still resolve.
+	suffix := idgen.SecretARNSuffix()
 	arn := idgen.AWSARN("secretsmanager", m.opts.Region, m.opts.AccountID, "secret:"+cfg.Name+"-"+suffix)
 
 	tags := make(map[string]string, len(cfg.Tags))
@@ -226,6 +219,66 @@ func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value 
 	m.secrets.Set(cfg.Name, sd)
 
 	result := info
+
+	return &result, nil
+}
+
+// createSecretConflict handles CreateSecret when a secret already exists under
+// cfg.Name: a retry sharing the same ClientRequestToken and content as the
+// existing secret's initial version is an idempotent no-op (see
+// idempotentCreateSecret); otherwise it reports the name collision, as
+// FailedPrecondition when the existing secret is scheduled for deletion and
+// AlreadyExists otherwise.
+func (m *Mock) createSecretConflict(
+	ctx context.Context, existing *secretData, cfg driver.SecretConfig, value []byte, //nolint:gocritic // hugeParam
+) (*driver.SecretInfo, error) {
+	existing.mu.Lock()
+	scheduledForDeletion := !existing.deletedAt.IsZero()
+
+	// A retry of this same CreateSecret call — the same ClientRequestToken
+	// naming the secret's already-created initial version — is a no-op that
+	// returns the existing secret rather than erroring, matching real Secrets
+	// Manager's SDK-retry-safety contract (the whole reason a client token
+	// exists: a lost response must not turn a successful create into a hard
+	// failure on retry).
+	if !scheduledForDeletion && cfg.ClientRequestToken != "" {
+		if ver, found := existing.versionByID(cfg.ClientRequestToken); found {
+			info, err := m.idempotentCreateSecret(ctx, existing, ver, value)
+			existing.mu.Unlock()
+
+			return info, err
+		}
+	}
+
+	existing.mu.Unlock()
+
+	if scheduledForDeletion {
+		return nil, errors.New(errors.FailedPrecondition,
+			"a secret with this name is already scheduled for deletion")
+	}
+
+	return nil, errors.Newf(errors.AlreadyExists, "secret %q already exists", cfg.Name)
+}
+
+// idempotentCreateSecret handles a CreateSecret call whose ClientRequestToken
+// names a version that already exists on the secret found under the requested
+// name (i.e. a retried CreateSecret): with identical content it returns the
+// existing secret unchanged (idempotent no-op); with different content the
+// existing version can't be modified in place, so it reports the same
+// AlreadyExists a plain name collision would. Callers must hold existing.mu.
+func (m *Mock) idempotentCreateSecret(
+	ctx context.Context, existing *secretData, ver *driver.SecretVersion, value []byte,
+) (*driver.SecretInfo, error) {
+	existingPlain, err := m.decrypt(ctx, ver.Value)
+	if err != nil {
+		return nil, err
+	}
+
+	if !bytes.Equal(existingPlain, value) {
+		return nil, errors.Newf(errors.AlreadyExists, "secret %q already exists", existing.info.Name)
+	}
+
+	result := existing.info
 
 	return &result, nil
 }
