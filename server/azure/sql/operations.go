@@ -191,7 +191,9 @@ func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.Datab
 
 	if body.Properties != nil {
 		cfg.Collation = body.Properties.Collation
-		cfg.ElasticPoolID = body.Properties.ElasticPoolID
+		if body.Properties.ElasticPoolID != nil {
+			cfg.ElasticPoolID = *body.Properties.ElasticPoolID
+		}
 		cfg.CreateMode = body.Properties.CreateMode
 		cfg.SourceDatabaseID = body.Properties.SourceDatabaseID
 
@@ -307,7 +309,11 @@ func mergeDatabaseFields(existing *rdsdriver.Database, body *armDatabase, cfg *r
 		merged.Tags = cfg.Tags
 	}
 
-	if cfg.ElasticPoolID != "" {
+	// ElasticPoolID is merged on pointer presence, not on cfg's zero-value check:
+	// a request explicitly clearing the field (elasticPoolId: "") must remove the
+	// database from its pool, which "" == not-supplied would otherwise mask (see
+	// dbCfgFromBody, which only sets cfg.ElasticPoolID when the pointer is set).
+	if body.Properties != nil && body.Properties.ElasticPoolID != nil {
 		merged.ElasticPoolID = cfg.ElasticPoolID
 	}
 
