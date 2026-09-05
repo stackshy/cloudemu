@@ -16,12 +16,20 @@ type topic struct {
 }
 
 // subscription is the GCP Pub/Sub Subscription resource shape. Extended fields
-// (pushConfig/retryPolicy/deadLetterPolicy/expirationPolicy) are kept as raw
-// JSON so they round-trip verbatim without modeling every nested member.
+// (pushConfig/bigqueryConfig/cloudStorageConfig/bigtableConfig/retryPolicy/
+// deadLetterPolicy/expirationPolicy) are kept as raw JSON so they round-trip
+// verbatim without modeling every nested member. pushConfig, bigqueryConfig,
+// cloudStorageConfig and bigtableConfig are the four mutually-exclusive
+// delivery types Pub/Sub supports (a subscription with none of them is a plain
+// pull subscription); all four must round-trip so Terraform's push_config /
+// bigquery_config / cloud_storage_config blocks don't perpetually drift.
 type subscription struct {
 	Name                      string            `json:"name"`
 	Topic                     string            `json:"topic"`
 	PushConfig                json.RawMessage   `json:"pushConfig,omitempty"`
+	BigqueryConfig            json.RawMessage   `json:"bigqueryConfig,omitempty"`
+	CloudStorageConfig        json.RawMessage   `json:"cloudStorageConfig,omitempty"`
+	BigtableConfig            json.RawMessage   `json:"bigtableConfig,omitempty"`
 	AckDeadlineSeconds        int               `json:"ackDeadlineSeconds,omitempty"`
 	RetainAckedMessages       bool              `json:"retainAckedMessages,omitempty"`
 	MessageRetentionDuration  string            `json:"messageRetentionDuration,omitempty"`
