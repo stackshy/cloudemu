@@ -195,6 +195,17 @@ type awsConfigManager interface {
 	GetFunctionAWSConfig(ctx context.Context, name string) (sdrv.AWSFunctionConfig, error)
 }
 
+// versionDeleter is the AWS-specific version-scoped delete surface backing a
+// DeleteFunction that carries a Qualifier. Deleting a single published version
+// (leaving $LATEST and other versions/aliases intact) is a Lambda concept with no
+// Azure Functions / GCP Cloud Functions equivalent, so it is kept off the portable
+// Serverless driver and type-asserted the same way as policyManager /
+// functionTagger. An unqualified DeleteFunction still removes the whole function
+// via the driver's DeleteFunction.
+type versionDeleter interface {
+	DeleteVersion(ctx context.Context, name, qualifier string) error
+}
+
 // ObjectStore is the slice of the in-process S3 backend the handler needs to
 // fetch an S3-sourced deployment package (Code.S3Bucket/S3Key).
 type ObjectStore interface {
@@ -1262,6 +1273,31 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, name string) {
+	// A Qualifier (from ?Qualifier= or a "name:qualifier" FunctionName, already
+	// reconciled onto the query by resolveFunctionRef) scopes DeleteFunction to a
+	// single published version — real Lambda deletes only that version and leaves
+	// $LATEST and the other versions/aliases intact. Without a qualifier the whole
+	// function (all versions and aliases) is deleted.
+	if qualifier := r.URL.Query().Get("Qualifier"); qualifier != "" {
+		vd, ok := h.fn.(versionDeleter)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "InvalidParameterValueException",
+				"version-scoped delete is not supported by this provider")
+
+			return
+		}
+
+		if err := vd.DeleteVersion(r.Context(), name, qualifier); err != nil {
+			writeErr(w, err)
+
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+		return
+	}
+
 	if err := h.fn.DeleteFunction(r.Context(), name); err != nil {
 		writeErr(w, err)
 		return
