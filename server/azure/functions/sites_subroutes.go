@@ -112,6 +112,9 @@ func getConfigWeb(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePa
 		Type: configResourceType,
 		Properties: siteConfig{
 			LinuxFxVersion: meta.LinuxFxVersion,
+			AlwaysOn:       meta.AlwaysOn,
+			FtpsState:      meta.FtpsState,
+			MinTLSVersion:  meta.MinTLSVersion,
 			AppSettings:    appSettingsSlice(meta.AppSettings),
 		},
 	})
