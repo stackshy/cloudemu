@@ -20,12 +20,20 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	repo, err := h.registry.CreateRepository(r.Context(), crdriver.RepositoryConfig{
+	cfg := crdriver.RepositoryConfig{
 		Name:               req.RepositoryName,
 		Tags:               tagsToMap(req.Tags),
 		ImageScanOnPush:    req.ImageScanningConfiguration.ScanOnPush,
 		ImageTagMutability: req.ImageTagMutability,
-	})
+	}
+	if req.EncryptionConfiguration != nil {
+		cfg.Encryption = &crdriver.EncryptionConfig{
+			Type:   req.EncryptionConfiguration.EncryptionType,
+			KmsKey: req.EncryptionConfiguration.KmsKey,
+		}
+	}
+
+	repo, err := h.registry.CreateRepository(r.Context(), cfg)
 	if err != nil {
 		writeErr(w, err)
 		return
