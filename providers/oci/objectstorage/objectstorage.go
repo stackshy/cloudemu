@@ -96,10 +96,13 @@ var _ driver.Bucket = (*Mock)(nil)
 // Optional driver capabilities, discovered by type assertion.
 var _ driver.VersionedBucket = (*Mock)(nil)
 
-// objectData is one stored object at its current version.
+// objectData is one stored object at its current version. Data is nil once a
+// StorageEngine holds the bytes instead, so Size is tracked independently and
+// Head/List stay correct after the offload.
 type objectData struct {
 	Name         string
 	Data         []byte
+	Size         int64
 	ContentType  string
 	ContentMD5   string
 	ETag         string
@@ -115,6 +118,7 @@ type objectData struct {
 type objectVersion struct {
 	versionID    string
 	data         []byte
+	size         int64
 	contentType  string
 	contentMD5   string
 	etag         string

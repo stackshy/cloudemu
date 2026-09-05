@@ -19,6 +19,9 @@ const metaPrefix = "opc-meta-"
 // headerStorageTier is the per-object storage tier header.
 const headerStorageTier = "storage-tier"
 
+// defaultContentType is what OCI reports for an object stored without one.
+const defaultContentType = "application/octet-stream"
+
 // maxObjectSize bounds a single PutObject body, so a runaway upload cannot
 // exhaust the emulator's memory.
 const maxObjectSize = 512 << 20
@@ -137,7 +140,7 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, obj
 		}
 
 		stampInfoHeaders(w, info)
-		ocirest.WriteJSON(w, r, http.StatusOK, nil)
+		writeHead(w, r, info.Size, info.ContentType)
 
 		return
 	}
@@ -149,7 +152,22 @@ func (h *Handler) headObject(w http.ResponseWriter, r *http.Request, bucket, obj
 	}
 
 	stampObjectHeaders(w, details)
-	ocirest.WriteJSON(w, r, http.StatusOK, nil)
+	writeHead(w, r, details.Size, details.ContentType)
+}
+
+// writeHead answers a HeadObject. The response carries no body, so the object's
+// own size and type have to be reported in headers rather than inferred — which
+// is why this does not go through ocirest.WriteJSON, whose application/json
+// would overwrite the object's content type.
+func writeHead(w http.ResponseWriter, r *http.Request, size int64, contentType string) {
+	if contentType == "" {
+		contentType = defaultContentType
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Header().Set("Content-Length", strconv.FormatInt(size, 10))
+	stampRequestID(w, r)
+	w.WriteHeader(http.StatusOK)
 }
 
 func (h *Handler) deleteObject(w http.ResponseWriter, r *http.Request, bucket, object string) {
@@ -230,9 +248,20 @@ func listOptions(r *http.Request) driver.ListOptions {
 	return driver.ListOptions{
 		Prefix:    q.Get("prefix"),
 		Delimiter: q.Get("delimiter"),
-		MaxKeys:   ocirest.Limit(r),
+		MaxKeys:   listLimit(r),
 		PageToken: q.Get("start"),
 	}
+}
+
+// listLimit is the requested page size, or zero when the caller named none.
+// Object Storage's own default is 1000, not the 100 shared by the other OCI
+// services, so an absent limit is left for the provider to fill in.
+func listLimit(r *http.Request) int {
+	if r.URL.Query().Get("limit") == "" {
+		return 0
+	}
+
+	return ocirest.Limit(r)
 }
 
 func (h *Handler) listObjectVersions(w http.ResponseWriter, r *http.Request, bucket string) {
@@ -412,7 +441,7 @@ func stampInfoHeaders(w http.ResponseWriter, info *driver.ObjectInfo) {
 // ocirest's JSON helpers do.
 func writeRaw(w http.ResponseWriter, r *http.Request, contentType string, data []byte) {
 	if contentType == "" {
-		contentType = "application/octet-stream"
+		contentType = defaultContentType
 	}
 
 	w.Header().Set("Content-Type", contentType)

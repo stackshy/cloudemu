@@ -125,7 +125,7 @@ func (m *Mock) ListParts(_ context.Context, bucket, key, uploadID string) ([]dri
 // CompleteMultipartUpload assembles the named parts, in ascending part-number
 // order, into the upload's object.
 func (m *Mock) CompleteMultipartUpload(
-	_ context.Context, bucket, key, uploadID string, parts []driver.UploadPart,
+	ctx context.Context, bucket, key, uploadID string, parts []driver.UploadPart,
 ) error {
 	if len(parts) == 0 {
 		return cerrors.New(cerrors.InvalidArgument, "partsToCommit cannot be empty")
@@ -168,9 +168,10 @@ func (m *Mock) CompleteMultipartUpload(
 	}
 
 	now := m.now()
-	storeObjectLocked(bkt, &objectData{
+	obj := &objectData{
 		Name:         mp.object,
 		Data:         data,
+		Size:         int64(len(data)),
 		ContentType:  mp.contentType,
 		ContentMD5:   contentMD5(data),
 		ETag:         objectETag(data),
@@ -178,7 +179,14 @@ func (m *Mock) CompleteMultipartUpload(
 		TimeModified: now,
 		Metadata:     cloneMeta(mp.metadata),
 		StorageTier:  mp.storageTier,
-	})
+	}
+	storeObjectLocked(bkt, obj)
+
+	// Parts stay on the heap until the upload commits; only the assembled
+	// object reaches the engine.
+	if err := m.offloadLocked(ctx, bkt, bucket, obj); err != nil {
+		return err
+	}
 
 	bkt.multiparts.Delete(uploadID)
 

@@ -162,6 +162,10 @@ type route struct {
 	// Rest is everything after Sub: an object name (which may contain slashes),
 	// a PAR OCID, a retention rule OCID or an action name.
 	Rest string
+	// HasBucketSeg records whether a /b segment was present. It is what
+	// separates /n/{ns}/b from /n/{ns}; sniffing the raw path for "/b" instead
+	// misreads a namespace that itself starts with b.
+	HasBucketSeg bool
 }
 
 // Matches claims the namespace-rooted Object Storage paths and the PAR
@@ -218,6 +222,8 @@ func parseNamespaced(rt route, rem string) (route, bool) {
 	if seg != segBuckets {
 		return route{}, false
 	}
+
+	rt.HasBucketSeg = true
 
 	if rem == "" {
 		return rt, true
@@ -284,7 +290,7 @@ func (h *Handler) namespaceOK(w http.ResponseWriter, r *http.Request, namespace 
 
 // serveBucketCollection serves /n/{ns} and /n/{ns}/b.
 func (h *Handler) serveBucketCollection(w http.ResponseWriter, r *http.Request, rt *route) {
-	if !strings.Contains(r.URL.Path, "/"+segBuckets) {
+	if !rt.HasBucketSeg {
 		h.namespaceMetadata(w, r)
 		return
 	}
@@ -297,8 +303,6 @@ func (h *Handler) serveBucketCollection(w http.ResponseWriter, r *http.Request, 
 	default:
 		methodNotAllowed(w, r)
 	}
-
-	_ = rt
 }
 
 // serveBucket dispatches everything addressed at one bucket.
