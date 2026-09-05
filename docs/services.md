@@ -66,7 +66,7 @@ This document lists every service and operation available in CloudEmu across all
 ## 1. Storage
 
 **Driver interface:** `services/storage/driver/driver.go`
-**AWS:** S3 | **Azure:** Blob Storage | **GCP:** GCS
+**AWS:** S3 | **Azure:** Blob Storage | **GCP:** GCS | **OCI:** Object Storage (buckets live in a compartment under the tenancy namespace; pre-authenticated requests map to presigned URLs; retention rules and storage tiers have no portable equivalent — bucket policies, CORS and object tags are not OCI concepts and answer `Unimplemented`)
 
 ### Bucket Operations
 
@@ -158,6 +158,79 @@ This document lists every service and operation available in CloudEmu across all
 | `DeleteBucketTagging` | `(ctx, bucket) error` |
 
 **Total: 33 operations**
+
+### OCI Object Storage
+
+**Optional capability:** `server/oci/objectstorage.Extras` — OCI roots every
+path at the tenancy namespace, scopes buckets to a compartment, and carries
+bucket settings, object rename, storage tiers, retention rules and
+pre-authenticated requests that the portable interface does not express. Its
+value types live in `providers/oci/objectstorage`.
+**Provider:** `providers/oci/objectstorage` | **Wire:** `server/oci/objectstorage`
+
+Object Storage carries no API-version prefix; `{ns}` is the tenancy namespace,
+which `GET /n` returns.
+
+| Operation | Route |
+|-----------|-------|
+| `GetNamespace` | `GET /n` |
+| `GetNamespaceMetadata` | `GET /n/{ns}` |
+| `CreateBucket` | `POST /n/{ns}/b` |
+| `ListBuckets` | `GET /n/{ns}/b` |
+| `GetBucket` | `GET /n/{ns}/b/{bucket}` |
+| `HeadBucket` | `HEAD /n/{ns}/b/{bucket}` |
+| `UpdateBucket` | `POST /n/{ns}/b/{bucket}` |
+| `DeleteBucket` | `DELETE /n/{ns}/b/{bucket}` |
+| `ListObjects` | `GET /n/{ns}/b/{bucket}/o` |
+| `PutObject` | `PUT /n/{ns}/b/{bucket}/o/{object}` |
+| `GetObject` | `GET /n/{ns}/b/{bucket}/o/{object}` |
+| `HeadObject` | `HEAD /n/{ns}/b/{bucket}/o/{object}` |
+| `DeleteObject` | `DELETE /n/{ns}/b/{bucket}/o/{object}` |
+| `ListObjectVersions` | `GET /n/{ns}/b/{bucket}/objectversions` |
+| `RenameObject` | `POST /n/{ns}/b/{bucket}/actions/renameObject` |
+| `CopyObject` | `POST /n/{ns}/b/{bucket}/actions/copyObject` |
+| `UpdateObjectStorageTier` | `POST /n/{ns}/b/{bucket}/actions/updateObjectStorageTier` |
+| `CreateMultipartUpload` | `POST /n/{ns}/b/{bucket}/u` |
+| `ListMultipartUploads` | `GET /n/{ns}/b/{bucket}/u` |
+| `UploadPart` | `PUT /n/{ns}/b/{bucket}/u/{object}` |
+| `CommitMultipartUpload` | `POST /n/{ns}/b/{bucket}/u/{object}` |
+| `ListMultipartUploadParts` | `GET /n/{ns}/b/{bucket}/u/{object}` |
+| `AbortMultipartUpload` | `DELETE /n/{ns}/b/{bucket}/u/{object}` |
+| `CreatePreauthenticatedRequest` | `POST /n/{ns}/b/{bucket}/p` |
+| `ListPreauthenticatedRequests` | `GET /n/{ns}/b/{bucket}/p` |
+| `GetPreauthenticatedRequest` | `GET /n/{ns}/b/{bucket}/p/{parId}` |
+| `DeletePreauthenticatedRequest` | `DELETE /n/{ns}/b/{bucket}/p/{parId}` |
+| PAR redemption | `GET`/`PUT /p/{par}/n/{ns}/b/{bucket}/o/{object}` |
+| `CreateRetentionRule` | `POST /n/{ns}/b/{bucket}/retentionRules` |
+| `ListRetentionRules` | `GET /n/{ns}/b/{bucket}/retentionRules` |
+| `GetRetentionRule` | `GET /n/{ns}/b/{bucket}/retentionRules/{ruleId}` |
+| `UpdateRetentionRule` | `PUT /n/{ns}/b/{bucket}/retentionRules/{ruleId}` |
+| `DeleteRetentionRule` | `DELETE /n/{ns}/b/{bucket}/retentionRules/{ruleId}` |
+| `PutObjectLifecyclePolicy` | `PUT /n/{ns}/b/{bucket}/l` |
+| `GetObjectLifecyclePolicy` | `GET /n/{ns}/b/{bucket}/l` |
+| `DeleteObjectLifecyclePolicy` | `DELETE /n/{ns}/b/{bucket}/l` |
+
+`ListBuckets` is the one collection OCI scopes by compartment, so it is the
+only route here that requires `compartmentId`; every other list is scoped by
+its bucket. An unspecified `limit` on `ListObjects` yields OCI's page size of
+1000, not the 100 the other OCI services default to. `copyObject` is
+asynchronous in real OCI, so it returns `202` with an `opc-work-request-id` the
+shared work-request poller answers; every other mutation here is synchronous.
+
+Buckets refuse deletion while they hold objects or uncommitted multipart
+uploads. Versioning is the OCI tri-state — `Disabled`, `Enabled`, `Suspended` —
+and never returns to `Disabled` once enabled; a `Suspended` bucket reuses the
+`null` version rather than appending. Retention rules with an elapsed lock
+block overwrites and deletes, and a locked rule cannot be weakened.
+
+Object bytes flow through `config.WithStorageEngine` when one is wired, the
+same seam AWS S3, Azure Blob and GCP GCS use, keyed by object version so each
+version's bytes are addressed separately.
+
+Not emulated: `/actions/reencrypt` and `/actions/restoreObjects`, which need
+per-object key material and an archive-retrieval lifecycle the storage driver
+has no shape for. Both are claimed by the handler and answer `501` with the
+reason rather than a bare `404`.
 
 ---
 

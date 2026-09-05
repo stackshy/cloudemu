@@ -96,7 +96,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `sql` | — | [SQL](./azure/sql.md) | — | — | 21 |
 | `sqlvirtualmachine` | — | [SQLVirtualMachine](./azure/sqlvirtualmachine.md) | — | — | 9 |
 | `sshpublickeys` | — | [Sshpublickeys](./azure/sshpublickeys.md) | — | — | 7 |
-| `storage` | [S3](./aws/s3.md) | [BlobStorage](./azure/blobstorage.md) | [GCS](./gcp/gcs.md) | — | 35 |
+| `storage` | [S3](./aws/s3.md) | [BlobStorage](./azure/blobstorage.md) | [GCS](./gcp/gcs.md) | [ObjectStorage](./oci/objectstorage.md) | 35 |
 | `storageaccount` | — | [Storageaccount](./azure/storageaccount.md) | — | — | 10 |
 | `sts` | [STS](./aws/sts.md) | — | — | — | 8 |
 | `subscriptions` | — | [Subscriptions](./azure/subscriptions.md) | — | — | 3 |

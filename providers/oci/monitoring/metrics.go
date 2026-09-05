@@ -78,8 +78,24 @@ type metricSeries struct {
 	points        []metricPoint
 }
 
-// PostMetricData records metric data points against a compartment.
-func (m *Mock) PostMetricData(_ context.Context, compartmentID, resourceGroup string, data []driver.MetricDatum) error {
+// PostMetricData records metric data points against a compartment. It is the
+// customer-facing path, so an Oracle-reserved namespace is refused here.
+func (m *Mock) PostMetricData(ctx context.Context, compartmentID, resourceGroup string, data []driver.MetricDatum) error {
+	for i := range data {
+		if reservedNamespace(data[i].Namespace) {
+			return cerrors.Newf(cerrors.InvalidArgument, "namespace %q uses a prefix Oracle reserves", data[i].Namespace)
+		}
+	}
+
+	return m.postMetricData(ctx, compartmentID, resourceGroup, data)
+}
+
+// postMetricData is the shared recorder. Oracle's own emulated services publish
+// through it into their reserved namespaces, which only customers are barred
+// from.
+func (m *Mock) postMetricData(
+	_ context.Context, compartmentID, resourceGroup string, data []driver.MetricDatum,
+) error {
 	if compartmentID == "" {
 		return cerrors.New(cerrors.InvalidArgument, "compartmentId is required")
 	}
@@ -329,8 +345,6 @@ func validateDatum(d *driver.MetricDatum) error {
 	case !validNamespace(d.Namespace):
 		return cerrors.Newf(cerrors.InvalidArgument,
 			"namespace %q must start with a letter and hold only letters, digits and underscores", d.Namespace)
-	case reservedNamespace(d.Namespace):
-		return cerrors.Newf(cerrors.InvalidArgument, "namespace %q uses a prefix Oracle reserves", d.Namespace)
 	case d.MetricName == "":
 		return cerrors.New(cerrors.InvalidArgument, "metric name is required")
 	case len(d.MetricName) > maxNameLength:
