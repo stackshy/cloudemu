@@ -196,6 +196,59 @@ func TestVaultARMLifecycle(t *testing.T) {
 	}
 }
 
+// TestVaultARMMinimalCreateDefaults verifies a create body that omits the
+// soft-delete and RBAC flags round-trips (on both the PUT response and a
+// follow-up GET) with the defaults real Azure Key Vault stamps on the vault:
+// enableSoftDelete=true, softDeleteRetentionInDays=90, enableRbacAuthorization=false.
+// A raw armkeyvault SDK user or a Terraform azurerm_key_vault refresh would
+// otherwise see these fields absent and drift.
+func TestVaultARMMinimalCreateDefaults(t *testing.T) {
+	ts := newVaultServer(t)
+	base := ts.URL
+
+	minimal := map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"tenantId": "11111111-1111-1111-1111-111111111111",
+			"sku":      map[string]any{"family": "A", "name": "standard"},
+		},
+	}
+
+	assertDefaults := func(label string, props map[string]any) {
+		if props["enableSoftDelete"] != true {
+			t.Errorf("%s enableSoftDelete = %v, want true", label, props["enableSoftDelete"])
+		}
+
+		if props["softDeleteRetentionInDays"] != float64(90) {
+			t.Errorf("%s softDeleteRetentionInDays = %v, want 90", label, props["softDeleteRetentionInDays"])
+		}
+
+		if props["enableRbacAuthorization"] != false {
+			t.Errorf("%s enableRbacAuthorization = %v, want false", label, props["enableRbacAuthorization"])
+		}
+	}
+
+	status, body := doJSON(t, http.MethodPut, vaultURL(base, vaultSub, vaultRG, "minivault"), minimal)
+	if status != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201; body=%v", status, body)
+	}
+
+	createProps, _ := body["properties"].(map[string]any)
+	if createProps == nil {
+		t.Fatalf("no properties in create response: %v", body)
+	}
+
+	assertDefaults("create", createProps)
+
+	status, got := doJSON(t, http.MethodGet, vaultURL(base, vaultSub, vaultRG, "minivault"), nil)
+	if status != http.StatusOK {
+		t.Fatalf("get status = %d, want 200", status)
+	}
+
+	getProps, _ := got["properties"].(map[string]any)
+	assertDefaults("get", getProps)
+}
+
 func TestVaultARMScopeMismatch(t *testing.T) {
 	ts := newVaultServer(t)
 	base := ts.URL

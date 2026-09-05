@@ -29,9 +29,38 @@ func (m *Mock) CreateOrUpdateVault(_ context.Context, cfg driver.KVVaultConfig) 
 		info.Properties.VaultURI = "https://" + cfg.Name + ".vault.azure.net/"
 	}
 
+	applyVaultPropertyDefaults(&info.Properties)
+
 	m.armVaults.Set(cfg.Name, info)
 
 	return cloneVaultInfo(info), nil
+}
+
+// defaultSoftDeleteRetentionDays is the ARM default for softDeleteRetentionInDays
+// when a create body omits it (Microsoft.KeyVault docs: default 90).
+const defaultSoftDeleteRetentionDays = 90
+
+// applyVaultPropertyDefaults materializes the server-side defaults that real
+// Azure Key Vault stamps onto a vault whose create body omits them, so a
+// round-trip GET (and Terraform's azurerm_key_vault refresh) sees them rather
+// than drifting on the absent fields. Per the Microsoft.KeyVault/vaults REST
+// contract: enableSoftDelete defaults to true (and, once true, cannot be
+// reverted), softDeleteRetentionInDays defaults to 90, and
+// enableRbacAuthorization defaults to false when null/unspecified.
+func applyVaultPropertyDefaults(p *driver.KVVaultProperties) {
+	if p.EnableSoftDelete == nil {
+		enabled := true
+		p.EnableSoftDelete = &enabled
+	}
+
+	if p.SoftDeleteRetentionInDays == 0 {
+		p.SoftDeleteRetentionInDays = defaultSoftDeleteRetentionDays
+	}
+
+	if p.EnableRbacAuthorization == nil {
+		disabled := false
+		p.EnableRbacAuthorization = &disabled
+	}
 }
 
 // GetVault returns the vault by name. Scope enforcement is left to the caller

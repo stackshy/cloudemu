@@ -54,6 +54,69 @@ func TestCreateOrUpdateVaultRoundTrip(t *testing.T) {
 	assert.Equal(t, []string{"get", "list"}, got.Properties.AccessPolicies[0].Permissions.Keys)
 }
 
+// TestCreateVaultMaterializesDefaults verifies that a create body omitting the
+// soft-delete and RBAC flags round-trips with the server-side defaults real
+// Azure Key Vault stamps on: enableSoftDelete=true, softDeleteRetentionInDays=90,
+// enableRbacAuthorization=false. Absent these, a Terraform azurerm_key_vault
+// refresh drifts on the unset fields.
+func TestCreateVaultMaterializesDefaults(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cfg := driver.KVVaultConfig{
+		Name:     "mini",
+		Location: "eastus",
+		Scope:    scope.Scope{Subscription: "sub-1", ResourceGroup: "rg-1"},
+		Properties: driver.KVVaultProperties{
+			TenantID: "tenant-1",
+			SKU:      driver.KVVaultSKU{Family: "A", Name: "standard"},
+		},
+	}
+
+	created, err := m.CreateOrUpdateVault(ctx, cfg)
+	require.NoError(t, err)
+
+	got, err := m.GetVault(ctx, "mini")
+	require.NoError(t, err)
+
+	for _, v := range []*driver.KVVaultInfo{created, got} {
+		require.NotNil(t, v.Properties.EnableSoftDelete)
+		assert.True(t, *v.Properties.EnableSoftDelete)
+		assert.Equal(t, 90, v.Properties.SoftDeleteRetentionInDays)
+		require.NotNil(t, v.Properties.EnableRbacAuthorization)
+		assert.False(t, *v.Properties.EnableRbacAuthorization)
+	}
+}
+
+// TestCreateVaultKeepsExplicitDefaultOverrides ensures the default-materialization
+// never clobbers values the caller set explicitly (e.g. a 7-day retention or RBAC
+// enabled).
+func TestCreateVaultKeepsExplicitDefaultOverrides(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cfg := driver.KVVaultConfig{
+		Name:     "explicit",
+		Location: "eastus",
+		Scope:    scope.Scope{Subscription: "sub-1", ResourceGroup: "rg-1"},
+		Properties: driver.KVVaultProperties{
+			TenantID:                  "tenant-1",
+			SKU:                       driver.KVVaultSKU{Family: "A", Name: "standard"},
+			SoftDeleteRetentionInDays: 7,
+			EnableRbacAuthorization:   boolPtr(true),
+		},
+	}
+
+	_, err := m.CreateOrUpdateVault(ctx, cfg)
+	require.NoError(t, err)
+
+	got, err := m.GetVault(ctx, "explicit")
+	require.NoError(t, err)
+	assert.Equal(t, 7, got.Properties.SoftDeleteRetentionInDays)
+	require.NotNil(t, got.Properties.EnableRbacAuthorization)
+	assert.True(t, *got.Properties.EnableRbacAuthorization)
+}
+
 func TestGetVaultReturnsCopy(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
