@@ -78,6 +78,19 @@ const (
 	// subnet is associated with (set via the subnet's own routeTable property),
 	// mirroring armSubnetNSGTag.
 	armSubnetRouteTableTag = "cloudemu:azureSubnetRouteTable"
+	// armSubnetPENPTag / armSubnetPLSNPTag store a subnet's
+	// privateEndpointNetworkPolicies / privateLinkServiceNetworkPolicies
+	// settings. Real ARM always reports both on a subnet GET, defaulting to
+	// Disabled / Enabled respectively when a create omits them (verified against
+	// the Subnets REST reference), so a subnet stored without either tag reports
+	// the default rather than a dropped field.
+	armSubnetPENPTag  = "cloudemu:azureSubnetPENP"
+	armSubnetPLSNPTag = "cloudemu:azureSubnetPLSNP"
+	// defaultPENP / defaultPLSNP are the ARM defaults for a subnet's
+	// privateEndpointNetworkPolicies / privateLinkServiceNetworkPolicies when a
+	// create omits them.
+	defaultPENP  = "Disabled"
+	defaultPLSNP = "Enabled"
 	// armRouteTableTag / armRouteTableRGTag record a route table's ARM name and
 	// resource group on its driver anchor so it is addressable by (rg, name), the
 	// same way armNSGTag / armNSGRGTag scope network security groups.
@@ -522,9 +535,12 @@ func (h *Handler) updateInlineSubnet(
 	nsgID := inlineRefID(sub.Properties.NetworkSecurityGroup)
 	routeTableID := inlineRefID(sub.Properties.RouteTable)
 
-	_, err := h.updateExistingSubnet(ctx, existing, cidr, natID, nsgID, routeTableID)
+	updated, err := h.updateExistingSubnet(ctx, existing, cidr, natID, nsgID, routeTableID)
+	if err != nil {
+		return err
+	}
 
-	return err
+	return h.applySubnetPolicies(ctx, updated, &sub.Properties)
 }
 
 // inlineRefID returns an armIDRef's id, or "" when the reference is nil (the
@@ -552,6 +568,14 @@ func inlineSubnetTags(sub *subnetRequest) map[string]string {
 
 	if sub.Properties.RouteTable != nil {
 		tags = mergeTags(tags, armSubnetRouteTableTag, sub.Properties.RouteTable.ID)
+	}
+
+	if sub.Properties.PrivateEndpointNetworkPolicies != "" {
+		tags = mergeTags(tags, armSubnetPENPTag, sub.Properties.PrivateEndpointNetworkPolicies)
+	}
+
+	if sub.Properties.PrivateLinkServiceNetworkPolicies != "" {
+		tags = mergeTags(tags, armSubnetPLSNPTag, sub.Properties.PrivateLinkServiceNetworkPolicies)
 	}
 
 	return tags
@@ -910,6 +934,11 @@ func (h *Handler) createSubnet(w http.ResponseWriter, r *http.Request, rp azurea
 		return
 	}
 
+	if err := h.applySubnetPolicies(r.Context(), info, &req.Properties); err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
 	body := toSubnetResponse(info, rp)
 
 	writeAcceptedAsync(w, r, rp.Subscription, "subnet-create-"+rp.SubResourceName, body)
@@ -1072,6 +1101,19 @@ func (h *Handler) replaceSubnetAssociation(ctx context.Context, existing *netdri
 	existing.Tags = tagsWithout(existing.Tags, tagKey)
 
 	return nil
+}
+
+// applySubnetPolicies stores a subnet's privateEndpointNetworkPolicies /
+// privateLinkServiceNetworkPolicies from a PUT body with full-replace semantics:
+// an omitted value clears the tag so the response falls back to the ARM default
+// (Disabled / Enabled), matching SubnetsClient.BeginCreateOrUpdate. existing.Tags
+// is updated in place so a response built from it reflects the change.
+func (h *Handler) applySubnetPolicies(ctx context.Context, existing *netdriver.SubnetInfo, props *subnetRequestProps) error {
+	if err := h.replaceSubnetAssociation(ctx, existing, armSubnetPENPTag, props.PrivateEndpointNetworkPolicies); err != nil {
+		return err
+	}
+
+	return h.replaceSubnetAssociation(ctx, existing, armSubnetPLSNPTag, props.PrivateLinkServiceNetworkPolicies)
 }
 
 // tagsWithout returns a copy of in with key removed.
@@ -1790,8 +1832,10 @@ func toSubnetResponse(info *netdriver.SubnetInfo, rp azurearm.ResourcePath) subn
 		Name: name,
 		Etag: etagOf(id),
 		Properties: subnetResponseProps{
-			ProvisioningState: "Succeeded",
-			AddressPrefix:     info.CIDRBlock,
+			ProvisioningState:                 "Succeeded",
+			AddressPrefix:                     info.CIDRBlock,
+			PrivateEndpointNetworkPolicies:    tagOr(info.Tags, armSubnetPENPTag, defaultPENP),
+			PrivateLinkServiceNetworkPolicies: tagOr(info.Tags, armSubnetPLSNPTag, defaultPLSNP),
 		},
 	}
 
