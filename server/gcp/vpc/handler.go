@@ -75,6 +75,12 @@ const (
 
 	defaultFirewallDirection = "INGRESS"
 	defaultFirewallPriority  = 1000
+
+	// A modern (non-legacy) GCP network always reads back a routing mode and an
+	// MTU: a network created without them defaults to REGIONAL dynamic routing
+	// and a 1460-byte MTU. These are the values compute.googleapis.com returns.
+	defaultRoutingMode       = "REGIONAL"
+	defaultNetworkMTU  int32 = 1460
 )
 
 // nowRFC3339 returns the current time formatted the way GCP stamps
@@ -1345,21 +1351,28 @@ func toNetworkResponse(info *netdriver.VPCInfo, rp gcprest.ResourcePath, host st
 		NetworkFirewallPolicyEnforcementOrder: fwPolicyOrderOr(info.Tags[netFwOrderTag]),
 	}
 
-	if rm := info.Tags[netRoutingModeTag]; rm != "" {
-		resp.RoutingConfig = &networkRoutingConfig{RoutingMode: rm}
+	// IPv4Range belongs only to a legacy network; a modern auto/custom network
+	// omits it (emitting it would wrongly read as legacy and conflict with
+	// autoCreateSubnetworks). Legacy networks predate routingConfig/mtu, so they
+	// carry neither; a modern network always reads back both, defaulting to
+	// REGIONAL routing and a 1460-byte MTU when the insert omitted them — real
+	// GCP always populates them, so omitting the default reads as a perpetual
+	// Terraform diff on routing_mode/mtu.
+	if info.Tags[legacyNetTag] == trueValue {
+		resp.IPv4Range = info.CIDRBlock
+		return resp
 	}
+
+	resp.RoutingConfig = &networkRoutingConfig{
+		RoutingMode: tagOr(info.Tags, netRoutingModeTag, defaultRoutingMode),
+	}
+
+	resp.Mtu = defaultNetworkMTU
 
 	if m := info.Tags[netMtuTag]; m != "" {
 		if v, err := strconv.ParseInt(m, 10, 32); err == nil {
 			resp.Mtu = int32(v)
 		}
-	}
-
-	// IPv4Range belongs only to a legacy network; a modern auto/custom network
-	// omits it (emitting it would wrongly read as legacy and conflict with
-	// autoCreateSubnetworks).
-	if info.Tags[legacyNetTag] == trueValue {
-		resp.IPv4Range = info.CIDRBlock
 	}
 
 	return resp
