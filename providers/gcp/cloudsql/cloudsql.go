@@ -283,6 +283,13 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		region = m.opts.Region
 	}
 
+	// storageAutoResize defaults to true on a real Cloud SQL instance; an omitted
+	// (nil) request field resolves to that default so a Get always reports it.
+	autoResize := true
+	if cfg.GCPStorageAutoResize != nil {
+		autoResize = *cfg.GCPStorageAutoResize
+	}
+
 	return rdsdriver.Instance{
 		ID:               cfg.ID,
 		ARN:              idgen.GCPID(m.opts.ProjectID, "instances", cfg.ID),
@@ -297,21 +304,22 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		// carries the reachable host reported as the PRIMARY ipAddress. Without a
 		// real engine this is a synthetic IP; dbengine.Provision overrides it with
 		// the real host:port when one is wired in.
-		ConnectionName:     instanceConnectionName(m.opts.ProjectID, region, cfg.ID),
-		Endpoint:           syntheticPrivateIP,
-		Port:               port,
-		State:              rdsdriver.StateAvailable,
-		MultiAZ:            cfg.MultiAZ,
-		DeletionProtection: cfg.DeletionProtection,
-		PubliclyAccessible: cfg.PubliclyAccessible,
-		VPCSecurityGroups:  append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:    cfg.SubnetGroupName,
-		AvailabilityZone:   region,
-		CreatedAt:          m.opts.Clock.Now().UTC(),
-		Tags:               copyTags(cfg.Tags),
-		GCPDatabaseFlags:   cfg.GCPDatabaseFlags,
-		GCPBackupConfig:    cfg.GCPBackupConfig,
-		GCPIPConfig:        cfg.GCPIPConfig,
+		ConnectionName:       instanceConnectionName(m.opts.ProjectID, region, cfg.ID),
+		Endpoint:             syntheticPrivateIP,
+		Port:                 port,
+		State:                rdsdriver.StateAvailable,
+		MultiAZ:              cfg.MultiAZ,
+		DeletionProtection:   cfg.DeletionProtection,
+		PubliclyAccessible:   cfg.PubliclyAccessible,
+		VPCSecurityGroups:    append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:      cfg.SubnetGroupName,
+		AvailabilityZone:     region,
+		CreatedAt:            m.opts.Clock.Now().UTC(),
+		Tags:                 copyTags(cfg.Tags),
+		GCPDatabaseFlags:     cfg.GCPDatabaseFlags,
+		GCPBackupConfig:      cfg.GCPBackupConfig,
+		GCPIPConfig:          cfg.GCPIPConfig,
+		GCPStorageAutoResize: autoResize,
 	}
 }
 
@@ -478,6 +486,10 @@ func applyGCPSettings(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceI
 
 	if input.GCPIPConfig != "" {
 		inst.GCPIPConfig = input.GCPIPConfig
+	}
+
+	if input.GCPStorageAutoResize != nil {
+		inst.GCPStorageAutoResize = *input.GCPStorageAutoResize
 	}
 }
 
@@ -841,21 +853,22 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 	password := m.rootPasswords[snap.InstanceID]
 
 	inst := rdsdriver.Instance{
-		ID:               input.NewInstanceID,
-		ARN:              idgen.GCPID(m.opts.ProjectID, "instances", input.NewInstanceID),
-		Engine:           snap.Engine,
-		EngineVersion:    snap.EngineVersion,
-		InstanceClass:    tier,
-		AllocatedStorage: snap.AllocatedStorage,
-		StorageType:      defaultStorageType,
-		MasterUsername:   username,
-		ConnectionName:   instanceConnectionName(m.opts.ProjectID, m.opts.Region, input.NewInstanceID),
-		Endpoint:         syntheticPrivateIP,
-		Port:             defaultPortFor(snap.Engine),
-		State:            rdsdriver.StateAvailable,
-		AvailabilityZone: m.opts.Region,
-		CreatedAt:        m.opts.Clock.Now().UTC(),
-		Tags:             copyTags(input.Tags),
+		ID:                   input.NewInstanceID,
+		ARN:                  idgen.GCPID(m.opts.ProjectID, "instances", input.NewInstanceID),
+		Engine:               snap.Engine,
+		EngineVersion:        snap.EngineVersion,
+		InstanceClass:        tier,
+		AllocatedStorage:     snap.AllocatedStorage,
+		StorageType:          defaultStorageType,
+		MasterUsername:       username,
+		ConnectionName:       instanceConnectionName(m.opts.ProjectID, m.opts.Region, input.NewInstanceID),
+		Endpoint:             syntheticPrivateIP,
+		Port:                 defaultPortFor(snap.Engine),
+		State:                rdsdriver.StateAvailable,
+		AvailabilityZone:     m.opts.Region,
+		CreatedAt:            m.opts.Clock.Now().UTC(),
+		Tags:                 copyTags(input.Tags),
+		GCPStorageAutoResize: true,
 	}
 
 	// Provision the restored instance's OWN database (keyed by the new id, so it

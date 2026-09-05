@@ -23,6 +23,23 @@ const (
 	availabilityRegional = "REGIONAL"
 	availabilityZonal    = "ZONAL"
 
+	// pricingPlanPerUse is settings.pricingPlan. PER_USE is the only value valid
+	// for a second-gen instance (which is all the emulator mints — backendType
+	// SECOND_GEN), and it is what real Cloud SQL always returns; emitting it keeps
+	// Terraform, whose disk_ pricing_plan default is also PER_USE, from a perpetual
+	// diff.
+	pricingPlanPerUse = "PER_USE"
+
+	// instanceTypeCloudSQL / instanceTypeReadReplica are the settings-less
+	// top-level instanceType enum: a standalone primary vs a read replica. Real
+	// Cloud SQL always reports one; Terraform reads instance_type as computed.
+	instanceTypeCloudSQL    = "CLOUD_SQL_INSTANCE"
+	instanceTypeReadReplica = "READ_REPLICA_INSTANCE"
+
+	// gceZoneSuffix is appended to the region to synthesize a plausible compute
+	// zone for gceZone (e.g. us-central1 -> us-central1-a).
+	gceZoneSuffix = "-a"
+
 	// serverCaCertPEM is the placeholder PEM returned as the instance's
 	// serverCaCert. It is a well-formed shape for SDK round-trips, not a real CA.
 	serverCaCertPEM = "-----BEGIN CERTIFICATE-----\nMOCK\n-----END CERTIFICATE-----"
@@ -58,6 +75,8 @@ type sqlInstance struct {
 	DatabaseVersion    string       `json:"databaseVersion,omitempty"`
 	State              string       `json:"state,omitempty"`
 	BackendType        string       `json:"backendType,omitempty"`
+	InstanceType       string       `json:"instanceType,omitempty"`
+	GceZone            string       `json:"gceZone,omitempty"`
 	ConnectionName     string       `json:"connectionName,omitempty"`
 	SelfLink           string       `json:"selfLink,omitempty"`
 	RootPassword       string       `json:"rootPassword,omitempty"`
@@ -75,7 +94,13 @@ type sqlSettings struct {
 	DataDiskSizeGb   int               `json:"dataDiskSizeGb,string,omitempty"`
 	DataDiskType     string            `json:"dataDiskType,omitempty"`
 	AvailabilityType string            `json:"availabilityType,omitempty"`
+	PricingPlan      string            `json:"pricingPlan,omitempty"`
 	UserLabels       map[string]string `json:"userLabels,omitempty"`
+	// StorageAutoResize is settings.storageAutoResize (Terraform disk_autoresize),
+	// which real Cloud SQL defaults to true. A pointer so an absent field on a
+	// Patch means "no change" rather than clobbering to false; always populated on
+	// a Get so Terraform doesn't see a perpetual false->true diff.
+	StorageAutoResize *bool `json:"storageAutoResize,omitempty"`
 	// DeletionProtectionEnabled guards the instance from deletion while true. A
 	// pointer so an absent field on a Patch means "no change" (merge) rather than
 	// clobbering the current value to false; it is always populated on a Get.
@@ -181,6 +206,11 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 		DatabaseVersion: inst.Engine,
 		State:           sqlState(inst.State),
 		BackendType:     "SECOND_GEN",
+		InstanceType:    instanceTypeFor(inst),
+		// gceZone is the compute zone the primary runs in; real Cloud SQL always
+		// reports one. The emulator has no zone concept, so it derives a stable
+		// zone from the region (a computed, read-only attribute in Terraform).
+		GceZone: gceZoneFor(inst.AvailabilityZone),
 		// connectionName is keyed on the REQUEST project (from the URL), matching
 		// real Cloud SQL's {project}:{region}:{instance} — not the server's
 		// configured project, which the stored inst.ConnectionName carries.
@@ -201,6 +231,8 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 			UserLabels:                inst.Tags,
 			ActivationPolicy:          activationFromState(inst.State),
 			AvailabilityType:          availabilityType(inst.MultiAZ),
+			PricingPlan:               pricingPlanPerUse,
+			StorageAutoResize:         boolPtr(inst.GCPStorageAutoResize),
 			DeletionProtectionEnabled: boolPtr(inst.DeletionProtection),
 			DatabaseFlags:             rawJSONOrNil(inst.GCPDatabaseFlags),
 			BackupConfiguration:       rawJSONOrNil(inst.GCPBackupConfig),
@@ -209,6 +241,26 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 		ServerCaCert: serverCaCertFor(inst),
 		CreateTime:   inst.CreatedAt.UTC().Format(rfc3339Milli),
 	}
+}
+
+// instanceTypeFor reports the top-level instanceType: READ_REPLICA_INSTANCE when
+// the instance replicates from a primary, CLOUD_SQL_INSTANCE otherwise.
+func instanceTypeFor(inst *rdsdriver.Instance) string {
+	if inst.ReadReplicaSource != "" {
+		return instanceTypeReadReplica
+	}
+
+	return instanceTypeCloudSQL
+}
+
+// gceZoneFor synthesizes a compute zone from a region. An empty region yields an
+// empty zone so the field is omitted rather than reporting a bare suffix.
+func gceZoneFor(region string) string {
+	if region == "" {
+		return ""
+	}
+
+	return region + gceZoneSuffix
 }
 
 // availabilityType maps the portable MultiAZ flag to the Cloud SQL
