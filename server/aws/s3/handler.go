@@ -317,6 +317,15 @@ func (h *Handler) bucketTaggingOp(w http.ResponseWriter, r *http.Request, bucket
 			return
 		}
 
+		// Real S3 has no "empty tag set" state: a bucket with no tags configured
+		// answers GetBucketTagging with 404 NoSuchTagSet, not an empty <TagSet/>.
+		// Returning an empty 200 diverged from the documented special error and
+		// tripped SDK callers that key off NoSuchTagSet to detect absence.
+		if len(tags) == 0 {
+			writeError(w, http.StatusNotFound, "NoSuchTagSet", "The TagSet does not exist")
+			return
+		}
+
 		resp := tagging{Xmlns: xmlns}
 
 		keys := make([]string, 0, len(tags))
