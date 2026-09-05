@@ -78,6 +78,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `resourcegraph` | — | [Resourcegraph](./azure/resourcegraph.md) | — | — | 3 |
 | `resourcegroups` | — | [Resourcegroups](./azure/resourcegroups.md) | — | — | 7 |
 | `resourcegroupstaggingapi` | [Resourcegroupstaggingapi](./aws/resourcegroupstaggingapi.md) | — | — | — | 5 |
+| `resourcemanager` | — | — | [Resourcemanager](./gcp/resourcemanager.md) | — | 3 |
 | `route53resolver` | [Route53Resolver](./aws/route53resolver.md) | — | — | — | 72 |
 | `sagemaker` | [SageMaker](./aws/sagemaker.md) | — | — | — | 121 |
 | `savingsplans` | [SavingsPlans](./aws/savingsplans.md) | — | — | — | 9 |

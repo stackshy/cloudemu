@@ -131,6 +131,9 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"gcp/servicenetworking": {
 		"CreateConnection", "DeleteConnection", "ListConnections",
 	},
+	"gcp/resourcemanager": {
+		"GetIamPolicy", "SetIamPolicy", "TestIamPermissions",
+	},
 	"gcp/cloudbilling": {
 		"CreateBillingAccount", "CreateBudget", "DeleteBudget", "GetBillingAccount",
 		"GetBudget", "GetProjectBillingInfo", "ListBillingAccounts", "ListBudgets",

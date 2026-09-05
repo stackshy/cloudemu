@@ -10089,6 +10089,24 @@
     }
   },
   {
+    "service": "resourcemanager",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "GetIamPolicy"
+      },
+      {
+        "name": "SetIamPolicy"
+      },
+      {
+        "name": "TestIamPermissions"
+      }
+    ],
+    "providers": {
+      "gcp": "Resourcemanager"
+    }
+  },
+  {
     "service": "route53resolver",
     "interface": "Route53Resolver",
     "operations": [
