@@ -1589,17 +1589,13 @@ func (m *Mock) SetManagedResourceVisibility(v string) error {
 	return nil
 }
 
-// CreateVolume creates a new EBS volume.
-//
 // ebsPerformanceDefaults returns the IOPS and throughput a volume of the given
 // type and size reports when the caller provisioned none, matching real AWS: gp3
 // baselines at 3000 IOPS / 125 MiB/s, gp2 derives IOPS from size (3/GiB, clamped
 // to [100,16000]) and has no throughput field. Explicitly provisioned values are
 // preserved. Other types (io1/io2 require a user-supplied IOPS; st1/sc1/standard
 // have none) pass through unchanged.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func ebsPerformanceDefaults(volType string, size, iops, throughput int) (int, int) {
+func ebsPerformanceDefaults(volType string, size, iops, throughput int) (resolvedIOPS, resolvedThroughput int) {
 	switch volType {
 	case defaultVolumeType: // gp3
 		if iops == 0 {
@@ -1627,6 +1623,9 @@ func ebsPerformanceDefaults(volType string, size, iops, throughput int) (int, in
 	return iops, throughput
 }
 
+// CreateVolume creates a new EBS volume.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
 	id := fmt.Sprintf("vol-%012d", m.volCounter.Add(1))
 
