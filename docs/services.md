@@ -1422,7 +1422,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 ## 13. Logging
 
 **Driver interface:** `services/logging/driver/driver.go`
-**AWS:** CloudWatch Logs | **Azure:** Log Analytics | **GCP:** Cloud Logging | **OCI:** Logging (a log group is the log group; a CUSTOM log is the log stream; an ingested log entry is the log event — metric filters have no OCI equivalent and report `Unimplemented`)
+**AWS:** CloudWatch Logs | **Azure:** Log Analytics | **GCP:** Cloud Logging | **OCI:** Logging (a log group is the log group; a CUSTOM log is the log stream; an ingested log entry is the log event — metric and subscription filters have no OCI equivalent and report `Unimplemented`)
 
 ### Log Group Operations
 
@@ -1448,7 +1448,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 | `PutLogEvents` | `(ctx, logGroup, streamName, events) error` |
 | `GetLogEvents` | `(ctx, input) ([]LogEvent, error)` |
 
-### Filtering and Metric Filters
+### Filtering, Metric Filters and Subscription Filters
 
 | Operation | Signature |
 |-----------|-----------|
@@ -1456,8 +1456,11 @@ a source cluster and detach on promote; clone-on-read on every path.
 | `PutMetricFilter` | `(ctx, config) error` |
 | `DeleteMetricFilter` | `(ctx, logGroup, filterName) error` |
 | `DescribeMetricFilters` | `(ctx, logGroup) ([]MetricFilterInfo, error)` |
+| `PutSubscriptionFilter` | `(ctx, config) error` |
+| `DeleteSubscriptionFilter` | `(ctx, logGroup, filterName) error` |
+| `DescribeSubscriptionFilters` | `(ctx, logGroup) ([]SubscriptionFilterInfo, error)` |
 
-**Total: 13 operations**
+**Total: 17 operations**
 
 ### OCI Logging
 
@@ -1515,9 +1518,17 @@ Not emulated: `/20200531/unifiedAgentConfigurations` and
 are claimed so a caller gets a `501` naming the gap rather than a bare `404`.
 A log group's retention is CloudEmu's: real OCI carries retention on the log,
 and the group holds the default its logs inherit so the portable
-`RetentionDays` has somewhere to live. Log group display names are unique
-across the emulator, not per compartment, which is what lets the portable
-driver address a group by name.
+`RetentionDays` has somewhere to live. Log group display names are unique per
+compartment, as in real OCI, so the same name may be used in two compartments.
+The portable driver has only a name to address a group by, so a name held in
+more than one compartment is rejected as ambiguous rather than resolved
+arbitrarily; such a group is reachable through the OCI API by OCID.
+
+A read limit is bounded before it sizes an allocation: `GetLogEvents`,
+`FilterLogEvents` and `SearchLogs` reject a negative limit and one above
+10000 with `InvalidArgument`. Subscription filters, like metric filters, are
+not an OCI Logging operation and report `Unimplemented` — OCI delivers log
+entries to another service through a Service Connector.
 
 ---
 

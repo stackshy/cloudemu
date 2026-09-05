@@ -140,7 +140,7 @@ func (m *Mock) DeleteGroup(_ context.Context, id string) error {
 	}
 
 	for _, rec := range m.logsIn(id) {
-		m.logs.Delete(rec.log.ID)
+		m.logs.Delete(rec.Log.ID)
 	}
 
 	m.groups.Delete(id)
@@ -171,10 +171,10 @@ func (m *Mock) MoveGroup(_ context.Context, id, compartmentID string) error {
 	g.TimeLastModified = m.now()
 
 	for _, rec := range m.logsIn(id) {
-		rec.log.CompartmentID = compartmentID
+		rec.Log.CompartmentID = compartmentID
 
-		if rec.log.Configuration != nil {
-			rec.log.Configuration.CompartmentID = compartmentID
+		if rec.Log.Configuration != nil {
+			rec.Log.Configuration.CompartmentID = compartmentID
 		}
 	}
 
