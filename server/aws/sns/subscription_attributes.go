@@ -83,9 +83,19 @@ func subscriptionAttributeEntries(sub *notifdriver.SubscriptionInfo) []attribute
 		attributeEntry{Key: "Endpoint", Value: sub.Endpoint},
 		attributeEntry{Key: "Owner", Value: accountFromARN(sub.ID)},
 		attributeEntry{Key: "PendingConfirmation", Value: pending},
-		attributeEntry{Key: "ConfirmationWasAuthenticated", Value: attrFalse},
+		attributeEntry{Key: "ConfirmationWasAuthenticated", Value: confirmationWasAuthenticated(sub)},
 		attributeEntry{Key: "RawMessageDelivery", Value: rawMessageDelivery(sub)},
 	)
+
+	// A subscription with a filter policy but no explicit FilterPolicyScope reports
+	// the documented default "MessageAttributes" — real SNS always surfaces the
+	// scope alongside a policy, so an SDK reader never has to infer it.
+	if _, hasPolicy := sub.Attributes["FilterPolicy"]; hasPolicy {
+		if _, hasScope := sub.Attributes["FilterPolicyScope"]; !hasScope {
+			entries = append(entries,
+				attributeEntry{Key: "FilterPolicyScope", Value: filterPolicyScopeDefault})
+		}
+	}
 
 	// Emit caller-set attributes (FilterPolicy, RedrivePolicy, ...) in a stable
 	// order so successive reads don't churn.
@@ -106,6 +116,40 @@ func subscriptionAttributeEntries(sub *notifdriver.SubscriptionInfo) []attribute
 	}
 
 	return entries
+}
+
+// filterPolicyScopeDefault is the FilterPolicyScope SNS reports for a
+// subscription that carries a FilterPolicy without an explicit scope.
+const filterPolicyScopeDefault = "MessageAttributes"
+
+// autoConfirmProtocols is the set of SNS protocols whose subscriptions are
+// confirmed as part of the authenticated Subscribe call rather than by an
+// out-of-band token. For those, real SNS reports ConfirmationWasAuthenticated
+// = "true"; http/https/email confirm via an unauthenticated click-through link,
+// so they stay "false".
+var autoConfirmProtocols = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"sqs":         {},
+	"lambda":      {},
+	"application": {},
+	"firehose":    {},
+	"sms":         {},
+}
+
+// confirmationWasAuthenticated reports SNS's ConfirmationWasAuthenticated value:
+// "true" only once a subscription is confirmed via the authenticated Subscribe
+// API (the auto-confirm protocols). A still-pending subscription, or one whose
+// confirmation happens through an unauthenticated link (http/https/email), is
+// "false".
+func confirmationWasAuthenticated(sub *notifdriver.SubscriptionInfo) string {
+	if sub.Status == statusPending {
+		return attrFalse
+	}
+
+	if _, ok := autoConfirmProtocols[sub.Protocol]; ok {
+		return attrTrue
+	}
+
+	return attrFalse
 }
 
 // idgenTopicARN reconstructs the topic ARN from the subscription ARN, which SNS
