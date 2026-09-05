@@ -71,40 +71,11 @@ func (h *Handler) createServer(w http.ResponseWriter, r *http.Request, rp *azure
 		return
 	}
 
-	cfg := rdsdriver.InstanceConfig{
-		ID:       rp.ResourceName,
-		Engine:   "MySQL",
-		Location: body.Location,
-		Tags:     body.Tags,
-		Scope:    requestScope(rp),
-	}
-
-	if body.SKU != nil {
-		cfg.InstanceClass = body.SKU.Name
-	}
-
-	if body.Properties != nil {
-		cfg.MasterUsername = body.Properties.AdministratorLogin
-		cfg.MasterUserPassword = body.Properties.AdministratorLoginPassword
-		cfg.EngineVersion = body.Properties.Version
-		cfg.AvailabilityZone = body.Properties.AvailabilityZone
-
-		if body.Properties.Storage != nil {
-			cfg.AllocatedStorage = body.Properties.Storage.StorageSizeGB
-			cfg.StorageType = body.Properties.Storage.StorageSKU
-		}
-
-		if ha := body.Properties.HighAvailability; ha != nil {
-			cfg.HighAvailabilityMode = ha.Mode
-			cfg.StandbyAvailabilityZone = ha.StandbyAvailabilityZone
-		}
-	}
-
 	// ARM PUT of a new resource returns 201 Created; an in-place update of an
 	// existing one returns 200.
 	status := http.StatusCreated
 
-	inst, err := h.db.CreateInstance(r.Context(), cfg)
+	inst, err := h.db.CreateInstance(r.Context(), instanceConfigFromBody(&body, rp))
 	if err != nil {
 		if !cerrors.IsAlreadyExists(err) {
 			azurearm.WriteCErr(w, err)
@@ -120,6 +91,49 @@ func (h *Handler) createServer(w http.ResponseWriter, r *http.Request, rp *azure
 	}
 
 	azurearm.WriteJSON(w, status, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
+}
+
+// instanceConfigFromBody maps a MySQL Flex server PUT body to the portable
+// create config. Split out of createServer so the handler stays under the
+// cyclomatic-complexity budget.
+func instanceConfigFromBody(body *armServer, rp *azurearm.ResourcePath) rdsdriver.InstanceConfig {
+	cfg := rdsdriver.InstanceConfig{
+		ID:       rp.ResourceName,
+		Engine:   "MySQL",
+		Location: body.Location,
+		Tags:     body.Tags,
+		Scope:    requestScope(rp),
+	}
+
+	if body.SKU != nil {
+		cfg.InstanceClass = body.SKU.Name
+		cfg.SKUTier = body.SKU.Tier
+	}
+
+	if body.Properties == nil {
+		return cfg
+	}
+
+	cfg.MasterUsername = body.Properties.AdministratorLogin
+	cfg.MasterUserPassword = body.Properties.AdministratorLoginPassword
+	cfg.EngineVersion = body.Properties.Version
+	cfg.AvailabilityZone = body.Properties.AvailabilityZone
+
+	if body.Properties.Storage != nil {
+		cfg.AllocatedStorage = body.Properties.Storage.StorageSizeGB
+		cfg.StorageType = body.Properties.Storage.StorageSKU
+	}
+
+	if b := body.Properties.Backup; b != nil && b.BackupRetentionDays > 0 {
+		cfg.BackupRetentionPeriod = b.BackupRetentionDays
+	}
+
+	if ha := body.Properties.HighAvailability; ha != nil {
+		cfg.HighAvailabilityMode = ha.Mode
+		cfg.StandbyAvailabilityZone = ha.StandbyAvailabilityZone
+	}
+
+	return cfg
 }
 
 // upsertOnNameCollision resolves a PUT whose server name is already taken.
@@ -160,6 +174,7 @@ func modifyInputFromBody(body *armServer) rdsdriver.ModifyInstanceInput {
 
 	if body.SKU != nil {
 		input.InstanceClass = body.SKU.Name
+		input.SKUTier = body.SKU.Tier
 	}
 
 	if body.Properties != nil {
@@ -167,6 +182,10 @@ func modifyInputFromBody(body *armServer) rdsdriver.ModifyInstanceInput {
 
 		if body.Properties.Storage != nil && body.Properties.Storage.StorageSizeGB > 0 {
 			input.AllocatedStorage = body.Properties.Storage.StorageSizeGB
+		}
+
+		if b := body.Properties.Backup; b != nil && b.BackupRetentionDays > 0 {
+			input.BackupRetentionPeriod = b.BackupRetentionDays
 		}
 
 		if ha := body.Properties.HighAvailability; ha != nil {

@@ -38,6 +38,7 @@ type armServerProps struct {
 	State                      string               `json:"state,omitempty"`
 	FullyQualifiedDomainName   string               `json:"fullyQualifiedDomainName,omitempty"`
 	Storage                    *armStorage          `json:"storage,omitempty"`
+	Backup                     *armBackup           `json:"backup,omitempty"`
 	AvailabilityZone           string               `json:"availabilityZone,omitempty"`
 	HighAvailability           *armHighAvailability `json:"highAvailability,omitempty"`
 }
@@ -68,6 +69,15 @@ type armStorage struct {
 	Iops          int    `json:"iops,omitempty"`
 }
 
+// armBackup mirrors properties.backup on a MySQL Flexible Server. Real Azure
+// always returns this block; backupRetentionDays defaults to 7 (range 1-35) and
+// geoRedundantBackup is Disabled/Enabled. geoRedundantBackup is preserved by the
+// generic unmodeled-property overlay, so only the retention days — which real
+// Azure defaults and which terraform-provider-azurerm reads back — is modeled.
+type armBackup struct {
+	BackupRetentionDays int `json:"backupRetentionDays,omitempty"`
+}
+
 // armList is the ARM list-response envelope.
 type armList[T any] struct {
 	Value    []T    `json:"value"`
@@ -76,6 +86,23 @@ type armList[T any] struct {
 
 // toARMServer converts a portable Instance to ARM JSON.
 func toARMServer(inst *rdsdriver.Instance, subscription, resourceGroup string) armServer {
+	props := &armServerProps{
+		AdministratorLogin:       inst.MasterUsername,
+		Version:                  inst.EngineVersion,
+		State:                    serverState(inst.State),
+		FullyQualifiedDomainName: inst.Endpoint,
+		AvailabilityZone:         inst.AvailabilityZone,
+		HighAvailability:         highAvailability(inst),
+		Storage: &armStorage{
+			StorageSizeGB: inst.AllocatedStorage,
+			StorageSKU:    inst.StorageType,
+		},
+	}
+
+	if inst.BackupRetentionPeriod > 0 {
+		props.Backup = &armBackup{BackupRetentionDays: inst.BackupRetentionPeriod}
+	}
+
 	return armServer{
 		ID:       armServerID(subscription, resourceGroup, inst.ID),
 		Name:     inst.ID,
@@ -84,19 +111,9 @@ func toARMServer(inst *rdsdriver.Instance, subscription, resourceGroup string) a
 		Tags:     inst.Tags,
 		SKU: &armSKU{
 			Name: inst.InstanceClass,
+			Tier: inst.SKUTier,
 		},
-		Properties: &armServerProps{
-			AdministratorLogin:       inst.MasterUsername,
-			Version:                  inst.EngineVersion,
-			State:                    serverState(inst.State),
-			FullyQualifiedDomainName: inst.Endpoint,
-			AvailabilityZone:         inst.AvailabilityZone,
-			HighAvailability:         highAvailability(inst),
-			Storage: &armStorage{
-				StorageSizeGB: inst.AllocatedStorage,
-				StorageSKU:    inst.StorageType,
-			},
-		},
+		Properties: props,
 	}
 }
 
