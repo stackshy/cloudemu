@@ -25,9 +25,12 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"time"
+
+	healthpb "google.golang.org/grpc/health/grpc_health_v1"
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/config"
@@ -42,7 +45,9 @@ import (
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 	cgrpc "github.com/stackshy/cloudemu/v2/server/grpc"
+	bigtableadmingrpc "github.com/stackshy/cloudemu/v2/server/grpc/bigtableadmin"
 	ociserver "github.com/stackshy/cloudemu/v2/server/oci"
+	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
@@ -189,6 +194,11 @@ type App struct {
 	netEngine   *topology.Engine
 	discovery   map[string]*resourcediscovery.Engine
 	providers   []closer // current live providers, Close()d when swapped out
+	// gcpBigtable is the current GCP bigtable Admin store (rebuilt on reset). The
+	// gRPC BigtableAdmin servers resolve it per-RPC through currentBigtableAdmin so
+	// they always target the live store, exactly as the REST handler reads the
+	// current handler from its admin.Backend. Nil when GCP is not selected.
+	gcpBigtable btdriver.Admin
 
 	// exportMu guards an in-flight state export (flusher save or admin snapshot)
 	// against provider teardown: every export holds it for read across the whole
@@ -432,6 +442,36 @@ func (a *App) Rebuild() {
 	a.closeProviders(outgoing)
 }
 
+// newDataPlane builds a fresh shared Kubernetes data-plane API server for a
+// rebuild, applying the opt-in staged-lifecycle and multi-node settings. It
+// returns nil when the data plane is disabled. The caller holds rebuildMu.
+func (a *App) newDataPlane() *kubernetes.APIServer {
+	if a.k8sBackend == nil {
+		return nil
+	}
+
+	k8s := kubernetes.NewAPIServer()
+	// Tell the data plane the address it is reachable on, so the
+	// managed-Kubernetes control planes can advertise an endpoint that actually
+	// answers. https, because the listener is served with a cert signed by the CA
+	// DescribeCluster advertises.
+	k8s.SetBaseURL("https://" + net.JoinHostPort(a.advertiseHost, a.k8sPort))
+
+	// Opt-in staged Pod lifecycle: enable it on every cluster this data plane
+	// registers, so the real-time ticker (started in Serve) can advance them.
+	if a.cfg.K8sProgression {
+		k8s.SetLifecycleProgression(true)
+	}
+
+	// Opt-in multi-node: seed N synthetic nodes per cluster (fixed at creation)
+	// so the first-fit scheduler places Pods across them.
+	if a.cfg.K8sNodes > 1 {
+		k8s.SetNodeCount(a.cfg.K8sNodes)
+	}
+
+	return k8s
+}
+
 // swapFresh builds every fresh handler, swaps them into the backends under the
 // rebuild lock, and returns the providers it displaced (for the caller to close
 // outside the lock). Building first means a construction panic leaves the
@@ -441,28 +481,7 @@ func (a *App) swapFresh() []closer {
 	a.rebuildMu.Lock()
 	defer a.rebuildMu.Unlock()
 
-	var k8s *kubernetes.APIServer
-	if a.k8sBackend != nil {
-		k8s = kubernetes.NewAPIServer()
-		// Tell the data plane the address it is reachable on, so the
-		// managed-Kubernetes control planes can advertise an endpoint that
-		// actually answers. https, because the listener is served with a cert
-		// signed by the CA DescribeCluster advertises.
-		k8s.SetBaseURL("https://" + net.JoinHostPort(a.advertiseHost, a.k8sPort))
-
-		// Opt-in staged Pod lifecycle: enable it on every cluster this data plane
-		// registers, so the real-time ticker (started in Serve) can advance them.
-		if a.cfg.K8sProgression {
-			k8s.SetLifecycleProgression(true)
-		}
-
-		// Opt-in multi-node: seed N synthetic nodes per cluster (fixed at
-		// creation) so the first-fit scheduler places Pods across them.
-		if a.cfg.K8sNodes > 1 {
-			k8s.SetNodeCount(a.cfg.K8sNodes)
-		}
-	}
-
+	k8s := a.newDataPlane()
 	a.k8s = k8s
 
 	fresh := make(map[string]http.Handler, len(a.sel))
@@ -473,6 +492,7 @@ func (a *App) swapFresh() []closer {
 	var (
 		freshEngine    *topology.Engine
 		freshProviders []closer
+		freshBigtable  btdriver.Admin
 	)
 
 	for _, p := range a.sel {
@@ -491,6 +511,10 @@ func (a *App) swapFresh() []closer {
 
 		if b.provider != nil {
 			freshProviders = append(freshProviders, b.provider)
+		}
+
+		if b.bigtable != nil {
+			freshBigtable = b.bigtable
 		}
 	}
 
@@ -514,6 +538,7 @@ func (a *App) swapFresh() []closer {
 	a.snapTargets = freshSnapTargets
 	a.netEngine = freshEngine
 	a.discovery = freshDiscovery
+	a.gcpBigtable = freshBigtable
 
 	outgoing := a.providers
 	a.providers = freshProviders
@@ -531,6 +556,7 @@ type builtProvider struct {
 	discovery *resourcediscovery.Engine // nil for oci
 	engine    *topology.Engine          // non-nil only for aws (network topology)
 	provider  closer                    // nil for oci (no Close/engine teardown)
+	bigtable  btdriver.Admin            // non-nil only for gcp (gRPC BigtableAdmin store)
 }
 
 // buildProvider constructs one provider and its hooks. It shares the single new
@@ -566,6 +592,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 			snap:      cloud.SnapshotServices(),
 			discovery: cloud.ResourceDiscovery,
 			provider:  cloud,
+			bigtable:  d.Bigtable,
 		}
 	case providerAzure:
 		// Azure subscriptions are GUIDs, unlike the 12-digit AWS account id.
@@ -922,11 +949,39 @@ func (a *App) buildServers() ([]listenerServer, endpointSet, error) {
 	// services (BIGTABLE_EMULATOR_HOST etc.) are layered on next.
 	if a.cfg.GCPGRPCPort != "" {
 		addr := net.JoinHostPort(a.cfg.Host, a.cfg.GCPGRPCPort)
-		servers = append(servers, &grpcServer{label: "gcp-grpc", bind: addr, srv: cgrpc.New()})
+		gs := cgrpc.New()
+		a.registerGRPCServices(gs)
+		servers = append(servers, &grpcServer{label: "gcp-grpc", bind: addr, srv: gs})
 		eps.GCPGRPC = addr
 	}
 
 	return servers, eps, nil
+}
+
+// registerGRPCServices layers the emulator-env-var gRPC services onto the
+// transport foundation. The Bigtable Admin surface (dialed via
+// BIGTABLE_EMULATOR_HOST by the cloud.google.com/go/bigtable admin clients and
+// the terraform google provider) is registered only when the GCP provider is
+// selected, delegating to the very store the GCP REST handler uses so both wire
+// surfaces share one backend. Each registered service is marked SERVING.
+func (a *App) registerGRPCServices(gs *cgrpc.Server) {
+	if !slices.Contains(a.sel, providerGCP) {
+		return
+	}
+
+	for _, name := range bigtableadmingrpc.Register(gs, a.currentBigtableAdmin) {
+		gs.SetServingStatus(name, healthpb.HealthCheckResponse_SERVING)
+	}
+}
+
+// currentBigtableAdmin returns the live GCP bigtable Admin store under the
+// rebuild lock, so the gRPC servers follow a reset/restore swap to the fresh
+// store instead of holding a stale reference.
+func (a *App) currentBigtableAdmin() btdriver.Admin {
+	a.rebuildMu.Lock()
+	defer a.rebuildMu.Unlock()
+
+	return a.gcpBigtable
 }
 
 // shutdown gracefully stops the servers, writes the persistence snapshot after
