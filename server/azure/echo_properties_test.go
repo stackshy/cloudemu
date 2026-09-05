@@ -838,18 +838,19 @@ func TestEchoEvictsSubResourceOverlayOnDelete(t *testing.T) {
 	created := putJSON(t, c, dbURL, map[string]any{
 		"location": "eastus",
 		"properties": map[string]any{
-			// readScale is not modeled by the SQL database handler; the
-			// overlay is what makes it round-trip at all.
-			"readScale": "Enabled",
+			// catalogCollation is not modeled by the SQL database handler
+			// (distinct from the modeled collation); the overlay is what makes
+			// it round-trip at all.
+			"catalogCollation": "DATABASE_DEFAULT",
 		},
 	})
 
-	if props(t, created)["readScale"] != "Enabled" {
-		t.Fatal("unmodeled readScale was not preserved after create")
+	if props(t, created)["catalogCollation"] != "DATABASE_DEFAULT" {
+		t.Fatal("unmodeled catalogCollation was not preserved after create")
 	}
 
-	if props(t, getJSON(t, c, dbURL))["readScale"] != "Enabled" {
-		t.Fatal("unmodeled readScale not echoed on GET before delete")
+	if props(t, getJSON(t, c, dbURL))["catalogCollation"] != "DATABASE_DEFAULT" {
+		t.Fatal("unmodeled catalogCollation not echoed on GET before delete")
 	}
 
 	deleteOK(t, c, dbURL)
@@ -857,11 +858,11 @@ func TestEchoEvictsSubResourceOverlayOnDelete(t *testing.T) {
 	// Re-create the same database name with no unmodeled properties at all.
 	recreated := putJSON(t, c, dbURL, map[string]any{"location": "eastus"})
 
-	if v, ok := props(t, recreated)["readScale"]; ok {
-		t.Fatalf("recreated database resurrected stale readScale from the deleted one: %v", v)
+	if v, ok := props(t, recreated)["catalogCollation"]; ok {
+		t.Fatalf("recreated database resurrected stale catalogCollation from the deleted one: %v", v)
 	}
 
-	if v, ok := props(t, getJSON(t, c, dbURL))["readScale"]; ok {
-		t.Fatalf("GET on recreated database still carries the deleted database's readScale: %v", v)
+	if v, ok := props(t, getJSON(t, c, dbURL))["catalogCollation"]; ok {
+		t.Fatalf("GET on recreated database still carries the deleted database's catalogCollation: %v", v)
 	}
 }
