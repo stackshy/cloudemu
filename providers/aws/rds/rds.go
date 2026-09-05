@@ -454,6 +454,16 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 		engineVersion = defaultEngineVersion(cfg.Engine)
 	}
 
+	// Real RDS assigns the account-default DB parameter group ("default.<family>")
+	// and places the instance in an Availability Zone when the caller supplies
+	// neither, and reports both back on every Describe. Default them here so an
+	// SDK/CLI caller reading DBParameterGroups / AvailabilityZone sees what real
+	// RDS returns rather than an empty element.
+	paramGroup := cfg.DBParameterGroupName
+	if paramGroup == "" {
+		paramGroup = defaultParameterGroupName(cfg.Engine)
+	}
+
 	// BackupRetentionPeriod is NOT defaulted here: unlike AllocatedStorage/
 	// StorageType/InstanceClass above, 0 is a meaningful explicit value (it
 	// disables automated backups). The wire layer, which can see whether the
@@ -489,10 +499,10 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 		PubliclyAccessible:         cfg.PubliclyAccessible,
 		VPCSecurityGroups:          append([]string(nil), cfg.VPCSecurityGroups...),
 		SubnetGroupName:            cfg.SubnetGroupName,
-		DBParameterGroupName:       cfg.DBParameterGroupName,
+		DBParameterGroupName:       paramGroup,
 		OptionGroupName:            cfg.OptionGroupName,
 		ClusterID:                  cfg.ClusterID,
-		AvailabilityZone:           cfg.AvailabilityZone,
+		AvailabilityZone:           defaultAvailabilityZone(cfg.AvailabilityZone, cfg.MultiAZ, region),
 		DbiResourceID:              resourceID("db-", cfg.ID),
 		BackupRetentionPeriod:      cfg.BackupRetentionPeriod,
 		PreferredBackupWindow:      backupWindow,
@@ -505,6 +515,37 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 		CreatedAt:                  m.opts.Clock.Now().UTC(),
 		Tags:                       copyTags(cfg.Tags),
 	}
+}
+
+// defaultParameterGroupName returns the DB parameter group real RDS assigns to
+// an instance whose caller supplied none: "default." + the engine's
+// parameter-group family (e.g. "default.mysql8.0"). An unknown engine has no
+// known family and so no default group, matching real RDS which only
+// auto-assigns one for a recognized engine.
+func defaultParameterGroupName(engine string) string {
+	family := engineFamily[engine]
+	if family == "" {
+		return ""
+	}
+
+	return "default." + family
+}
+
+// defaultAvailabilityZone returns the AZ real RDS reports for an instance. A
+// single-AZ instance is placed in one AZ (the caller's choice, else the first
+// AZ in the region); a Multi-AZ instance spans AZs with an RDS-chosen primary,
+// which is left unset here. region+"a" mirrors the AZ naming availabilityZones()
+// uses for Aurora clusters.
+func defaultAvailabilityZone(az string, multiAZ bool, region string) string {
+	if az != "" {
+		return az
+	}
+
+	if multiAZ || region == "" {
+		return ""
+	}
+
+	return region + "a"
 }
 
 // resolveKMSKeyID mirrors real RDS: when storage is encrypted and the caller
@@ -1393,6 +1434,8 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 		PubliclyAccessible:         input.PubliclyAccessible,
 		DeletionProtection:         input.DeletionProtection,
 		SubnetGroupName:            input.SubnetGroupName,
+		DBParameterGroupName:       defaultParameterGroupName(snap.Engine),
+		AvailabilityZone:           defaultAvailabilityZone("", input.MultiAZ, region),
 		CreatedAt:                  m.opts.Clock.Now().UTC(),
 		Tags:                       copyTags(input.Tags),
 	}
