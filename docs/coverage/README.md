@@ -14,6 +14,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `acm` | [ACM](./aws/acm.md) | — | — | — | 17 |
 | `aks` | — | [AKS](./azure/aks.md) | — | — | 18 |
 | `apigateway` | [APIGateway](./aws/apigateway.md) | — | — | — | 23 |
+| `apigatewayv2` | [APIGatewayV2](./aws/apigatewayv2.md) | — | — | — | 20 |
 | `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
 | `azuresearch` | — | [Search](./azure/search.md) | — | — | 53 |
 | `bedrock` | [Bedrock](./aws/bedrock.md) | — | — | — | 65 |
