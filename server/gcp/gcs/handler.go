@@ -77,6 +77,13 @@ const (
 	subresIAM = "iam"
 	// subresNotificationConfigs is the /b/{bucket}/notificationConfigs segment.
 	subresNotificationConfigs = "notificationConfigs"
+	// subresAnywhereCaches is the /b/{bucket}/anywhereCaches sub-collection
+	// segment. cloudemu does not model Anywhere Cache instances, but the list
+	// endpoint must answer 200 with an empty set: the Terraform google provider
+	// lists anywhere caches during force_destroy and aborts its object cleanup
+	// (leaving the bucket non-empty) if that call errors instead of returning a
+	// list.
+	subresAnywhereCaches = "anywhereCaches"
 	// defaultLocation / defaultStorageClass are the GCS defaults a bucket reads
 	// back when none was set at create.
 	defaultLocation     = "US"
@@ -284,6 +291,8 @@ func (h *Handler) serveBucketSubcollection(w http.ResponseWriter, r *http.Reques
 		h.bucketIAM(w, r, parts[1])
 	case subresNotificationConfigs:
 		h.notificationCollection(w, r, parts[1])
+	case subresAnywhereCaches:
+		h.listAnywhereCaches(w, r, parts[1])
 	case "lockRetentionPolicy":
 		h.lockRetentionPolicy(w, r, parts[1])
 	default:
@@ -299,6 +308,11 @@ func (h *Handler) serveBucketSubresource(w http.ResponseWriter, r *http.Request,
 		h.objectOp(w, r, parts[1], strings.Join(parts[3:], "/"))
 	case parts[2] == subresIAM && parts[3] == "testPermissions":
 		h.testIAMPermissions(w, r, parts[1])
+	case parts[2] == subresAnywhereCaches && parts[3] == "":
+		// The Go storage client appends a trailing slash to the list URL
+		// (b/{bucket}/anywhereCaches/), which splits into a trailing empty
+		// segment; route it to the same empty-list handler.
+		h.listAnywhereCaches(w, r, parts[1])
 	case parts[2] == subresNotificationConfigs:
 		h.notificationResourceOp(w, r, parts[1], parts[3])
 	default:
@@ -640,6 +654,25 @@ func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, name stri
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// listAnywhereCaches serves GET /b/{bucket}/anywhereCaches. cloudemu does not
+// model Anywhere Cache instances, so it always reports an empty list — the
+// correct response for a bucket that has no caches, and enough for the Terraform
+// google provider's force_destroy path (which lists caches before deleting a
+// bucket's objects and aborts that cleanup if the call errors) to proceed.
+func (h *Handler) listAnywhereCaches(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
+		return
+	}
+
+	if !h.bucketExists(r, name) {
+		writeError(w, http.StatusNotFound, "notFound", "bucket "+name+" not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, anywhereCachesListResponse{Kind: "storage#anywhereCaches"})
+}
+
 // bucketIAM serves /b/{bucket}/iam — GET returns the bucket's IAM policy (a
 // default empty policy when none was set), PUT/POST replaces it.
 func (h *Handler) bucketIAM(w http.ResponseWriter, r *http.Request, name string) {
@@ -824,11 +857,10 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) initResumable(w http.ResponseWriter, r *http.Request, bucket string) {
 	meta := h.readResumableInitMetadata(r)
 
-	name := meta.Name
-	if name == "" {
-		name = r.URL.Query().Get("name")
-	}
-
+	// The `name` query parameter overrides the metadata name when both are
+	// present (GCS Objects: insert contract), and is the sole source when the
+	// init body carries no metadata name.
+	name := firstNonEmpty(r.URL.Query().Get("name"), meta.Name)
 	if name == "" {
 		writeError(w, http.StatusBadRequest, "invalid", "name required for resumable upload")
 		return
@@ -1262,8 +1294,16 @@ func (h *Handler) uploadMultipart(w http.ResponseWriter, r *http.Request, bucket
 		return
 	}
 
-	if meta.Name == "" {
-		writeError(w, http.StatusBadRequest, "invalid", "metadata.name required")
+	// The object name may come from the metadata part or the `name` query
+	// parameter; per the GCS Objects: insert contract the query parameter
+	// "Overrides the object metadata's name value, if any" and is "Not required
+	// if the request body contains object metadata that includes a name value".
+	// The Terraform google provider and gcloud/gsutil put the name in the query
+	// string and omit it from the metadata part, so consulting only the metadata
+	// name (as before) rejected every such upload.
+	name := firstNonEmpty(r.URL.Query().Get("name"), meta.Name)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "invalid", "Required parameter: name")
 		return
 	}
 
@@ -1271,7 +1311,7 @@ func (h *Handler) uploadMultipart(w http.ResponseWriter, r *http.Request, bucket
 		payloadCT = contentTypeBinary
 	}
 
-	h.storeObject(w, r, bucket, meta.Name, payloadCT, payload, meta.Metadata, &storagedriver.GCSObjectAttrs{
+	h.storeObject(w, r, bucket, name, payloadCT, payload, meta.Metadata, &storagedriver.GCSObjectAttrs{
 		CacheControl:       meta.CacheControl,
 		ContentEncoding:    meta.ContentEncoding,
 		ContentDisposition: meta.ContentDisposition,
