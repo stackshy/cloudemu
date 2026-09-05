@@ -33,6 +33,7 @@ const (
 	defaultKmsDataKeyReuse   = 300
 	dedupScopeQueue          = "queue"
 	fifoThroughputPerQueue   = "perQueue"
+	attrTrue                 = "true"
 	maxReceiveMessages       = 10
 	deduplicationWindow      = 5 * time.Minute
 	maxReceiveWaitSeconds    = 20
@@ -347,13 +348,34 @@ func sameQueueConfig(existing *queueData, cfg *driver.QueueConfig) bool {
 		existing.delaySeconds == cfg.DelaySeconds &&
 		existing.receiveWaitTime == cfg.ReceiveMessageWaitTimeSeconds &&
 		existing.contentBasedDedup == cfg.ContentBasedDeduplication &&
-		existing.redrivePolicy == cfg.RedrivePolicy &&
+		samePolicyConfig(existing, cfg) &&
+		sameSSEConfig(existing, cfg) &&
+		sameFIFOConfig(existing, cfg)
+}
+
+// samePolicyConfig reports whether the redrive and access-policy documents on an
+// existing queue match the requested configuration. The caller must hold
+// existing.mu.
+func samePolicyConfig(existing *queueData, cfg *driver.QueueConfig) bool {
+	return existing.redrivePolicy == cfg.RedrivePolicy &&
 		existing.redriveAllowPolicy == cfg.RedriveAllowPolicy &&
-		existing.policy == cfg.Policy &&
-		existing.kmsMasterKeyID == cfg.KmsMasterKeyID &&
+		existing.policy == cfg.Policy
+}
+
+// sameSSEConfig reports whether the server-side encryption settings on an
+// existing queue match the requested configuration. The caller must hold
+// existing.mu.
+func sameSSEConfig(existing *queueData, cfg *driver.QueueConfig) bool {
+	return existing.kmsMasterKeyID == cfg.KmsMasterKeyID &&
 		existing.kmsDataKeyReuse == resolveKmsDataKeyReuse(cfg) &&
-		existing.sqsManagedSSE == (cfg.SqsManagedSseEnabled && cfg.KmsMasterKeyID == "") &&
-		existing.deduplicationScope == resolveDedupScope(cfg) &&
+		existing.sqsManagedSSE == (cfg.SqsManagedSseEnabled && cfg.KmsMasterKeyID == "")
+}
+
+// sameFIFOConfig reports whether the FIFO deduplication scope and throughput
+// limit on an existing queue match the requested configuration. The caller must
+// hold existing.mu.
+func sameFIFOConfig(existing *queueData, cfg *driver.QueueConfig) bool {
+	return existing.deduplicationScope == resolveDedupScope(cfg) &&
 		existing.fifoThroughputLim == resolveFifoThroughputLimit(cfg)
 }
 
@@ -1405,7 +1427,7 @@ func (m *Mock) SetQueueAttributesRaw(_ context.Context, queue string, attrs map[
 	}
 
 	if v, ok := attrs["ContentBasedDeduplication"]; ok {
-		qd.contentBasedDedup = v == "true"
+		qd.contentBasedDedup = v == attrTrue
 	}
 
 	if v, ok := attrs["Policy"]; ok {
@@ -1439,7 +1461,7 @@ func applyEncryptionAttrs(qd *queueData, attrs map[string]string) {
 	}
 
 	if v, ok := attrs["SqsManagedSseEnabled"]; ok {
-		qd.sqsManagedSSE = v == "true"
+		qd.sqsManagedSSE = v == attrTrue
 		if qd.sqsManagedSSE {
 			qd.kmsMasterKeyID = ""
 		}
