@@ -24,6 +24,7 @@ type gceSnapshot struct {
 	Snapshots    json.RawMessage              `json:"snapshots,omitempty"`
 	Images       json.RawMessage              `json:"images,omitempty"`
 	KeyPairs     json.RawMessage              `json:"keyPairs,omitempty"`
+	Migs         json.RawMessage              `json:"migs,omitempty"`
 	ASGs         map[string]*asgSnapshot      `json:"asgs,omitempty"`
 	Counters     countersSnapshot             `json:"counters"`
 }
@@ -106,6 +107,7 @@ func (m *Mock) snapshotStores(snap *gceSnapshot) error {
 		{&snap.Snapshots, m.snapshots.Snapshot},
 		{&snap.Images, m.images.Snapshot},
 		{&snap.KeyPairs, m.keyPairs.Snapshot},
+		{&snap.Migs, m.migs.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -193,6 +195,7 @@ func (m *Mock) restoreStores(snap *gceSnapshot) error {
 		{snap.Snapshots, m.snapshots.LoadSnapshot},
 		{snap.Images, m.images.LoadSnapshot},
 		{snap.KeyPairs, m.keyPairs.LoadSnapshot},
+		{snap.Migs, m.migs.LoadSnapshot},
 	}
 
 	for _, l := range loads {

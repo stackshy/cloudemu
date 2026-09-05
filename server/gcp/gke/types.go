@@ -81,6 +81,10 @@ type gkeNodePool struct {
 	Management       *gkeNodeManagement `json:"management,omitempty"`
 	Status           string             `json:"status,omitempty"`
 	SelfLink         string             `json:"selfLink,omitempty"`
+	// InstanceGroupUrls point at each backing zonal MIG. The Terraform google
+	// provider derives node_count from the targetSize of the MIGs these resolve
+	// to, so emitting them (with a matching MIG) is what stops node_count drift.
+	InstanceGroupUrls []string `json:"instanceGroupUrls,omitempty"`
 }
 
 type gkeNodeConfig struct {
@@ -227,7 +231,9 @@ func int64Ptr(v int64) *int64 { return &v }
 // endpoint argument is what the Mock reported via Endpoint(location, name) —
 // either the in-memory K8s data-plane URL when a data plane is wired, or the
 // cluster's synthesized control-plane IP.
-func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.NodePool) gkeCluster {
+func toClusterResource(
+	c *gke.Cluster, project, endpoint string, pools []gke.NodePool, igmURLsFor func(np *gke.NodePool) []string,
+) gkeCluster {
 	var currentNodes int64
 	for i := range pools {
 		currentNodes += pools[i].NodeCount
@@ -268,7 +274,7 @@ func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.Nod
 	}
 
 	for i := range pools {
-		out.NodePools = append(out.NodePools, toNodePoolResource(&pools[i], project))
+		out.NodePools = append(out.NodePools, toNodePoolResource(&pools[i], project, igmURLsFor(&pools[i])))
 	}
 
 	return out
@@ -284,11 +290,12 @@ func versionOr(v string) string {
 	return v
 }
 
-func toNodePoolResource(np *gke.NodePool, project string) gkeNodePool {
+func toNodePoolResource(np *gke.NodePool, project string, igmUrls []string) gkeNodePool {
 	out := gkeNodePool{
-		Name:             np.Name,
-		Version:          np.Version,
-		InitialNodeCount: int64Ptr(np.NodeCount),
+		InstanceGroupUrls: igmUrls,
+		Name:              np.Name,
+		Version:           np.Version,
+		InitialNodeCount:  int64Ptr(np.NodeCount),
 		Config: &gkeNodeConfig{
 			MachineType: np.MachineType,
 			DiskSizeGb:  np.DiskSizeGB,

@@ -156,7 +156,16 @@ func New(d Drivers) *server.Server {
 	// the op was recorded by the GKE mock, so foreign location operations still
 	// fall through to lro below — no shadowing.
 	if d.GKE != nil {
-		srv.Register(gke.New(d.GKE))
+		gkeH := gke.New(d.GKE)
+		// Wire the compute-side MIG registrar (the GCE Mock) so node-pool
+		// lifecycle keeps a backing instanceGroupManager's targetSize == node
+		// count, letting the Terraform provider resolve node_count and stop the
+		// 0→N drift. Nil compute driver leaves node pools without MIG URLs.
+		if reg, ok := d.Compute.(gke.InstanceGroupManagerRegistrar); ok {
+			gkeH.SetInstanceGroupManagers(reg)
+		}
+
+		srv.Register(gkeH)
 	}
 
 	// Shared location-operations poller. Registered ahead of the remaining
