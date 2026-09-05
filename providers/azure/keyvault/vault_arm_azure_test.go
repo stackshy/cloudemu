@@ -284,6 +284,31 @@ func TestListVaultsByScope(t *testing.T) {
 	assert.Len(t, bySub, 2)
 }
 
+// TestListVaultsSortedByName pins the deterministic list order real ARM
+// (Vaults.ListByResourceGroup / ListBySubscription and the azurerm_key_vaults
+// data source) exposes: vaults come back sorted by name regardless of creation
+// order, so pagers and Terraform refreshes never churn on randomized map order.
+func TestListVaultsSortedByName(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	// Insert in reverse-alphabetical order.
+	for _, name := range []string{"vault-c", "vault-a", "vault-b"} {
+		_, err := m.CreateOrUpdateVault(ctx, sampleVaultConfig(name, "sub-1", "rg-1"))
+		require.NoError(t, err)
+	}
+
+	got, err := m.ListVaults(ctx, scope.Scope{Subscription: "sub-1", ResourceGroup: "rg-1"})
+	require.NoError(t, err)
+
+	names := make([]string, len(got))
+	for i := range got {
+		names[i] = got[i].Name
+	}
+
+	assert.Equal(t, []string{"vault-a", "vault-b", "vault-c"}, names)
+}
+
 func TestDeleteVault(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

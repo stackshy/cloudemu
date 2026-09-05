@@ -2,6 +2,7 @@ package keyvault
 
 import (
 	"context"
+	"sort"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -103,6 +104,13 @@ func (m *Mock) ListVaults(_ context.Context, filter scope.Scope) ([]driver.KVVau
 
 		out = append(out, *cloneVaultInfo(info))
 	}
+
+	// Vaults are stored in a map, whose iteration order is randomized. Real ARM
+	// list responses (Vaults.ListByResourceGroup / ListBySubscription, and the
+	// azurerm_key_vaults data source that walks them) return a stable order, so
+	// sort by the globally unique vault name to keep GETs deterministic and free
+	// of Terraform plan churn.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 
 	return out, nil
 }
