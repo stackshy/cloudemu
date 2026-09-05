@@ -276,7 +276,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parts := strings.Split(rest, "/")
-	name := parts[0]
+
+	name, ok := h.resolveFunctionRef(w, r, parts[0])
+	if !ok {
+		return
+	}
 
 	const (
 		partsResource    = 1 // /functions/{name}
@@ -438,6 +442,64 @@ func splitFunctionNameQualifier(raw string) (name, qualifier string) {
 	}
 
 	return rest, ""
+}
+
+// qualifierMismatchMessage is the ValidationException real Lambda returns when the
+// qualifier embedded in the FunctionName (e.g. "my-fn:PROD") disagrees with the
+// explicit ?Qualifier= query parameter.
+const qualifierMismatchMessage = "The derived qualifier from the function name does not match the specified qualifier."
+
+// resolveFunctionRef normalizes a FunctionName path segment — which real Lambda
+// accepts as a bare name, "name:qualifier", an unqualified function ARN, or a
+// qualified function ARN (".../function:name:qualifier") — into a bare function
+// name, reconciling any qualifier embedded in the reference with an explicit
+// ?Qualifier= query parameter. When both are present and differ it writes a
+// ValidationException and returns ok=false; when they agree, or only one is
+// present, it rewrites the request's Qualifier query parameter to the reconciled
+// value so every downstream handler reads the effective qualifier uniformly.
+// Applying it at the single control-plane dispatch point makes all
+// FunctionName-taking operations (Get/UpdateFunctionConfiguration, GetFunction,
+// Invoke, UpdateFunctionCode, DeleteFunction, PublishVersion, alias and policy
+// ops) accept every FunctionName form.
+func (*Handler) resolveFunctionRef(w http.ResponseWriter, r *http.Request, raw string) (string, bool) {
+	name, embedded := splitFunctionNameQualifier(raw)
+
+	qualifier, ok := reconcileQualifier(embedded, r.URL.Query().Get("Qualifier"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "ValidationException", qualifierMismatchMessage)
+		return "", false
+	}
+
+	setQualifier(r, qualifier)
+
+	return name, true
+}
+
+// reconcileQualifier merges a qualifier embedded in a FunctionName with an
+// explicit ?Qualifier= query parameter: either alone (or both equal) is accepted;
+// two different non-empty qualifiers are a conflict (ok=false).
+func reconcileQualifier(embedded, query string) (string, bool) {
+	switch {
+	case embedded == "":
+		return query, true
+	case query == "" || query == embedded:
+		return embedded, true
+	default:
+		return "", false
+	}
+}
+
+// setQualifier rewrites the request URL's Qualifier query parameter to the
+// reconciled value so downstream handlers read it via r.URL.Query().Get.
+func setQualifier(r *http.Request, qualifier string) {
+	q := r.URL.Query()
+	if qualifier == "" {
+		q.Del("Qualifier")
+	} else {
+		q.Set("Qualifier", qualifier)
+	}
+
+	r.URL.RawQuery = q.Encode()
 }
 
 // servePolicy handles POST (AddPermission) and GET (GetPolicy) on
