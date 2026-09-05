@@ -37,6 +37,10 @@ const (
 	// storageClassStandard is S3's default storage class; it is never emitted in
 	// the x-amz-storage-class response header (real S3 omits it for STANDARD).
 	storageClassStandard = "STANDARD"
+	// defaultContentType is the Content-Type S3 assigns to an object uploaded
+	// without one. Real S3 uses "binary/octet-stream" (not the more common
+	// "application/octet-stream"), and returns it on GET/HeadObject.
+	defaultContentType = "binary/octet-stream"
 )
 
 // Handler serves S3 REST requests against a storage.Bucket driver.
@@ -653,7 +657,7 @@ func (h *Handler) putObject(w http.ResponseWriter, r *http.Request, bucket, key 
 
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
-		contentType = "application/octet-stream"
+		contentType = defaultContentType
 	}
 
 	metadata := extractMetadata(r.Header)
@@ -1748,7 +1752,7 @@ type multipartTagger interface {
 func (h *Handler) createMultipartUpload(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	contentType := r.Header.Get("Content-Type")
 	if contentType == "" {
-		contentType = "application/octet-stream"
+		contentType = defaultContentType
 	}
 
 	mp, err := h.beginMultipartUpload(r, bucket, key, contentType)

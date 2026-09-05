@@ -30,6 +30,9 @@ const (
 	s3DefaultMaxKeys       = 1000
 	s3TimeFormat           = "2006-01-02T15:04:05Z"
 	hoursPerDay            = 24
+	// s3DefaultContentType is the Content-Type S3 assigns when a CopyObject with
+	// REPLACE metadata supplies none. Real S3 uses "binary/octet-stream".
+	s3DefaultContentType = "binary/octet-stream"
 )
 
 var (
@@ -1095,7 +1098,7 @@ func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) 
 		contentType = req.ContentType
 
 		if contentType == "" {
-			contentType = "application/octet-stream"
+			contentType = s3DefaultContentType
 		}
 	}
 
