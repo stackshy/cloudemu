@@ -32,6 +32,11 @@ const (
 	StatusUpdating     = "updating"
 	StatusDeleting     = "deleting"
 	StatusSnapshotting = "snapshotting"
+	// StatusActive is the terminal status for ACLs and users. MemoryDB reports
+	// clusters and snapshots as "available" but ACLs/users as "active" (ACL:
+	// creating|active|modifying|deleting; User: active|modifying|deleting), which
+	// their Terraform waiters require.
+	StatusActive = "active"
 )
 
 // Endpoint is an address:port a client connects to.
