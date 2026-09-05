@@ -188,19 +188,24 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// writeErr maps cloudemu errors to ELBv2 XML error responses.
+// writeErr maps cloudemu errors to ELBv2 XML error responses. The <Message> is
+// the human-readable text only: real AWS never leaks an internal error-taxonomy
+// name into it, so cerrors.Message strips the canonical code prefix that
+// err.Error() would otherwise prepend (e.g. "NotFound: load balancer ...").
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, notFoundCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, notFoundCode(err), msg)
 	case cerrors.IsAlreadyExists(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, duplicateNameCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, duplicateNameCode(err), msg)
 	case cerrors.IsInvalidArgument(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "ValidationError", err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "ValidationError", msg)
 	case cerrors.IsFailedPrecondition(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, failedPreconditionCode(err), err.Error())
+		awsquery.WriteXMLError(w, http.StatusBadRequest, failedPreconditionCode(err), msg)
 	default:
-		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", err.Error())
+		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
 }
 
