@@ -8,6 +8,7 @@ require (
 	cloud.google.com/go/eventarc v1.18.0
 	cloud.google.com/go/firestore v1.22.0
 	cloud.google.com/go/iam v1.7.0
+	cloud.google.com/go/secretmanager v1.16.0
 	cloud.google.com/go/storage v1.62.1
 	github.com/Azure/azure-kusto-go v0.16.1
 	github.com/Azure/azure-sdk-for-go/sdk/ai/azopenai v0.7.2

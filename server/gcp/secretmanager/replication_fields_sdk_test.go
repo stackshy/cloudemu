@@ -96,6 +96,23 @@ func TestSDKReplicationRequiredOnCreate(t *testing.T) {
 	}
 }
 
+// TestSDKReplicationEmptyOneofRejected proves a create with a replication object
+// present but neither automatic nor userManaged set is rejected 400
+// INVALID_ARGUMENT — real Secret Manager validates the required replication
+// oneof rather than silently defaulting an empty policy to automatic.
+func TestSDKReplicationEmptyOneofRejected(t *testing.T) {
+	svc := newSMService(t)
+
+	_, err := svc.Projects.Secrets.Create(testParent, &sm.Secret{
+		Replication: &sm.Replication{},
+	}).SecretId("empty-rep").Context(context.Background()).Do()
+
+	var gerr *googleapi.Error
+	if !errors.As(err, &gerr) || gerr.Code != 400 {
+		t.Fatalf("Create with empty replication oneof: got %v, want 400", err)
+	}
+}
+
 // TestSDKAccessReturnsDataCrc32c proves accessSecretVersion returns the
 // Castagnoli CRC32C of the payload so client-side verification passes
 // (audit: BUG2).
