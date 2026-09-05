@@ -135,7 +135,7 @@ func (h *Handler) patchSubscription(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
-	masks := parseMask(req.UpdateMask)
+	masks := maskFromRequest(r, req.UpdateMask)
 	if len(masks) == 0 {
 		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "updateMask must be specified and non-empty")
 		return
@@ -208,6 +208,9 @@ func subMaskSetters() map[string]func(dst, src *subscription) {
 		"retryPolicy":              func(d, s *subscription) { d.RetryPolicy = s.RetryPolicy },
 		"deadLetterPolicy":         func(d, s *subscription) { d.DeadLetterPolicy = s.DeadLetterPolicy },
 		"pushConfig":               func(d, s *subscription) { d.PushConfig = s.PushConfig },
+		"bigqueryConfig":           func(d, s *subscription) { d.BigqueryConfig = s.BigqueryConfig },
+		"cloudStorageConfig":       func(d, s *subscription) { d.CloudStorageConfig = s.CloudStorageConfig },
+		"bigtableConfig":           func(d, s *subscription) { d.BigtableConfig = s.BigtableConfig },
 		"labels":                   func(d, s *subscription) { d.Labels = s.Labels },
 		"messageRetentionDuration": func(d, s *subscription) { d.MessageRetentionDuration = s.MessageRetentionDuration },
 		"expirationPolicy":         func(d, s *subscription) { d.ExpirationPolicy = s.ExpirationPolicy },
