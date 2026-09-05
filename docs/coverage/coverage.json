@@ -1966,6 +1966,51 @@
     }
   },
   {
+    "service": "cloudfront",
+    "interface": "CloudFront",
+    "operations": [
+      {
+        "name": "CreateDistribution",
+        "doc": "Distributions."
+      },
+      {
+        "name": "CreateInvalidation",
+        "doc": "Invalidations (synchronous — every invalidation is Completed immediately)."
+      },
+      {
+        "name": "DeleteDistribution"
+      },
+      {
+        "name": "GetDistribution"
+      },
+      {
+        "name": "GetInvalidation"
+      },
+      {
+        "name": "ListDistributions"
+      },
+      {
+        "name": "ListInvalidations"
+      },
+      {
+        "name": "ListTagsForResource",
+        "doc": "Tags (ARN-keyed)."
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateDistribution"
+      }
+    ],
+    "providers": {
+      "aws": "CloudFront"
+    }
+  },
+  {
     "service": "cloudrun",
     "interface": "CloudRun",
     "operations": [

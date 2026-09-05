@@ -25,6 +25,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cloudasset` | — | — | [Cloudasset](./gcp/cloudasset.md) | — | 11 |
 | `cloudbilling` | — | — | [Cloudbilling](./gcp/cloudbilling.md) | — | 14 |
 | `cloudformation` | [CloudFormation](./aws/cloudformation.md) | — | — | — | 9 |
+| `cloudfront` | [CloudFront](./aws/cloudfront.md) | — | — | — | 11 |
 | `cloudrun` | — | — | [CloudRun](./gcp/cloudrun.md) | — | 18 |
 | `cloudsql` | — | — | [CloudSQL](./gcp/cloudsql.md) | — | 21 |
 | `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | — | — | — | 60 |

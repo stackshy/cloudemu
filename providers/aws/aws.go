@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudformation"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudfront"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
@@ -184,6 +185,7 @@ type Provider struct {
 	APIGateway          *apigateway.Mock
 	APIGatewayV2        *apigatewayv2.Mock
 	CloudFormation      *cloudformation.Mock
+	CloudFront          *cloudfront.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -249,6 +251,7 @@ func New(opts ...config.Option) *Provider {
 		GuardDuty:           guardduty.New(o),
 		APIGateway:          apigateway.New(o),
 		APIGatewayV2:        apigatewayv2.New(o),
+		CloudFront:          cloudfront.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 		EnforceAuth:         o.EnforceAuth,
