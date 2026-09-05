@@ -272,8 +272,10 @@ func selectDoc(item map[string]any, paths []*expr.PathOperand) map[string]any {
 	}
 
 	// Carry the reserved commit-timestamp keys through the projection so a
-	// selected document still reports stable createTime/updateTime.
-	for _, k := range []string{fieldCreateTime, fieldUpdateTime} {
+	// selected document still reports stable createTime/updateTime. fieldCollPath
+	// (set only during a collection-group query) rides along so the projected
+	// document still knows its owning collection path.
+	for _, k := range []string{fieldCreateTime, fieldUpdateTime, fieldCollPath} {
 		if v, ok := item[k]; ok {
 			projected[k] = v
 		}

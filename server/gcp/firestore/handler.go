@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/http"
 	"sort"
 	"strconv"
@@ -69,12 +70,17 @@ const (
 	fieldID         = "\x00id"
 	fieldCreateTime = "\x00createTime"
 	fieldUpdateTime = "\x00updateTime"
+	// fieldCollPath is a transient, never-persisted key set on a cloned item
+	// during a collection-group (allDescendants) query so the response can
+	// reconstruct each document's owning collection path — matched documents
+	// come from many different subcollections, not the query's base collection.
+	fieldCollPath = "\x00collPath"
 )
 
 // isReservedKey reports whether k is a handler-internal item key that must not
 // be emitted as a Firestore document field.
 func isReservedKey(k string) bool {
-	return k == fieldID || k == fieldCreateTime || k == fieldUpdateTime
+	return k == fieldID || k == fieldCreateTime || k == fieldUpdateTime || k == fieldCollPath
 }
 
 // reference is a Go carrier for a Firestore referenceValue: a document
@@ -841,7 +847,8 @@ type runQueryRequest struct {
 
 type structuredQuery struct {
 	From []struct {
-		CollectionID string `json:"collectionId"`
+		CollectionID   string `json:"collectionId"`
+		AllDescendants bool   `json:"allDescendants"`
 	} `json:"from"`
 	Where   *queryFilter    `json:"where"`
 	OrderBy []orderByClause `json:"orderBy"`
@@ -1039,14 +1046,24 @@ func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, base string) 
 		return
 	}
 
-	p.collection = joinPath(p.parentPath(), req.StructuredQuery.From[0].CollectionID)
-	p.documentID = ""
+	from := req.StructuredQuery.From[0]
 
 	node, ferr := buildFilterNode(req.StructuredQuery.Where)
 	if ferr != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", cerrors.Message(ferr))
 		return
 	}
+
+	// A collection-group query (allDescendants) matches every collection with the
+	// given id at any depth beneath the request's parent, not just the single
+	// collection directly under it, so it scans across driver tables.
+	if from.AllDescendants {
+		h.runGroupQuery(w, r, p, from.CollectionID, node, &req.StructuredQuery)
+		return
+	}
+
+	p.collection = joinPath(p.parentPath(), from.CollectionID)
+	p.documentID = ""
 
 	// Fetch the full collection and evaluate the where clause here with full
 	// grammar fidelity (type-aware, AND/OR/NOT, IN/array-contains, unary). A
@@ -1073,6 +1090,110 @@ func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, base string) 
 	matched = shapeResults(matched, &req.StructuredQuery)
 
 	streamQueryResults(w, matched, p)
+}
+
+// runGroupQuery serves a collection-group runQuery (from.allDescendants=true).
+// It scans every collection in the request's (project, database) namespace whose
+// final path segment equals collectionID and that is a descendant of the request
+// base, tags each matched document with its owning collection path, then filters,
+// shapes, and streams the combined set. base carries the project/database and the
+// parent path the group is scoped under (empty at the documents root).
+func (h *Handler) runGroupQuery(
+	w http.ResponseWriter, r *http.Request, base firestorePath,
+	collectionID string, node expr.Node, q *structuredQuery,
+) {
+	items, err := h.scanCollectionGroup(r.Context(), base, collectionID)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	matched, merr := filterDocuments(items, node)
+	if merr != nil {
+		writeErr(w, merr)
+		return
+	}
+
+	matched = shapeResults(matched, q)
+
+	streamGroupResults(w, matched, base.project, base.database)
+}
+
+// scanCollectionItems returns every document in a single collection table. A
+// never-written collection has no driver table; real Firestore treats that as an
+// empty result set rather than an error, so NotFound maps to no items.
+func (h *Handler) scanCollectionItems(ctx context.Context, table string) ([]map[string]any, error) {
+	result, err := h.db.Scan(ctx, dbdriver.ScanInput{Table: table, Limit: allResults})
+	if err != nil {
+		if cerrors.IsNotFound(err) {
+			return nil, nil
+		}
+
+		return nil, err
+	}
+
+	return result.Items, nil
+}
+
+// scanCollectionGroup gathers every document belonging to a collection whose id
+// (final path segment) equals collectionID and that is a descendant of base,
+// within base's (project, database) namespace. Each returned item is a clone
+// tagged with fieldCollPath (its owning collection path) so callers can rebuild
+// the document's resource name. A never-written collection is skipped.
+func (h *Handler) scanCollectionGroup(
+	ctx context.Context, base firestorePath, collectionID string,
+) ([]map[string]any, error) {
+	tables, err := h.db.ListTables(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	nsPrefix := base.namespacePrefix()
+	parent := base.parentPath()
+
+	var items []map[string]any
+
+	for _, t := range tables {
+		if !strings.HasPrefix(t, nsPrefix) {
+			continue
+		}
+
+		coll := t[len(nsPrefix):]
+		if lastPathSegment(coll) != collectionID {
+			continue
+		}
+
+		if parent != "" && !strings.HasPrefix(coll, parent+"/") {
+			continue
+		}
+
+		res, serr := h.db.Scan(ctx, dbdriver.ScanInput{Table: t, Limit: allResults})
+		if serr != nil {
+			if cerrors.IsNotFound(serr) {
+				continue
+			}
+
+			return nil, serr
+		}
+
+		for _, it := range res.Items {
+			tagged := maps.Clone(it)
+			tagged[fieldCollPath] = coll
+			items = append(items, tagged)
+		}
+	}
+
+	return items, nil
+}
+
+// lastPathSegment returns the final "/"-separated segment of a collection path,
+// i.e. its collection id ("cities/SF/landmarks" → "landmarks").
+func lastPathSegment(path string) string {
+	if i := strings.LastIndex(path, "/"); i >= 0 {
+		return path[i+1:]
+	}
+
+	return path
 }
 
 // filterDocuments keeps the items matching node (a nil node matches all).
@@ -1111,6 +1232,33 @@ func streamQueryResults(w http.ResponseWriter, items []map[string]any, p firesto
 		}
 
 		id, _ := item[fieldID].(string)
+		doc := mapToDocument(item, p, id)
+
+		_ = json.NewEncoder(w).Encode(runQueryResponseEntry{Document: &doc, ReadTime: now})
+	}
+
+	w.Write([]byte("]")) //nolint:errcheck // best-effort
+}
+
+// streamGroupResults streams collection-group query results. Each item was
+// tagged (in runGroupQuery) with fieldCollPath — its owning collection path —
+// so every document's resource name is rebuilt from its own subcollection
+// rather than a single shared collection.
+func streamGroupResults(w http.ResponseWriter, items []map[string]any, project, database string) {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+
+	w.Header().Set("Content-Type", contentTypeJSON)
+	w.WriteHeader(http.StatusOK)
+	w.Write([]byte("[")) //nolint:errcheck // best-effort streaming response
+
+	for i, item := range items {
+		if i > 0 {
+			w.Write([]byte(",")) //nolint:errcheck // best-effort
+		}
+
+		coll, _ := item[fieldCollPath].(string)
+		id, _ := item[fieldID].(string)
+		p := firestorePath{project: project, database: database, collection: coll}
 		doc := mapToDocument(item, p, id)
 
 		_ = json.NewEncoder(w).Encode(runQueryResponseEntry{Document: &doc, ReadTime: now})
