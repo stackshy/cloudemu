@@ -54,6 +54,7 @@ func instanceFromBody(body *sqlInstance) rdsdriver.InstanceConfig {
 		cfg.GCPDatabaseFlags = string(s.DatabaseFlags)
 		cfg.GCPBackupConfig = string(s.BackupConfiguration)
 		cfg.GCPIPConfig = string(s.IPConfiguration)
+		cfg.GCPSettingsExtra = settingsExtraJSON(s)
 		// A nil StorageAutoResize is carried through so the provider applies the
 		// Cloud SQL default (true) rather than false.
 		cfg.GCPStorageAutoResize = s.StorageAutoResize
@@ -89,6 +90,7 @@ func modifyInputFromBody(body *sqlInstance, replace bool) rdsdriver.ModifyInstan
 	input.GCPDatabaseFlags = string(s.DatabaseFlags)
 	input.GCPBackupConfig = string(s.BackupConfiguration)
 	input.GCPIPConfig = string(s.IPConfiguration)
+	input.GCPSettingsExtra = settingsExtraJSON(s)
 
 	applyModifySettings(&input, s, replace)
 

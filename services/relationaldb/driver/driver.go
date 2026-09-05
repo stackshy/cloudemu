@@ -143,6 +143,12 @@ type InstanceConfig struct {
 	GCPDatabaseFlags string
 	GCPBackupConfig  string
 	GCPIPConfig      string
+	// GCPSettingsExtra carries every other Cloud SQL settings sub-field the wire
+	// layer does not model explicitly (maintenanceWindow, insightsConfig,
+	// locationPreference, connectorEnforcement, passwordValidationPolicy, …) as one
+	// opaque JSON object, so they all round-trip on Insert->Get without the wire
+	// layer modeling each. Cloud SQL-only; AWS RDS / Redshift never set it.
+	GCPSettingsExtra string
 	// GCPStorageAutoResize is the Cloud SQL settings.storageAutoResize flag, which
 	// defaults to true on a real instance. A pointer so an omitted field means
 	// "use the default" (true) rather than false; Cloud SQL-only, ignored by
@@ -229,6 +235,11 @@ type Instance struct {
 	GCPDatabaseFlags string
 	GCPBackupConfig  string
 	GCPIPConfig      string
+	// GCPSettingsExtra echoes every other Cloud SQL settings sub-field the wire
+	// layer does not model explicitly (maintenanceWindow, insightsConfig,
+	// locationPreference, connectorEnforcement, …) as one opaque JSON object so
+	// they round-trip on read. Empty for AWS RDS / Redshift.
+	GCPSettingsExtra string
 	// GCPStorageAutoResize echoes the Cloud SQL settings.storageAutoResize flag on
 	// read. It is resolved to a concrete value on create (defaulting to true),
 	// so a Get always reports it. False/unused for AWS RDS / Redshift.
@@ -294,6 +305,11 @@ type ModifyInstanceInput struct {
 	GCPDatabaseFlags string
 	GCPBackupConfig  string
 	GCPIPConfig      string
+	// GCPSettingsExtra updates the opaque JSON object of Cloud SQL settings
+	// sub-fields the wire layer does not model explicitly (maintenanceWindow,
+	// insightsConfig, locationPreference, connectorEnforcement, …); empty means
+	// "no change". Cloud SQL-only; RDS/Redshift ignore it.
+	GCPSettingsExtra string
 	// GCPStorageAutoResize updates the Cloud SQL settings.storageAutoResize flag; a
 	// nil pointer means "no change". Cloud SQL-only; RDS/Redshift ignore it.
 	GCPStorageAutoResize *bool

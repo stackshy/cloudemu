@@ -319,6 +319,7 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		GCPDatabaseFlags:     cfg.GCPDatabaseFlags,
 		GCPBackupConfig:      cfg.GCPBackupConfig,
 		GCPIPConfig:          cfg.GCPIPConfig,
+		GCPSettingsExtra:     cfg.GCPSettingsExtra,
 		GCPStorageAutoResize: autoResize,
 	}
 }
@@ -486,6 +487,10 @@ func applyGCPSettings(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceI
 
 	if input.GCPIPConfig != "" {
 		inst.GCPIPConfig = input.GCPIPConfig
+	}
+
+	if input.GCPSettingsExtra != "" {
+		inst.GCPSettingsExtra = input.GCPSettingsExtra
 	}
 
 	if input.GCPStorageAutoResize != nil {

@@ -111,6 +111,88 @@ type sqlSettings struct {
 	DatabaseFlags       json.RawMessage `json:"databaseFlags,omitempty"`
 	BackupConfiguration json.RawMessage `json:"backupConfiguration,omitempty"`
 	IPConfiguration     json.RawMessage `json:"ipConfiguration,omitempty"`
+	// extra holds every other settings sub-field the wire type does not model
+	// explicitly (maintenanceWindow, insightsConfig, locationPreference,
+	// connectorEnforcement, passwordValidationPolicy, …). It is populated by
+	// UnmarshalJSON from an inbound request and re-inlined by MarshalJSON on a Get
+	// so those fields round-trip instead of being silently dropped — a perpetual
+	// Terraform drift source. It carries no json tag: the (Un)marshalers handle it.
+	extra map[string]json.RawMessage
+}
+
+// isModeledSettingsKey reports whether a settings JSON key is one this wire type
+// models with a typed field (and therefore must NOT be captured into extra).
+// settingsVersion and kind are stripped too: they are server-managed, so echoing
+// a client-supplied value would be wrong.
+func isModeledSettingsKey(k string) bool {
+	switch k {
+	case "tier", "activationPolicy", "dataDiskSizeGb", "dataDiskType",
+		"availabilityType", "pricingPlan", "userLabels", "storageAutoResize",
+		"deletionProtectionEnabled", "databaseFlags", "backupConfiguration",
+		"ipConfiguration", "settingsVersion", "kind":
+		return true
+	default:
+		return false
+	}
+}
+
+// MarshalJSON emits the typed settings fields and re-inlines every unmodeled
+// sub-field captured in extra, so fields like maintenanceWindow round-trip on a
+// Get. Typed fields win over an extra of the same name.
+func (s *sqlSettings) MarshalJSON() ([]byte, error) {
+	type alias sqlSettings // new type, no methods — avoids recursion
+
+	b, err := json.Marshal(alias(*s))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(s.extra) == 0 {
+		return b, nil
+	}
+
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(b, &merged); err != nil {
+		return nil, err
+	}
+
+	for k, v := range s.extra {
+		if _, ok := merged[k]; !ok {
+			merged[k] = v
+		}
+	}
+
+	return json.Marshal(merged)
+}
+
+// UnmarshalJSON decodes the typed settings fields and captures every other
+// (unmodeled) sub-field into extra so it can round-trip on a later Get.
+func (s *sqlSettings) UnmarshalJSON(b []byte) error {
+	type alias sqlSettings
+
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+
+	*s = sqlSettings(a)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+
+	for k := range raw {
+		if isModeledSettingsKey(k) {
+			delete(raw, k)
+		}
+	}
+
+	if len(raw) > 0 {
+		s.extra = raw
+	}
+
+	return nil
 }
 
 type ipMapping struct {
@@ -237,6 +319,7 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 			DatabaseFlags:             rawJSONOrNil(inst.GCPDatabaseFlags),
 			BackupConfiguration:       rawJSONOrNil(inst.GCPBackupConfig),
 			IPConfiguration:           rawJSONOrNil(inst.GCPIPConfig),
+			extra:                     settingsExtraMap(inst.GCPSettingsExtra),
 		},
 		ServerCaCert: serverCaCertFor(inst),
 		CreateTime:   inst.CreatedAt.UTC().Format(rfc3339Milli),
@@ -288,6 +371,38 @@ func rawJSONOrNil(s string) json.RawMessage {
 	}
 
 	return json.RawMessage(s)
+}
+
+// settingsExtraMap decodes the stored extra-settings JSON object back into the
+// map sqlSettings.MarshalJSON re-inlines. A malformed or empty value yields nil
+// so no extra fields are emitted.
+func settingsExtraMap(s string) map[string]json.RawMessage {
+	if s == "" {
+		return nil
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &m); err != nil || len(m) == 0 {
+		return nil
+	}
+
+	return m
+}
+
+// settingsExtraJSON serializes a settings' captured extra sub-fields back to a
+// JSON object string for storage on the driver. It returns "" when there are
+// none, matching the "no change / omit" convention of the other GCP* blobs.
+func settingsExtraJSON(s *sqlSettings) string {
+	if s == nil || len(s.extra) == 0 {
+		return ""
+	}
+
+	b, err := json.Marshal(s.extra)
+	if err != nil {
+		return ""
+	}
+
+	return string(b)
 }
 
 // serverCaCertFor builds the synthetic server CA certificate Cloud SQL reports
