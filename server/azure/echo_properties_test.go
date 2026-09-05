@@ -686,6 +686,107 @@ func TestEchoStillReflectsNonSecretProperty(t *testing.T) {
 	}
 }
 
+// getRawBody performs a GET and returns the raw response bytes so a test can
+// assert on the exact wire body (e.g. grep it for a leaked secret value), not
+// just the decoded map.
+func getRawBody(t *testing.T, c *http.Client, url string) []byte {
+	t.Helper()
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, url, nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+
+	resp, err := c.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		t.Fatalf("GET %s: status %d: %s", url, resp.StatusCode, data)
+	}
+
+	return data
+}
+
+// TestEchoDoesNotLeakContainerAppSecretValue is the credential-leak regression:
+// the Container Apps handler models configuration.secrets and echoes each
+// secret's NAME on read but never its value (real Azure serves values only via
+// listSecrets). The generic overlay used to see the omitted "value" as an
+// unmodeled property and re-inject the caller's cleartext secret on the create
+// response and every later GET. The path-aware write-only rule (a "value" under
+// "secrets") must suppress it, while a non-secret sibling under the same secret
+// element (identity) and a non-secret unmodeled top-level property still echo —
+// proving the fix is precise, not a blanket bare-"value" denylist.
+func TestEchoDoesNotLeakContainerAppSecretValue(t *testing.T) {
+	ts, c := echoTestServer(t)
+	url := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.App/containerApps/leakapp?api-version=2023-05-01"
+
+	const secretValue = "supersecret-leak-canary"
+
+	created := putJSON(t, c, url, map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			// Non-secret unmodeled top-level property: must still round-trip.
+			"workloadProfileName": "canary-unmodeled",
+			"configuration": map[string]any{
+				"activeRevisionsMode": "Single",
+				"secrets": []any{
+					map[string]any{
+						"name":     "mysecret",
+						"value":    secretValue,
+						"identity": "system", // non-secret sibling, must still echo
+					},
+				},
+			},
+		},
+	})
+
+	if createdRaw, err := json.Marshal(created); err != nil {
+		t.Fatal(err)
+	} else if bytes.Contains(createdRaw, []byte(secretValue)) {
+		t.Fatalf("create response leaked the secret value: %s", createdRaw)
+	}
+
+	// Raw-wire security assertion: the secret value must be absent from the GET body.
+	raw := getRawBody(t, c, url)
+	if bytes.Contains(raw, []byte(secretValue)) {
+		t.Fatalf("GET leaked the container app secret value on the wire: %s", raw)
+	}
+
+	gp := props(t, getJSON(t, c, url))
+
+	if gp["workloadProfileName"] != "canary-unmodeled" {
+		t.Errorf("overlay dropped non-secret unmodeled workloadProfileName: %v", gp["workloadProfileName"])
+	}
+
+	cfg, ok := gp["configuration"].(map[string]any)
+	if !ok {
+		t.Fatalf("GET dropped configuration: %v", gp)
+	}
+
+	secrets, ok := cfg["secrets"].([]any)
+	if !ok || len(secrets) != 1 {
+		t.Fatalf("GET dropped configuration.secrets: %v", cfg["secrets"])
+	}
+
+	secret, _ := secrets[0].(map[string]any)
+
+	if _, leaked := secret["value"]; leaked {
+		t.Fatalf("GET leaked write-only secret value under configuration.secrets[]: %v", secret)
+	}
+
+	if secret["name"] != "mysecret" {
+		t.Errorf("GET dropped the modeled secret name: %v", secret["name"])
+	}
+
+	if secret["identity"] != "system" {
+		t.Errorf("path-aware rule over-suppressed the non-secret sibling identity: %v", secret["identity"])
+	}
+}
+
 func bytesReader(t *testing.T, v map[string]any) *bytes.Reader {
 	t.Helper()
 

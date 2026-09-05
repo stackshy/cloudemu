@@ -367,7 +367,7 @@ func captureUnmodeled(
 		return stored
 	}
 
-	fresh := missingProperties(reqProps, respProps)
+	fresh := missingProperties(reqProps, respProps, "")
 	if r.Method == http.MethodPatch {
 		fresh = mergeProperties(fresh, stored)
 	}
@@ -428,13 +428,29 @@ func captureUnmodeled(
 // via GetPnsCredentials, never the generic hub GET. Each is an object, so
 // denylisting the key skips the whole credential subtree.
 //
+// 3. Path-aware rule: a bare "value" key is write-only only when its immediate
+// containing key is "secrets" — Container Apps configuration.secrets[].value,
+// the one secret input whose owning handler models the secret (echoing its name)
+// but omits the value on read, exactly as real Azure does (values are served
+// only via listSecrets). toConfigResponse therefore returns {name} per secret,
+// so the overlay would otherwise see "value" as missing from the response and
+// re-inject the caller's cleartext secret on every later GET. Scoping the skip
+// to the "secrets" parent is deliberate: a global bare-"value" denylist would
+// over-match every unmodeled "value" elsewhere (env vars, DNS records, tags),
+// silently dropping legitimate round-tripped data.
+//
 // The rule is matched case-insensitively at any nesting depth (missingProperties
-// and sanitizeUnmodeled recurse into nested objects and arrays), and never
-// suppresses a field a handler legitimately returns.
-func writeOnlyProperty(key string) bool {
+// and sanitizeUnmodeled recurse into nested objects and arrays, threading the
+// containing key as parent), and never suppresses a field a handler legitimately
+// returns.
+func writeOnlyProperty(parent, key string) bool {
 	lower := strings.ToLower(key)
 
 	if strings.HasSuffix(lower, "password") || strings.HasSuffix(lower, "secret") {
+		return true
+	}
+
+	if lower == "value" && strings.EqualFold(parent, "secrets") {
 		return true
 	}
 
@@ -454,25 +470,28 @@ func writeOnlyProperty(key string) bool {
 // slip past the per-key denylist. Both objects (map[string]any) and arrays
 // ([]any, e.g. imageRegistryCredentials[].password) are recursed and deep-copied
 // so no request-owned map or slice is aliased into the overlay store; any other
-// value passes through unchanged.
-func sanitizeUnmodeled(v any) any {
+// value passes through unchanged. parent is the key of the object/array that
+// holds v, so the path-aware write-only rule (a "value" under "secrets") applies
+// inside verbatim-captured subtrees too; array elements inherit their array's
+// key as parent.
+func sanitizeUnmodeled(v any, parent string) any {
 	switch t := v.(type) {
 	case map[string]any:
 		out := make(map[string]any, len(t))
 
 		for k, val := range t {
-			if writeOnlyProperty(k) {
+			if writeOnlyProperty(parent, k) {
 				continue
 			}
 
-			out[k] = sanitizeUnmodeled(val)
+			out[k] = sanitizeUnmodeled(val, k)
 		}
 
 		return out
 	case []any:
 		out := make([]any, len(t))
 		for i, el := range t {
-			out[i] = sanitizeUnmodeled(el)
+			out[i] = sanitizeUnmodeled(el, parent)
 		}
 
 		return out
@@ -506,8 +525,10 @@ func isZeroScalarJSON(v any) bool {
 // array element, e.g. a vnet inline subnet or a VM data disk) is still captured.
 // A key present in both as scalars is considered modeled (the handler owns it)
 // and is omitted. Write-only secret keys (writeOnlyProperty) are skipped at
-// every level so they are never captured, persisted, or echoed.
-func missingProperties(req, resp map[string]any) map[string]any {
+// every level so they are never captured, persisted, or echoed. parent is the
+// key whose object req is (empty at the properties root), threaded so the
+// path-aware write-only rule can see a key's container.
+func missingProperties(req, resp map[string]any, parent string) map[string]any {
 	if len(req) == 0 {
 		return nil
 	}
@@ -515,52 +536,13 @@ func missingProperties(req, resp map[string]any) map[string]any {
 	out := map[string]any{}
 
 	for k, reqVal := range req {
-		if writeOnlyProperty(k) {
+		if writeOnlyProperty(parent, k) {
 			continue
 		}
 
 		respVal, present := resp[k]
-		if !present {
-			// A request scalar at its JSON zero value (null/""/false/0) that the
-			// response doesn't echo is far more likely a field the handler DOES
-			// model — and correctly dropped via omitempty because a PATCH just
-			// set it back to its default — than genuinely unmodeled data worth
-			// preserving. Azure SQL's PATCH-to-clear elasticPoolId (set it to ""
-			// to remove a database from its elastic pool) is exactly this shape:
-			// without this guard, the overlay "helpfully" re-injected the
-			// just-cleared "" back into every future response, resurrecting pool
-			// membership the request explicitly removed. A non-zero scalar or a
-			// populated object/array is still captured verbatim below — this
-			// only narrows the false-positive case of a zero scalar.
-			if isZeroScalarJSON(reqVal) {
-				continue
-			}
-
-			// A wholly-unmodeled object is captured verbatim, so strip any
-			// write-only secret nested inside it — the per-key skip above only
-			// covers keys the loop visits directly, not those buried in a
-			// subtree the handler dropped entirely (e.g. a VM osProfile the
-			// response omits, carrying adminPassword).
-			out[k] = sanitizeUnmodeled(reqVal)
-			continue
-		}
-
-		if reqChild, ok := reqVal.(map[string]any); ok {
-			if respChild, ok := respVal.(map[string]any); ok {
-				if nested := missingProperties(reqChild, respChild); len(nested) > 0 {
-					out[k] = nested
-				}
-			}
-
-			continue
-		}
-
-		if reqArr, ok := reqVal.([]any); ok {
-			if respArr, ok := respVal.([]any); ok {
-				if nested := missingArrayElements(reqArr, respArr); nested != nil {
-					out[k] = nested
-				}
-			}
+		if val, keep := missingEntry(k, reqVal, respVal, present); keep {
+			out[k] = val
 		}
 	}
 
@@ -569,6 +551,60 @@ func missingProperties(req, resp map[string]any) map[string]any {
 	}
 
 	return out
+}
+
+// missingEntry decides what a single request key k contributes to its object's
+// diff: it returns the value to store under k and whether to store it. Split out
+// of missingProperties so each shape (absent, nested object, nested array) reads
+// as one branch.
+func missingEntry(k string, reqVal, respVal any, present bool) (any, bool) {
+	if !present {
+		// A request scalar at its JSON zero value (null/""/false/0) that the
+		// response doesn't echo is far more likely a field the handler DOES
+		// model — and correctly dropped via omitempty because a PATCH just set it
+		// back to its default — than genuinely unmodeled data worth preserving.
+		// Azure SQL's PATCH-to-clear elasticPoolId (set it to "" to remove a
+		// database from its elastic pool) is exactly this shape: without this
+		// guard, the overlay "helpfully" re-injected the just-cleared "" back into
+		// every future response, resurrecting pool membership the request
+		// explicitly removed. A non-zero scalar or a populated object/array is
+		// still captured verbatim below — this only narrows the false-positive
+		// case of a zero scalar.
+		if isZeroScalarJSON(reqVal) {
+			return nil, false
+		}
+
+		// A wholly-unmodeled object is captured verbatim, so strip any write-only
+		// secret nested inside it — the per-key skip in the caller only covers
+		// keys the loop visits directly, not those buried in a subtree the handler
+		// dropped entirely (e.g. a VM osProfile the response omits, carrying
+		// adminPassword).
+		return sanitizeUnmodeled(reqVal, k), true
+	}
+
+	if reqChild, ok := reqVal.(map[string]any); ok {
+		respChild, ok := respVal.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+
+		nested := missingProperties(reqChild, respChild, k)
+
+		return nested, len(nested) > 0
+	}
+
+	if reqArr, ok := reqVal.([]any); ok {
+		respArr, ok := respVal.([]any)
+		if !ok {
+			return nil, false
+		}
+
+		nested := missingArrayElements(reqArr, respArr, k)
+
+		return nested, nested != nil
+	}
+
+	return nil, false
 }
 
 // missingArrayElements diffs a request array against the response array that a
@@ -586,8 +622,10 @@ func missingProperties(req, resp map[string]any) map[string]any {
 // request shorter than the response simply leaves the response tail unenriched.
 // Only object elements paired with object elements are diffed; a scalar element
 // present in both is left to the handler (a wholly-unmodeled scalar array is
-// captured verbatim by the caller's !present branch instead).
-func missingArrayElements(req, resp []any) []any {
+// captured verbatim by the caller's !present branch instead). parent is the key
+// this array is stored under, passed to each element's diff so a path-aware
+// write-only rule (a "value" under "secrets") sees the array's key.
+func missingArrayElements(req, resp []any, parent string) []any {
 	n := len(resp)
 	if len(req) < n {
 		n = len(req)
@@ -602,7 +640,7 @@ func missingArrayElements(req, resp []any) []any {
 		respEl, respOK := resp[i].(map[string]any)
 
 		if reqOK && respOK {
-			if nested := missingProperties(reqEl, respEl); len(nested) > 0 {
+			if nested := missingProperties(reqEl, respEl, parent); len(nested) > 0 {
 				out[i] = nested
 				found = true
 			}
