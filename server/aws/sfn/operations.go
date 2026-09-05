@@ -13,6 +13,8 @@ func (h *Handler) createStateMachine(w http.ResponseWriter, r *http.Request) {
 		arn, versionArn, created, err := h.sfn.CreateStateMachine(ctx, sfndriver.CreateStateMachineInput{
 			Name: req.Name, Definition: req.Definition, RoleArn: req.RoleArn, Type: req.Type,
 			Description: req.Description, Publish: req.Publish, Tags: tagsToMap(req.Tags),
+			LoggingConfigJSON: rawJSON(req.LoggingConfiguration),
+			TracingConfigJSON: rawJSON(req.TracingConfiguration),
 		})
 		if err != nil {
 			return nil, err
@@ -46,6 +48,8 @@ func (h *Handler) updateStateMachine(w http.ResponseWriter, r *http.Request) {
 		res, err := h.sfn.UpdateStateMachine(ctx, sfndriver.UpdateStateMachineInput{
 			ARN: req.StateMachineArn, Definition: req.Definition, RoleArn: req.RoleArn,
 			Publish: req.Publish, VersionDesc: req.VersionDescription,
+			LoggingConfigJSON: rawJSON(req.LoggingConfiguration),
+			TracingConfigJSON: rawJSON(req.TracingConfiguration),
 		})
 		if err != nil {
 			return nil, err
