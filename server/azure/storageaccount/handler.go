@@ -50,6 +50,11 @@ const (
 	// access off, shared-key access on. Modeled here (rather than left to the
 	// echo-properties overlay) so an explicitly-false value survives round-trip
 	// and a create that omits them still reads back real defaults.
+	// The REST reference's property text calls TLS 1.0 the "default
+	// interpretation", but its own GetProperties sample response reports
+	// "TLS1_2", and the azurerm provider always sends min_tls_version=TLS1_2
+	// explicitly — so TLS1_2 matches the documented example, causes no Terraform
+	// drift, and reflects modern Azure hardening.
 	defaultMinTLSVersion       = "TLS1_2"
 	defaultPublicNetworkAccess = "Enabled"
 	defaultHTTPSTrafficOnly    = true
@@ -513,18 +518,23 @@ func applyAccountUpdate(cur *storagedriver.AccountAttributes, body *armAccountUp
 		cur.PublicNetworkAccess = body.Properties.PublicNetworkAccess
 	}
 
-	// The security toggles PATCH-merge on presence: a non-nil pointer overwrites
-	// (including an explicit false), a nil one leaves the stored value untouched.
-	if body.Properties.SupportsHTTPSTrafficOnly != nil {
-		cur.EnableHTTPSTrafficOnly = body.Properties.SupportsHTTPSTrafficOnly
+	applySecurityToggles(cur, body.Properties)
+}
+
+// applySecurityToggles PATCH-merges the *bool security toggles on presence: a
+// non-nil pointer overwrites the stored value (including an explicit false), a
+// nil one leaves it untouched.
+func applySecurityToggles(cur *storagedriver.AccountAttributes, props *armAccountPropsReq) {
+	if props.SupportsHTTPSTrafficOnly != nil {
+		cur.EnableHTTPSTrafficOnly = props.SupportsHTTPSTrafficOnly
 	}
 
-	if body.Properties.AllowBlobPublicAccess != nil {
-		cur.AllowBlobPublicAccess = body.Properties.AllowBlobPublicAccess
+	if props.AllowBlobPublicAccess != nil {
+		cur.AllowBlobPublicAccess = props.AllowBlobPublicAccess
 	}
 
-	if body.Properties.AllowSharedKeyAccess != nil {
-		cur.AllowSharedKeyAccess = body.Properties.AllowSharedKeyAccess
+	if props.AllowSharedKeyAccess != nil {
+		cur.AllowSharedKeyAccess = props.AllowSharedKeyAccess
 	}
 }
 
