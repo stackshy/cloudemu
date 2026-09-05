@@ -222,7 +222,13 @@ func TestE2E_DeleteLifecycle(t *testing.T) {
 	resID, _ := res["id"].(string)
 
 	doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET", `{"authorizationType":"NONE"}`)
-	doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET/integration", `{"type":"MOCK"}`)
+
+	ig := doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET/integration", `{"type":"MOCK"}`)
+	// PutIntegration without timeoutInMillis defaults to AWS's 29s and returns
+	// it on the wire, so a Terraform refresh sees no drift on that attribute.
+	if to, _ := ig["timeoutInMillis"].(float64); to != 29000 {
+		t.Fatalf("integration timeoutInMillis = %v, want 29000", ig["timeoutInMillis"])
+	}
 
 	dep := doJSON(t, http.MethodPost, base+"/restapis/"+apiID+"/deployments", `{"stageName":"prod"}`)
 	depID, _ := dep["id"].(string)

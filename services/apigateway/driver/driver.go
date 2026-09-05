@@ -70,6 +70,7 @@ type Integration struct {
 	IntegrationHTTPMethod string
 	URI                   string
 	PassthroughBehavior   string
+	TimeoutInMillis       int
 }
 
 // Deployment is a point-in-time snapshot of a REST API published to a stage.
@@ -107,12 +108,14 @@ type PutMethodInput struct {
 	APIKeyRequired    bool
 }
 
-// PutIntegrationInput carries the fields PutIntegration accepts.
+// PutIntegrationInput carries the fields PutIntegration accepts. TimeoutInMillis
+// of 0 selects the AWS default (29000ms); a non-zero value is stored verbatim.
 type PutIntegrationInput struct {
 	Type                  string
 	IntegrationHTTPMethod string
 	URI                   string
 	PassthroughBehavior   string
+	TimeoutInMillis       int
 }
 
 // CreateDeploymentInput carries the fields CreateDeployment accepts. A non-empty

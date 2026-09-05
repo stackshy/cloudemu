@@ -29,6 +29,11 @@ const idLen = 10
 // idAlphabet is the character set REST API ids draw from.
 const idAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
 
+// defaultIntegrationTimeoutMillis is the integration timeout API Gateway applies
+// when PutIntegration omits timeoutInMillis (29 seconds), returned verbatim by
+// GetIntegration so clients (e.g. Terraform) see no drift.
+const defaultIntegrationTimeoutMillis = 29000
+
 // LambdaInvoker is the cross-service seam API Gateway uses to invoke a Lambda
 // function synchronously for an AWS_PROXY/AWS integration. It is deliberately
 // the recursion-guarded InvokeSync shape (same as the Step Functions
@@ -170,6 +175,15 @@ func (m *Mock) DeleteRestAPI(_ context.Context, id string) error {
 // orDefault returns v when non-empty, else def.
 func orDefault(v, def string) string {
 	if v == "" {
+		return def
+	}
+
+	return v
+}
+
+// orDefaultInt returns v when non-zero, else def.
+func orDefaultInt(v, def int) int {
+	if v == 0 {
 		return def
 	}
 
