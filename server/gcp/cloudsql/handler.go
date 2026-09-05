@@ -45,6 +45,27 @@ const (
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 1 << 20
 
+	// pathPrefixBeta / pathFlagsBeta are the sql/v1beta4 REST paths. The Go
+	// sqladmin/v1 client hits /v1/projects/..., but gcloud and the Terraform
+	// google provider (via the embedded sqladmin client) hit
+	// /sql/v1beta4/projects/... — real Cloud SQL serves both surfaces, so the
+	// handler must accept either prefix or every gcloud/Terraform request gets a
+	// 501 and google_sql_database_instance can never be created.
+	pathPrefixBeta = "/sql/v1beta4/projects/"
+	pathFlagsBeta  = "/sql/v1beta4/flags"
+
+	// pathPrefixBare is the version-less /projects/ prefix. When a single
+	// sql_custom_endpoint (http://host:port/) is pointed at the emulator, the
+	// Terraform google provider's handwritten instance/user client prepends
+	// sql/v1beta4/ (→ pathPrefixBeta) while its generated google_sql_database /
+	// google_sql_user resources append projects/... straight onto the endpoint
+	// (→ this bare prefix). Accepting it lets one endpoint drive the full
+	// instance + database + user lifecycle. It is narrowed to the Cloud SQL
+	// resource segments (instances/operations/tiers), and cloudsql registers
+	// ahead of the greedy /v1/projects/ Firestore handler, so it never steals
+	// another service's traffic.
+	pathPrefixBare = "/projects/"
+
 	resourceInstances  = "instances"
 	resourceOperations = "operations"
 	resourceBackupRuns = "backupRuns"
@@ -114,20 +135,42 @@ func (h *Handler) completeOp(w http.ResponseWriter, project, name, opType, resou
 	writeJSON(w, http.StatusOK, h.buildOp(project, name, opType, resourceType, target))
 }
 
-// Matches accepts /v1/projects/{p}/{instances|operations|tiers}/... paths plus
-// the project-less /v1/flags catalog. Other resource types under /v1/projects/
-// (locations, topics, subscriptions, databases) belong to Cloud Functions,
-// Pub/Sub, or Firestore respectively and must fall through.
+// isFlagsPath reports whether urlPath is the project-less flags catalog on
+// either the v1 or v1beta4 surface.
+func isFlagsPath(urlPath string) bool {
+	return urlPath == pathFlags || urlPath == pathFlagsBeta
+}
+
+// trimProjectsPrefix strips the /v1/projects/ or /sql/v1beta4/projects/ prefix,
+// returning the "{project}/{resource}/..." remainder. ok is false when urlPath
+// carries neither prefix.
+func trimProjectsPrefix(urlPath string) (string, bool) {
+	for _, pfx := range [...]string{pathPrefix, pathPrefixBeta, pathPrefixBare} {
+		if rest, ok := strings.CutPrefix(urlPath, pfx); ok {
+			return rest, true
+		}
+	}
+
+	return "", false
+}
+
+// Matches accepts /v1/projects/{p}/{instances|operations|tiers}/... and the
+// equivalent /sql/v1beta4/projects/... paths (used by gcloud and the Terraform
+// google provider), plus the project-less flags catalog on either surface.
+// Other resource types under /v1/projects/ (locations, topics, subscriptions,
+// databases) belong to Cloud Functions, Pub/Sub, or Firestore respectively and
+// must fall through.
 func (*Handler) Matches(r *http.Request) bool {
-	if r.URL.Path == pathFlags {
+	if isFlagsPath(r.URL.Path) {
 		return true
 	}
 
-	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
+	rest, ok := trimProjectsPrefix(r.URL.Path)
+	if !ok {
 		return false
 	}
 
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, pathPrefix), "/")
+	parts := strings.Split(rest, "/")
 
 	const idxResource = 1
 
@@ -169,7 +212,10 @@ func parsePath(urlPath string) (sqlPath, bool) {
 		idxSubName     = 4
 	)
 
-	rest := strings.TrimPrefix(urlPath, pathPrefix)
+	rest, ok := trimProjectsPrefix(urlPath)
+	if !ok {
+		return sqlPath{}, false
+	}
 
 	parts := strings.Split(rest, "/")
 	if len(parts) < minParts {
@@ -201,8 +247,8 @@ func parsePath(urlPath string) (sqlPath, bool) {
 
 // ServeHTTP routes the parsed path to the matching operation.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// /v1/flags is project-less, so it bypasses the project path parser.
-	if r.URL.Path == pathFlags {
+	// The flags catalog is project-less, so it bypasses the project path parser.
+	if isFlagsPath(r.URL.Path) {
 		serveFlags(w, r)
 		return
 	}

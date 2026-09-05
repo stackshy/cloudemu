@@ -138,7 +138,12 @@ type InstanceConfig struct {
 	GCPDatabaseFlags string
 	GCPBackupConfig  string
 	GCPIPConfig      string
-	Tags             map[string]string
+	// GCPStorageAutoResize is the Cloud SQL settings.storageAutoResize flag, which
+	// defaults to true on a real instance. A pointer so an omitted field means
+	// "use the default" (true) rather than false; Cloud SQL-only, ignored by
+	// AWS RDS / Redshift.
+	GCPStorageAutoResize *bool
+	Tags                 map[string]string
 	// Scope records where the resource lives (Azure subscription/resource
 	// group). Zero for AWS/GCP and unscoped portable callers.
 	Scope scope.Scope
@@ -215,6 +220,10 @@ type Instance struct {
 	GCPDatabaseFlags string
 	GCPBackupConfig  string
 	GCPIPConfig      string
+	// GCPStorageAutoResize echoes the Cloud SQL settings.storageAutoResize flag on
+	// read. It is resolved to a concrete value on create (defaulting to true),
+	// so a Get always reports it. False/unused for AWS RDS / Redshift.
+	GCPStorageAutoResize bool
 	// Scope records where the resource lives (Azure subscription/resource
 	// group), echoed from the InstanceConfig it was created with. Zero for
 	// AWS/GCP and unscoped portable callers — Scope.Matches treats a zero
@@ -266,7 +275,10 @@ type ModifyInstanceInput struct {
 	GCPDatabaseFlags string
 	GCPBackupConfig  string
 	GCPIPConfig      string
-	Tags             map[string]string
+	// GCPStorageAutoResize updates the Cloud SQL settings.storageAutoResize flag; a
+	// nil pointer means "no change". Cloud SQL-only; RDS/Redshift ignore it.
+	GCPStorageAutoResize *bool
+	Tags                 map[string]string
 	// ApplyImmediately controls when the deferrable changes above take effect
 	// (AWS RDS ModifyDBInstance ApplyImmediately, default false). When true the
 	// target fields are updated on the instance now and PendingModifiedValues is

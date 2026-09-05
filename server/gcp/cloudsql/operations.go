@@ -54,6 +54,9 @@ func instanceFromBody(body *sqlInstance) rdsdriver.InstanceConfig {
 		cfg.GCPDatabaseFlags = string(s.DatabaseFlags)
 		cfg.GCPBackupConfig = string(s.BackupConfiguration)
 		cfg.GCPIPConfig = string(s.IPConfiguration)
+		// A nil StorageAutoResize is carried through so the provider applies the
+		// Cloud SQL default (true) rather than false.
+		cfg.GCPStorageAutoResize = s.StorageAutoResize
 	}
 
 	return cfg
@@ -87,6 +90,16 @@ func modifyInputFromBody(body *sqlInstance, replace bool) rdsdriver.ModifyInstan
 	input.GCPBackupConfig = string(s.BackupConfiguration)
 	input.GCPIPConfig = string(s.IPConfiguration)
 
+	applyModifySettings(&input, s, replace)
+
+	return input
+}
+
+// applyModifySettings copies the merge/replace-sensitive settings (labels,
+// availabilityType, deletionProtection, storageAutoResize) from s onto input.
+// On a PATCH an absent field means "no change"; on a PUT (replace) it reverts to
+// the Cloud SQL default.
+func applyModifySettings(input *rdsdriver.ModifyInstanceInput, s *sqlSettings, replace bool) {
 	// On replace an absent userLabels clears the labels (empty non-nil map),
 	// while on merge an absent map leaves them unchanged (nil).
 	switch {
@@ -108,7 +121,15 @@ func modifyInputFromBody(body *sqlInstance, replace bool) rdsdriver.ModifyInstan
 		input.DeletionProtection = &off
 	}
 
-	return input
+	// storageAutoResize: a present flag updates it; on a PUT (replace) an absent
+	// flag reverts to the Cloud SQL default (true), matching full-resource update.
+	switch {
+	case s.StorageAutoResize != nil:
+		input.GCPStorageAutoResize = s.StorageAutoResize
+	case replace:
+		on := true
+		input.GCPStorageAutoResize = &on
+	}
 }
 
 // orDefaultStr returns v, or def when v is empty and replace is set (a PUT
