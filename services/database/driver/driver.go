@@ -72,6 +72,15 @@ type TableConfig struct {
 	StreamViewType string
 	StreamArn      string
 	StreamLabel    string
+	// DeletionProtectionEnabled carries the deletion-protection toggle. A
+	// describe echoes it back (default false); once on, DeleteTable is rejected.
+	// An IaC client that sets it otherwise reads back nothing and sees a
+	// perpetual diff.
+	DeletionProtectionEnabled bool
+	// TableClass is "STANDARD" (default) or "STANDARD_INFREQUENT_ACCESS". A
+	// describe echoes it back as TableClassSummary; an IaC client that sets it
+	// otherwise sees a perpetual diff.
+	TableClass string
 	// TableArn, CreatedAtUnix and TableID are populated by the provider on
 	// create. TableID is a UUID a real table carries and IaC clients read back.
 	TableArn      string
