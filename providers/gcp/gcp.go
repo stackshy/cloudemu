@@ -10,6 +10,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/alloydb"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/artifactregistry"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/bigquery"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigtable"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudfunctions"
@@ -79,6 +80,7 @@ type Provider struct {
 	ArtifactRegistry *artifactregistry.Mock
 	Eventarc         *eventarc.Mock
 	Bigtable         *bigtable.Mock
+	BigQuery         *bigquery.Mock
 	CloudSQL         *cloudsql.Mock
 	AlloyDB          *alloydb.Mock
 	GKE              *gke.Mock
@@ -123,6 +125,7 @@ func New(opts ...config.Option) *Provider {
 		ArtifactRegistry: artifactregistry.New(o),
 		Eventarc:         eventarc.New(o),
 		Bigtable:         bigtable.New(o),
+		BigQuery:         bigquery.New(o),
 		CloudSQL:         cloudsql.New(o),
 		AlloyDB:          alloydb.New(o),
 		GKE:              gke.New(o),

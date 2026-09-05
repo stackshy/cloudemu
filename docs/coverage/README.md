@@ -20,6 +20,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `bedrock` | [Bedrock](./aws/bedrock.md) | — | — | — | 65 |
 | `bedrockagent` | [BedrockAgent](./aws/bedrockagent.md) | — | — | — | 29 |
 | `bedrockagentruntime` | [BedrockAgentRuntime](./aws/bedrockagentruntime.md) | — | — | — | 3 |
+| `bigquery` | — | — | [BigQuery](./gcp/bigquery.md) | — | 12 |
 | `bigtable` | — | — | [Bigtable](./gcp/bigtable.md) | — | 38 |
 | `cache` | [ElastiCache](./aws/elasticache.md) | [Cache](./azure/cache.md) | [Memorystore](./gcp/memorystore.md) | — | 17 |
 | `cloudasset` | — | — | [Cloudasset](./gcp/cloudasset.md) | — | 11 |
