@@ -41,6 +41,14 @@ const (
 	providerName    = "Microsoft.DocumentDB"
 	resourceType    = "databaseAccounts"
 	defaultLocation = "eastus"
+
+	// Real Azure always returns a consistencyPolicy with these staleness bounds,
+	// regardless of the level: for every non-BoundedStaleness account they are
+	// the meaningless-but-present defaults (5 seconds / 100 operations), and a
+	// BoundedStaleness account overrides them. A client that reads the account
+	// back (armcosmos, azurerm) sees them populated on every account.
+	defaultMaxIntervalSeconds int32 = 5
+	defaultMaxStalenessPrefix int64 = 100
 )
 
 // attrBackend is the optional Cosmos-account attribute capability. The Azure
@@ -463,21 +471,33 @@ func renderAccount(subscription, base, name string, attrs dbdriver.AccountAttrib
 
 // renderConsistencyPolicy echoes the stored consistency policy, defaulting to
 // Cosmos's Session level when none was submitted (matching real Azure, which
-// always returns a consistencyPolicy). The staleness bounds are surfaced only
-// for BoundedStaleness, where they are meaningful.
+// always returns a consistencyPolicy). Real Azure also always returns the
+// staleness bounds — meaningful only for BoundedStaleness, but present on every
+// account as the 5s/100-op defaults — so they are surfaced unconditionally, each
+// falling back to its Azure default when the account carries none. Emitting them
+// for every level is what makes an armcosmos GET read back the same bounds real
+// Azure returns instead of a zero value.
 func renderConsistencyPolicy(cp dbdriver.ConsistencyPolicy) *armConsistencyPolicy {
 	level := cp.DefaultConsistencyLevel
 	if level == "" {
 		level = "Session"
 	}
 
-	out := &armConsistencyPolicy{DefaultConsistencyLevel: level}
-	if strings.EqualFold(level, "BoundedStaleness") {
-		out.MaxIntervalInSeconds = cp.MaxIntervalInSeconds
-		out.MaxStalenessPrefix = cp.MaxStalenessPrefix
+	interval := cp.MaxIntervalInSeconds
+	if interval == 0 {
+		interval = defaultMaxIntervalSeconds
 	}
 
-	return out
+	staleness := cp.MaxStalenessPrefix
+	if staleness == 0 {
+		staleness = defaultMaxStalenessPrefix
+	}
+
+	return &armConsistencyPolicy{
+		DefaultConsistencyLevel: level,
+		MaxIntervalInSeconds:    interval,
+		MaxStalenessPrefix:      staleness,
+	}
 }
 
 // toAccountLocations converts the ARM create-request locations into the
