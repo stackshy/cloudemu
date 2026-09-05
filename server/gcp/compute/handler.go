@@ -35,11 +35,16 @@ const (
 	resourceSnapshots  = "snapshots"
 	resourceImages     = "images"
 	resourceMachineTyp = "machineTypes"
+	resourceMIGs       = "instanceGroupManagers"
 )
 
 // actionSetLabels is the lowercased setLabels verb, shared by the instance,
 // disk, image, and snapshot POST-action routers.
 const actionSetLabels = "setlabels"
+
+// actionResize is the lowercased resize verb, shared by the disk and instance-
+// group-manager POST-action routers.
+const actionResize = "resize"
 
 // Handler serves GCP Compute Engine REST requests for instances and zone
 // operations.
@@ -80,7 +85,8 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceInstances, resourceOperations, resourceDisks, resourceSnapshots, resourceImages, resourceMachineTyp:
+	case resourceInstances, resourceOperations, resourceDisks, resourceSnapshots,
+		resourceImages, resourceMachineTyp, resourceMIGs:
 		return true
 	}
 
@@ -147,6 +153,9 @@ func (h *Handler) serveAggregated(w http.ResponseWriter, r *http.Request, rp gcp
 		case resourceDisks:
 			h.aggregatedListDisks(w, r, rp)
 			return
+		case resourceMIGs:
+			h.aggregatedListMIGs(w, r, rp)
+			return
 		}
 	}
 
@@ -169,6 +178,8 @@ func (h *Handler) routeResource(w http.ResponseWriter, r *http.Request, rp gcpre
 		h.serveImagesRoute(w, r, rp)
 	case resourceMachineTyp:
 		serveMachineTypesRoute(w, r, rp)
+	case resourceMIGs:
+		h.serveInstanceGroupManagersRoute(w, r, rp)
 	default:
 		return false
 	}
@@ -271,7 +282,7 @@ func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcp
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) serveDiskAction(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	switch strings.ToLower(rp.Action) {
-	case "resize":
+	case actionResize:
 		h.resizeDisk(w, r, rp)
 	case actionSetLabels:
 		h.setDiskLabels(w, r, rp)

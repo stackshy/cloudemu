@@ -110,6 +110,7 @@ type Mock struct {
 	snapshots    *memstore.Store[*driver.SnapshotInfo]
 	images       *memstore.Store[*driver.ImageInfo]
 	keyPairs     *memstore.Store[*driver.KeyPairInfo]
+	migs         *memstore.Store[InstanceGroupManager]
 	sm           *statemachine.Machine
 	opts         *config.Options
 	ipCounter    atomic.Int64
@@ -230,6 +231,7 @@ func New(opts *config.Options) *Mock {
 		snapshots:    memstore.New[*driver.SnapshotInfo](),
 		images:       memstore.New[*driver.ImageInfo](),
 		keyPairs:     memstore.New[*driver.KeyPairInfo](),
+		migs:         memstore.New[InstanceGroupManager](),
 		sm:           statemachine.New(compute.VMTransitions()),
 		opts:         opts,
 	}
