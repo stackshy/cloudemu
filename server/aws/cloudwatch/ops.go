@@ -723,6 +723,7 @@ func anyActionHasPrefix(a *mondriver.AlarmInfo, prefix string) bool {
 	return false
 }
 
+//nolint:dupl // parallel to query.go toAlarmMemberXML but a distinct CBOR wire shape.
 func toMetricAlarmCBR(a *mondriver.AlarmInfo) metricAlarmCBR {
 	m := metricAlarmCBR{
 		AlarmName:               a.Name,
