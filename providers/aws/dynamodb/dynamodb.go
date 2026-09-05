@@ -548,6 +548,14 @@ func (m *Mock) DeleteTable(_ context.Context, name string) error {
 		return cerrors.Newf(cerrors.NotFound, "table %s not found", name)
 	}
 
+	// Real DynamoDB refuses to delete a table with deletion protection on; a
+	// client must disable it first. Without this a protected table deletes
+	// silently, diverging from AWS.
+	if td.config.DeletionProtectionEnabled {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"Table '%s' can't be deleted while DeletionProtectionEnabled is set to True", name)
+	}
+
 	m.tableSettle.Clear(name)
 
 	for _, gsi := range td.config.GSIs {
@@ -1312,6 +1320,32 @@ func (m *Mock) UpdateThroughput(_ context.Context, table, billingMode string, rc
 
 	if wcu > 0 {
 		td.config.WriteCapacityUnits = wcu
+	}
+
+	m.tableSettle.Begin(table, statusUpdating, m.opts.Clock.Now(), m.opts.SettleDuration(settleTableUpdate))
+
+	return nil
+}
+
+// UpdateTableSettings changes a table's metadata settings (table class and/or
+// deletion protection) as part of UpdateTable. An empty tableClass or nil
+// deletionProtection leaves that field untouched. AWS-specific capability,
+// discovered by the wire handler via type assertion.
+func (m *Mock) UpdateTableSettings(_ context.Context, table, tableClass string, deletionProtection *bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	if tableClass != "" {
+		td.config.TableClass = tableClass
+	}
+
+	if deletionProtection != nil {
+		td.config.DeletionProtectionEnabled = *deletionProtection
 	}
 
 	m.tableSettle.Begin(table, statusUpdating, m.opts.Clock.Now(), m.opts.SettleDuration(settleTableUpdate))
