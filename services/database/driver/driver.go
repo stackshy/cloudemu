@@ -316,6 +316,13 @@ type AccountAttributes struct {
 	// EnableMultipleWriteLocations mirrors the ARM property of the same name:
 	// when true every declared location accepts writes, not just priority 0.
 	EnableMultipleWriteLocations bool
+	// EnableAutomaticFailover mirrors the ARM property of the same name: when
+	// true a single-write-region account fails over automatically to the next
+	// priority region. Default false.
+	EnableAutomaticFailover bool
+	// PublicNetworkAccess mirrors the ARM property of the same name (Enabled /
+	// Disabled). Empty means the account uses Azure's Enabled default.
+	PublicNetworkAccess string
 	// ConsistencyPolicy is the account's default consistency level (and, for
 	// BoundedStaleness, its staleness bounds). Empty DefaultConsistencyLevel
 	// means the account uses Cosmos's Session default.

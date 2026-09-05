@@ -16,6 +16,8 @@ type armAccountCreateProps struct {
 	Capabilities                 []armCapability       `json:"capabilities,omitempty"`
 	Locations                    []armLocation         `json:"locations,omitempty"`
 	EnableMultipleWriteLocations bool                  `json:"enableMultipleWriteLocations,omitempty"`
+	EnableAutomaticFailover      bool                  `json:"enableAutomaticFailover,omitempty"`
+	PublicNetworkAccess          string                `json:"publicNetworkAccess,omitempty"`
 	ConsistencyPolicy            *armConsistencyPolicy `json:"consistencyPolicy,omitempty"`
 }
 
@@ -50,6 +52,8 @@ type armAccountUpdateProps struct {
 	Capabilities                 []armCapability       `json:"capabilities,omitempty"`
 	Locations                    []armLocation         `json:"locations,omitempty"`
 	EnableMultipleWriteLocations *bool                 `json:"enableMultipleWriteLocations,omitempty"`
+	EnableAutomaticFailover      *bool                 `json:"enableAutomaticFailover,omitempty"`
+	PublicNetworkAccess          *string               `json:"publicNetworkAccess,omitempty"`
 	ConsistencyPolicy            *armConsistencyPolicy `json:"consistencyPolicy,omitempty"`
 }
 
@@ -65,16 +69,25 @@ type armAccount struct {
 }
 
 type armAccountProps struct {
-	DatabaseAccountOfferType string                `json:"databaseAccountOfferType,omitempty"`
-	EnableFreeTier           bool                  `json:"enableFreeTier,omitempty"`
-	Capabilities             []armCapability       `json:"capabilities,omitempty"`
-	ProvisioningState        string                `json:"provisioningState,omitempty"`
-	DocumentEndpoint         string                `json:"documentEndpoint,omitempty"`
-	Locations                []armLocation         `json:"locations,omitempty"`
-	ReadLocations            []armLocation         `json:"readLocations,omitempty"`
-	WriteLocations           []armLocation         `json:"writeLocations,omitempty"`
-	FailoverPolicies         []armFailover         `json:"failoverPolicies,omitempty"`
-	ConsistencyPolicy        *armConsistencyPolicy `json:"consistencyPolicy,omitempty"`
+	DatabaseAccountOfferType string `json:"databaseAccountOfferType,omitempty"`
+	// The boolean/network toggles carry no omitempty: real Azure always returns
+	// them (as false / "Enabled" defaults), and a caller — Terraform in
+	// particular — reads them back on every refresh. Emitting them from the
+	// handler makes them authoritative, so the property-echo overlay never has to
+	// synthesize them (and can no longer leave a stale value behind when one is
+	// PATCHed back to its zero value).
+	EnableFreeTier               bool                  `json:"enableFreeTier"`
+	EnableAutomaticFailover      bool                  `json:"enableAutomaticFailover"`
+	EnableMultipleWriteLocations bool                  `json:"enableMultipleWriteLocations"`
+	PublicNetworkAccess          string                `json:"publicNetworkAccess,omitempty"`
+	Capabilities                 []armCapability       `json:"capabilities,omitempty"`
+	ProvisioningState            string                `json:"provisioningState,omitempty"`
+	DocumentEndpoint             string                `json:"documentEndpoint,omitempty"`
+	Locations                    []armLocation         `json:"locations,omitempty"`
+	ReadLocations                []armLocation         `json:"readLocations,omitempty"`
+	WriteLocations               []armLocation         `json:"writeLocations,omitempty"`
+	FailoverPolicies             []armFailover         `json:"failoverPolicies,omitempty"`
+	ConsistencyPolicy            *armConsistencyPolicy `json:"consistencyPolicy,omitempty"`
 }
 
 // armLocation is a region entry in a database account's location arrays.
