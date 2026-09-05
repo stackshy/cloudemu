@@ -35,6 +35,7 @@ import (
 	memorystoresrv "github.com/stackshy/cloudemu/v2/server/gcp/memorystore"
 	"github.com/stackshy/cloudemu/v2/server/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/server/gcp/pubsub"
+	"github.com/stackshy/cloudemu/v2/server/gcp/resourcemanager"
 	secretmanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/secretmanager"
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
@@ -404,6 +405,15 @@ func New(d Drivers) *server.Server {
 	// /v1/projects/ family, so it registers before Firestore; the billingInfo-
 	// suffix guard keeps it disjoint from Firestore's /v1/projects/{p}/databases.
 	srv.Register(cloudbilling.New())
+
+	// Project-level IAM policy (cloudresourcemanager.googleapis.com):
+	// POST /v1/projects/{p}:{get,set}IamPolicy / :testIamPermissions. This is
+	// the surface google_project_iam_member/_binding/_policy/_audit_config drive
+	// via etag read-modify-write. It has no driver (the project policy is a
+	// wire-only store) so it is always registered, like cloudbilling above; the
+	// colon-verb single-segment guard keeps it disjoint from every other
+	// /v1/projects/ handler, but it must precede Firestore's permissive prefix.
+	srv.Register(resourcemanager.New())
 
 	if d.Firestore != nil {
 		srv.Register(firestore.New(d.Firestore))
