@@ -23,7 +23,10 @@ import (
 // The mock must satisfy the handler's OCI-only capability interface.
 var _ ocilogging.Extras = (*logprovider.Mock)(nil)
 
-const compartmentA = "ocid1.compartment.oc1..aaaaaaaacompa"
+const (
+	compartmentA = "ocid1.compartment.oc1..aaaaaaaacompa"
+	compartmentB = "ocid1.compartment.oc1..aaaaaaaacompb"
+)
 
 func newOptions() *config.Options {
 	return config.NewOptions(
@@ -689,4 +692,492 @@ func codeOf(t *testing.T, rec *httptest.ResponseRecorder) string {
 	}
 
 	return body.Code
+}
+
+// resultIDs reads the entry ids out of a search response, in result order.
+func resultIDs(t *testing.T, rec *httptest.ResponseRecorder) []string {
+	t.Helper()
+
+	var body struct {
+		Results []struct {
+			Data struct {
+				LogContent struct {
+					ID     string `json:"id"`
+					Oracle struct {
+						CompartmentID string `json:"compartmentid"`
+						LogGroupID    string `json:"loggroupid"`
+						LogID         string `json:"logid"`
+						IngestedTime  string `json:"ingestedtime"`
+					} `json:"oracle"`
+				} `json:"logContent"`
+			} `json:"data"`
+		} `json:"results"`
+	}
+
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+
+	ids := make([]string, 0, len(body.Results))
+	for i := range body.Results {
+		ids = append(ids, body.Results[i].Data.LogContent.ID)
+	}
+
+	return ids
+}
+
+// TestSearchSortAndProvenance is the positive counterpart to the rejection
+// table: a successful sort must come back in the asked-for order, and an
+// oracle.* comparison must resolve against the log an entry came from.
+func TestSearchSortAndProvenance(t *testing.T) {
+	h, work := newHandler(t)
+	groupID := createGroup(t, h, work, "app-logs")
+	stdout := createLog(t, h, work, groupID, "stdout")
+	stderr := createLog(t, h, work, groupID, "stderr")
+
+	push := func(logID string, entries ...any) {
+		t.Helper()
+
+		rec := do(t, h, http.MethodPost, "/20200601/logs/"+logID+"/actions/push", map[string]any{
+			"specversion":     "1.0",
+			"logEntryBatches": []any{map[string]any{"source": "host-a", "type": "custom", "entries": entries}},
+		})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	}
+
+	// Pushed out of time order, so a sorted result cannot pass by accident.
+	push(stdout,
+		map[string]any{"data": "third", "id": "e3", "time": "2026-08-08T10:30:00Z"},
+		map[string]any{"data": "first", "id": "e1", "time": "2026-08-08T10:10:00Z"},
+		map[string]any{"data": "second", "id": "e2", "time": "2026-08-08T10:20:00Z"},
+	)
+	push(stderr, map[string]any{"data": "fourth", "id": "e4", "time": "2026-08-08T10:40:00Z"})
+
+	search := func(query string) *httptest.ResponseRecorder {
+		rec := do(t, h, http.MethodPost, "/20190909/search", map[string]any{
+			"searchQuery": query,
+			"timeStart":   "2026-08-08T09:00:00Z",
+			"timeEnd":     "2026-08-08T11:00:00Z",
+		})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+		return rec
+	}
+
+	all := `search "` + compartmentA + `"`
+
+	tests := []struct {
+		name   string
+		query  string
+		expect []string
+	}{
+		{name: "no sort clause is ascending", query: all, expect: []string{"e1", "e2", "e3", "e4"}},
+		{name: "sort by datetime asc", query: all + ` | sort by datetime asc`, expect: []string{"e1", "e2", "e3", "e4"}},
+		{name: "sort by datetime desc", query: all + ` | sort by datetime desc`, expect: []string{"e4", "e3", "e2", "e1"}},
+		{name: "sort by time desc", query: all + ` | sort by time desc`, expect: []string{"e4", "e3", "e2", "e1"}},
+		{
+			name:   "where oracle.logid",
+			query:  all + ` | where oracle.logid = '` + stderr + `'`,
+			expect: []string{"e4"},
+		},
+		{
+			name:   "where oracle.logid negated",
+			query:  all + ` | where oracle.logid != '` + stderr + `'`,
+			expect: []string{"e1", "e2", "e3"},
+		},
+		{
+			name:   "where oracle.loggroupid",
+			query:  all + ` | where oracle.loggroupid = '` + groupID + `'`,
+			expect: []string{"e1", "e2", "e3", "e4"},
+		},
+		{
+			name:   "where oracle.compartmentid",
+			query:  all + ` | where oracle.compartmentid = '` + compartmentA + `'`,
+			expect: []string{"e1", "e2", "e3", "e4"},
+		},
+		{
+			name:   "where oracle.ingestedtime",
+			query:  all + ` | where oracle.ingestedtime = '2026-08-08T12:00:00Z'`,
+			expect: []string{"e1", "e2", "e3", "e4"},
+		},
+		{
+			name:   "where and sort together",
+			query:  all + ` | where oracle.loggroupid = '` + groupID + `' | sort by datetime desc`,
+			expect: []string{"e4", "e3", "e2", "e1"},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.expect, resultIDs(t, search(tc.query)))
+		})
+	}
+
+	t.Run("the oracle block carries the log an entry came from", func(t *testing.T) {
+		rec := search(all + ` | where oracle.logid = '` + stderr + `'`)
+
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		require.Len(t, body["results"], 1)
+
+		content := body["results"].([]any)[0].(map[string]any)["data"].(map[string]any)["logContent"].(map[string]any)
+		oracle := content["oracle"].(map[string]any)
+		assert.Equal(t, compartmentA, oracle["compartmentid"])
+		assert.Equal(t, groupID, oracle["loggroupid"])
+		assert.Equal(t, stderr, oracle["logid"])
+		assert.Equal(t, "2026-08-08T12:00:00Z", oracle["ingestedtime"])
+	})
+
+	t.Run("a non-JSON payload comes back as the raw string", func(t *testing.T) {
+		rec := search(all + ` | where id = 'e1'`)
+
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+		require.Len(t, body["results"], 1)
+
+		content := body["results"].([]any)[0].(map[string]any)["data"].(map[string]any)["logContent"].(map[string]any)
+		assert.Equal(t, "first", content["data"])
+	})
+
+	t.Run("the limit truncates after sorting", func(t *testing.T) {
+		rec := do(t, h, http.MethodPost, "/20190909/search?limit=2", map[string]any{
+			"searchQuery": all + ` | sort by datetime desc`,
+			"timeStart":   "2026-08-08T09:00:00Z",
+			"timeEnd":     "2026-08-08T11:00:00Z",
+		})
+		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+		assert.Equal(t, []string{"e4", "e3"}, resultIDs(t, rec))
+	})
+}
+
+func TestLogGroupMutations(t *testing.T) {
+	h, work := newHandler(t)
+	groupID := createGroup(t, h, work, "app-logs")
+
+	t.Run("update", func(t *testing.T) {
+		rec := do(t, h, http.MethodPut, "/20200531/logGroups/"+groupID, map[string]any{
+			"displayName":  "renamed",
+			"description":  "the app's logs",
+			"freeformTags": map[string]string{"env": "dev"},
+		})
+		require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+		got := do(t, h, http.MethodGet, "/20200531/logGroups/"+groupID, nil)
+		require.Equal(t, http.StatusOK, got.Code)
+
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(got.Body.Bytes(), &body))
+		assert.Equal(t, "renamed", body["displayName"])
+		assert.Equal(t, "the app's logs", body["description"])
+		assert.Equal(t, map[string]any{"env": "dev"}, body["freeformTags"])
+	})
+
+	t.Run("move between compartments", func(t *testing.T) {
+		rec := do(t, h, http.MethodPost,
+			"/20200531/logGroups/"+groupID+"/actions/changeCompartment",
+			map[string]any{"targetCompartmentId": compartmentB})
+		require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+		got := do(t, h, http.MethodGet, "/20200531/logGroups/"+groupID, nil)
+
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(got.Body.Bytes(), &body))
+		assert.Equal(t, compartmentB, body["compartmentId"])
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		rec := do(t, h, http.MethodDelete, "/20200531/logGroups/"+groupID, nil)
+		require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+		got := do(t, h, http.MethodGet, "/20200531/logGroups/"+groupID, nil)
+		assert.Equal(t, http.StatusNotFound, got.Code)
+	})
+}
+
+func TestLogGroupMutationErrors(t *testing.T) {
+	h, work := newHandler(t)
+	groupID := createGroup(t, h, work, "app-logs")
+	missing := "ocid1.loggroup.oc1.iad.missing"
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       any
+		expectCode int
+	}{
+		{
+			name: "update an unknown group", method: http.MethodPut,
+			path: "/20200531/logGroups/" + missing, body: map[string]any{"description": "x"},
+			expectCode: http.StatusNotFound,
+		},
+		{
+			name: "delete an unknown group", method: http.MethodDelete,
+			path: "/20200531/logGroups/" + missing, expectCode: http.StatusNotFound,
+		},
+		{
+			name: "move an unknown group", method: http.MethodPost,
+			path: "/20200531/logGroups/" + missing + "/actions/changeCompartment",
+			body: map[string]any{"targetCompartmentId": compartmentB}, expectCode: http.StatusNotFound,
+		},
+		{
+			name: "move needs a target compartment", method: http.MethodPost,
+			path: "/20200531/logGroups/" + groupID + "/actions/changeCompartment",
+			body: map[string]any{}, expectCode: http.StatusBadRequest,
+		},
+		{
+			name: "an unknown group action", method: http.MethodPost,
+			path: "/20200531/logGroups/" + groupID + "/actions/archive",
+			body: map[string]any{}, expectCode: http.StatusNotFound,
+		},
+		{
+			name: "a group action is POST only", method: http.MethodGet,
+			path:       "/20200531/logGroups/" + groupID + "/actions/changeCompartment",
+			expectCode: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "the collection takes no PUT", method: http.MethodPut,
+			path: "/20200531/logGroups", body: map[string]any{}, expectCode: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "a group takes no PATCH", method: http.MethodPatch,
+			path: "/20200531/logGroups/" + groupID, body: map[string]any{},
+			expectCode: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "listing needs a compartment", method: http.MethodGet,
+			path: "/20200531/logGroups", expectCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, h, tc.method, tc.path, tc.body)
+			assert.Equal(t, tc.expectCode, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+func TestListLogGroupsPaginates(t *testing.T) {
+	h, work := newHandler(t)
+
+	for _, name := range []string{"a", "b", "c"} {
+		createGroup(t, h, work, name)
+	}
+
+	first := do(t, h, http.MethodGet, "/20200531/logGroups?compartmentId="+compartmentA+"&limit=2", nil)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+
+	var page []map[string]any
+
+	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &page))
+	assert.Len(t, page, 2)
+
+	next := first.Header().Get(ocirest.HeaderNextPage)
+	require.NotEmpty(t, next, "a truncated page must stamp opc-next-page")
+
+	second := do(t, h, http.MethodGet,
+		"/20200531/logGroups?compartmentId="+compartmentA+"&limit=2&page="+next, nil)
+	require.Equal(t, http.StatusOK, second.Code)
+
+	require.NoError(t, json.Unmarshal(second.Body.Bytes(), &page))
+	assert.Len(t, page, 1)
+	assert.Empty(t, second.Header().Get(ocirest.HeaderNextPage), "the last page stamps no cursor")
+
+	byName := do(t, h, http.MethodGet,
+		"/20200531/logGroups?compartmentId="+compartmentA+"&displayName=b", nil)
+	require.Equal(t, http.StatusOK, byName.Code)
+
+	require.NoError(t, json.Unmarshal(byName.Body.Bytes(), &page))
+	require.Len(t, page, 1)
+	assert.Equal(t, "b", page[0]["displayName"])
+}
+
+func TestLogMutations(t *testing.T) {
+	h, work := newHandler(t)
+	groupID := createGroup(t, h, work, "app-logs")
+	logID := createLog(t, h, work, groupID, "stdout")
+
+	t.Run("update", func(t *testing.T) {
+		rec := do(t, h, http.MethodPut, "/20200531/logGroups/"+groupID+"/logs/"+logID, map[string]any{
+			"displayName":       "renamed",
+			"isEnabled":         false,
+			"retentionDuration": 90,
+			"freeformTags":      map[string]string{"env": "dev"},
+			"configuration": map[string]any{
+				"source":    map[string]any{"parameters": map[string]string{"k": "v"}},
+				"archiving": map[string]any{"isEnabled": true},
+			},
+		})
+		require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+		got := do(t, h, http.MethodGet, "/20200531/logGroups/"+groupID+"/logs/"+logID, nil)
+		require.Equal(t, http.StatusOK, got.Code)
+
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(got.Body.Bytes(), &body))
+		assert.Equal(t, "renamed", body["displayName"])
+		assert.Equal(t, false, body["isEnabled"])
+		assert.InDelta(t, 90, body["retentionDuration"], 0)
+
+		cfg := body["configuration"].(map[string]any)
+		assert.Equal(t, "OCISERVICE", cfg["source"].(map[string]any)["sourceType"])
+		assert.Equal(t, true, cfg["archiving"].(map[string]any)["isEnabled"])
+	})
+
+	t.Run("delete", func(t *testing.T) {
+		rec := do(t, h, http.MethodDelete, "/20200531/logGroups/"+groupID+"/logs/"+logID, nil)
+		require.Equal(t, http.StatusAccepted, rec.Code, rec.Body.String())
+
+		got := do(t, h, http.MethodGet, "/20200531/logGroups/"+groupID+"/logs/"+logID, nil)
+		assert.Equal(t, http.StatusNotFound, got.Code)
+	})
+}
+
+func TestLogMutationErrors(t *testing.T) {
+	h, work := newHandler(t)
+	groupID := createGroup(t, h, work, "app-logs")
+	logID := createLog(t, h, work, groupID, "stdout")
+	missing := "ocid1.log.oc1.iad.missing"
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		body       any
+		expectCode int
+	}{
+		{
+			name: "update an unknown log", method: http.MethodPut,
+			path: "/20200531/logGroups/" + groupID + "/logs/" + missing,
+			body: map[string]any{"isEnabled": true}, expectCode: http.StatusNotFound,
+		},
+		{
+			name: "delete an unknown log", method: http.MethodDelete,
+			path: "/20200531/logGroups/" + groupID + "/logs/" + missing, expectCode: http.StatusNotFound,
+		},
+		{
+			name: "a log takes no PATCH", method: http.MethodPatch,
+			path: "/20200531/logGroups/" + groupID + "/logs/" + logID, body: map[string]any{},
+			expectCode: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "the log collection takes no PUT", method: http.MethodPut,
+			path: "/20200531/logGroups/" + groupID + "/logs", body: map[string]any{},
+			expectCode: http.StatusMethodNotAllowed,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, h, tc.method, tc.path, tc.body)
+			assert.Equal(t, tc.expectCode, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+func TestRoutingEdges(t *testing.T) {
+	h, work := newHandler(t)
+	groupID := createGroup(t, h, work, "app-logs")
+
+	tests := []struct {
+		name       string
+		method     string
+		path       string
+		expectCode int
+	}{
+		{name: "malformed path", method: http.MethodGet, path: "/20200531", expectCode: http.StatusBadRequest},
+		{
+			name: "too many segments", method: http.MethodGet,
+			path: "/20200531/logGroups/" + groupID + "/logs/l/extra/more", expectCode: http.StatusBadRequest,
+		},
+		{
+			name: "unknown API version", method: http.MethodGet,
+			path: "/19990101/logGroups", expectCode: http.StatusNotFound,
+		},
+		{
+			name: "unknown control-plane collection", method: http.MethodGet,
+			path: "/20200531/somethingElse", expectCode: http.StatusNotFound,
+		},
+		{
+			name: "unemulated unified agent", method: http.MethodGet,
+			path: "/20200531/unifiedAgentConfigurations", expectCode: http.StatusNotImplemented,
+		},
+		{
+			name: "unemulated saved searches", method: http.MethodGet,
+			path: "/20200531/logSavedSearches", expectCode: http.StatusNotImplemented,
+		},
+		{
+			name: "unknown sub-collection", method: http.MethodGet,
+			path: "/20200531/logGroups/" + groupID + "/exports", expectCode: http.StatusNotFound,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, h, tc.method, tc.path, nil)
+			assert.Equal(t, tc.expectCode, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+// TestMalformedBodies covers the decode failure of every operation that reads
+// one, since a bad body must be a 400 rather than a panic.
+func TestMalformedBodies(t *testing.T) {
+	h, work := newHandler(t)
+	groupID := createGroup(t, h, work, "app-logs")
+	logID := createLog(t, h, work, groupID, "stdout")
+
+	paths := map[string]struct {
+		method string
+		path   string
+	}{
+		"create group": {http.MethodPost, "/20200531/logGroups"},
+		"update group": {http.MethodPut, "/20200531/logGroups/" + groupID},
+		"move group": {
+			http.MethodPost, "/20200531/logGroups/" + groupID + "/actions/changeCompartment",
+		},
+		"create log": {http.MethodPost, "/20200531/logGroups/" + groupID + "/logs"},
+		"update log": {http.MethodPut, "/20200531/logGroups/" + groupID + "/logs/" + logID},
+		"push":       {http.MethodPost, "/20200601/logs/" + logID + "/actions/push"},
+		"search":     {http.MethodPost, "/20190909/search"},
+	}
+
+	for name, tc := range paths {
+		t.Run(name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.path, strings.NewReader("{not json")))
+			assert.Equal(t, http.StatusBadRequest, rec.Code, rec.Body.String())
+		})
+	}
+}
+
+func TestCreateLogErrors(t *testing.T) {
+	h, work := newHandler(t)
+	groupID := createGroup(t, h, work, "app-logs")
+
+	tests := []struct {
+		name       string
+		path       string
+		body       any
+		expectCode int
+	}{
+		{
+			name: "an unknown group", path: "/20200531/logGroups/ocid1.loggroup.oc1.iad.missing/logs",
+			body: map[string]any{"displayName": "stdout", "logType": "CUSTOM"}, expectCode: http.StatusNotFound,
+		},
+		{
+			name: "no display name", path: "/20200531/logGroups/" + groupID + "/logs",
+			body: map[string]any{"logType": "CUSTOM"}, expectCode: http.StatusBadRequest,
+		},
+		{
+			name: "a SERVICE log with no source", path: "/20200531/logGroups/" + groupID + "/logs",
+			body: map[string]any{"displayName": "flow", "logType": "SERVICE"}, expectCode: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, h, http.MethodPost, tc.path, tc.body)
+			assert.Equal(t, tc.expectCode, rec.Code, rec.Body.String())
+		})
+	}
 }
