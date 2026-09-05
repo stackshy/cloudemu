@@ -85,6 +85,15 @@ type bucketsListResponse struct {
 	Items []bucketResource `json:"items"`
 }
 
+// anywhereCachesListResponse is the Buckets anywhereCaches: list response. Its
+// items are always empty because cloudemu does not model Anywhere Cache
+// instances; the empty list is what a bucket with no caches returns.
+type anywhereCachesListResponse struct {
+	Kind          string `json:"kind"`
+	Items         []any  `json:"items,omitempty"`
+	NextPageToken string `json:"nextPageToken,omitempty"`
+}
+
 type objectResource struct {
 	Kind                    string            `json:"kind"`
 	ID                      string            `json:"id"`
