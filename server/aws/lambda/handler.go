@@ -195,6 +195,17 @@ type awsConfigManager interface {
 	GetFunctionAWSConfig(ctx context.Context, name string) (sdrv.AWSFunctionConfig, error)
 }
 
+// versionDeleter is the AWS-specific version-scoped delete surface backing a
+// DeleteFunction that carries a Qualifier. Deleting a single published version
+// (leaving $LATEST and other versions/aliases intact) is a Lambda concept with no
+// Azure Functions / GCP Cloud Functions equivalent, so it is kept off the portable
+// Serverless driver and type-asserted the same way as policyManager /
+// functionTagger. An unqualified DeleteFunction still removes the whole function
+// via the driver's DeleteFunction.
+type versionDeleter interface {
+	DeleteVersion(ctx context.Context, name, qualifier string) error
+}
+
 // ObjectStore is the slice of the in-process S3 backend the handler needs to
 // fetch an S3-sourced deployment package (Code.S3Bucket/S3Key).
 type ObjectStore interface {
@@ -276,7 +287,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parts := strings.Split(rest, "/")
-	name := parts[0]
+
+	name, ok := h.resolveFunctionRef(w, r, parts[0])
+	if !ok {
+		return
+	}
 
 	const (
 		partsResource    = 1 // /functions/{name}
@@ -438,6 +453,64 @@ func splitFunctionNameQualifier(raw string) (name, qualifier string) {
 	}
 
 	return rest, ""
+}
+
+// qualifierMismatchMessage is the ValidationException real Lambda returns when the
+// qualifier embedded in the FunctionName (e.g. "my-fn:PROD") disagrees with the
+// explicit ?Qualifier= query parameter.
+const qualifierMismatchMessage = "The derived qualifier from the function name does not match the specified qualifier."
+
+// resolveFunctionRef normalizes a FunctionName path segment — which real Lambda
+// accepts as a bare name, "name:qualifier", an unqualified function ARN, or a
+// qualified function ARN (".../function:name:qualifier") — into a bare function
+// name, reconciling any qualifier embedded in the reference with an explicit
+// ?Qualifier= query parameter. When both are present and differ it writes a
+// ValidationException and returns ok=false; when they agree, or only one is
+// present, it rewrites the request's Qualifier query parameter to the reconciled
+// value so every downstream handler reads the effective qualifier uniformly.
+// Applying it at the single control-plane dispatch point makes all
+// FunctionName-taking operations (Get/UpdateFunctionConfiguration, GetFunction,
+// Invoke, UpdateFunctionCode, DeleteFunction, PublishVersion, alias and policy
+// ops) accept every FunctionName form.
+func (*Handler) resolveFunctionRef(w http.ResponseWriter, r *http.Request, raw string) (string, bool) {
+	name, embedded := splitFunctionNameQualifier(raw)
+
+	qualifier, ok := reconcileQualifier(embedded, r.URL.Query().Get("Qualifier"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "ValidationException", qualifierMismatchMessage)
+		return "", false
+	}
+
+	setQualifier(r, qualifier)
+
+	return name, true
+}
+
+// reconcileQualifier merges a qualifier embedded in a FunctionName with an
+// explicit ?Qualifier= query parameter: either alone (or both equal) is accepted;
+// two different non-empty qualifiers are a conflict (ok=false).
+func reconcileQualifier(embedded, query string) (string, bool) {
+	switch {
+	case embedded == "":
+		return query, true
+	case query == "" || query == embedded:
+		return embedded, true
+	default:
+		return "", false
+	}
+}
+
+// setQualifier rewrites the request URL's Qualifier query parameter to the
+// reconciled value so downstream handlers read it via r.URL.Query().Get.
+func setQualifier(r *http.Request, qualifier string) {
+	q := r.URL.Query()
+	if qualifier == "" {
+		q.Del("Qualifier")
+	} else {
+		q.Set("Qualifier", qualifier)
+	}
+
+	r.URL.RawQuery = q.Encode()
 }
 
 // servePolicy handles POST (AddPermission) and GET (GetPolicy) on
@@ -1200,6 +1273,31 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, name string) {
+	// A Qualifier (from ?Qualifier= or a "name:qualifier" FunctionName, already
+	// reconciled onto the query by resolveFunctionRef) scopes DeleteFunction to a
+	// single published version — real Lambda deletes only that version and leaves
+	// $LATEST and the other versions/aliases intact. Without a qualifier the whole
+	// function (all versions and aliases) is deleted.
+	if qualifier := r.URL.Query().Get("Qualifier"); qualifier != "" {
+		vd, ok := h.fn.(versionDeleter)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "InvalidParameterValueException",
+				"version-scoped delete is not supported by this provider")
+
+			return
+		}
+
+		if err := vd.DeleteVersion(r.Context(), name, qualifier); err != nil {
+			writeErr(w, err)
+
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+		return
+	}
+
 	if err := h.fn.DeleteFunction(r.Context(), name); err != nil {
 		writeErr(w, err)
 		return
