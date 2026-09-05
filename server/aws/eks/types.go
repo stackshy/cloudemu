@@ -110,6 +110,15 @@ type nodegroupScalingConfigJSON struct {
 	DesiredSize *int32 `json:"desiredSize,omitempty"`
 }
 
+// nodegroupUpdateConfigJSON mirrors the SDK NodegroupUpdateConfig shape: the
+// rolling-update concurrency, expressed as exactly one of an absolute node
+// count or a percentage. Used on CreateNodegroup, DescribeNodegroup, and
+// UpdateNodegroupConfig.
+type nodegroupUpdateConfigJSON struct {
+	MaxUnavailable           *int32 `json:"maxUnavailable,omitempty"`
+	MaxUnavailablePercentage *int32 `json:"maxUnavailablePercentage,omitempty"`
+}
+
 // taintJSON mirrors the SDK Taint shape (key, value, effect) used on
 // CreateNodegroup, DescribeNodegroup, and UpdateNodegroupConfig.
 type taintJSON struct {
@@ -130,6 +139,7 @@ type nodegroupJSON struct {
 	Status         string                      `json:"status"`
 	CapacityType   string                      `json:"capacityType,omitempty"`
 	ScalingConfig  *nodegroupScalingConfigJSON `json:"scalingConfig,omitempty"`
+	UpdateConfig   *nodegroupUpdateConfigJSON  `json:"updateConfig,omitempty"`
 	InstanceTypes  []string                    `json:"instanceTypes,omitempty"`
 	Subnets        []string                    `json:"subnets,omitempty"`
 	AmiType        string                      `json:"amiType,omitempty"`
@@ -241,6 +251,7 @@ type createNodegroupRequest struct {
 	Version        string                      `json:"version,omitempty"`
 	ReleaseVersion string                      `json:"releaseVersion,omitempty"`
 	ScalingConfig  *nodegroupScalingConfigJSON `json:"scalingConfig,omitempty"`
+	UpdateConfig   *nodegroupUpdateConfigJSON  `json:"updateConfig,omitempty"`
 	Labels         map[string]string           `json:"labels,omitempty"`
 	Taints         []taintJSON                 `json:"taints,omitempty"`
 	Tags           map[string]string           `json:"tags,omitempty"`
@@ -248,6 +259,7 @@ type createNodegroupRequest struct {
 
 type updateNodegroupConfigRequest struct {
 	ScalingConfig *nodegroupScalingConfigJSON `json:"scalingConfig,omitempty"`
+	UpdateConfig  *nodegroupUpdateConfigJSON  `json:"updateConfig,omitempty"`
 	Labels        *labelsUpdate               `json:"labels,omitempty"`
 	Taints        *taintsUpdate               `json:"taints,omitempty"`
 }

@@ -162,6 +162,18 @@ type Taint struct {
 	Effect string
 }
 
+// NodegroupUpdateConfig captures a managed node group's rolling-update
+// concurrency. Real EKS surfaces exactly one of MaxUnavailable (an absolute
+// node count) or MaxUnavailablePercentage; the two are mutually exclusive, and
+// a zero value on both means "unset". EKS defaults a created nodegroup to
+// MaxUnavailable=1 when the caller omits updateConfig entirely, so
+// DescribeNodegroup always reports a value and Terraform's update_config block
+// stops drifting.
+type NodegroupUpdateConfig struct {
+	MaxUnavailable           int
+	MaxUnavailablePercentage int
+}
+
 // NodegroupConfig configures a new managed node group.
 type NodegroupConfig struct {
 	ClusterName    string
@@ -175,6 +187,7 @@ type NodegroupConfig struct {
 	Version        string
 	ReleaseVersion string
 	ScalingConfig  NodegroupScalingConfig
+	UpdateConfig   NodegroupUpdateConfig
 	Labels         map[string]string
 	Taints         []Taint
 	Tags           map[string]string
@@ -194,6 +207,7 @@ type Nodegroup struct {
 	Version        string
 	ReleaseVersion string
 	ScalingConfig  NodegroupScalingConfig
+	UpdateConfig   NodegroupUpdateConfig
 	Status         string
 	Labels         map[string]string
 	Taints         []Taint
@@ -210,6 +224,7 @@ type Nodegroup struct {
 // add/update and remove deltas, matching the real EKS request shape.
 type NodegroupConfigUpdate struct {
 	Scaling           *NodegroupScalingConfig
+	UpdateConfig      *NodegroupUpdateConfig
 	AddOrUpdateLabels map[string]string
 	RemoveLabels      []string
 	AddOrUpdateTaints []Taint
