@@ -136,9 +136,7 @@ func withDatabaseDefaults(cfg *rdsdriver.DatabaseConfig) {
 		cfg.SKUName = "GP_Gen5_2"
 	}
 
-	if cfg.SKUTier == "" {
-		cfg.SKUTier = "GeneralPurpose"
-	}
+	deriveDatabaseSKU(cfg)
 
 	if cfg.Collation == "" {
 		cfg.Collation = defaultCollation
@@ -154,6 +152,25 @@ func withDatabaseDefaults(cfg *rdsdriver.DatabaseConfig) {
 
 	if cfg.ReadScale == "" {
 		cfg.ReadScale = defaultReadScale
+	}
+}
+
+// deriveDatabaseSKU fills the tier and vCore capacity implied by the database's
+// service-objective (SKU) name, so a create/update that supplies only the name
+// (e.g. azurerm's sku_name) stores — and therefore reads back and reports to
+// Resource Graph — the tier real Azure derives from it. The name is
+// authoritative: "S0" is Standard, not the old hardcoded GeneralPurpose. An
+// unrecognized name (e.g. an elastic-pool sku) derives nothing and leaves the
+// caller's values intact.
+func deriveDatabaseSKU(cfg *rdsdriver.DatabaseConfig) {
+	tier, _, capacity := rdsdriver.ParseAzureSQLSKU(cfg.SKUName)
+
+	if tier != "" {
+		cfg.SKUTier = tier
+	}
+
+	if capacity != 0 {
+		cfg.SKUCapacity = capacity
 	}
 }
 
@@ -218,6 +235,11 @@ func (m *Mock) UpdateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 	if cfg.Server == "" || cfg.Name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "server and database name are required")
 	}
+
+	// A PATCH that changes the service-objective (SKU) name must re-derive the
+	// tier/capacity from the new name; otherwise a resize (e.g. S0 → P2) would
+	// keep the stale tier merged over from the stored record.
+	deriveDatabaseSKU(&cfg)
 
 	var updated rdsdriver.Database
 
