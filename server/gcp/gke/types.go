@@ -38,6 +38,29 @@ type gkeCluster struct {
 	CurrentMasterVer  string            `json:"currentMasterVersion,omitempty"`
 	CurrentNodeVer    string            `json:"currentNodeVersion,omitempty"`
 	CreateTime        string            `json:"createTime,omitempty"`
+	// LegacyAbac and NetworkConfig are ALWAYS emitted (non-omitempty pointers)
+	// because real GKE always returns them, and the official Terraform google
+	// provider dereferences cluster.LegacyAbac.Enabled and cluster.NetworkConfig.
+	// Network/Subnetwork unconditionally on read — a nil either one panics the
+	// provider on the very first google_container_cluster apply.
+	LegacyAbac    *gkeLegacyAbac    `json:"legacyAbac"`
+	NetworkConfig *gkeNetworkConfig `json:"networkConfig"`
+}
+
+// gkeLegacyAbac mirrors container/v1.LegacyAbac. Real GKE returns this object on
+// every cluster (an empty {} when disabled); the provider reads .Enabled off it
+// without a nil check.
+type gkeLegacyAbac struct {
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+// gkeNetworkConfig mirrors the subset of container/v1.NetworkConfig the Terraform
+// provider reads unconditionally. Real GKE always returns a networkConfig with
+// the resolved network/subnetwork; the provider sources the `network`/`subnetwork`
+// attributes from here (not the deprecated top-level fields).
+type gkeNetworkConfig struct {
+	Network    string `json:"network,omitempty"`
+	Subnetwork string `json:"subnetwork,omitempty"`
 }
 
 type gkeMasterAuth struct {
@@ -240,6 +263,8 @@ func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.Nod
 		CurrentNodeVer:   versionOr(c.NodeVersion),
 		SelfLink:         selfLinkBase + "projects/" + project + "/locations/" + c.Location + "/clusters/" + c.Name,
 		CreateTime:       c.CreatedAt.Format("2006-01-02T15:04:05.000Z"),
+		LegacyAbac:       &gkeLegacyAbac{Enabled: c.LegacyAbacEnabled},
+		NetworkConfig:    &gkeNetworkConfig{Network: c.Network, Subnetwork: c.Subnetwork},
 	}
 
 	for i := range pools {
@@ -300,10 +325,13 @@ func toOperationResource(op *gke.Operation, project string) gkeOperation {
 		Status:        op.Status,
 		Location:      op.Location,
 		Zone:          op.Location,
-		TargetLink:    selfLinkBase + op.TargetLink,
-		StartTime:     op.StartTime.Format("2006-01-02T15:04:05.000Z"),
-		EndTime:       op.EndTime.Format("2006-01-02T15:04:05.000Z"),
-		SelfLink:      selfLinkBase + "projects/" + project + "/locations/" + op.Location + "/operations/" + op.Name,
+		// op.TargetLink is stored project-relative ("locations/.../clusters/...")
+		// so the full link carries the project from the request URL, not the
+		// emulator's configured default project.
+		TargetLink: selfLinkBase + "projects/" + project + "/" + op.TargetLink,
+		StartTime:  op.StartTime.Format("2006-01-02T15:04:05.000Z"),
+		EndTime:    op.EndTime.Format("2006-01-02T15:04:05.000Z"),
+		SelfLink:   selfLinkBase + "projects/" + project + "/locations/" + op.Location + "/operations/" + op.Name,
 	}
 }
 
