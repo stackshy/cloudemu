@@ -157,6 +157,52 @@ func TestSDKNetworkRoutingModeMtuDescription(t *testing.T) {
 	}
 }
 
+// TestSDKNetworkDefaultRoutingModeMtu covers the divergence that a network
+// created without routingConfig/mtu read back with no routing mode and mtu=0.
+// Real compute.googleapis.com always returns routingConfig.routingMode=REGIONAL
+// and mtu=1460 for a modern network, so Terraform google_compute_network sees a
+// perpetual diff on routing_mode/mtu when the defaults are omitted.
+func TestSDKNetworkDefaultRoutingModeMtu(t *testing.T) {
+	ts := newGCPNetServer(t)
+	ctx := context.Background()
+
+	client, err := gcpcompute.NewNetworksRESTClient(ctx,
+		option.WithEndpoint(ts.URL), option.WithoutAuthentication(), option.WithHTTPClient(ts.Client()))
+	if err != nil {
+		t.Fatalf("NewNetworksRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	op, err := client.Insert(ctx, &computepb.InsertNetworkRequest{
+		Project: testProject,
+		NetworkResource: &computepb.Network{
+			Name:                  ptrStr("net-def"),
+			AutoCreateSubnetworks: func() *bool { b := false; return &b }(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if err := op.Wait(ctx); err != nil {
+		t.Fatalf("Insert wait: %v", err)
+	}
+
+	got, err := client.Get(ctx, &computepb.GetNetworkRequest{Project: testProject, Network: "net-def"})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.GetRoutingConfig().GetRoutingMode() != "REGIONAL" {
+		t.Errorf("routingMode=%q want REGIONAL (default)", got.GetRoutingConfig().GetRoutingMode())
+	}
+
+	if got.GetMtu() != 1460 {
+		t.Errorf("mtu=%d want 1460 (default)", got.GetMtu())
+	}
+}
+
 // TestSDKFirewallMissingNetworkRejected covers the MED finding that a firewall
 // referencing an unknown network fabricated a phantom VPC that then leaked into
 // networks.list. Real GCP rejects the insert with 404; no VPC is created.
