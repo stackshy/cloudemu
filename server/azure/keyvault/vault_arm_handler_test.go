@@ -196,6 +196,125 @@ func TestVaultARMLifecycle(t *testing.T) {
 	}
 }
 
+// TestVaultARMMinimalCreateDefaults verifies a create body that omits the
+// soft-delete, RBAC, and enabledFor* flags round-trips (on both the PUT response
+// and a follow-up GET) with the defaults real Azure Key Vault stamps on the
+// vault: enableSoftDelete=true, softDeleteRetentionInDays=90, and
+// enableRbacAuthorization / enabledForDeployment / enabledForDiskEncryption /
+// enabledForTemplateDeployment all present=false. A raw armkeyvault SDK user or a
+// Terraform azurerm_key_vault refresh would otherwise see these fields absent and
+// drift.
+func TestVaultARMMinimalCreateDefaults(t *testing.T) {
+	ts := newVaultServer(t)
+	base := ts.URL
+
+	minimal := map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"tenantId": "11111111-1111-1111-1111-111111111111",
+			"sku":      map[string]any{"family": "A", "name": "standard"},
+		},
+	}
+
+	assertDefaults := func(label string, props map[string]any) {
+		if props["enableSoftDelete"] != true {
+			t.Errorf("%s enableSoftDelete = %v, want true", label, props["enableSoftDelete"])
+		}
+
+		if props["softDeleteRetentionInDays"] != float64(90) {
+			t.Errorf("%s softDeleteRetentionInDays = %v, want 90", label, props["softDeleteRetentionInDays"])
+		}
+
+		for _, flag := range []string{
+			"enableRbacAuthorization",
+			"enabledForDeployment",
+			"enabledForDiskEncryption",
+			"enabledForTemplateDeployment",
+		} {
+			if props[flag] != false {
+				t.Errorf("%s %s = %v, want false (present, not absent)", label, flag, props[flag])
+			}
+		}
+	}
+
+	status, body := doJSON(t, http.MethodPut, vaultURL(base, vaultSub, vaultRG, "minivault"), minimal)
+	if status != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201; body=%v", status, body)
+	}
+
+	createProps, _ := body["properties"].(map[string]any)
+	if createProps == nil {
+		t.Fatalf("no properties in create response: %v", body)
+	}
+
+	assertDefaults("create", createProps)
+
+	status, got := doJSON(t, http.MethodGet, vaultURL(base, vaultSub, vaultRG, "minivault"), nil)
+	if status != http.StatusOK {
+		t.Fatalf("get status = %d, want 200", status)
+	}
+
+	getProps, _ := got["properties"].(map[string]any)
+	assertDefaults("get", getProps)
+}
+
+// TestVaultARMSoftDeleteCannotBeDisabled verifies Azure's mandatory soft-delete
+// over the wire: a create body that explicitly sets enableSoftDelete=false is
+// overridden to true, and a later PATCH setting it false cannot revert the vault
+// ("Once soft-delete is enabled on a key vault, it can't be disabled.").
+func TestVaultARMSoftDeleteCannotBeDisabled(t *testing.T) {
+	ts := newVaultServer(t)
+	base := ts.URL
+
+	create := map[string]any{
+		"location": "eastus",
+		"properties": map[string]any{
+			"tenantId":         "11111111-1111-1111-1111-111111111111",
+			"sku":              map[string]any{"family": "A", "name": "standard"},
+			"enableSoftDelete": false,
+		},
+	}
+
+	status, body := doJSON(t, http.MethodPut, vaultURL(base, vaultSub, vaultRG, "sd-vault"), create)
+	if status != http.StatusCreated {
+		t.Fatalf("create status = %d, want 201; body=%v", status, body)
+	}
+
+	createProps, _ := body["properties"].(map[string]any)
+	if createProps["enableSoftDelete"] != true {
+		t.Errorf("create enableSoftDelete = %v, want true (explicit false must be forced on)", createProps["enableSoftDelete"])
+	}
+
+	status, got := doJSON(t, http.MethodGet, vaultURL(base, vaultSub, vaultRG, "sd-vault"), nil)
+	if status != http.StatusOK {
+		t.Fatalf("get status = %d, want 200", status)
+	}
+
+	if gp, _ := got["properties"].(map[string]any); gp["enableSoftDelete"] != true {
+		t.Errorf("get enableSoftDelete = %v, want true", gp["properties"])
+	}
+
+	// PATCH attempting to turn soft-delete off must be ignored.
+	status, patched := doJSON(t, http.MethodPatch, vaultURL(base, vaultSub, vaultRG, "sd-vault"),
+		map[string]any{"properties": map[string]any{"enableSoftDelete": false}})
+	if status != http.StatusOK {
+		t.Fatalf("patch status = %d, want 200; body=%v", status, patched)
+	}
+
+	if pp, _ := patched["properties"].(map[string]any); pp["enableSoftDelete"] != true {
+		t.Errorf("patch enableSoftDelete = %v, want true (cannot revert)", pp["enableSoftDelete"])
+	}
+
+	status, after := doJSON(t, http.MethodGet, vaultURL(base, vaultSub, vaultRG, "sd-vault"), nil)
+	if status != http.StatusOK {
+		t.Fatalf("get-after-patch status = %d, want 200", status)
+	}
+
+	if ap, _ := after["properties"].(map[string]any); ap["enableSoftDelete"] != true {
+		t.Errorf("get-after-patch enableSoftDelete = %v, want true", ap["enableSoftDelete"])
+	}
+}
+
 func TestVaultARMScopeMismatch(t *testing.T) {
 	ts := newVaultServer(t)
 	base := ts.URL
