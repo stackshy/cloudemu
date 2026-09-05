@@ -245,6 +245,12 @@ type ModifyInstanceInput struct {
 	OptionGroupName             string
 	DBClusterParameterGroupName string
 	ElasticPoolID               string
+	// MinimalTLSVersion / PublicNetworkAccess / RestrictOutboundNetworkAccess
+	// update the Azure SQL logical-server properties on a PATCH; empty means "no
+	// change". Other engines ignore them.
+	MinimalTLSVersion             string
+	PublicNetworkAccess           string
+	RestrictOutboundNetworkAccess string
 	// The fields below are AWS RDS ModifyDBInstance attributes; empty / zero /
 	// nil means "no change". NewInstanceID renames the instance (and its ARN).
 	NewInstanceID              string
@@ -359,6 +365,12 @@ type ClusterConfig struct {
 	// Scope records where an Azure SQL logical server lives (subscription/
 	// resource group). Zero for AWS/GCP and unscoped portable callers.
 	Scope scope.Scope
+	// MinimalTLSVersion / PublicNetworkAccess / RestrictOutboundNetworkAccess are
+	// Azure SQL logical-server inputs; empty means the request omitted them, so
+	// the Azure SQL provider fills the documented default. Empty for AWS/GCP.
+	MinimalTLSVersion             string
+	PublicNetworkAccess           string
+	RestrictOutboundNetworkAccess string
 }
 
 // Cluster describes an Aurora-style database cluster.
@@ -414,6 +426,14 @@ type Cluster struct {
 	// Scope records where an Azure SQL logical server lives (subscription/
 	// resource group). Zero for AWS/GCP and unscoped portable callers.
 	Scope scope.Scope
+	// MinimalTLSVersion / PublicNetworkAccess / RestrictOutboundNetworkAccess
+	// echo Azure SQL logical-server properties on read (minimalTlsVersion,
+	// publicNetworkAccess, restrictOutboundNetworkAccess). Azure SQL only; empty
+	// for AWS/GCP. Azure fills documented defaults ("1.2", "Enabled", "Disabled")
+	// on a create that omits them, so a read round-trips like real Azure SQL.
+	MinimalTLSVersion             string
+	PublicNetworkAccess           string
+	RestrictOutboundNetworkAccess string
 }
 
 // DBClusterRole is an IAM role associated with an Aurora DB cluster (AWS RDS
@@ -654,6 +674,13 @@ type DatabaseConfig struct {
 	// from: a full ARM database resource ID (".../servers/{s}/databases/{d}")
 	// or a bare database name on the same server. Ignored for a Default create.
 	SourceDatabaseID string
+	// MaxSizeBytes / BackupStorageRedundancy / ReadScale are Azure SQL database
+	// inputs (properties.maxSizeBytes, requestedBackupStorageRedundancy,
+	// readScale). Zero/empty means the request omitted them, so the Azure SQL
+	// provider fills the documented default. Other providers leave them zero.
+	MaxSizeBytes            int64
+	BackupStorageRedundancy string
+	ReadScale               string
 }
 
 // Database is a logical database hosted by a managed server (Azure MySQL /
@@ -679,6 +706,14 @@ type Database struct {
 	// ElasticPoolID echoes the elastic pool this database belongs to on read
 	// (properties.elasticPoolId); empty for a standalone database.
 	ElasticPoolID string
+	// MaxSizeBytes / BackupStorageRedundancy / ReadScale echo Azure SQL database
+	// properties on read (maxSizeBytes, requestedBackupStorageRedundancy /
+	// currentBackupStorageRedundancy, readScale). Azure SQL only; zero/empty for
+	// AWS/GCP. Azure fills documented defaults (32 GB, "Geo", "Disabled") on a
+	// create that omits them, so a read round-trips like real Azure SQL.
+	MaxSizeBytes            int64
+	BackupStorageRedundancy string
+	ReadScale               string
 }
 
 // Databases is an OPTIONAL capability for managing the logical databases inside
