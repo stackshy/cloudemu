@@ -85,6 +85,11 @@ type updateFunctionConfigurationRequest struct {
 	VpcConfig        *vpcConfigEnvelope        `json:"VpcConfig"`
 	DeadLetterConfig *deadLetterConfigEnvelope `json:"DeadLetterConfig"`
 	TracingConfig    *tracingConfigEnvelope    `json:"TracingConfig"`
+	// EphemeralStorage updates the function's /tmp size. UpdateFunctionConfiguration
+	// (not UpdateFunctionCode) is the API that carries it — dropping it here leaves
+	// GetFunction reporting the create-time size, so Terraform sees perpetual drift
+	// on every ephemeral_storage change.
+	EphemeralStorage *ephemeralStorageEnvelope `json:"EphemeralStorage"`
 	// Layers replaces the function's imported layer versions (their ARNs).
 	Layers []string `json:"Layers"`
 }
@@ -100,6 +105,12 @@ type updateFunctionCodeRequest struct {
 	S3Key           string   `json:"S3Key"`
 	S3ObjectVersion string   `json:"S3ObjectVersion"`
 	Layers          []string `json:"Layers"`
+	// Architectures updates the function's instruction set (["x86_64"] or
+	// ["arm64"]). UpdateFunctionCode (not UpdateFunctionConfiguration) is the API
+	// that carries it — the code must match the target architecture — so dropping
+	// it here leaves GetFunction reporting the create-time architecture and
+	// Terraform sees perpetual drift on every architectures change.
+	Architectures []string `json:"Architectures"`
 	// Publish, when true, cuts a new version from the updated code and returns
 	// that version's configuration (qualified ARN), matching AWS.
 	Publish bool `json:"Publish"`

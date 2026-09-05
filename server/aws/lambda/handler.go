@@ -139,6 +139,7 @@ const (
 // (the /tmp size) to 512 MB.
 const (
 	archX8664                 = "x86_64"
+	archArm64                 = "arm64"
 	defaultEphemeralStorageMB = 512
 )
 
@@ -646,6 +647,11 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
+	if err := validateEphemeralStorage(req.EphemeralStorage); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	cfg := sdrv.FunctionConfig{
 		Name:        name,
 		Runtime:     req.Runtime,
@@ -669,6 +675,7 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 		VPCConfig:        toDriverVPCConfig(req.VpcConfig),
 		DeadLetterConfig: toDriverDeadLetter(req.DeadLetterConfig),
 		TracingConfig:    toDriverTracing(req.TracingConfig),
+		EphemeralStorage: toDriverEphemeral(req.EphemeralStorage),
 		Layers:           h.resolveLayers(req.Layers),
 	}, false)
 
@@ -708,6 +715,11 @@ func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 
+	if err := validateArchitectures(req.Architectures); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	code, err := h.resolveCode(r.Context(), &functionCode{
 		ZipFile: req.ZipFile, S3Bucket: req.S3Bucket, S3Key: req.S3Key,
 	})
@@ -734,7 +746,7 @@ func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 
-	awsCfg := h.awsFnConfig(r.Context(), name)
+	awsCfg := h.codeAWSConfig(r.Context(), name, req.Architectures)
 
 	if req.Publish {
 		h.writePublished(r.Context(), w, http.StatusOK, name, info, awsCfg)
@@ -742,6 +754,25 @@ func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string)
 	}
 
 	writeJSON(w, http.StatusOK, toConfiguration(info, awsCfg))
+}
+
+// codeAWSConfig returns the function's stored AWS-only config, first persisting
+// any Architectures change carried on the UpdateFunctionCode request — that is
+// the API that carries the instruction set (the code must match the target
+// architecture), so without this GetFunction keeps reporting the create-time
+// architecture and Terraform re-plans it forever. It falls back to the current
+// stored config for a non-AWS backend (applyAWSConfig returns nil there).
+func (h *Handler) codeAWSConfig(ctx context.Context, name string, arch []string) *sdrv.AWSFunctionConfig {
+	awsCfg := h.awsFnConfig(ctx, name)
+	if len(arch) == 0 {
+		return awsCfg
+	}
+
+	if applied := h.applyAWSConfig(ctx, name, sdrv.AWSFunctionConfig{Architectures: arch}, false); applied != nil {
+		return applied
+	}
+
+	return awsCfg
 }
 
 // serveVersions handles POST (PublishVersion) and GET (ListVersionsByFunction)
@@ -1042,7 +1073,26 @@ func validateCreateRequest(req *createFunctionRequest) error {
 		}
 	}
 
+	if err := validateArchitectures(req.Architectures); err != nil {
+		return err
+	}
+
 	return validateEphemeralStorage(req.EphemeralStorage)
+}
+
+// validateArchitectures rejects an Architectures value outside the AWS enum
+// (x86_64, arm64), matching real Lambda, which fails such a request with
+// InvalidParameterValueException rather than silently accepting it.
+func validateArchitectures(arch []string) error {
+	for _, a := range arch {
+		if a != archX8664 && a != archArm64 {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"value '%s' at 'architectures' failed to satisfy constraint: "+
+					"Member must satisfy enum value set: [%s, %s]", a, archX8664, archArm64)
+		}
+	}
+
+	return nil
 }
 
 // validateEphemeralStorage rejects a /tmp size outside the AWS 512–10240 MB range.
