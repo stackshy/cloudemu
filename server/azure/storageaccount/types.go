@@ -8,6 +8,7 @@ type armAccountCreate struct {
 	Kind       string              `json:"kind,omitempty"`
 	Tags       map[string]string   `json:"tags,omitempty"`
 	SKU        *armSKU             `json:"sku,omitempty"`
+	Identity   *armIdentity        `json:"identity,omitempty"`
 	Properties *armAccountPropsReq `json:"properties,omitempty"`
 }
 
@@ -18,7 +19,28 @@ type armAccountUpdate struct {
 	Kind       string              `json:"kind,omitempty"`
 	Tags       map[string]string   `json:"tags,omitempty"`
 	SKU        *armSKU             `json:"sku,omitempty"`
+	Identity   *armIdentity        `json:"identity,omitempty"`
 	Properties *armAccountPropsReq `json:"properties,omitempty"`
+}
+
+// armIdentity is the ARM managed-identity block — a top-level sibling of
+// properties/sku/kind on a storage account (armstorage.Identity). On a request
+// only Type and the userAssignedIdentities keys are meaningful; the response
+// synthesizes the system-assigned principal/tenant ids and each user-assigned
+// identity's principal/client pair, mirroring real Azure.
+type armIdentity struct {
+	Type                   string                              `json:"type,omitempty"`
+	PrincipalID            string                              `json:"principalId,omitempty"`
+	TenantID               string                              `json:"tenantId,omitempty"`
+	UserAssignedIdentities map[string]*armUserAssignedIdentity `json:"userAssignedIdentities,omitempty"`
+}
+
+// armUserAssignedIdentity is one entry of identity.userAssignedIdentities: the
+// principal/client pair Azure returns for an attached user-assigned identity.
+// On a request the value is an empty object; the response synthesizes the pair.
+type armUserAssignedIdentity struct {
+	PrincipalID string `json:"principalId,omitempty"`
+	ClientID    string `json:"clientId,omitempty"`
 }
 
 // armAccountPropsReq is the settable subset of properties on a create or
@@ -69,6 +91,7 @@ type armAccount struct {
 	Kind       string            `json:"kind,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	SKU        *armSKU           `json:"sku,omitempty"`
+	Identity   *armIdentity      `json:"identity,omitempty"`
 	Properties *armAccountProps  `json:"properties,omitempty"`
 }
 

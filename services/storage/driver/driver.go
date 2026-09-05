@@ -70,6 +70,19 @@ type AccountAttributes struct {
 	EnableHTTPSTrafficOnly *bool
 	AllowBlobPublicAccess  *bool
 	AllowSharedKeyAccess   *bool
+	// IdentityType is the ARM managed-identity type attached to the account
+	// (None/SystemAssigned/UserAssigned/"SystemAssigned,UserAssigned"). Empty
+	// means the create/update carried no identity block, so the handler emits
+	// no identity object at all. IdentityPrincipalID/IdentityTenantID are the
+	// ids synthesized for a system-assigned identity (empty otherwise), and
+	// UserAssignedIdentities holds the attached user-assigned identity resource
+	// IDs. Modeled here (not left to the echo overlay) because the identity
+	// block is a top-level ARM sibling of properties — the overlay only echoes
+	// unmodeled keys under properties, so a bare identity would be dropped.
+	IdentityType           string
+	IdentityPrincipalID    string
+	IdentityTenantID       string
+	UserAssignedIdentities []string
 }
 
 // AccountEncryption is the storage-account encryption configuration requested
