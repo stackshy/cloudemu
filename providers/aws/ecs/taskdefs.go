@@ -145,6 +145,12 @@ func (m *Mock) nextRevision(family string) int {
 func (m *Mock) ListTaskDefinitions(
 	_ context.Context, familyPrefix, status, sortOrder string,
 ) ([]driver.TaskDefinition, error) {
+	// ECS filters to ACTIVE task definitions by default: deregistered (INACTIVE)
+	// revisions are hidden unless the caller explicitly asks for INACTIVE.
+	if status == "" {
+		status = statusActive
+	}
+
 	all := m.taskDefs.SortedValues()
 
 	out := make([]driver.TaskDefinition, 0, len(all))
