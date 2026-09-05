@@ -48,13 +48,12 @@ const reservationPrefix = "r-"
 // emulator launches. They are fixed rather than modeled because no cloudemu
 // behavior depends on them, but SDK clients and IaC read them.
 const (
-	archX86            = "x86_64"
-	hypervisorXen      = "xen"
-	virtualizationHVM  = "hvm"
-	rootDeviceTypeEBS  = "ebs"
-	rootDeviceNameXVDA = "/dev/xvda"
-	tenancyDefault     = "default"
-	defaultZone        = "us-east-1a"
+	archX86           = "x86_64"
+	hypervisorXen     = "xen"
+	virtualizationHVM = "hvm"
+	rootDeviceTypeEBS = "ebs"
+	tenancyDefault    = "default"
+	defaultZone       = "us-east-1a"
 	// eniAttachedStatus / primaryDeviceIndex describe the primary ENI's
 	// attachment.
 	eniAttachedStatus  = "attached"
@@ -804,11 +803,26 @@ func (h *Handler) toInstanceXMLs(ctx context.Context, instances []computedriver.
 	volsByInstance := h.volumesByInstance(ctx)
 	eipByInstance := h.eipByInstance(ctx)
 
+	// The instance's reported root device name must equal the device its boot
+	// volume is attached at, so terraform (which matches the block-device mapping
+	// whose deviceName == rootDeviceName to populate root_block_device) classifies
+	// the root volume correctly. Both derive from the launch AMI's root device, so
+	// resolve it once per distinct image.
+	rootDevices := make(map[string]string, len(instances))
+
 	out := make([]instanceXML, 0, len(instances))
 
 	for i := range instances {
 		inst := &instances[i]
-		out = append(out, instanceXMLFor(inst, names, enisByInstance[inst.ID], volsByInstance[inst.ID], eipByInstance[inst.ID]))
+
+		rootDevice, ok := rootDevices[inst.ImageID]
+		if !ok {
+			rootDevice = h.rootDeviceName(ctx, inst.ImageID)
+			rootDevices[inst.ImageID] = rootDevice
+		}
+
+		out = append(out, instanceXMLFor(inst, rootDevice, names,
+			enisByInstance[inst.ID], volsByInstance[inst.ID], eipByInstance[inst.ID]))
 	}
 
 	return out
@@ -892,7 +906,7 @@ func (h *Handler) eipByInstance(ctx context.Context) map[string]*netdriver.Elast
 // instanceXMLFor builds the wire shape for one instance, including the static
 // facts and derived placement / DNS / primary-ENI fields real EC2 reports.
 func instanceXMLFor(
-	inst *computedriver.Instance, names map[string]string,
+	inst *computedriver.Instance, rootDevice string, names map[string]string,
 	enis []netdriver.NetworkInterface, vols []computedriver.VolumeInfo, eip *netdriver.ElasticIP,
 ) instanceXML {
 	// An associated elastic IP is what gives an instance its public address;
@@ -919,7 +933,7 @@ func instanceXMLFor(
 		AmiLaunchIndex:     0,
 		Architecture:       archX86,
 		RootDeviceType:     rootDeviceTypeEBS,
-		RootDeviceName:     rootDeviceNameXVDA,
+		RootDeviceName:     rootDevice,
 		VirtualizationType: virtualizationHVM,
 		Hypervisor:         hypervisorXen,
 		Placement:          &placementXML{AvailabilityZone: instanceZone(inst), Tenancy: tenancyDefault},
