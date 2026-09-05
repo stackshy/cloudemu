@@ -45,6 +45,13 @@ const (
 	cpuMetricRunning   = 0.25
 	cpuMetricStopped   = 0.0
 	dtuRunning         = 50.0
+
+	// Azure SQL logical-server defaults synthesized when a create omits them, so
+	// a read round-trips like real Azure SQL. minimalTlsVersion defaults to "1.2",
+	// public endpoint access is Enabled, and outbound access is unrestricted.
+	defaultMinimalTLSVersion       = "1.2"
+	defaultPublicNetworkAccess     = "Enabled"
+	defaultRestrictOutboundNetwork = "Disabled"
 )
 
 var (
@@ -505,18 +512,21 @@ func (m *Mock) CreateCluster(_ context.Context, cfg rdsdriver.ClusterConfig) (*r
 	}
 
 	cluster := rdsdriver.Cluster{
-		ID:             cfg.ID,
-		ARN:            idgen.AzureID(m.opts.Region, m.opts.Region, armProvider, "servers", cfg.ID),
-		Engine:         "SQLServer",
-		EngineVersion:  cfg.EngineVersion,
-		MasterUsername: cfg.MasterUsername,
-		Endpoint:       cfg.ID + ".database.windows.net",
-		Port:           defaultPort,
-		State:          rdsdriver.StateAvailable,
-		Location:       orDefault(cfg.Location, m.opts.Region),
-		CreatedAt:      m.opts.Clock.Now().UTC(),
-		Tags:           copyTags(cfg.Tags),
-		Scope:          cfg.Scope,
+		ID:                            cfg.ID,
+		ARN:                           idgen.AzureID(m.opts.Region, m.opts.Region, armProvider, "servers", cfg.ID),
+		Engine:                        "SQLServer",
+		EngineVersion:                 cfg.EngineVersion,
+		MasterUsername:                cfg.MasterUsername,
+		Endpoint:                      cfg.ID + ".database.windows.net",
+		Port:                          defaultPort,
+		State:                         rdsdriver.StateAvailable,
+		Location:                      orDefault(cfg.Location, m.opts.Region),
+		CreatedAt:                     m.opts.Clock.Now().UTC(),
+		Tags:                          copyTags(cfg.Tags),
+		Scope:                         cfg.Scope,
+		MinimalTLSVersion:             orDefault(cfg.MinimalTLSVersion, defaultMinimalTLSVersion),
+		PublicNetworkAccess:           orDefault(cfg.PublicNetworkAccess, defaultPublicNetworkAccess),
+		RestrictOutboundNetworkAccess: orDefault(cfg.RestrictOutboundNetworkAccess, defaultRestrictOutboundNetwork),
 	}
 
 	m.clusters.Set(cfg.ID, cluster)
@@ -573,6 +583,18 @@ func (m *Mock) ModifyCluster(
 
 	if input.EngineVersion != "" {
 		cluster.EngineVersion = input.EngineVersion
+	}
+
+	if input.MinimalTLSVersion != "" {
+		cluster.MinimalTLSVersion = input.MinimalTLSVersion
+	}
+
+	if input.PublicNetworkAccess != "" {
+		cluster.PublicNetworkAccess = input.PublicNetworkAccess
+	}
+
+	if input.RestrictOutboundNetworkAccess != "" {
+		cluster.RestrictOutboundNetworkAccess = input.RestrictOutboundNetworkAccess
 	}
 
 	if input.Tags != nil {

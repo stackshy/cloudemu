@@ -19,6 +19,9 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 	}
 
 	reqVersion := stringFrom(body.Properties, func(p *armServerProps) string { return p.Version })
+	reqTLS := stringFrom(body.Properties, func(p *armServerProps) string { return p.MinimalTLSVersion })
+	reqPNA := stringFrom(body.Properties, func(p *armServerProps) string { return p.PublicNetworkAccess })
+	reqRONA := stringFrom(body.Properties, func(p *armServerProps) string { return p.RestrictOutboundNetworkAccess })
 
 	cfg := rdsdriver.ClusterConfig{
 		ID:             rp.ResourceName,
@@ -28,9 +31,12 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 		MasterUserPassword: stringFrom(body.Properties, func(p *armServerProps) string {
 			return p.AdministratorLoginPassword
 		}),
-		EngineVersion: reqVersion,
-		Tags:          body.Tags,
-		Scope:         scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+		EngineVersion:                 reqVersion,
+		Tags:                          body.Tags,
+		Scope:                         scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup},
+		MinimalTLSVersion:             reqTLS,
+		PublicNetworkAccess:           reqPNA,
+		RestrictOutboundNetworkAccess: reqRONA,
 	}
 
 	// Azure SQL synthesizes version "12.0" when a server create omits it.
@@ -54,8 +60,11 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 		// a PUT that omits version preserves the existing one (ModifyCluster
 		// guards empty), not the create-time "12.0" default.
 		cluster, err = h.db.ModifyCluster(r.Context(), rp.ResourceName, rdsdriver.ModifyInstanceInput{
-			EngineVersion: reqVersion,
-			Tags:          body.Tags,
+			EngineVersion:                 reqVersion,
+			Tags:                          body.Tags,
+			MinimalTLSVersion:             reqTLS,
+			PublicNetworkAccess:           reqPNA,
+			RestrictOutboundNetworkAccess: reqRONA,
 		})
 		if err != nil {
 			azurearm.WriteCErr(w, err)
@@ -75,8 +84,11 @@ func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azure
 	}
 
 	input := rdsdriver.ModifyInstanceInput{
-		EngineVersion: stringFrom(body.Properties, func(p *armServerProps) string { return p.Version }),
-		Tags:          body.Tags,
+		EngineVersion:                 stringFrom(body.Properties, func(p *armServerProps) string { return p.Version }),
+		Tags:                          body.Tags,
+		MinimalTLSVersion:             stringFrom(body.Properties, func(p *armServerProps) string { return p.MinimalTLSVersion }),
+		PublicNetworkAccess:           stringFrom(body.Properties, func(p *armServerProps) string { return p.PublicNetworkAccess }),
+		RestrictOutboundNetworkAccess: stringFrom(body.Properties, serverRestrictOutbound),
 	}
 
 	cluster, err := h.db.ModifyCluster(r.Context(), rp.ResourceName, input)
@@ -196,6 +208,9 @@ func dbCfgFromBody(body *armDatabase, rp *azurearm.ResourcePath) rdsdriver.Datab
 		}
 		cfg.CreateMode = body.Properties.CreateMode
 		cfg.SourceDatabaseID = body.Properties.SourceDatabaseID
+		cfg.MaxSizeBytes = body.Properties.MaxSizeBytes
+		cfg.BackupStorageRedundancy = body.Properties.RequestedBackupStorageRedundancy
+		cfg.ReadScale = body.Properties.ReadScale
 
 		if body.Properties.ZoneRedundant != nil {
 			cfg.ZoneRedundant = *body.Properties.ZoneRedundant
@@ -278,13 +293,10 @@ func (h *Handler) writeDatabaseNotFound(
 	azurearm.WriteError(w, http.StatusBadRequest, "TargetElasticPoolDoesNotExist", cerrors.Message(err))
 }
 
-// mergeDatabaseFields overlays the non-empty fields of cfg (and body's
-// pointer-only properties) onto existing, leaving fields the request omitted
-// untouched. Split out of replaceDatabase to keep that function's
-// cyclomatic complexity down — this is pure field merging, no I/O.
-func mergeDatabaseFields(existing *rdsdriver.Database, body *armDatabase, cfg *rdsdriver.DatabaseConfig) rdsdriver.Database {
-	merged := *existing
-
+// mergeDatabaseSKUAndProps overlays cfg's non-empty SKU and Azure-SQL property
+// fields onto merged, leaving fields the request omitted untouched. Split out of
+// mergeDatabaseFields to keep that function's cyclomatic complexity down.
+func mergeDatabaseSKUAndProps(merged *rdsdriver.Database, cfg *rdsdriver.DatabaseConfig) {
 	if cfg.SKUName != "" {
 		merged.SKUName = cfg.SKUName
 	}
@@ -300,6 +312,28 @@ func mergeDatabaseFields(existing *rdsdriver.Database, body *armDatabase, cfg *r
 	if cfg.Collation != "" {
 		merged.Collation = cfg.Collation
 	}
+
+	if cfg.MaxSizeBytes != 0 {
+		merged.MaxSizeBytes = cfg.MaxSizeBytes
+	}
+
+	if cfg.BackupStorageRedundancy != "" {
+		merged.BackupStorageRedundancy = cfg.BackupStorageRedundancy
+	}
+
+	if cfg.ReadScale != "" {
+		merged.ReadScale = cfg.ReadScale
+	}
+}
+
+// mergeDatabaseFields overlays the non-empty fields of cfg (and body's
+// pointer-only properties) onto existing, leaving fields the request omitted
+// untouched. Split out of replaceDatabase to keep that function's
+// cyclomatic complexity down — this is pure field merging, no I/O.
+func mergeDatabaseFields(existing *rdsdriver.Database, body *armDatabase, cfg *rdsdriver.DatabaseConfig) rdsdriver.Database {
+	merged := *existing
+
+	mergeDatabaseSKUAndProps(&merged, cfg)
 
 	if cfg.Location != "" {
 		merged.Location = cfg.Location
@@ -356,17 +390,20 @@ func replaceDatabase(
 	}
 
 	return updater.UpdateDatabase(ctx, rdsdriver.DatabaseConfig{
-		Server:        merged.Server,
-		Name:          merged.Name,
-		Charset:       merged.Charset,
-		Collation:     merged.Collation,
-		Location:      merged.Location,
-		Tags:          merged.Tags,
-		SKUName:       merged.SKUName,
-		SKUTier:       merged.SKUTier,
-		SKUCapacity:   merged.SKUCapacity,
-		ZoneRedundant: merged.ZoneRedundant,
-		ElasticPoolID: merged.ElasticPoolID,
+		Server:                  merged.Server,
+		Name:                    merged.Name,
+		Charset:                 merged.Charset,
+		Collation:               merged.Collation,
+		Location:                merged.Location,
+		Tags:                    merged.Tags,
+		SKUName:                 merged.SKUName,
+		SKUTier:                 merged.SKUTier,
+		SKUCapacity:             merged.SKUCapacity,
+		ZoneRedundant:           merged.ZoneRedundant,
+		ElasticPoolID:           merged.ElasticPoolID,
+		MaxSizeBytes:            merged.MaxSizeBytes,
+		BackupStorageRedundancy: merged.BackupStorageRedundancy,
+		ReadScale:               merged.ReadScale,
 	})
 }
 
@@ -429,6 +466,10 @@ func (h *Handler) listDatabases(
 
 	azurearm.WriteJSON(w, http.StatusOK, armList[armDatabase]{Value: out})
 }
+
+// serverRestrictOutbound extracts restrictOutboundNetworkAccess from server
+// props; a named func keeps the ModifyInstanceInput literal under the line limit.
+func serverRestrictOutbound(p *armServerProps) string { return p.RestrictOutboundNetworkAccess }
 
 // stringFrom returns f(p) when p is non-nil, else "". A small helper that
 // keeps body decoders compact when most fields are pointer-deref accesses.

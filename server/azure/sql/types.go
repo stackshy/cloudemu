@@ -21,11 +21,14 @@ type armServer struct {
 }
 
 type armServerProps struct {
-	AdministratorLogin         string `json:"administratorLogin,omitempty"`
-	AdministratorLoginPassword string `json:"administratorLoginPassword,omitempty"`
-	Version                    string `json:"version,omitempty"`
-	State                      string `json:"state,omitempty"`
-	FullyQualifiedDomainName   string `json:"fullyQualifiedDomainName,omitempty"`
+	AdministratorLogin            string `json:"administratorLogin,omitempty"`
+	AdministratorLoginPassword    string `json:"administratorLoginPassword,omitempty"`
+	Version                       string `json:"version,omitempty"`
+	State                         string `json:"state,omitempty"`
+	FullyQualifiedDomainName      string `json:"fullyQualifiedDomainName,omitempty"`
+	MinimalTLSVersion             string `json:"minimalTlsVersion,omitempty"`
+	PublicNetworkAccess           string `json:"publicNetworkAccess,omitempty"`
+	RestrictOutboundNetworkAccess string `json:"restrictOutboundNetworkAccess,omitempty"`
 }
 
 // armDatabase is the JSON shape Azure ARM expects for
@@ -47,16 +50,19 @@ type armSKU struct {
 }
 
 type armDatabaseProps struct {
-	Status                      string  `json:"status,omitempty"`
-	CreateMode                  string  `json:"createMode,omitempty"`
-	SourceDatabaseID            string  `json:"sourceDatabaseId,omitempty"`
-	RestorePointInTime          string  `json:"restorePointInTime,omitempty"`
-	MaxSizeBytes                int64   `json:"maxSizeBytes,omitempty"`
-	Collation                   string  `json:"collation,omitempty"`
-	DatabaseID                  string  `json:"databaseId,omitempty"`
-	CurrentServiceObjectiveName string  `json:"currentServiceObjectiveName,omitempty"`
-	CurrentSKU                  *armSKU `json:"currentSku,omitempty"`
-	ZoneRedundant               *bool   `json:"zoneRedundant,omitempty"`
+	Status                           string  `json:"status,omitempty"`
+	CreateMode                       string  `json:"createMode,omitempty"`
+	SourceDatabaseID                 string  `json:"sourceDatabaseId,omitempty"`
+	RestorePointInTime               string  `json:"restorePointInTime,omitempty"`
+	MaxSizeBytes                     int64   `json:"maxSizeBytes,omitempty"`
+	Collation                        string  `json:"collation,omitempty"`
+	DatabaseID                       string  `json:"databaseId,omitempty"`
+	CurrentServiceObjectiveName      string  `json:"currentServiceObjectiveName,omitempty"`
+	CurrentSKU                       *armSKU `json:"currentSku,omitempty"`
+	ReadScale                        string  `json:"readScale,omitempty"`
+	RequestedBackupStorageRedundancy string  `json:"requestedBackupStorageRedundancy,omitempty"`
+	CurrentBackupStorageRedundancy   string  `json:"currentBackupStorageRedundancy,omitempty"`
+	ZoneRedundant                    *bool   `json:"zoneRedundant,omitempty"`
 	// ElasticPoolID is a pointer (not a plain string) so a PATCH can distinguish
 	// an omitted field from an explicit "" — real Azure SQL removes a database
 	// from its elastic pool when elasticPoolId is set to "" in the request body,
@@ -79,10 +85,13 @@ func toARMServer(cluster *rdsdriver.Cluster, subscription, resourceGroup string)
 		Location: cluster.Location,
 		Tags:     cluster.Tags,
 		Properties: &armServerProps{
-			AdministratorLogin:       cluster.MasterUsername,
-			Version:                  cluster.EngineVersion,
-			State:                    "Ready",
-			FullyQualifiedDomainName: cluster.Endpoint,
+			AdministratorLogin:            cluster.MasterUsername,
+			Version:                       cluster.EngineVersion,
+			State:                         "Ready",
+			FullyQualifiedDomainName:      cluster.Endpoint,
+			MinimalTLSVersion:             cluster.MinimalTLSVersion,
+			PublicNetworkAccess:           cluster.PublicNetworkAccess,
+			RestrictOutboundNetworkAccess: cluster.RestrictOutboundNetworkAccess,
 		},
 	}
 }
@@ -117,13 +126,17 @@ func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath, status str
 		Tags:     db.Tags,
 		SKU:      &armSKU{Name: db.SKUName, Tier: db.SKUTier, Capacity: db.SKUCapacity},
 		Properties: &armDatabaseProps{
-			Status:                      status,
-			Collation:                   db.Collation,
-			DatabaseID:                  databaseGUID(db),
-			CurrentServiceObjectiveName: db.SKUName,
-			CurrentSKU:                  &armSKU{Name: db.SKUName, Tier: db.SKUTier, Capacity: db.SKUCapacity},
-			ZoneRedundant:               &zoneRedundant,
-			ElasticPoolID:               elasticPoolID,
+			Status:                           status,
+			Collation:                        db.Collation,
+			DatabaseID:                       databaseGUID(db),
+			CurrentServiceObjectiveName:      db.SKUName,
+			CurrentSKU:                       &armSKU{Name: db.SKUName, Tier: db.SKUTier, Capacity: db.SKUCapacity},
+			MaxSizeBytes:                     db.MaxSizeBytes,
+			ReadScale:                        db.ReadScale,
+			RequestedBackupStorageRedundancy: db.BackupStorageRedundancy,
+			CurrentBackupStorageRedundancy:   db.BackupStorageRedundancy,
+			ZoneRedundant:                    &zoneRedundant,
+			ElasticPoolID:                    elasticPoolID,
 		},
 	}
 }
