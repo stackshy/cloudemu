@@ -24,6 +24,8 @@ const (
 	maxMessageSizeBytes  = 1048576
 	minWaitTimeSeconds   = 0
 	maxWaitTimeSeconds   = 20
+	minKmsDataKeyReuse   = 60
+	maxKmsDataKeyReuse   = 86400
 )
 
 // validateBatchEntryIDs enforces the structural constraints SQS applies to every
@@ -76,6 +78,7 @@ func validateQueueAttributeRanges(w http.ResponseWriter, attrs map[string]string
 		{"MessageRetentionPeriod", minRetentionPeriod, maxRetentionPeriod},
 		{"MaximumMessageSize", minMessageSizeBytes, maxMessageSizeBytes},
 		{"ReceiveMessageWaitTimeSeconds", minWaitTimeSeconds, maxWaitTimeSeconds},
+		{"KmsDataKeyReusePeriodSeconds", minKmsDataKeyReuse, maxKmsDataKeyReuse},
 	}
 
 	for _, rng := range ranges {
