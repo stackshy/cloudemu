@@ -440,6 +440,7 @@ your client.
 | `--aws-port` / `--azure-port` / `--gcp-port` / `--k8s-port` / `--oci-port` | `4566`/`4568`/`4569`/`4570`/`4571` | listen ports (empty `--k8s-port` disables Kubernetes; OCI only served when `oci` is in `--providers`) |
 | `--account-id` | `000000000000` | AWS account ID (also used for GCP/OCI) |
 | `--azure-subscription` | `00000000-0000-0000-0000-000000000000` | Azure subscription id (a GUID). Resource ids and Resource Graph scoping use it; discovery is subscription-transparent, so a query scoped to any subscription returns the estate rendered under it |
+| `--oci-tenancy` | `ocid1.tenancy.oc1..aaaaaaaacloudemulocaltenancy` | OCI tenancy OCID. It is also the root compartment, and the Object Storage namespace is derived from it |
 | `--region` | `us-east-1` | default region |
 | `--project-id` | `cloudemu-local` | GCP project ID |
 | `--latency` | `0` | artificial per-call latency (e.g. `20ms`) |

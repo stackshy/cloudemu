@@ -304,7 +304,7 @@ func projectBucket(bkt *bucketData) *Bucket {
 	for _, name := range bkt.objects.Keys() {
 		if obj, ok := bkt.objects.Get(name); ok {
 			count++
-			size += int64(len(obj.Data))
+			size += obj.Size
 		}
 	}
 

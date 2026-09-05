@@ -1,8 +1,9 @@
 // Package storageengine wires an optional real storage engine into an
 // object-storage provider's data path. It is shared by every storage provider
-// (AWS S3, Azure Blob, GCP GCS) so the put/get/delete/copy hook stays identical
-// across clouds and cannot drift. When no engine is configured every call is a
-// no-op, leaving the provider's in-memory object bytes untouched.
+// (AWS S3, Azure Blob, GCP GCS, OCI Object Storage) so the put/get/delete/copy
+// hook stays identical across clouds and cannot drift. When no engine is
+// configured every call is a no-op, leaving the provider's in-memory object
+// bytes untouched.
 package storageengine
 
 import (

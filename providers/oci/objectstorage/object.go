@@ -9,6 +9,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
+	"github.com/stackshy/cloudemu/v2/services/storage/storageengine"
 )
 
 // defaultListLimit is the page size OCI applies when the caller names none.
@@ -51,7 +52,7 @@ func (m *Mock) PutObject(
 // PutObjectWith stores an object with OCI's per-object settings and returns
 // what OCI stamps on the response.
 func (m *Mock) PutObjectWith(
-	_ context.Context, bucket, key string, data []byte, opts PutOptions,
+	ctx context.Context, bucket, key string, data []byte, opts PutOptions,
 ) (*ObjectDetails, error) {
 	if key == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "object name cannot be empty")
@@ -84,6 +85,7 @@ func (m *Mock) PutObjectWith(
 	obj := &objectData{
 		Name:         key,
 		Data:         cloneBytes(data),
+		Size:         int64(len(data)),
 		ContentType:  orDefault(opts.ContentType, "application/octet-stream"),
 		ContentMD5:   contentMD5(data),
 		ETag:         objectETag(data),
@@ -93,6 +95,12 @@ func (m *Mock) PutObjectWith(
 		StorageTier:  orDefault(opts.StorageTier, bkt.StorageTier),
 	}
 	storeObjectLocked(bkt, obj)
+
+	if err := m.offloadLocked(ctx, bkt, bucket, obj); err != nil {
+		m.mu.Unlock()
+		return nil, err
+	}
+
 	details := detailsOf(obj)
 	m.mu.Unlock()
 
@@ -102,7 +110,7 @@ func (m *Mock) PutObjectWith(
 	return &details, nil
 }
 
-func (m *Mock) GetObject(_ context.Context, bucket, key string) (*driver.Object, error) {
+func (m *Mock) GetObject(ctx context.Context, bucket, key string) (*driver.Object, error) {
 	m.mu.RLock()
 
 	bkt, err := m.bucketLocked(bucket)
@@ -117,7 +125,13 @@ func (m *Mock) GetObject(_ context.Context, bucket, key string) (*driver.Object,
 		return nil, err
 	}
 
-	out := &driver.Object{Info: infoOf(obj), Data: cloneBytes(obj.Data)}
+	data, err := m.engineLoad(ctx, engineRef(bucket, key, obj.VersionID), obj.Data)
+	if err != nil {
+		m.mu.RUnlock()
+		return nil, err
+	}
+
+	out := &driver.Object{Info: infoOf(obj), Data: cloneBytes(data)}
 	m.mu.RUnlock()
 
 	m.emitMetric("GetRequests", 1, "Count", bucket)
@@ -165,7 +179,7 @@ func (m *Mock) ObjectDetailsOf(_ context.Context, bucket, key string) (*ObjectDe
 	return &d, nil
 }
 
-func (m *Mock) DeleteObject(_ context.Context, bucket, key string) error {
+func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	m.mu.Lock()
 
 	bkt, err := m.bucketLocked(bucket)
@@ -179,7 +193,8 @@ func (m *Mock) DeleteObject(_ context.Context, bucket, key string) error {
 		return err
 	}
 
-	_, _, existed := m.deleteCurrentLocked(bkt, key)
+	vid, marker, existed := m.deleteCurrentLocked(bkt, key)
+	m.purgeLocked(ctx, bucket, key, vid, marker)
 	m.mu.Unlock()
 
 	if !existed {
@@ -193,7 +208,7 @@ func (m *Mock) DeleteObject(_ context.Context, bucket, key string) error {
 
 // RenameObject moves an object to a new name within the same bucket, OCI's
 // atomic rename action. newName must not already exist.
-func (m *Mock) RenameObject(_ context.Context, bucket, sourceName, newName string) (*ObjectDetails, error) {
+func (m *Mock) RenameObject(ctx context.Context, bucket, sourceName, newName string) (*ObjectDetails, error) {
 	if sourceName == "" || newName == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "sourceName and newName are required")
 	}
@@ -223,6 +238,8 @@ func (m *Mock) RenameObject(_ context.Context, bucket, sourceName, newName strin
 		return nil, err
 	}
 
+	srcVersion := src.VersionID
+
 	moved := *src
 	moved.Name = newName
 	moved.TimeModified = m.now()
@@ -230,7 +247,18 @@ func (m *Mock) RenameObject(_ context.Context, bucket, sourceName, newName strin
 	moved.Metadata = cloneMeta(src.Metadata)
 
 	storeObjectLocked(bkt, &moved)
-	m.deleteCurrentLocked(bkt, sourceName)
+
+	if m.engineWired() {
+		if err := storageengine.Copy(ctx, m.opts.StorageEngine,
+			engineRef(bucket, newName, moved.VersionID), engineRef(bucket, sourceName, srcVersion)); err != nil {
+			return nil, err
+		}
+
+		dropBytesLocked(bkt, &moved)
+	}
+
+	vid, marker, _ := m.deleteCurrentLocked(bkt, sourceName)
+	m.purgeLocked(ctx, bucket, sourceName, vid, marker)
 
 	details := detailsOf(&moved)
 
@@ -239,7 +267,7 @@ func (m *Mock) RenameObject(_ context.Context, bucket, sourceName, newName strin
 
 // CopyObject copies an object between buckets in this namespace. OCI runs the
 // copy asynchronously; the wire layer records the work request.
-func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src driver.CopySource) error {
+func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src driver.CopySource) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -263,9 +291,10 @@ func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src drive
 	}
 
 	now := m.now()
-	storeObjectLocked(dstBkt, &objectData{
+	dstObj := &objectData{
 		Name:         dstKey,
 		Data:         cloneBytes(srcObj.Data),
+		Size:         srcObj.Size,
 		ContentType:  srcObj.ContentType,
 		ContentMD5:   srcObj.ContentMD5,
 		ETag:         srcObj.ETag,
@@ -273,7 +302,18 @@ func (m *Mock) CopyObject(_ context.Context, dstBucket, dstKey string, src drive
 		TimeModified: now,
 		Metadata:     cloneMeta(srcObj.Metadata),
 		StorageTier:  srcObj.StorageTier,
-	})
+	}
+	storeObjectLocked(dstBkt, dstObj)
+
+	if m.engineWired() {
+		if err := storageengine.Copy(ctx, m.opts.StorageEngine,
+			engineRef(dstBucket, dstKey, dstObj.VersionID),
+			engineRef(src.Bucket, src.Key, srcObj.VersionID)); err != nil {
+			return err
+		}
+
+		dropBytesLocked(dstBkt, dstObj)
+	}
 
 	return nil
 }
@@ -398,7 +438,7 @@ func (m *Mock) ListObjectDetails(
 func infoOf(obj *objectData) driver.ObjectInfo {
 	return driver.ObjectInfo{
 		Key:          obj.Name,
-		Size:         int64(len(obj.Data)),
+		Size:         obj.Size,
 		ContentType:  obj.ContentType,
 		ETag:         obj.ETag,
 		LastModified: obj.TimeModified,
@@ -410,7 +450,7 @@ func infoOf(obj *objectData) driver.ObjectInfo {
 func detailsOf(obj *objectData) ObjectDetails {
 	return ObjectDetails{
 		Name:         obj.Name,
-		Size:         int64(len(obj.Data)),
+		Size:         obj.Size,
 		MD5:          obj.ContentMD5,
 		ETag:         obj.ETag,
 		ContentType:  obj.ContentType,

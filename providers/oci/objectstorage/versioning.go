@@ -97,6 +97,7 @@ func versionOf(obj *objectData) *objectVersion {
 	return &objectVersion{
 		versionID:    obj.VersionID,
 		data:         obj.Data,
+		size:         obj.Size,
 		contentType:  obj.ContentType,
 		contentMD5:   obj.ContentMD5,
 		etag:         obj.ETag,
@@ -110,6 +111,7 @@ func objectOfVersion(name string, v *objectVersion) *objectData {
 	return &objectData{
 		Name:         name,
 		Data:         v.data,
+		Size:         v.size,
 		ContentType:  v.contentType,
 		ContentMD5:   v.contentMD5,
 		ETag:         v.etag,
@@ -124,7 +126,7 @@ func objectOfVersion(name string, v *objectVersion) *objectData {
 func infoOfVersion(name string, v *objectVersion) driver.ObjectInfo {
 	return driver.ObjectInfo{
 		Key:          name,
-		Size:         int64(len(v.data)),
+		Size:         v.size,
 		ContentType:  v.contentType,
 		ETag:         v.etag,
 		LastModified: v.timeModified,
@@ -221,7 +223,12 @@ func (m *Mock) GetObjectVersion(ctx context.Context, bucket, key, versionID stri
 		return nil, err
 	}
 
-	return &driver.Object{Info: infoOfVersion(key, v), Data: cloneBytes(v.data)}, nil
+	data, err := m.engineLoad(ctx, engineRef(bucket, key, versionID), v.data)
+	if err != nil {
+		return nil, err
+	}
+
+	return &driver.Object{Info: infoOfVersion(key, v), Data: cloneBytes(data)}, nil
 }
 
 // HeadObjectVersion returns metadata for a specific version.
@@ -270,7 +277,7 @@ func (m *Mock) findVersionLocked(bucket, key, versionID string) (*objectVersion,
 // versionID is empty. A top-level delete that finds nothing is NotFound, as
 // DeleteObject is; a versioned bucket always records a delete marker.
 func (m *Mock) DeleteObjectVersion(
-	_ context.Context, bucket, key, versionID string,
+	ctx context.Context, bucket, key, versionID string,
 ) (deletedVersionID string, deleteMarker bool, err error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -289,6 +296,8 @@ func (m *Mock) DeleteObjectVersion(
 		if !existed {
 			return "", false, cerrors.Newf(cerrors.NotFound, "object %q not found in bucket %q", key, bucket)
 		}
+
+		m.purgeLocked(ctx, bucket, key, vid, marker)
 
 		return vid, marker, nil
 	}
@@ -316,6 +325,7 @@ func (m *Mock) DeleteObjectVersion(
 	}
 
 	recomputeCurrentLocked(bkt, key)
+	m.purgeLocked(ctx, bucket, key, versionID, removed.deleteMarker)
 
 	return versionID, removed.deleteMarker, nil
 }
@@ -414,7 +424,7 @@ func versionsOfLocked(bkt *bucketData, name string) []driver.ObjectVersion {
 
 		return []driver.ObjectVersion{{
 			Key: name, VersionID: nullVersionID, IsLatest: true,
-			Size: int64(len(obj.Data)), ETag: obj.ETag,
+			Size: obj.Size, ETag: obj.ETag,
 			ContentType: obj.ContentType, LastModified: obj.TimeModified,
 		}}
 	}
@@ -425,7 +435,7 @@ func versionsOfLocked(bkt *bucketData, name string) []driver.ObjectVersion {
 		v := chain[i]
 		out = append(out, driver.ObjectVersion{
 			Key: name, VersionID: v.versionID, IsLatest: i == len(chain)-1,
-			DeleteMarker: v.deleteMarker, Size: int64(len(v.data)), ETag: v.etag,
+			DeleteMarker: v.deleteMarker, Size: v.size, ETag: v.etag,
 			ContentType: v.contentType, LastModified: v.timeModified,
 		})
 	}

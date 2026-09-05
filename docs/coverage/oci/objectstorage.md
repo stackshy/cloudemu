@@ -47,14 +47,6 @@ OCI's `storage` service · portable interface `driver.Bucket` · [OCI index](./R
 
 Discovered by type assertion; only some providers implement these.
 
-### BucketAttributes
-
-BucketAttributes is an OPTIONAL capability, discovered by type assertion (like
-
-| Operation | Description |
-| --- | --- |
-| `BucketAttributes` |  |
-
 ### VersionedBucket
 
 VersionedBucket is an optional extension a storage provider implements when
