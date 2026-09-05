@@ -19,6 +19,12 @@ import (
 // presence of a tag key (as opposed to "tag:<key>", which matches a value).
 const tagKeyFilter = "tag-key"
 
+// allProtocols is the IpProtocol value EC2 uses for a rule that matches every
+// protocol. The two describe shapes report its ports differently: the
+// IpPermission shape omits fromPort/toPort, while the SecurityGroupRule shape
+// reports -1 for both.
+const allProtocols = "-1"
+
 // groupIDFilter and securityGroupRuleIDFilter are the filter names shared by
 // DescribeSecurityGroups and DescribeSecurityGroupRules.
 const (
@@ -63,8 +69,8 @@ type userIDGroupPairXML struct {
 
 type ipPermissionXML struct {
 	IPProtocol    string               `xml:"ipProtocol"`
-	FromPort      int                  `xml:"fromPort"`
-	ToPort        int                  `xml:"toPort"`
+	FromPort      *int                 `xml:"fromPort,omitempty"`
+	ToPort        *int                 `xml:"toPort,omitempty"`
 	IPRanges      []ipRangeXML         `xml:"ipRanges>item,omitempty"`
 	IPv6Ranges    []ipv6RangeXML       `xml:"ipv6Ranges>item,omitempty"`
 	PrefixListIDs []prefixListIDXML    `xml:"prefixListIds>item,omitempty"`
@@ -169,6 +175,12 @@ func (h *Handler) createSecurityGroup(w http.ResponseWriter, r *http.Request) {
 // (surfaced as AlreadyExists) to the CreateSecurityGroup-only
 // InvalidGroup.Duplicate code, falling back to the shared SG error mapping.
 func writeCreateSGErr(w http.ResponseWriter, err error) {
+	// A CreateSecurityGroup naming a VpcId that doesn't exist is a missing-VPC
+	// error, not a missing-group one (the group isn't created yet).
+	if writeInvalidVPCIfMissing(w, err) {
+		return
+	}
+
 	if cerrors.IsAlreadyExists(err) {
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidGroup.Duplicate", cerrors.Message(err))
 		return
@@ -585,6 +597,31 @@ func (h *Handler) writeAuthorizeSGResponse(w http.ResponseWriter, name, groupID 
 	})
 }
 
+// permPortPtr returns nil for the all-protocols ("-1") rule — whose port range
+// the IpPermission shape (DescribeSecurityGroups) omits — and a pointer to p for
+// every other protocol, so a real port (including 0) is still emitted.
+func permPortPtr(protocol string, p int) *int {
+	if protocol == allProtocols {
+		return nil
+	}
+
+	v := p
+
+	return &v
+}
+
+// rulePortValue returns the fromPort/toPort value the flat SecurityGroupRule
+// shape (DescribeSecurityGroupRules / Authorize) reports. AWS reports -1 for the
+// all-protocols ("-1") rule there — unlike the IpPermission shape, which omits
+// the ports entirely — so translate the stored value accordingly.
+func rulePortValue(protocol string, p int) int {
+	if protocol == allProtocols {
+		return -1
+	}
+
+	return p
+}
+
 // toSecurityGroupRuleXML maps one stored rule to the flat SecurityGroupRule
 // wire shape, emitting exactly the target element (cidrIpv4/cidrIpv6/
 // prefixListId/referencedGroupInfo) the rule carries.
@@ -595,8 +632,8 @@ func (h *Handler) toSecurityGroupRuleXML(groupID string, egress bool, rule *netd
 		GroupOwnerID:        h.accountID,
 		IsEgress:            egress,
 		IPProtocol:          rule.Protocol,
-		FromPort:            rule.FromPort,
-		ToPort:              rule.ToPort,
+		FromPort:            rulePortValue(rule.Protocol, rule.FromPort),
+		ToPort:              rulePortValue(rule.Protocol, rule.ToPort),
 		CidrIPv4:            rule.CIDR,
 		CidrIPv6:            rule.IPv6CIDR,
 		PrefixListID:        rule.PrefixListID,
@@ -813,8 +850,8 @@ func (h *Handler) toIPPermissionXMLs(rules []netdriver.SecurityRule) []ipPermiss
 		if !ok {
 			perm = &ipPermissionXML{
 				IPProtocol: rule.Protocol,
-				FromPort:   rule.FromPort,
-				ToPort:     rule.ToPort,
+				FromPort:   permPortPtr(rule.Protocol, rule.FromPort),
+				ToPort:     permPortPtr(rule.Protocol, rule.ToPort),
 			}
 			byKey[k] = perm
 

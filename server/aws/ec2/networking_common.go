@@ -6,6 +6,7 @@ import (
 	"sort"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 )
 
@@ -114,6 +115,29 @@ func tagFilterMatch(name string, values []string, tags map[string]string) (match
 	default:
 		return false, false
 	}
+}
+
+// stripCodePrefix removes the internal "<Code>: " routing marker some driver
+// messages carry (used by the wire layer to pick the right EC2 error code) so it
+// never leaks into the user-facing <Message>. Real EC2 messages carry no such
+// prefix. The prefix is only trimmed when present, leaving other messages as-is.
+func stripCodePrefix(msg, prefix string) string {
+	return strings.TrimPrefix(msg, prefix)
+}
+
+// writeInvalidVPCIfMissing reports whether err is the driver's "referenced VPC
+// does not exist" NotFound and, if so, answers InvalidVpcID.NotFound. The
+// Create{Subnet,SecurityGroup,RouteTable} actions all take a VpcId; when that
+// VPC is absent real EC2 reports InvalidVpcID.NotFound (the VPC is the missing
+// resource) rather than the created resource's own NotFound code, which would
+// wrongly tell the caller the not-yet-created subnet/group/table is missing.
+func writeInvalidVPCIfMissing(w http.ResponseWriter, err error) bool {
+	if cerrors.IsNotFound(err) && strings.Contains(strings.ToLower(cerrors.Message(err)), "vpc ") {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidVpcID.NotFound", cerrors.Message(err))
+		return true
+	}
+
+	return false
 }
 
 // writeReturnTrue writes the common EC2 "<return>true</return>" acknowledgement
