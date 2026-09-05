@@ -18,6 +18,7 @@ type endpointSet struct {
 	AWS        string `json:"aws,omitempty"`
 	Azure      string `json:"azure,omitempty"`
 	GCP        string `json:"gcp,omitempty"`
+	GCPGRPC    string `json:"gcp_grpc,omitempty"`
 	OCI        string `json:"oci,omitempty"`
 	Kubernetes string `json:"kubernetes,omitempty"`
 }
@@ -38,6 +39,7 @@ func (e *endpointSet) banner() []struct{ label, url, note string } {
 		{"AWS", e.AWS, ""},
 		{"Azure", e.Azure, "   (self-signed TLS)"},
 		{"GCP", e.GCP, ""},
+		{"GCP gRPC", e.GCPGRPC, "   (set BIGTABLE_EMULATOR_HOST / PUBSUB_EMULATOR_HOST to this)"},
 		{"OCI", e.OCI, ""},
 		{"Kubernetes", e.Kubernetes, ""},
 	}
