@@ -67,6 +67,7 @@ type CommonConfig struct {
 	AWSPort       string
 	AzurePort     string
 	GCPPort       string
+	GCPGRPCPort   string
 	OCIPort       string
 	K8sPort       string
 
@@ -119,6 +120,8 @@ func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) strin
 	fs.StringVar(&c.AWSPort, "aws-port", "4566", "port for the AWS endpoint (HTTP)")
 	fs.StringVar(&c.AzurePort, "azure-port", "4568", "port for the Azure endpoint (HTTPS)")
 	fs.StringVar(&c.GCPPort, "gcp-port", "4569", "port for the GCP endpoint (HTTP)")
+	fs.StringVar(&c.GCPGRPCPort, "gcp-grpc-port", "",
+		"port for the GCP gRPC transport (health+reflection; empty disables it). Point *_EMULATOR_HOST clients here")
 	fs.StringVar(&c.OCIPort, "oci-port", "4571", "port for the OCI endpoint (HTTP)")
 	fs.StringVar(&c.K8sPort, "k8s-port", "4570", "port for the shared Kubernetes data-plane (HTTPS); empty to disable")
 	fs.StringVar(&c.AccountID, "account-id", "000000000000", "AWS account ID (also GCP/OCI) reported by the emulator")
@@ -230,6 +233,7 @@ func (c *CommonConfig) ToServerkitConfig(providers []string) serverkit.Config {
 			"oci":   c.OCIPort,
 		},
 		K8sPort:                c.K8sPort,
+		GCPGRPCPort:            c.GCPGRPCPort,
 		AdvertiseHost:          c.AdvertiseHost,
 		K8sProgression:         c.K8sProgression,
 		K8sProgressionInterval: c.K8sProgressionInterval,

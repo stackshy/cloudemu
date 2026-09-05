@@ -41,6 +41,7 @@ import (
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
+	cgrpc "github.com/stackshy/cloudemu/v2/server/grpc"
 	ociserver "github.com/stackshy/cloudemu/v2/server/oci"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
@@ -89,6 +90,7 @@ type Config struct {
 	Host          string            // host/interface to bind
 	Ports         map[string]string // per-provider bind ports, keys aws/azure/gcp/oci (and optionally k8s)
 	K8sPort       string            // shared Kubernetes data-plane port; empty disables it
+	GCPGRPCPort   string            // GCP gRPC transport port (health+reflection); empty disables it
 	AdvertiseHost string            // host the Kubernetes endpoint is advertised at (default: derived from Host)
 
 	// K8sProgression enables KWOK-style staged Pod lifecycle on the data plane:
@@ -842,8 +844,8 @@ func (a *App) Serve(ctx context.Context) error {
 
 // buildServers assembles the per-provider (and Kubernetes) HTTP servers and the
 // endpoint set advertised to clients.
-func (a *App) buildServers() ([]*namedServer, endpointSet, error) {
-	var servers []*namedServer
+func (a *App) buildServers() ([]listenerServer, endpointSet, error) {
+	var servers []listenerServer
 
 	eps := endpointSet{}
 
@@ -877,8 +879,8 @@ func (a *App) buildServers() ([]*namedServer, endpointSet, error) {
 			eps.Azure = fmt.Sprintf("https://%s", addr)
 		}
 
-		servers = append(servers, &namedServer{
-			name: p,
+		servers = append(servers, &httpServer{
+			label: p,
 			srv: &http.Server{
 				Addr:              addr,
 				Handler:           a.handlerFor(a.backends[p], a.seedFor(p)),
@@ -900,8 +902,8 @@ func (a *App) buildServers() ([]*namedServer, endpointSet, error) {
 			return nil, eps, fmt.Errorf("kubernetes data-plane TLS: %w", err)
 		}
 
-		servers = append(servers, &namedServer{
-			name: "kubernetes",
+		servers = append(servers, &httpServer{
+			label: "kubernetes",
 			srv: &http.Server{
 				Addr:              addr,
 				Handler:           a.handlerFor(a.k8sBackend, nil),
@@ -914,6 +916,16 @@ func (a *App) buildServers() ([]*namedServer, endpointSet, error) {
 		eps.Kubernetes = fmt.Sprintf("https://%s", net.JoinHostPort(a.advertiseHost, a.k8sPort))
 	}
 
+	// Optional GCP gRPC transport on its own TCP port (off unless the port is
+	// set), served beside the REST endpoints. It carries only the health and
+	// reflection services for now — the foundation the emulator-env-var gRPC
+	// services (BIGTABLE_EMULATOR_HOST etc.) are layered on next.
+	if a.cfg.GCPGRPCPort != "" {
+		addr := net.JoinHostPort(a.cfg.Host, a.cfg.GCPGRPCPort)
+		servers = append(servers, &grpcServer{label: "gcp-grpc", bind: addr, srv: cgrpc.New()})
+		eps.GCPGRPC = addr
+	}
+
 	return servers, eps, nil
 }
 
@@ -921,7 +933,7 @@ func (a *App) buildServers() ([]*namedServer, endpointSet, error) {
 // they are quiescent (so no in-flight request can mutate state mid-read), and
 // only then closes the live providers — engines must stay readable through the
 // snapshot.
-func (a *App) shutdown(servers []*namedServer) error {
+func (a *App) shutdown(servers []listenerServer) error {
 	to := a.cfg.ShutdownTimeout
 	if to <= 0 {
 		to = defaultShutdownTimeout
@@ -932,7 +944,7 @@ func (a *App) shutdown(servers []*namedServer) error {
 
 	var shutErr error
 	for _, s := range servers {
-		if err := s.srv.Shutdown(ctx); err != nil && shutErr == nil {
+		if err := s.shutdown(ctx); err != nil && shutErr == nil {
 			shutErr = err
 		}
 	}
@@ -1019,29 +1031,72 @@ func (a *App) stopK8sTicker() {
 	a.k8sTickStop = nil
 }
 
-// namedServer is one endpoint's HTTP server plus how it is served.
-type namedServer struct {
-	name string
-	srv  *http.Server
-	tls  bool
+// listenerServer is one endpoint's serve/shutdown lifecycle, independent of the
+// wire protocol behind it. The HTTP endpoints (httpServer) and the optional gRPC
+// endpoint (grpcServer) both implement it, so bindListeners/serveAll/shutdown
+// drive every endpoint uniformly on its own TCP port. A clean shutdown must be
+// reported by serve() as nil (or, for HTTP, http.ErrServerClosed) so the serve
+// loop never treats an ordinary stop as a fatal error.
+type listenerServer interface {
+	name() string // endpoint label, used in bind/serve error messages
+	addr() string // host:port to bind
+	serve(net.Listener) error
+	shutdown(context.Context) error
 }
+
+// httpServer adapts the existing *http.Server path to listenerServer. It carries
+// the exact bind/serve/shutdown behavior the emulator has always used — TLS
+// endpoints ServeTLS with the cert already in the server's TLSConfig, plain ones
+// Serve — so wrapping it here changes nothing observable.
+type httpServer struct {
+	label string
+	srv   *http.Server
+	tls   bool
+}
+
+func (h *httpServer) name() string { return h.label }
+func (h *httpServer) addr() string { return h.srv.Addr }
+
+func (h *httpServer) serve(ln net.Listener) error {
+	if h.tls {
+		return h.srv.ServeTLS(ln, "", "")
+	}
+
+	return h.srv.Serve(ln)
+}
+
+func (h *httpServer) shutdown(ctx context.Context) error { return h.srv.Shutdown(ctx) }
+
+// grpcServer adapts the server/grpc transport wrapper to listenerServer, so the
+// optional gRPC endpoint binds and drains through the same loop as the HTTP
+// ones. Its serve() already maps a clean stop to nil (see server/grpc).
+type grpcServer struct {
+	label string
+	bind  string
+	srv   *cgrpc.Server
+}
+
+func (g *grpcServer) name() string                       { return g.label }
+func (g *grpcServer) addr() string                       { return g.bind }
+func (g *grpcServer) serve(ln net.Listener) error        { return g.srv.Serve(ln) }
+func (g *grpcServer) shutdown(ctx context.Context) error { return g.srv.Shutdown(ctx) }
 
 // bindListeners binds every listener up front so a port clash fails fast, before
 // a banner promises endpoints that never came up. A partial failure closes the
 // listeners already opened.
-func bindListeners(servers []*namedServer) ([]net.Listener, error) {
+func bindListeners(servers []listenerServer) ([]net.Listener, error) {
 	listeners := make([]net.Listener, len(servers))
 
 	var lc net.ListenConfig
 
 	for i, s := range servers {
-		ln, err := lc.Listen(context.Background(), "tcp", s.srv.Addr)
+		ln, err := lc.Listen(context.Background(), "tcp", s.addr())
 		if err != nil {
 			for _, l := range listeners[:i] {
 				l.Close()
 			}
 
-			return nil, fmt.Errorf("bind %s (%s): %w", s.name, s.srv.Addr, err)
+			return nil, fmt.Errorf("bind %s (%s): %w", s.name(), s.addr(), err)
 		}
 
 		listeners[i] = ln
@@ -1052,22 +1107,15 @@ func bindListeners(servers []*namedServer) ([]net.Listener, error) {
 
 // serveAll starts every bound listener in its own goroutine and returns a
 // channel reporting the first fatal serve error.
-func serveAll(servers []*namedServer, listeners []net.Listener) <-chan error {
+func serveAll(servers []listenerServer, listeners []net.Listener) <-chan error {
 	errCh := make(chan error, len(servers))
 
 	for i, s := range servers {
 		ln := listeners[i]
 
 		go func() {
-			var err error
-			if s.tls {
-				err = s.srv.ServeTLS(ln, "", "")
-			} else {
-				err = s.srv.Serve(ln)
-			}
-
-			if err != nil && !errors.Is(err, http.ErrServerClosed) {
-				errCh <- fmt.Errorf("%s: %w", s.name, err)
+			if err := s.serve(ln); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				errCh <- fmt.Errorf("%s: %w", s.name(), err)
 			}
 		}()
 	}
