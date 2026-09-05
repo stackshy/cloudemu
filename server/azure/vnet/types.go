@@ -47,6 +47,7 @@ type subnetRequest struct {
 
 type subnetRequestProps struct {
 	AddressPrefix                     string    `json:"addressPrefix,omitempty"`
+	AddressPrefixes                   []string  `json:"addressPrefixes,omitempty"`
 	NatGateway                        *armIDRef `json:"natGateway,omitempty"`
 	NetworkSecurityGroup              *armIDRef `json:"networkSecurityGroup,omitempty"`
 	RouteTable                        *armIDRef `json:"routeTable,omitempty"`
@@ -64,6 +65,7 @@ type subnetResponse struct {
 type subnetResponseProps struct {
 	ProvisioningState                 string    `json:"provisioningState"`
 	AddressPrefix                     string    `json:"addressPrefix,omitempty"`
+	AddressPrefixes                   []string  `json:"addressPrefixes,omitempty"`
 	NatGateway                        *armIDRef `json:"natGateway,omitempty"`
 	NetworkSecurityGroup              *armIDRef `json:"networkSecurityGroup,omitempty"`
 	RouteTable                        *armIDRef `json:"routeTable,omitempty"`
