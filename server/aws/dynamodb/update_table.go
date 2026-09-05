@@ -24,6 +24,13 @@ type pitrController interface {
 	GetPITR(ctx context.Context, table string) (bool, error)
 }
 
+// attributeDefinitionSyncer is the optional provider capability UpdateTable uses
+// to reconcile a table's attribute definitions after a GSI add/delete. Only the
+// AWS mock implements it, so it stays off the cross-cloud Database interface.
+type attributeDefinitionSyncer interface {
+	SyncAttributeDefinitions(ctx context.Context, table string, defs []dbdriver.AttributeDef) error
+}
+
 // tableSettingsUpdater is the optional provider capability UpdateTable needs to
 // change a table's metadata settings (table class, deletion protection).
 // Discovered by type assertion so it stays off the cross-cloud Database
@@ -73,7 +80,8 @@ func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.applyGSIUpdates(r.Context(), req.TableName, req.GlobalSecondaryIndexUpdates); err != nil {
+	if err := h.applyIndexUpdates(
+		r.Context(), req.TableName, req.GlobalSecondaryIndexUpdates, req.AttributeDefinitions); err != nil {
 		writeErr(w, err)
 		return
 	}
@@ -100,6 +108,19 @@ func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{"TableDescription": h.describeTableShape(full)})
 }
 
+// applyIndexUpdates applies an UpdateTable's GSI create/delete entries and then
+// reconciles the table's attribute definitions to match the resulting index set,
+// as a single step so the caller has one error path to handle.
+func (h *Handler) applyIndexUpdates(
+	ctx context.Context, table string, updates []gsiUpdateJSON, defs []attrDefJSON,
+) error {
+	if err := h.applyGSIUpdates(ctx, table, updates); err != nil {
+		return err
+	}
+
+	return h.syncAttributeDefinitions(ctx, table, updates, defs)
+}
+
 // applyGSIUpdates applies every GlobalSecondaryIndexUpdates entry (each a GSI
 // create or delete) on an UpdateTable request, stopping at the first failure.
 func (h *Handler) applyGSIUpdates(ctx context.Context, table string, updates []gsiUpdateJSON) error {
@@ -110,6 +131,31 @@ func (h *Handler) applyGSIUpdates(ctx context.Context, table string, updates []g
 	}
 
 	return nil
+}
+
+// syncAttributeDefinitions reconciles the table's attribute definitions after
+// GSI create/delete updates so DescribeTable surfaces exactly the attributes the
+// table key and its surviving indexes reference — matching real DynamoDB. It is
+// a no-op when the request touches neither indexes nor attribute definitions, or
+// when the provider does not expose the capability.
+func (h *Handler) syncAttributeDefinitions(
+	ctx context.Context, table string, updates []gsiUpdateJSON, defs []attrDefJSON,
+) error {
+	if len(updates) == 0 && len(defs) == 0 {
+		return nil
+	}
+
+	syncer, ok := h.db.(attributeDefinitionSyncer)
+	if !ok {
+		return nil
+	}
+
+	converted := make([]dbdriver.AttributeDef, 0, len(defs))
+	for _, d := range defs {
+		converted = append(converted, dbdriver.AttributeDef{Name: d.AttributeName, Type: d.AttributeType})
+	}
+
+	return syncer.SyncAttributeDefinitions(ctx, table, converted)
 }
 
 func indexDeleteName(del *struct {

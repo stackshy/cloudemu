@@ -1745,6 +1745,86 @@ func (m *Mock) DeleteIndex(_ context.Context, table, indexName string) error {
 	return cerrors.Newf(cerrors.NotFound, "index %s not found", indexName)
 }
 
+// SyncAttributeDefinitions reconciles a table's attribute definitions after an
+// UpdateTable that adds or removes secondary indexes. It merges the request's
+// AttributeDefinitions (which carry the type of any newly indexed attribute)
+// and then prunes the set to exactly those the table key or a surviving index
+// still references. Real DynamoDB keeps AttributeDefinitions equal to the
+// attributes used by the table plus its indexes: adding a GSI grows the set,
+// deleting one shrinks it. Without this an added GSI's key attribute never
+// appears in DescribeTable and an IaC client sees a perpetual diff.
+func (m *Mock) SyncAttributeDefinitions(_ context.Context, table string, defs []driver.AttributeDef) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	types := make(map[string]string, len(td.config.Attributes)+len(defs))
+	for _, a := range td.config.Attributes {
+		types[a.Name] = a.Type
+	}
+
+	for _, a := range defs {
+		types[a.Name] = a.Type
+	}
+
+	referenced := referencedAttributes(&td.config)
+	merged := make([]driver.AttributeDef, 0, len(referenced))
+
+	appendAttr := func(name string) {
+		if _, want := referenced[name]; !want {
+			return
+		}
+
+		merged = append(merged, driver.AttributeDef{Name: name, Type: types[name]})
+		delete(referenced, name)
+	}
+
+	for _, a := range td.config.Attributes {
+		appendAttr(a.Name)
+	}
+
+	for _, a := range defs {
+		appendAttr(a.Name)
+	}
+
+	td.config.Attributes = merged
+
+	return nil
+}
+
+// referencedAttributes returns the set of attribute names the table key schema
+// and every current secondary index key schema reference — the attributes a
+// real table's AttributeDefinitions must contain, no more and no less.
+func referencedAttributes(cfg *driver.TableConfig) map[string]struct{} {
+	ref := make(map[string]struct{})
+
+	for _, name := range []string{cfg.PartitionKey, cfg.SortKey} {
+		if name != "" {
+			ref[name] = struct{}{}
+		}
+	}
+
+	for _, g := range cfg.GSIs {
+		for _, name := range []string{g.PartitionKey, g.SortKey} {
+			if name != "" {
+				ref[name] = struct{}{}
+			}
+		}
+	}
+
+	for _, l := range cfg.LSIs {
+		if l.SortKey != "" {
+			ref[l.SortKey] = struct{}{}
+		}
+	}
+
+	return ref
+}
+
 // DescribeIndex returns information about a Global Secondary Index.
 func (m *Mock) DescribeIndex(_ context.Context, table, indexName string) (*driver.IndexInfo, error) {
 	m.mu.RLock()
