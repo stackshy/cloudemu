@@ -4,12 +4,21 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsr53 "github.com/aws/aws-sdk-go-v2/service/route53"
 	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
 )
+
+// bareZoneID strips the "/hostedzone/" prefix that HostedZone.Id carries so a
+// self-resource id (Create/Get/List HostedZone.Id) can be compared to a
+// cross-reference id like HostedZoneSummary.HostedZoneId, which real Route 53
+// returns bare.
+func bareZoneID(id string) string {
+	return strings.TrimPrefix(id, "/hostedzone/")
+}
 
 // createPrivateZone creates a private hosted zone associated with one VPC and
 // returns its id.
@@ -285,9 +294,8 @@ func TestSDKListHostedZonesByVPC(t *testing.T) {
 		t.Fatalf("got %d summaries, want 1", len(out.HostedZoneSummaries))
 	}
 
-	if aws.ToString(out.HostedZoneSummaries[0].HostedZoneId) != shared {
-		t.Errorf("summary zone id = %q, want %q",
-			aws.ToString(out.HostedZoneSummaries[0].HostedZoneId), shared)
+	if got := aws.ToString(out.HostedZoneSummaries[0].HostedZoneId); got != bareZoneID(shared) {
+		t.Errorf("summary zone id = %q, want %q", got, bareZoneID(shared))
 	}
 
 	if out.HostedZoneSummaries[0].Owner == nil ||
@@ -309,7 +317,8 @@ func TestSDKListHostedZonesByVPCPaginates(t *testing.T) {
 	for i := range total {
 		id := createPrivateZone(t, client,
 			fmt.Sprintf("vpczone-%d.internal.", i), fmt.Sprintf("vpc-page-ref-%d", i), "vpc-page")
-		want[id] = 0
+		// The summaries carry the bare HostedZoneId; HostedZone.Id is prefixed.
+		want[bareZoneID(id)] = 0
 	}
 
 	got := make(map[string]int, total)
