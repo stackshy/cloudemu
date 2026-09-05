@@ -187,6 +187,101 @@ func TestCloudFrontLifecycle(t *testing.T) {
 	}
 }
 
+// TestCloudFrontMinimalConfigNormalized is the regression guard for the
+// terraform-provider-aws crash: a minimal config that omits the server-side
+// default blocks (Aliases, OriginGroups, CacheBehaviors, CustomErrorResponses,
+// Logging, Restrictions, ViewerCertificate, and the DefaultCacheBehavior
+// TrustedSigners/TrustedKeyGroups/AllowedMethods/Function+Lambda associations)
+// must read back COMPLETE. Real CloudFront always returns those blocks, and the
+// provider dereferences them without a nil check — a missing block segfaults it.
+func TestCloudFrontMinimalConfigNormalized(t *testing.T) {
+	ctx := context.Background()
+	c := newCloudFrontClient(t)
+
+	created, err := c.CreateDistribution(ctx, &awscf.CreateDistributionInput{
+		DistributionConfig: sampleDistConfig("norm-ref", "normalize", true),
+	})
+	if err != nil {
+		t.Fatalf("CreateDistribution: %v", err)
+	}
+
+	got, err := c.GetDistribution(ctx, &awscf.GetDistributionInput{Id: created.Distribution.Id})
+	if err != nil {
+		t.Fatalf("GetDistribution: %v", err)
+	}
+
+	cfg := got.Distribution.DistributionConfig
+
+	if cfg.Aliases == nil || aws.ToInt32(cfg.Aliases.Quantity) != 0 {
+		t.Errorf("Aliases not defaulted: %+v", cfg.Aliases)
+	}
+
+	if cfg.OriginGroups == nil || aws.ToInt32(cfg.OriginGroups.Quantity) != 0 {
+		t.Errorf("OriginGroups not defaulted (the provider crash): %+v", cfg.OriginGroups)
+	}
+
+	if cfg.CacheBehaviors == nil || aws.ToInt32(cfg.CacheBehaviors.Quantity) != 0 {
+		t.Errorf("CacheBehaviors not defaulted: %+v", cfg.CacheBehaviors)
+	}
+
+	if cfg.CustomErrorResponses == nil || aws.ToInt32(cfg.CustomErrorResponses.Quantity) != 0 {
+		t.Errorf("CustomErrorResponses not defaulted: %+v", cfg.CustomErrorResponses)
+	}
+
+	if cfg.Restrictions == nil || cfg.Restrictions.GeoRestriction == nil ||
+		cfg.Restrictions.GeoRestriction.RestrictionType != cftypes.GeoRestrictionTypeNone {
+		t.Errorf("Restrictions not defaulted to none: %+v", cfg.Restrictions)
+	}
+
+	if cfg.ViewerCertificate == nil || !aws.ToBool(cfg.ViewerCertificate.CloudFrontDefaultCertificate) {
+		t.Errorf("ViewerCertificate not defaulted: %+v", cfg.ViewerCertificate)
+	}
+
+	if cfg.PriceClass != cftypes.PriceClassPriceClassAll {
+		t.Errorf("PriceClass = %q, want PriceClass_All", cfg.PriceClass)
+	}
+
+	if cfg.HttpVersion != cftypes.HttpVersionHttp2 {
+		t.Errorf("HttpVersion = %q, want http2", cfg.HttpVersion)
+	}
+
+	if !aws.ToBool(cfg.IsIPV6Enabled) {
+		t.Error("IsIPV6Enabled not preserved as true")
+	}
+
+	dcb := cfg.DefaultCacheBehavior
+	if dcb.TrustedSigners == nil || aws.ToBool(dcb.TrustedSigners.Enabled) ||
+		aws.ToInt32(dcb.TrustedSigners.Quantity) != 0 {
+		t.Errorf("DCB TrustedSigners not defaulted disabled/0: %+v", dcb.TrustedSigners)
+	}
+
+	if dcb.TrustedKeyGroups == nil || aws.ToBool(dcb.TrustedKeyGroups.Enabled) ||
+		aws.ToInt32(dcb.TrustedKeyGroups.Quantity) != 0 {
+		t.Errorf("DCB TrustedKeyGroups not defaulted disabled/0: %+v", dcb.TrustedKeyGroups)
+	}
+
+	if dcb.AllowedMethods == nil || dcb.AllowedMethods.CachedMethods == nil {
+		t.Errorf("DCB AllowedMethods/CachedMethods not defaulted: %+v", dcb.AllowedMethods)
+	}
+
+	if dcb.LambdaFunctionAssociations == nil || aws.ToInt32(dcb.LambdaFunctionAssociations.Quantity) != 0 {
+		t.Errorf("DCB LambdaFunctionAssociations not defaulted: %+v", dcb.LambdaFunctionAssociations)
+	}
+
+	if dcb.FunctionAssociations == nil || aws.ToInt32(dcb.FunctionAssociations.Quantity) != 0 {
+		t.Errorf("DCB FunctionAssociations not defaulted: %+v", dcb.FunctionAssociations)
+	}
+
+	// Caller values must be preserved exactly, not overwritten by defaults.
+	if aws.ToString(dcb.TargetOriginId) != "s3-origin" {
+		t.Errorf("caller TargetOriginId lost: %q", aws.ToString(dcb.TargetOriginId))
+	}
+
+	if dcb.ForwardedValues == nil || aws.ToBool(dcb.ForwardedValues.QueryString) {
+		t.Errorf("caller ForwardedValues.QueryString lost: %+v", dcb.ForwardedValues)
+	}
+}
+
 func TestCloudFrontDuplicateCallerReference(t *testing.T) {
 	ctx := context.Background()
 	c := newCloudFrontClient(t)

@@ -76,7 +76,7 @@ func (h *Handler) getDistributionConfig(w http.ResponseWriter, r *http.Request, 
 	}
 
 	w.Header().Set("ETag", dist.ETag)
-	wire.WriteXML(w, http.StatusOK, distributionConfigResponse{Xmlns: xmlns, Inner: dist.ConfigXML})
+	wire.WriteXML(w, http.StatusOK, distributionConfigResponse{Xmlns: xmlns, Inner: normalizeConfigXML(dist.ConfigXML)})
 }
 
 func (h *Handler) updateDistribution(w http.ResponseWriter, r *http.Request, id string) {
@@ -143,7 +143,7 @@ func toDistributionXML(dist *cfdriver.Distribution) distributionXML {
 		LastModifiedTime:              isoTime(dist.LastModifiedTime),
 		InProgressInvalidationBatches: 0,
 		DomainName:                    dist.DomainName,
-		Config:                        xmlRaw{Inner: dist.ConfigXML},
+		Config:                        xmlRaw{Inner: normalizeConfigXML(dist.ConfigXML)},
 	}
 }
 
@@ -155,6 +155,6 @@ func toSummaryXML(dist *cfdriver.Distribution) distributionSummaryXML {
 		Status:           dist.Status,
 		LastModifiedTime: isoTime(dist.LastModifiedTime),
 		DomainName:       dist.DomainName,
-		ConfigInner:      dist.ConfigXML,
+		ConfigInner:      normalizeConfigXML(dist.ConfigXML),
 	}
 }
