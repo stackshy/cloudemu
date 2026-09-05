@@ -219,6 +219,75 @@
     }
   },
   {
+    "service": "apigatewayv2",
+    "interface": "APIGatewayV2",
+    "operations": [
+      {
+        "name": "CreateAPI"
+      },
+      {
+        "name": "CreateIntegration"
+      },
+      {
+        "name": "CreateRoute"
+      },
+      {
+        "name": "CreateStage"
+      },
+      {
+        "name": "DeleteAPI"
+      },
+      {
+        "name": "DeleteIntegration"
+      },
+      {
+        "name": "DeleteRoute"
+      },
+      {
+        "name": "DeleteStage"
+      },
+      {
+        "name": "GetAPI"
+      },
+      {
+        "name": "GetAPIs"
+      },
+      {
+        "name": "GetIntegration"
+      },
+      {
+        "name": "GetIntegrations"
+      },
+      {
+        "name": "GetRoute"
+      },
+      {
+        "name": "GetRoutes"
+      },
+      {
+        "name": "GetStage"
+      },
+      {
+        "name": "GetStages"
+      },
+      {
+        "name": "UpdateAPI"
+      },
+      {
+        "name": "UpdateIntegration"
+      },
+      {
+        "name": "UpdateRoute"
+      },
+      {
+        "name": "UpdateStage"
+      }
+    ],
+    "providers": {
+      "aws": "APIGatewayV2"
+    }
+  },
+  {
     "service": "azureai",
     "interface": "AzureAI",
     "operations": [

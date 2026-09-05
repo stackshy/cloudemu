@@ -7,6 +7,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | --- | --- | --- |
 | [ACM](./acm.md) | `acm` | 17 |
 | [APIGateway](./apigateway.md) | `apigateway` | 23 |
+| [APIGatewayV2](./apigatewayv2.md) | `apigatewayv2` | 20 |
 | [Bedrock](./bedrock.md) | `bedrock` | 65 |
 | [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 29 |
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |

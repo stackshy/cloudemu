@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server"
 	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
 	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/aws/apigateway"
+	apigatewayv2srv "github.com/stackshy/cloudemu/v2/server/aws/apigatewayv2"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
@@ -67,6 +68,7 @@ import (
 	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	apigatewaydriver "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
+	apigatewayv2driver "github.com/stackshy/cloudemu/v2/services/apigatewayv2/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
@@ -194,6 +196,11 @@ type Drivers struct {
 	// a request to a deployed API by method+path to its Lambda proxy integration.
 	// It must register before the S3 catch-all.
 	APIGateway apigatewaydriver.APIGateway
+	// APIGatewayV2 serves the Amazon API Gateway v2 (HTTP/WebSocket APIs)
+	// REST/JSON control plane rooted at /v2/apis (Api/Route/Integration/Stage).
+	// Disjoint from API Gateway REST v1 (/restapis); must register before the S3
+	// catch-all.
+	APIGatewayV2 apigatewayv2driver.APIGatewayV2
 	// GuardDuty serves the Amazon GuardDuty REST-JSON API (path + method routing,
 	// no version prefix) against the guardduty driver. It must register before
 	// the S3 catch-all (see the GuardDuty handler's Matches doc).
@@ -336,6 +343,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		Config:              p.Config,
 		GuardDuty:           p.GuardDuty,
 		APIGateway:          p.APIGateway,
+		APIGatewayV2:        p.APIGatewayV2,
 		CloudFormation:      p.CloudFormation,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
@@ -724,6 +732,15 @@ func New(d Drivers) *server.Server {
 	// permissive REST fallback, which would otherwise claim /restapis.
 	if d.APIGateway != nil {
 		srv.Register(apigatewaysrv.New(d.APIGateway))
+	}
+
+	// API Gateway v2 (HTTP/WebSocket APIs): the restJson1 control plane roots at
+	// /v2/apis (Api/Route/Integration/Stage). Its /v2/apis prefix is disjoint
+	// from API Gateway REST v1's /restapis, so it never shadows v1; it must
+	// register before S3's permissive REST fallback, which would otherwise claim
+	// /v2/apis as a bucket path.
+	if d.APIGatewayV2 != nil {
+		srv.Register(apigatewayv2srv.New(d.APIGatewayV2))
 	}
 
 	// before S3 because S3 is the permissive REST fallback that would
