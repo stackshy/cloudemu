@@ -115,6 +115,48 @@ func TestSDKCloudFunctionsCreateGetListDelete(t *testing.T) {
 	}
 }
 
+// TestSDKCloudFunctionsCreateDefaults verifies that a create which omits
+// availableMemoryMb and timeout reads back the values real gen1 Cloud Functions
+// assigns by default (256MB, 60s) rather than a missing field, which would show
+// up as drift on a Terraform refresh.
+func TestSDKCloudFunctionsCreateDefaults(t *testing.T) {
+	svc := newGCPSDKService(t)
+	ctx := context.Background()
+
+	parent := "projects/demo/locations/us-central1"
+
+	op, err := svc.Projects.Locations.Functions.Create(parent, &cloudfunctions.CloudFunction{
+		Name:         parent + "/functions/defaults",
+		Runtime:      "go121",
+		EntryPoint:   "Hello",
+		HttpsTrigger: &cloudfunctions.HttpsTrigger{},
+	}).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	if !op.Done {
+		t.Fatal("Create operation not done")
+	}
+
+	got, err := svc.Projects.Locations.Functions.Get(parent + "/functions/defaults").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.AvailableMemoryMb != 256 {
+		t.Fatalf("AvailableMemoryMb = %d, want default 256", got.AvailableMemoryMb)
+	}
+
+	if got.Timeout != "60s" {
+		t.Fatalf("Timeout = %q, want default 60s", got.Timeout)
+	}
+
+	if got.Status != "ACTIVE" {
+		t.Fatalf("Status = %q, want ACTIVE", got.Status)
+	}
+}
+
 func TestSDKCloudFunctionsCall(t *testing.T) {
 	cloud := cloudemu.NewGCP()
 	srv := gcpserver.New(gcpserver.Drivers{CloudFunctions: cloud.CloudFunctions})
