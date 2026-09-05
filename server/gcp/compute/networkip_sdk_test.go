@@ -52,12 +52,16 @@ func TestSDKInstanceServiceAccountsRoundTrip(t *testing.T) {
 	def := getSDKInstance(t, client, "default-sa-vm")
 
 	dsas := def.GetServiceAccounts()
-	if len(dsas) != 1 || dsas[0].GetEmail() != "default" {
-		t.Fatalf("default-sa-vm serviceAccounts=%v want single email=default", dsas)
+
+	wantEmail := testProject + "-compute@developer.gserviceaccount.com"
+	if len(dsas) != 1 || dsas[0].GetEmail() != wantEmail {
+		t.Fatalf("default-sa-vm serviceAccounts=%v want single email=%q", dsas, wantEmail)
 	}
 
-	if len(dsas[0].GetScopes()) != 1 || dsas[0].GetScopes()[0] != "https://www.googleapis.com/auth/cloud-platform" {
-		t.Errorf("default SA scopes=%v want [cloud-platform]", dsas[0].GetScopes())
+	// Real GCP grants the default compute SA the default-access scope set, not
+	// the full cloud-platform scope.
+	if len(dsas[0].GetScopes()) != 6 || dsas[0].GetScopes()[0] != "https://www.googleapis.com/auth/devstorage.read_only" {
+		t.Errorf("default SA scopes=%v want the 6-scope default-access set", dsas[0].GetScopes())
 	}
 }
 

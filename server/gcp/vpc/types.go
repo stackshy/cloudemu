@@ -10,26 +10,34 @@ type networkRoutingConfig struct {
 	RoutingMode string `json:"routingMode,omitempty"`
 }
 
+// defaultFwPolicyOrder is GCP's default networkFirewallPolicyEnforcementOrder
+// for a new network. networks.get always returns this field, so the emulator
+// must too — else Terraform's google_compute_network (which defaults the
+// attribute to this value) shows a perpetual diff wanting to set it.
+const defaultFwPolicyOrder = "AFTER_CLASSIC_FIREWALL"
+
 type networkRequest struct {
-	Name                  string                `json:"name"`
-	Description           string                `json:"description,omitempty"`
-	IPv4Range             string                `json:"IPv4Range,omitempty"`
-	AutoCreateSubnetworks *bool                 `json:"autoCreateSubnetworks,omitempty"`
-	RoutingConfig         *networkRoutingConfig `json:"routingConfig,omitempty"`
-	Mtu                   int32                 `json:"mtu,omitempty"`
+	Name                                  string                `json:"name"`
+	Description                           string                `json:"description,omitempty"`
+	IPv4Range                             string                `json:"IPv4Range,omitempty"`
+	AutoCreateSubnetworks                 *bool                 `json:"autoCreateSubnetworks,omitempty"`
+	RoutingConfig                         *networkRoutingConfig `json:"routingConfig,omitempty"`
+	Mtu                                   int32                 `json:"mtu,omitempty"`
+	NetworkFirewallPolicyEnforcementOrder string                `json:"networkFirewallPolicyEnforcementOrder,omitempty"`
 }
 
 type networkResponse struct {
-	Kind                  string                `json:"kind"`
-	ID                    string                `json:"id"`
-	Name                  string                `json:"name"`
-	Description           string                `json:"description,omitempty"`
-	SelfLink              string                `json:"selfLink"`
-	IPv4Range             string                `json:"IPv4Range,omitempty"`
-	AutoCreateSubnetworks bool                  `json:"autoCreateSubnetworks"`
-	RoutingConfig         *networkRoutingConfig `json:"routingConfig,omitempty"`
-	Mtu                   int32                 `json:"mtu,omitempty"`
-	CreationTimestamp     string                `json:"creationTimestamp,omitempty"`
+	Kind                                  string                `json:"kind"`
+	ID                                    string                `json:"id"`
+	Name                                  string                `json:"name"`
+	Description                           string                `json:"description,omitempty"`
+	SelfLink                              string                `json:"selfLink"`
+	IPv4Range                             string                `json:"IPv4Range,omitempty"`
+	AutoCreateSubnetworks                 bool                  `json:"autoCreateSubnetworks"`
+	RoutingConfig                         *networkRoutingConfig `json:"routingConfig,omitempty"`
+	Mtu                                   int32                 `json:"mtu,omitempty"`
+	NetworkFirewallPolicyEnforcementOrder string                `json:"networkFirewallPolicyEnforcementOrder,omitempty"`
+	CreationTimestamp                     string                `json:"creationTimestamp,omitempty"`
 }
 
 type networkListResponse struct {

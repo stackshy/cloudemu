@@ -22,8 +22,7 @@ const gcpDiskSourceImageTag = "cloudemu:gcpDiskSourceImage"
 // diskRequest mirrors the subset of GCP compute#disk we accept on insert.
 type diskRequest struct {
 	Name        string            `json:"name"`
-	SizeGb      int               `json:"sizeGb,string,omitempty"`
-	SizeGbInt   int               `json:"-"`
+	SizeGb      flexInt           `json:"sizeGb,omitempty"`
 	Type        string            `json:"type,omitempty"`
 	SourceImage string            `json:"sourceImage,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
@@ -77,7 +76,7 @@ func (h *Handler) insertDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 	}
 
 	cfg := computedriver.VolumeConfig{
-		Size:             pickSize(req.SizeGb, req.SizeGbInt),
+		Size:             int(req.SizeGb),
 		VolumeType:       lastSegment(req.Type),
 		AvailabilityZone: rp.ScopeName,
 		Tags:             mergeDiskTags(req.Labels, req.Name, req.SourceImage),
@@ -173,11 +172,11 @@ func (h *Handler) deleteDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
-// diskResizeRequest is the compute#disksResizeRequest body (sizeGb arrives as a
-// JSON string from the protobuf clients).
+// diskResizeRequest is the compute#disksResizeRequest body. sizeGb arrives as a
+// quoted string from the typed clients and as a bare number from the Terraform
+// provider, so flexInt accepts either.
 type diskResizeRequest struct {
-	SizeGb    int `json:"sizeGb,string,omitempty"`
-	SizeGbInt int `json:"-"`
+	SizeGb flexInt `json:"sizeGb,omitempty"`
 }
 
 // volumeResizer is the GCP-local grow-a-disk capability the GCE Mock implements;
@@ -202,7 +201,7 @@ func (h *Handler) resizeDisk(w http.ResponseWriter, r *http.Request, rp gcprest.
 		return
 	}
 
-	newSize := pickSize(req.SizeGb, req.SizeGbInt)
+	newSize := int(req.SizeGb)
 	if newSize < vol.Size {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "disk size cannot be reduced")
 		return
@@ -547,15 +546,6 @@ func conflictIfExists(w http.ResponseWriter, findErr error, msg string) bool {
 	default:
 		return false
 	}
-}
-
-// pickSize chooses sizeGb from the alternate fields the SDK might use.
-func pickSize(sFromString, sInt int) int {
-	if sFromString > 0 {
-		return sFromString
-	}
-
-	return sInt
 }
 
 // lastSegment returns the trailing path segment of a self-link or full URL.

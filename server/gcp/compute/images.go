@@ -28,7 +28,7 @@ type imageRequest struct {
 	SourceDisk     string            `json:"sourceDisk,omitempty"`
 	SourceSnapshot string            `json:"sourceSnapshot,omitempty"`
 	Family         string            `json:"family,omitempty"`
-	DiskSizeGb     int               `json:"diskSizeGb,string,omitempty"`
+	DiskSizeGb     flexInt           `json:"diskSizeGb,omitempty"`
 	Labels         map[string]string `json:"labels,omitempty"`
 }
 
@@ -269,7 +269,7 @@ func (h *Handler) mergeImageTags(ctx context.Context, in map[string]string, req 
 // when given, otherwise the size of the source disk it is built from.
 func (h *Handler) imageDiskSizeGb(ctx context.Context, req *imageRequest) string {
 	if req.DiskSizeGb > 0 {
-		return strconv.Itoa(req.DiskSizeGb)
+		return strconv.Itoa(int(req.DiskSizeGb))
 	}
 
 	if req.SourceDisk == "" {
