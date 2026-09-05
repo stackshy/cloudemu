@@ -34,9 +34,11 @@ func (m *Mock) PutDashboard(_ context.Context, name, body string) error {
 	}
 
 	d := &storedDashboard{
-		Name:         name,
-		Body:         body,
-		ARN:          idgen.AWSARN("cloudwatch", m.opts.Region, m.opts.AccountID, "dashboard/"+name),
+		Name: name,
+		Body: body,
+		// CloudWatch dashboards are a global resource: their ARN carries an empty
+		// region (arn:aws:cloudwatch::account:dashboard/name), unlike alarms.
+		ARN:          idgen.AWSARN("cloudwatch", "", m.opts.AccountID, "dashboard/"+name),
 		LastModified: m.opts.Clock.Now(),
 		Size:         len(body),
 	}

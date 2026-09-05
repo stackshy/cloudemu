@@ -42,6 +42,8 @@ func isQueryRequest(r *http.Request) bool {
 }
 
 // serveQuery handles a CloudWatch query-protocol request.
+//
+//nolint:gocyclo // first-match dispatch over many CloudWatch query actions.
 func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
 	if err := r.ParseForm(); err != nil {
 		writeQueryError(w, http.StatusBadRequest, "MalformedQueryString", err.Error())
@@ -63,6 +65,16 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
 		h.queryDeleteAlarms(w, r)
 	case opSetAlarmState:
 		h.querySetAlarmState(w, r)
+	case opDescribeAlarmHistory:
+		h.queryDescribeAlarmHistory(w, r)
+	case opPutDashboard:
+		h.queryPutDashboard(w, r)
+	case opGetDashboard:
+		h.queryGetDashboard(w, r)
+	case opListDashboards:
+		h.queryListDashboards(w, r)
+	case opDeleteDashboards:
+		h.queryDeleteDashboards(w, r)
 	case opPutMetricStream:
 		h.queryPutMetricStream(w, r)
 	case opGetMetricStream:
@@ -255,7 +267,11 @@ func (h *Handler) queryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		Threshold: threshold, Period: period, EvaluationPeriods: evalPeriods, DatapointsToAlarm: datapointsToAlarm,
 		Stat: r.Form.Get("Statistic"), ExtendedStatistic: r.Form.Get("ExtendedStatistic"),
 		Unit: r.Form.Get("Unit"), TreatMissingData: r.Form.Get("TreatMissingData"),
-		AlarmActions: queryStringList(r, "AlarmActions.member."), OKActions: queryStringList(r, "OKActions.member."),
+		AlarmDescription: r.Form.Get("AlarmDescription"), ActionsEnabled: queryOptBool(r, "ActionsEnabled"),
+		AlarmActions:            queryStringList(r, "AlarmActions.member."),
+		OKActions:               queryStringList(r, "OKActions.member."),
+		InsufficientDataActions: queryStringList(r, "InsufficientDataActions.member."),
+		Tags:                    queryTagPairs(r, "Tags.member."),
 	})
 	if err != nil {
 		writeQueryDriverErr(w, err)
@@ -265,36 +281,155 @@ func (h *Handler) queryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 	writeQueryResponse(w, "PutMetricAlarmResponse", nil)
 }
 
+// queryDescribeAlarms mirrors the rpc-v2-cbor describeAlarms: it renders the
+// full MetricAlarm shape (not just a handful of fields), honors the
+// AlarmNamePrefix / StateValue / ActionPrefix / AlarmTypes filters, and returns
+// composite alarms alongside metric alarms. The query protocol is what the AWS
+// CLI and the Terraform AWS provider actually speak to CloudWatch, so a
+// truncated reply here left aws_cloudwatch_metric_alarm in perpetual drift.
 func (h *Handler) queryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
-	alarms, err := h.monitoring.DescribeAlarms(r.Context(), queryStringList(r, "AlarmNames.member."))
-	if err != nil {
-		writeQueryDriverErr(w, err)
-		return
+	in := describeAlarmsInput{
+		AlarmNames:      queryStringList(r, "AlarmNames.member."),
+		AlarmNamePrefix: r.Form.Get("AlarmNamePrefix"),
+		AlarmTypes:      queryStringList(r, "AlarmTypes.member."),
+		StateValue:      r.Form.Get("StateValue"),
+		ActionPrefix:    r.Form.Get("ActionPrefix"),
 	}
 
-	sort.SliceStable(alarms, func(i, j int) bool { return alarms[i].Name < alarms[j].Name })
+	members := make([]alarmMemberXML, 0)
+
+	if wantsAlarmType(in.AlarmTypes, alarmTypeMetric) {
+		alarms, err := h.monitoring.DescribeAlarms(r.Context(), in.AlarmNames)
+		if err != nil {
+			writeQueryDriverErr(w, err)
+			return
+		}
+
+		for i := range alarms {
+			if !alarmMatchesFilters(&alarms[i], &in) {
+				continue
+			}
+
+			members = append(members, toAlarmMemberXML(&alarms[i]))
+		}
+	}
+
+	sort.SliceStable(members, func(i, j int) bool { return members[i].AlarmName < members[j].AlarmName })
 
 	size := maxAlarmPageSize
 	if v, _ := strconv.Atoi(r.Form.Get("MaxRecords")); v > 0 {
 		size = v
 	}
 
-	from, to, next := pageWindow(len(alarms), decodeOffsetToken(r.Form.Get("NextToken")), size)
+	offset := decodeOffsetToken(r.Form.Get("NextToken"))
+	from, to, next := pageWindow(len(members), offset, size)
 
-	members := make([]alarmMemberXML, 0, to-from)
-	for i := from; i < to; i++ {
-		members = append(members, alarmMemberXML{
-			AlarmName: alarms[i].Name, Namespace: alarms[i].Namespace, MetricName: alarms[i].MetricName,
-			StateValue: alarms[i].State, ComparisonOperator: alarms[i].ComparisonOperator, Threshold: alarms[i].Threshold,
-		})
-	}
-
-	result := describeAlarmsResultXML{MetricAlarms: members}
+	result := describeAlarmsResultXML{MetricAlarms: members[from:to]}
 	if next > 0 {
 		result.NextToken = encodeOffsetToken(next)
 	}
 
+	// Composite alarms are a small, separate collection returned in full on the
+	// first page so they aren't duplicated across metric-alarm pages.
+	if offset == 0 && wantsAlarmType(in.AlarmTypes, alarmTypeComposite) {
+		composites, err := h.compositeAlarmRows(r, &in)
+		if err != nil {
+			writeQueryDriverErr(w, err)
+			return
+		}
+
+		result.CompositeAlarms = toCompositeAlarmMemberXMLs(composites)
+	}
+
 	writeQueryResponse(w, "DescribeAlarmsResponse", result)
+}
+
+// toAlarmMemberXML renders an AlarmInfo as the full query-protocol MetricAlarm
+// member, matching every field the rpc-v2-cbor path returns so a Terraform read
+// round-trips without drift.
+//
+//nolint:dupl // parallel to ops.go toMetricAlarmCBR but a distinct XML wire shape.
+func toAlarmMemberXML(a *mondriver.AlarmInfo) alarmMemberXML {
+	m := alarmMemberXML{
+		AlarmName:               a.Name,
+		AlarmArn:                a.AlarmArn,
+		AlarmDescription:        a.AlarmDescription,
+		Namespace:               a.Namespace,
+		MetricName:              a.MetricName,
+		Dimensions:              dimsToXML(a.Dimensions),
+		StateValue:              a.State,
+		StateReason:             a.StateReason,
+		ComparisonOperator:      a.ComparisonOperator,
+		Threshold:               a.Threshold,
+		Period:                  a.Period,
+		EvaluationPeriods:       a.EvaluationPeriods,
+		DatapointsToAlarm:       a.DatapointsToAlarm,
+		Statistic:               a.Statistic,
+		ExtendedStatistic:       a.ExtendedStatistic,
+		Unit:                    a.Unit,
+		TreatMissingData:        a.TreatMissingData,
+		ActionsEnabled:          a.ActionsEnabled,
+		AlarmActions:            a.AlarmActions,
+		OKActions:               a.OKActions,
+		InsufficientDataActions: a.InsufficientDataActions,
+	}
+
+	if !a.StateUpdatedTimestamp.IsZero() {
+		m.StateUpdatedTimestamp = a.StateUpdatedTimestamp.UTC().Format(time.RFC3339)
+	}
+
+	return m
+}
+
+// dimsToXML renders a dimension map as sorted wire dimensions for stable output.
+func dimsToXML(dims map[string]string) []dimensionXML {
+	if len(dims) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(dims))
+	for k := range dims {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	out := make([]dimensionXML, 0, len(dims))
+	for _, k := range keys {
+		out = append(out, dimensionXML{Name: k, Value: dims[k]})
+	}
+
+	return out
+}
+
+// toCompositeAlarmMemberXMLs converts the shared composite-alarm rows to their
+// query-protocol XML members.
+func toCompositeAlarmMemberXMLs(rows []compositeAlarmCBR) []compositeAlarmMemberXML {
+	out := make([]compositeAlarmMemberXML, 0, len(rows))
+
+	for i := range rows {
+		row := &rows[i]
+		m := compositeAlarmMemberXML{
+			AlarmName:               row.AlarmName,
+			AlarmArn:                row.AlarmArn,
+			AlarmRule:               row.AlarmRule,
+			AlarmDescription:        row.AlarmDescription,
+			StateValue:              row.StateValue,
+			StateReason:             row.StateReason,
+			ActionsEnabled:          row.ActionsEnabled,
+			AlarmActions:            row.AlarmActions,
+			OKActions:               row.OKActions,
+			InsufficientDataActions: row.InsufficientDataActions,
+		}
+
+		if row.StateUpdatedTimestamp != nil {
+			m.StateUpdatedTimestamp = row.StateUpdatedTimestamp.UTC().Format(time.RFC3339)
+		}
+
+		out = append(out, m)
+	}
+
+	return out
 }
 
 func (h *Handler) queryDeleteAlarms(w http.ResponseWriter, r *http.Request) {
@@ -375,6 +510,23 @@ func queryFloatList(r *http.Request, prefix string) []float64 {
 	return out
 }
 
+// queryOptBool returns a *bool for a form field that AWS treats as optional
+// with a default (e.g. ActionsEnabled defaults to true when absent). An absent
+// or unparseable value yields nil so the backend applies its own default.
+func queryOptBool(r *http.Request, field string) *bool {
+	raw := r.Form.Get(field)
+	if raw == "" {
+		return nil
+	}
+
+	v, err := strconv.ParseBool(raw)
+	if err != nil {
+		return nil
+	}
+
+	return &v
+}
+
 func queryStringList(r *http.Request, prefix string) []string {
 	var out []string
 
@@ -434,19 +586,55 @@ type getStatsResultXML struct {
 	Datapoints []datapointXML `xml:"Datapoints>member"`
 }
 
+type dimensionXML struct {
+	Name  string `xml:"Name"`
+	Value string `xml:"Value"`
+}
+
 type alarmMemberXML struct {
-	AlarmName          string  `xml:"AlarmName"`
-	Namespace          string  `xml:"Namespace"`
-	MetricName         string  `xml:"MetricName"`
-	StateValue         string  `xml:"StateValue"`
-	ComparisonOperator string  `xml:"ComparisonOperator"`
-	Threshold          float64 `xml:"Threshold"`
+	AlarmName               string         `xml:"AlarmName"`
+	AlarmArn                string         `xml:"AlarmArn,omitempty"`
+	AlarmDescription        string         `xml:"AlarmDescription,omitempty"`
+	Namespace               string         `xml:"Namespace,omitempty"`
+	MetricName              string         `xml:"MetricName,omitempty"`
+	Dimensions              []dimensionXML `xml:"Dimensions>member,omitempty"`
+	StateValue              string         `xml:"StateValue"`
+	StateReason             string         `xml:"StateReason,omitempty"`
+	StateUpdatedTimestamp   string         `xml:"StateUpdatedTimestamp,omitempty"`
+	ComparisonOperator      string         `xml:"ComparisonOperator"`
+	Threshold               float64        `xml:"Threshold"`
+	Period                  int            `xml:"Period,omitempty"`
+	EvaluationPeriods       int            `xml:"EvaluationPeriods,omitempty"`
+	DatapointsToAlarm       int            `xml:"DatapointsToAlarm,omitempty"`
+	Statistic               string         `xml:"Statistic,omitempty"`
+	ExtendedStatistic       string         `xml:"ExtendedStatistic,omitempty"`
+	Unit                    string         `xml:"Unit,omitempty"`
+	TreatMissingData        string         `xml:"TreatMissingData,omitempty"`
+	ActionsEnabled          bool           `xml:"ActionsEnabled"`
+	AlarmActions            []string       `xml:"AlarmActions>member,omitempty"`
+	OKActions               []string       `xml:"OKActions>member,omitempty"`
+	InsufficientDataActions []string       `xml:"InsufficientDataActions>member,omitempty"`
+}
+
+type compositeAlarmMemberXML struct {
+	AlarmName               string   `xml:"AlarmName"`
+	AlarmArn                string   `xml:"AlarmArn,omitempty"`
+	AlarmRule               string   `xml:"AlarmRule"`
+	AlarmDescription        string   `xml:"AlarmDescription,omitempty"`
+	StateValue              string   `xml:"StateValue"`
+	StateReason             string   `xml:"StateReason,omitempty"`
+	StateUpdatedTimestamp   string   `xml:"StateUpdatedTimestamp,omitempty"`
+	ActionsEnabled          bool     `xml:"ActionsEnabled"`
+	AlarmActions            []string `xml:"AlarmActions>member,omitempty"`
+	OKActions               []string `xml:"OKActions>member,omitempty"`
+	InsufficientDataActions []string `xml:"InsufficientDataActions>member,omitempty"`
 }
 
 type describeAlarmsResultXML struct {
-	XMLName      xml.Name         `xml:"DescribeAlarmsResult"`
-	MetricAlarms []alarmMemberXML `xml:"MetricAlarms>member"`
-	NextToken    string           `xml:"NextToken,omitempty"`
+	XMLName         xml.Name                  `xml:"DescribeAlarmsResult"`
+	MetricAlarms    []alarmMemberXML          `xml:"MetricAlarms>member"`
+	CompositeAlarms []compositeAlarmMemberXML `xml:"CompositeAlarms>member,omitempty"`
+	NextToken       string                    `xml:"NextToken,omitempty"`
 }
 
 // writeQueryResponse writes an AWS query-protocol XML envelope. result may be
