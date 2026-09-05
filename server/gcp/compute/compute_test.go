@@ -270,6 +270,58 @@ func TestGetOperationAlwaysDone(t *testing.T) {
 	}
 }
 
+func TestOperationWaitReturnsDone(t *testing.T) {
+	ts := newGCPTestServer(t)
+	op := insertInstance(t, ts, "vm-wait")
+
+	selfLink, _ := op["selfLink"].(string)
+	if selfLink == "" {
+		t.Fatal("missing selfLink")
+	}
+
+	// gcloud and the typed google clients confirm every mutation with
+	// zoneOperations.wait — a POST to <operation>/wait that blocks until the
+	// operation is DONE and returns it. Without this the CLI reports a failure
+	// even though the mutation applied.
+	resp, err := ts.Client().Post(selfLink+"/wait", "application/json", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		dump, _ := io.ReadAll(resp.Body)
+		t.Fatalf("operation wait: status=%d body=%s", resp.StatusCode, dump)
+	}
+
+	var got map[string]any
+	_ = json.NewDecoder(resp.Body).Decode(&got)
+
+	if got["status"] != "DONE" {
+		t.Errorf("operation status=%v want DONE", got["status"])
+	}
+
+	if got["kind"] != "compute#operation" {
+		t.Errorf("kind=%v want compute#operation", got["kind"])
+	}
+}
+
+func TestOperationWaitUnknownIs404(t *testing.T) {
+	ts := newGCPTestServer(t)
+
+	resp, err := ts.Client().Post(
+		ts.URL+zonesPath("/operations/operation-bogus/wait"),
+		"application/json", http.NoBody)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusNotFound {
+		t.Errorf("status=%d want 404", resp.StatusCode)
+	}
+}
+
 func TestRejectsNonComputePaths(t *testing.T) {
 	ts := newGCPTestServer(t)
 

@@ -392,15 +392,21 @@ func (h *Handler) dispatchInstanceMutationVerb(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// serveOperations handles GET on operations/{name}. Since the mock executes
-// synchronously, a known operation always reads back DONE. An operation name
-// that was never minted (a bogus poll, `gcloud compute operations describe
-// <bogus>`) is 404, matching real GCP, rather than a fabricated DONE — provided
-// a shared registry is wired (a nil registry keeps the legacy allow-all).
+// serveOperations handles GET on operations/{name} and the POST
+// operations/{name}/wait verb. Since the mock executes synchronously, a known
+// operation always reads back DONE. gcloud and the typed google clients confirm
+// every mutation by calling zoneOperations.wait (a POST that blocks until the
+// operation is DONE, then returns it) rather than polling GET, so without wait
+// support `gcloud compute instances stop/start` (and every other mutation)
+// reports a failure even though the state changed. An operation name that was
+// never minted (a bogus poll, `gcloud compute operations describe <bogus>`) is
+// 404, matching real GCP, rather than a fabricated DONE — provided a shared
+// registry is wired (a nil registry keeps the legacy allow-all).
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) serveOperations(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	if r.Method != http.MethodGet {
+	isWait := r.Method == http.MethodPost && strings.EqualFold(rp.Action, "wait")
+	if r.Method != http.MethodGet && !isWait {
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		return
 	}
