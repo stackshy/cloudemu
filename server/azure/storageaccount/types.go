@@ -27,6 +27,17 @@ type armAccountUpdate struct {
 type armAccountPropsReq struct {
 	AccessTier string            `json:"accessTier,omitempty"`
 	Encryption *armEncryptionReq `json:"encryption,omitempty"`
+	// MinimumTLSVersion / PublicNetworkAccess are string toggles; empty means the
+	// request omitted them.
+	MinimumTLSVersion   string `json:"minimumTlsVersion,omitempty"`
+	PublicNetworkAccess string `json:"publicNetworkAccess,omitempty"`
+	// SupportsHTTPSTrafficOnly / AllowBlobPublicAccess / AllowSharedKeyAccess are
+	// pointers so a PATCH can tell "omitted" (nil) from "explicitly false" — the
+	// distinction the echo-properties overlay drops for zero-valued scalars, which
+	// is why these must be modeled here rather than left to the overlay.
+	SupportsHTTPSTrafficOnly *bool `json:"supportsHttpsTrafficOnly,omitempty"`
+	AllowBlobPublicAccess    *bool `json:"allowBlobPublicAccess,omitempty"`
+	AllowSharedKeyAccess     *bool `json:"allowSharedKeyAccess,omitempty"`
 }
 
 // armEncryptionReq is the request-side encryption block: keySource selects
@@ -72,6 +83,15 @@ type armAccountProps struct {
 	PrimaryEndpoints  *armEndpoints `json:"primaryEndpoints,omitempty"`
 	PrimaryLocation   string        `json:"primaryLocation,omitempty"`
 	StatusOfPrimary   string        `json:"statusOfPrimary,omitempty"`
+	// The account security toggles are always rendered (with real-Azure defaults
+	// when unset) so a create that omits them still reads back the values real
+	// Azure reports, and an explicit "false" is never dropped. The bools carry no
+	// omitempty — false is a meaningful, must-be-serialized value here.
+	MinimumTLSVersion        string `json:"minimumTlsVersion,omitempty"`
+	PublicNetworkAccess      string `json:"publicNetworkAccess,omitempty"`
+	SupportsHTTPSTrafficOnly bool   `json:"supportsHttpsTrafficOnly"`
+	AllowBlobPublicAccess    bool   `json:"allowBlobPublicAccess"`
+	AllowSharedKeyAccess     bool   `json:"allowSharedKeyAccess"`
 	// SecondaryLocation/StatusOfSecondary are populated for GRS/RA-GRS/GZRS/
 	// RA-GZRS SKUs; SecondaryEndpoints only for the read-access (RA-*) variants
 	// — matching real Azure (see armstorage AccountProperties doc comments).
