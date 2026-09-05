@@ -46,6 +46,7 @@ type armDatabase struct {
 type armSKU struct {
 	Name     string `json:"name,omitempty"`
 	Tier     string `json:"tier,omitempty"`
+	Family   string `json:"family,omitempty"`
 	Capacity int    `json:"capacity,omitempty"`
 }
 
@@ -118,19 +119,21 @@ func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath, status str
 		elasticPoolID = &db.ElasticPoolID
 	}
 
+	sku := databaseSKU(db)
+
 	return armDatabase{
 		ID:       armDatabaseID(rp.Subscription, rp.ResourceGroup, db.Server, db.Name),
 		Name:     db.Name,
 		Type:     providerName + "/servers/databases",
 		Location: db.Location,
 		Tags:     db.Tags,
-		SKU:      &armSKU{Name: db.SKUName, Tier: db.SKUTier, Capacity: db.SKUCapacity},
+		SKU:      sku,
 		Properties: &armDatabaseProps{
 			Status:                           status,
 			Collation:                        db.Collation,
 			DatabaseID:                       databaseGUID(db),
 			CurrentServiceObjectiveName:      db.SKUName,
-			CurrentSKU:                       &armSKU{Name: db.SKUName, Tier: db.SKUTier, Capacity: db.SKUCapacity},
+			CurrentSKU:                       databaseSKU(db),
 			MaxSizeBytes:                     db.MaxSizeBytes,
 			ReadScale:                        db.ReadScale,
 			RequestedBackupStorageRedundancy: db.BackupStorageRedundancy,
@@ -138,6 +141,22 @@ func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath, status str
 			ZoneRedundant:                    &zoneRedundant,
 			ElasticPoolID:                    elasticPoolID,
 		},
+	}
+}
+
+// databaseSKU builds the ARM sku object for a database. The stored tier and
+// capacity are name-authoritative (set on create/update by the provider); the
+// hardware family (Gen5, Fsv2, …) is not stored, so it is derived from the sku
+// name here — real Azure reports family for vCore databases and omits it for the
+// DTU model.
+func databaseSKU(db *rdsdriver.Database) *armSKU {
+	_, family, _ := rdsdriver.ParseAzureSQLSKU(db.SKUName)
+
+	return &armSKU{
+		Name:     db.SKUName,
+		Tier:     db.SKUTier,
+		Family:   family,
+		Capacity: db.SKUCapacity,
 	}
 }
 

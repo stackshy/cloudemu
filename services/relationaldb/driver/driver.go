@@ -7,6 +7,7 @@ package driver
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -997,6 +998,109 @@ func SourceDatabaseRef(id string) (server, database string, ok bool) {
 	}
 
 	return server, database, true
+}
+
+// ParseAzureSQLSKU derives the tier, hardware family and vCore/DTU capacity that
+// real Azure SQL reports for a database service-objective (SKU) name, so a create
+// that supplies only the name reads back the full sku object real Azure fills in.
+// The service-objective name is authoritative: Azure ignores a mismatched
+// tier/capacity in the request and returns the values the name implies.
+//
+//   - vCore names encode tier_[S_]family_capacity: "GP_Gen5_2" → GeneralPurpose,
+//     Gen5, 2; "GP_S_Gen5_2" (serverless) → GeneralPurpose, Gen5, 2;
+//     "BC_Gen5_4" → BusinessCritical, Gen5, 4; "HS_Gen5_2" → Hyperscale, Gen5, 2.
+//   - DTU names encode only the tier: "S0"/"S3" → Standard, "P1" → Premium,
+//     "Basic" → Basic (their fixed DTU capacity is not encoded in the name and is
+//     left to the caller).
+//
+// Returns zero values for an unrecognized name (e.g. an elastic-pool sku), so a
+// caller derives nothing and keeps whatever it already holds. Shared by the
+// provider (which stores the sku so Resource Graph discovery reports the right
+// tier) and the wire server (which echoes sku.family on read), so the two never
+// derive the sku differently.
+func ParseAzureSQLSKU(name string) (tier, family string, capacity int) {
+	if name == "" {
+		return "", "", 0
+	}
+
+	parts := strings.Split(name, "_")
+
+	switch parts[0] {
+	case "GP":
+		tier = "GeneralPurpose"
+	case "BC":
+		tier = "BusinessCritical"
+	case "HS":
+		tier = "Hyperscale"
+	}
+
+	if tier != "" {
+		family, capacity = vCoreFamilyCapacity(parts)
+		return tier, family, capacity
+	}
+
+	return dtuTier(name), "", 0
+}
+
+// vCorePartsWithFamily is the minimum "_"-split segment count of a vCore sku name
+// that carries a hardware family: tier_family_capacity (e.g. GP_Gen5_2). Fewer
+// segments (e.g. an elastic-pool "GP_Gen5") carry no family.
+const vCorePartsWithFamily = 3
+
+// vCoreFamilyCapacity extracts the hardware family and vCore count from the parts
+// of a vCore sku name split on "_". The capacity is the trailing integer segment;
+// the family is the segment before it (Gen5, Fsv2, DC, …). A name with no numeric
+// tail (e.g. an elastic-pool "GP_Gen5") yields no family/capacity. parts always
+// has at least one element (strings.Split never returns empty), so the trailing
+// index is safe; a name that is only a prefix fails the Atoi and yields nothing.
+func vCoreFamilyCapacity(parts []string) (family string, capacity int) {
+	n := len(parts)
+
+	c, err := strconv.Atoi(parts[n-1])
+	if err != nil {
+		return "", 0
+	}
+
+	capacity = c
+
+	if n >= vCorePartsWithFamily {
+		family = parts[n-2]
+	}
+
+	return family, capacity
+}
+
+// dtuTier maps a DTU service-objective name to its pricing tier. Basic, the
+// Standard series (S0–S12) and the Premium series (P1–P15) are the DTU purchasing
+// model; every other name is a non-DTU sku this helper does not classify.
+func dtuTier(name string) string {
+	const basic = "Basic" // sku name and its pricing tier share the literal
+
+	switch {
+	case name == basic:
+		return basic
+	case strings.HasPrefix(name, "S") && isAllDigits(name[1:]):
+		return "Standard"
+	case strings.HasPrefix(name, "P") && isAllDigits(name[1:]):
+		return "Premium"
+	default:
+		return ""
+	}
+}
+
+// isAllDigits reports whether s is non-empty and every byte is an ASCII digit.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 // FailoverGroupConfig describes a failover group to create (Azure SQL).
