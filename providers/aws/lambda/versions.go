@@ -22,6 +22,15 @@ func (m *Mock) PublishVersion(_ context.Context, functionName, description strin
 		return nil, cerrors.Newf(cerrors.NotFound, "function %s not found", functionName)
 	}
 
+	// AWS Lambda doesn't publish a new version if the function's configuration and
+	// code haven't changed since the last version — it returns that existing
+	// version instead. Every configuration/code update mints a fresh $LATEST
+	// RevisionID, so a last-published version cut from the current $LATEST revision
+	// means nothing changed and no new version is created.
+	if n := len(fd.versions); n > 0 && fd.versions[n-1].revisionID == fd.info.RevisionID {
+		return versionResult(functionName, fd.versions[n-1], description), nil
+	}
+
 	verNum := fd.nextVersion
 	fd.nextVersion++
 
@@ -40,19 +49,27 @@ func (m *Mock) PublishVersion(_ context.Context, functionName, description strin
 	fd.versions = append(fd.versions, vd)
 	m.funcs.Set(functionName, fd)
 
+	return versionResult(functionName, vd, description), nil
+}
+
+// versionResult renders a published version's driver.FunctionVersion, used both
+// when a fresh version is cut and when a no-change PublishVersion returns the
+// existing version. description overrides the stored version description, matching
+// PublishVersion's Description parameter.
+func versionResult(functionName string, v *versionData, description string) *driver.FunctionVersion {
 	return &driver.FunctionVersion{
 		FunctionName: functionName,
-		Version:      verStr,
+		Version:      v.version,
 		Description:  description,
-		CodeSHA256:   sha,
-		RevisionID:   rev,
-		CreatedAt:    now,
-		Runtime:      fd.info.Runtime,
-		Handler:      fd.info.Handler,
-		Memory:       fd.info.Memory,
-		Timeout:      fd.info.Timeout,
-		Role:         fd.info.Role,
-	}, nil
+		CodeSHA256:   v.codeSHA,
+		RevisionID:   v.revisionID,
+		CreatedAt:    v.createdAt,
+		Runtime:      v.config.Runtime,
+		Handler:      v.config.Handler,
+		Memory:       v.config.Memory,
+		Timeout:      v.config.Timeout,
+		Role:         v.config.Role,
+	}
 }
 
 // ListVersions returns all published versions for a function.

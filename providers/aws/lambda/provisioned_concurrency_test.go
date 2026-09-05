@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"context"
+	"strconv"
 	"sync"
 	"testing"
 
@@ -199,6 +200,10 @@ func TestProvisionedConcurrencyRejectsWeightedAlias(t *testing.T) {
 	ctx := context.Background()
 	ver := createPublishedFunc(t, m)
 
+	if _, err := m.UpdateFunction(ctx, "my-func", driver.FunctionConfig{Code: []byte("v2-code")}); err != nil {
+		t.Fatalf("UpdateFunction: %v", err)
+	}
+
 	ver2, err := m.PublishVersion(ctx, "my-func", "")
 	if err != nil {
 		t.Fatalf("PublishVersion: %v", err)
@@ -323,6 +328,12 @@ func TestProvisionedConcurrencyCOWIndependence(t *testing.T) {
 	vers := make([]*driver.FunctionVersion, 0, 3)
 
 	for i := 0; i < 3; i++ {
+		// Change the code before each publish so Lambda cuts a distinct version
+		// rather than deduping an unchanged one.
+		if _, err := m.UpdateFunction(ctx, "my-func", driver.FunctionConfig{Code: []byte(strconv.Itoa(i) + "-code")}); err != nil {
+			t.Fatalf("UpdateFunction: %v", err)
+		}
+
 		ver, err := m.PublishVersion(ctx, "my-func", "")
 		if err != nil {
 			t.Fatalf("PublishVersion: %v", err)
