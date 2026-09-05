@@ -628,6 +628,22 @@ func TestMetricFiltersAreNotAnOCIOperation(t *testing.T) {
 	assert.Equal(t, cerrors.Unimplemented, cerrors.GetCode(err))
 }
 
+func TestSubscriptionFiltersAreNotAnOCIOperation(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+
+	err := m.PutSubscriptionFilter(ctx, &driver.SubscriptionFilterConfig{Name: "stream"})
+	require.Error(t, err)
+	assert.Equal(t, cerrors.Unimplemented, cerrors.GetCode(err))
+	assert.Contains(t, err.Error(), "Service Connector",
+		"an operation OCI has no equivalent for names what OCI does instead")
+
+	assert.Equal(t, cerrors.Unimplemented, cerrors.GetCode(m.DeleteSubscriptionFilter(ctx, "g", "stream")))
+
+	_, err = m.DescribeSubscriptionFilters(ctx, "g")
+	assert.Equal(t, cerrors.Unimplemented, cerrors.GetCode(err))
+}
+
 // Per-compartment display-name uniqueness.
 
 func TestGroupNamesAreUniquePerCompartment(t *testing.T) {

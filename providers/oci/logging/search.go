@@ -154,23 +154,23 @@ func (m *Mock) collect(q *searchQuery, start, end time.Time) []SearchEntry {
 	out := make([]SearchEntry, 0)
 
 	for _, rec := range m.logs.SortedValues() {
-		g, ok := m.groups.Get(rec.log.LogGroupID)
-		if !ok || !q.selects(g, &rec.log) {
+		g, ok := m.groups.Get(rec.Log.LogGroupID)
+		if !ok || !q.selects(g, &rec.Log) {
 			continue
 		}
 
-		for i := range rec.entries {
-			e := &rec.entries[i]
+		for i := range rec.Entries {
+			e := &rec.Entries[i]
 			if e.Time.Before(start) || !e.Time.Before(end) {
 				continue
 			}
 
-			if q.matches(e, g, &rec.log) {
+			if q.matches(e, g, &rec.Log) {
 				out = append(out, SearchEntry{
 					LogEntry:      *e,
 					CompartmentID: g.CompartmentID,
-					LogGroupID:    rec.log.LogGroupID,
-					LogName:       rec.log.DisplayName,
+					LogGroupID:    rec.Log.LogGroupID,
+					LogName:       rec.Log.DisplayName,
 				})
 			}
 		}

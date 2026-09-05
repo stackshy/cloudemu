@@ -61,7 +61,7 @@ func (m *Mock) createLog(groupID string, spec LogSpec) (*Log, error) {
 		FreeformTags:      copyTags(spec.FreeformTags),
 	}
 
-	m.logs.Set(l.ID, &logRecord{log: l})
+	m.logs.Set(l.ID, &logRecord{Log: l})
 
 	out := l
 
@@ -124,7 +124,7 @@ func (m *Mock) GetLog(_ context.Context, groupID, logID string) (*Log, error) {
 		return nil, err
 	}
 
-	out := rec.log
+	out := rec.Log
 
 	return &out, nil
 }
@@ -145,8 +145,8 @@ func (m *Mock) ListLogs(_ context.Context, groupID string, f LogFilter) ([]Log, 
 	out := make([]Log, 0, len(recs))
 
 	for _, rec := range recs {
-		if matchesLogFilter(&rec.log, f) {
-			out = append(out, rec.log)
+		if matchesLogFilter(&rec.Log, f) {
+			out = append(out, rec.Log)
 		}
 	}
 
@@ -191,39 +191,39 @@ func (m *Mock) UpdateLog(_ context.Context, groupID, logID string, u LogUpdate) 
 		return nil, err
 	}
 
-	if u.DisplayName != nil && *u.DisplayName != rec.log.DisplayName {
+	if u.DisplayName != nil && *u.DisplayName != rec.Log.DisplayName {
 		if _, taken := m.logByName(groupID, *u.DisplayName); taken {
 			return nil, cerrors.Newf(cerrors.AlreadyExists,
 				"log %q already exists in log group %q", *u.DisplayName, groupID)
 		}
 
-		rec.log.DisplayName = *u.DisplayName
+		rec.Log.DisplayName = *u.DisplayName
 	}
 
 	if u.IsEnabled != nil {
-		rec.log.IsEnabled = *u.IsEnabled
+		rec.Log.IsEnabled = *u.IsEnabled
 	}
 
 	if u.RetentionDuration != nil {
-		rec.log.RetentionDuration = *u.RetentionDuration
+		rec.Log.RetentionDuration = *u.RetentionDuration
 	}
 
 	if u.Configuration != nil {
-		cfg, cfgErr := normalizeConfiguration(rec.log.LogType, u.Configuration, rec.log.CompartmentID)
+		cfg, cfgErr := normalizeConfiguration(rec.Log.LogType, u.Configuration, rec.Log.CompartmentID)
 		if cfgErr != nil {
 			return nil, cfgErr
 		}
 
-		rec.log.Configuration = cfg
+		rec.Log.Configuration = cfg
 	}
 
 	if u.FreeformTags != nil {
-		rec.log.FreeformTags = copyTags(u.FreeformTags)
+		rec.Log.FreeformTags = copyTags(u.FreeformTags)
 	}
 
-	rec.log.TimeLastModified = m.now()
+	rec.Log.TimeLastModified = m.now()
 
-	out := rec.log
+	out := rec.Log
 
 	return &out, nil
 }
@@ -247,7 +247,7 @@ func (m *Mock) DeleteLog(_ context.Context, groupID, logID string) error {
 // The caller holds mu.
 func (m *Mock) findLog(groupID, logID string) (*logRecord, error) {
 	rec, ok := m.logs.Get(logID)
-	if !ok || rec.log.LogGroupID != groupID {
+	if !ok || rec.Log.LogGroupID != groupID {
 		return nil, cerrors.Newf(cerrors.NotFound, "log %q not found in log group %q", logID, groupID)
 	}
 
