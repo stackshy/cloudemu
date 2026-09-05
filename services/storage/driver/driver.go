@@ -1148,6 +1148,14 @@ type GCSBucketMeta struct {
 	StorageClass   string
 	Metageneration int64
 	Updated        string
+	// Versioning is the bucket's current versioning-enabled state, and
+	// VersioningSet reports whether versioning has ever been explicitly
+	// configured. Real GCS omits the versioning field on a bucket that has never
+	// had it set but returns {enabled:false} once it has been disabled, so the
+	// wire layer needs the two apart to avoid a perpetual Terraform diff on a
+	// `versioning { enabled = false }` block.
+	Versioning    bool
+	VersioningSet bool
 }
 
 // GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type
