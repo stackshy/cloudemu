@@ -17,6 +17,22 @@ import (
 // viaServiceConnector is what OCI does instead of a metric filter.
 const viaServiceConnector = "a Service Connector routes matching log entries into Monitoring"
 
+// resolveLimit turns a caller-supplied read limit into one safe to size an
+// allocation with. Zero or unset means the default; anything negative or above
+// maxLogLimit is rejected rather than silently clamped.
+func resolveLimit(limit int) (int, error) {
+	switch {
+	case limit == 0:
+		return defaultLogLimit, nil
+	case limit < 0:
+		return 0, cerrors.Newf(cerrors.InvalidArgument, "limit %d must not be negative", limit)
+	case limit > maxLogLimit:
+		return 0, cerrors.Newf(cerrors.InvalidArgument, "limit %d exceeds the maximum of %d", limit, maxLogLimit)
+	default:
+		return limit, nil
+	}
+}
+
 // CreateLogGroup creates a log group in the compartment the config's scope
 // names, or the configured default compartment.
 //
@@ -47,9 +63,9 @@ func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	g, ok := m.groupByName(cfg.Name)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "log group %q not found", cfg.Name)
+	g, err := m.portableGroupByName(cfg.Name)
+	if err != nil {
+		return nil, err
 	}
 
 	if cfg.RetentionDays != 0 {
@@ -60,7 +76,12 @@ func (m *Mock) UpdateLogGroup(_ context.Context, cfg driver.LogGroupConfig) (*dr
 		g.FreeformTags = copyTags(cfg.Tags)
 	}
 
-	if cfg.Scope.Compartment != "" {
+	if cfg.Scope.Compartment != "" && cfg.Scope.Compartment != g.CompartmentID {
+		if other, taken := m.groupByName(cfg.Scope.Compartment, g.DisplayName); taken && other.ID != g.ID {
+			return nil, cerrors.Newf(cerrors.AlreadyExists,
+				"log group %q already exists in compartment %s", g.DisplayName, cfg.Scope.Compartment)
+		}
+
 		g.CompartmentID = cfg.Scope.Compartment
 	}
 
@@ -76,9 +97,9 @@ func (m *Mock) DeleteLogGroup(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	g, ok := m.groupByName(name)
-	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "log group %q not found", name)
+	g, err := m.portableGroupByName(name)
+	if err != nil {
+		return err
 	}
 
 	for _, rec := range m.logsIn(g.ID) {
@@ -95,9 +116,9 @@ func (m *Mock) GetLogGroup(_ context.Context, name string) (*driver.LogGroupInfo
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	g, ok := m.groupByName(name)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "log group %q not found", name)
+	g, err := m.portableGroupByName(name)
+	if err != nil {
+		return nil, err
 	}
 
 	info := m.toLogGroupInfo(g)
@@ -128,9 +149,9 @@ func (m *Mock) CreateLogStream(_ context.Context, logGroup, streamName string) (
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	g, ok := m.groupByName(logGroup)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "log group %q not found", logGroup)
+	g, err := m.portableGroupByName(logGroup)
+	if err != nil {
+		return nil, err
 	}
 
 	l, err := m.createLog(g.ID, LogSpec{
@@ -165,9 +186,9 @@ func (m *Mock) ListLogStreams(_ context.Context, logGroup string) ([]driver.LogS
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	g, ok := m.groupByName(logGroup)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "log group %q not found", logGroup)
+	g, err := m.portableGroupByName(logGroup)
+	if err != nil {
+		return nil, err
 	}
 
 	recs := m.logsIn(g.ID)
@@ -212,14 +233,14 @@ func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]d
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	recs, err := m.portableSelection(input.LogGroup, input.LogStream)
+	limit, err := resolveLimit(input.Limit)
 	if err != nil {
 		return nil, err
 	}
 
-	limit := input.Limit
-	if limit <= 0 {
-		limit = defaultLogLimit
+	recs, err := m.portableSelection(input.LogGroup, input.LogStream)
+	if err != nil {
+		return nil, err
 	}
 
 	out := make([]driver.LogEvent, 0, limit)
@@ -250,14 +271,14 @@ func (m *Mock) FilterLogEvents(
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	recs, err := m.portableSelection(input.LogGroup, input.LogStream)
+	limit, err := resolveLimit(input.Limit)
 	if err != nil {
 		return nil, err
 	}
 
-	limit := input.Limit
-	if limit <= 0 {
-		limit = defaultLogLimit
+	recs, err := m.portableSelection(input.LogGroup, input.LogStream)
+	if err != nil {
+		return nil, err
 	}
 
 	out := make([]driver.FilteredLogEvent, 0, limit)
@@ -307,9 +328,9 @@ func unsupported(operation string) error {
 
 // portableLog resolves a log by group and log display name. The caller holds mu.
 func (m *Mock) portableLog(logGroup, streamName string) (*logRecord, error) {
-	g, ok := m.groupByName(logGroup)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "log group %q not found", logGroup)
+	g, err := m.portableGroupByName(logGroup)
+	if err != nil {
+		return nil, err
 	}
 
 	rec, ok := m.logByName(g.ID, streamName)
@@ -332,9 +353,9 @@ func (m *Mock) portableSelection(logGroup, streamName string) ([]*logRecord, err
 		return []*logRecord{rec}, nil
 	}
 
-	g, ok := m.groupByName(logGroup)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "log group %q not found", logGroup)
+	g, err := m.portableGroupByName(logGroup)
+	if err != nil {
+		return nil, err
 	}
 
 	return m.logsIn(g.ID), nil

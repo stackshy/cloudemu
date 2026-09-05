@@ -21,8 +21,10 @@ func (m *Mock) createGroup(spec LogGroupSpec) (*LogGroup, error) {
 		return nil, err
 	}
 
-	if _, ok := m.groupByName(spec.DisplayName); ok {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "log group %q already exists", spec.DisplayName)
+	compartment := m.compartmentOr(spec.CompartmentID)
+	if _, ok := m.groupByName(compartment, spec.DisplayName); ok {
+		return nil, cerrors.Newf(cerrors.AlreadyExists,
+			"log group %q already exists in compartment %s", spec.DisplayName, compartment)
 	}
 
 	retention := spec.RetentionDays
@@ -33,7 +35,7 @@ func (m *Mock) createGroup(spec LogGroupSpec) (*LogGroup, error) {
 	now := m.now()
 	g := &LogGroup{
 		ID:               m.newOCID(typeLogGroup),
-		CompartmentID:    m.compartmentOr(spec.CompartmentID),
+		CompartmentID:    compartment,
 		DisplayName:      spec.DisplayName,
 		Description:      spec.Description,
 		LifecycleState:   StateActive,
@@ -104,8 +106,9 @@ func (m *Mock) UpdateGroup(_ context.Context, id string, u LogGroupUpdate) (*Log
 	}
 
 	if u.DisplayName != nil && *u.DisplayName != g.DisplayName {
-		if _, taken := m.groupByName(*u.DisplayName); taken {
-			return nil, cerrors.Newf(cerrors.AlreadyExists, "log group %q already exists", *u.DisplayName)
+		if _, taken := m.groupByName(g.CompartmentID, *u.DisplayName); taken {
+			return nil, cerrors.Newf(cerrors.AlreadyExists,
+				"log group %q already exists in compartment %s", *u.DisplayName, g.CompartmentID)
 		}
 
 		g.DisplayName = *u.DisplayName
@@ -157,6 +160,11 @@ func (m *Mock) MoveGroup(_ context.Context, id, compartmentID string) error {
 	g, ok := m.groups.Get(id)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "log group %q not found", id)
+	}
+
+	if other, taken := m.groupByName(compartmentID, g.DisplayName); taken && other.ID != id {
+		return cerrors.Newf(cerrors.AlreadyExists,
+			"log group %q already exists in compartment %s", g.DisplayName, compartmentID)
 	}
 
 	g.CompartmentID = compartmentID

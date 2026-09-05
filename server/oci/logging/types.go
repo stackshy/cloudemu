@@ -1,5 +1,7 @@
 package logging
 
+import "time"
+
 // OCI Logging REST shapes, across all three API surfaces.
 
 // definedTags is OCI's namespaced tag map. CloudEmu does not model tag
@@ -170,4 +172,28 @@ type searchLogsResponse struct {
 	Results []searchResult `json:"results"`
 	Fields  []fieldInfo    `json:"fields,omitempty"`
 	Summary searchSummary  `json:"summary"`
+}
+
+// parseTime reads an OCI timestamp, treating an empty one as unset.
+func parseTime(value, field string) (time.Time, error) {
+	if value == "" {
+		return time.Time{}, nil
+	}
+
+	t, err := time.Parse(time.RFC3339, value)
+	if err != nil {
+		return time.Time{}, &timeError{field: field, value: value}
+	}
+
+	return t, nil
+}
+
+// timeError reports a timestamp the handler could not read.
+type timeError struct {
+	field string
+	value string
+}
+
+func (e *timeError) Error() string {
+	return e.field + " " + e.value + " is not an RFC 3339 timestamp"
 }
