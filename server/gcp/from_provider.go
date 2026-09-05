@@ -20,6 +20,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		CloudRun:         p.CloudRun,
 		PubSub:           p.PubSub,
 		Bigtable:         p.Bigtable,
+		BigQuery:         p.BigQuery,
 		CloudSQL:         p.CloudSQL,
 		GKE:              p.GKE,
 		VertexAI:         p.VertexAI,

@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server"
 	alloydbsrv "github.com/stackshy/cloudemu/v2/server/gcp/alloydb"
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
+	bigqueryserver "github.com/stackshy/cloudemu/v2/server/gcp/bigquery"
 	bigtableserver "github.com/stackshy/cloudemu/v2/server/gcp/bigtable"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudasset"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudbilling"
@@ -41,6 +42,7 @@ import (
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	bqdriver "github.com/stackshy/cloudemu/v2/services/bigquery/driver"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	cloudrundriver "github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
@@ -78,6 +80,9 @@ type Drivers struct {
 	CloudRun cloudrundriver.CloudRun
 	PubSub   mqdriver.MessageQueue
 	Bigtable btdriver.Admin
+	// BigQuery serves the bigquery.googleapis.com v2 dataset + table metadata
+	// control plane against the bigquery driver.
+	BigQuery bqdriver.BigQuery
 	CloudSQL rdbdriver.RelationalDB
 	GKE      *gkeprov.Mock
 	// AlloyDB serves the alloydb.googleapis.com v1 REST API against a
@@ -287,6 +292,14 @@ func New(d Drivers) *server.Server {
 	// /v1/projects/ space as Firestore, so register first.
 	if d.Bigtable != nil {
 		srv.Register(bigtableserver.New(d.Bigtable))
+	}
+
+	// BigQuery matches /bigquery/v2/projects/{p}/datasets[...] — its own
+	// /bigquery/v2/ URL space, disjoint from the /v1/projects/ family,
+	// /compute/v1/, and /dns/v1/, so registration order relative to every other
+	// handler is unconstrained.
+	if d.BigQuery != nil {
+		srv.Register(bigqueryserver.New(d.BigQuery))
 	}
 
 	if d.CloudSQL != nil {

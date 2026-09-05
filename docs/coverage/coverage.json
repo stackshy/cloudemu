@@ -1580,6 +1580,63 @@
     }
   },
   {
+    "service": "bigquery",
+    "interface": "BigQuery",
+    "operations": [
+      {
+        "name": "DeleteDataset",
+        "doc": "DeleteDataset removes the dataset. When deleteContents is false and the"
+      },
+      {
+        "name": "DeleteTable",
+        "doc": "DeleteTable removes the table, or NotFound."
+      },
+      {
+        "name": "GetDataset",
+        "doc": "GetDataset returns the dataset, or NotFound."
+      },
+      {
+        "name": "GetTable",
+        "doc": "GetTable returns the table, or NotFound."
+      },
+      {
+        "name": "InsertDataset",
+        "doc": "InsertDataset creates a dataset under project. It returns AlreadyExists"
+      },
+      {
+        "name": "InsertTable",
+        "doc": "InsertTable creates a table under project/datasetID. It returns"
+      },
+      {
+        "name": "ListDatasets",
+        "doc": "ListDatasets returns every dataset in project, ordered by datasetId."
+      },
+      {
+        "name": "ListTables",
+        "doc": "ListTables returns every table in the dataset, ordered by tableId."
+      },
+      {
+        "name": "PatchDataset",
+        "doc": "PatchDataset merges the supplied fields of patch into the dataset (the"
+      },
+      {
+        "name": "PatchTable",
+        "doc": "PatchTable merges the supplied fields of patch into the table (labels are"
+      },
+      {
+        "name": "UpdateDataset",
+        "doc": "UpdateDataset replaces the dataset's mutable fields with the supplied"
+      },
+      {
+        "name": "UpdateTable",
+        "doc": "UpdateTable replaces the table's mutable fields with the supplied patch."
+      }
+    ],
+    "providers": {
+      "gcp": "BigQuery"
+    }
+  },
+  {
     "service": "bigtable",
     "interface": "Admin",
     "operations": [
