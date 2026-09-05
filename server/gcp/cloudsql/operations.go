@@ -91,6 +91,9 @@ func modifyInputFromBody(body *sqlInstance, replace bool) rdsdriver.ModifyInstan
 	input.GCPBackupConfig = string(s.BackupConfiguration)
 	input.GCPIPConfig = string(s.IPConfiguration)
 	input.GCPSettingsExtra = settingsExtraJSON(s)
+	// A PATCH merges the named extra sub-fields onto the stored blob (siblings
+	// survive); a PUT wholesale replaces it.
+	input.GCPSettingsExtraMerge = !replace
 
 	applyModifySettings(&input, s, replace)
 

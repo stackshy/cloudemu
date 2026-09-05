@@ -310,6 +310,11 @@ type ModifyInstanceInput struct {
 	// insightsConfig, locationPreference, connectorEnforcement, …); empty means
 	// "no change". Cloud SQL-only; RDS/Redshift ignore it.
 	GCPSettingsExtra string
+	// GCPSettingsExtraMerge selects how GCPSettingsExtra is applied. On a PATCH
+	// (merge=true) the incoming sub-fields are overlaid per-key onto the stored
+	// blob so siblings the patch does not name survive; on a PUT (merge=false)
+	// GCPSettingsExtra wholesale replaces the stored blob (omitted keys drop).
+	GCPSettingsExtraMerge bool
 	// GCPStorageAutoResize updates the Cloud SQL settings.storageAutoResize flag; a
 	// nil pointer means "no change". Cloud SQL-only; RDS/Redshift ignore it.
 	GCPStorageAutoResize *bool

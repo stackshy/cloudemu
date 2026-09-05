@@ -10,6 +10,7 @@ package cloudsql
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -490,12 +491,49 @@ func applyGCPSettings(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceI
 	}
 
 	if input.GCPSettingsExtra != "" {
-		inst.GCPSettingsExtra = input.GCPSettingsExtra
+		if input.GCPSettingsExtraMerge {
+			inst.GCPSettingsExtra = mergeSettingsExtra(inst.GCPSettingsExtra, input.GCPSettingsExtra)
+		} else {
+			inst.GCPSettingsExtra = input.GCPSettingsExtra
+		}
 	}
 
 	if input.GCPStorageAutoResize != nil {
 		inst.GCPStorageAutoResize = *input.GCPStorageAutoResize
 	}
+}
+
+// mergeSettingsExtra overlays the incoming Cloud SQL settings extra-blob onto the
+// stored one so a PATCH naming one unmodeled sub-field leaves the siblings it
+// omits intact (incoming keys win per-key). Both blobs are already stripped of
+// modeled and server-managed keys by the wire layer, so no such key is
+// reintroduced. The result is serialized with sorted keys (json.Marshal of a
+// map) for determinism; a missing stored blob or a malformed blob falls back to
+// the incoming value.
+func mergeSettingsExtra(stored, incoming string) string {
+	if stored == "" {
+		return incoming
+	}
+
+	var base, patch map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(stored), &base); err != nil {
+		return incoming
+	}
+
+	if err := json.Unmarshal([]byte(incoming), &patch); err != nil {
+		return incoming
+	}
+
+	for k, v := range patch {
+		base[k] = v
+	}
+
+	out, err := json.Marshal(base)
+	if err != nil {
+		return incoming
+	}
+
+	return string(out)
 }
 
 // DeleteInstance removes an instance, unlinks it from any replica relationship,
