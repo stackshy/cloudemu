@@ -49,16 +49,27 @@ func toResourceJSON(rp *azurearm.ResourcePath, kind string, res *armResource) re
 	}
 }
 
-// withProvisioningState injects a terminal provisioningState into a metric
-// alert's properties (real metricAlerts carry provisioningState=Succeeded), so a
-// state-refresh read sees a settled resource.
-func withProvisioningState(props map[string]any) map[string]any {
+// withMetricAlertDefaults injects the server-applied defaults a real metric
+// alert carries into its properties when the caller omitted them, so a
+// state-refresh read sees the same settled resource Azure returns:
+//   - provisioningState=Succeeded (a metricAlert create is synchronous), so a
+//     refresh sees a terminal state.
+//   - autoMitigate=true — the documented default for a metricAlert whose request
+//     omits it (Metric Alerts - Create Or Update returns "autoMitigate": true).
+//     A raw armmonitor client that never set AutoMitigate reads it back as true
+//     against real Azure, so the emulator must apply the same default rather than
+//     leaving the field absent (nil).
+func withMetricAlertDefaults(props map[string]any) map[string]any {
 	if props == nil {
 		props = map[string]any{}
 	}
 
 	if _, ok := props["provisioningState"]; !ok {
 		props["provisioningState"] = "Succeeded"
+	}
+
+	if _, ok := props["autoMitigate"]; !ok {
+		props["autoMitigate"] = true
 	}
 
 	return props

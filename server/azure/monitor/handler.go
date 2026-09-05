@@ -129,7 +129,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 
 	res := &armResource{Location: req.Location, Tags: req.Tags, Properties: req.Properties}
 	if kind == typeAlerts {
-		res.Properties = withProvisioningState(res.Properties)
+		res.Properties = withMetricAlertDefaults(res.Properties)
 	}
 
 	if err := h.applySideEffects(r, rp, kind, res.Properties); err != nil {
@@ -240,7 +240,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request, rp *azurearm.Res
 
 	merged := mergeResource(existing, &req)
 	if kind == typeAlerts {
-		merged.Properties = withProvisioningState(merged.Properties)
+		merged.Properties = withMetricAlertDefaults(merged.Properties)
 	}
 
 	if err := h.applySideEffects(r, rp, kind, merged.Properties); err != nil {
