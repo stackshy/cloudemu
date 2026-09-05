@@ -20,20 +20,20 @@ func (m *Mock) PutLogs(ctx context.Context, logID string, batches []LogEntryBatc
 		return cerrors.Newf(cerrors.NotFound, "log %q not found", logID)
 	}
 
-	if rec.log.LogType != LogTypeCustom {
+	if rec.Log.LogType != LogTypeCustom {
 		m.mu.Unlock()
 		return cerrors.Newf(cerrors.InvalidArgument,
-			"log %q is a %s log; only a %s log accepts PutLogs", logID, rec.log.LogType, LogTypeCustom)
+			"log %q is a %s log; only a %s log accepts PutLogs", logID, rec.Log.LogType, LogTypeCustom)
 	}
 
-	if !rec.log.IsEnabled {
+	if !rec.Log.IsEnabled {
 		m.mu.Unlock()
 		return cerrors.Newf(cerrors.FailedPrecondition, "log %q is disabled and accepts no entries", logID)
 	}
 
 	count, bytes := m.ingest(rec, batches)
 
-	compartmentID, groupID := rec.log.CompartmentID, rec.log.LogGroupID
+	compartmentID, groupID := rec.Log.CompartmentID, rec.Log.LogGroupID
 	mon := m.monitoring
 	m.mu.Unlock()
 
@@ -53,8 +53,8 @@ func (m *Mock) ingest(rec *logRecord, batches []LogEntryBatch) (count, bytes int
 		batch := &batches[i]
 
 		for j := range batch.Entries {
-			entry := buildEntry(rec.log.ID, batch, &batch.Entries[j], ingested)
-			rec.entries = append(rec.entries, entry)
+			entry := buildEntry(rec.Log.ID, batch, &batch.Entries[j], ingested)
+			rec.Entries = append(rec.Entries, entry)
 			count++
 			bytes += len(entry.Data)
 		}
@@ -102,8 +102,8 @@ func (m *Mock) Entries(_ context.Context, logID string) ([]LogEntry, error) {
 		return nil, cerrors.Newf(cerrors.NotFound, "log %q not found", logID)
 	}
 
-	out := make([]LogEntry, len(rec.entries))
-	copy(out, rec.entries)
+	out := make([]LogEntry, len(rec.Entries))
+	copy(out, rec.Entries)
 
 	return out, nil
 }

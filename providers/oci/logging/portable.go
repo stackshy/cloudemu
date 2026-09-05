@@ -14,8 +14,11 @@ import (
 // group, a log stream is a CUSTOM log inside it, and a log event is an
 // ingested log entry.
 
-// viaServiceConnector is what OCI does instead of a metric filter.
-const viaServiceConnector = "a Service Connector routes matching log entries into Monitoring"
+// What OCI does instead of a metric filter and instead of a subscription filter.
+const (
+	viaServiceConnector = "a Service Connector routes matching log entries into Monitoring"
+	viaConnectorTarget  = "a Service Connector delivers matching log entries to a target service"
+)
 
 // resolveLimit turns a caller-supplied read limit into one safe to size an
 // allocation with. Zero or unset means the default; anything negative or above
@@ -103,7 +106,7 @@ func (m *Mock) DeleteLogGroup(_ context.Context, name string) error {
 	}
 
 	for _, rec := range m.logsIn(g.ID) {
-		m.logs.Delete(rec.log.ID)
+		m.logs.Delete(rec.Log.ID)
 	}
 
 	m.groups.Delete(g.ID)
@@ -176,7 +179,7 @@ func (m *Mock) DeleteLogStream(_ context.Context, logGroup, streamName string) e
 		return err
 	}
 
-	m.logs.Delete(rec.log.ID)
+	m.logs.Delete(rec.Log.ID)
 
 	return nil
 }
@@ -217,7 +220,7 @@ func (m *Mock) PutLogEvents(ctx context.Context, logGroup, streamName string, ev
 	}
 
 	count, bytes := m.ingest(rec, []LogEntryBatch{batch})
-	compartmentID, groupID, logID := rec.log.CompartmentID, rec.log.LogGroupID, rec.log.ID
+	compartmentID, groupID, logID := rec.Log.CompartmentID, rec.Log.LogGroupID, rec.Log.ID
 	mon := m.monitoring
 	m.mu.Unlock()
 
@@ -246,8 +249,8 @@ func (m *Mock) GetLogEvents(_ context.Context, input *driver.LogQueryInput) ([]d
 	out := make([]driver.LogEvent, 0, limit)
 
 	for _, rec := range recs {
-		for i := range rec.entries {
-			e := &rec.entries[i]
+		for i := range rec.Entries {
+			e := &rec.Entries[i]
 			if !inWindow(e, input.StartTime, input.EndTime) || !containsPattern(e.Data, input.Pattern) {
 				continue
 			}
@@ -284,14 +287,14 @@ func (m *Mock) FilterLogEvents(
 	out := make([]driver.FilteredLogEvent, 0, limit)
 
 	for _, rec := range recs {
-		for i := range rec.entries {
-			e := &rec.entries[i]
+		for i := range rec.Entries {
+			e := &rec.Entries[i]
 			if !inWindow(e, input.StartTime, input.EndTime) || !containsPattern(e.Data, input.FilterPattern) {
 				continue
 			}
 
 			out = append(out, driver.FilteredLogEvent{
-				LogStream: rec.log.DisplayName,
+				LogStream: rec.Log.DisplayName,
 				Timestamp: e.Time,
 				Message:   e.Data,
 			})
@@ -307,23 +310,41 @@ func (m *Mock) FilterLogEvents(
 
 // PutMetricFilter is not an OCI Logging operation.
 func (*Mock) PutMetricFilter(_ context.Context, _ *driver.MetricFilterConfig) error {
-	return unsupported("PutMetricFilter")
+	return unsupported("PutMetricFilter", viaServiceConnector)
 }
 
 // DeleteMetricFilter is not an OCI Logging operation.
 func (*Mock) DeleteMetricFilter(_ context.Context, _, _ string) error {
-	return unsupported("DeleteMetricFilter")
+	return unsupported("DeleteMetricFilter", viaServiceConnector)
 }
 
 // DescribeMetricFilters is not an OCI Logging operation.
 func (*Mock) DescribeMetricFilters(_ context.Context, _ string) ([]driver.MetricFilterInfo, error) {
-	return nil, unsupported("DescribeMetricFilters")
+	return nil, unsupported("DescribeMetricFilters", viaServiceConnector)
 }
 
-// unsupported reports an operation OCI Logging has no equivalent for.
-func unsupported(operation string) error {
+// PutSubscriptionFilter is not an OCI Logging operation.
+func (*Mock) PutSubscriptionFilter(_ context.Context, _ *driver.SubscriptionFilterConfig) error {
+	return unsupported("PutSubscriptionFilter", viaConnectorTarget)
+}
+
+// DeleteSubscriptionFilter is not an OCI Logging operation.
+func (*Mock) DeleteSubscriptionFilter(_ context.Context, _, _ string) error {
+	return unsupported("DeleteSubscriptionFilter", viaConnectorTarget)
+}
+
+// DescribeSubscriptionFilters is not an OCI Logging operation.
+func (*Mock) DescribeSubscriptionFilters(
+	_ context.Context, _ string,
+) ([]driver.SubscriptionFilterInfo, error) {
+	return nil, unsupported("DescribeSubscriptionFilters", viaConnectorTarget)
+}
+
+// unsupported reports an operation OCI Logging has no equivalent for, naming
+// what OCI does instead.
+func unsupported(operation, instead string) error {
 	return cerrors.Newf(cerrors.Unimplemented, "%s is not an OCI Logging operation: %s",
-		operation, viaServiceConnector)
+		operation, instead)
 }
 
 // portableLog resolves a log by group and log display name. The caller holds mu.
@@ -377,9 +398,9 @@ func (m *Mock) toLogGroupInfo(g *LogGroup) driver.LogGroupInfo {
 
 // toStreamInfo projects a log onto the portable stream shape. The caller holds mu.
 func toStreamInfo(rec *logRecord) driver.LogStreamInfo {
-	info := driver.LogStreamInfo{Name: rec.log.DisplayName, CreatedAt: rec.log.TimeCreated}
-	if n := len(rec.entries); n > 0 {
-		info.LastEvent = rec.entries[n-1].Time.UTC().Format(timeFormat)
+	info := driver.LogStreamInfo{Name: rec.Log.DisplayName, CreatedAt: rec.Log.TimeCreated}
+	if n := len(rec.Entries); n > 0 {
+		info.LastEvent = rec.Entries[n-1].Time.UTC().Format(timeFormat)
 	}
 
 	return info

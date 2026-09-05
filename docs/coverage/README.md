@@ -60,7 +60,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `kusto` | — | [Kusto](./azure/kusto.md) | — | — | 14 |
 | `loadbalancer` | [ELB](./aws/elb.md) | [LB](./azure/lb.md) | [LB](./gcp/lb.md) | — | 19 |
 | `locks` | — | [Locks](./azure/locks.md) | — | — | 4 |
-| `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | — | 17 |
+| `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | [Logging](./oci/logging.md) | 17 |
 | `lro` | — | — | [LRO](./gcp/lro.md) | — | 1 |
 | `managedcassandra` | — | [ManagedCassandra](./azure/managedcassandra.md) | — | — | 15 |
 | `managedidentity` | — | [ManagedIdentity](./azure/managedidentity.md) | — | — | 8 |

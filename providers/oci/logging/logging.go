@@ -186,10 +186,12 @@ type LogFilter struct {
 	LifecycleState string
 }
 
-// logRecord is a log and the entries ingested into it.
+// logRecord is a log and the entries ingested into it. Its fields are exported
+// so the record round-trips through the generic memstore snapshot helper, which
+// serializes as JSON.
 type logRecord struct {
-	log     Log
-	entries []LogEntry
+	Log     Log
+	Entries []LogEntry
 }
 
 // Mock is an in-memory mock implementation of the OCI Logging service.
@@ -289,7 +291,7 @@ func (m *Mock) portableGroupByName(name string) (*LogGroup, error) {
 // logByName resolves a log by display name within a group. The caller holds mu.
 func (m *Mock) logByName(groupID, name string) (*logRecord, bool) {
 	for _, rec := range m.logs.SortedValues() {
-		if rec.log.LogGroupID == groupID && rec.log.DisplayName == name {
+		if rec.Log.LogGroupID == groupID && rec.Log.DisplayName == name {
 			return rec, true
 		}
 	}
@@ -303,7 +305,7 @@ func (m *Mock) logsIn(groupID string) []*logRecord {
 	var out []*logRecord
 
 	for _, rec := range m.logs.SortedValues() {
-		if rec.log.LogGroupID == groupID {
+		if rec.Log.LogGroupID == groupID {
 			out = append(out, rec)
 		}
 	}
@@ -316,8 +318,8 @@ func (m *Mock) storedBytes(groupID string) int64 {
 	var total int64
 
 	for _, rec := range m.logsIn(groupID) {
-		for i := range rec.entries {
-			total += int64(len(rec.entries[i].Data))
+		for i := range rec.Entries {
+			total += int64(len(rec.Entries[i].Data))
 		}
 	}
 
