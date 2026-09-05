@@ -329,6 +329,13 @@ func TestSDKDatabaseAccountConsistencyPolicy(t *testing.T) {
 	require.NotNil(t, def.Properties.ConsistencyPolicy)
 	require.NotNil(t, def.Properties.ConsistencyPolicy.DefaultConsistencyLevel)
 	assert.Equal(t, armcosmos.DefaultConsistencyLevelSession, *def.Properties.ConsistencyPolicy.DefaultConsistencyLevel)
+
+	// Real Azure always returns the staleness bounds on every account, defaulting
+	// to 5s / 100 ops for a non-BoundedStaleness level — not a null value.
+	require.NotNil(t, def.Properties.ConsistencyPolicy.MaxIntervalInSeconds)
+	assert.Equal(t, int32(5), *def.Properties.ConsistencyPolicy.MaxIntervalInSeconds)
+	require.NotNil(t, def.Properties.ConsistencyPolicy.MaxStalenessPrefix)
+	assert.Equal(t, int64(100), *def.Properties.ConsistencyPolicy.MaxStalenessPrefix)
 }
 
 func assertBoundedStaleness(t *testing.T, props *armcosmos.DatabaseAccountGetProperties) {
