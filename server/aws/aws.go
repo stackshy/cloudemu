@@ -21,6 +21,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
 	cloudformationsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudformation"
+	cloudfrontsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudfront"
 	cloudtrailsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
@@ -74,6 +75,7 @@ import (
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	cfnsvc "github.com/stackshy/cloudemu/v2/services/cloudformation"
+	cloudfrontdriver "github.com/stackshy/cloudemu/v2/services/cloudfront/driver"
 	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	configservicedriver "github.com/stackshy/cloudemu/v2/services/configservice/driver"
@@ -181,6 +183,9 @@ type Drivers struct {
 	// CloudFormation serves the CloudFormation query protocol (CreateStack,
 	// DescribeStacks, …) against the stack orchestrator.
 	CloudFormation cfnsvc.API
+	// CloudFront serves the CloudFront REST/XML protocol (2020-05-31) against the
+	// cloudfront driver. It must register before the S3 catch-all.
+	CloudFront cloudfrontdriver.CloudFront
 	// CloudTrail serves the CloudTrail JSON 1.1 protocol (X-Amz-Target prefix
 	// "CloudTrail_20131101.") against the cloudtrail driver.
 	CloudTrail cloudtraildriver.CloudTrail
@@ -345,6 +350,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		APIGateway:          p.APIGateway,
 		APIGatewayV2:        p.APIGatewayV2,
 		CloudFormation:      p.CloudFormation,
+		CloudFront:          p.CloudFront,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -800,6 +806,14 @@ func New(d Drivers) *server.Server {
 	// claim those paths.
 	if d.Route53 != nil {
 		srv.Register(route53.New(d.Route53))
+	}
+
+	// CloudFront is a REST/XML service rooted at /2020-05-31/distribution and
+	// /2020-05-31/tagging — its own path space, disjoint from every other AWS
+	// handler. It must register before S3 because S3 is the permissive REST
+	// fallback that would otherwise claim those paths.
+	if d.CloudFront != nil {
+		srv.Register(cloudfrontsrv.New(d.CloudFront))
 	}
 
 	if d.S3 != nil {
