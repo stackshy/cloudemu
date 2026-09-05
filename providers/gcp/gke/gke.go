@@ -464,7 +464,7 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 	m.clusterSettle.Begin(key, statusProvisioning, now, settleDur)
 
 	op := m.recordOperationAsync("CREATE_CLUSTER", input.Location,
-		"projects/"+m.opts.ProjectID+"/locations/"+input.Location+"/clusters/"+input.Name, now, settleDur)
+		"locations/"+input.Location+"/clusters/"+input.Name, now, settleDur)
 
 	m.emitClusterMetrics(input.Name)
 
@@ -547,6 +547,11 @@ func (m *Mock) ListClusters(_ context.Context, location string) ([]Cluster, erro
 		c.Status = m.clusterState(k, c.Status)
 		out = append(out, c)
 	}
+
+	// Deterministic order: map iteration is random, but real clients (gcloud
+	// container clusters list, SDK pagination, snapshot diffs) expect a stable
+	// listing. Sort by name.
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 
 	return out, nil
 }
@@ -657,7 +662,7 @@ func (m *Mock) DeleteCluster(_ context.Context, location, name string) (*Operati
 	}
 
 	op := m.recordOperation("DELETE_CLUSTER", location,
-		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+name)
+		"locations/"+location+"/clusters/"+name)
 
 	return &op, nil
 }
@@ -730,7 +735,7 @@ func (m *Mock) SetResourceLabels(
 	m.clusters.Set(key, c)
 
 	op := m.recordOperation("SET_LABELS", location,
-		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+name)
+		"locations/"+location+"/clusters/"+name)
 
 	return &op, nil
 }
@@ -767,7 +772,7 @@ func (m *Mock) mutateCluster(
 	m.clusters.Set(key, c)
 
 	op := m.recordOperation("UPDATE_CLUSTER", location,
-		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+name)
+		"locations/"+location+"/clusters/"+name)
 
 	return &op, nil
 }
@@ -807,7 +812,7 @@ func (m *Mock) CreateNodePool(
 	m.clusters.Set(cKey, cluster)
 
 	op := m.recordOperationAsync("CREATE_NODE_POOL", location,
-		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+clusterName+"/nodePools/"+spec.Name, now, settleDur)
+		"locations/"+location+"/clusters/"+clusterName+"/nodePools/"+spec.Name, now, settleDur)
 
 	out := np
 	out.Status = m.nodePoolState(npKey, out.Status)
@@ -858,6 +863,17 @@ func (m *Mock) ListNodePools(_ context.Context, location, clusterName string) ([
 		}
 	}
 
+	// Deterministic order matching real GKE, which lists pools in creation
+	// order (default-pool first, then added pools). Map iteration is random, so
+	// sort by creation time, breaking ties by name.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].CreatedAt.Equal(out[j].CreatedAt) {
+			return out[i].CreatedAt.Before(out[j].CreatedAt)
+		}
+
+		return out[i].Name < out[j].Name
+	})
+
 	return out, nil
 }
 
@@ -906,7 +922,7 @@ func (m *Mock) DeleteNodePool(_ context.Context, location, clusterName, name str
 	}
 
 	op := m.recordOperation("DELETE_NODE_POOL", location,
-		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+clusterName+"/nodePools/"+name)
+		"locations/"+location+"/clusters/"+clusterName+"/nodePools/"+name)
 
 	return &op, nil
 }
@@ -976,7 +992,7 @@ func (m *Mock) mutateNodePool(
 	m.nodePoolSettle.Begin(key, statusReconciling, now, settleDur)
 
 	op := m.recordOperationAsync(opType, location,
-		"projects/"+m.opts.ProjectID+"/locations/"+location+"/clusters/"+clusterName+"/nodePools/"+name, now, settleDur)
+		"locations/"+location+"/clusters/"+clusterName+"/nodePools/"+name, now, settleDur)
 	op.Status = m.opState(op.Name, op.Status)
 
 	return &op, nil
@@ -1028,6 +1044,16 @@ func (m *Mock) ListOperations(_ context.Context, location string) ([]Operation, 
 		op.Status = m.opState(op.Name, op.Status)
 		out = append(out, op)
 	}
+
+	// Deterministic order: oldest first (by start time), breaking ties by name,
+	// so operations.list is stable across identical calls.
+	sort.Slice(out, func(i, j int) bool {
+		if !out[i].StartTime.Equal(out[j].StartTime) {
+			return out[i].StartTime.Before(out[j].StartTime)
+		}
+
+		return out[i].Name < out[j].Name
+	})
 
 	return out, nil
 }
