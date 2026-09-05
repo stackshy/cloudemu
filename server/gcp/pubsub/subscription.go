@@ -135,7 +135,7 @@ func (h *Handler) patchSubscription(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
-	masks := parseMask(req.UpdateMask)
+	masks := maskFromRequest(r, req.UpdateMask)
 	if len(masks) == 0 {
 		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "updateMask must be specified and non-empty")
 		return
