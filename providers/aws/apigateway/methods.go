@@ -111,6 +111,7 @@ func (m *Mock) PutIntegration(
 		IntegrationHTTPMethod: in.IntegrationHTTPMethod,
 		URI:                   in.URI,
 		PassthroughBehavior:   orDefault(in.PassthroughBehavior, "WHEN_NO_MATCH"),
+		TimeoutInMillis:       orDefaultInt(in.TimeoutInMillis, defaultIntegrationTimeoutMillis),
 	}
 	mth.Integration = ig
 

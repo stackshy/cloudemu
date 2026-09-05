@@ -155,6 +155,47 @@ func TestPutGetMethodAndIntegration(t *testing.T) {
 	if ig.URI != lambdaURI {
 		t.Fatalf("unexpected integration uri: %s", ig.URI)
 	}
+
+	// PutIntegration omitted timeoutInMillis, so it defaults to the AWS 29s
+	// value and round-trips through GetIntegration (no Terraform drift).
+	const defaultTimeout = 29000
+	if ig.TimeoutInMillis != defaultTimeout {
+		t.Fatalf("default timeout = %d, want %d", ig.TimeoutInMillis, defaultTimeout)
+	}
+}
+
+// TestPutIntegrationCustomTimeout proves an explicit timeoutInMillis is stored
+// verbatim rather than being overridden by the default.
+func TestPutIntegrationCustomTimeout(t *testing.T) {
+	m := newMock(t)
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "t"})
+	res, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "x")
+
+	if _, err := m.PutMethod(ctx(), api.ID, res.ID, "GET", driver.PutMethodInput{}); err != nil {
+		t.Fatalf("PutMethod: %v", err)
+	}
+
+	const custom = 5000
+
+	ig, err := m.PutIntegration(ctx(), api.ID, res.ID, "GET", driver.PutIntegrationInput{
+		Type: driver.IntegrationMock, TimeoutInMillis: custom,
+	})
+	if err != nil {
+		t.Fatalf("PutIntegration: %v", err)
+	}
+
+	if ig.TimeoutInMillis != custom {
+		t.Fatalf("PutIntegration timeout = %d, want %d", ig.TimeoutInMillis, custom)
+	}
+
+	got, err := m.GetIntegration(ctx(), api.ID, res.ID, "GET")
+	if err != nil {
+		t.Fatalf("GetIntegration: %v", err)
+	}
+
+	if got.TimeoutInMillis != custom {
+		t.Fatalf("GetIntegration timeout = %d, want %d", got.TimeoutInMillis, custom)
+	}
 }
 
 func TestCreateDeploymentAutoCreatesStage(t *testing.T) {

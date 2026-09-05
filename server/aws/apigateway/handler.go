@@ -356,6 +356,7 @@ func (h *Handler) serveIntegration(w http.ResponseWriter, r *http.Request, segs 
 		ig, err := h.ag.PutIntegration(r.Context(), id, resourceID, httpMethod, driver.PutIntegrationInput{
 			Type: req.Type, IntegrationHTTPMethod: req.IntegrationHTTPMethod,
 			URI: req.URI, PassthroughBehavior: req.PassthroughBehavior,
+			TimeoutInMillis: req.TimeoutInMillis,
 		})
 		if err != nil {
 			writeErr(w, err)

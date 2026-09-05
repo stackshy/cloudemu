@@ -34,6 +34,7 @@ type putIntegrationRequest struct {
 	IntegrationHTTPMethod string `json:"integrationHttpMethod"`
 	URI                   string `json:"uri"`
 	PassthroughBehavior   string `json:"passthroughBehavior"`
+	TimeoutInMillis       int    `json:"timeoutInMillis"`
 }
 
 // createDeploymentRequest is the CreateDeployment request body.
@@ -97,6 +98,7 @@ type integrationResponse struct {
 	HTTPMethod          string `json:"httpMethod,omitempty"`
 	URI                 string `json:"uri,omitempty"`
 	PassthroughBehavior string `json:"passthroughBehavior,omitempty"`
+	TimeoutInMillis     int    `json:"timeoutInMillis,omitempty"`
 }
 
 // deploymentResponse is the Deployment wire object.
@@ -169,6 +171,7 @@ func toIntegrationResponse(ig *driver.Integration) integrationResponse {
 	return integrationResponse{
 		Type: ig.Type, HTTPMethod: ig.IntegrationHTTPMethod,
 		URI: ig.URI, PassthroughBehavior: ig.PassthroughBehavior,
+		TimeoutInMillis: ig.TimeoutInMillis,
 	}
 }
 
