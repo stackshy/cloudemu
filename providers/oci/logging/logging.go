@@ -31,6 +31,10 @@ const defaultRetentionDays = 30
 // defaultLogLimit caps a portable read that names no limit.
 const defaultLogLimit = 100
 
+// maxLogLimit is the largest limit a read may ask for. A caller-supplied limit
+// sizes an allocation, so it is bounded rather than trusted.
+const maxLogLimit = 10000
+
 // OCI lifecycle states for log groups and logs.
 const (
 	StateCreating = "CREATING"
@@ -241,17 +245,45 @@ func (m *Mock) compartmentOr(id string) string {
 	return m.opts.CompartmentID
 }
 
-// groupByName resolves a log group by display name. Display names are unique
-// across the mock, which is what lets the portable driver key groups by name.
-// The caller holds mu.
-func (m *Mock) groupByName(name string) (*LogGroup, bool) {
+// groupByName resolves a log group by display name within one compartment.
+// Display names are unique per compartment, as in real OCI. The caller holds mu.
+func (m *Mock) groupByName(compartmentID, name string) (*LogGroup, bool) {
 	for _, g := range m.groups.SortedValues() {
-		if g.DisplayName == name {
+		if g.CompartmentID == compartmentID && g.DisplayName == name {
 			return g, true
 		}
 	}
 
 	return nil, false
+}
+
+// portableGroupByName resolves a log group by display name alone, the only
+// handle the portable driver has. A name held in more than one compartment is
+// ambiguous, so it is rejected rather than resolved arbitrarily. The caller
+// holds mu.
+func (m *Mock) portableGroupByName(name string) (*LogGroup, error) {
+	var found *LogGroup
+
+	for _, g := range m.groups.SortedValues() {
+		if g.DisplayName != name {
+			continue
+		}
+
+		if found != nil {
+			return nil, cerrors.Newf(cerrors.InvalidArgument,
+				"log group %q exists in more than one compartment (%s, %s); "+
+					"address it through the OCI API by OCID",
+				name, found.CompartmentID, g.CompartmentID)
+		}
+
+		found = g
+	}
+
+	if found == nil {
+		return nil, cerrors.Newf(cerrors.NotFound, "log group %q not found", name)
+	}
+
+	return found, nil
 }
 
 // logByName resolves a log by display name within a group. The caller holds mu.

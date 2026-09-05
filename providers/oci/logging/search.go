@@ -125,9 +125,9 @@ func (m *Mock) SearchLogs(_ context.Context, req SearchRequest) (*SearchResult, 
 		return nil, err
 	}
 
-	limit := req.Limit
-	if limit <= 0 {
-		limit = defaultLogLimit
+	limit, err := resolveLimit(req.Limit)
+	if err != nil {
+		return nil, err
 	}
 
 	m.mu.RLock()
