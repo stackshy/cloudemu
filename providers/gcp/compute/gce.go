@@ -659,9 +659,12 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 	id := fmt.Sprintf("projects/%s/zones/%s/disks/disk-%d",
 		m.opts.ProjectID, m.opts.Region, m.volCounter.Add(1))
 
+	// GCP's disks.insert default type when the caller names none is pd-standard
+	// (not pd-ssd); a raw SDK/gcloud disk or a boot disk with no diskType reads
+	// back pd-standard on real GCP.
 	volType := cfg.VolumeType
 	if volType == "" {
-		volType = "pd-ssd"
+		volType = "pd-standard"
 	}
 
 	vol := &driver.VolumeInfo{

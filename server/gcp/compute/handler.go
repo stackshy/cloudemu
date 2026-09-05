@@ -84,7 +84,22 @@ func (*Handler) Matches(r *http.Request) bool {
 		return true
 	}
 
+	// A bare zone/region path (.../zones/{z} or .../regions/{r}, no resource
+	// type) is the zones.get / regions.get endpoint — Terraform resolves the
+	// zone via zones.get before creating an instance.
+	if isScopeResource(&rp) {
+		return true
+	}
+
 	return false
+}
+
+// isScopeResource reports whether rp addresses a zone or region resource
+// itself (".../zones/{z}" / ".../regions/{r}" with no trailing resource type),
+// i.e. the zones.get / regions.get endpoint.
+func isScopeResource(rp *gcprest.ResourcePath) bool {
+	return rp.ResourceType == "" && rp.ResourceName == "" && rp.Action == "" &&
+		rp.ScopeName != "" && (rp.Scope == gcprest.ScopeZones || rp.Scope == gcprest.ScopeRegions)
 }
 
 // ServeHTTP routes the parsed path to the matching operation.
@@ -97,6 +112,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rp.Scope == gcprest.ScopeAggregated {
 		h.serveAggregated(w, r, rp)
+		return
+	}
+
+	if isScopeResource(&rp) {
+		serveScopeResource(w, r, rp)
 		return
 	}
 

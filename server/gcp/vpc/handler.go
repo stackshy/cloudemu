@@ -56,6 +56,7 @@ const (
 	netDescTag          = "cloudemu:gcpNetDesc"
 	netRoutingModeTag   = "cloudemu:gcpNetRoutingMode"
 	netMtuTag           = "cloudemu:gcpNetMtu"
+	netFwOrderTag       = "cloudemu:gcpNetFwOrder"
 	subnetPurposeTag    = "cloudemu:gcpSubnetPurpose"
 	subnetStackTag      = "cloudemu:gcpSubnetStack"
 	subnetPGATag        = "cloudemu:gcpSubnetPGA"
@@ -355,6 +356,10 @@ func networkStorage(req *networkRequest) (cidr string, tags map[string]string) {
 
 	if req.Mtu > 0 {
 		tags[netMtuTag] = strconv.Itoa(int(req.Mtu))
+	}
+
+	if req.NetworkFirewallPolicyEnforcementOrder != "" {
+		tags[netFwOrderTag] = req.NetworkFirewallPolicyEnforcementOrder
 	}
 
 	return cidr, tags
@@ -1330,13 +1335,14 @@ func toNetworkResponse(info *netdriver.VPCInfo, rp gcprest.ResourcePath, host st
 	name := tagOr(info.Tags, netNameTag, info.ID)
 
 	resp := networkResponse{
-		Kind:                  "compute#network",
-		ID:                    numericID(info.ID),
-		Name:                  name,
-		Description:           info.Tags[netDescTag],
-		AutoCreateSubnetworks: info.Tags[autoSubnetTag] == trueValue,
-		CreationTimestamp:     info.Tags[createdAtTag],
-		SelfLink:              gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", name),
+		Kind:                                  "compute#network",
+		ID:                                    numericID(info.ID),
+		Name:                                  name,
+		Description:                           info.Tags[netDescTag],
+		AutoCreateSubnetworks:                 info.Tags[autoSubnetTag] == trueValue,
+		CreationTimestamp:                     info.Tags[createdAtTag],
+		SelfLink:                              gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", name),
+		NetworkFirewallPolicyEnforcementOrder: fwPolicyOrderOr(info.Tags[netFwOrderTag]),
 	}
 
 	if rm := info.Tags[netRoutingModeTag]; rm != "" {
@@ -1357,6 +1363,16 @@ func toNetworkResponse(info *netdriver.VPCInfo, rp gcprest.ResourcePath, host st
 	}
 
 	return resp
+}
+
+// fwPolicyOrderOr returns the stored networkFirewallPolicyEnforcementOrder,
+// defaulting to GCP's AFTER_CLASSIC_FIREWALL when the network did not record one.
+func fwPolicyOrderOr(stored string) string {
+	if stored != "" {
+		return stored
+	}
+
+	return defaultFwPolicyOrder
 }
 
 // lastSegment returns the final path/URL segment (e.g. a network self-link or

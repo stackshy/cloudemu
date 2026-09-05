@@ -286,3 +286,46 @@ func TestSDKFirewallRoundTrip(t *testing.T) {
 		t.Errorf("Delete wait: %v", err)
 	}
 }
+
+// TestSDKNetworkFirewallPolicyEnforcementOrderDefault covers the perpetual-diff
+// finding that networks.get omitted networkFirewallPolicyEnforcementOrder.
+// Terraform's google_compute_network defaults the attribute to
+// AFTER_CLASSIC_FIREWALL, so a network read that omits it drives an endless plan
+// diff wanting to set it. The endpoint must return the default on read.
+func TestSDKNetworkFirewallPolicyEnforcementOrderDefault(t *testing.T) {
+	ts := newGCPNetServer(t)
+	ctx := context.Background()
+
+	client, err := gcpcompute.NewNetworksRESTClient(ctx,
+		option.WithEndpoint(ts.URL), option.WithoutAuthentication(), option.WithHTTPClient(ts.Client()))
+	if err != nil {
+		t.Fatalf("NewNetworksRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = client.Close() })
+
+	insertOp, err := client.Insert(ctx, &computepb.InsertNetworkRequest{
+		Project: testProject,
+		NetworkResource: &computepb.Network{
+			Name:                  ptrStr("fw-order-net"),
+			AutoCreateSubnetworks: func() *bool { b := false; return &b }(),
+		},
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if err := insertOp.Wait(ctx); err != nil {
+		t.Fatalf("Insert wait: %v", err)
+	}
+
+	got, err := client.Get(ctx, &computepb.GetNetworkRequest{Project: testProject, Network: "fw-order-net"})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.GetNetworkFirewallPolicyEnforcementOrder() != "AFTER_CLASSIC_FIREWALL" {
+		t.Errorf("networkFirewallPolicyEnforcementOrder=%q want AFTER_CLASSIC_FIREWALL",
+			got.GetNetworkFirewallPolicyEnforcementOrder())
+	}
+}
