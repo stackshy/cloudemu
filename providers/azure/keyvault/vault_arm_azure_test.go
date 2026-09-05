@@ -117,6 +117,113 @@ func TestCreateVaultKeepsExplicitDefaultOverrides(t *testing.T) {
 	assert.True(t, *got.Properties.EnableRbacAuthorization)
 }
 
+// TestCreateVaultForcesSoftDeleteTrue verifies Azure's mandatory soft-delete:
+// an explicit enableSoftDelete=false on create is overridden to true (real
+// Azure enables soft-delete on every new vault; once on, it cannot be reverted).
+func TestCreateVaultForcesSoftDeleteTrue(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cfg := driver.KVVaultConfig{
+		Name:     "forced",
+		Location: "eastus",
+		Scope:    scope.Scope{Subscription: "sub-1", ResourceGroup: "rg-1"},
+		Properties: driver.KVVaultProperties{
+			TenantID:         "tenant-1",
+			SKU:              driver.KVVaultSKU{Family: "A", Name: "standard"},
+			EnableSoftDelete: boolPtr(false),
+		},
+	}
+
+	created, err := m.CreateOrUpdateVault(ctx, cfg)
+	require.NoError(t, err)
+
+	got, err := m.GetVault(ctx, "forced")
+	require.NoError(t, err)
+
+	for _, v := range []*driver.KVVaultInfo{created, got} {
+		require.NotNil(t, v.Properties.EnableSoftDelete)
+		assert.True(t, *v.Properties.EnableSoftDelete, "explicit enableSoftDelete=false must be forced to true")
+	}
+
+	// A subsequent replace (PUT semantics) that again sets false must not revert.
+	cfg.Properties.EnableSoftDelete = boolPtr(false)
+	_, err = m.CreateOrUpdateVault(ctx, cfg)
+	require.NoError(t, err)
+
+	again, err := m.GetVault(ctx, "forced")
+	require.NoError(t, err)
+	require.NotNil(t, again.Properties.EnableSoftDelete)
+	assert.True(t, *again.Properties.EnableSoftDelete, "soft-delete must never revert to false")
+}
+
+// TestCreateVaultMaterializesSiblingDefaults verifies the enabledForDeployment /
+// enabledForDiskEncryption / enabledForTemplateDeployment flags default to false
+// (present, not absent) when a create body omits them, matching real Azure's GET
+// response and the enableRbacAuthorization default; otherwise an azurerm refresh
+// drifts on the absent fields.
+func TestCreateVaultMaterializesSiblingDefaults(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cfg := driver.KVVaultConfig{
+		Name:     "siblings",
+		Location: "eastus",
+		Scope:    scope.Scope{Subscription: "sub-1", ResourceGroup: "rg-1"},
+		Properties: driver.KVVaultProperties{
+			TenantID: "tenant-1",
+			SKU:      driver.KVVaultSKU{Family: "A", Name: "standard"},
+		},
+	}
+
+	created, err := m.CreateOrUpdateVault(ctx, cfg)
+	require.NoError(t, err)
+
+	got, err := m.GetVault(ctx, "siblings")
+	require.NoError(t, err)
+
+	for _, v := range []*driver.KVVaultInfo{created, got} {
+		require.NotNil(t, v.Properties.EnabledForDeployment)
+		assert.False(t, *v.Properties.EnabledForDeployment)
+		require.NotNil(t, v.Properties.EnabledForDiskEncryption)
+		assert.False(t, *v.Properties.EnabledForDiskEncryption)
+		require.NotNil(t, v.Properties.EnabledForTemplateDeployment)
+		assert.False(t, *v.Properties.EnabledForTemplateDeployment)
+	}
+}
+
+// TestCreateVaultKeepsExplicitSiblingTrue ensures an explicit true on any of the
+// sibling flags is preserved rather than defaulted to false.
+func TestCreateVaultKeepsExplicitSiblingTrue(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cfg := driver.KVVaultConfig{
+		Name:     "sibling-true",
+		Location: "eastus",
+		Scope:    scope.Scope{Subscription: "sub-1", ResourceGroup: "rg-1"},
+		Properties: driver.KVVaultProperties{
+			TenantID:                 "tenant-1",
+			SKU:                      driver.KVVaultSKU{Family: "A", Name: "standard"},
+			EnabledForDeployment:     boolPtr(true),
+			EnabledForDiskEncryption: boolPtr(true),
+		},
+	}
+
+	_, err := m.CreateOrUpdateVault(ctx, cfg)
+	require.NoError(t, err)
+
+	got, err := m.GetVault(ctx, "sibling-true")
+	require.NoError(t, err)
+	require.NotNil(t, got.Properties.EnabledForDeployment)
+	assert.True(t, *got.Properties.EnabledForDeployment)
+	require.NotNil(t, got.Properties.EnabledForDiskEncryption)
+	assert.True(t, *got.Properties.EnabledForDiskEncryption)
+	// The unset third flag still defaults to false.
+	require.NotNil(t, got.Properties.EnabledForTemplateDeployment)
+	assert.False(t, *got.Properties.EnabledForTemplateDeployment)
+}
+
 func TestGetVaultReturnsCopy(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
