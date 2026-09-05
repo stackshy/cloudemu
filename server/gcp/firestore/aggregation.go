@@ -8,7 +8,6 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 )
 
 // runAggregationQueryRequest mirrors google.firestore.v1.RunAggregationQueryRequest:
@@ -126,24 +125,32 @@ func (h *Handler) aggregationMatches(r *http.Request, base string, q *structured
 		return nil, cerrors.New(cerrors.InvalidArgument, perr.Error())
 	}
 
-	p.collection = joinPath(p.parentPath(), q.From[0].CollectionID)
-	p.documentID = ""
-
 	node, ferr := buildFilterNode(q.Where)
 	if ferr != nil {
 		return nil, cerrors.New(cerrors.InvalidArgument, cerrors.Message(ferr))
 	}
 
-	result, err := h.db.Scan(r.Context(), dbdriver.ScanInput{Table: p.tableKey(), Limit: allResults})
-	if err != nil {
-		if cerrors.IsNotFound(err) {
-			return nil, nil
-		}
+	// A collection-group aggregation (allDescendants) counts/sums across every
+	// collection with the given id at any depth, not just the one directly under
+	// the parent; otherwise it scans the single collection under the parent.
+	var (
+		items []map[string]any
+		serr  error
+	)
 
-		return nil, err
+	if q.From[0].AllDescendants {
+		items, serr = h.scanCollectionGroup(r.Context(), p, q.From[0].CollectionID)
+	} else {
+		p.collection = joinPath(p.parentPath(), q.From[0].CollectionID)
+		p.documentID = ""
+		items, serr = h.scanCollectionItems(r.Context(), p.tableKey())
 	}
 
-	matched, merr := filterDocuments(result.Items, node)
+	if serr != nil {
+		return nil, serr
+	}
+
+	matched, merr := filterDocuments(items, node)
 	if merr != nil {
 		return nil, merr
 	}
