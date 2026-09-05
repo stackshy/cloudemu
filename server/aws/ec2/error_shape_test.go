@@ -35,6 +35,8 @@ var leakedPrefixes = []string{ //nolint:gochecknoglobals // shared test fixture
 	"InvalidAttachment.NotFound:",
 	"CannotDelete:",
 	"InvalidNetworkInterface.InUse:",
+	"InvalidSubnet.Range:",
+	"InvalidSubnet.Conflict:",
 }
 
 func apiMessage(t *testing.T, err error) string {

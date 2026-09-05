@@ -125,7 +125,14 @@ func (h *Handler) createRouteTable(w http.ResponseWriter, r *http.Request) {
 
 	rt, err := h.vpc.CreateRouteTable(r.Context(), cfg)
 	if err != nil {
+		// A CreateRouteTable naming a VpcId that doesn't exist is a missing-VPC
+		// error, not a missing-route-table one (the table isn't created yet).
+		if writeInvalidVPCIfMissing(w, err) {
+			return
+		}
+
 		writeRouteTableErr(w, err)
+
 		return
 	}
 
