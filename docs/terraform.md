@@ -90,16 +90,59 @@ provider "google" {
 }
 ```
 
-**Azure** — the `azurerm` provider does not expose a simple per-service endpoint
-override the way AWS and GCP do (its endpoint wiring changes across provider
-major versions), so there is no drop-in block to paste here yet. Run against the
-Azure port (`:4568`) and consult your `azurerm` version's provider-configuration
-docs for the current override mechanism.
+**Azure** — the `azurerm` provider has no per-service endpoint override. Instead
+it resolves every endpoint from an Azure *metadata* document and mints a bearer
+token from an AAD OAuth2 endpoint. CloudEmu serves both, so an **unmodified**
+`azurerm` provider bootstraps against the emulator by pointing
+`ARM_METADATA_HOSTNAME` at the Azure port — the metadata document CloudEmu
+returns references itself, so Resource Manager and token traffic route straight
+back to the emulator.
+
+The `azurerm` provider is a Go binary and verifies TLS with no skip-verify flag,
+so it must trust CloudEmu's cert. Run the Azure port with a cert you generate,
+then hand the same cert to Terraform via `SSL_CERT_FILE` (honored by Go's TLS
+stack on Linux; on macOS run Terraform in a Linux container or add the cert to
+the system keychain):
+
+```sh
+# 1. a cert whose SANs cover the host Terraform dials
+openssl req -x509 -newkey rsa:2048 -nodes -keyout key.pem -out cert.pem -days 2 \
+  -subj "/CN=cloudemu" \
+  -addext "subjectAltName=IP:127.0.0.1,DNS:localhost" \
+  -addext "basicConstraints=critical,CA:TRUE"
+
+# 2. serve Azure with that cert
+cloudemu serve -providers=azure -azure-port 4568 \
+  -tls-cert cert.pem -tls-key key.pem \
+  -azure-subscription 00000000-0000-0000-0000-0000000000ab
+```
+
+```sh
+# 3. Terraform env — any credentials work (CloudEmu never verifies them)
+export ARM_METADATA_HOSTNAME=127.0.0.1:4568
+export ARM_SUBSCRIPTION_ID=00000000-0000-0000-0000-0000000000ab
+export ARM_TENANT_ID=11111111-1111-1111-1111-111111111111
+export ARM_CLIENT_ID=00000000-0000-0000-0000-000000000001
+export ARM_CLIENT_SECRET=any
+export ARM_RESOURCE_PROVIDER_REGISTRATIONS=none
+export SSL_CERT_FILE=$PWD/cert.pem
+```
+
+The config needs only an empty provider block:
+
+```hcl
+provider "azurerm" {
+  features {}
+}
+```
+
+`init → apply → plan(no-diff) → destroy` then runs unmodified — verified with
+`azurerm` v4 against `azurerm_resource_group` and `azurerm_storage_account`.
 
 > AWS is the most exercised surface today, and the only one with an automated
 > idempotency suite. The GCP block above works but is not yet suite-covered, and
-> Azure has no verified Terraform recipe — contributions of fixtures for either
-> are welcome.
+> the Azure recipe above is proven by hand but not yet suite-covered —
+> contributions of fixtures for either are welcome.
 
 ## What's verified
 

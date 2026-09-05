@@ -12,6 +12,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/azure/aad"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
 	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
@@ -257,6 +258,16 @@ func New(d Drivers) http.Handler {
 	// /providers/{namespace}/{resourceType}/... paths owned by the service
 	// handlers, so it does not shadow them.
 	srv.Register(providerssrv.New())
+
+	// AAD bootstrap endpoints so an unmodified Terraform azurerm provider (and
+	// other SDKs resolving a custom cloud via ARM_METADATA_HOSTNAME) can discover
+	// the ARM + login endpoints and obtain a bearer token before any ARM call.
+	// Both live outside /subscriptions/ — an exact /metadata/endpoints match and a
+	// /{tenant}/oauth2/...token suffix match, disjoint from every ARM and blob
+	// data-plane path — so they are registered here, ahead of the permissive blob
+	// fallback, and shadow nothing.
+	srv.Register(aad.NewMetadata())
+	srv.Register(aad.NewToken(tenantID))
 
 	// Management locks (Microsoft.Authorization/locks) attach at any scope,
 	// including a nested .../providers/{ns}/{type}/{name}/providers/Microsoft.

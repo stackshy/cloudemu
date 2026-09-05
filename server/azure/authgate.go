@@ -10,6 +10,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server/authctx"
+	"github.com/stackshy/cloudemu/v2/server/azure/aad"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
@@ -36,6 +37,14 @@ func newAuthGate(clock config.Clock) func(http.ResponseWriter, *http.Request) (*
 	}
 
 	return func(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
+		// The AAD bootstrap endpoints (metadata discovery and the token endpoint)
+		// must be reachable unauthenticated even with EnforceAuth on: a caller
+		// cannot present a bearer token to the endpoint that issues tokens, and
+		// discovery necessarily precedes authentication.
+		if aad.IsBootstrapPath(r.URL.Path) {
+			return r, true
+		}
+
 		token, ok := bearerToken(r)
 		if !ok {
 			writeAuthError(w, "Request is missing a Bearer authentication token")

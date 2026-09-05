@@ -56,6 +56,9 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	},
 
 	// Azure — ARM handlers, routed on HTTP method + resource path shape.
+	"azure/aad": {
+		"GetMetadataEndpoints", "GetToken",
+	},
 	"azure/disks": {
 		"CreateOrUpdate", "Delete", "Get", "GrantAccess", "List", "ListByResourceGroup", "RevokeAccess",
 	},
