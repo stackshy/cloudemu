@@ -25,6 +25,13 @@ type Repository struct {
 	ImageTagMutability string
 	// ScanOnPush reflects the repository's scan-on-push configuration.
 	ScanOnPush bool
+	// EncryptionType is the at-rest encryption mode (AWS ECR): "AES256" (the
+	// default) or "KMS". Real ECR always reports an encryptionConfiguration on
+	// every repository, so the AWS provider populates this for every repository.
+	EncryptionType string
+	// KmsKey is the KMS key ARN backing a KMS-encrypted repository (AWS ECR);
+	// empty for AES256 repositories.
+	KmsKey string
 }
 
 // ImmutableTagsReservedTag is the reserved Repository.Tags key GCP Artifact
@@ -45,6 +52,19 @@ type RepositoryConfig struct {
 	Tags               map[string]string
 	ImageScanOnPush    bool
 	ImageTagMutability string // "MUTABLE" or "IMMUTABLE"
+	// Encryption is the optional at-rest encryption configuration (AWS ECR). Nil
+	// means the provider's default (ECR: AES256). Ignored by providers that do
+	// not model encryption configuration.
+	Encryption *EncryptionConfig
+}
+
+// EncryptionConfig is a repository's at-rest encryption configuration (AWS ECR).
+type EncryptionConfig struct {
+	// Type is the encryption mode: "AES256" (the default when empty), "KMS", or
+	// "KMS_DSSE".
+	Type string
+	// KmsKey is the optional KMS key ARN/id for a KMS-encrypted repository.
+	KmsKey string
 }
 
 // ImageDetail describes a container image.

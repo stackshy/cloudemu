@@ -23,6 +23,10 @@ const (
 	mutableTag         = "MUTABLE"
 	immutableTag       = "IMMUTABLE"
 	scanStatusComplete = "COMPLETE"
+
+	encryptionAES256  = "AES256"
+	encryptionKMS     = "KMS"
+	encryptionKMSDSSE = "KMS_DSSE"
 )
 
 // Compile-time check that Mock implements driver.ContainerRegistry.
@@ -98,6 +102,11 @@ func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig
 	uri := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s", m.opts.AccountID, region, cfg.Name)
 	arn := fmt.Sprintf("arn:aws:ecr:%s:%s:repository/%s", region, m.opts.AccountID, cfg.Name)
 
+	encType, kmsKey, err := resolveEncryption(cfg.Encryption, region, m.opts.AccountID, cfg.Name)
+	if err != nil {
+		return nil, err
+	}
+
 	info := driver.Repository{
 		Name:               cfg.Name,
 		URI:                uri,
@@ -108,6 +117,8 @@ func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig
 		RegistryID:         m.opts.AccountID,
 		ImageTagMutability: mutability,
 		ScanOnPush:         cfg.ImageScanOnPush,
+		EncryptionType:     encType,
+		KmsKey:             kmsKey,
 	}
 
 	rd := &repoData{
@@ -123,6 +134,54 @@ func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig
 	result := info
 
 	return &result, nil
+}
+
+// resolveEncryption validates and resolves a repository's encryption
+// configuration, matching AWS ECR defaults: an omitted encryptionType defaults
+// to AES256, and a KMS repository created without an explicit key is backed by
+// the account's default AWS-managed ECR key, whose ARN ECR then reports. Real
+// ECR always surfaces an encryptionConfiguration on every repository, so a
+// non-empty encryptionType is always returned.
+func resolveEncryption(enc *driver.EncryptionConfig, region, accountID, repo string) (encType, kmsKey string, err error) {
+	var (
+		reqType string
+		reqKey  string
+	)
+
+	if enc != nil {
+		reqType = enc.Type
+		reqKey = enc.KmsKey
+	}
+
+	switch reqType {
+	case "", encryptionAES256:
+		if reqKey != "" {
+			return "", "", errors.New(errors.InvalidArgument,
+				"kmsKey should not be specified with AES256 encryption")
+		}
+
+		return encryptionAES256, "", nil
+	case encryptionKMS, encryptionKMSDSSE:
+		if reqKey != "" {
+			return reqType, reqKey, nil
+		}
+
+		return reqType, defaultKMSKeyARN(region, accountID, repo), nil
+	default:
+		return "", "", errors.Newf(errors.InvalidArgument,
+			"invalid encryptionType %q; expected AES256, KMS, or KMS_DSSE", reqType)
+	}
+}
+
+// defaultKMSKeyARN synthesizes a stable ARN for the AWS-managed ECR key that
+// backs a KMS repository created without an explicit key. It is derived from the
+// repository name so every DescribeRepositories read reports the same value
+// (matching real ECR, which returns the resolved CMK ARN).
+func defaultKMSKeyARN(region, accountID, repo string) string {
+	sum := sha256.Sum256([]byte(region + accountID + repo))
+	id := fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
+
+	return fmt.Sprintf("arn:aws:kms:%s:%s:key/%s", region, accountID, id)
 }
 
 // PutImageTagMutability updates a repository's image tag mutability setting.

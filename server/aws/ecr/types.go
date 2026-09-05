@@ -15,6 +15,15 @@ type imageScanningConfigJSON struct {
 	ScanOnPush bool `json:"scanOnPush"`
 }
 
+// encryptionConfigJSON mirrors ECR's EncryptionConfiguration object. Real ECR
+// reports an encryptionConfiguration on every repository (default AES256), and
+// Terraform's aws_ecr_repository reads it back on every refresh — omitting it
+// makes an explicit encryption_configuration block drift and force replacement.
+type encryptionConfigJSON struct {
+	EncryptionType string `json:"encryptionType"`
+	KmsKey         string `json:"kmsKey,omitempty"`
+}
+
 type repositoryJSON struct {
 	RepositoryArn              string                   `json:"repositoryArn,omitempty"`
 	RepositoryName             string                   `json:"repositoryName"`
@@ -23,6 +32,7 @@ type repositoryJSON struct {
 	CreatedAt                  float64                  `json:"createdAt,omitempty"`
 	ImageTagMutability         string                   `json:"imageTagMutability,omitempty"`
 	ImageScanningConfiguration *imageScanningConfigJSON `json:"imageScanningConfiguration,omitempty"`
+	EncryptionConfiguration    *encryptionConfigJSON    `json:"encryptionConfiguration,omitempty"`
 }
 
 type imageIDJSON struct {
@@ -68,6 +78,7 @@ type createRepositoryRequest struct {
 	Tags                       []tagJSON               `json:"tags"`
 	ImageScanningConfiguration imageScanningConfigJSON `json:"imageScanningConfiguration"`
 	ImageTagMutability         string                  `json:"imageTagMutability"`
+	EncryptionConfiguration    *encryptionConfigJSON   `json:"encryptionConfiguration"`
 }
 
 type describeRepositoriesRequest struct {
@@ -169,7 +180,21 @@ func toRepositoryJSON(r *crdriver.Repository) repositoryJSON {
 		CreatedAt:                  epochSeconds(r.CreatedAt),
 		ImageTagMutability:         r.ImageTagMutability,
 		ImageScanningConfiguration: &imageScanningConfigJSON{ScanOnPush: r.ScanOnPush},
+		EncryptionConfiguration:    toEncryptionConfigJSON(r),
 	}
+}
+
+// toEncryptionConfigJSON renders a repository's encryption configuration. Real
+// ECR always reports one, defaulting to AES256 for repositories created before
+// the field was modeled, so a repository with no stored type is reported as
+// AES256 rather than omitted.
+func toEncryptionConfigJSON(r *crdriver.Repository) *encryptionConfigJSON {
+	encType := r.EncryptionType
+	if encType == "" {
+		encType = "AES256"
+	}
+
+	return &encryptionConfigJSON{EncryptionType: encType, KmsKey: r.KmsKey}
 }
 
 func toImageDetailJSON(d *crdriver.ImageDetail) imageDetailJSON {

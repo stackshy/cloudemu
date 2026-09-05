@@ -107,6 +107,88 @@ func TestCreateRepository(t *testing.T) {
 	}
 }
 
+func TestCreateRepositoryEncryption(t *testing.T) {
+	tests := []struct {
+		name       string
+		cfg        driver.RepositoryConfig
+		wantType   string
+		wantKeySet bool
+		expectErr  bool
+	}{
+		{
+			name:     "default is AES256",
+			cfg:      driver.RepositoryConfig{Name: "enc-default"},
+			wantType: "AES256",
+		},
+		{
+			name:     "explicit AES256",
+			cfg:      driver.RepositoryConfig{Name: "enc-aes", Encryption: &driver.EncryptionConfig{Type: "AES256"}},
+			wantType: "AES256",
+		},
+		{
+			name:       "KMS without key synthesizes a key ARN",
+			cfg:        driver.RepositoryConfig{Name: "enc-kms", Encryption: &driver.EncryptionConfig{Type: "KMS"}},
+			wantType:   "KMS",
+			wantKeySet: true,
+		},
+		{
+			name: "KMS with explicit key echoes it",
+			cfg: driver.RepositoryConfig{
+				Name:       "enc-kms-key",
+				Encryption: &driver.EncryptionConfig{Type: "KMS", KmsKey: "arn:aws:kms:us-east-1:123:key/abc"},
+			},
+			wantType:   "KMS",
+			wantKeySet: true,
+		},
+		{
+			name: "AES256 with a key is rejected",
+			cfg: driver.RepositoryConfig{
+				Name:       "bad-aes",
+				Encryption: &driver.EncryptionConfig{Type: "AES256", KmsKey: "arn:aws:kms:x"},
+			},
+			expectErr: true,
+		},
+		{
+			name:      "invalid encryption type is rejected",
+			cfg:       driver.RepositoryConfig{Name: "bad-type", Encryption: &driver.EncryptionConfig{Type: "ROT13"}},
+			expectErr: true,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			m, _ := newTestMock()
+
+			repo, err := m.CreateRepository(context.Background(), tc.cfg)
+			if tc.expectErr {
+				require.Error(t, err)
+				assert.True(t, cerrors.IsInvalidArgument(err), "want InvalidArgument, got %v", err)
+
+				return
+			}
+
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantType, repo.EncryptionType)
+
+			if tc.wantKeySet {
+				assert.NotEmpty(t, repo.KmsKey)
+			} else {
+				assert.Empty(t, repo.KmsKey)
+			}
+
+			if tc.cfg.Encryption != nil && tc.cfg.Encryption.KmsKey != "" {
+				assert.Equal(t, tc.cfg.Encryption.KmsKey, repo.KmsKey)
+			}
+
+			// The value must survive a read.
+			got, err := m.GetRepository(context.Background(), tc.cfg.Name)
+			require.NoError(t, err)
+			assert.Equal(t, repo.EncryptionType, got.EncryptionType)
+			assert.Equal(t, repo.KmsKey, got.KmsKey)
+		})
+	}
+}
+
 func TestDeleteRepository(t *testing.T) {
 	tests := []struct {
 		name      string
