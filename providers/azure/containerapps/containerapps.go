@@ -40,6 +40,12 @@ const (
 	// synthesized domain label, revision suffix and static IP, so those minted
 	// values are stable per resource yet distinct between resources.
 	shortHashLen = 8
+
+	// Azure server-side defaults a create/update omits, applied so a read-back
+	// matches real Azure instead of reporting empty/nil.
+	defaultActiveRevMode = "Single" // configuration.activeRevisionsMode
+	defaultTransport     = "auto"   // configuration.ingress.transport
+	defaultMaxReplicas   = 10       // template.scale.maxReplicas
 )
 
 // AppLogsConfiguration mirrors the managed environment's log-export setting.
@@ -294,7 +300,8 @@ func (m *Mock) CreateOrUpdateApp(
 	app.Ingress = cloneIngress(in.Ingress)
 	app.SecretNames = append([]string(nil), in.SecretNames...)
 	app.Template = cloneTemplate(in.Template)
-	app.Fqdn = m.appFqdnLocked(name, in.EnvironmentID, in.Ingress)
+	applyAppDefaults(&app)
+	app.Fqdn = m.appFqdnLocked(name, in.EnvironmentID, app.Ingress)
 
 	if err := m.materializeRevisionLocked(&app); err != nil {
 		return ContainerApp{}, false, err
@@ -504,6 +511,36 @@ func staticIP(h string) string {
 	}
 
 	return "20." + strings.Join(octets, ".")
+}
+
+// applyAppDefaults fills the Azure server-side defaults a create/update omits, so
+// a read-back (GET/LIST/discover) matches real Azure: configuration.
+// activeRevisionsMode defaults to Single, an ingress's transport defaults to auto,
+// and a template with containers gets scale.maxReplicas 10. Applied before the
+// revision is materialized so the defaults are part of the content-addressed
+// template and survive a create -> discover round trip. app.Ingress/app.Template
+// are already deep-cloned copies, so mutating them here is safe.
+func applyAppDefaults(app *ContainerApp) {
+	if app.ActiveRevMode == "" {
+		app.ActiveRevMode = defaultActiveRevMode
+	}
+
+	if app.Ingress != nil && app.Ingress.Transport == "" {
+		app.Ingress.Transport = defaultTransport
+	}
+
+	if len(app.Template.Containers) == 0 {
+		return
+	}
+
+	if app.Template.Scale == nil {
+		app.Template.Scale = &Scale{}
+	}
+
+	if app.Template.Scale.MaxReplicas == nil {
+		v := int32(defaultMaxReplicas)
+		app.Template.Scale.MaxReplicas = &v
+	}
 }
 
 func cloneAppLogs(in *AppLogsConfiguration) *AppLogsConfiguration {

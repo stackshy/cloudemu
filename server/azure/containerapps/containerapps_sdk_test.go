@@ -382,6 +382,73 @@ func TestSDKContainerAppRevisions(t *testing.T) {
 	assertRevisionErrors(t, ctx, revClient)
 }
 
+// TestSDKContainerAppDefaults proves a minimal create that omits
+// activeRevisionsMode, ingress.transport and scale.maxReplicas reads back the
+// Azure server-side defaults (Single / auto / 10) rather than empty values, so
+// an SDK or CLI user that leaves them unset does not drift against real Azure.
+func TestSDKContainerAppDefaults(t *testing.T) {
+	ts := newServer(t)
+	ctx := context.Background()
+
+	envClient, err := armappcontainers.NewManagedEnvironmentsClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewManagedEnvironmentsClient: %v", err)
+	}
+
+	envID := createEnvironment(t, ctx, envClient)
+
+	appClient, err := armappcontainers.NewContainerAppsClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewContainerAppsClient: %v", err)
+	}
+
+	poller, err := appClient.BeginCreateOrUpdate(ctx, rgName, "minimal", armappcontainers.ContainerApp{
+		Location: to.Ptr("eastus"),
+		Properties: &armappcontainers.ContainerAppProperties{
+			EnvironmentID: to.Ptr(envID),
+			Configuration: &armappcontainers.Configuration{
+				Ingress: &armappcontainers.Ingress{External: to.Ptr(true), TargetPort: to.Ptr[int32](80)},
+			},
+			Template: &armappcontainers.Template{
+				Containers: []*armappcontainers.Container{{Name: to.Ptr("main"), Image: to.Ptr("nginx")}},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate minimal app: %v", err)
+	}
+
+	if _, err = poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("poll minimal app create: %v", err)
+	}
+
+	got, err := appClient.Get(ctx, rgName, "minimal", nil)
+	if err != nil {
+		t.Fatalf("Get minimal app: %v", err)
+	}
+
+	assertAppDefaults(t, got.Properties)
+}
+
+func assertAppDefaults(t *testing.T, p *armappcontainers.ContainerAppProperties) {
+	t.Helper()
+
+	if p == nil || p.Configuration == nil || p.Configuration.ActiveRevisionsMode == nil ||
+		*p.Configuration.ActiveRevisionsMode != armappcontainers.ActiveRevisionsModeSingle {
+		t.Fatalf("activeRevisionsMode = %v, want Single", p)
+	}
+
+	if p.Configuration.Ingress == nil || p.Configuration.Ingress.Transport == nil ||
+		*p.Configuration.Ingress.Transport != armappcontainers.IngressTransportMethodAuto {
+		t.Fatalf("ingress.transport = %v, want auto", p.Configuration.Ingress)
+	}
+
+	if p.Template == nil || p.Template.Scale == nil || p.Template.Scale.MaxReplicas == nil ||
+		*p.Template.Scale.MaxReplicas != 10 {
+		t.Fatalf("scale.maxReplicas = %v, want 10", p.Template)
+	}
+}
+
 func seedRevisionEnv(t *testing.T, ctx context.Context, ts *httptest.Server) string {
 	t.Helper()
 
