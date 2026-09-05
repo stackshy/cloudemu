@@ -2,13 +2,93 @@ package s3_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
+	"github.com/aws/smithy-go"
 )
+
+// TestSDKBucketEncryptionDefaultAES256 covers the real-S3 behavior (since
+// January 2023) that every bucket has default encryption: GetBucketEncryption on
+// a bucket with no explicit configuration returns the SSE-S3 (AES256) base rule
+// with bucket keys disabled, NOT ServerSideEncryptionConfigurationNotFoundError.
+// Returning the old error caused perpetual Terraform drift on buckets with no
+// customer-defined encryption.
+func TestSDKBucketEncryptionDefaultAES256(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	const bucket = "enc-default-bucket"
+	mustCreateBucket(t, client, bucket)
+
+	got, err := client.GetBucketEncryption(ctx, &awss3.GetBucketEncryptionInput{Bucket: aws.String(bucket)})
+	if err != nil {
+		t.Fatalf("GetBucketEncryption on a fresh bucket: %v", err)
+	}
+
+	if got.ServerSideEncryptionConfiguration == nil || len(got.ServerSideEncryptionConfiguration.Rules) != 1 {
+		t.Fatalf("default encryption config = %+v, want 1 rule", got.ServerSideEncryptionConfiguration)
+	}
+
+	rule := got.ServerSideEncryptionConfiguration.Rules[0]
+	if rule.ApplyServerSideEncryptionByDefault == nil ||
+		rule.ApplyServerSideEncryptionByDefault.SSEAlgorithm != types.ServerSideEncryptionAes256 {
+		t.Fatalf("default SSEAlgorithm = %+v, want AES256", rule.ApplyServerSideEncryptionByDefault)
+	}
+
+	if aws.ToBool(rule.BucketKeyEnabled) {
+		t.Fatal("default BucketKeyEnabled = true, want false")
+	}
+}
+
+// TestSDKBucketTaggingNoSuchTagSet covers the real-S3 special error: a bucket
+// with no tags configured answers GetBucketTagging with 404 NoSuchTagSet, not an
+// empty <TagSet/> with 200. It also confirms the error returns again after the
+// tag set is deleted.
+func TestSDKBucketTaggingNoSuchTagSet(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	const bucket = "tag-absent-bucket"
+	mustCreateBucket(t, client, bucket)
+
+	assertNoSuchTagSet := func(when string) {
+		t.Helper()
+
+		_, err := client.GetBucketTagging(ctx, &awss3.GetBucketTaggingInput{Bucket: aws.String(bucket)})
+		if err == nil {
+			t.Fatalf("GetBucketTagging %s: expected NoSuchTagSet, got nil", when)
+		}
+
+		var apiErr smithy.APIError
+		if !errors.As(err, &apiErr) {
+			t.Fatalf("GetBucketTagging %s error = %T %v, want smithy.APIError", when, err, err)
+		}
+
+		if apiErr.ErrorCode() != "NoSuchTagSet" {
+			t.Fatalf("GetBucketTagging %s code = %q, want NoSuchTagSet", when, apiErr.ErrorCode())
+		}
+	}
+
+	assertNoSuchTagSet("on a fresh bucket")
+
+	if _, err := client.PutBucketTagging(ctx, &awss3.PutBucketTaggingInput{
+		Bucket:  aws.String(bucket),
+		Tagging: &types.Tagging{TagSet: []types.Tag{{Key: aws.String("env"), Value: aws.String("prod")}}},
+	}); err != nil {
+		t.Fatalf("PutBucketTagging: %v", err)
+	}
+
+	if _, err := client.DeleteBucketTagging(ctx, &awss3.DeleteBucketTaggingInput{Bucket: aws.String(bucket)}); err != nil {
+		t.Fatalf("DeleteBucketTagging: %v", err)
+	}
+
+	assertNoSuchTagSet("after DeleteBucketTagging")
+}
 
 // TestSDKBucketPolicyRoundTrip covers the config-persistence gap for
 // PutBucketPolicy: the JSON document must read back byte-for-byte (previously a
