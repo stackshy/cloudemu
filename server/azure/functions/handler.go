@@ -331,6 +331,9 @@ func (h *Handler) upsertSiteMeta(
 		HTTPSOnly:      req.Properties.HTTPSOnly,
 		Reserved:       req.Properties.Reserved,
 		LinuxFxVersion: req.Properties.SiteConfig.LinuxFxVersion,
+		AlwaysOn:       req.Properties.SiteConfig.AlwaysOn,
+		FtpsState:      req.Properties.SiteConfig.FtpsState,
+		MinTLSVersion:  req.Properties.SiteConfig.MinTLSVersion,
 		Identity:       toSiteMetaIdentity(req.Identity),
 		AppSettings:    appSettingsToMap(settings),
 	})
@@ -444,6 +447,9 @@ func (h *Handler) patchSiteMeta(
 
 		if req.Properties.SiteConfig != nil {
 			patch.LinuxFxVersion = req.Properties.SiteConfig.LinuxFxVersion
+			patch.AlwaysOn = req.Properties.SiteConfig.AlwaysOn
+			patch.FtpsState = req.Properties.SiteConfig.FtpsState
+			patch.MinTLSVersion = req.Properties.SiteConfig.MinTLSVersion
 		}
 	}
 
@@ -916,12 +922,19 @@ func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, meta *azf
 
 	var identity *siteIdentity
 
+	var alwaysOn *bool
+
+	var ftpsState, minTLSVersion string
+
 	if meta != nil {
 		location = meta.Location
 		provisioningState = meta.ProvisioningState
 		serverFarmID = meta.ServerFarmID
 		httpsOnly = meta.HTTPSOnly
 		reserved = meta.Reserved
+		alwaysOn = meta.AlwaysOn
+		ftpsState = meta.FtpsState
+		minTLSVersion = meta.MinTLSVersion
 		identity = fromSiteMetaIdentity(meta.Identity)
 
 		if meta.Kind != "" {
@@ -957,6 +970,9 @@ func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, meta *azf
 			// GET. The values are read only via config/appsettings/list.
 			SiteConfig: siteConfig{
 				LinuxFxVersion: info.Runtime,
+				AlwaysOn:       alwaysOn,
+				FtpsState:      ftpsState,
+				MinTLSVersion:  minTLSVersion,
 			},
 			ServerFarmID:        serverFarmID,
 			HTTPSOnly:           httpsOnly,
