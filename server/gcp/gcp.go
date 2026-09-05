@@ -416,6 +416,14 @@ func New(d Drivers) *server.Server {
 	srv.Register(resourcemanager.New())
 
 	if d.Firestore != nil {
+		// The Firestore Admin API (projects.databases[.collectionGroups.indexes])
+		// registers BEFORE the document data-plane handler: the data-plane's
+		// Matches greedily claims every /v1/projects/ path, while the admin
+		// handler's Matches claims only the databases/indexes/operations shapes
+		// and defers .../documents to the data plane. First-match-wins keeps the
+		// two disjoint on one server (google_firestore_database provisions via the
+		// admin handler; app document reads/writes hit the data plane).
+		srv.Register(firestore.NewAdmin())
 		srv.Register(firestore.New(d.Firestore))
 	}
 
