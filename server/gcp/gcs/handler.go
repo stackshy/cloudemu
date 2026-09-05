@@ -366,8 +366,8 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 		_ = h.bucket.PutBucketTagging(r.Context(), body.Name, body.Labels)
 	}
 
-	if body.Versioning != nil && body.Versioning.Enabled {
-		_ = h.bucket.SetBucketVersioning(r.Context(), body.Name, true)
+	if body.Versioning != nil {
+		_ = h.bucket.SetBucketVersioning(r.Context(), body.Name, body.Versioning.Enabled)
 	}
 
 	if h.ext != nil {
@@ -376,6 +376,10 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request) {
 
 	if body.Lifecycle != nil {
 		_ = h.putLifecycle(r.Context(), body.Name, body.Lifecycle)
+	}
+
+	if body.Cors != nil {
+		_ = h.putCORS(r.Context(), body.Name, body.Cors)
 	}
 
 	_ = h.applyIAMConfig(r.Context(), body.Name, body.IamConfiguration)
@@ -439,8 +443,8 @@ func (h *Handler) bucketView(r *http.Request, name, created string) bucketResour
 		IamConfiguration: h.iamConfigView(r.Context(), name),
 	}
 
-	if enabled, err := h.bucket.GetBucketVersioning(r.Context(), name); err == nil && enabled {
-		res.Versioning = &bucketVersioning{Enabled: true}
+	if v := h.versioningView(r.Context(), name); v != nil {
+		res.Versioning = v
 	}
 
 	if labels, err := h.bucket.GetBucketTagging(r.Context(), name); err == nil && len(labels) > 0 {
@@ -453,6 +457,10 @@ func (h *Handler) bucketView(r *http.Request, name, created string) bucketResour
 
 	if rp := h.retentionView(r.Context(), name); rp != nil {
 		res.RetentionPolicy = rp
+	}
+
+	if cors := h.corsView(r.Context(), name); cors != nil {
+		res.Cors = cors
 	}
 
 	return res
@@ -494,6 +502,28 @@ func (h *Handler) resolveBucketAttrs(
 	return location, storageClass, metageneration, updated
 }
 
+// versioningView renders the bucket's versioning sub-resource, or nil when it
+// should be omitted. Real GCS omits versioning entirely for a bucket that has
+// never had it configured, but returns {enabled:false} once it has been
+// disabled — so a Terraform `versioning { enabled = false }` block does not
+// perpetually diff. The GCSExtensions capability tracks the "ever set" bit; the
+// fallback path (no capability) can only emit when versioning is enabled.
+func (h *Handler) versioningView(ctx context.Context, name string) *bucketVersioning {
+	if h.ext != nil {
+		if attrs, err := h.ext.BucketAttrsGCS(ctx, name); err == nil && attrs.VersioningSet {
+			return &bucketVersioning{Enabled: attrs.Versioning}
+		}
+
+		return nil
+	}
+
+	if enabled, err := h.bucket.GetBucketVersioning(ctx, name); err == nil && enabled {
+		return &bucketVersioning{Enabled: true}
+	}
+
+	return nil
+}
+
 // locationType classifies a GCS location as a multi-region or a region, which
 // real GCS reports in the locationType field.
 func locationType(location string) string {
@@ -505,17 +535,29 @@ func locationType(location string) string {
 	}
 }
 
-// patchBucket applies a bucket configuration update (versioning + labels),
-// which real clients set via Buckets.Patch/Update. Without this the driver's
-// versioning/label capabilities are unreachable over the wire.
+// patchBucket applies a bucket configuration update (versioning, labels,
+// lifecycle, IAM config, retention, CORS), which real clients set via
+// Buckets.Patch/Update. Without this the driver's mutable capabilities are
+// unreachable over the wire.
 func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name string) {
+	raw, ok := readBody(w, r)
+	if !ok {
+		return
+	}
+
 	var body bucketResource
-	if !decodeJSON(w, r, &body) {
+	if err := json.Unmarshal(raw, &body); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", err.Error())
 		return
 	}
 
 	if err := h.checkBucketMetagenerationPrecondition(r, name); err != nil {
 		writePreconditionOrErr(w, err)
+		return
+	}
+
+	if err := h.applyLabelPatch(r.Context(), name, raw); err != nil {
+		writeErr(w, err)
 		return
 	}
 
@@ -533,6 +575,57 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 	}
 
 	writeJSON(w, http.StatusOK, h.bucketView(r, name, ""))
+}
+
+// applyLabelPatch merges the labels field of a Buckets.patch body into the
+// bucket's existing labels using GCS merge-patch semantics: a key mapped to a
+// value is set/overwritten, a key mapped to JSON null is removed, and keys not
+// present in the patch are left untouched. The labels field is decoded from the
+// raw body separately (map[string]*string) so a null value is distinguishable
+// from an empty string — the SDK/Terraform delete a label by sending null.
+func (h *Handler) applyLabelPatch(ctx context.Context, name string, raw []byte) error {
+	var patch struct {
+		Labels map[string]*string `json:"labels"`
+	}
+
+	if err := json.Unmarshal(raw, &patch); err != nil {
+		return err
+	}
+
+	if patch.Labels == nil {
+		return nil
+	}
+
+	merged := map[string]string{}
+
+	if existing, err := h.bucket.GetBucketTagging(ctx, name); err == nil {
+		for k, v := range existing {
+			merged[k] = v
+		}
+	}
+
+	for k, v := range patch.Labels {
+		if v == nil {
+			delete(merged, k)
+			continue
+		}
+
+		merged[k] = *v
+	}
+
+	return h.bucket.PutBucketTagging(ctx, name, merged)
+}
+
+// readBody reads and returns the request body (bounded), writing a 400 and
+// returning ok=false on a read error.
+func readBody(w http.ResponseWriter, r *http.Request) ([]byte, bool) {
+	raw, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxPutBodyBytes))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid", "could not read body")
+		return nil, false
+	}
+
+	return raw, true
 }
 
 // checkBucketMetagenerationPrecondition evaluates the Buckets.patch/update
@@ -584,10 +677,12 @@ func (h *Handler) bucketMetageneration(ctx context.Context, name string) int64 {
 }
 
 // applyBucketConfig applies the mutable configuration fields present in a
-// Buckets.patch/update body (versioning, labels, lifecycle, iamConfiguration,
-// retentionPolicy), each only when supplied. It returns the first error
-// encountered. Each field is guarded by a small closure so adding another
-// configuration field does not raise the function's cyclomatic complexity.
+// Buckets.patch/update body (versioning, lifecycle, iamConfiguration,
+// retentionPolicy, cors), each only when supplied. Labels are handled
+// separately by applyLabelPatch (merge-patch with null-delete). It returns the
+// first error encountered. Each field is guarded by a small closure so adding
+// another configuration field does not raise the function's cyclomatic
+// complexity.
 func (h *Handler) applyBucketConfig(ctx context.Context, name string, body *bucketResource) error {
 	appliers := []func() error{
 		func() error {
@@ -596,13 +691,6 @@ func (h *Handler) applyBucketConfig(ctx context.Context, name string, body *buck
 			}
 
 			return h.bucket.SetBucketVersioning(ctx, name, body.Versioning.Enabled)
-		},
-		func() error {
-			if body.Labels == nil {
-				return nil
-			}
-
-			return h.bucket.PutBucketTagging(ctx, name, body.Labels)
 		},
 		func() error {
 			if body.Lifecycle == nil {
@@ -624,6 +712,13 @@ func (h *Handler) applyBucketConfig(ctx context.Context, name string, body *buck
 			}
 
 			return h.applyRetention(ctx, name, body.RetentionPolicy)
+		},
+		func() error {
+			if body.Cors == nil {
+				return nil
+			}
+
+			return h.putCORS(ctx, name, body.Cors)
 		},
 	}
 
