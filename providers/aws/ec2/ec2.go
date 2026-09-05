@@ -74,6 +74,17 @@ const (
 	// defaultVolumeType is the EBS volume type used for a launch-materialized
 	// volume that names none (matching the CreateVolume default).
 	defaultVolumeType = "gp3"
+
+	// EBS performance defaults real AWS reports for a volume created without
+	// explicit provisioning. gp3 baselines at 3000 IOPS / 125 MiB/s; gp2 derives
+	// its IOPS from size at 3 IOPS/GiB, floored at 100 and capped at 16000. SDK
+	// clients and terraform read these back, so a created volume must carry them.
+	volumeTypeGP2        = "gp2"
+	gp3DefaultIOPS       = 3000
+	gp3DefaultThroughput = 125
+	gp2IOPSPerGiB        = 3
+	gp2MinIOPS           = 100
+	gp2MaxIOPS           = 16000
 	// rsaKeyBits is the modulus size for generated RSA key pairs.
 	rsaKeyBits = 2048
 	// keyTypeRSA / keyTypeEd25519 are the two key-pair algorithms the mock
@@ -781,6 +792,8 @@ func (m *Mock) materializeInstanceVolumes(cfg driver.InstanceConfig, instanceID 
 func (m *Mock) createAttachedVolume(instanceID, device, volType string, size int, deleteOnTermination bool, az, now string) {
 	id := fmt.Sprintf("vol-%012d", m.volCounter.Add(1))
 
+	iops, throughput := ebsPerformanceDefaults(volType, size, 0, 0)
+
 	m.volumes.Set(id, &driver.VolumeInfo{
 		ID:                  id,
 		Size:                size,
@@ -791,6 +804,8 @@ func (m *Mock) createAttachedVolume(instanceID, device, volType string, size int
 		Device:              device,
 		CreatedAt:           now,
 		DeleteOnTermination: deleteOnTermination,
+		IOPS:                iops,
+		Throughput:          throughput,
 	})
 }
 
@@ -1574,6 +1589,40 @@ func (m *Mock) SetManagedResourceVisibility(v string) error {
 	return nil
 }
 
+// ebsPerformanceDefaults returns the IOPS and throughput a volume of the given
+// type and size reports when the caller provisioned none, matching real AWS: gp3
+// baselines at 3000 IOPS / 125 MiB/s, gp2 derives IOPS from size (3/GiB, clamped
+// to [100,16000]) and has no throughput field. Explicitly provisioned values are
+// preserved. Other types (io1/io2 require a user-supplied IOPS; st1/sc1/standard
+// have none) pass through unchanged.
+func ebsPerformanceDefaults(volType string, size, iops, throughput int) (resolvedIOPS, resolvedThroughput int) {
+	switch volType {
+	case defaultVolumeType: // gp3
+		if iops == 0 {
+			iops = gp3DefaultIOPS
+		}
+
+		if throughput == 0 {
+			throughput = gp3DefaultThroughput
+		}
+	case volumeTypeGP2:
+		if iops == 0 {
+			iops = size * gp2IOPSPerGiB
+			if iops < gp2MinIOPS {
+				iops = gp2MinIOPS
+			}
+
+			if iops > gp2MaxIOPS {
+				iops = gp2MaxIOPS
+			}
+		}
+
+		throughput = 0
+	}
+
+	return iops, throughput
+}
+
 // CreateVolume creates a new EBS volume.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
@@ -1584,6 +1633,8 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 	if volType == "" {
 		volType = "gp3"
 	}
+
+	iops, throughput := ebsPerformanceDefaults(volType, cfg.Size, cfg.IOPS, cfg.Throughput)
 
 	az := cfg.AvailabilityZone
 	if az == "" {
@@ -1603,8 +1654,8 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 		AvailabilityZone: az,
 		CreatedAt:        m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
 		Tags:             copyTags(cfg.Tags),
-		IOPS:             cfg.IOPS,
-		Throughput:       cfg.Throughput,
+		IOPS:             iops,
+		Throughput:       throughput,
 		Tier:             cfg.Tier,
 		Encrypted:        cfg.Encrypted,
 		SnapshotID:       cfg.SnapshotID,

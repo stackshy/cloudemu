@@ -994,6 +994,76 @@ func TestImportKeyPairEd25519Fingerprint(t *testing.T) {
 	}
 }
 
+// TestCreateVolumePerformanceDefaults pins the IOPS/throughput real AWS reports
+// for a volume created without explicit provisioning: gp3 baselines at 3000 IOPS
+// / 125 MiB/s, gp2 derives IOPS from size (3/GiB, clamped) and has no throughput,
+// and explicitly provisioned values override the defaults. SDK/terraform read
+// these back, so a missing default shows up as spurious drift.
+func TestCreateVolumePerformanceDefaults(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	cases := []struct {
+		name           string
+		cfg            driver.VolumeConfig
+		wantIOPS       int
+		wantThroughput int
+	}{
+		{"gp3 defaults", driver.VolumeConfig{Size: 10, VolumeType: "gp3"}, 3000, 125},
+		{"gp3 explicit", driver.VolumeConfig{Size: 10, VolumeType: "gp3", IOPS: 5000, Throughput: 250}, 5000, 250},
+		{"empty type defaults to gp3", driver.VolumeConfig{Size: 10}, 3000, 125},
+		{"gp2 derives from size", driver.VolumeConfig{Size: 100, VolumeType: "gp2"}, 300, 0},
+		{"gp2 floors at 100", driver.VolumeConfig{Size: 10, VolumeType: "gp2"}, 100, 0},
+		{"gp2 caps at 16000", driver.VolumeConfig{Size: 20000, VolumeType: "gp2"}, 16000, 0},
+		{"io1 passes through", driver.VolumeConfig{Size: 100, VolumeType: "io1", IOPS: 2000}, 2000, 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			vol, err := m.CreateVolume(ctx, tc.cfg)
+			requireNoError(t, err)
+			assertEqual(t, tc.wantIOPS, vol.IOPS)
+			assertEqual(t, tc.wantThroughput, vol.Throughput)
+		})
+	}
+}
+
+// TestLaunchRootVolumePerformanceDefaults pins that the root EBS volume
+// materialized at launch also carries the gp3 performance defaults, so
+// DescribeVolumes / an instance's root_block_device report them.
+func TestLaunchRootVolumePerformanceDefaults(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	insts, err := m.RunInstances(ctx, driver.InstanceConfig{
+		ImageID:      "ami-123",
+		InstanceType: "t3.micro",
+		BlockDeviceMappings: []driver.BlockDeviceMapping{
+			{DeviceName: defaultRootDeviceName, Boot: true, AutoDelete: true},
+		},
+	}, 1)
+	requireNoError(t, err)
+
+	vols, err := m.DescribeVolumes(ctx, nil)
+	requireNoError(t, err)
+
+	var root *driver.VolumeInfo
+
+	for i := range vols {
+		if vols[i].AttachedTo == insts[0].ID {
+			root = &vols[i]
+		}
+	}
+
+	if root == nil {
+		t.Fatalf("no root volume attached to %s", insts[0].ID)
+	}
+
+	assertEqual(t, "gp3", root.VolumeType)
+	assertEqual(t, 3000, root.IOPS)
+	assertEqual(t, 125, root.Throughput)
+}
+
 // TestModifyVolumeGrowsAndValidates pins that ModifyVolume captures originals,
 // mutates the stored volume, rejects shrink, and reports NotFound for a missing
 // volume.
