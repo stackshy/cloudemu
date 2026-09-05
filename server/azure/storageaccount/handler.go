@@ -44,6 +44,22 @@ const (
 
 	minAccountNameLen = 3
 	maxAccountNameLen = 24
+
+	// Real-Azure defaults reported for a new account that omits these toggles:
+	// minimum TLS 1.2, public network access enabled, HTTPS-only on, blob public
+	// access off, shared-key access on. Modeled here (rather than left to the
+	// echo-properties overlay) so an explicitly-false value survives round-trip
+	// and a create that omits them still reads back real defaults.
+	// The REST reference's property text calls TLS 1.0 the "default
+	// interpretation", but its own GetProperties sample response reports
+	// "TLS1_2", and the azurerm provider always sends min_tls_version=TLS1_2
+	// explicitly — so TLS1_2 matches the documented example, causes no Terraform
+	// drift, and reflects modern Azure hardening.
+	defaultMinTLSVersion       = "TLS1_2"
+	defaultPublicNetworkAccess = "Enabled"
+	defaultHTTPSTrafficOnly    = true
+	defaultBlobPublicAccess    = false
+	defaultSharedKeyAccess     = true
 )
 
 // attrBackend is the optional storage-account attribute capability. The Azure
@@ -390,6 +406,11 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 
 	if body.Properties != nil {
 		attrs.AccessTier = body.Properties.AccessTier
+		attrs.MinimumTLSVersion = body.Properties.MinimumTLSVersion
+		attrs.PublicNetworkAccess = body.Properties.PublicNetworkAccess
+		attrs.EnableHTTPSTrafficOnly = body.Properties.SupportsHTTPSTrafficOnly
+		attrs.AllowBlobPublicAccess = body.Properties.AllowBlobPublicAccess
+		attrs.AllowSharedKeyAccess = body.Properties.AllowSharedKeyAccess
 		encryption = fromARMEncryptionReq(body.Properties.Encryption)
 	}
 
@@ -481,8 +502,39 @@ func applyAccountUpdate(cur *storagedriver.AccountAttributes, body *armAccountUp
 		cur.Tags = body.Tags
 	}
 
-	if body.Properties != nil && body.Properties.AccessTier != "" {
+	if body.Properties == nil {
+		return
+	}
+
+	if body.Properties.AccessTier != "" {
 		cur.AccessTier = body.Properties.AccessTier
+	}
+
+	if body.Properties.MinimumTLSVersion != "" {
+		cur.MinimumTLSVersion = body.Properties.MinimumTLSVersion
+	}
+
+	if body.Properties.PublicNetworkAccess != "" {
+		cur.PublicNetworkAccess = body.Properties.PublicNetworkAccess
+	}
+
+	applySecurityToggles(cur, body.Properties)
+}
+
+// applySecurityToggles PATCH-merges the *bool security toggles on presence: a
+// non-nil pointer overwrites the stored value (including an explicit false), a
+// nil one leaves it untouched.
+func applySecurityToggles(cur *storagedriver.AccountAttributes, props *armAccountPropsReq) {
+	if props.SupportsHTTPSTrafficOnly != nil {
+		cur.EnableHTTPSTrafficOnly = props.SupportsHTTPSTrafficOnly
+	}
+
+	if props.AllowBlobPublicAccess != nil {
+		cur.AllowBlobPublicAccess = props.AllowBlobPublicAccess
+	}
+
+	if props.AllowSharedKeyAccess != nil {
+		cur.AllowSharedKeyAccess = props.AllowSharedKeyAccess
 	}
 }
 
@@ -586,13 +638,18 @@ func (h *Handler) toARMAccount(ctx context.Context, rp *azurearm.ResourcePath) a
 	}
 
 	props := &armAccountProps{
-		AccessTier:        attrs.AccessTier,
-		ProvisioningState: "Succeeded",
-		PrimaryLocation:   location,
-		StatusOfPrimary:   "available",
-		CreationTime:      h.accountCreatedAt(ctx, rp.ResourceName),
-		PrimaryEndpoints:  accountEndpoints(rp.ResourceName),
-		Encryption:        armEncryptionFor(encryption),
+		AccessTier:               attrs.AccessTier,
+		ProvisioningState:        "Succeeded",
+		PrimaryLocation:          location,
+		StatusOfPrimary:          "available",
+		CreationTime:             h.accountCreatedAt(ctx, rp.ResourceName),
+		PrimaryEndpoints:         accountEndpoints(rp.ResourceName),
+		Encryption:               armEncryptionFor(encryption),
+		MinimumTLSVersion:        strOr(attrs.MinimumTLSVersion, defaultMinTLSVersion),
+		PublicNetworkAccess:      strOr(attrs.PublicNetworkAccess, defaultPublicNetworkAccess),
+		SupportsHTTPSTrafficOnly: boolOr(attrs.EnableHTTPSTrafficOnly, defaultHTTPSTrafficOnly),
+		AllowBlobPublicAccess:    boolOr(attrs.AllowBlobPublicAccess, defaultBlobPublicAccess),
+		AllowSharedKeyAccess:     boolOr(attrs.AllowSharedKeyAccess, defaultSharedKeyAccess),
 	}
 
 	// GRS/RA-GRS/GZRS/RA-GZRS replicate to a documented paired region;
@@ -764,6 +821,26 @@ func (h *Handler) accountCreatedAt(ctx context.Context, name string) string {
 	}
 
 	return fallback
+}
+
+// strOr returns v when non-empty, else the real-Azure default def.
+func strOr(v, def string) string {
+	if v == "" {
+		return def
+	}
+
+	return v
+}
+
+// boolOr dereferences p when set, else returns the real-Azure default def —
+// letting an explicitly-stored false survive while an unset toggle reads back
+// its documented default.
+func boolOr(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+
+	return *p
 }
 
 // skuTier derives the read-only SKU tier from the SKU name (Standard_LRS ->

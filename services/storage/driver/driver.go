@@ -53,6 +53,23 @@ type AccountAttributes struct {
 	// Tags are the ARM resource tags submitted on create-or-update, round-tripped
 	// back on GET / list.
 	Tags map[string]string
+	// MinimumTLSVersion is the account's minimum permitted TLS version
+	// (minimumTlsVersion — e.g. TLS1_0/TLS1_1/TLS1_2). Empty means unset; the
+	// handler renders the real-Azure default (TLS1_2) instead.
+	MinimumTLSVersion string
+	// PublicNetworkAccess gates public endpoint reachability (publicNetworkAccess
+	// — Enabled/Disabled/SecuredByPerimeter). Empty means unset; the handler
+	// renders the real-Azure default (Enabled).
+	PublicNetworkAccess string
+	// EnableHTTPSTrafficOnly, AllowBlobPublicAccess and AllowSharedKeyAccess are
+	// the account's security toggles (supportsHttpsTrafficOnly,
+	// allowBlobPublicAccess, allowSharedKeyAccess). They are pointers so an ARM
+	// PATCH can distinguish "field omitted" (leave as-is) from "explicitly set to
+	// false" — a distinction the value form would lose. Nil means unset; the
+	// handler renders the real-Azure default (true / false / true respectively).
+	EnableHTTPSTrafficOnly *bool
+	AllowBlobPublicAccess  *bool
+	AllowSharedKeyAccess   *bool
 }
 
 // AccountEncryption is the storage-account encryption configuration requested
