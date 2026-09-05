@@ -156,6 +156,15 @@ func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request, rt route)
 		return
 	}
 
+	// The replication field is a required oneof: a Replication object present but
+	// with neither automatic nor userManaged set is rejected INVALID_ARGUMENT by
+	// real Secret Manager (rather than silently defaulting to automatic).
+	if req.Replication.Automatic == nil && req.Replication.UserManaged == nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalidArgument",
+			"replication must specify automatic or userManaged")
+		return
+	}
+
 	if req.Replication.UserManaged != nil && len(req.Replication.UserManaged.Replicas) == 0 {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalidArgument", "userManaged replication requires at least one replica")
 		return
