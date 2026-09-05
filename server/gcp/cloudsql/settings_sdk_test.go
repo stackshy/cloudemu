@@ -71,6 +71,140 @@ func TestSDKCloudSQLSettingsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSDKCloudSQLUnmodeledSettingsRoundTrip reproduces the Terraform
+// perpetual-drift bug where settings sub-fields the wire layer does not model
+// explicitly — maintenanceWindow, insightsConfig, locationPreference and the
+// scalar connectorEnforcement — were silently dropped on Insert, so every
+// `terraform plan` after apply proposed re-adding them. They must all survive
+// the Insert->Get round-trip, and a Patch of one must be reflected on the
+// following Get.
+func TestSDKCloudSQLUnmodeledSettingsRoundTrip(t *testing.T) {
+	svc, project := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := svc.Instances.Insert(project, &sqladmin.DatabaseInstance{
+		Name:            "extras",
+		DatabaseVersion: "POSTGRES_15",
+		Region:          "us-central1",
+		Settings: &sqladmin.Settings{
+			Tier:                 "db-custom-2-8192",
+			ConnectorEnforcement: "NOT_REQUIRED",
+			MaintenanceWindow:    &sqladmin.MaintenanceWindow{Day: 7, Hour: 3, UpdateTrack: "stable"},
+			InsightsConfig: &sqladmin.InsightsConfig{
+				QueryInsightsEnabled: true,
+				QueryStringLength:    1024,
+			},
+			LocationPreference: &sqladmin.LocationPreference{Zone: "us-central1-a"},
+		},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Instances.Insert: %v", err)
+	}
+
+	got, err := svc.Instances.Get(project, "extras").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Instances.Get: %v", err)
+	}
+
+	if got.Settings.ConnectorEnforcement != "NOT_REQUIRED" {
+		t.Fatalf("connectorEnforcement = %q, want NOT_REQUIRED", got.Settings.ConnectorEnforcement)
+	}
+
+	if got.Settings.MaintenanceWindow == nil || got.Settings.MaintenanceWindow.Day != 7 ||
+		got.Settings.MaintenanceWindow.Hour != 3 || got.Settings.MaintenanceWindow.UpdateTrack != "stable" {
+		t.Fatalf("maintenanceWindow = %+v, want day=7 hour=3 stable", got.Settings.MaintenanceWindow)
+	}
+
+	if got.Settings.InsightsConfig == nil || !got.Settings.InsightsConfig.QueryInsightsEnabled ||
+		got.Settings.InsightsConfig.QueryStringLength != 1024 {
+		t.Fatalf("insightsConfig = %+v, want enabled queryStringLength=1024", got.Settings.InsightsConfig)
+	}
+
+	if got.Settings.LocationPreference == nil || got.Settings.LocationPreference.Zone != "us-central1-a" {
+		t.Fatalf("locationPreference = %+v, want zone=us-central1-a", got.Settings.LocationPreference)
+	}
+
+	// A Patch of the maintenance window must be reflected on the next Get.
+	if _, err := svc.Instances.Patch(project, "extras", &sqladmin.DatabaseInstance{
+		Settings: &sqladmin.Settings{
+			MaintenanceWindow: &sqladmin.MaintenanceWindow{Day: 1, Hour: 5, UpdateTrack: "canary"},
+		},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	patched, err := svc.Instances.Get(project, "extras").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get (after patch): %v", err)
+	}
+
+	if patched.Settings.MaintenanceWindow == nil || patched.Settings.MaintenanceWindow.Day != 1 ||
+		patched.Settings.MaintenanceWindow.Hour != 5 || patched.Settings.MaintenanceWindow.UpdateTrack != "canary" {
+		t.Fatalf("after patch maintenanceWindow = %+v, want day=1 hour=5 canary", patched.Settings.MaintenanceWindow)
+	}
+
+	// A PATCH of one unmodeled sub-field must MERGE, not replace: the siblings
+	// (insightsConfig, locationPreference) not named in the patch body must
+	// survive unchanged.
+	if patched.Settings.InsightsConfig == nil || !patched.Settings.InsightsConfig.QueryInsightsEnabled ||
+		patched.Settings.InsightsConfig.QueryStringLength != 1024 {
+		t.Fatalf("after patch insightsConfig = %+v, want preserved enabled queryStringLength=1024",
+			patched.Settings.InsightsConfig)
+	}
+
+	if patched.Settings.LocationPreference == nil || patched.Settings.LocationPreference.Zone != "us-central1-a" {
+		t.Fatalf("after patch locationPreference = %+v, want preserved zone=us-central1-a",
+			patched.Settings.LocationPreference)
+	}
+}
+
+// TestSDKCloudSQLUpdateReplacesUnmodeledSettings verifies PUT (Instances.Update)
+// full-replace semantics for the unmodeled settings blob: a PUT that names one
+// unmodeled sub-field drops the previously-set siblings it omits (unlike PATCH,
+// which merges).
+func TestSDKCloudSQLUpdateReplacesUnmodeledSettings(t *testing.T) {
+	svc, project := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := svc.Instances.Insert(project, &sqladmin.DatabaseInstance{
+		Name:            "putextras",
+		DatabaseVersion: "POSTGRES_15",
+		Region:          "us-central1",
+		Settings: &sqladmin.Settings{
+			Tier:               "db-custom-2-8192",
+			InsightsConfig:     &sqladmin.InsightsConfig{QueryInsightsEnabled: true, QueryStringLength: 1024},
+			LocationPreference: &sqladmin.LocationPreference{Zone: "us-central1-a"},
+		},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Instances.Insert: %v", err)
+	}
+
+	// PUT naming only insightsConfig drops the omitted locationPreference.
+	if _, err := svc.Instances.Update(project, "putextras", &sqladmin.DatabaseInstance{
+		DatabaseVersion: "POSTGRES_15",
+		Region:          "us-central1",
+		Settings: &sqladmin.Settings{
+			Tier:           "db-custom-2-8192",
+			InsightsConfig: &sqladmin.InsightsConfig{QueryInsightsEnabled: true, QueryStringLength: 2048},
+		},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Instances.Update (PUT): %v", err)
+	}
+
+	got, err := svc.Instances.Get(project, "putextras").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get (after update): %v", err)
+	}
+
+	if got.Settings.InsightsConfig == nil || got.Settings.InsightsConfig.QueryStringLength != 2048 {
+		t.Fatalf("after PUT insightsConfig = %+v, want queryStringLength=2048", got.Settings.InsightsConfig)
+	}
+
+	if got.Settings.LocationPreference != nil {
+		t.Fatalf("after PUT locationPreference = %+v, want nil (dropped by replace)",
+			got.Settings.LocationPreference)
+	}
+}
+
 // TestSDKCloudSQLPatchSettings verifies that a Patch of availabilityType and
 // databaseFlags is reflected on the following Get (default is ZONAL).
 func TestSDKCloudSQLPatchSettings(t *testing.T) {
