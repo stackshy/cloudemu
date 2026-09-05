@@ -12,6 +12,7 @@ package aks
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"sort"
 	"strings"
 	"sync"
@@ -514,7 +515,19 @@ func resolveClusterFields(cluster *ManagedCluster, input ClusterInput, existing 
 
 	resolveClusterIdentity(cluster, input, existing)
 
-	cluster.FQDN = cluster.DNSPrefix + ".hcp." + defaultIfEmpty(cluster.Location, "eastus") + ".azmk8s.io"
+	cluster.FQDN = clusterFQDN(cluster.DNSPrefix, cluster.ResourceGroup, cluster.Name, cluster.Location)
+}
+
+// clusterFQDN builds the public API-server FQDN the real AKS service assigns a
+// managed cluster: "<dnsPrefix>-<hash>.hcp.<region>.azmk8s.io". Real AKS
+// generates the 8-hex host segment randomly at creation; the emulator derives
+// it deterministically from the cluster identity so it is stable across reads
+// and updates while matching the real format a caller parsing the FQDN expects.
+func clusterFQDN(dnsPrefix, rg, name, location string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(rg + "/" + name))
+
+	return fmt.Sprintf("%s-%08x.hcp.%s.azmk8s.io", dnsPrefix, h.Sum32(), defaultIfEmpty(location, "eastus"))
 }
 
 // mergeStr resolves a string field: the submitted value wins when non-empty;
