@@ -104,6 +104,61 @@ func TestAppFqdnDerivedFromEnvironment(t *testing.T) {
 	}
 }
 
+// TestAppDefaultsFilled proves the provider fills the Azure server-side defaults
+// a create omits: activeRevisionsMode -> Single, ingress.transport -> auto, and
+// scale.maxReplicas -> 10 on a template with containers. These read back on
+// GET/LIST/discover, so an SDK/CLI user that leaves them unset matches real Azure.
+func TestAppDefaultsFilled(t *testing.T) {
+	m := newMock()
+	env := mustEnv(t, m)
+
+	app, _, err := m.CreateOrUpdateApp(context.Background(), sub, rg, appNm, &containerapps.AppInput{
+		Location:      region,
+		EnvironmentID: env.ARMID(),
+		Ingress:       &containerapps.Ingress{External: true, TargetPort: 80},
+		Template: containerapps.Template{
+			Containers: []containerapps.Container{{Name: "main", Image: "nginx"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateOrUpdateApp: %v", err)
+	}
+
+	if app.ActiveRevMode != "Single" {
+		t.Fatalf("activeRevMode = %q, want Single", app.ActiveRevMode)
+	}
+
+	if app.Ingress == nil || app.Ingress.Transport != "auto" {
+		t.Fatalf("ingress.transport = %v, want auto", app.Ingress)
+	}
+
+	if app.Template.Scale == nil || app.Template.Scale.MaxReplicas == nil || *app.Template.Scale.MaxReplicas != 10 {
+		t.Fatalf("scale.maxReplicas = %v, want 10", app.Template.Scale)
+	}
+
+	// minReplicas stays unset (real Azure omits it when 0).
+	if app.Template.Scale.MinReplicas != nil {
+		t.Fatalf("scale.minReplicas = %v, want unset", app.Template.Scale.MinReplicas)
+	}
+
+	// An explicit maxReplicas is preserved, not overwritten by the default.
+	app2, _, err := m.CreateOrUpdateApp(context.Background(), sub, rg, "app-2", &containerapps.AppInput{
+		Location:      region,
+		EnvironmentID: env.ARMID(),
+		Template: containerapps.Template{
+			Containers: []containerapps.Container{{Name: "main", Image: "nginx"}},
+			Scale:      &containerapps.Scale{MaxReplicas: ptr(int32(3))},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateOrUpdateApp app-2: %v", err)
+	}
+
+	if app2.Template.Scale == nil || *app2.Template.Scale.MaxReplicas != 3 {
+		t.Fatalf("explicit maxReplicas = %v, want 3 preserved", app2.Template.Scale)
+	}
+}
+
 func TestAppWithoutIngressHasNoFqdn(t *testing.T) {
 	m := newMock()
 	env := mustEnv(t, m)
