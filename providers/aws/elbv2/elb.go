@@ -356,7 +356,7 @@ func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig
 		targetType = "instance"
 	}
 
-	hc := defaultHealthCheck(cfg)
+	hc := defaultHealthCheck(cfg, targetType)
 
 	tg := driver.TargetGroupInfo{
 		ID:          id,
@@ -387,13 +387,30 @@ func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig
 // unset.
 const (
 	defaultHCIntervalSec   = 30
-	defaultHCTimeoutSec    = 5
 	defaultHCHealthyCount  = 5
 	defaultHCUnhealthyCoun = 2
 	defaultHCMatcher       = "200"
 	defaultHCPort          = "traffic-port"
 	defaultHCPath          = "/"
 	protocolHTTP           = "HTTP"
+
+	// Health-check timeout defaults ELBv2 applies per target-group protocol and
+	// target type (CreateTargetGroup API reference, HealthCheckTimeoutSeconds).
+	// HTTP is 6, HTTPS/TCP/TLS (and the other TCP-family protocols, whose health
+	// check runs over TCP) is 10, GENEVE is 5, and a lambda target group is 30.
+	timeoutHTTPSec   = 6
+	timeoutTCPSec    = 10
+	timeoutGENEVESec = 5
+	timeoutLambdaSec = 30
+
+	// Health-check defaults specific to a lambda target group (CreateTargetGroup
+	// API reference): the interval defaults to 35 (not 30), and both threshold
+	// counts default to 5. A lambda target group carries no health-check protocol,
+	// port, or path — health checks are disabled by default — so those are left
+	// unset rather than defaulted the way an instance/ip group's are.
+	intervalLambdaSec = 35
+	thresholdLambda   = 5
+	targetTypeLambda  = "lambda"
 )
 
 // isHTTPProtocol reports whether p is an HTTP-family protocol (which carries a
@@ -418,11 +435,37 @@ func defaultHealthCheckProtocol(tgProtocol string) string {
 	return "TCP"
 }
 
+// defaultHealthCheckTimeout reports the HealthCheckTimeoutSeconds ELBv2 defaults
+// to for a target group of the given protocol and target type. Per the
+// CreateTargetGroup API reference: a lambda target group defaults to 30; among
+// the rest, an HTTP target group defaults to 6, a GENEVE (Gateway Load Balancer)
+// target group to 5, and every other protocol — HTTPS, TCP, TLS, UDP, TCP_UDP,
+// QUIC, TCP_QUIC, whose health check runs over TCP — to 10. The prior flat 5
+// under-reported the timeout real AWS returns for every non-GENEVE protocol.
+func defaultHealthCheckTimeout(tgProtocol, targetType string) int {
+	if targetType == targetTypeLambda {
+		return timeoutLambdaSec
+	}
+
+	switch tgProtocol {
+	case protocolHTTP:
+		return timeoutHTTPSec
+	case "GENEVE":
+		return timeoutGENEVESec
+	default:
+		return timeoutTCPSec
+	}
+}
+
 // defaultHealthCheck fills a target group's health-check settings, applying the
 // ELBv2 protocol-derived defaults for any field the caller left unset.
 //
 //nolint:gocritic // hugeParam: called once per create, copy cost is irrelevant.
-func defaultHealthCheck(cfg driver.TargetGroupConfig) driver.HealthCheck {
+func defaultHealthCheck(cfg driver.TargetGroupConfig, targetType string) driver.HealthCheck {
+	if targetType == targetTypeLambda {
+		return defaultLambdaHealthCheck(cfg.HealthCheck)
+	}
+
 	hc := cfg.HealthCheck
 
 	if hc.Protocol == "" {
@@ -433,19 +476,43 @@ func defaultHealthCheck(cfg driver.TargetGroupConfig) driver.HealthCheck {
 		hc.Port = defaultHCPort
 	}
 
-	if hc.Path == "" && isHTTPProtocol(hc.Protocol) {
-		hc.Path = cfg.HealthPath
+	applyHTTPHealthCheckDefaults(&hc, cfg.HealthPath)
+	applyHealthCheckNumericDefaults(&hc, defaultHealthCheckTimeout(cfg.Protocol, targetType))
+
+	return hc
+}
+
+// applyHTTPHealthCheckDefaults fills the path and matcher an HTTP/HTTPS health
+// check defaults to (ping path "/", success code "200"); a non-HTTP health
+// check carries neither, so it is left untouched.
+func applyHTTPHealthCheckDefaults(hc *driver.HealthCheck, configuredPath string) {
+	if !isHTTPProtocol(hc.Protocol) {
+		return
+	}
+
+	if hc.Path == "" {
+		hc.Path = configuredPath
 		if hc.Path == "" {
 			hc.Path = defaultHCPath
 		}
 	}
 
+	if hc.Matcher == "" {
+		hc.Matcher = defaultHCMatcher
+	}
+}
+
+// applyHealthCheckNumericDefaults fills the interval, timeout, and threshold
+// counts a health check defaults to when the caller left them unset. timeout is
+// passed in because its default depends on the target group's protocol and
+// target type (see defaultHealthCheckTimeout).
+func applyHealthCheckNumericDefaults(hc *driver.HealthCheck, timeout int) {
 	if hc.IntervalSeconds == 0 {
 		hc.IntervalSeconds = defaultHCIntervalSec
 	}
 
 	if hc.TimeoutSeconds == 0 {
-		hc.TimeoutSeconds = defaultHCTimeoutSec
+		hc.TimeoutSeconds = timeout
 	}
 
 	if hc.HealthyThreshold == 0 {
@@ -455,9 +522,32 @@ func defaultHealthCheck(cfg driver.TargetGroupConfig) driver.HealthCheck {
 	if hc.UnhealthyThreshold == 0 {
 		hc.UnhealthyThreshold = defaultHCUnhealthyCoun
 	}
+}
 
-	if hc.Matcher == "" && isHTTPProtocol(hc.Protocol) {
-		hc.Matcher = defaultHCMatcher
+// defaultLambdaHealthCheck fills the health-check defaults for a lambda target
+// group. Unlike an instance/ip group, a lambda group defaults with health checks
+// disabled and so carries no protocol, port, or path — real ELBv2 returns none,
+// and returning a protocol makes Terraform reject the group with "health_check
+// .protocol cannot be specified when target_type is lambda". Only the numeric
+// defaults (interval 35, timeout 30, both thresholds 5) are applied; an
+// explicitly supplied field is preserved.
+//
+//nolint:gocritic // hugeParam: called once per create, copy cost is irrelevant.
+func defaultLambdaHealthCheck(hc driver.HealthCheck) driver.HealthCheck {
+	if hc.IntervalSeconds == 0 {
+		hc.IntervalSeconds = intervalLambdaSec
+	}
+
+	if hc.TimeoutSeconds == 0 {
+		hc.TimeoutSeconds = timeoutLambdaSec
+	}
+
+	if hc.HealthyThreshold == 0 {
+		hc.HealthyThreshold = thresholdLambda
+	}
+
+	if hc.UnhealthyThreshold == 0 {
+		hc.UnhealthyThreshold = thresholdLambda
 	}
 
 	return hc
