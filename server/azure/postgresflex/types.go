@@ -41,6 +41,7 @@ type armServerProps struct {
 	State                      string               `json:"state,omitempty"`
 	FullyQualifiedDomainName   string               `json:"fullyQualifiedDomainName,omitempty"`
 	Storage                    *armStorage          `json:"storage,omitempty"`
+	Backup                     *armBackup           `json:"backup,omitempty"`
 	AvailabilityZone           string               `json:"availabilityZone,omitempty"`
 	HighAvailability           *armHighAvailability `json:"highAvailability,omitempty"`
 	CreateMode                 string               `json:"createMode,omitempty"`
@@ -58,6 +59,15 @@ type armHighAvailability struct {
 
 type armStorage struct {
 	StorageSizeGB int `json:"storageSizeGB,omitempty"`
+}
+
+// armBackup mirrors properties.backup on a PostgreSQL Flexible Server. Real
+// Azure always returns this block; backupRetentionDays defaults to 7 and
+// geoRedundantBackup is Disabled/Enabled. geoRedundantBackup is preserved by
+// the generic unmodeled-property overlay, so only the retention days — which
+// real Azure defaults and which a caller reads back — is modeled here.
+type armBackup struct {
+	BackupRetentionDays int `json:"backupRetentionDays,omitempty"`
 }
 
 // armList is the ARM list-response envelope.
@@ -81,6 +91,10 @@ func toARMServer(inst *rdsdriver.Instance, subscription, resourceGroup string) a
 		props.Storage = &armStorage{StorageSizeGB: inst.AllocatedStorage}
 	}
 
+	if inst.BackupRetentionPeriod > 0 {
+		props.Backup = &armBackup{BackupRetentionDays: inst.BackupRetentionPeriod}
+	}
+
 	return armServer{
 		ID:       azurearm.BuildResourceID(subscription, resourceGroup, providerName, resourceFlexibleServers, inst.ID),
 		Name:     inst.ID,
@@ -89,6 +103,7 @@ func toARMServer(inst *rdsdriver.Instance, subscription, resourceGroup string) a
 		Tags:     inst.Tags,
 		SKU: &armSKU{
 			Name: inst.InstanceClass,
+			Tier: inst.SKUTier,
 		},
 		Properties: props,
 	}

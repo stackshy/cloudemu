@@ -64,10 +64,15 @@ func ValidHAMode(mode string) bool {
 
 // InstanceConfig configures a managed database instance.
 type InstanceConfig struct {
-	ID                   string
-	Engine               string // "mysql", "postgres", "aurora-mysql", "aurora-postgresql", …
-	EngineVersion        string
-	InstanceClass        string // "db.t3.micro", …
+	ID            string
+	Engine        string // "mysql", "postgres", "aurora-mysql", "aurora-postgresql", …
+	EngineVersion string
+	InstanceClass string // "db.t3.micro", …
+	// SKUTier is the Azure Flexible Server compute tier
+	// ("Burstable"/"GeneralPurpose"/"MemoryOptimized") that pairs with
+	// InstanceClass (the compute SKU name) to form the ARM sku object. It is an
+	// Azure Flexible Server concept; empty for AWS/GCP, which have no tier split.
+	SKUTier              string
 	AllocatedStorage     int    // GiB
 	StorageType          string // "gp2", "io1", …
 	MasterUsername       string
@@ -151,11 +156,15 @@ type InstanceConfig struct {
 
 // Instance describes a managed database instance.
 type Instance struct {
-	ID               string
-	ARN              string
-	Engine           string
-	EngineVersion    string
-	InstanceClass    string
+	ID            string
+	ARN           string
+	Engine        string
+	EngineVersion string
+	InstanceClass string
+	// SKUTier echoes the Azure Flexible Server compute tier
+	// ("Burstable"/"GeneralPurpose"/"MemoryOptimized") on read; it pairs with
+	// InstanceClass to reconstruct the ARM sku object. Empty for AWS/GCP.
+	SKUTier          string
 	AllocatedStorage int
 	StorageType      string
 	MasterUsername   string
@@ -236,7 +245,11 @@ type Instance struct {
 // apply to instances; DBClusterParameterGroupName applies to clusters (the
 // same input type backs ModifyInstance and ModifyCluster).
 type ModifyInstanceInput struct {
-	InstanceClass               string
+	InstanceClass string
+	// SKUTier updates the Azure Flexible Server compute tier
+	// ("Burstable"/"GeneralPurpose"/"MemoryOptimized"); empty means "no change".
+	// Other engines ignore it.
+	SKUTier                     string
 	AllocatedStorage            int
 	EngineVersion               string
 	MasterUserPassword          string
@@ -539,6 +552,9 @@ type RestoreInstanceInput struct {
 	NewInstanceID string
 	SnapshotID    string
 	InstanceClass string
+	// SKUTier is the Azure Flexible Server compute tier for the restored server;
+	// empty falls back to the provider default. Unused by AWS/GCP.
+	SKUTier string
 	// Port overrides the restored instance's connection port. Zero means "no
 	// override": AWS falls back to the same port as the original DB instance
 	// the snapshot was taken from, not the engine default.
