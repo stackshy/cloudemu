@@ -10,6 +10,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 
 | Service | AWS | Azure | GCP | OCI | Operations |
 | --- | --- | --- | --- | --- | --- |
+| `aad` | — | [Aad](./azure/aad.md) | — | — | 2 |
 | `acm` | [ACM](./aws/acm.md) | — | — | — | 17 |
 | `aks` | — | [AKS](./azure/aks.md) | — | — | 18 |
 | `apigateway` | [APIGateway](./aws/apigateway.md) | — | — | — | 23 |
