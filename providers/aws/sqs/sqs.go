@@ -30,6 +30,9 @@ const (
 	defaultVisibilityTimeout = 30
 	defaultMaxMessageSize    = 262144
 	defaultMessageRetention  = 345600
+	defaultKmsDataKeyReuse   = 300
+	dedupScopeQueue          = "queue"
+	fifoThroughputPerQueue   = "perQueue"
 	maxReceiveMessages       = 10
 	deduplicationWindow      = 5 * time.Minute
 	maxReceiveWaitSeconds    = 20
@@ -74,6 +77,10 @@ type queueData struct {
 	redriveAllowPolicy string
 	policy             string
 	kmsMasterKeyID     string
+	kmsDataKeyReuse    int
+	sqsManagedSSE      bool
+	deduplicationScope string
+	fifoThroughputLim  string
 	createdAt          time.Time
 	lastModifiedAt     time.Time
 	deduplicationIndex map[string]time.Time
@@ -230,6 +237,12 @@ func (m *Mock) CreateQueue(ctx context.Context, cfg driver.QueueConfig) (*driver
 		messageRetention:   messageRetention,
 		receiveWaitTime:    cfg.ReceiveMessageWaitTimeSeconds,
 		contentBasedDedup:  cfg.ContentBasedDeduplication,
+		policy:             cfg.Policy,
+		kmsMasterKeyID:     cfg.KmsMasterKeyID,
+		kmsDataKeyReuse:    resolveKmsDataKeyReuse(&cfg),
+		sqsManagedSSE:      cfg.SqsManagedSseEnabled && cfg.KmsMasterKeyID == "",
+		deduplicationScope: resolveDedupScope(&cfg),
+		fifoThroughputLim:  resolveFifoThroughputLimit(&cfg),
 		createdAt:          now,
 		lastModifiedAt:     now,
 		deduplicationIndex: make(map[string]time.Time),
@@ -280,6 +293,44 @@ func queueSizeDefaults(cfg *driver.QueueConfig) (maxSize, retention int) {
 	return maxSize, retention
 }
 
+// resolveKmsDataKeyReuse applies the SQS default of 300 when the data-key reuse
+// period was left unset.
+func resolveKmsDataKeyReuse(cfg *driver.QueueConfig) int {
+	if cfg.KmsDataKeyReusePeriodSeconds == 0 {
+		return defaultKmsDataKeyReuse
+	}
+
+	return cfg.KmsDataKeyReusePeriodSeconds
+}
+
+// resolveDedupScope applies the FIFO default DeduplicationScope of "queue".
+// It is meaningful only for FIFO queues; a standard queue stores "".
+func resolveDedupScope(cfg *driver.QueueConfig) string {
+	if !cfg.FIFO {
+		return ""
+	}
+
+	if cfg.DeduplicationScope == "" {
+		return dedupScopeQueue
+	}
+
+	return cfg.DeduplicationScope
+}
+
+// resolveFifoThroughputLimit applies the FIFO default FifoThroughputLimit of
+// "perQueue". It is meaningful only for FIFO queues; a standard queue stores "".
+func resolveFifoThroughputLimit(cfg *driver.QueueConfig) string {
+	if !cfg.FIFO {
+		return ""
+	}
+
+	if cfg.FifoThroughputLimit == "" {
+		return fifoThroughputPerQueue
+	}
+
+	return cfg.FifoThroughputLimit
+}
+
 // sameQueueConfig reports whether an existing queue's stored attributes match
 // the incoming CreateQueue config exactly, which is what makes CreateQueue
 // idempotent (identical re-create returns the existing URL).
@@ -297,7 +348,13 @@ func sameQueueConfig(existing *queueData, cfg *driver.QueueConfig) bool {
 		existing.receiveWaitTime == cfg.ReceiveMessageWaitTimeSeconds &&
 		existing.contentBasedDedup == cfg.ContentBasedDeduplication &&
 		existing.redrivePolicy == cfg.RedrivePolicy &&
-		existing.redriveAllowPolicy == cfg.RedriveAllowPolicy
+		existing.redriveAllowPolicy == cfg.RedriveAllowPolicy &&
+		existing.policy == cfg.Policy &&
+		existing.kmsMasterKeyID == cfg.KmsMasterKeyID &&
+		existing.kmsDataKeyReuse == resolveKmsDataKeyReuse(cfg) &&
+		existing.sqsManagedSSE == (cfg.SqsManagedSseEnabled && cfg.KmsMasterKeyID == "") &&
+		existing.deduplicationScope == resolveDedupScope(cfg) &&
+		existing.fifoThroughputLim == resolveFifoThroughputLimit(cfg)
 }
 
 // parseRedrivePolicy resolves an SQS RedrivePolicy JSON document into a
@@ -1263,6 +1320,10 @@ func (m *Mock) GetQueueAttributes(
 		ReceiveMessageWaitTimeSeconds: qd.receiveWaitTime,
 		Policy:                        qd.policy,
 		KmsMasterKeyID:                qd.kmsMasterKeyID,
+		KmsDataKeyReusePeriodSeconds:  qd.kmsDataKeyReuse,
+		SqsManagedSseEnabled:          qd.sqsManagedSSE,
+		DeduplicationScope:            qd.deduplicationScope,
+		FifoThroughputLimit:           qd.fifoThroughputLim,
 	}, nil
 }
 
@@ -1351,13 +1412,50 @@ func (m *Mock) SetQueueAttributesRaw(_ context.Context, queue string, attrs map[
 		qd.policy = v
 	}
 
-	if v, ok := attrs["KmsMasterKeyId"]; ok {
-		qd.kmsMasterKeyID = v
-	}
+	applyEncryptionAttrs(qd, attrs)
+	applyFifoThroughputAttrs(qd, attrs)
 
 	qd.lastModifiedAt = m.opts.Clock.Now()
 
 	return nil
+}
+
+// applyEncryptionAttrs applies the SSE-KMS / SSE-SQS attributes, enforcing the
+// SQS rule that the two encryption options are mutually exclusive: setting a
+// KMS key disables SSE-SQS, and enabling SSE-SQS clears any KMS key. Caller
+// holds qd.mu.
+func applyEncryptionAttrs(qd *queueData, attrs map[string]string) {
+	if v, ok := attrs["KmsMasterKeyId"]; ok {
+		qd.kmsMasterKeyID = v
+		if v != "" {
+			qd.sqsManagedSSE = false
+		}
+	}
+
+	if v, ok := attrs["KmsDataKeyReusePeriodSeconds"]; ok {
+		if n, err := strconv.Atoi(v); err == nil {
+			qd.kmsDataKeyReuse = n
+		}
+	}
+
+	if v, ok := attrs["SqsManagedSseEnabled"]; ok {
+		qd.sqsManagedSSE = v == "true"
+		if qd.sqsManagedSSE {
+			qd.kmsMasterKeyID = ""
+		}
+	}
+}
+
+// applyFifoThroughputAttrs applies the FIFO high-throughput attributes. Caller
+// holds qd.mu.
+func applyFifoThroughputAttrs(qd *queueData, attrs map[string]string) {
+	if v, ok := attrs["DeduplicationScope"]; ok {
+		qd.deduplicationScope = v
+	}
+
+	if v, ok := attrs["FifoThroughputLimit"]; ok {
+		qd.fifoThroughputLim = v
+	}
 }
 
 // parseNumericAttrs extracts the integer-valued queue attributes from a raw
