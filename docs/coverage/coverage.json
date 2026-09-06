@@ -1463,6 +1463,31 @@
     }
   },
   {
+    "service": "bastion",
+    "interface": "BastionHosts",
+    "operations": [
+      {
+        "name": "CreateOrUpdateBastionHost",
+        "doc": "CreateOrUpdateBastionHost stores host as a full replace and reports whether"
+      },
+      {
+        "name": "DeleteBastionHost",
+        "doc": "DeleteBastionHost removes the host, returning NotFound if it does not exist."
+      },
+      {
+        "name": "GetBastionHost",
+        "doc": "GetBastionHost returns the host identified by (resourceGroup, name), or"
+      },
+      {
+        "name": "ListBastionHosts",
+        "doc": "ListBastionHosts returns the hosts in rg, or all when rg is empty"
+      }
+    ],
+    "providers": {
+      "azure": "Bastion"
+    }
+  },
+  {
     "service": "batch",
     "interface": "Batch",
     "operations": [

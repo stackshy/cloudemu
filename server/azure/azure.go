@@ -18,6 +18,7 @@ import (
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
 	appinsightssrv "github.com/stackshy/cloudemu/v2/server/azure/appinsights"
 	appgatewaysrv "github.com/stackshy/cloudemu/v2/server/azure/applicationgateway"
+	bastionsrv "github.com/stackshy/cloudemu/v2/server/azure/bastion"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
 	containerappssrv "github.com/stackshy/cloudemu/v2/server/azure/containerapps"
@@ -85,6 +86,7 @@ import (
 	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
 	fwdriver "github.com/stackshy/cloudemu/v2/services/azurefirewall/driver"
 	azuresearchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
+	bastiondriver "github.com/stackshy/cloudemu/v2/services/bastion/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	acidriver "github.com/stackshy/cloudemu/v2/services/containerinstances/driver"
@@ -179,6 +181,9 @@ type Drivers struct {
 	// Firewall Policy (Microsoft.Network/firewallPolicies) ARM APIs against the
 	// azurefirewall driver.
 	Firewall fwdriver.AzureFirewalls
+	// Bastion serves the Azure Bastion (Microsoft.Network/bastionHosts) ARM API
+	// against the bastion driver.
+	Bastion bastiondriver.BastionHosts
 	// FrontDoor serves the Azure Front Door Standard/Premium
 	// (Microsoft.Cdn/profiles + afdEndpoints + originGroups) ARM API against the
 	// frontdoor driver.
@@ -326,6 +331,7 @@ func New(d Drivers) http.Handler {
 		lbHandler        *lbsrv.Handler
 		appGwHandler     *appgatewaysrv.Handler
 		firewallHandler  *azurefirewallsrv.Handler
+		bastionHandler   *bastionsrv.Handler
 		frontDoorHandler *frontdoorsrv.Handler
 		privateDNS       *privatednssrv.Handler
 		rgPurgers        []resourcegroups.ResourceGroupPurger
@@ -371,6 +377,13 @@ func New(d Drivers) http.Handler {
 	if d.Firewall != nil {
 		firewallHandler = azurefirewallsrv.New(d.Firewall)
 		rgPurgers = append(rgPurgers, firewallHandler)
+	}
+
+	// Azure Bastion is a resource-group-scoped Microsoft.Network resource, so its
+	// handler joins the purge cascade. Registered further below.
+	if d.Bastion != nil {
+		bastionHandler = bastionsrv.New(d.Bastion)
+		rgPurgers = append(rgPurgers, bastionHandler)
 	}
 
 	// Azure Front Door (Microsoft.Cdn/profiles) is a resource-group-scoped
@@ -560,6 +573,14 @@ func New(d Drivers) http.Handler {
 	// fallback.
 	if firewallHandler != nil {
 		srv.Register(firewallHandler)
+	}
+
+	// Azure Bastion shares the Microsoft.Network ARM provider with the network /
+	// DNS / load-balancer / app-gateway / firewall handlers above but claims a
+	// disjoint resource type (bastionHosts), so registration order relative to
+	// them is unconstrained. Registered before the BlobStorage fallback.
+	if bastionHandler != nil {
+		srv.Register(bastionHandler)
 	}
 
 	// Azure Front Door claims the new Microsoft.Cdn ARM provider namespace,
