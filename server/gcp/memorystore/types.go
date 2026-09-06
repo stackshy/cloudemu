@@ -25,6 +25,10 @@ const (
 	// stateReady is Memorystore's terminal instance state; the mock provisions
 	// synchronously so every instance reports READY.
 	stateReady = "READY"
+	// allLocations is the location wildcard: a List parent of
+	// projects/{p}/locations/-/instances aggregates instances across every region
+	// (each reported under its actual location), matching real Memorystore.
+	allLocations = "-"
 )
 
 // instanceJSON mirrors the subset of google.golang.org/api/redis/v1 Instance
@@ -81,6 +85,35 @@ func operationResourceName(project, location, operationID string) string {
 	return "projects/" + project + "/locations/" + location + "/operations/" + operationID
 }
 
+// resolveLocation returns the instance's stored region (the create-time location
+// tag), falling back to the request-path location for instances created before
+// the tag existed (or restored snapshots that predate it).
+func resolveLocation(fallback string, tags map[string]string) string {
+	if v := tags[locationTag]; v != "" {
+		return v
+	}
+
+	return fallback
+}
+
+// instanceInScope reports whether an instance addressed by a project- and
+// location-qualified name actually lives in that project and location. Real
+// Memorystore names are unique per (project, location); the shared cache store is
+// keyed on the bare instance id, so a Get/Patch/Delete for the right id but the
+// wrong location or project must not resolve. A missing tag/scope (legacy or
+// snapshot-restored) is treated as in-scope so old state stays reachable.
+func instanceInScope(info *cachedriver.CacheInfo, project, location string) bool {
+	if loc := info.Tags[locationTag]; loc != "" && loc != location {
+		return false
+	}
+
+	if p := info.Scope.Project; p != "" && p != project {
+		return false
+	}
+
+	return true
+}
+
 // shortInstanceID recovers the driver's map key (the short instance id) from a
 // CacheInfo.Name. The Memorystore driver stamps info.Name as
 // "projects/{p}/instances/{id}" (its own resource id, without a location
@@ -126,6 +159,10 @@ func toInstanceJSON(project, location, instanceID string, info *cachedriver.Cach
 		tier = info.NodeType
 	}
 
+	// The instance's true location is authoritative for the resource name and zone
+	// (the request path may be a wildcard, or a scoping check that has already
+	// passed). Legacy instances without the tag fall back to the request location.
+	location = resolveLocation(location, info.Tags)
 	zone := zoneForLocation(location, info.Tags[locationIDTag])
 
 	inst := instanceJSON{
@@ -291,6 +328,11 @@ const (
 	transitEncryptionTag = "cloudemu:gcpTransitEncryptionMode"
 	replicaCountTag      = "cloudemu:gcpReplicaCount"
 	readReplicasModeTag  = "cloudemu:gcpReadReplicasMode"
+	// locationTag records the region (the path's location segment) the instance was
+	// created in, so Get/List scope by location and reconstruct the resource name
+	// from the instance's true location rather than the request path. Real
+	// Memorystore instance names are unique per (project, location).
+	locationTag = "cloudemu:gcpLocation"
 	// tagTrue is the stored value for a set boolean reserved tag.
 	tagTrue = "true"
 )
