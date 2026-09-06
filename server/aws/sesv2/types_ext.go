@@ -94,6 +94,11 @@ type putSuppressionOptionsRequest struct {
 
 type putTrackingOptionsRequest struct {
 	CustomRedirectDomain string `json:"CustomRedirectDomain"`
+	HTTPSPolicy          string `json:"HttpsPolicy"`
+}
+
+type putVdmOptionsRequest struct {
+	VdmOptions *vdmOptionsJSON `json:"VdmOptions"`
 }
 
 // --- contacts / contact lists ---

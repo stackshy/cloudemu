@@ -53,13 +53,13 @@ func exceptionFor(err error) (status int, errType string) {
 func writeErr(w http.ResponseWriter, err error) {
 	var apiErr *sesdriver.APIError
 	if errors.As(err, &apiErr) {
-		writeError(w, http.StatusBadRequest, apiErr.Exception, err.Error())
+		writeError(w, http.StatusBadRequest, apiErr.Exception, cerrors.Message(err))
 
 		return
 	}
 
 	status, errType := exceptionFor(err)
-	writeError(w, status, errType, err.Error())
+	writeError(w, status, errType, cerrors.Message(err))
 }
 
 func notFound(w http.ResponseWriter, path string) {

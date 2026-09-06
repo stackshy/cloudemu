@@ -81,11 +81,14 @@ type ConfigurationSet struct {
 	Tags           map[string]string
 
 	// Additional put-option state.
-	ArchiveARN        string
-	SuppressedReasons []string
-	CustomRedirectDom string
-	VdmEnabled        bool
-	EventDestinations []EventDestination
+	ArchiveARN          string
+	SuppressedReasons   []string
+	CustomRedirectDom   string
+	TrackingHTTPSPolicy string
+	VdmEnabled          bool
+	VdmEngagement       string
+	VdmGuardianDelivery string
+	EventDestinations   []EventDestination
 }
 
 // TemplateContent is the subject/HTML/text of an email template.
@@ -143,12 +146,18 @@ type CreateIdentityInput struct {
 
 // CreateConfigurationSetInput describes a configuration set to create.
 type CreateConfigurationSetInput struct {
-	Name           string
-	SendingEnabled bool
-	ReputationOn   bool
-	TLSPolicy      string
-	SendingPoolN   string
-	Tags           map[string]string
+	Name                string
+	SendingEnabled      bool
+	ReputationOn        bool
+	TLSPolicy           string
+	SendingPoolN        string
+	SuppressedReasons   []string
+	CustomRedirectDom   string
+	TrackingHTTPSPolicy string
+	VdmConfigured       bool
+	VdmEngagement       string
+	VdmGuardianDelivery string
+	Tags                map[string]string
 }
 
 // TemplateInput describes a template to create or update.
@@ -256,8 +265,8 @@ type SESV2 interface {
 	PutConfigurationSetReputationOptions(ctx context.Context, configSet string, reputationEnabled bool) error
 	PutConfigurationSetSendingOptions(ctx context.Context, configSet string, sendingEnabled bool) error
 	PutConfigurationSetSuppressionOptions(ctx context.Context, configSet string, suppressedReasons []string) error
-	PutConfigurationSetTrackingOptions(ctx context.Context, configSet, customRedirectDomain string) error
-	PutConfigurationSetVdmOptions(ctx context.Context, configSet string) error
+	PutConfigurationSetTrackingOptions(ctx context.Context, configSet, customRedirectDomain, httpsPolicy string) error
+	PutConfigurationSetVdmOptions(ctx context.Context, configSet, engagementMetrics, optimizedSharedDelivery string) error
 
 	// Dedicated IP pools and IPs.
 	CreateDedicatedIPPool(ctx context.Context, name, scalingMode string, tags map[string]string) error
