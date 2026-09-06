@@ -14457,6 +14457,80 @@
     }
   },
   {
+    "service": "transfer",
+    "interface": "Transfer",
+    "operations": [
+      {
+        "name": "CreateServer",
+        "doc": "CreateServer creates a server, materializing the real Transfer defaults"
+      },
+      {
+        "name": "CreateUser",
+        "doc": "CreateUser creates a user on a server and increments the server's"
+      },
+      {
+        "name": "DeleteSSHPublicKey",
+        "doc": "DeleteSSHPublicKey removes a key from a user by its SSHPublicKeyID."
+      },
+      {
+        "name": "DeleteServer",
+        "doc": "DeleteServer removes a server and every user hosted on it."
+      },
+      {
+        "name": "DeleteUser",
+        "doc": "DeleteUser removes a user and decrements the server's UserCount."
+      },
+      {
+        "name": "DescribeServer",
+        "doc": "DescribeServer returns a deep copy of a server, or a"
+      },
+      {
+        "name": "DescribeUser",
+        "doc": "DescribeUser returns a deep copy of a user (including its imported SSH"
+      },
+      {
+        "name": "ImportSSHPublicKey",
+        "doc": "ImportSSHPublicKey appends a key to a user and returns its generated"
+      },
+      {
+        "name": "ListServers",
+        "doc": "ListServers returns server summaries in a deterministic (ServerID) order."
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListUsers",
+        "doc": "ListUsers returns user summaries for a server in a deterministic"
+      },
+      {
+        "name": "StartServer",
+        "doc": "StartServer transitions a server to State ONLINE."
+      },
+      {
+        "name": "StopServer",
+        "doc": "StopServer transitions a server to State OFFLINE."
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateServer",
+        "doc": "UpdateServer applies the mutable-field delta to a server. A nil field is"
+      },
+      {
+        "name": "UpdateUser",
+        "doc": "UpdateUser applies the mutable-field delta to a user."
+      }
+    ],
+    "providers": {
+      "aws": "Transfer"
+    }
+  },
+  {
     "service": "vertexai",
     "interface": "VertexAI",
     "operations": [
