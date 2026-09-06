@@ -282,6 +282,52 @@ func TestDatasetCreate(t *testing.T) {
 	assert.Len(t, list["datasets"], 1)
 }
 
+// TestEndpointTerraformLifecycle mirrors the Terraform google_vertex_ai_endpoint
+// flow: create with a client-chosen numeric id (endpointId query param), read it
+// back at that id, then PATCH display_name/labels with an update mask.
+func TestEndpointTerraformLifecycle(t *testing.T) {
+	url := newServer(t)
+
+	op := do(t, http.MethodPost, url+base+"/endpoints?endpointId=1234567890",
+		map[string]any{"displayName": "ep", "network": "projects/mock-project/global/networks/vpc1"})
+	resp, _ := op["response"].(map[string]any)
+	require.NotNil(t, resp)
+	assert.Equal(t, "projects/mock-project/locations/us-central1/endpoints/1234567890", resp["name"],
+		"endpoint must be created under the client-chosen id")
+	assert.Equal(t, "projects/mock-project/global/networks/vpc1", resp["network"])
+
+	got := do(t, http.MethodGet, url+base+"/endpoints/1234567890", nil)
+	assert.Equal(t, "ep", got["displayName"])
+
+	patched := do(t, http.MethodPatch, url+base+"/endpoints/1234567890?updateMask=displayName,labels",
+		map[string]any{"displayName": "ep2", "labels": map[string]any{"env": "prod"}})
+	assert.Equal(t, "ep2", patched["displayName"])
+	assert.Equal(t, "projects/mock-project/global/networks/vpc1", patched["network"], "unmasked network preserved")
+}
+
+// TestFeaturestoreTerraformLifecycle mirrors the Terraform
+// google_vertex_ai_featurestore flow: create with labels + a fixed node count,
+// then PATCH the node count. The update must return a done Operation because
+// UpdateFeaturestore is a long-running operation Terraform polls.
+func TestFeaturestoreTerraformLifecycle(t *testing.T) {
+	url := newServer(t)
+
+	op := do(t, http.MethodPost, url+base+"/featurestores?featurestoreId=tf_fs",
+		map[string]any{"labels": map[string]any{"env": "dev"}, "onlineServingConfig": map[string]any{"fixedNodeCount": 2}})
+	resp, _ := op["response"].(map[string]any)
+	require.NotNil(t, resp)
+	labels, _ := resp["labels"].(map[string]any)
+	assert.Equal(t, "dev", labels["env"], "featurestore labels must round-trip")
+
+	patch := do(t, http.MethodPatch, url+base+"/featurestores/tf_fs?updateMask=onlineServingConfig.fixedNodeCount",
+		map[string]any{"onlineServingConfig": map[string]any{"fixedNodeCount": 5}})
+	assert.Equal(t, true, patch["done"], "featurestore update must be a done LRO")
+	pr, _ := patch["response"].(map[string]any)
+	require.NotNil(t, pr)
+	osc, _ := pr["onlineServingConfig"].(map[string]any)
+	assert.EqualValues(t, 5, osc["fixedNodeCount"])
+}
+
 func opName(t *testing.T, op map[string]any) string {
 	t.Helper()
 

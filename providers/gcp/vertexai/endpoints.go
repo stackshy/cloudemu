@@ -8,22 +8,59 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
+//nolint:gocritic // cfg is passed by value to match the by-value Create* convention across the driver.
 func (m *Mock) CreateEndpoint(_ context.Context, cfg driver.EndpointConfig) (*driver.Operation, *driver.Endpoint, error) {
 	now := m.now()
-	name := m.resName(cfg.Location, "endpoints", m.newID())
+	// Endpoints carry a client-chosen numeric id (endpointId query param); the
+	// server assigns one only when the caller omits it. Terraform reads the
+	// resource back at the id it supplied, so honoring endpointId is required.
+	name := m.resName(cfg.Location, "endpoints", orID(cfg.EndpointID, m.newID()))
 	ep := &driver.Endpoint{
 		Name:         name,
 		DisplayName:  cfg.DisplayName,
 		Description:  cfg.Description,
+		Network:      cfg.Network,
 		TrafficSplit: map[string]int{},
 		Labels:       copyLabels(cfg.Labels),
 		CreateTime:   now,
 		UpdateTime:   now,
+		Etag:         m.newEtag(),
 	}
 	m.endpoints.Set(name, ep)
 	m.emitMetric("endpoint/count", 1, map[string]string{"location": orLocation(cfg.Location)})
 
 	return m.doneOp(cfg.Location, name), cloneEndpoint(ep), nil
+}
+
+func (m *Mock) PatchEndpoint(_ context.Context, name string, upd driver.EndpointUpdate) (*driver.Endpoint, error) {
+	ep, ok := m.endpoints.Get(name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "endpoint %q not found", name)
+	}
+
+	// Copy-then-Set: only fields the update mask named are touched.
+	updated := cloneEndpoint(ep)
+	if upd.DisplayName != nil {
+		updated.DisplayName = *upd.DisplayName
+	}
+
+	if upd.Description != nil {
+		updated.Description = *upd.Description
+	}
+
+	if upd.Network != nil {
+		updated.Network = *upd.Network
+	}
+
+	if upd.SetLabels {
+		updated.Labels = copyLabels(upd.Labels)
+	}
+
+	updated.UpdateTime = m.now()
+	updated.Etag = m.newEtag()
+	m.endpoints.Set(name, updated)
+
+	return cloneEndpoint(updated), nil
 }
 
 func (m *Mock) GetEndpoint(_ context.Context, name string) (*driver.Endpoint, error) {

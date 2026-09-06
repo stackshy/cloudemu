@@ -47,6 +47,7 @@ import (
 	eventgridsrv "github.com/stackshy/cloudemu/v2/server/azure/eventgrid"
 	eventhubsrv "github.com/stackshy/cloudemu/v2/server/azure/eventhub"
 	azurefirewallsrv "github.com/stackshy/cloudemu/v2/server/azure/firewall"
+	frontdoorsrv "github.com/stackshy/cloudemu/v2/server/azure/frontdoor"
 	"github.com/stackshy/cloudemu/v2/server/azure/functions"
 	"github.com/stackshy/cloudemu/v2/server/azure/iam"
 	"github.com/stackshy/cloudemu/v2/server/azure/images"
@@ -94,6 +95,7 @@ import (
 	dfdriver "github.com/stackshy/cloudemu/v2/services/datafactory/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	fddriver "github.com/stackshy/cloudemu/v2/services/frontdoor/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
@@ -177,6 +179,10 @@ type Drivers struct {
 	// Firewall Policy (Microsoft.Network/firewallPolicies) ARM APIs against the
 	// azurefirewall driver.
 	Firewall fwdriver.AzureFirewalls
+	// FrontDoor serves the Azure Front Door Standard/Premium
+	// (Microsoft.Cdn/profiles + afdEndpoints + originGroups) ARM API against the
+	// frontdoor driver.
+	FrontDoor fddriver.AzureFrontDoorProfiles
 	// PrivateDNS serves the Azure Private DNS
 	// (Microsoft.Network/privateDnsZones) ARM API — private zones,
 	// virtualNetworkLinks and record sets — against the privatedns driver.
@@ -314,14 +320,15 @@ func New(d Drivers) http.Handler {
 	// each of these handlers implements ResourceGroupPurger to tear its own
 	// resources down. Other resource types are not cascaded yet.
 	var (
-		vnetHandler     *vnet.Handler
-		vmHandler       *virtualmachines.Handler
-		storageHandler  *storageaccountsrv.Handler
-		lbHandler       *lbsrv.Handler
-		appGwHandler    *appgatewaysrv.Handler
-		firewallHandler *azurefirewallsrv.Handler
-		privateDNS      *privatednssrv.Handler
-		rgPurgers       []resourcegroups.ResourceGroupPurger
+		vnetHandler      *vnet.Handler
+		vmHandler        *virtualmachines.Handler
+		storageHandler   *storageaccountsrv.Handler
+		lbHandler        *lbsrv.Handler
+		appGwHandler     *appgatewaysrv.Handler
+		firewallHandler  *azurefirewallsrv.Handler
+		frontDoorHandler *frontdoorsrv.Handler
+		privateDNS       *privatednssrv.Handler
+		rgPurgers        []resourcegroups.ResourceGroupPurger
 	)
 
 	// Virtual machines are purged before the networking resources they consume
@@ -364,6 +371,14 @@ func New(d Drivers) http.Handler {
 	if d.Firewall != nil {
 		firewallHandler = azurefirewallsrv.New(d.Firewall)
 		rgPurgers = append(rgPurgers, firewallHandler)
+	}
+
+	// Azure Front Door (Microsoft.Cdn/profiles) is a resource-group-scoped
+	// resource whose delete cascades its afdEndpoints and originGroups, so its
+	// handler joins the purge cascade. Registered further below.
+	if d.FrontDoor != nil {
+		frontDoorHandler = frontdoorsrv.New(d.FrontDoor)
+		rgPurgers = append(rgPurgers, frontDoorHandler)
 	}
 
 	// Private DNS zones (and their vnet links and records) are resource-group-
@@ -545,6 +560,13 @@ func New(d Drivers) http.Handler {
 	// fallback.
 	if firewallHandler != nil {
 		srv.Register(firewallHandler)
+	}
+
+	// Azure Front Door claims the new Microsoft.Cdn ARM provider namespace,
+	// disjoint from every existing handler, so registration order is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if frontDoorHandler != nil {
+		srv.Register(frontDoorHandler)
 	}
 
 	// Private DNS claims Microsoft.Network/privateDnsZones — disjoint from the

@@ -2,10 +2,28 @@ package vertexai
 
 import (
 	"net/http"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
+
+// maskWants reports whether a PATCH update mask names field. An empty mask means
+// the caller sent none, in which case GCP treats every field present in the body
+// as intended, so every field is considered wanted.
+func maskWants(mask, field string) bool {
+	if mask == "" {
+		return true
+	}
+
+	for _, f := range strings.Split(mask, ",") {
+		if strings.TrimSpace(f) == field {
+			return true
+		}
+	}
+
+	return false
+}
 
 func writeJSON(w http.ResponseWriter, v any) {
 	gcprest.WriteJSON(w, http.StatusOK, v)

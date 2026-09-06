@@ -12,11 +12,13 @@ func featurestoreJSON(f *driver.Featurestore) map[string]any {
 	return map[string]any{
 		"name": f.Name, "state": f.State,
 		"onlineServingConfig": map[string]any{"fixedNodeCount": f.OnlineNodeCount},
+		"labels":              f.Labels,
 		"createTime":          f.CreateTime,
+		"updateTime":          f.UpdateTime,
+		"etag":                f.Etag,
 	}
 }
 
-//nolint:dupl // REST shim; the decode/dispatch shape recurs across collections.
 func (h *Handler) serveFeaturestores(w http.ResponseWriter, r *http.Request, p *vPath) {
 	if p.subRes == "entityTypes" {
 		h.serveEntityTypes(w, r, p)
@@ -40,6 +42,8 @@ func (h *Handler) serveFeaturestores(w http.ResponseWriter, r *http.Request, p *
 	switch r.Method {
 	case http.MethodGet:
 		h.getFeaturestore(w, r, p.name)
+	case http.MethodPatch:
+		h.patchFeaturestore(w, r, p.name)
 	case http.MethodDelete:
 		h.deleteFeaturestore(w, r, p.name)
 	default:
@@ -52,6 +56,7 @@ func (h *Handler) createFeaturestore(w http.ResponseWriter, r *http.Request, loc
 		OnlineServingConfig struct {
 			FixedNodeCount int `json:"fixedNodeCount"`
 		} `json:"onlineServingConfig"`
+		Labels map[string]string `json:"labels"`
 	}
 
 	if !decode(w, r, &req) {
@@ -60,8 +65,41 @@ func (h *Handler) createFeaturestore(w http.ResponseWriter, r *http.Request, loc
 
 	op, fs, err := h.svc.CreateFeaturestore(r.Context(), driver.FeaturestoreConfig{
 		Location: location, FeaturestoreID: r.URL.Query().Get("featurestoreId"),
-		OnlineNodeCount: req.OnlineServingConfig.FixedNodeCount,
+		OnlineNodeCount: req.OnlineServingConfig.FixedNodeCount, Labels: req.Labels,
 	})
+	if err != nil {
+		writeCErr(w, err)
+
+		return
+	}
+
+	writeResourceOp(w, op, featurestoreJSON(fs), "Featurestore")
+}
+
+func (h *Handler) patchFeaturestore(w http.ResponseWriter, r *http.Request, name string) {
+	var req struct {
+		OnlineServingConfig struct {
+			FixedNodeCount int `json:"fixedNodeCount"`
+		} `json:"onlineServingConfig"`
+		Labels map[string]string `json:"labels"`
+	}
+
+	if !decode(w, r, &req) {
+		return
+	}
+
+	mask := r.URL.Query().Get("updateMask")
+
+	var upd driver.FeaturestoreUpdate
+	if maskWants(mask, "onlineServingConfig.fixedNodeCount") || maskWants(mask, "onlineServingConfig") {
+		upd.OnlineNodeCount = &req.OnlineServingConfig.FixedNodeCount
+	}
+
+	if maskWants(mask, "labels") {
+		upd.Labels, upd.SetLabels = req.Labels, true
+	}
+
+	op, fs, err := h.svc.PatchFeaturestore(r.Context(), name, upd)
 	if err != nil {
 		writeCErr(w, err)
 
