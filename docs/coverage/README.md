@@ -18,6 +18,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `appinsights` | — | [Appinsights](./azure/appinsights.md) | — | — | 6 |
 | `applicationgateway` | — | [AppGateway](./azure/appgateway.md) | — | — | 4 |
 | `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
+| `azurefirewall` | — | [Firewall](./azure/firewall.md) | — | — | 8 |
 | `azuresearch` | — | [Search](./azure/search.md) | — | — | 53 |
 | `bedrock` | [Bedrock](./aws/bedrock.md) | — | — | — | 65 |
 | `bedrockagent` | [BedrockAgent](./aws/bedrockagent.md) | — | — | — | 29 |

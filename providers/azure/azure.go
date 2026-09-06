@@ -22,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/databricks"
 	"github.com/stackshy/cloudemu/v2/providers/azure/dns"
 	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
+	"github.com/stackshy/cloudemu/v2/providers/azure/firewall"
 	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
 	"github.com/stackshy/cloudemu/v2/providers/azure/iam"
 	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
@@ -135,6 +136,7 @@ type Provider struct {
 	DNS              *dns.Mock
 	LB               *loadbalancer.Mock
 	AppGateway       *applicationgateway.Mock
+	Firewall         *firewall.Mock
 	ServiceBus       *servicebus.Mock
 	// QueueStorage backs the Azure Queue Storage data-plane handler. It reuses
 	// the messagequeue provider, but is a distinct instance from ServiceBus so
@@ -197,6 +199,7 @@ func New(opts ...config.Option) *Provider {
 		DNS:                dns.New(o),
 		LB:                 loadbalancer.New(o),
 		AppGateway:         applicationgateway.New(o),
+		Firewall:           firewall.New(o),
 		ServiceBus:         servicebus.New(o),
 		QueueStorage:       servicebus.New(o),
 		TableStorage:       tablestorage.New(o),
