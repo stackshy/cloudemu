@@ -25,6 +25,7 @@ import (
 	cloudrunsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudrun"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudsql"
 	cloudtaskssrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudtasks"
+	composersrv "github.com/stackshy/cloudemu/v2/server/gcp/composer"
 	"github.com/stackshy/cloudemu/v2/server/gcp/compute"
 	dataprocsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataproc"
 	"github.com/stackshy/cloudemu/v2/server/gcp/eventarc"
@@ -53,6 +54,7 @@ import (
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	cloudrundriver "github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
 	ctdriver "github.com/stackshy/cloudemu/v2/services/cloudtasks/driver"
+	composerdriver "github.com/stackshy/cloudemu/v2/services/composer/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
@@ -112,7 +114,14 @@ type Drivers struct {
 	// {clusters|operations}; the handler's Matches narrows on the regions keyword
 	// and the resource segment so it is disjoint from every other /v1/projects/
 	// handler, and Compute's regional paths are under the /compute/v1/ prefix.
-	Dataproc         dataprocdriver.Dataproc
+	Dataproc dataprocdriver.Dataproc
+	// Composer serves the composer.googleapis.com v1 environment control plane
+	// against the composer driver. Its paths live under /v1/projects/{p}/
+	// locations/{l}/environments[/…]; the handler's Matches narrows on the
+	// environments resource segment, so it is disjoint from every other
+	// /v1/projects/ handler, and its location-scoped operation polls are owned by
+	// the shared LRO poller.
+	Composer         composerdriver.Composer
 	VertexAI         vertexaidriver.VertexAI
 	IAM              iamdriver.IAM
 	ArtifactRegistry crdriver.ContainerRegistry
@@ -352,6 +361,19 @@ func New(d Drivers) *server.Server {
 	// separate /compute/v1/ prefix, so the two never collide.
 	if d.Dataproc != nil {
 		srv.Register(dataprocsrv.New(d.Dataproc))
+	}
+
+	// Composer matches /v1/projects/{p}/locations/{l}/environments[/…]. Its
+	// environments resource-type guard is disjoint from every other /v1/projects/
+	// handler (Memorystore/Filestore's instances, GKE's clusters, Cloud
+	// Functions' functions, Eventarc's triggers, …), so registration order among
+	// them is unconstrained; registered before Firestore's permissive prefix.
+	// Its location-scoped operation polls are owned by the shared LRO poller
+	// (registered above), which the handler's Matches yields to.
+	if d.Composer != nil {
+		composerH := composersrv.New(d.Composer)
+		composerH.SetOperationRegistry(opsReg)
+		srv.Register(composerH)
 	}
 
 	// AlloyDB matches /v1/projects/{p}/locations/{l}/{clusters|backups|

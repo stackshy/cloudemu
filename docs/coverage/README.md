@@ -37,6 +37,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cloudtasks` | — | — | [CloudTasks](./gcp/cloudtasks.md) | — | 11 |
 | `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | — | — | — | 60 |
 | `cognito` | [Cognito](./aws/cognito.md) | — | — | — | 18 |
+| `composer` | — | — | [Composer](./gcp/composer.md) | — | 6 |
 | `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | — | 37 |
 | `configservice` | [Config](./aws/config.md) | — | — | — | 102 |
 | `containerapps` | — | [ContainerApps](./azure/containerapps.md) | — | — | 19 |
@@ -48,6 +49,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `costmanagement` | — | [Costmanagement](./azure/costmanagement.md) | — | — | 1 |
 | `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | — | 24 |
 | `databricks` | — | [Databricks](./azure/databricks.md) | — | — | 46 |
+| `datafactory` | — | [DataFactory](./azure/datafactory.md) | — | — | 6 |
 | `dataproc` | — | — | [Dataproc](./gcp/dataproc.md) | — | 6 |
 | `disks` | — | [Disks](./azure/disks.md) | — | — | 7 |
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | — | 16 |

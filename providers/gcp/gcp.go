@@ -18,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudrun"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudtasks"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/composer"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/dataproc"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/eventarc"
@@ -91,6 +92,7 @@ type Provider struct {
 	VertexAI         *vertexai.Mock
 	Spanner          *spannerprov.Mock
 	Dataproc         *dataproc.Mock
+	Composer         *composer.Mock
 	Scheduler        *scheduler.Mock
 	CloudTasks       *cloudtasks.Mock
 
@@ -140,6 +142,7 @@ func New(opts ...config.Option) *Provider {
 		VertexAI:         vertexai.New(o),
 		Spanner:          spannerprov.New(o),
 		Dataproc:         dataproc.New(o),
+		Composer:         composer.New(o),
 		Scheduler:        scheduler.New(o),
 		CloudTasks:       cloudtasks.New(o),
 		ProjectID:        o.ProjectID,

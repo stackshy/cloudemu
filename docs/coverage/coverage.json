@@ -2821,6 +2821,39 @@
     }
   },
   {
+    "service": "composer",
+    "interface": "Composer",
+    "operations": [
+      {
+        "name": "CreateEnvironment",
+        "doc": "CreateEnvironment provisions a new RUNNING environment (returns a completed"
+      },
+      {
+        "name": "DeleteEnvironment",
+        "doc": "DeleteEnvironment removes an environment (returns a completed LRO)."
+      },
+      {
+        "name": "GetEnvironment",
+        "doc": "GetEnvironment returns an environment by project/location/id."
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name."
+      },
+      {
+        "name": "ListEnvironments",
+        "doc": "ListEnvironments returns every environment in a project+location."
+      },
+      {
+        "name": "UpdateEnvironment",
+        "doc": "UpdateEnvironment applies a masked update from desired and returns a"
+      }
+    ],
+    "providers": {
+      "gcp": "Composer"
+    }
+  },
+  {
     "service": "compute",
     "interface": "Compute",
     "operations": [
@@ -4401,6 +4434,39 @@
     ],
     "providers": {
       "azure": "Databricks"
+    }
+  },
+  {
+    "service": "datafactory",
+    "interface": "Factories",
+    "operations": [
+      {
+        "name": "CreateOrUpdateFactory",
+        "doc": "CreateOrUpdateFactory stores the factory as a full replace and reports"
+      },
+      {
+        "name": "DeleteFactory",
+        "doc": "DeleteFactory removes the factory, returning NotFound if it does not exist."
+      },
+      {
+        "name": "GetFactory",
+        "doc": "GetFactory returns the factory identified by (resourceGroup, name), or"
+      },
+      {
+        "name": "ListFactories",
+        "doc": "ListFactories returns every factory in the subscription, ordered by ID."
+      },
+      {
+        "name": "ListFactoriesByResourceGroup",
+        "doc": "ListFactoriesByResourceGroup returns the factories in resourceGroup, ordered"
+      },
+      {
+        "name": "UpdateFactory",
+        "doc": "UpdateFactory applies a PATCH (Factories_Update): it REPLACES tags and"
+      }
+    ],
+    "providers": {
+      "azure": "DataFactory"
     }
   },
   {
