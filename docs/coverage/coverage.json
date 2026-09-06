@@ -1379,6 +1379,61 @@
     }
   },
   {
+    "service": "batch",
+    "interface": "Batch",
+    "operations": [
+      {
+        "name": "CreateComputeEnvironment",
+        "doc": "Compute environments."
+      },
+      {
+        "name": "CreateJobQueue",
+        "doc": "Job queues."
+      },
+      {
+        "name": "DeleteComputeEnvironment"
+      },
+      {
+        "name": "DeleteJobQueue"
+      },
+      {
+        "name": "DeregisterJobDefinition"
+      },
+      {
+        "name": "DescribeComputeEnvironments"
+      },
+      {
+        "name": "DescribeJobDefinitions"
+      },
+      {
+        "name": "DescribeJobQueues"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "RegisterJobDefinition",
+        "doc": "Job definitions."
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tags (by ARN), shared across all three resource kinds."
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateComputeEnvironment"
+      },
+      {
+        "name": "UpdateJobQueue"
+      }
+    ],
+    "providers": {
+      "aws": "Batch"
+    }
+  },
+  {
     "service": "bedrock",
     "interface": "Bedrock",
     "operations": [

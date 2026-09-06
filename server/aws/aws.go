@@ -17,6 +17,7 @@ import (
 	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
 	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/aws/apigateway"
 	apigatewayv2srv "github.com/stackshy/cloudemu/v2/server/aws/apigatewayv2"
+	batchsrv "github.com/stackshy/cloudemu/v2/server/aws/batch"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
@@ -70,6 +71,7 @@ import (
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	apigatewaydriver "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 	apigatewayv2driver "github.com/stackshy/cloudemu/v2/services/apigatewayv2/driver"
+	batchdriver "github.com/stackshy/cloudemu/v2/services/batch/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
@@ -152,6 +154,10 @@ type Drivers struct {
 	// EFS serves the AWS EFS REST-JSON API (path + method routing under the
 	// /2015-02-01/ version prefix) against the efs driver.
 	EFS efsdriver.EFS
+
+	// Batch serves the AWS Batch REST-JSON control plane (verb + operation-path
+	// routing under the /v1/ prefix) against the batch driver.
+	Batch batchdriver.Batch
 
 	// SESV2 serves the AWS SES v2 REST-JSON API (path + method routing under the
 	// /v2/email/ version prefix) against the sesv2 driver.
@@ -335,6 +341,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		VPCLattice:          p.VPCLattice,
 		WAFv2:               p.WAFv2,
 		EFS:                 p.EFS,
+		Batch:               p.Batch,
 		SESV2:               p.SESV2,
 		OpenSearch:          p.OpenSearch,
 		Kafka:               p.Kafka,
@@ -556,6 +563,15 @@ func New(d Drivers) *server.Server {
 	// catch-all (no real bucket path begins with /2015-02-01/).
 	if d.EFS != nil {
 		srv.Register(efssrv.New(d.EFS))
+	}
+
+	// Batch uses REST-JSON verb + operation-path routing under the /v1/ prefix;
+	// its Matches predicate gates on that prefix plus a known Batch operation
+	// segment, so it must run before the S3 catch-all. The /v1/tags/{arn} path is
+	// shared with MSK, so Batch's Matches claims it only for batch ARNs (see
+	// batch.Handler.Matches) and a kafka ARN falls through to the Kafka handler.
+	if d.Batch != nil {
+		srv.Register(batchsrv.New(d.Batch))
 	}
 
 	// SES v2 uses REST-JSON path routing under the /v2/email/ version prefix; its

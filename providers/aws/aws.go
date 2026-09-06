@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigateway"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigatewayv2"
+	"github.com/stackshy/cloudemu/v2/providers/aws/batch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
@@ -170,6 +171,7 @@ type Provider struct {
 	SSM                 *ssm.Mock
 	ECS                 *ecs.Mock
 	EFS                 *efs.Mock
+	Batch               *batch.Mock
 	Kinesis             *kinesis.Mock
 	SESV2               *sesv2.Mock
 	OpenSearch          *opensearch.Mock
@@ -237,6 +239,7 @@ func New(opts ...config.Option) *Provider {
 		SSM:                 ssm.New(o),
 		ECS:                 ecs.New(o),
 		EFS:                 efs.New(o),
+		Batch:               batch.New(o),
 		Kinesis:             kinesis.New(o),
 		SESV2:               sesv2.New(o),
 		OpenSearch:          opensearch.New(o),
