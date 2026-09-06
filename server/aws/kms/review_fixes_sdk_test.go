@@ -265,3 +265,72 @@ func TestSDKMultiRegionKeyIDHasMRKPrefix(t *testing.T) {
 		t.Fatalf("DescribeKey KeyId = %q, want %q", aws.ToString(desc.KeyMetadata.KeyId), keyID)
 	}
 }
+
+// e2e audit: rotation operations must honor the key state. Real KMS rejects
+// EnableKeyRotation/DisableKeyRotation/RotateKeyOnDemand on a disabled key with
+// DisabledException (per the key-state table) rather than silently succeeding.
+func TestSDKRotationOnDisabledKeyRejected(t *testing.T) {
+	ctx := context.Background()
+	c := newKMSClient(t)
+
+	key, err := c.CreateKey(ctx, &awskms.CreateKeyInput{})
+	if err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+
+	keyID := key.KeyMetadata.KeyId
+	if _, err := c.DisableKey(ctx, &awskms.DisableKeyInput{KeyId: keyID}); err != nil {
+		t.Fatalf("DisableKey: %v", err)
+	}
+
+	assertDisabled := func(op string, err error) {
+		t.Helper()
+
+		if err == nil {
+			t.Fatalf("%s on a disabled key should fail", op)
+		}
+
+		var disabled *kmstypes.DisabledException
+		if !errors.As(err, &disabled) {
+			t.Fatalf("%s: want DisabledException, got %v", op, err)
+		}
+	}
+
+	_, err = c.EnableKeyRotation(ctx, &awskms.EnableKeyRotationInput{KeyId: keyID})
+	assertDisabled("EnableKeyRotation", err)
+
+	_, err = c.DisableKeyRotation(ctx, &awskms.DisableKeyRotationInput{KeyId: keyID})
+	assertDisabled("DisableKeyRotation", err)
+
+	_, err = c.RotateKeyOnDemand(ctx, &awskms.RotateKeyOnDemandInput{KeyId: keyID})
+	assertDisabled("RotateKeyOnDemand", err)
+}
+
+// e2e audit: EnableKeyRotation on a key that is pending deletion must reject
+// with KMSInvalidStateException, matching real KMS's key-state table.
+func TestSDKRotationOnPendingDeletionKeyRejected(t *testing.T) {
+	ctx := context.Background()
+	c := newKMSClient(t)
+
+	key, err := c.CreateKey(ctx, &awskms.CreateKeyInput{})
+	if err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+
+	keyID := key.KeyMetadata.KeyId
+	if _, err := c.ScheduleKeyDeletion(ctx, &awskms.ScheduleKeyDeletionInput{
+		KeyId: keyID, PendingWindowInDays: aws.Int32(7),
+	}); err != nil {
+		t.Fatalf("ScheduleKeyDeletion: %v", err)
+	}
+
+	_, err = c.EnableKeyRotation(ctx, &awskms.EnableKeyRotationInput{KeyId: keyID})
+	if err == nil {
+		t.Fatal("EnableKeyRotation on a pending-deletion key should fail")
+	}
+
+	var invalidState *kmstypes.KMSInvalidStateException
+	if !errors.As(err, &invalidState) {
+		t.Fatalf("want KMSInvalidStateException, got %v", err)
+	}
+}
