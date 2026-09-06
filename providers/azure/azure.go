@@ -24,6 +24,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/dns"
 	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
 	"github.com/stackshy/cloudemu/v2/providers/azure/firewall"
+	"github.com/stackshy/cloudemu/v2/providers/azure/frontdoor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
 	"github.com/stackshy/cloudemu/v2/providers/azure/iam"
 	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
@@ -139,6 +140,7 @@ type Provider struct {
 	LB               *loadbalancer.Mock
 	AppGateway       *applicationgateway.Mock
 	Firewall         *firewall.Mock
+	FrontDoor        *frontdoor.Mock
 	PrivateDNS       *privatedns.Mock
 	ServiceBus       *servicebus.Mock
 	// QueueStorage backs the Azure Queue Storage data-plane handler. It reuses
@@ -204,6 +206,7 @@ func New(opts ...config.Option) *Provider {
 		LB:                 loadbalancer.New(o),
 		AppGateway:         applicationgateway.New(o),
 		Firewall:           firewall.New(o),
+		FrontDoor:          frontdoor.New(o),
 		PrivateDNS:         privatedns.New(o),
 		ServiceBus:         servicebus.New(o),
 		QueueStorage:       servicebus.New(o),
