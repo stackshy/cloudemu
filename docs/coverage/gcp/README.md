@@ -20,6 +20,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [Dataproc](./dataproc.md) | `dataproc` | 6 |
 | [Eventarc](./eventarc.md) | `eventbus` | 16 |
 | [FCM](./fcm.md) | `notification` | 9 |
+| [Filestore](./filestore.md) | — (provider-native) | 5 |
 | [Firestore](./firestore.md) | `database` | 24 |
 | [GCE](./gce.md) | `compute` | 37 |
 | [GCS](./gcs.md) | `storage` | 35 |

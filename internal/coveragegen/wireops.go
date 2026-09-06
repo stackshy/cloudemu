@@ -131,6 +131,9 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"BatchGetAssetsHistory", "CreateFeed", "DeleteFeed", "ExportAssets", "GetFeed",
 		"GetOperation", "ListAssets", "ListFeeds", "SearchAllIamPolicies", "SearchAllResources", "UpdateFeed",
 	},
+	"gcp/filestore": {
+		"CreateInstance", "DeleteInstance", "GetInstance", "ListInstances", "UpdateInstance",
+	},
 	"gcp/lro": {
 		"GetOperation",
 	},
