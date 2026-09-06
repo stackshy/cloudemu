@@ -4783,6 +4783,30 @@
     }
   },
   {
+    "service": "filestore",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateInstance"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "GetInstance"
+      },
+      {
+        "name": "ListInstances"
+      },
+      {
+        "name": "UpdateInstance"
+      }
+    ],
+    "providers": {
+      "gcp": "Filestore"
+    }
+  },
+  {
     "service": "gke",
     "interface": "provider-native",
     "operations": [
