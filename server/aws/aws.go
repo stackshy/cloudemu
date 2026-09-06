@@ -17,6 +17,7 @@ import (
 	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
 	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/aws/apigateway"
 	apigatewayv2srv "github.com/stackshy/cloudemu/v2/server/aws/apigatewayv2"
+	appsyncsrv "github.com/stackshy/cloudemu/v2/server/aws/appsync"
 	athenasrv "github.com/stackshy/cloudemu/v2/server/aws/athena"
 	batchsrv "github.com/stackshy/cloudemu/v2/server/aws/batch"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
@@ -73,6 +74,7 @@ import (
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	apigatewaydriver "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 	apigatewayv2driver "github.com/stackshy/cloudemu/v2/services/apigatewayv2/driver"
+	appsyncdriver "github.com/stackshy/cloudemu/v2/services/appsync/driver"
 	athenadriver "github.com/stackshy/cloudemu/v2/services/athena/driver"
 	batchdriver "github.com/stackshy/cloudemu/v2/services/batch/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
@@ -171,6 +173,10 @@ type Drivers struct {
 	// method routing under the /2021-01-01/ version prefix) against the
 	// opensearch driver.
 	OpenSearch opensearchdriver.OpenSearch
+
+	// AppSync serves the AWS AppSync control-plane REST-JSON API (verb + path
+	// routing under the /v1/ prefix) against the appsync driver.
+	AppSync appsyncdriver.AppSync
 
 	// Kafka serves the Amazon MSK REST-JSON API (path + method routing under
 	// the /v1/, /api/v2/, and /replication/v1/ version prefixes) against the
@@ -354,6 +360,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		Batch:               p.Batch,
 		SESV2:               p.SESV2,
 		OpenSearch:          p.OpenSearch,
+		AppSync:             p.AppSync,
 		Kafka:               p.Kafka,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
@@ -611,6 +618,15 @@ func New(d Drivers) *server.Server {
 	// the S3 catch-all (no real bucket path begins with /2021-01-01/).
 	if d.OpenSearch != nil {
 		srv.Register(opensearchsrv.New(d.OpenSearch))
+	}
+
+	// AppSync uses REST-JSON verb+path routing under the /v1/ prefix. Its
+	// Matches claims /v1/apis paths and /v1/tags paths carrying an AppSync ARN,
+	// so it must run before the S3 catch-all and before the MSK handler (which
+	// also uses /v1/ and claims /v1/tags for any ARN) so AppSync tag ops are not
+	// shadowed. It is disjoint from Batch (distinct operation-name roots).
+	if d.AppSync != nil {
+		srv.Register(appsyncsrv.New(d.AppSync))
 	}
 
 	// MSK (Kafka) uses REST-JSON path routing under the /v1/, /api/v2/, and

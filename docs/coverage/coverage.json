@@ -364,6 +364,66 @@
     }
   },
   {
+    "service": "appsync",
+    "interface": "AppSync",
+    "operations": [
+      {
+        "name": "CreateApiKey"
+      },
+      {
+        "name": "CreateDataSource"
+      },
+      {
+        "name": "CreateGraphqlApi"
+      },
+      {
+        "name": "DeleteApiKey"
+      },
+      {
+        "name": "DeleteDataSource"
+      },
+      {
+        "name": "DeleteGraphqlApi"
+      },
+      {
+        "name": "GetDataSource"
+      },
+      {
+        "name": "GetGraphqlApi"
+      },
+      {
+        "name": "ListApiKeys"
+      },
+      {
+        "name": "ListDataSources"
+      },
+      {
+        "name": "ListGraphqlApis"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateApiKey"
+      },
+      {
+        "name": "UpdateDataSource"
+      },
+      {
+        "name": "UpdateGraphqlApi"
+      }
+    ],
+    "providers": {
+      "aws": "AppSync"
+    }
+  },
+  {
     "service": "athena",
     "interface": "Athena",
     "operations": [
