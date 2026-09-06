@@ -41,6 +41,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/ucstorage"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/unitycatalog"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/wsfs"
+	datafactorysrv "github.com/stackshy/cloudemu/v2/server/azure/datafactory"
 	"github.com/stackshy/cloudemu/v2/server/azure/disks"
 	dnssrv "github.com/stackshy/cloudemu/v2/server/azure/dns"
 	eventgridsrv "github.com/stackshy/cloudemu/v2/server/azure/eventgrid"
@@ -89,6 +90,7 @@ import (
 	cpgdriver "github.com/stackshy/cloudemu/v2/services/cosmospostgresql/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
+	dfdriver "github.com/stackshy/cloudemu/v2/services/datafactory/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
@@ -189,11 +191,14 @@ type Drivers struct {
 	NotificationHubs    notifdriver.Notification
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
-	CognitiveServices   azureaidriver.CognitiveServices
-	MachineLearning     azureaidriver.MachineLearning
-	AzureAIDataPlane    azureaidriver.DataPlane
-	SearchControl       azuresearchdriver.SearchControl
-	SearchDataPlane     azuresearchdriver.SearchDataPlane
+	// DataFactory serves the Microsoft.DataFactory/factories ARM API against the
+	// datafactory driver.
+	DataFactory       dfdriver.Factories
+	CognitiveServices azureaidriver.CognitiveServices
+	MachineLearning   azureaidriver.MachineLearning
+	AzureAIDataPlane  azureaidriver.DataPlane
+	SearchControl     azuresearchdriver.SearchControl
+	SearchDataPlane   azuresearchdriver.SearchDataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -394,6 +399,14 @@ func New(d Drivers) http.Handler {
 	// purge cascade. Registered further below.
 	appInsightsHandler := appinsightssrv.New()
 	rgPurgers = append(rgPurgers, appInsightsHandler)
+
+	// Data Factory (Microsoft.DataFactory/factories) is a resource-group-scoped
+	// resource, so its handler joins the purge cascade. Registered further below.
+	var dataFactoryHandler *datafactorysrv.Handler
+	if d.DataFactory != nil {
+		dataFactoryHandler = datafactorysrv.New(d.DataFactory)
+		rgPurgers = append(rgPurgers, dataFactoryHandler)
+	}
 
 	// Resource groups have no driver of their own: they are containers, and the
 	// emulator tracks membership by the ids resources already carry. The
@@ -638,6 +651,14 @@ func New(d Drivers) http.Handler {
 	}
 
 	registerDatabricksDataPlane(srv, &d)
+
+	// Data Factory matches on Microsoft.DataFactory/factories — a distinct ARM
+	// provider namespace, so registration order is unconstrained. Must precede the
+	// BlobStorage fallback so a factory request is not swallowed as a blob call.
+	// Created above and joined to the resource-group purge cascade.
+	if dataFactoryHandler != nil {
+		srv.Register(dataFactoryHandler)
+	}
 
 	// Cognitive Services matches on Microsoft.CognitiveServices/accounts — a
 	// distinct ARM provider name, so registration order is unconstrained.

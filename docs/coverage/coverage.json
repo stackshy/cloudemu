@@ -4330,6 +4330,39 @@
     }
   },
   {
+    "service": "datafactory",
+    "interface": "Factories",
+    "operations": [
+      {
+        "name": "CreateOrUpdateFactory",
+        "doc": "CreateOrUpdateFactory stores the factory as a full replace and reports"
+      },
+      {
+        "name": "DeleteFactory",
+        "doc": "DeleteFactory removes the factory, returning NotFound if it does not exist."
+      },
+      {
+        "name": "GetFactory",
+        "doc": "GetFactory returns the factory identified by (resourceGroup, name), or"
+      },
+      {
+        "name": "ListFactories",
+        "doc": "ListFactories returns every factory in the subscription, ordered by ID."
+      },
+      {
+        "name": "ListFactoriesByResourceGroup",
+        "doc": "ListFactoriesByResourceGroup returns the factories in resourceGroup, ordered"
+      },
+      {
+        "name": "UpdateFactory",
+        "doc": "UpdateFactory applies a PATCH (Factories_Update): it REPLACES tags and"
+      }
+    ],
+    "providers": {
+      "azure": "DataFactory"
+    }
+  },
+  {
     "service": "dataproc",
     "interface": "Dataproc",
     "operations": [

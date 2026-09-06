@@ -61,6 +61,8 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		Databricks:          p.Databricks,
 		DatabricksDataPlane: p.Databricks,
 
+		DataFactory: p.DataFactory,
+
 		// Azure AI mock satisfies CognitiveServices, MachineLearning and the
 		// inference/Assistants data plane.
 		CognitiveServices: p.AI,

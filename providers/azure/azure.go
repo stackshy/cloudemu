@@ -20,6 +20,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmospostgresql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/databricks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/datafactory"
 	"github.com/stackshy/cloudemu/v2/providers/azure/dns"
 	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
 	"github.com/stackshy/cloudemu/v2/providers/azure/firewall"
@@ -156,6 +157,7 @@ type Provider struct {
 	MySQLFlex          *mysqlflex.Mock
 	AKS                *aks.Mock
 	Databricks         *databricks.Mock
+	DataFactory        *datafactory.Mock
 	AI                 *ai.Mock
 	Search             *search.Mock
 	ManagedIdentity    *managedidentity.Mock
@@ -215,6 +217,7 @@ func New(opts ...config.Option) *Provider {
 		MySQLFlex:          mysqlflex.New(o),
 		AKS:                aks.New(o),
 		Databricks:         databricks.New(o),
+		DataFactory:        datafactory.New(o),
 		AI:                 ai.New(o),
 		Search:             search.New(o),
 		ManagedIdentity:    managedidentity.New(o),
