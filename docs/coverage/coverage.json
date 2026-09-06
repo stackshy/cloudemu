@@ -312,6 +312,57 @@
     }
   },
   {
+    "service": "appflow",
+    "interface": "AppFlow",
+    "operations": [
+      {
+        "name": "CreateConnectorProfile"
+      },
+      {
+        "name": "CreateFlow"
+      },
+      {
+        "name": "DeleteConnectorProfile"
+      },
+      {
+        "name": "DeleteFlow"
+      },
+      {
+        "name": "DescribeConnectorProfiles"
+      },
+      {
+        "name": "DescribeFlow"
+      },
+      {
+        "name": "ListFlows"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "StartFlow"
+      },
+      {
+        "name": "StopFlow"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateConnectorProfile"
+      },
+      {
+        "name": "UpdateFlow"
+      }
+    ],
+    "providers": {
+      "aws": "AppFlow"
+    }
+  },
+  {
     "service": "appinsights",
     "interface": "provider-native",
     "operations": [

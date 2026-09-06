@@ -17,6 +17,7 @@ import (
 	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
 	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/aws/apigateway"
 	apigatewayv2srv "github.com/stackshy/cloudemu/v2/server/aws/apigatewayv2"
+	appflowsrv "github.com/stackshy/cloudemu/v2/server/aws/appflow"
 	appsyncsrv "github.com/stackshy/cloudemu/v2/server/aws/appsync"
 	athenasrv "github.com/stackshy/cloudemu/v2/server/aws/athena"
 	batchsrv "github.com/stackshy/cloudemu/v2/server/aws/batch"
@@ -75,6 +76,7 @@ import (
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	apigatewaydriver "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 	apigatewayv2driver "github.com/stackshy/cloudemu/v2/services/apigatewayv2/driver"
+	appflowdriver "github.com/stackshy/cloudemu/v2/services/appflow/driver"
 	appsyncdriver "github.com/stackshy/cloudemu/v2/services/appsync/driver"
 	athenadriver "github.com/stackshy/cloudemu/v2/services/athena/driver"
 	batchdriver "github.com/stackshy/cloudemu/v2/services/batch/driver"
@@ -179,6 +181,11 @@ type Drivers struct {
 	// AppSync serves the AWS AppSync control-plane REST-JSON API (verb + path
 	// routing under the /v1/ prefix) against the appsync driver.
 	AppSync appsyncdriver.AppSync
+
+	// AppFlow serves the AWS AppFlow control-plane REST-JSON API (verb + fixed
+	// per-operation root paths, e.g. POST /create-flow) against the appflow
+	// driver.
+	AppFlow appflowdriver.AppFlow
 
 	// Kafka serves the Amazon MSK REST-JSON API (path + method routing under
 	// the /v1/, /api/v2/, and /replication/v1/ version prefixes) against the
@@ -366,6 +373,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		SESV2:               p.SESV2,
 		OpenSearch:          p.OpenSearch,
 		AppSync:             p.AppSync,
+		AppFlow:             p.AppFlow,
 		Kafka:               p.Kafka,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
@@ -639,6 +647,13 @@ func New(d Drivers) *server.Server {
 	// shadowed. It is disjoint from Batch (distinct operation-name roots).
 	if d.AppSync != nil {
 		srv.Register(appsyncsrv.New(d.AppSync))
+	}
+
+	// AppFlow uses REST-JSON verb + fixed per-operation root paths (e.g.
+	// POST /create-flow) and /tags paths carrying an AppFlow ARN, so its Matches
+	// claims only those exact paths and must run before the S3 catch-all.
+	if d.AppFlow != nil {
+		srv.Register(appflowsrv.New(d.AppFlow))
 	}
 
 	// MSK (Kafka) uses REST-JSON path routing under the /v1/, /api/v2/, and

@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigateway"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigatewayv2"
+	"github.com/stackshy/cloudemu/v2/providers/aws/appflow"
 	"github.com/stackshy/cloudemu/v2/providers/aws/appsync"
 	"github.com/stackshy/cloudemu/v2/providers/aws/athena"
 	"github.com/stackshy/cloudemu/v2/providers/aws/batch"
@@ -180,6 +181,7 @@ type Provider struct {
 	SESV2               *sesv2.Mock
 	OpenSearch          *opensearch.Mock
 	AppSync             *appsync.Mock
+	AppFlow             *appflow.Mock
 	Kafka               *kafka.Mock
 	VPCLattice          *vpclattice.Mock
 	WAFv2               *wafv2.Mock
@@ -252,6 +254,7 @@ func New(opts ...config.Option) *Provider {
 		SESV2:               sesv2.New(o),
 		OpenSearch:          opensearch.New(o),
 		AppSync:             appsync.New(o),
+		AppFlow:             appflow.New(o),
 		Kafka:               kafka.New(o),
 		VPCLattice:          vpclattice.New(o),
 		WAFv2:               wafv2.New(o),
