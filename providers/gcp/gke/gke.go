@@ -55,6 +55,14 @@ const (
 	defaultNodeCount   = 1
 	defaultMachineType = "e2-medium"
 	defaultDiskSizeGB  = 100
+	// defaultImageType/defaultServiceAccount are the node-config values real GKE
+	// fills in when the request omits them. The Terraform google provider marks
+	// node_config.image_type and node_config.service_account computed and sources
+	// them from the server, so a read that omits them shows a perpetual
+	// image_type: "" -> "COS_CONTAINERD" (and service_account) diff that never
+	// converges.
+	defaultImageType      = "COS_CONTAINERD"
+	defaultServiceAccount = "default"
 
 	// defaultServicesCIDR mirrors GKE's default Kubernetes Services IP range.
 	defaultServicesCIDR = "34.118.224.0/20"
@@ -91,6 +99,13 @@ type Cluster struct {
 	LegacyAbacEnabled bool
 	NetworkPolicy     bool
 	MasterUsername    string
+	// NodeConfig is the effective node configuration of the cluster's default
+	// pool, frozen at creation. Real GKE returns cluster.nodeConfig on every
+	// read (it survives even a remove-default-node-pool deletion), and the
+	// Terraform google provider reads google_container_cluster.node_config from
+	// it — a missing cluster.nodeConfig makes the provider see the whole
+	// node_config block vanish and force-replace the cluster on the next plan.
+	NodeConfig        NodeConfigSpec
 	ResourceLabels    map[string]string
 	LabelFingerprint  string // opaque hash of ResourceLabels; computed on read.
 	MaintenanceWindow string // RFC-3339 daily window encoding; empty = none.
@@ -104,13 +119,23 @@ type Cluster struct {
 
 // NodePool is the in-memory representation of a GKE node pool.
 type NodePool struct {
-	Name                  string
-	ClusterName           string
-	Location              string
-	NodeCount             int64
-	MachineType           string
-	DiskSizeGB            int64
-	OauthScopes           []string
+	Name        string
+	ClusterName string
+	Location    string
+	NodeCount   int64
+	MachineType string
+	DiskSizeGB  int64
+	OauthScopes []string
+	// ImageType/Tags/Metadata/ServiceAccount/Labels round-trip the remaining
+	// node_config fields the Terraform google provider reads back. ImageType and
+	// ServiceAccount are computed (default COS_CONTAINERD / "default") so a bare
+	// pool still converges; Labels forces a cluster/pool replacement when it
+	// vanishes on read, so it must survive the round-trip.
+	ImageType             string
+	Tags                  []string
+	Metadata              map[string]string
+	ServiceAccount        string
+	Labels                map[string]string
 	Version               string
 	AutoscalingMin        int64
 	AutoscalingMax        int64
@@ -344,9 +369,14 @@ type CreateClusterInput struct {
 // NodeConfigSpec captures the cluster-level nodeConfig that seeds the
 // auto-created default node pool when no explicit node pools are given.
 type NodeConfigSpec struct {
-	MachineType string
-	DiskSizeGB  int64
-	OauthScopes []string
+	MachineType    string
+	DiskSizeGB     int64
+	OauthScopes    []string
+	ImageType      string
+	Tags           []string
+	Metadata       map[string]string
+	ServiceAccount string
+	Labels         map[string]string
 }
 
 // NodePoolManagement captures the node auto-management flags a create request
@@ -368,6 +398,11 @@ type NodePoolSpec struct {
 	MachineType      string
 	DiskSizeGB       int64
 	OauthScopes      []string
+	ImageType        string
+	Tags             []string
+	Metadata         map[string]string
+	ServiceAccount   string
+	Labels           map[string]string
 	Version          string
 	AutoscalingMin   int64
 	AutoscalingMax   int64
@@ -419,22 +454,7 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 	// fields fall back to defaults via nodePoolFromSpec.
 	pools := input.NodePools
 	if len(pools) == 0 {
-		// Carry the pointer through untouched so an explicit initialNodeCount=0
-		// (autoscale-from-zero) reaches the default pool; nodePoolFromSpec
-		// resolves a nil (absent) count to the GKE default.
-		spec := NodePoolSpec{
-			Name:             "default-pool",
-			InitialNodeCount: input.InitialNodeCount,
-			Version:          stubNodeVersion,
-		}
-
-		if nc := input.NodeConfig; nc != nil {
-			spec.MachineType = nc.MachineType
-			spec.DiskSizeGB = nc.DiskSizeGB
-			spec.OauthScopes = nc.OauthScopes
-		}
-
-		pools = []NodePoolSpec{spec}
+		pools = []NodePoolSpec{defaultPoolSpec(input)}
 	}
 
 	// The bootstrap/explicit node pools provision alongside the cluster in real
@@ -445,6 +465,22 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 	for i := range pools {
 		np := nodePoolFromSpec(&pools[i], input.Name, input.Location, now)
 		npKey := nodePoolKey(input.Location, input.Name, np.Name)
+
+		// cluster.nodeConfig mirrors the default (first) pool's effective config,
+		// frozen at creation — real GKE keeps returning it even after the default
+		// pool is deleted (remove_default_node_pool).
+		if i == 0 {
+			cluster.NodeConfig = NodeConfigSpec{
+				MachineType:    np.MachineType,
+				DiskSizeGB:     np.DiskSizeGB,
+				OauthScopes:    np.OauthScopes,
+				ImageType:      np.ImageType,
+				Tags:           np.Tags,
+				Metadata:       np.Metadata,
+				ServiceAccount: np.ServiceAccount,
+				Labels:         np.Labels,
+			}
+		}
 
 		m.nodePools.Set(npKey, np)
 		m.nodePoolSettle.Begin(npKey, statusProvisioning, now, settleDur)
@@ -475,6 +511,33 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 	return &out, &op, nil
 }
 
+// defaultPoolSpec builds the bootstrap default node pool real GKE materializes
+// when a create request specifies no explicit node pools. The cluster-level
+// nodeConfig (when present) configures that pool; absent fields fall back to
+// defaults via nodePoolFromSpec. The InitialNodeCount pointer is carried through
+// untouched so an explicit 0 (autoscale-from-zero) reaches the pool, while a nil
+// (absent) count resolves to the GKE default.
+func defaultPoolSpec(input *CreateClusterInput) NodePoolSpec {
+	spec := NodePoolSpec{
+		Name:             "default-pool",
+		InitialNodeCount: input.InitialNodeCount,
+		Version:          stubNodeVersion,
+	}
+
+	if nc := input.NodeConfig; nc != nil {
+		spec.MachineType = nc.MachineType
+		spec.DiskSizeGB = nc.DiskSizeGB
+		spec.OauthScopes = nc.OauthScopes
+		spec.ImageType = nc.ImageType
+		spec.Tags = nc.Tags
+		spec.Metadata = nc.Metadata
+		spec.ServiceAccount = nc.ServiceAccount
+		spec.Labels = nc.Labels
+	}
+
+	return spec
+}
+
 func nodePoolFromSpec(spec *NodePoolSpec, clusterName, location string, now time.Time) NodePool {
 	// Honor an explicit count (including 0 for autoscale-from-zero); only
 	// backfill the GKE default when the field was genuinely absent (nil).
@@ -499,6 +562,11 @@ func nodePoolFromSpec(spec *NodePoolSpec, clusterName, location string, now time
 		MachineType:    defaultIfEmpty(spec.MachineType, defaultMachineType),
 		DiskSizeGB:     defaultIfZero(spec.DiskSizeGB, defaultDiskSizeGB),
 		OauthScopes:    spec.OauthScopes,
+		ImageType:      defaultIfEmpty(spec.ImageType, defaultImageType),
+		Tags:           spec.Tags,
+		Metadata:       spec.Metadata,
+		ServiceAccount: defaultIfEmpty(spec.ServiceAccount, defaultServiceAccount),
+		Labels:         spec.Labels,
 		Version:        defaultIfEmpty(spec.Version, stubNodeVersion),
 		AutoscalingMin: spec.AutoscalingMin,
 		AutoscalingMax: spec.AutoscalingMax,

@@ -59,6 +59,114 @@ func TestSDKGKEClusterAlwaysEmitsLegacyAbacAndNetworkConfig(t *testing.T) {
 	}
 }
 
+// TestSDKGKEClusterAlwaysEmitsNodeConfig proves a cluster read carries a
+// cluster-level nodeConfig reflecting the default pool's config. Real GKE always
+// returns cluster.nodeConfig, and the Terraform google provider sources
+// google_container_cluster.node_config from it — a nil cluster.nodeConfig makes
+// the provider see the whole node_config block vanish and force-replace the
+// cluster (1 to add / 1 to destroy) on the very next plan, even with no config
+// change.
+func TestSDKGKEClusterAlwaysEmitsNodeConfig(t *testing.T) {
+	svc, project := newSDKClient(t)
+	ctx := context.Background()
+	loc := "us-central1"
+
+	if _, err := svc.Projects.Locations.Clusters.Create(parent(project, loc), &container.CreateClusterRequest{
+		Cluster: &container.Cluster{
+			Name:             "nc",
+			InitialNodeCount: 1,
+			NodeConfig: &container.NodeConfig{
+				MachineType:    cfMachineType,
+				DiskSizeGb:     cfDiskSizeGb,
+				OauthScopes:    []string{cfOauthScope},
+				Labels:         map[string]string{ncLabelKey: ncLabelVal},
+				ImageType:      ncImageType,
+				Tags:           []string{ncTag},
+				Metadata:       map[string]string{ncMetaKey: ncMetaVal},
+				ServiceAccount: ncServiceAccount,
+			},
+		},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := svc.Projects.Locations.Clusters.Get(clusterName(project, loc, "nc")).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if got.NodeConfig == nil {
+		t.Fatal("cluster.nodeConfig nil — Terraform force-replaces the cluster on the next plan")
+	}
+
+	if got.NodeConfig.MachineType != cfMachineType || got.NodeConfig.DiskSizeGb != cfDiskSizeGb {
+		t.Fatalf("cluster.nodeConfig = %+v, want machineType=%s diskSizeGb=%d",
+			got.NodeConfig, cfMachineType, cfDiskSizeGb)
+	}
+
+	// labels round-trip at cluster level: a labels block that vanishes on read
+	// makes the Terraform google provider force-replace (destroy) the cluster.
+	assertNodeConfigExtras(t, "cluster.nodeConfig", got.NodeConfig)
+
+	// The default pool's config must carry the same fields, since Terraform reads
+	// google_container_node_pool.node_config from it too.
+	if len(got.NodePools) == 0 || got.NodePools[0].Config == nil {
+		t.Fatal("cluster missing default node pool config")
+	}
+
+	assertNodeConfigExtras(t, "nodePool[0].config", got.NodePools[0].Config)
+
+	// The same object must survive the list path (Terraform refreshes via both).
+	list, err := svc.Projects.Locations.Clusters.List(parent(project, loc)).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	if len(list.Clusters) != 1 || list.Clusters[0].NodeConfig == nil {
+		t.Fatalf("list cluster missing nodeConfig: %+v", list.Clusters)
+	}
+
+	assertNodeConfigExtras(t, "list[0].nodeConfig", list.Clusters[0].NodeConfig)
+}
+
+// Node-config fields beyond the original machineType/diskSizeGb/oauthScopes that
+// the Terraform google provider reads back: labels/metadata/serviceAccount force
+// a cluster/pool replacement when they drift, and imageType/tags perpetually
+// diff, so all must survive the round-trip.
+const (
+	ncLabelKey       = "team"
+	ncLabelVal       = "platform"
+	ncImageType      = "COS_CONTAINERD"
+	ncTag            = "web"
+	ncMetaKey        = "foo"
+	ncMetaVal        = "bar"
+	ncServiceAccount = "default"
+)
+
+func assertNodeConfigExtras(t *testing.T, where string, cfg *container.NodeConfig) {
+	t.Helper()
+
+	if cfg.Labels[ncLabelKey] != ncLabelVal {
+		t.Fatalf("%s.labels = %v, want %s=%s", where, cfg.Labels, ncLabelKey, ncLabelVal)
+	}
+
+	if cfg.ImageType != ncImageType {
+		t.Fatalf("%s.imageType = %q, want %q", where, cfg.ImageType, ncImageType)
+	}
+
+	if len(cfg.Tags) != 1 || cfg.Tags[0] != ncTag {
+		t.Fatalf("%s.tags = %v, want [%s]", where, cfg.Tags, ncTag)
+	}
+
+	if cfg.Metadata[ncMetaKey] != ncMetaVal {
+		t.Fatalf("%s.metadata = %v, want %s=%s", where, cfg.Metadata, ncMetaKey, ncMetaVal)
+	}
+
+	if cfg.ServiceAccount != ncServiceAccount {
+		t.Fatalf("%s.serviceAccount = %q, want %q", where, cfg.ServiceAccount, ncServiceAccount)
+	}
+}
+
 // TestSDKGKEOperationTargetLinkUsesRequestProject proves an operation's
 // targetLink carries the project from the request URL, not the emulator's
 // configured default project — a user parsing targetLink to locate the resource

@@ -31,9 +31,14 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *gkePa
 
 	if nc := body.Cluster.NodeConfig; nc != nil {
 		in.NodeConfig = &gke.NodeConfigSpec{
-			MachineType: nc.MachineType,
-			DiskSizeGB:  nc.DiskSizeGb,
-			OauthScopes: nc.OauthScopes,
+			MachineType:    nc.MachineType,
+			DiskSizeGB:     nc.DiskSizeGb,
+			OauthScopes:    nc.OauthScopes,
+			ImageType:      nc.ImageType,
+			Tags:           nc.Tags,
+			Metadata:       nc.Metadata,
+			ServiceAccount: nc.ServiceAccount,
+			Labels:         nc.Labels,
 		}
 	}
 
@@ -66,6 +71,11 @@ func nodePoolSpecFromWire(np *gkeNodePool) gke.NodePoolSpec {
 		spec.MachineType = np.Config.MachineType
 		spec.DiskSizeGB = np.Config.DiskSizeGb
 		spec.OauthScopes = np.Config.OauthScopes
+		spec.ImageType = np.Config.ImageType
+		spec.Tags = np.Config.Tags
+		spec.Metadata = np.Config.Metadata
+		spec.ServiceAccount = np.Config.ServiceAccount
+		spec.Labels = np.Config.Labels
 	}
 
 	if np.Autoscaling != nil {
