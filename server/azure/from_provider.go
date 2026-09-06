@@ -47,6 +47,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		KeyVault:           p.KeyVault,
 		DNS:                p.DNS,
 		LB:                 p.LB,
+		AppGateway:         p.AppGateway,
 		EventGrid:          p.EventGrid,
 		LogAnalytics:       p.LogAnalytics,
 		Cache:              p.Cache,

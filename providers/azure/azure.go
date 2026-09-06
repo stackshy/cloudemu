@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/ai"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/applicationgateway"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
 	"github.com/stackshy/cloudemu/v2/providers/azure/containerapps"
@@ -133,6 +134,7 @@ type Provider struct {
 	IAM              *iam.Mock
 	DNS              *dns.Mock
 	LB               *loadbalancer.Mock
+	AppGateway       *applicationgateway.Mock
 	ServiceBus       *servicebus.Mock
 	// QueueStorage backs the Azure Queue Storage data-plane handler. It reuses
 	// the messagequeue provider, but is a distinct instance from ServiceBus so
@@ -194,6 +196,7 @@ func New(opts ...config.Option) *Provider {
 		IAM:                iam.New(o),
 		DNS:                dns.New(o),
 		LB:                 loadbalancer.New(o),
+		AppGateway:         applicationgateway.New(o),
 		ServiceBus:         servicebus.New(o),
 		QueueStorage:       servicebus.New(o),
 		TableStorage:       tablestorage.New(o),
@@ -287,7 +290,6 @@ func New(opts ...config.Option) *Provider {
 			},
 		},
 	)
-
 	p.engineClosers = o.EngineClosers()
 
 	return p
