@@ -8,9 +8,12 @@ import (
 )
 
 // Operation-state constants. The emulator completes every mutation immediately
-// and deterministically, so a recorded operation is always COMPLETED.
+// and deterministically, so a recorded cluster operation is terminal on return.
+// Real MSK reports UPDATE_COMPLETE (not a bare "COMPLETED") for a finished
+// cluster operation, and clients — notably Terraform's aws_msk_cluster update
+// waiter — poll DescribeClusterOperation for exactly that target state.
 const (
-	operationStateCompleted = "COMPLETED"
+	operationStateCompleted = "UPDATE_COMPLETE"
 )
 
 // copyOperation returns a deep copy of an operation record so a reader cannot
