@@ -19,10 +19,12 @@ import (
 )
 
 const (
-	defaultMediaType   = "application/vnd.docker.distribution.manifest.v2+json"
-	mutableTag         = "MUTABLE"
-	immutableTag       = "IMMUTABLE"
-	scanStatusComplete = "COMPLETE"
+	defaultMediaType       = "application/vnd.docker.distribution.manifest.v2+json"
+	mutableTag             = "MUTABLE"
+	immutableTag           = "IMMUTABLE"
+	immutableWithExclusion = "IMMUTABLE_WITH_EXCLUSION"
+	mutableWithExclusion   = "MUTABLE_WITH_EXCLUSION"
+	scanStatusComplete     = "COMPLETE"
 
 	encryptionAES256  = "AES256"
 	encryptionKMS     = "KMS"
@@ -99,7 +101,8 @@ func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig
 
 	if !validTagMutability(mutability) {
 		return nil, errors.Newf(errors.InvalidArgument,
-			"invalid imageTagMutability %q; expected MUTABLE or IMMUTABLE", mutability)
+			"invalid imageTagMutability %q; expected one of MUTABLE, IMMUTABLE, "+
+				"IMMUTABLE_WITH_EXCLUSION, MUTABLE_WITH_EXCLUSION", mutability)
 	}
 
 	tags := copyTags(cfg.Tags)
@@ -189,15 +192,20 @@ func defaultKMSKeyARN(region, accountID, repo string) string {
 	return fmt.Sprintf("arn:aws:kms:%s:%s:key/%s", region, accountID, id)
 }
 
-// validTagMutability reports whether v is a tag-mutability value the emulator
-// models. Real ECR's enum also includes IMMUTABLE_WITH_EXCLUSION and
-// MUTABLE_WITH_EXCLUSION, but those require imageTagMutabilityExclusionFilters,
-// an exclusion-filter sub-surface the emulator does not model, so both
-// CreateRepository and PutImageTagMutability accept only the two base values
-// and reject anything else with InvalidParameterException (matching real ECR's
-// rejection of an unrecognized value).
+// validTagMutability reports whether v is one of ECR's four imageTagMutability
+// enum values. All four are accepted and round-tripped verbatim. The
+// _WITH_EXCLUSION variants pair with imageTagMutabilityExclusionFilters, an
+// exclusion-filter sub-surface the emulator does not model; a repository set to
+// one behaves like its base setting for push-time tag checks (checkTagMutability
+// treats anything other than IMMUTABLE as mutable). Anything outside the enum is
+// rejected with InvalidParameterException, matching real ECR.
 func validTagMutability(v string) bool {
-	return v == mutableTag || v == immutableTag
+	switch v {
+	case mutableTag, immutableTag, immutableWithExclusion, mutableWithExclusion:
+		return true
+	default:
+		return false
+	}
 }
 
 // PutImageTagMutability updates a repository's image tag mutability setting.
@@ -209,7 +217,8 @@ func (m *Mock) PutImageTagMutability(
 ) (*driver.Repository, error) {
 	if !validTagMutability(mutability) {
 		return nil, errors.Newf(errors.InvalidArgument,
-			"invalid imageTagMutability %q; expected MUTABLE or IMMUTABLE", mutability)
+			"invalid imageTagMutability %q; expected one of MUTABLE, IMMUTABLE, "+
+				"IMMUTABLE_WITH_EXCLUSION, MUTABLE_WITH_EXCLUSION", mutability)
 	}
 
 	m.mu.Lock()
