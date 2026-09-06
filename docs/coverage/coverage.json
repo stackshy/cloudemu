@@ -2747,6 +2747,39 @@
     }
   },
   {
+    "service": "composer",
+    "interface": "Composer",
+    "operations": [
+      {
+        "name": "CreateEnvironment",
+        "doc": "CreateEnvironment provisions a new RUNNING environment (returns a completed"
+      },
+      {
+        "name": "DeleteEnvironment",
+        "doc": "DeleteEnvironment removes an environment (returns a completed LRO)."
+      },
+      {
+        "name": "GetEnvironment",
+        "doc": "GetEnvironment returns an environment by project/location/id."
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name."
+      },
+      {
+        "name": "ListEnvironments",
+        "doc": "ListEnvironments returns every environment in a project+location."
+      },
+      {
+        "name": "UpdateEnvironment",
+        "doc": "UpdateEnvironment applies a masked update from desired and returns a"
+      }
+    ],
+    "providers": {
+      "gcp": "Composer"
+    }
+  },
+  {
     "service": "compute",
     "interface": "Compute",
     "operations": [
