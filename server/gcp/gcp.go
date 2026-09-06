@@ -49,6 +49,7 @@ import (
 	spannersrv "github.com/stackshy/cloudemu/v2/server/gcp/spanner"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
+	workflowssrv "github.com/stackshy/cloudemu/v2/server/gcp/workflows"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	bqdriver "github.com/stackshy/cloudemu/v2/services/bigquery/driver"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
@@ -79,6 +80,7 @@ import (
 	spannerdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 	vertexaidriver "github.com/stackshy/cloudemu/v2/services/vertexai/driver"
+	workflowsdriver "github.com/stackshy/cloudemu/v2/services/workflows/driver"
 )
 
 // Drivers bundles the driver interfaces the GCP server can expose.
@@ -130,7 +132,14 @@ type Drivers struct {
 	// handler's Matches narrows on those resource segments, so it is disjoint from
 	// every other /v1/projects/ handler, and its location-scoped operation polls
 	// are owned by the shared LRO poller.
-	CloudDeploy      clouddeploydriver.CloudDeploy
+	CloudDeploy clouddeploydriver.CloudDeploy
+	// Workflows serves the workflows.googleapis.com v1 control plane against the
+	// workflows driver. Its paths live under
+	// /v1/projects/{p}/locations/{l}/workflows[/…]; the handler's Matches narrows
+	// on that resource segment, so it is disjoint from every other /v1/projects/
+	// handler, and its location-scoped operation polls are owned by the shared
+	// LRO poller.
+	Workflows        workflowsdriver.Workflows
 	VertexAI         vertexaidriver.VertexAI
 	IAM              iamdriver.IAM
 	ArtifactRegistry crdriver.ContainerRegistry
@@ -396,6 +405,19 @@ func New(d Drivers) *server.Server {
 		clouddeployH := clouddeploysrv.New(d.CloudDeploy)
 		clouddeployH.SetOperationRegistry(opsReg)
 		srv.Register(clouddeployH)
+	}
+
+	// Workflows matches /v1/projects/{p}/locations/{l}/workflows[/…]. Its
+	// workflows resource-segment guard is disjoint from every other /v1/projects/
+	// handler (Composer's environments, Cloud Deploy's pipelines/targets,
+	// Scheduler's jobs, …), so registration order among them is unconstrained;
+	// registered before Firestore's permissive prefix. Its location-scoped
+	// operation polls are owned by the shared LRO poller, which the handler's
+	// Matches yields to.
+	if d.Workflows != nil {
+		workflowsH := workflowssrv.New(d.Workflows)
+		workflowsH.SetOperationRegistry(opsReg)
+		srv.Register(workflowsH)
 	}
 
 	// AlloyDB matches /v1/projects/{p}/locations/{l}/{clusters|backups|

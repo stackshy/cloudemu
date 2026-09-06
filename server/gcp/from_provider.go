@@ -26,6 +26,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		Dataproc:         p.Dataproc,
 		Composer:         p.Composer,
 		CloudDeploy:      p.CloudDeploy,
+		Workflows:        p.Workflows,
 		GKE:              p.GKE,
 		VertexAI:         p.VertexAI,
 		IAM:              p.IAM,

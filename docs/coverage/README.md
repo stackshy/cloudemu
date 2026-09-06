@@ -128,4 +128,5 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `vertexai` | — | — | [VertexAI](./gcp/vertexai.md) | — | 127 |
 | `vpclattice` | [VPCLattice](./aws/vpclattice.md) | — | — | — | 73 |
 | `wafv2` | [WAFv2](./aws/wafv2.md) | — | — | — | 39 |
+| `workflows` | — | — | [Workflows](./gcp/workflows.md) | — | 6 |
 | `workrequest` | — | — | — | [Workrequest](./oci/workrequest.md) | 4 |
