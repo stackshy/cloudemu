@@ -103,6 +103,9 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"azure/locks": {
 		"CreateOrUpdate", "Delete", "Get", "List",
 	},
+	"azure/appinsights": {
+		"CreateOrUpdate", "Delete", "Get", "List", "ListByResourceGroup", "UpdateTags",
+	},
 	"azure/eventhub": {
 		"CheckNameAvailability", "CreateOrUpdate", "CreateOrUpdateAuthorizationRule",
 		"Delete", "DeleteAuthorizationRule", "Get", "GetAuthorizationRule",
