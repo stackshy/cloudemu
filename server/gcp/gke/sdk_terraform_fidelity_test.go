@@ -59,6 +59,57 @@ func TestSDKGKEClusterAlwaysEmitsLegacyAbacAndNetworkConfig(t *testing.T) {
 	}
 }
 
+// TestSDKGKEClusterAlwaysEmitsNodeConfig proves a cluster read carries a
+// cluster-level nodeConfig reflecting the default pool's config. Real GKE always
+// returns cluster.nodeConfig, and the Terraform google provider sources
+// google_container_cluster.node_config from it — a nil cluster.nodeConfig makes
+// the provider see the whole node_config block vanish and force-replace the
+// cluster (1 to add / 1 to destroy) on the very next plan, even with no config
+// change.
+func TestSDKGKEClusterAlwaysEmitsNodeConfig(t *testing.T) {
+	svc, project := newSDKClient(t)
+	ctx := context.Background()
+	loc := "us-central1"
+
+	if _, err := svc.Projects.Locations.Clusters.Create(parent(project, loc), &container.CreateClusterRequest{
+		Cluster: &container.Cluster{
+			Name:             "nc",
+			InitialNodeCount: 1,
+			NodeConfig: &container.NodeConfig{
+				MachineType: cfMachineType,
+				DiskSizeGb:  cfDiskSizeGb,
+				OauthScopes: []string{cfOauthScope},
+			},
+		},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	got, err := svc.Projects.Locations.Clusters.Get(clusterName(project, loc, "nc")).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if got.NodeConfig == nil {
+		t.Fatal("cluster.nodeConfig nil — Terraform force-replaces the cluster on the next plan")
+	}
+
+	if got.NodeConfig.MachineType != cfMachineType || got.NodeConfig.DiskSizeGb != cfDiskSizeGb {
+		t.Fatalf("cluster.nodeConfig = %+v, want machineType=%s diskSizeGb=%d",
+			got.NodeConfig, cfMachineType, cfDiskSizeGb)
+	}
+
+	// The same object must survive the list path (Terraform refreshes via both).
+	list, err := svc.Projects.Locations.Clusters.List(parent(project, loc)).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	if len(list.Clusters) != 1 || list.Clusters[0].NodeConfig == nil {
+		t.Fatalf("list cluster missing nodeConfig: %+v", list.Clusters)
+	}
+}
+
 // TestSDKGKEOperationTargetLinkUsesRequestProject proves an operation's
 // targetLink carries the project from the request URL, not the emulator's
 // configured default project — a user parsing targetLink to locate the resource

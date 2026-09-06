@@ -248,6 +248,7 @@ func toClusterResource(
 		Network:           c.Network,
 		Subnetwork:        c.Subnetwork,
 		InitialNodeCount:  int64Ptr(c.InitialNodeCount),
+		NodeConfig:        clusterNodeConfig(c),
 		CurrentNodeCount:  currentNodes,
 		LoggingService:    c.LoggingService,
 		MonitoringService: c.MonitoringService,
@@ -278,6 +279,22 @@ func toClusterResource(
 	}
 
 	return out
+}
+
+// clusterNodeConfig maps the cluster's frozen default-pool node config to the
+// wire shape. Real GKE always returns cluster.nodeConfig; the Terraform google
+// provider force-replaces a cluster whose read is missing it. A cluster with no
+// stored config (e.g. restored from a pre-field snapshot) emits no nodeConfig.
+func clusterNodeConfig(c *gke.Cluster) *gkeNodeConfig {
+	if c.NodeConfig.MachineType == "" && c.NodeConfig.DiskSizeGB == 0 && len(c.NodeConfig.OauthScopes) == 0 {
+		return nil
+	}
+
+	return &gkeNodeConfig{
+		MachineType: c.NodeConfig.MachineType,
+		DiskSizeGb:  c.NodeConfig.DiskSizeGB,
+		OauthScopes: c.NodeConfig.OauthScopes,
+	}
 }
 
 // versionOr returns the cluster's applied version, falling back to the stub

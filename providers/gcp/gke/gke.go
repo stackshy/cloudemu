@@ -91,6 +91,13 @@ type Cluster struct {
 	LegacyAbacEnabled bool
 	NetworkPolicy     bool
 	MasterUsername    string
+	// NodeConfig is the effective node configuration of the cluster's default
+	// pool, frozen at creation. Real GKE returns cluster.nodeConfig on every
+	// read (it survives even a remove-default-node-pool deletion), and the
+	// Terraform google provider reads google_container_cluster.node_config from
+	// it — a missing cluster.nodeConfig makes the provider see the whole
+	// node_config block vanish and force-replace the cluster on the next plan.
+	NodeConfig        NodeConfigSpec
 	ResourceLabels    map[string]string
 	LabelFingerprint  string // opaque hash of ResourceLabels; computed on read.
 	MaintenanceWindow string // RFC-3339 daily window encoding; empty = none.
@@ -445,6 +452,17 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 	for i := range pools {
 		np := nodePoolFromSpec(&pools[i], input.Name, input.Location, now)
 		npKey := nodePoolKey(input.Location, input.Name, np.Name)
+
+		// cluster.nodeConfig mirrors the default (first) pool's effective config,
+		// frozen at creation — real GKE keeps returning it even after the default
+		// pool is deleted (remove_default_node_pool).
+		if i == 0 {
+			cluster.NodeConfig = NodeConfigSpec{
+				MachineType: np.MachineType,
+				DiskSizeGB:  np.DiskSizeGB,
+				OauthScopes: np.OauthScopes,
+			}
+		}
 
 		m.nodePools.Set(npKey, np)
 		m.nodePoolSettle.Begin(npKey, statusProvisioning, now, settleDur)
