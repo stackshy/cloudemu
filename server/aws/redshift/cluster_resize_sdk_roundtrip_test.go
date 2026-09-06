@@ -150,6 +150,41 @@ func TestSDKRedshiftDefaultRetentionAndDBName(t *testing.T) {
 	}
 }
 
+// TestSDKRedshiftExplicitZeroRetention proves an explicit
+// AutomatedSnapshotRetentionPeriod of 0 (which disables automated snapshots) is
+// preserved as 0 rather than collapsed to the default of 1. A presence-check
+// (not a zero-value check) is required so Terraform's non-computed schema
+// default does not drift a user who deliberately disabled snapshots.
+func TestSDKRedshiftExplicitZeroRetention(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	out, err := client.CreateCluster(ctx, &awsredshift.CreateClusterInput{
+		ClusterIdentifier:                aws.String("nosnap"),
+		MasterUsername:                   aws.String("admin"),
+		MasterUserPassword:               aws.String("Sup3rSecret!"),
+		NodeType:                         aws.String("dc2.large"),
+		AutomatedSnapshotRetentionPeriod: aws.Int32(0),
+	})
+	if err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if got := aws.ToInt32(out.Cluster.AutomatedSnapshotRetentionPeriod); got != 0 {
+		t.Fatalf("create AutomatedSnapshotRetentionPeriod=%d, want 0 (explicit disable)", got)
+	}
+
+	desc, err := client.DescribeClusters(ctx, &awsredshift.DescribeClustersInput{
+		ClusterIdentifier: aws.String("nosnap"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeClusters: %v", err)
+	}
+	if got := aws.ToInt32(desc.Clusters[0].AutomatedSnapshotRetentionPeriod); got != 0 {
+		t.Fatalf("describe AutomatedSnapshotRetentionPeriod=%d, want 0 (explicit disable)", got)
+	}
+}
+
 // TestSDKRedshiftModifyClusterSingleNode proves ClusterType single-node forces
 // NumberOfNodes to 1 on resize.
 func TestSDKRedshiftModifyClusterSingleNode(t *testing.T) {
