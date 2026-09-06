@@ -2328,6 +2328,49 @@
     }
   },
   {
+    "service": "clouddeploy",
+    "interface": "CloudDeploy",
+    "operations": [
+      {
+        "name": "CreatePipeline"
+      },
+      {
+        "name": "CreateTarget"
+      },
+      {
+        "name": "DeletePipeline"
+      },
+      {
+        "name": "DeleteTarget"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetPipeline"
+      },
+      {
+        "name": "GetTarget"
+      },
+      {
+        "name": "ListPipelines"
+      },
+      {
+        "name": "ListTargets"
+      },
+      {
+        "name": "PatchPipeline"
+      },
+      {
+        "name": "PatchTarget"
+      }
+    ],
+    "providers": {
+      "gcp": "CloudDeploy"
+    }
+  },
+  {
     "service": "cloudformation",
     "interface": "provider-native",
     "operations": [

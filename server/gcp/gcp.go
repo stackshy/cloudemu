@@ -19,6 +19,7 @@ import (
 	bigtableserver "github.com/stackshy/cloudemu/v2/server/gcp/bigtable"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudasset"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudbilling"
+	clouddeploysrv "github.com/stackshy/cloudemu/v2/server/gcp/clouddeploy"
 	"github.com/stackshy/cloudemu/v2/server/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudfunctions"
 	cloudloggingsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudlogging"
@@ -52,6 +53,7 @@ import (
 	bqdriver "github.com/stackshy/cloudemu/v2/services/bigquery/driver"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	clouddeploydriver "github.com/stackshy/cloudemu/v2/services/clouddeploy/driver"
 	cloudrundriver "github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
 	ctdriver "github.com/stackshy/cloudemu/v2/services/cloudtasks/driver"
 	composerdriver "github.com/stackshy/cloudemu/v2/services/composer/driver"
@@ -121,7 +123,14 @@ type Drivers struct {
 	// environments resource segment, so it is disjoint from every other
 	// /v1/projects/ handler, and its location-scoped operation polls are owned by
 	// the shared LRO poller.
-	Composer         composerdriver.Composer
+	Composer composerdriver.Composer
+	// CloudDeploy serves the clouddeploy.googleapis.com v1 delivery-pipeline and
+	// target control plane against the clouddeploy driver. Its paths live under
+	// /v1/projects/{p}/locations/{l}/{deliveryPipelines|targets}[/…]; the
+	// handler's Matches narrows on those resource segments, so it is disjoint from
+	// every other /v1/projects/ handler, and its location-scoped operation polls
+	// are owned by the shared LRO poller.
+	CloudDeploy      clouddeploydriver.CloudDeploy
 	VertexAI         vertexaidriver.VertexAI
 	IAM              iamdriver.IAM
 	ArtifactRegistry crdriver.ContainerRegistry
@@ -374,6 +383,19 @@ func New(d Drivers) *server.Server {
 		composerH := composersrv.New(d.Composer)
 		composerH.SetOperationRegistry(opsReg)
 		srv.Register(composerH)
+	}
+
+	// Cloud Deploy matches /v1/projects/{p}/locations/{l}/{deliveryPipelines|
+	// targets}[/…]. Its resource-segment guard is disjoint from every other
+	// /v1/projects/ handler (Composer's environments, Memorystore/Filestore's
+	// instances, GKE's clusters, Scheduler's jobs, …), so registration order among
+	// them is unconstrained; registered before Firestore's permissive prefix. Its
+	// location-scoped operation polls are owned by the shared LRO poller, which the
+	// handler's Matches yields to.
+	if d.CloudDeploy != nil {
+		clouddeployH := clouddeploysrv.New(d.CloudDeploy)
+		clouddeployH.SetOperationRegistry(opsReg)
+		srv.Register(clouddeployH)
 	}
 
 	// AlloyDB matches /v1/projects/{p}/locations/{l}/{clusters|backups|

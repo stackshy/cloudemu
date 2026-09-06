@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigquery"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigtable"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddeploy"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudfunctions"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudlogging"
@@ -93,6 +94,7 @@ type Provider struct {
 	Spanner          *spannerprov.Mock
 	Dataproc         *dataproc.Mock
 	Composer         *composer.Mock
+	CloudDeploy      *clouddeploy.Mock
 	Scheduler        *scheduler.Mock
 	CloudTasks       *cloudtasks.Mock
 
@@ -143,6 +145,7 @@ func New(opts ...config.Option) *Provider {
 		Spanner:          spannerprov.New(o),
 		Dataproc:         dataproc.New(o),
 		Composer:         composer.New(o),
+		CloudDeploy:      clouddeploy.New(o),
 		Scheduler:        scheduler.New(o),
 		CloudTasks:       cloudtasks.New(o),
 		ProjectID:        o.ProjectID,
