@@ -38,6 +38,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/server/gcp/pubsub"
 	"github.com/stackshy/cloudemu/v2/server/gcp/resourcemanager"
+	schedulersrv "github.com/stackshy/cloudemu/v2/server/gcp/scheduler"
 	secretmanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/secretmanager"
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
 	spannersrv "github.com/stackshy/cloudemu/v2/server/gcp/spanner"
@@ -64,6 +65,7 @@ import (
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
+	scheddriver "github.com/stackshy/cloudemu/v2/services/scheduler/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	spannerdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
@@ -128,6 +130,9 @@ type Drivers struct {
 	// Memorystore serves the redis.googleapis.com v1 REST API against the cache
 	// driver's instance control plane.
 	Memorystore cachedriver.Cache
+	// Scheduler serves the cloudscheduler.googleapis.com v1 REST API (job
+	// control plane) against the scheduler driver.
+	Scheduler scheddriver.Scheduler
 	// FCM serves the fcm.googleapis.com v1 messages:send API against the
 	// notification driver (Publish only; FCM has no topic/subscription CRUD).
 	FCM notifdriver.Notification
@@ -446,6 +451,15 @@ func New(d Drivers) *server.Server {
 		msH := memorystoresrv.New(d.Memorystore)
 		msH.SetOperationRegistry(opsReg)
 		srv.Register(msH)
+	}
+
+	// Cloud Scheduler matches /v1/projects/{p}/locations/{l}/jobs[/…] — its jobs
+	// resource-type guard is disjoint from Memorystore (instances|operations),
+	// Eventarc (triggers), GKE (clusters), and the rest of the /v1/projects/
+	// family; Cloud Run's jobs are under the /v2/ prefix. All eight methods are
+	// synchronous (no LRO). Registered before Firestore's permissive prefix.
+	if d.Scheduler != nil {
+		srv.Register(schedulersrv.New(d.Scheduler))
 	}
 
 	// FCM matches /v1/projects/{p}/messages:send — disjoint from every other

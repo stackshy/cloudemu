@@ -30,6 +30,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [Memorystore](./memorystore.md) | `cache` | 17 |
 | [PubSub](./pubsub.md) | `messagequeue` | 14 |
 | [Resourcemanager](./resourcemanager.md) | — (provider-native) | 3 |
+| [Scheduler](./scheduler.md) | `scheduler` | 8 |
 | [SecretManager](./secretmanager.md) | `secrets` | 7 |
 | [Servicenetworking](./servicenetworking.md) | — (provider-native) | 3 |
 | [Spanner](./spanner.md) | `spanner` | 12 |

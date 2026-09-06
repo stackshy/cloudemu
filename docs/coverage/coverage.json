@@ -11647,6 +11647,47 @@
     }
   },
   {
+    "service": "scheduler",
+    "interface": "Scheduler",
+    "operations": [
+      {
+        "name": "CreateJob",
+        "doc": "CreateJob stores a job. cfg.Name is the full resource name; the job is"
+      },
+      {
+        "name": "DeleteJob",
+        "doc": "DeleteJob removes a job by its full resource name."
+      },
+      {
+        "name": "GetJob",
+        "doc": "GetJob returns a job by its full resource name."
+      },
+      {
+        "name": "ListJobs",
+        "doc": "ListJobs returns every job under the given parent"
+      },
+      {
+        "name": "PatchJob",
+        "doc": "PatchJob applies a field-mask update to an existing job and returns it."
+      },
+      {
+        "name": "PauseJob",
+        "doc": "PauseJob transitions a job to PAUSED and returns it."
+      },
+      {
+        "name": "ResumeJob",
+        "doc": "ResumeJob transitions a job to ENABLED and returns it."
+      },
+      {
+        "name": "RunJob",
+        "doc": "RunJob force-runs a job now. Dispatch is out of scope, so this records the"
+      }
+    ],
+    "providers": {
+      "gcp": "Scheduler"
+    }
+  },
+  {
     "service": "secrets",
     "interface": "Secrets",
     "operations": [
