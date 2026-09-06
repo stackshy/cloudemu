@@ -89,6 +89,80 @@ func TestSDKLocationScoping(t *testing.T) {
 	}
 }
 
+// TestSDKReservedLabelCannotOverrideScoping guards that user-supplied labels
+// carrying the reserved cloudemu: prefix can never set or overwrite the internal
+// tags that scope an instance. A PATCH (or create) of a cloudemu:gcpLocation
+// label must not "teleport" the instance to a phantom region, while an ordinary
+// label in the same request is still applied.
+func TestSDKReservedLabelCannotOverrideScoping(t *testing.T) {
+	svc := newRedisService(t)
+	ctx := context.Background()
+
+	const project = "demo"
+
+	loc := func(region string) string { return "projects/" + project + "/locations/" + region }
+	name := func(region, id string) string { return loc(region) + "/instances/" + id }
+
+	// Create carrying a reserved label plus an ordinary one. The reserved label
+	// must be ignored (the server's own location tag wins); the ordinary one sticks.
+	if _, err := svc.Projects.Locations.Instances.Create(loc("us-central1"), &redis.Instance{
+		Tier:         "BASIC",
+		MemorySizeGb: 1,
+		Labels:       map[string]string{"cloudemu:gcpLocation": "us-west1", "team": "core"},
+	}).InstanceId("guarded").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// The instance lives at its real region, not the phantom one from the label.
+	got, err := svc.Projects.Locations.Instances.Get(name("us-central1", "guarded")).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get(real region) after create: %v", err)
+	}
+
+	if _, err = svc.Projects.Locations.Instances.Get(name("us-west1", "guarded")).Context(ctx).Do(); err == nil {
+		t.Fatalf("Get(phantom region) after create: expected NOT_FOUND, got success")
+	} else {
+		assertNotFound(t, err, "Get(phantom region) after create")
+	}
+
+	// The ordinary label round-trips; the reserved key is never surfaced.
+	if got.Labels["team"] != "core" {
+		t.Errorf("labels after create = %v, want team=core", got.Labels)
+	}
+
+	if _, ok := got.Labels["cloudemu:gcpLocation"]; ok {
+		t.Errorf("reserved label leaked into GET labels: %v", got.Labels)
+	}
+
+	// PATCH (no updateMask → merge) a reserved label plus an ordinary one.
+	if _, err = svc.Projects.Locations.Instances.Patch(name("us-central1", "guarded"), &redis.Instance{
+		Labels: map[string]string{"cloudemu:gcpLocation": "us-west1", "env": "prod"},
+	}).Context(ctx).Do(); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	// Still reachable at its real region; still absent from the phantom region.
+	got, err = svc.Projects.Locations.Instances.Get(name("us-central1", "guarded")).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get(real region) after patch: %v", err)
+	}
+
+	if _, err = svc.Projects.Locations.Instances.Get(name("us-west1", "guarded")).Context(ctx).Do(); err == nil {
+		t.Fatalf("Get(phantom region) after patch: expected NOT_FOUND, got success")
+	} else {
+		assertNotFound(t, err, "Get(phantom region) after patch")
+	}
+
+	// The ordinary patch label is applied; the reserved key stays hidden.
+	if got.Labels["env"] != "prod" || got.Labels["team"] != "core" {
+		t.Errorf("labels after patch = %v, want env=prod and team=core", got.Labels)
+	}
+
+	if _, ok := got.Labels["cloudemu:gcpLocation"]; ok {
+		t.Errorf("reserved label leaked into GET labels after patch: %v", got.Labels)
+	}
+}
+
 func assertNotFound(t *testing.T, err error, op string) {
 	t.Helper()
 

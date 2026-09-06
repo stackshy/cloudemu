@@ -447,13 +447,19 @@ func carryForwardTags(existing map[string]string, mask fieldMask) map[string]str
 
 // applyLabels overlays the request's labels. Merge and replace both overlay;
 // replace additionally dropped the existing labels in carryForwardTags. Preserve
-// applies nothing, leaving the carried-forward labels untouched.
+// applies nothing, leaving the carried-forward labels untouched. Reserved-prefix
+// keys in user labels are ignored so they can never set or overwrite the
+// cloudemu-internal tags (e.g. the location tag that scopes the instance).
 func applyLabels(out map[string]string, body *instanceJSON, mask fieldMask) {
 	if mask.mapMode("labels") == mapModePreserve {
 		return
 	}
 
 	for k, v := range body.Labels {
+		if strings.HasPrefix(k, reservedPrefix) { // don't let user labels overwrite reserved tags
+			continue
+		}
+
 		out[k] = v
 	}
 }
