@@ -251,6 +251,49 @@ func TestQueueTagging(t *testing.T) {
 	}
 }
 
+// TestReceiveMessageEmptyOmitsMessagesField pins the wire fidelity that real SQS
+// returns a bare {} for an empty ReceiveMessage rather than {"Messages":[]}.
+func TestReceiveMessageEmptyOmitsMessagesField(t *testing.T) {
+	srv, _ := newServer(t)
+
+	create := postJSON(t, srv, "AmazonSQS.CreateQueue", `{"QueueName":"empty-q"}`)
+	qurl := extractQueueURL(t, create)
+
+	resp := postJSON(t, srv, "AmazonSQS.ReceiveMessage", `{"QueueUrl":"`+qurl+`"}`)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("receive status = %d", resp.StatusCode)
+	}
+
+	body := readBody(t, resp)
+	if strings.Contains(body, "Messages") {
+		t.Fatalf("empty ReceiveMessage must omit the Messages field, got %s", body)
+	}
+}
+
+// TestErrorMessageOmitsCanonicalCodePrefix guards against leaking the internal
+// cloudemu error-taxonomy name (e.g. "InvalidArgument: ") into the wire message,
+// which real SQS never does.
+func TestErrorMessageOmitsCanonicalCodePrefix(t *testing.T) {
+	srv, _ := newServer(t)
+
+	resp := postJSON(t, srv, "AmazonSQS.CreateQueue",
+		`{"QueueName":"badfifo","Attributes":{"FifoQueue":"true"}}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", resp.StatusCode)
+	}
+
+	body := readBody(t, resp)
+	if !strings.Contains(body, "InvalidParameterValue") {
+		t.Fatalf("error code = %s, want InvalidParameterValue", body)
+	}
+
+	for _, leak := range []string{"InvalidArgument:", "NotFound:", "AlreadyExists:", "FailedPrecondition:"} {
+		if strings.Contains(body, leak) {
+			t.Fatalf("wire message leaked canonical code prefix %q: %s", leak, body)
+		}
+	}
+}
+
 func postJSON(t *testing.T, srv *httptest.Server, target, body string) *http.Response {
 	t.Helper()
 
