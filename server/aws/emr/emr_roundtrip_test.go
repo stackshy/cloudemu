@@ -420,6 +420,206 @@ func TestSDKCancelSteps(t *testing.T) {
 	}
 }
 
+func TestSDKEc2AttributesAndSecurityConfigRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newEMRClient(t)
+
+	out, err := c.RunJobFlow(ctx, &emr.RunJobFlowInput{
+		Name:                  aws.String("secured"),
+		ReleaseLabel:          aws.String("emr-6.15.0"),
+		JobFlowRole:           aws.String("EMR_EC2_DefaultRole"),
+		ServiceRole:           aws.String("EMR_DefaultRole"),
+		SecurityConfiguration: aws.String("my-sec-config"),
+		Instances: &emrtypes.JobFlowInstancesConfig{
+			InstanceCount:               aws.Int32(2),
+			MasterInstanceType:          aws.String("m5.xlarge"),
+			Ec2SubnetId:                 aws.String("subnet-abc"),
+			Ec2KeyName:                  aws.String("my-key"),
+			KeepJobFlowAliveWhenNoSteps: aws.Bool(true),
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunJobFlow: %v", err)
+	}
+
+	got, err := c.DescribeCluster(ctx, &emr.DescribeClusterInput{ClusterId: out.JobFlowId})
+	if err != nil {
+		t.Fatalf("DescribeCluster: %v", err)
+	}
+
+	cl := got.Cluster
+
+	// instance_profile round-trip: terraform reads ec2_attributes.instance_profile
+	// from Ec2InstanceAttributes.IamInstanceProfile — a drift source if dropped.
+	if cl.Ec2InstanceAttributes == nil ||
+		aws.ToString(cl.Ec2InstanceAttributes.IamInstanceProfile) != "EMR_EC2_DefaultRole" {
+		t.Fatalf("IamInstanceProfile = %+v, want EMR_EC2_DefaultRole", cl.Ec2InstanceAttributes)
+	}
+
+	if aws.ToString(cl.Ec2InstanceAttributes.Ec2KeyName) != "my-key" {
+		t.Fatalf("Ec2KeyName = %q, want my-key", aws.ToString(cl.Ec2InstanceAttributes.Ec2KeyName))
+	}
+
+	if aws.ToString(cl.SecurityConfiguration) != "my-sec-config" {
+		t.Fatalf("SecurityConfiguration = %q, want my-sec-config", aws.ToString(cl.SecurityConfiguration))
+	}
+
+	if aws.ToString(cl.MasterPublicDnsName) == "" {
+		t.Fatal("MasterPublicDnsName is empty, want the master node DNS")
+	}
+}
+
+func TestSDKSecurityConfigurationLifecycle(t *testing.T) {
+	ctx := context.Background()
+	c := newEMRClient(t)
+
+	const (
+		name = "encryption-at-rest"
+		body = `{"EncryptionConfiguration":{"EnableInTransitEncryption":false,"EnableAtRestEncryption":true}}`
+	)
+
+	created, err := c.CreateSecurityConfiguration(ctx, &emr.CreateSecurityConfigurationInput{
+		Name:                  aws.String(name),
+		SecurityConfiguration: aws.String(body),
+	})
+	if err != nil {
+		t.Fatalf("CreateSecurityConfiguration: %v", err)
+	}
+
+	if aws.ToString(created.Name) != name || created.CreationDateTime == nil {
+		t.Fatalf("create out = %+v, want name/creation set", created)
+	}
+
+	// Duplicate name is rejected.
+	if _, err := c.CreateSecurityConfiguration(ctx, &emr.CreateSecurityConfigurationInput{
+		Name: aws.String(name), SecurityConfiguration: aws.String(body),
+	}); err == nil {
+		t.Fatal("duplicate CreateSecurityConfiguration: want error, got nil")
+	}
+
+	desc, err := c.DescribeSecurityConfiguration(ctx, &emr.DescribeSecurityConfigurationInput{Name: aws.String(name)})
+	if err != nil {
+		t.Fatalf("DescribeSecurityConfiguration: %v", err)
+	}
+
+	if aws.ToString(desc.Name) != name || aws.ToString(desc.SecurityConfiguration) != body {
+		t.Fatalf("describe = %q/%q, want %q/<body>", aws.ToString(desc.Name), aws.ToString(desc.SecurityConfiguration), name)
+	}
+
+	if desc.CreationDateTime == nil {
+		t.Fatal("describe CreationDateTime is nil")
+	}
+
+	list, err := c.ListSecurityConfigurations(ctx, &emr.ListSecurityConfigurationsInput{})
+	if err != nil {
+		t.Fatalf("ListSecurityConfigurations: %v", err)
+	}
+
+	if len(list.SecurityConfigurations) != 1 || aws.ToString(list.SecurityConfigurations[0].Name) != name {
+		t.Fatalf("list = %+v, want one %q", list.SecurityConfigurations, name)
+	}
+
+	if _, err := c.DeleteSecurityConfiguration(ctx,
+		&emr.DeleteSecurityConfigurationInput{Name: aws.String(name)}); err != nil {
+		t.Fatalf("DeleteSecurityConfiguration: %v", err)
+	}
+
+	if _, err := c.DescribeSecurityConfiguration(ctx,
+		&emr.DescribeSecurityConfigurationInput{Name: aws.String(name)}); err == nil {
+		t.Fatal("DescribeSecurityConfiguration after delete: want error, got nil")
+	}
+}
+
+func TestSDKClusterTagsAddRemove(t *testing.T) {
+	ctx := context.Background()
+	c := newEMRClient(t)
+
+	out, err := c.RunJobFlow(ctx, &emr.RunJobFlowInput{
+		Name:         aws.String("tagged"),
+		ReleaseLabel: aws.String("emr-6.15.0"),
+		Instances: &emrtypes.JobFlowInstancesConfig{
+			MasterInstanceType:          aws.String("m5.xlarge"),
+			KeepJobFlowAliveWhenNoSteps: aws.Bool(true),
+		},
+		Tags: []emrtypes.Tag{{Key: aws.String("env"), Value: aws.String("dev")}},
+	})
+	if err != nil {
+		t.Fatalf("RunJobFlow: %v", err)
+	}
+
+	id := aws.ToString(out.JobFlowId)
+
+	// AddTags upserts: new key + updated value on the existing key.
+	if _, err := c.AddTags(ctx, &emr.AddTagsInput{
+		ResourceId: aws.String(id),
+		Tags: []emrtypes.Tag{
+			{Key: aws.String("env"), Value: aws.String("prod")},
+			{Key: aws.String("team"), Value: aws.String("data")},
+		},
+	}); err != nil {
+		t.Fatalf("AddTags: %v", err)
+	}
+
+	got := tagMap(t, c, id)
+	if got["env"] != "prod" || got["team"] != "data" {
+		t.Fatalf("tags after add = %v, want env=prod team=data", got)
+	}
+
+	if _, err := c.RemoveTags(ctx, &emr.RemoveTagsInput{
+		ResourceId: aws.String(id), TagKeys: []string{"team"},
+	}); err != nil {
+		t.Fatalf("RemoveTags: %v", err)
+	}
+
+	got = tagMap(t, c, id)
+	if _, ok := got["team"]; ok || got["env"] != "prod" {
+		t.Fatalf("tags after remove = %v, want only env=prod", got)
+	}
+}
+
+func TestSDKModifyInstanceGroupsTerminatedGuard(t *testing.T) {
+	ctx := context.Background()
+	c := newEMRClient(t)
+	id := runCluster(t, c)
+
+	groups, err := c.ListInstanceGroups(ctx, &emr.ListInstanceGroupsInput{ClusterId: aws.String(id)})
+	if err != nil {
+		t.Fatalf("ListInstanceGroups: %v", err)
+	}
+
+	coreID := aws.ToString(groups.InstanceGroups[0].Id)
+
+	if _, err := c.TerminateJobFlows(ctx, &emr.TerminateJobFlowsInput{JobFlowIds: []string{id}}); err != nil {
+		t.Fatalf("TerminateJobFlows: %v", err)
+	}
+
+	// Resizing a group on a terminated cluster must fail, matching real EMR.
+	_, err = c.ModifyInstanceGroups(ctx, &emr.ModifyInstanceGroupsInput{
+		InstanceGroups: []emrtypes.InstanceGroupModifyConfig{{
+			InstanceGroupId: aws.String(coreID), InstanceCount: aws.Int32(4),
+		}},
+	})
+	if err == nil {
+		t.Fatal("ModifyInstanceGroups on terminated cluster: want error, got nil")
+	}
+}
+
+func tagMap(t *testing.T, c *emr.Client, id string) map[string]string {
+	t.Helper()
+
+	out, err := c.DescribeCluster(context.Background(), &emr.DescribeClusterInput{ClusterId: aws.String(id)})
+	if err != nil {
+		t.Fatalf("DescribeCluster: %v", err)
+	}
+
+	m := map[string]string{}
+	for _, tg := range out.Cluster.Tags {
+		m[aws.ToString(tg.Key)] = aws.ToString(tg.Value)
+	}
+
+	return m
+}
+
 func containsCluster(clusters []emrtypes.ClusterSummary, id string) bool {
 	for i := range clusters {
 		if aws.ToString(clusters[i].Id) == id {

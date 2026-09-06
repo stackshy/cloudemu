@@ -47,6 +47,13 @@ func New(accountID, region string, clock config.Clock) *Handler {
 		"ListInstanceGroups":   h.listInstanceGroups,
 		"ListInstances":        h.listInstances,
 		"ListBootstrapActions": h.listBootstrapActions,
+		"AddTags":              h.addTagsHandler,
+		"RemoveTags":           h.removeTagsHandler,
+
+		"CreateSecurityConfiguration":   h.createSecurityConfiguration,
+		"DescribeSecurityConfiguration": h.describeSecurityConfiguration,
+		"DeleteSecurityConfiguration":   h.deleteSecurityConfiguration,
+		"ListSecurityConfigurations":    h.listSecurityConfigurations,
 	}
 
 	return h
