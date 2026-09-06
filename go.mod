@@ -98,6 +98,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kms v1.50.3
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.90.1
 	github.com/aws/aws-sdk-go-v2/service/memorydb v1.36.2
+	github.com/aws/aws-sdk-go-v2/service/mwaa v1.47.0
 	github.com/aws/aws-sdk-go-v2/service/neptune v1.44.5
 	github.com/aws/aws-sdk-go-v2/service/networkfirewall v1.66.0
 	github.com/aws/aws-sdk-go-v2/service/opensearch v1.75.4
