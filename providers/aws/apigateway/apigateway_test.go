@@ -628,6 +628,38 @@ func TestUpdateResourceRenameRecomputesSubtree(t *testing.T) {
 	}
 }
 
+func TestUpdateResourceParentIdCycleRejected(t *testing.T) {
+	m := newMock(t)
+
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "x"})
+	foo, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "foo")
+	bar, _ := m.CreateResource(ctx(), api.ID, foo.ID, "bar")
+
+	// Moving a resource under itself must be rejected, not loop forever.
+	if _, err := m.UpdateResource(ctx(), api.ID, foo.ID, []driver.PatchOperation{
+		{Op: "replace", Path: "/parentId", Value: foo.ID},
+	}); err == nil {
+		t.Fatal("self-parent move should be rejected")
+	}
+
+	// Moving a resource into its own subtree (foo -> under bar) must be rejected.
+	if _, err := m.UpdateResource(ctx(), api.ID, foo.ID, []driver.PatchOperation{
+		{Op: "replace", Path: "/parentId", Value: bar.ID},
+	}); err == nil {
+		t.Fatal("move into own subtree should be rejected")
+	}
+
+	// The tree is unchanged after the rejected moves: foo still under root.
+	got, err := m.GetResource(ctx(), api.ID, foo.ID)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+
+	if got.ParentID != api.RootResourceID {
+		t.Fatalf("foo parent mutated by a rejected move: %s", got.ParentID)
+	}
+}
+
 func TestUpdateMethodAndIntegrationPatches(t *testing.T) {
 	m := newMock(t)
 	apiID, _, resID := deployProxyAPI(t, m, "hello", "GET", lambdaURI)

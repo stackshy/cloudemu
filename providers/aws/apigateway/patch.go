@@ -117,8 +117,21 @@ func (m *Mock) UpdateResource(
 		case "/pathPart":
 			res.PathPart = op.Value
 		case "/parentId":
+			if op.Value == resourceID {
+				return nil, cerrors.New(cerrors.InvalidArgument, "A resource cannot be its own parent")
+			}
+
 			if _, ok := ad.resources[op.Value]; !ok {
 				return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", op.Value)
+			}
+
+			// Reject a move into the resource's own subtree: the target must not
+			// be a descendant, or the tree would become cyclic and path
+			// recomputation would never terminate. Check before mutating.
+			for _, id := range descendants(ad.resources, resourceID) {
+				if id == op.Value {
+					return nil, cerrors.New(cerrors.InvalidArgument, "Cannot move a resource into its own subtree")
+				}
 			}
 
 			res.ParentID = op.Value

@@ -112,12 +112,17 @@ func (m *Mock) DeleteResource(_ context.Context, restAPIID, resourceID string) e
 // subtree in one pass.
 func descendants(resources map[string]*driver.Resource, resourceID string) []string {
 	out := []string{resourceID}
+	seen := map[string]bool{resourceID: true}
 
 	for i := 0; i < len(out); i++ {
 		parent := out[i]
 
 		for id, r := range resources {
-			if r.ParentID == parent {
+			// seen guards against a malformed cyclic tree so the walk always
+			// terminates, even though callers reject cycles up front.
+			if r.ParentID == parent && !seen[id] {
+				seen[id] = true
+
 				out = append(out, id)
 			}
 		}
