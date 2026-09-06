@@ -6859,6 +6859,66 @@
     }
   },
   {
+    "service": "kms-gcp",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateCryptoKey"
+      },
+      {
+        "name": "CreateCryptoKeyVersion"
+      },
+      {
+        "name": "CreateKeyRing"
+      },
+      {
+        "name": "DestroyCryptoKeyVersion"
+      },
+      {
+        "name": "GetCryptoKey"
+      },
+      {
+        "name": "GetCryptoKeyVersion"
+      },
+      {
+        "name": "GetIamPolicy"
+      },
+      {
+        "name": "GetKeyRing"
+      },
+      {
+        "name": "ListCryptoKeyVersions"
+      },
+      {
+        "name": "ListCryptoKeys"
+      },
+      {
+        "name": "ListKeyRings"
+      },
+      {
+        "name": "RestoreCryptoKeyVersion"
+      },
+      {
+        "name": "SetIamPolicy"
+      },
+      {
+        "name": "TestIamPermissions"
+      },
+      {
+        "name": "UpdateCryptoKey"
+      },
+      {
+        "name": "UpdateCryptoKeyPrimaryVersion"
+      },
+      {
+        "name": "UpdateCryptoKeyVersion"
+      }
+    ],
+    "providers": {
+      "gcp": "KMS"
+    }
+  },
+  {
     "service": "kusto",
     "interface": "provider-native",
     "operations": [
