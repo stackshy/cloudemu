@@ -223,6 +223,82 @@ func TestSDKGen2TrafficAndConcurrency(t *testing.T) {
 	}
 }
 
+// TestSDKGen2ExplicitAllTrafficFalse guards the drift regression in the other
+// direction: all_traffic_on_latest_revision=false is a legitimate config (real
+// GCF then honors the underlying Cloud Run service's existing traffic split), so
+// an explicit false must round-trip as false — not be clobbered to the default
+// true. A masked patch of an unrelated field must leave it false, and an explicit
+// true must still round-trip as true.
+func TestSDKGen2ExplicitAllTrafficFalse(t *testing.T) {
+	svc := newGCPV2Service(t)
+	ctx := context.Background()
+
+	parent := "projects/demo/locations/us-central1"
+	name := parent + "/functions/traffic-false"
+
+	if _, err := svc.Projects.Locations.Functions.Create(parent, &cloudfunctions2.Function{
+		BuildConfig: &cloudfunctions2.BuildConfig{Runtime: "go121", EntryPoint: "Hello"},
+		ServiceConfig: &cloudfunctions2.ServiceConfig{
+			AvailableMemory:            "256M",
+			AllTrafficOnLatestRevision: false,
+			ForceSendFields:            []string{"AllTrafficOnLatestRevision"},
+		},
+	}).FunctionId("traffic-false").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create (explicit false): %v", err)
+	}
+
+	got, err := svc.Projects.Locations.Functions.Get(name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.ServiceConfig.AllTrafficOnLatestRevision {
+		t.Fatal("allTrafficOnLatestRevision = true at create, want false preserved (explicit false is legitimate)")
+	}
+
+	// A masked patch of an unrelated field must not resurrect the default true.
+	if _, err := svc.Projects.Locations.Functions.Patch(name, &cloudfunctions2.Function{
+		ServiceConfig: &cloudfunctions2.ServiceConfig{AvailableMemory: "512M"},
+	}).UpdateMask("serviceConfig.availableMemory").Context(ctx).Do(); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	got2, err := svc.Projects.Locations.Functions.Get(name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get after patch: %v", err)
+	}
+
+	if got2.ServiceConfig.AvailableMemory != "512M" {
+		t.Fatalf("availableMemory = %q, want 512M", got2.ServiceConfig.AvailableMemory)
+	}
+
+	if got2.ServiceConfig.AllTrafficOnLatestRevision {
+		t.Fatal("allTrafficOnLatestRevision = true after masked patch, want false preserved")
+	}
+
+	// An explicit true must still round-trip as true.
+	tname := parent + "/functions/traffic-true"
+	if _, err := svc.Projects.Locations.Functions.Create(parent, &cloudfunctions2.Function{
+		BuildConfig: &cloudfunctions2.BuildConfig{Runtime: "go121", EntryPoint: "Hello"},
+		ServiceConfig: &cloudfunctions2.ServiceConfig{
+			AvailableMemory:            "256M",
+			AllTrafficOnLatestRevision: true,
+			ForceSendFields:            []string{"AllTrafficOnLatestRevision"},
+		},
+	}).FunctionId("traffic-true").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create (explicit true): %v", err)
+	}
+
+	gotTrue, err := svc.Projects.Locations.Functions.Get(tname).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get (explicit true): %v", err)
+	}
+
+	if !gotTrue.ServiceConfig.AllTrafficOnLatestRevision {
+		t.Fatal("allTrafficOnLatestRevision = false at create with explicit true, want true")
+	}
+}
+
 // TestSDKGen2GetMissing confirms a missing gen2 function 404s.
 func TestSDKGen2GetMissing(t *testing.T) {
 	svc := newGCPV2Service(t)

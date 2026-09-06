@@ -74,11 +74,15 @@ type gen2ServiceConfig struct {
 	// the real default rather than a missing field.
 	MaxInstanceRequestConcurrency int `json:"maxInstanceRequestConcurrency,omitempty"`
 	// AllTrafficOnLatestRevision reports whether 100% of traffic routes to the newest
-	// revision. Real gen2 always returns true for a freshly deployed function, and
-	// terraform's service_config.all_traffic_on_latest_revision defaults to true — so
-	// omitting it from the response makes terraform read false and diff true->false on
-	// every plan (perpetual drift). It is not omitempty: a true value must serialize.
-	AllTrafficOnLatestRevision bool `json:"allTrafficOnLatestRevision"`
+	// revision. Real gen2 defaults it to true, and terraform's
+	// service_config.all_traffic_on_latest_revision defaults to true too — so omitting
+	// it from the response makes terraform read false and diff true->false on every
+	// plan (perpetual drift). But false is a legitimate explicit value (GCF then honors
+	// the underlying Cloud Run service's existing traffic split), so it is modeled as a
+	// pointer: nil (unset) defaults to true, while an explicit true or false round-trips
+	// unchanged. It is not omitempty — after defaulting the pointer is always non-nil,
+	// so the field always serializes as a real bool (never null).
+	AllTrafficOnLatestRevision *bool `json:"allTrafficOnLatestRevision"`
 }
 
 type gen2EventTrigger struct {
@@ -656,12 +660,13 @@ func applyServiceConfigDefaults(sc *gen2ServiceConfig, p v2Path) {
 		sc.MaxInstanceRequestConcurrency = gen2DefaultConcurrency
 	}
 
-	// A newly reconciled gen2 function always routes all traffic to its latest
-	// revision, so real GCP reports allTrafficOnLatestRevision=true. Treat an
-	// unset/false request value as the default true (traffic splitting is a
-	// post-deploy operation the create/update path doesn't express).
-	if !sc.AllTrafficOnLatestRevision {
-		sc.AllTrafficOnLatestRevision = true
+	// Real gen2 defaults allTrafficOnLatestRevision to true, so an unset (nil)
+	// value reconciles to true. An explicit client value — true OR false — is
+	// preserved: false is legitimate (GCF then honors the underlying Cloud Run
+	// service's existing traffic split), and clobbering it to true would
+	// reintroduce perpetual terraform drift for that config.
+	if sc.AllTrafficOnLatestRevision == nil {
+		sc.AllTrafficOnLatestRevision = boolPtr(true)
 	}
 }
 
@@ -731,6 +736,11 @@ func cloneGen2(fn *gen2Function) *gen2Function {
 	if fn.ServiceConfig != nil {
 		sc := *fn.ServiceConfig
 		sc.EnvironmentVariables = cloneStringMap(fn.ServiceConfig.EnvironmentVariables)
+
+		if fn.ServiceConfig.AllTrafficOnLatestRevision != nil {
+			sc.AllTrafficOnLatestRevision = boolPtr(*fn.ServiceConfig.AllTrafficOnLatestRevision)
+		}
+
 		out.ServiceConfig = &sc
 	}
 
@@ -757,6 +767,11 @@ func cloneStringMap(m map[string]string) map[string]string {
 	}
 
 	return out
+}
+
+// boolPtr returns a pointer to b, for setting *bool fields to an explicit value.
+func boolPtr(b bool) *bool {
+	return &b
 }
 
 // randomToken returns a short random hex string for synthesized ids.
