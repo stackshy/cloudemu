@@ -432,6 +432,7 @@ type computeConfigCompat = struct {
 	IamInstanceProfileARN  string
 	IamInstanceProfileName string
 	Identity               *computedriver.ManagedIdentity
+	Plan                   *computedriver.MarketplacePlan
 	NetworkInterfaces      []computedriver.AzureNICRef
 	PrivateIP              string
 	BlockDeviceMappings    []computedriver.BlockDeviceMapping
