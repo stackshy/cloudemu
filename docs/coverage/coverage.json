@@ -4021,6 +4021,39 @@
     }
   },
   {
+    "service": "dataproc",
+    "interface": "Dataproc",
+    "operations": [
+      {
+        "name": "CreateCluster",
+        "doc": "CreateCluster provisions a new RUNNING cluster (returns a completed LRO)."
+      },
+      {
+        "name": "DeleteCluster",
+        "doc": "DeleteCluster removes a cluster (returns a completed LRO)."
+      },
+      {
+        "name": "GetCluster",
+        "doc": "GetCluster returns a cluster by project/region/name."
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name."
+      },
+      {
+        "name": "ListClusters",
+        "doc": "ListClusters returns every cluster in a project+region."
+      },
+      {
+        "name": "UpdateCluster",
+        "doc": "UpdateCluster applies a masked update to a cluster (returns a completed LRO)."
+      }
+    ],
+    "providers": {
+      "gcp": "Dataproc"
+    }
+  },
+  {
     "service": "disks",
     "interface": "provider-native",
     "operations": [

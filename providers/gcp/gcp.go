@@ -18,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudrun"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/compute"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/dataproc"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/eventarc"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/fcm"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/firestore"
@@ -87,6 +88,7 @@ type Provider struct {
 	GKE              *gke.Mock
 	VertexAI         *vertexai.Mock
 	Spanner          *spannerprov.Mock
+	Dataproc         *dataproc.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -133,6 +135,7 @@ func New(opts ...config.Option) *Provider {
 		GKE:              gke.New(o),
 		VertexAI:         vertexai.New(o),
 		Spanner:          spannerprov.New(o),
+		Dataproc:         dataproc.New(o),
 		ProjectID:        o.ProjectID,
 		Region:           o.Region,
 		Clock:            o.Clock,

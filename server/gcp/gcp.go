@@ -25,6 +25,7 @@ import (
 	cloudrunsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudrun"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudsql"
 	"github.com/stackshy/cloudemu/v2/server/gcp/compute"
+	dataprocsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataproc"
 	"github.com/stackshy/cloudemu/v2/server/gcp/eventarc"
 	fcmsrv "github.com/stackshy/cloudemu/v2/server/gcp/fcm"
 	"github.com/stackshy/cloudemu/v2/server/gcp/firestore"
@@ -50,6 +51,7 @@ import (
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	dataprocdriver "github.com/stackshy/cloudemu/v2/services/dataproc/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
@@ -98,7 +100,13 @@ type Drivers struct {
 	// /v1/projects/{p}/instances URL space with Cloud SQL; the Spanner handler's
 	// Matches disambiguates by content and instance ownership, and it registers
 	// ahead of Cloud SQL (see New).
-	Spanner          spannerdriver.Spanner
+	Spanner spannerdriver.Spanner
+	// Dataproc serves the dataproc.googleapis.com v1 cluster control plane against
+	// the dataproc driver. Its paths live under /v1/projects/{p}/regions/{r}/
+	// {clusters|operations}; the handler's Matches narrows on the regions keyword
+	// and the resource segment so it is disjoint from every other /v1/projects/
+	// handler, and Compute's regional paths are under the /compute/v1/ prefix.
+	Dataproc         dataprocdriver.Dataproc
 	VertexAI         vertexaidriver.VertexAI
 	IAM              iamdriver.IAM
 	ArtifactRegistry crdriver.ContainerRegistry
@@ -321,6 +329,17 @@ func New(d Drivers) *server.Server {
 
 	if d.CloudSQL != nil {
 		srv.Register(cloudsql.New(d.CloudSQL))
+	}
+
+	// Dataproc matches /v1/projects/{p}/regions/{r}/{clusters|operations}[/…]. Its
+	// Matches narrows on the "regions" keyword and the clusters/operations
+	// resource segment, so it is disjoint from every other /v1/projects/ handler
+	// and must simply register before Firestore's permissive /v1/projects/ prefix.
+	// It serves its own region-scoped operation polls (the shared LRO poller owns
+	// only the /locations/ space), and Compute's regional paths are under the
+	// separate /compute/v1/ prefix, so the two never collide.
+	if d.Dataproc != nil {
+		srv.Register(dataprocsrv.New(d.Dataproc))
 	}
 
 	// AlloyDB matches /v1/projects/{p}/locations/{l}/{clusters|backups|
