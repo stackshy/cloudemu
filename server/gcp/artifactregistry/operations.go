@@ -20,6 +20,17 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *r
 		return
 	}
 
+	// format is required and immutable: real Artifact Registry rejects a create
+	// whose format is missing, FORMAT_UNSPECIFIED, or an unknown enum with
+	// INVALID_ARGUMENT. Defaulting a missing format to DOCKER (as this handler
+	// once did) masked that client error.
+	if !isKnownFormat(string(body.Format)) {
+		gcprest.WriteError(w, http.StatusBadRequest, "required",
+			"format is required and must be a valid enum (e.g. DOCKER, MAVEN, NPM, PYTHON, GO, GENERIC)")
+
+		return
+	}
+
 	repo, err := h.registry.CreateRepository(r.Context(), crdriver.RepositoryConfig{
 		Name: repoID,
 		Tags: reservedTagsFrom(&body),
@@ -483,7 +494,12 @@ func pageSize(r *http.Request) int {
 // the same done operation (with its typed response) in the full server.
 func (h *Handler) doneOperation(rt *route, id string, response any) operationJSON {
 	name := "projects/" + rt.project + "/locations/" + rt.location + "/operations/op-" + id
-	h.ops.Register(name, response)
+
+	// A standalone package server (New without SetOperationRegistry) has no shared
+	// poller and answers its own /operations/ polls, so only register when wired.
+	if h.ops != nil {
+		h.ops.Register(name, response)
+	}
 
 	return operationJSON{
 		Name:     name,

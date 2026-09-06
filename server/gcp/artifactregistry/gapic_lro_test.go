@@ -40,7 +40,7 @@ func TestGAPICCreateRepositoryWait(t *testing.T) {
 	op, err := client.CreateRepository(ctx, &artifactregistrypb.CreateRepositoryRequest{
 		Parent:       "projects/demo/locations/us",
 		RepositoryId: "gapic-repo",
-		Repository:   &artifactregistrypb.Repository{Description: "gapic"},
+		Repository:   &artifactregistrypb.Repository{Format: artifactregistrypb.Repository_DOCKER, Description: "gapic"},
 	})
 	if err != nil {
 		t.Fatalf("CreateRepository: %v", err)
