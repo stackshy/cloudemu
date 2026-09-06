@@ -39,6 +39,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/resourcemanager"
 	secretmanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/secretmanager"
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
+	spannersrv "github.com/stackshy/cloudemu/v2/server/gcp/spanner"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
@@ -63,6 +64,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	spannerdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 	vertexaidriver "github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
@@ -90,7 +92,13 @@ type Drivers struct {
 	// paths (/v1/projects/{p}/locations/{l}/clusters…) are identical to GKE's,
 	// so the two cannot be multiplexed on one server; AlloyDB is left nil in
 	// DriversFrom and injected by callers that want it instead of GKE.
-	AlloyDB          rdbdriver.RelationalDB
+	AlloyDB rdbdriver.RelationalDB
+	// Spanner serves the spanner.googleapis.com v1 admin REST API (instance +
+	// database control plane) against the spanner driver. It shares the
+	// /v1/projects/{p}/instances URL space with Cloud SQL; the Spanner handler's
+	// Matches disambiguates by content and instance ownership, and it registers
+	// ahead of Cloud SQL (see New).
+	Spanner          spannerdriver.Spanner
 	VertexAI         vertexaidriver.VertexAI
 	IAM              iamdriver.IAM
 	ArtifactRegistry crdriver.ContainerRegistry
@@ -300,6 +308,15 @@ func New(d Drivers) *server.Server {
 	// handler is unconstrained.
 	if d.BigQuery != nil {
 		srv.Register(bigqueryserver.New(d.BigQuery))
+	}
+
+	// Spanner shares the /v1/projects/{p}/instances URL space with Cloud SQL, so
+	// it must register BEFORE Cloud SQL: its Matches claims only genuinely-Spanner
+	// traffic (create-by-body, item/sub-resource-by-instance-ownership, and the
+	// instance list), letting every other /v1/projects/{p}/instances request fall
+	// through to Cloud SQL below.
+	if d.Spanner != nil {
+		srv.Register(spannersrv.New(d.Spanner))
 	}
 
 	if d.CloudSQL != nil {

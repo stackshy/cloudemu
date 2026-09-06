@@ -12476,6 +12476,63 @@
     }
   },
   {
+    "service": "spanner",
+    "interface": "Spanner",
+    "operations": [
+      {
+        "name": "CreateDatabase",
+        "doc": "CreateDatabase provisions a database under an instance (returns a completed LRO)."
+      },
+      {
+        "name": "CreateInstance",
+        "doc": "CreateInstance provisions a new instance (returns a completed LRO)."
+      },
+      {
+        "name": "DeleteInstance",
+        "doc": "DeleteInstance removes an instance and its databases (synchronous)."
+      },
+      {
+        "name": "DropDatabase",
+        "doc": "DropDatabase deletes a database (synchronous)."
+      },
+      {
+        "name": "GetDatabase",
+        "doc": "GetDatabase returns a database by full resource name."
+      },
+      {
+        "name": "GetDatabaseDdl",
+        "doc": "GetDatabaseDdl returns a database's accumulated DDL statements."
+      },
+      {
+        "name": "GetInstance",
+        "doc": "GetInstance returns an instance by full resource name."
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name."
+      },
+      {
+        "name": "ListDatabases",
+        "doc": "ListDatabases returns every database under an instance (parent)."
+      },
+      {
+        "name": "ListInstances",
+        "doc": "ListInstances returns every instance in a project."
+      },
+      {
+        "name": "UpdateDatabaseDdl",
+        "doc": "UpdateDatabaseDdl appends DDL statements to a database (returns a completed LRO)."
+      },
+      {
+        "name": "UpdateInstance",
+        "doc": "UpdateInstance applies a masked update to an instance (returns a completed LRO)."
+      }
+    ],
+    "providers": {
+      "gcp": "Spanner"
+    }
+  },
+  {
     "service": "sql",
     "interface": "provider-native",
     "operations": [
