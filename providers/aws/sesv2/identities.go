@@ -41,7 +41,7 @@ func (m *Mock) CreateEmailIdentity(_ context.Context, in driver.CreateIdentityIn
 
 	if isDomain {
 		id.DkimTokens = dkimTokens(in.EmailIdentity)
-		id.DkimSigningHostedZn = m.opts.Region
+		id.DkimSigningHostedZn = dkimSigningHostedZone
 	}
 
 	if !m.identities.SetIfAbsent(in.EmailIdentity, &identityData{id: id}) {

@@ -158,11 +158,18 @@ func mergeTags(dst, src map[string]string) (map[string]string, error) {
 	return dst, nil
 }
 
-// dkimTokens returns deterministic-looking DKIM CNAME tokens for a domain.
-func dkimTokens(name string) []string {
+// dkimSigningHostedZone is the DNS zone that Easy DKIM CNAME records point to,
+// so a token maps to the CNAME target "<token>.dkim.amazonses.com".
+const dkimSigningHostedZone = "dkim.amazonses.com"
+
+// dkimTokens returns deterministic DKIM selector tokens. A token is a
+// domain-independent selector used to build a "<token>._domainkey.<domain>"
+// CNAME record (matching real SES Easy DKIM tokens, which never embed the
+// domain), so the name argument only seeds uniqueness.
+func dkimTokens(string) []string {
 	toks := make([]string, 0, dkimTokenCount)
 	for i := 0; i < dkimTokenCount; i++ {
-		toks = append(toks, idgen.GenerateID("")+"."+name)
+		toks = append(toks, idgen.GenerateID(""))
 	}
 
 	return toks

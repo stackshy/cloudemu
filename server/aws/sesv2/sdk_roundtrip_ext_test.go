@@ -298,6 +298,105 @@ func TestSDKConfigSetPutOptions(t *testing.T) {
 	}
 }
 
+// TestSDKConfigSetOptionsRoundTrip verifies the suppression, tracking, delivery
+// and VDM option blocks supplied to CreateConfigurationSet survive a
+// GetConfigurationSet round-trip (they were previously dropped), and that a
+// config set created without delivery options reports no delivery block.
+func TestSDKConfigSetOptionsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newSESClient(t)
+
+	if _, err := c.CreateConfigurationSet(ctx, &awsses.CreateConfigurationSetInput{
+		ConfigurationSetName: aws.String("full"),
+		DeliveryOptions:      &sestypes.DeliveryOptions{TlsPolicy: sestypes.TlsPolicyRequire},
+		SendingOptions:       &sestypes.SendingOptions{SendingEnabled: false},
+		SuppressionOptions:   &sestypes.SuppressionOptions{SuppressedReasons: []sestypes.SuppressionListReason{sestypes.SuppressionListReasonBounce}},
+		TrackingOptions:      &sestypes.TrackingOptions{CustomRedirectDomain: aws.String("click.example.com")},
+		VdmOptions: &sestypes.VdmOptions{
+			DashboardOptions: &sestypes.DashboardOptions{EngagementMetrics: sestypes.FeatureStatusEnabled},
+			GuardianOptions:  &sestypes.GuardianOptions{OptimizedSharedDelivery: sestypes.FeatureStatusEnabled},
+		},
+	}); err != nil {
+		t.Fatalf("CreateConfigurationSet: %v", err)
+	}
+
+	got, err := c.GetConfigurationSet(ctx, &awsses.GetConfigurationSetInput{ConfigurationSetName: aws.String("full")})
+	if err != nil {
+		t.Fatalf("GetConfigurationSet: %v", err)
+	}
+
+	if got.DeliveryOptions == nil || got.DeliveryOptions.TlsPolicy != sestypes.TlsPolicyRequire {
+		t.Fatalf("delivery TLS policy not round-tripped: %+v", got.DeliveryOptions)
+	}
+
+	if got.SuppressionOptions == nil || len(got.SuppressionOptions.SuppressedReasons) != 1 ||
+		got.SuppressionOptions.SuppressedReasons[0] != sestypes.SuppressionListReasonBounce {
+		t.Fatalf("suppressed reasons not round-tripped: %+v", got.SuppressionOptions)
+	}
+
+	if got.TrackingOptions == nil || aws.ToString(got.TrackingOptions.CustomRedirectDomain) != "click.example.com" {
+		t.Fatalf("tracking options not round-tripped: %+v", got.TrackingOptions)
+	}
+
+	if got.VdmOptions == nil || got.VdmOptions.DashboardOptions == nil ||
+		got.VdmOptions.DashboardOptions.EngagementMetrics != sestypes.FeatureStatusEnabled {
+		t.Fatalf("VDM options not round-tripped: %+v", got.VdmOptions)
+	}
+
+	// A set created without delivery options reports the OPTIONAL TLS-policy
+	// default, matching real SES (which always returns a DeliveryOptions block).
+	if _, err := c.CreateConfigurationSet(ctx, &awsses.CreateConfigurationSetInput{
+		ConfigurationSetName: aws.String("bare"),
+	}); err != nil {
+		t.Fatalf("CreateConfigurationSet(bare): %v", err)
+	}
+
+	bare, err := c.GetConfigurationSet(ctx, &awsses.GetConfigurationSetInput{ConfigurationSetName: aws.String("bare")})
+	if err != nil {
+		t.Fatalf("GetConfigurationSet(bare): %v", err)
+	}
+
+	if bare.DeliveryOptions == nil || bare.DeliveryOptions.TlsPolicy != sestypes.TlsPolicyOptional {
+		t.Fatalf("bare set should report OPTIONAL TLS policy, got %+v", bare.DeliveryOptions)
+	}
+}
+
+// TestSDKPutVdmOptionsRoundTrip verifies PutConfigurationSetVdmOptions (whose
+// wire body wraps the options under VdmOptions) is decoded and surfaced by
+// GetConfigurationSet.
+func TestSDKPutVdmOptionsRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newSESClient(t)
+
+	if _, err := c.CreateConfigurationSet(ctx, &awsses.CreateConfigurationSetInput{
+		ConfigurationSetName: aws.String("vdmcs"),
+	}); err != nil {
+		t.Fatalf("CreateConfigurationSet: %v", err)
+	}
+
+	if _, err := c.PutConfigurationSetVdmOptions(ctx, &awsses.PutConfigurationSetVdmOptionsInput{
+		ConfigurationSetName: aws.String("vdmcs"),
+		VdmOptions: &sestypes.VdmOptions{
+			DashboardOptions: &sestypes.DashboardOptions{EngagementMetrics: sestypes.FeatureStatusDisabled},
+			GuardianOptions:  &sestypes.GuardianOptions{OptimizedSharedDelivery: sestypes.FeatureStatusEnabled},
+		},
+	}); err != nil {
+		t.Fatalf("PutConfigurationSetVdmOptions: %v", err)
+	}
+
+	got, err := c.GetConfigurationSet(ctx, &awsses.GetConfigurationSetInput{ConfigurationSetName: aws.String("vdmcs")})
+	if err != nil {
+		t.Fatalf("GetConfigurationSet: %v", err)
+	}
+
+	if got.VdmOptions == nil || got.VdmOptions.DashboardOptions == nil ||
+		got.VdmOptions.DashboardOptions.EngagementMetrics != sestypes.FeatureStatusDisabled ||
+		got.VdmOptions.GuardianOptions == nil ||
+		got.VdmOptions.GuardianOptions.OptimizedSharedDelivery != sestypes.FeatureStatusEnabled {
+		t.Fatalf("put VDM options not surfaced by Get: %+v", got.VdmOptions)
+	}
+}
+
 func TestSDKDedicatedIpPoolLifecycle(t *testing.T) {
 	ctx := context.Background()
 	c := newSESClient(t)

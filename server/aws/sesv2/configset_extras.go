@@ -256,9 +256,26 @@ func (h *Handler) putTrackingOptions(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
-	writeOK(w, h.ses.PutConfigurationSetTrackingOptions(r.Context(), name, req.CustomRedirectDomain))
+	writeOK(w, h.ses.PutConfigurationSetTrackingOptions(r.Context(), name, req.CustomRedirectDomain, req.HTTPSPolicy))
 }
 
 func (h *Handler) putVdmOptions(w http.ResponseWriter, r *http.Request, name string) {
-	writeOK(w, h.ses.PutConfigurationSetVdmOptions(r.Context(), name))
+	var req putVdmOptionsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	var engagement, guardian string
+
+	if req.VdmOptions != nil {
+		if req.VdmOptions.DashboardOptions != nil {
+			engagement = req.VdmOptions.DashboardOptions.EngagementMetrics
+		}
+
+		if req.VdmOptions.GuardianOptions != nil {
+			guardian = req.VdmOptions.GuardianOptions.OptimizedSharedDelivery
+		}
+	}
+
+	writeOK(w, h.ses.PutConfigurationSetVdmOptions(r.Context(), name, engagement, guardian))
 }

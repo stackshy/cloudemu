@@ -129,20 +129,48 @@ type deliveryOptionsJSON struct {
 	SendingPoolName string `json:"SendingPoolName,omitempty"`
 }
 
+type suppressionOptionsJSON struct {
+	SuppressedReasons []string `json:"SuppressedReasons"`
+}
+
+type trackingOptionsJSON struct {
+	CustomRedirectDomain string `json:"CustomRedirectDomain,omitempty"`
+	HTTPSPolicy          string `json:"HttpsPolicy,omitempty"`
+}
+
+type vdmDashboardOptionsJSON struct {
+	EngagementMetrics string `json:"EngagementMetrics,omitempty"`
+}
+
+type vdmGuardianOptionsJSON struct {
+	OptimizedSharedDelivery string `json:"OptimizedSharedDelivery,omitempty"`
+}
+
+type vdmOptionsJSON struct {
+	DashboardOptions *vdmDashboardOptionsJSON `json:"DashboardOptions,omitempty"`
+	GuardianOptions  *vdmGuardianOptionsJSON  `json:"GuardianOptions,omitempty"`
+}
+
 type createConfigurationSetRequest struct {
-	ConfigurationSetName string                 `json:"ConfigurationSetName"`
-	SendingOptions       *sendingOptionsJSON    `json:"SendingOptions"`
-	ReputationOptions    *reputationOptionsJSON `json:"ReputationOptions"`
-	DeliveryOptions      *deliveryOptionsJSON   `json:"DeliveryOptions"`
-	Tags                 []tag                  `json:"Tags"`
+	ConfigurationSetName string                  `json:"ConfigurationSetName"`
+	SendingOptions       *sendingOptionsJSON     `json:"SendingOptions"`
+	ReputationOptions    *reputationOptionsJSON  `json:"ReputationOptions"`
+	DeliveryOptions      *deliveryOptionsJSON    `json:"DeliveryOptions"`
+	SuppressionOptions   *suppressionOptionsJSON `json:"SuppressionOptions"`
+	TrackingOptions      *trackingOptionsJSON    `json:"TrackingOptions"`
+	VdmOptions           *vdmOptionsJSON         `json:"VdmOptions"`
+	Tags                 []tag                   `json:"Tags"`
 }
 
 type getConfigurationSetResponse struct {
-	ConfigurationSetName string                `json:"ConfigurationSetName"`
-	SendingOptions       sendingOptionsJSON    `json:"SendingOptions"`
-	ReputationOptions    reputationOptionsJSON `json:"ReputationOptions"`
-	DeliveryOptions      deliveryOptionsJSON   `json:"DeliveryOptions"`
-	Tags                 []tag                 `json:"Tags"`
+	ConfigurationSetName string                  `json:"ConfigurationSetName"`
+	SendingOptions       sendingOptionsJSON      `json:"SendingOptions"`
+	ReputationOptions    reputationOptionsJSON   `json:"ReputationOptions"`
+	DeliveryOptions      *deliveryOptionsJSON    `json:"DeliveryOptions,omitempty"`
+	SuppressionOptions   *suppressionOptionsJSON `json:"SuppressionOptions,omitempty"`
+	TrackingOptions      *trackingOptionsJSON    `json:"TrackingOptions,omitempty"`
+	VdmOptions           *vdmOptionsJSON         `json:"VdmOptions,omitempty"`
+	Tags                 []tag                   `json:"Tags"`
 }
 
 type listConfigurationSetsResponse struct {
