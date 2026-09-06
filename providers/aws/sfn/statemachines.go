@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sfn/asl"
@@ -18,7 +19,10 @@ import (
 // QueryLanguage JSONata) with InvalidDefinition, matching real Step Functions.
 func validateASL(definition string) error {
 	if _, err := asl.Parse(definition); err != nil {
-		return invalidDefinition(err.Error())
+		// Use the human message only: err.Error() prepends the canonical code
+		// (e.g. "InvalidArgument: ..."), and real Step Functions never leaks an
+		// internal error-taxonomy name into an InvalidDefinition message.
+		return invalidDefinition(errors.Message(err))
 	}
 
 	return nil
@@ -95,6 +99,8 @@ func (m *Mock) CreateStateMachine(
 // with the same name whose definition, type, logging and tracing configuration
 // all match the existing machine returns that machine (HTTP 200) — a differing
 // roleArn or tags is ignored. Any other difference is StateMachineAlreadyExists.
+// The idempotency check mirrors real Step Functions, which also folds
+// encryptionConfiguration into the comparison.
 func (m *Mock) reconcileExisting(
 	arn string, want *driver.StateMachine,
 ) (resolvedArn, versionArn string, created time.Time, err error) {
@@ -109,7 +115,8 @@ func (m *Mock) reconcileExisting(
 	same := sd.sm.Definition == want.Definition &&
 		sd.sm.Type == want.Type &&
 		sd.sm.LoggingConfigJSON == want.LoggingConfigJSON &&
-		sd.sm.TracingConfigJSON == want.TracingConfigJSON
+		sd.sm.TracingConfigJSON == want.TracingConfigJSON &&
+		sd.sm.EncryptionCfgJSON == want.EncryptionCfgJSON
 	if !same {
 		return "", "", time.Time{}, smAlreadyExists(want.Name)
 	}
