@@ -2,6 +2,7 @@ package apigateway
 
 import (
 	"context"
+	"sort"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/apigateway/driver"
@@ -52,6 +53,16 @@ func (m *Mock) GetDeployments(_ context.Context, restAPIID string) ([]driver.Dep
 	for _, d := range ad.deployments {
 		out = append(out, *d)
 	}
+
+	// Deterministic order: oldest first, ties broken by id (the backing map
+	// iterates randomly).
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedDate != out[j].CreatedDate {
+			return out[i].CreatedDate < out[j].CreatedDate
+		}
+
+		return out[i].ID < out[j].ID
+	})
 
 	return out, nil
 }
@@ -143,6 +154,8 @@ func (m *Mock) CreateStage(_ context.Context, restAPIID string, in driver.Create
 }
 
 // GetStages lists every stage of a REST API.
+//
+//nolint:dupl // mirrors the sibling GetResources list-and-sort by design
 func (m *Mock) GetStages(_ context.Context, restAPIID string) ([]driver.Stage, error) {
 	ad, err := m.getAPI(restAPIID)
 	if err != nil {
@@ -156,6 +169,9 @@ func (m *Mock) GetStages(_ context.Context, restAPIID string) ([]driver.Stage, e
 	for _, s := range ad.stages {
 		out = append(out, copyStage(s))
 	}
+
+	// Deterministic order by stage name (the backing map iterates randomly).
+	sort.Slice(out, func(i, j int) bool { return out[i].StageName < out[j].StageName })
 
 	return out, nil
 }

@@ -38,6 +38,24 @@ type RestAPI struct {
 	Tags                       map[string]string
 	BinaryMediaTypes           []string
 	EndpointConfigurationTypes []string
+	DisableExecuteAPIEndpoint  bool
+	// MinimumCompressionSize is nil when unset (compression disabled); a non-nil
+	// value in [0,10485760] enables payload compression above that byte size.
+	MinimumCompressionSize *int
+	Policy                 string
+}
+
+// PatchOperation is one entry of an AWS API Gateway update request's
+// patchOperations array (a JSON Patch operation). Op is "replace", "add",
+// "remove" or "copy"; Path is a "/"-rooted pointer to the target field
+// (e.g. "/name", "/variables/env"); Value carries the new value (always a
+// string on the wire, even for bool/int fields). From is the source pointer
+// for a "copy" op.
+type PatchOperation struct {
+	Op    string
+	Path  string
+	Value string
+	From  string
 }
 
 // Resource is a node in a REST API's path tree. Path is the fully-resolved
@@ -100,6 +118,9 @@ type CreateRestAPIInput struct {
 	Tags                       map[string]string
 	BinaryMediaTypes           []string
 	EndpointConfigurationTypes []string
+	DisableExecuteAPIEndpoint  bool
+	MinimumCompressionSize     *int
+	Policy                     string
 }
 
 // PutMethodInput carries the fields PutMethod accepts.
@@ -167,26 +188,39 @@ type APIGateway interface {
 	CreateRestAPI(ctx context.Context, in *CreateRestAPIInput) (*RestAPI, error)
 	GetRestAPIs(ctx context.Context) ([]RestAPI, error)
 	GetRestAPI(ctx context.Context, id string) (*RestAPI, error)
+	// UpdateRestAPI applies a patchOperations document to a REST API and returns
+	// the updated object, matching the real UpdateRestApi.
+	UpdateRestAPI(ctx context.Context, id string, ops []PatchOperation) (*RestAPI, error)
 	DeleteRestAPI(ctx context.Context, id string) error
 
 	CreateResource(ctx context.Context, restAPIID, parentID, pathPart string) (*Resource, error)
 	GetResources(ctx context.Context, restAPIID string) ([]Resource, error)
 	GetResource(ctx context.Context, restAPIID, resourceID string) (*Resource, error)
+	// UpdateResource applies a patchOperations document to a resource (rename via
+	// /pathPart, move via /parentId), recomputing the affected subtree paths.
+	UpdateResource(ctx context.Context, restAPIID, resourceID string, ops []PatchOperation) (*Resource, error)
 	// DeleteResource removes a resource and its whole descendant subtree, as
 	// real API Gateway does. Deleting the API's root resource is rejected.
 	DeleteResource(ctx context.Context, restAPIID, resourceID string) error
 
 	PutMethod(ctx context.Context, restAPIID, resourceID, httpMethod string, in PutMethodInput) (*Method, error)
 	GetMethod(ctx context.Context, restAPIID, resourceID, httpMethod string) (*Method, error)
+	// UpdateMethod applies a patchOperations document to a method.
+	UpdateMethod(ctx context.Context, restAPIID, resourceID, httpMethod string, ops []PatchOperation) (*Method, error)
 	DeleteMethod(ctx context.Context, restAPIID, resourceID, httpMethod string) error
 
 	PutIntegration(ctx context.Context, restAPIID, resourceID, httpMethod string, in PutIntegrationInput) (*Integration, error)
 	GetIntegration(ctx context.Context, restAPIID, resourceID, httpMethod string) (*Integration, error)
+	// UpdateIntegration applies a patchOperations document to an integration.
+	UpdateIntegration(ctx context.Context, restAPIID, resourceID, httpMethod string, ops []PatchOperation) (*Integration, error)
 	DeleteIntegration(ctx context.Context, restAPIID, resourceID, httpMethod string) error
 
 	CreateDeployment(ctx context.Context, restAPIID string, in CreateDeploymentInput) (*Deployment, error)
 	GetDeployments(ctx context.Context, restAPIID string) ([]Deployment, error)
 	GetDeployment(ctx context.Context, restAPIID, deploymentID string) (*Deployment, error)
+	// UpdateDeployment applies a patchOperations document to a deployment
+	// (only /description is mutable).
+	UpdateDeployment(ctx context.Context, restAPIID, deploymentID string, ops []PatchOperation) (*Deployment, error)
 	// DeleteDeployment removes a deployment. It fails with a FailedPrecondition
 	// error when a stage still points at it, matching real API Gateway (a
 	// deployment referenced by a stage must have that stage moved or deleted
@@ -196,6 +230,9 @@ type APIGateway interface {
 	CreateStage(ctx context.Context, restAPIID string, in CreateStageInput) (*Stage, error)
 	GetStages(ctx context.Context, restAPIID string) ([]Stage, error)
 	GetStage(ctx context.Context, restAPIID, stageName string) (*Stage, error)
+	// UpdateStage applies a patchOperations document to a stage (/description,
+	// /variables/<key> add|replace|remove, /deploymentId).
+	UpdateStage(ctx context.Context, restAPIID, stageName string, ops []PatchOperation) (*Stage, error)
 	DeleteStage(ctx context.Context, restAPIID, stageName string) error
 
 	// InvokeRoute resolves req.HTTPMethod+req.Path against the deployed stage's

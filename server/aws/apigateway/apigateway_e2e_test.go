@@ -311,3 +311,55 @@ func TestE2E_ControlPlaneRoundTrip(t *testing.T) {
 		t.Fatalf("GetRestApis returned no items: %v", list)
 	}
 }
+
+// TestE2E_UpdatePatchRoundTrip exercises the PATCH (Update*) verbs across the
+// control plane the way Terraform does: a patchOperations document per object,
+// then a GET to confirm the mutation round-trips.
+func TestE2E_UpdatePatchRoundTrip(t *testing.T) {
+	srv := newE2E(t)
+	base := srv.URL
+
+	api := doJSON(t, http.MethodPost, base+"/restapis", `{"name":"orig"}`)
+	apiID, _ := api["id"].(string)
+	rootID, _ := api["rootResourceId"].(string)
+
+	// UpdateRestApi: rename + toggle disableExecuteApiEndpoint + set compression.
+	upd := doJSON(t, http.MethodPatch, base+"/restapis/"+apiID,
+		`{"patchOperations":[{"op":"replace","path":"/name","value":"renamed"},`+
+			`{"op":"replace","path":"/disableExecuteApiEndpoint","value":"true"},`+
+			`{"op":"replace","path":"/minimumCompressionSize","value":"1024"}]}`)
+	if upd["name"] != "renamed" || upd["disableExecuteApiEndpoint"] != true ||
+		upd["minimumCompressionSize"].(float64) != 1024 {
+		t.Fatalf("UpdateRestApi round-trip: %v", upd)
+	}
+
+	res := doJSON(t, http.MethodPost, base+"/restapis/"+apiID+"/resources/"+rootID, `{"pathPart":"pets"}`)
+	resID, _ := res["id"].(string)
+
+	doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET", `{"authorizationType":"NONE"}`)
+	doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET/integration", `{"type":"MOCK"}`)
+
+	// UpdateMethod + UpdateIntegration.
+	m := doJSON(t, http.MethodPatch, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET",
+		`{"patchOperations":[{"op":"replace","path":"/apiKeyRequired","value":"true"}]}`)
+	if m["apiKeyRequired"] != true {
+		t.Fatalf("UpdateMethod round-trip: %v", m)
+	}
+
+	ig := doJSON(t, http.MethodPatch, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET/integration",
+		`{"patchOperations":[{"op":"replace","path":"/timeoutInMillis","value":"5000"}]}`)
+	if ig["timeoutInMillis"].(float64) != 5000 {
+		t.Fatalf("UpdateIntegration round-trip: %v", ig)
+	}
+
+	// UpdateStage variables + description.
+	doJSON(t, http.MethodPost, base+"/restapis/"+apiID+"/deployments", `{"stageName":"prod"}`)
+
+	st := doJSON(t, http.MethodPatch, base+"/restapis/"+apiID+"/stages/prod",
+		`{"patchOperations":[{"op":"replace","path":"/description","value":"live"},`+
+			`{"op":"add","path":"/variables/env","value":"staging"}]}`)
+	vars, _ := st["variables"].(map[string]any)
+	if st["description"] != "live" || vars["env"] != "staging" {
+		t.Fatalf("UpdateStage round-trip: %v", st)
+	}
+}

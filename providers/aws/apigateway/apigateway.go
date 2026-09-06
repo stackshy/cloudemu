@@ -10,6 +10,7 @@ package apigateway
 import (
 	"context"
 	"crypto/rand"
+	"sort"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -120,6 +121,9 @@ func (m *Mock) CreateRestAPI(_ context.Context, in *driver.CreateRestAPIInput) (
 		Tags:                       copyStrMap(in.Tags),
 		BinaryMediaTypes:           append([]string(nil), in.BinaryMediaTypes...),
 		EndpointConfigurationTypes: endpointTypes(in.EndpointConfigurationTypes),
+		DisableExecuteAPIEndpoint:  in.DisableExecuteAPIEndpoint,
+		MinimumCompressionSize:     copyIntPtr(in.MinimumCompressionSize),
+		Policy:                     in.Policy,
 	}
 
 	m.apis.Set(apiID, &apiData{
@@ -144,6 +148,16 @@ func (m *Mock) GetRestAPIs(_ context.Context) ([]driver.RestAPI, error) {
 		out = append(out, copyAPI(&ad.api))
 		ad.mu.RUnlock()
 	}
+
+	// Deterministic order: oldest first, ties broken by id (the backing map
+	// iterates randomly).
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedDate != out[j].CreatedDate {
+			return out[i].CreatedDate < out[j].CreatedDate
+		}
+
+		return out[i].ID < out[j].ID
+	})
 
 	return out, nil
 }
@@ -219,6 +233,18 @@ func copyAPI(a *driver.RestAPI) driver.RestAPI {
 	out.Tags = copyStrMap(a.Tags)
 	out.BinaryMediaTypes = append([]string(nil), a.BinaryMediaTypes...)
 	out.EndpointConfigurationTypes = append([]string(nil), a.EndpointConfigurationTypes...)
+	out.MinimumCompressionSize = copyIntPtr(a.MinimumCompressionSize)
 
 	return out
+}
+
+// copyIntPtr returns an independent copy of an *int (nil stays nil).
+func copyIntPtr(p *int) *int {
+	if p == nil {
+		return nil
+	}
+
+	v := *p
+
+	return &v
 }
