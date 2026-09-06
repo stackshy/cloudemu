@@ -1580,9 +1580,10 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	sku := ""
+	sku, skuTier := "", ""
 	if req.SKU != nil {
 		sku = req.SKU.Name
+		skuTier = req.SKU.Tier
 	}
 
 	tags := mergeTags(req.Tags, armPublicIPTag, rp.ResourceName)
@@ -1597,6 +1598,8 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 
 	cfg := netdriver.ElasticIPConfig{
 		SKU:                sku,
+		SKUTier:            skuTier,
+		IPVersion:          req.Properties.PublicIPAddressVersion,
 		AllocationMethod:   req.Properties.PublicIPAllocationMethod,
 		Tags:               tags,
 		Zones:              req.Zones,
@@ -2131,6 +2134,7 @@ func (h *Handler) toPublicIPResponse(
 		Properties: publicIPRespProps{
 			ProvisioningState:        "Succeeded",
 			PublicIPAllocationMethod: info.AllocationMethod,
+			PublicIPAddressVersion:   orDefault(info.IPVersion, "IPv4"),
 			IPAddress:                info.PublicIP,
 			IdleTimeoutInMinutes:     info.IdleTimeoutMinutes,
 			ResourceGUID:             info.ResourceGUID,
@@ -2138,7 +2142,7 @@ func (h *Handler) toPublicIPResponse(
 	}
 
 	if info.SKU != "" {
-		out.SKU = &publicIPSKU{Name: info.SKU}
+		out.SKU = &publicIPSKU{Name: info.SKU, Tier: orDefault(info.SKUTier, "Regional")}
 	}
 
 	if info.DNSDomainNameLabel != "" {
@@ -2257,6 +2261,17 @@ func tagOr(m map[string]string, key, fallback string) string {
 	}
 
 	return fallback
+}
+
+// orDefault returns v, or fallback when v is empty — used to surface the ARM
+// defaults (IPv4, Regional) a real GET always reports for a public IP whose
+// stored record predates the field being modeled.
+func orDefault(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+
+	return v
 }
 
 func stripInternal(in map[string]string) map[string]string {
