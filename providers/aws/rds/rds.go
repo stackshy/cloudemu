@@ -1091,6 +1091,21 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg rdsdriver.ClusterConfig) (
 		allocatedStorage = auroraAllocatedStorage
 	}
 
+	backupRetention := cfg.BackupRetentionPeriod
+	if backupRetention == 0 {
+		backupRetention = defaultBackupRetention
+	}
+
+	backupWindow := cfg.PreferredBackupWindow
+	if backupWindow == "" {
+		backupWindow = defaultBackupWindow
+	}
+
+	maintenanceWindow := cfg.PreferredMaintenanceWindow
+	if maintenanceWindow == "" {
+		maintenanceWindow = defaultMaintenanceWindow
+	}
+
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 	cluster := rdsdriver.Cluster{
 		ID:                          cfg.ID,
@@ -1106,6 +1121,9 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg rdsdriver.ClusterConfig) (
 		VPCSecurityGroups:           append([]string(nil), cfg.VPCSecurityGroups...),
 		SubnetGroupName:             cfg.SubnetGroupName,
 		DBClusterParameterGroupName: cfg.DBClusterParameterGroupName,
+		BackupRetentionPeriod:       backupRetention,
+		PreferredBackupWindow:       backupWindow,
+		PreferredMaintenanceWindow:  maintenanceWindow,
 		EngineMode:                  engineMode,
 		DBClusterResourceID:         resourceID("cluster-", cfg.ID),
 		AllocatedStorage:            allocatedStorage,
@@ -1183,6 +1201,18 @@ func (m *Mock) ModifyCluster(
 
 	if input.DBClusterParameterGroupName != "" {
 		cluster.DBClusterParameterGroupName = input.DBClusterParameterGroupName
+	}
+
+	if input.BackupRetentionPeriod > 0 {
+		cluster.BackupRetentionPeriod = input.BackupRetentionPeriod
+	}
+
+	if input.PreferredBackupWindow != "" {
+		cluster.PreferredBackupWindow = input.PreferredBackupWindow
+	}
+
+	if input.PreferredMaintenanceWindow != "" {
+		cluster.PreferredMaintenanceWindow = input.PreferredMaintenanceWindow
 	}
 
 	if input.DeletionProtection != nil {
