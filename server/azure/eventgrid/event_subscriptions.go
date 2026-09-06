@@ -111,8 +111,9 @@ func (h *Handler) regenerateTopicKey(w http.ResponseWriter, r *http.Request, rp 
 }
 
 // enrichSubscriptionProperties parses stored properties, stamps the read-only
-// topic id and provisioning state, and re-marshals. When props is empty a
-// minimal object with just those read-only fields is produced.
+// topic id and provisioning state, fills the read-only Event Grid defaults the
+// caller omitted (retryPolicy, eventDeliverySchema), and re-marshals. When props
+// is empty a minimal object with just those read-only fields is produced.
 func enrichSubscriptionProperties(props []byte, topicID string) json.RawMessage {
 	obj := map[string]any{}
 	if len(props) > 0 {
@@ -121,6 +122,7 @@ func enrichSubscriptionProperties(props []byte, topicID string) json.RawMessage 
 
 	obj["topic"] = topicID
 	obj["provisioningState"] = subscriptionProvisionedGood
+	stampSubscriptionDefaults(obj)
 
 	out, err := json.Marshal(obj)
 	if err != nil {
@@ -128,6 +130,41 @@ func enrichSubscriptionProperties(props []byte, topicID string) json.RawMessage 
 	}
 
 	return out
+}
+
+// stampSubscriptionDefaults fills the read-only defaults Event Grid reports for
+// an event subscription when the caller did not set them: eventDeliverySchema
+// (EventGridSchema) and a retryPolicy of 30 delivery attempts / 1440-minute
+// event TTL. Caller-supplied values are preserved — only absent fields are
+// filled, matching real Azure's GET response, so a subscription created with an
+// explicit retry policy or delivery schema round-trips unchanged while one
+// created without still reports the documented defaults.
+func stampSubscriptionDefaults(obj map[string]any) {
+	if _, ok := obj["eventDeliverySchema"]; !ok {
+		obj["eventDeliverySchema"] = defaultEventDeliverySchema
+	}
+
+	obj["retryPolicy"] = retryPolicyWithDefaults(obj["retryPolicy"])
+}
+
+// retryPolicyWithDefaults returns the retry policy to report: the caller's, with
+// each unset field filled from Event Grid's defaults (30 attempts, 1440-minute
+// TTL). A missing or non-object retryPolicy yields the full default policy.
+func retryPolicyWithDefaults(existing any) map[string]any {
+	rp, _ := existing.(map[string]any)
+	if rp == nil {
+		rp = map[string]any{}
+	}
+
+	if _, ok := rp["maxDeliveryAttempts"]; !ok {
+		rp["maxDeliveryAttempts"] = defaultMaxDeliveryAttempts
+	}
+
+	if _, ok := rp["eventTimeToLiveInMinutes"]; !ok {
+		rp["eventTimeToLiveInMinutes"] = defaultEventTTLMinutes
+	}
+
+	return rp
 }
 
 func subscriptionID(rp *azurearm.ResourcePath) string {
