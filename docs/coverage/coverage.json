@@ -4611,10 +4611,22 @@
         "name": "AddJobFlowSteps"
       },
       {
+        "name": "AddTags"
+      },
+      {
         "name": "CancelSteps"
       },
       {
+        "name": "CreateSecurityConfiguration"
+      },
+      {
+        "name": "DeleteSecurityConfiguration"
+      },
+      {
         "name": "DescribeCluster"
+      },
+      {
+        "name": "DescribeSecurityConfiguration"
       },
       {
         "name": "DescribeStep"
@@ -4632,10 +4644,16 @@
         "name": "ListInstances"
       },
       {
+        "name": "ListSecurityConfigurations"
+      },
+      {
         "name": "ListSteps"
       },
       {
         "name": "ModifyInstanceGroups"
+      },
+      {
+        "name": "RemoveTags"
       },
       {
         "name": "RunJobFlow"

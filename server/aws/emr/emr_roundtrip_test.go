@@ -92,6 +92,61 @@ func runCluster(t *testing.T, c *emr.Client) string {
 	return aws.ToString(out.JobFlowId)
 }
 
+// TestSDKVisibleToAllUsersExplicitFalse guards that an explicit
+// VisibleToAllUsers=false round-trips as false rather than being dropped and
+// defaulting back to true — the classic explicit-zero drift a Terraform
+// aws_emr_cluster with visible_to_all_users=false would otherwise hit.
+func TestSDKVisibleToAllUsersExplicitFalse(t *testing.T) {
+	ctx := context.Background()
+	c := newEMRClient(t)
+
+	out, err := c.RunJobFlow(ctx, &emr.RunJobFlowInput{
+		Name:              aws.String("private-cluster"),
+		ReleaseLabel:      aws.String("emr-6.15.0"),
+		VisibleToAllUsers: aws.Bool(false),
+		Instances: &emrtypes.JobFlowInstancesConfig{
+			InstanceCount:               aws.Int32(1),
+			MasterInstanceType:          aws.String("m5.xlarge"),
+			KeepJobFlowAliveWhenNoSteps: aws.Bool(true),
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunJobFlow: %v", err)
+	}
+
+	desc, err := c.DescribeCluster(ctx, &emr.DescribeClusterInput{ClusterId: out.JobFlowId})
+	if err != nil {
+		t.Fatalf("DescribeCluster: %v", err)
+	}
+
+	if desc.Cluster.VisibleToAllUsers == nil || aws.ToBool(desc.Cluster.VisibleToAllUsers) {
+		t.Fatalf("VisibleToAllUsers = %v, want explicit false", desc.Cluster.VisibleToAllUsers)
+	}
+
+	// A cluster that omits the field defaults to true (real EMR default).
+	def, err := c.RunJobFlow(ctx, &emr.RunJobFlowInput{
+		Name:         aws.String("default-cluster"),
+		ReleaseLabel: aws.String("emr-6.15.0"),
+		Instances: &emrtypes.JobFlowInstancesConfig{
+			InstanceCount:               aws.Int32(1),
+			MasterInstanceType:          aws.String("m5.xlarge"),
+			KeepJobFlowAliveWhenNoSteps: aws.Bool(true),
+		},
+	})
+	if err != nil {
+		t.Fatalf("RunJobFlow(default): %v", err)
+	}
+
+	descDef, err := c.DescribeCluster(ctx, &emr.DescribeClusterInput{ClusterId: def.JobFlowId})
+	if err != nil {
+		t.Fatalf("DescribeCluster(default): %v", err)
+	}
+
+	if !aws.ToBool(descDef.Cluster.VisibleToAllUsers) {
+		t.Fatalf("default VisibleToAllUsers = %v, want true", descDef.Cluster.VisibleToAllUsers)
+	}
+}
+
 func TestSDKRunJobFlowAndDescribeCluster(t *testing.T) {
 	ctx := context.Background()
 	c := newEMRClient(t)
