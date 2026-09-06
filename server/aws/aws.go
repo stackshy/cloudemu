@@ -567,9 +567,9 @@ func New(d Drivers) *server.Server {
 
 	// Batch uses REST-JSON verb + operation-path routing under the /v1/ prefix;
 	// its Matches predicate gates on that prefix plus a known Batch operation
-	// segment, so it must run before the S3 catch-all. Its operation segments are
-	// disjoint from MSK's /v1/ collection roots, so order relative to Kafka is
-	// unconstrained.
+	// segment, so it must run before the S3 catch-all. The /v1/tags/{arn} path is
+	// shared with MSK, so Batch's Matches claims it only for batch ARNs (see
+	// batch.Handler.Matches) and a kafka ARN falls through to the Kafka handler.
 	if d.Batch != nil {
 		srv.Register(batchsrv.New(d.Batch))
 	}

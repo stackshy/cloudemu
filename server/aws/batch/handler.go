@@ -79,6 +79,13 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
+	// The /v1/tags/{arn} path is shared with other restJson1 services (notably
+	// MSK, which registers after us). Claim it only for Batch ARNs so a kafka
+	// (or other) ARN falls through to its owning handler.
+	if segs[0] == opTags {
+		return len(segs) >= 2 && strings.Contains(strings.Join(segs[1:], "/"), ":batch:")
+	}
+
 	return knownOps[segs[0]]
 }
 
