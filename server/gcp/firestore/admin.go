@@ -43,6 +43,7 @@ import (
 const (
 	segCollectionGroups = "collectionGroups"
 	segIndexes          = "indexes"
+	segFields           = "fields"
 	segOperations       = "operations"
 )
 
@@ -88,6 +89,7 @@ type operationRec struct {
 type AdminHandler struct {
 	databases *memstore.Store[dbRecord]
 	indexes   *memstore.Store[indexRecord]
+	fields    *memstore.Store[fieldRecord]
 	ops       *memstore.Store[operationRec]
 
 	opSeq atomic.Uint64
@@ -98,6 +100,7 @@ func NewAdmin() *AdminHandler {
 	return &AdminHandler{
 		databases: memstore.New[dbRecord](),
 		indexes:   memstore.New[indexRecord](),
+		fields:    memstore.New[fieldRecord](),
 		ops:       memstore.New[operationRec](),
 	}
 }
@@ -109,7 +112,9 @@ type adminPath struct {
 	operation    string // set for .../operations/{op}
 	collGroup    string // set for .../collectionGroups/{cg}
 	index        string // set for .../collectionGroups/{cg}/indexes/{i}
+	field        string // set for .../collectionGroups/{cg}/fields/{f}
 	isIndexColl  bool   // .../collectionGroups/{cg}/indexes (collection)
+	isFieldColl  bool   // .../collectionGroups/{cg}/fields (collection)
 	isDatabase   bool   // .../databases/{db} (resource, no sub-collection)
 	isDatabases  bool   // .../databases (collection)
 	isOperations bool   // .../operations/{op}
@@ -170,9 +175,28 @@ func parseAdminSubPath(parts []string, p *adminPath) bool {
 
 		return true
 	case segCollectionGroups:
-		return parseIndexPath(parts, p)
+		return parseCollectionGroupPath(parts, p)
 	default:
 		// documents (data-plane) and anything else: not ours.
+		return false
+	}
+}
+
+// parseCollectionGroupPath dispatches a .../collectionGroups/{cg}/... path to the
+// indexes or fields sub-surface parser. Any other (or truncated) sub-resource is
+// not owned by the admin handler.
+func parseCollectionGroupPath(parts []string, p *adminPath) bool {
+	const kind = 6 // projects/p/databases/db/collectionGroups/cg/<kind>
+	if len(parts) <= kind {
+		return false
+	}
+
+	switch parts[kind] {
+	case segIndexes:
+		return parseIndexPath(parts, p)
+	case segFields:
+		return parseFieldPath(parts, p)
+	default:
 		return false
 	}
 }
@@ -217,6 +241,10 @@ func (h *AdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveOperation(w, r, &p)
 	case p.isIndexColl:
 		h.serveIndexCollection(w, r, &p)
+	case p.isFieldColl:
+		h.serveFieldCollection(w, r, &p)
+	case p.field != "":
+		h.serveFieldResource(w, r, &p)
 	default: // index resource
 		h.serveIndexResource(w, r, &p)
 	}

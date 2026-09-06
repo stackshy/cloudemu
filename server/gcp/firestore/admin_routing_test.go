@@ -27,6 +27,11 @@ func TestAdminMatchesDisambiguation(t *testing.T) {
 		{http.MethodGet, "/v1/projects/p/databases/db1/operations/op-1", true},
 		{http.MethodPost, "/v1/projects/p/databases/db1/collectionGroups/cities/indexes", true},
 		{http.MethodGet, "/v1/projects/p/databases/db1/collectionGroups/cities/indexes/idx-1", true},
+		// collectionGroups/.../fields is admin-owned (single-field index/TTL config).
+		{http.MethodGet, "/v1/projects/p/databases/db1/collectionGroups/cities/fields", true},
+		{http.MethodGet, "/v1/projects/p/databases/db1/collectionGroups/cities/fields/basic", true},
+		{http.MethodPatch, "/v1/projects/p/databases/db1/collectionGroups/cities/fields/basic", true},
+		{http.MethodGet, "/v1/projects/p/databases/db1/collectionGroups/__default__/fields/*", true},
 
 		// Data-plane-owned: admin must defer.
 		{http.MethodPost, "/v1/projects/p/databases/db1/documents/cities", false},
@@ -34,8 +39,6 @@ func TestAdminMatchesDisambiguation(t *testing.T) {
 		{http.MethodPost, "/v1/projects/p/databases/db1/documents:commit", false},
 		{http.MethodPost, "/v1/projects/p/databases/db1/documents:runQuery", false},
 		{http.MethodPost, "/v1/projects/p/databases/db1:exportDocuments", false},
-		// collectionGroups/.../fields is not implemented here -> defer.
-		{http.MethodGet, "/v1/projects/p/databases/db1/collectionGroups/cities/fields/foo", false},
 	}
 
 	for _, c := range cases {

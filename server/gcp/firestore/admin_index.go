@@ -55,8 +55,7 @@ type indexRecord struct {
 }
 
 // parseIndexPath parses .../collectionGroups/{cg}/indexes[/{i}] into p. It
-// returns false for the collectionGroups/.../fields surface (not implemented)
-// and any malformed shape.
+// returns false for any malformed shape.
 func parseIndexPath(parts []string, p *adminPath) bool {
 	const (
 		collLen  = 7 // projects/p/databases/db/collectionGroups/cg/indexes
@@ -280,11 +279,13 @@ func assignFieldMode(fr *indexFieldRec, m map[string]any) error {
 	return nil
 }
 
-// renderIndex builds the JSON map for an Index resource.
-func renderIndex(rec *indexRecord) map[string]any {
-	fields := make([]map[string]any, 0, len(rec.fields))
+// renderIndexFields builds the JSON array for an index's IndexField list,
+// emitting order or arrayConfig only when set. Shared by the standalone Index
+// resource and the field-embedded indexes in an IndexConfig.
+func renderIndexFields(fields []indexFieldRec) []map[string]any {
+	out := make([]map[string]any, 0, len(fields))
 
-	for _, f := range rec.fields {
+	for _, f := range fields {
 		fm := map[string]any{"fieldPath": f.fieldPath}
 		if f.order != "" {
 			fm["order"] = f.order
@@ -294,14 +295,19 @@ func renderIndex(rec *indexRecord) map[string]any {
 			fm["arrayConfig"] = f.arrayConfig
 		}
 
-		fields = append(fields, fm)
+		out = append(out, fm)
 	}
 
+	return out
+}
+
+// renderIndex builds the JSON map for an Index resource.
+func renderIndex(rec *indexRecord) map[string]any {
 	return map[string]any{
 		"name":       indexKey(rec.project, rec.database, rec.collGroup, rec.indexID),
 		"queryScope": rec.queryScope,
 		"apiScope":   rec.apiScope,
-		"fields":     fields,
+		"fields":     renderIndexFields(rec.fields),
 		"state":      indexStateReady,
 	}
 }
