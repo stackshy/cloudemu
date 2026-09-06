@@ -153,6 +153,71 @@ func TestSDKEventHubPropertyValidation(t *testing.T) {
 	}
 }
 
+// TestSDKNamespaceUpdateAppliesProperties checks that the ARM Namespaces - Update
+// (PATCH) operation applies the properties in the request body as a partial
+// update, matching real Azure. A caller that PATCHes isAutoInflateEnabled and
+// maximumThroughputUnits must read those values back; silently dropping them
+// causes read-back drift for the SDK, the Azure CLI (az eventhubs namespace
+// update) and any tool that uses PATCH rather than PUT.
+func TestSDKNamespaceUpdateAppliesProperties(t *testing.T) {
+	ts := newServer(t)
+	ctx := context.Background()
+
+	c, err := armeventhub.NewNamespacesClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewNamespacesClient: %v", err)
+	}
+
+	createStandardNamespace(t, ctx, ts)
+
+	// PATCH: turn AutoInflate on and set a maximum throughput unit ceiling.
+	updated, err := c.Update(ctx, rgName, nsName, armeventhub.EHNamespace{
+		Properties: &armeventhub.EHNamespaceProperties{
+			IsAutoInflateEnabled:   to.Ptr(true),
+			MaximumThroughputUnits: to.Ptr[int32](10),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("Update namespace: %v", err)
+	}
+
+	if updated.Properties == nil || updated.Properties.IsAutoInflateEnabled == nil ||
+		!*updated.Properties.IsAutoInflateEnabled {
+		t.Fatalf("PATCH response isAutoInflateEnabled = %v, want true", updated.Properties)
+	}
+
+	got, err := c.Get(ctx, rgName, nsName, nil)
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+
+	if got.Properties.IsAutoInflateEnabled == nil || !*got.Properties.IsAutoInflateEnabled {
+		t.Fatalf("read-back isAutoInflateEnabled = %v, want true", got.Properties.IsAutoInflateEnabled)
+	}
+
+	if got.Properties.MaximumThroughputUnits == nil || *got.Properties.MaximumThroughputUnits != 10 {
+		t.Fatalf("read-back maximumThroughputUnits = %v, want 10", got.Properties.MaximumThroughputUnits)
+	}
+
+	// A PATCH that omits a property must leave it unchanged (partial update): a
+	// tags-only update must not reset isAutoInflateEnabled to false.
+	if _, err := c.Update(ctx, rgName, nsName, armeventhub.EHNamespace{
+		Tags: map[string]*string{"team": to.Ptr("data")},
+	}, nil); err != nil {
+		t.Fatalf("tags-only Update: %v", err)
+	}
+
+	got, err = c.Get(ctx, rgName, nsName, nil)
+	if err != nil {
+		t.Fatalf("Get after tags-only update: %v", err)
+	}
+
+	if got.Properties.IsAutoInflateEnabled == nil || !*got.Properties.IsAutoInflateEnabled {
+		t.Fatalf("isAutoInflateEnabled after tags-only PATCH = %v, want it preserved as true",
+			got.Properties.IsAutoInflateEnabled)
+	}
+}
+
 func createStandardNamespace(t *testing.T, ctx context.Context, ts *httptest.Server) {
 	t.Helper()
 
