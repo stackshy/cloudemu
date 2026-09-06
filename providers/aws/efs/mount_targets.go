@@ -224,10 +224,13 @@ func (m *Mock) allocateIP(explicit, subnetID string, subnet *netdriver.SubnetInf
 }
 
 // nextIP hands out a globally-unique fallback address (10.0.x.y) when no subnet
-// CIDR is available to allocate an in-range address from.
+// CIDR is available to allocate an in-range address from. The counter is offset
+// by mtFirstHost so the first address is 10.0.0.4, never the 10.0.0.0 network
+// address (nor the reserved low hosts) — real EFS/EC2 never assigns those to a
+// mount target.
 func (m *Mock) nextIP() string {
 	m.ipMu.Lock()
-	n := m.ipCounters[""]
+	n := m.ipCounters[""] + mtFirstHost
 	m.ipCounters[""]++
 	m.ipMu.Unlock()
 
