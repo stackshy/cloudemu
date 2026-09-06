@@ -112,6 +112,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `servicequotas` | [ServiceQuotas](./aws/servicequotas.md) | — | — | — | 6 |
 | `sesv2` | [SESV2](./aws/sesv2.md) | — | — | — | 113 |
 | `sfn` | [SFN](./aws/sfn.md) | — | — | — | 37 |
+| `signalr` | — | [SignalR](./azure/signalr.md) | — | — | 10 |
 | `snapshots` | — | [Snapshots](./azure/snapshots.md) | — | — | 5 |
 | `spanner` | — | — | [Spanner](./gcp/spanner.md) | — | 12 |
 | `sql` | — | [SQL](./azure/sql.md) | — | — | 21 |

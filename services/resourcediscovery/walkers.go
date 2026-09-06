@@ -58,6 +58,9 @@ const (
 	// ServiceLoadTesting buckets Azure Load Testing resources
 	// (Microsoft.LoadTestService/loadTests).
 	ServiceLoadTesting = "loadtesting"
+	// ServiceSignalR buckets Azure SignalR Service resources
+	// (Microsoft.SignalRService/signalR).
+	ServiceSignalR = "signalr"
 )
 
 // Resource type constants emitted by the walkers.
@@ -133,6 +136,10 @@ const (
 // TypeLoadTest is the portable type for an Azure Load Testing resource
 // (Microsoft.LoadTestService/loadTests). Azure-only, so it lives in its own line.
 const TypeLoadTest = "LoadTest"
+
+// TypeSignalR is the portable type for an Azure SignalR Service resource
+// (Microsoft.SignalRService/signalR). Azure-only, so it lives in its own line.
+const TypeSignalR = "SignalR"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs

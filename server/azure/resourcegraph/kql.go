@@ -82,6 +82,7 @@ const (
 	azureTypeCAEnv     = "microsoft.app/managedenvironments"
 	azureTypeLoadTest  = "microsoft.loadtestservice/loadtests"
 	azureTypeCApp      = "microsoft.app/containerapps"
+	azureTypeSignalR   = "microsoft.signalrservice/signalr"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -109,6 +110,7 @@ const (
 	portableCognitive    = "cognitiveservices"
 	portableContainerApp = "containerapps"
 	portableLoadTest     = "loadtesting"
+	portableSignalR      = "signalr"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -391,6 +393,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeCAEnv:     {portableContainerApp, "ManagedEnvironment"},
 	azureTypeCApp:      {portableContainerApp, "ContainerApp"},
 	azureTypeLoadTest:  {portableLoadTest, "LoadTest"},
+	azureTypeSignalR:   {portableSignalR, "SignalR"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

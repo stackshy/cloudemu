@@ -71,6 +71,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	azuresearchserver "github.com/stackshy/cloudemu/v2/server/azure/search"
 	"github.com/stackshy/cloudemu/v2/server/azure/servicebus"
+	signalrsrv "github.com/stackshy/cloudemu/v2/server/azure/signalr"
 	"github.com/stackshy/cloudemu/v2/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/v2/server/azure/sql"
 	sqlvirtualmachinesrv "github.com/stackshy/cloudemu/v2/server/azure/sqlvirtualmachine"
@@ -156,6 +157,8 @@ type Drivers struct {
 	ManagedIdentity managedidentitysrv.Store
 	// LoadTesting serves Microsoft.LoadTestService/loadTests.
 	LoadTesting loadtestingsrv.Store
+	// SignalR serves Microsoft.SignalRService/signalR.
+	SignalR signalrsrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -424,6 +427,14 @@ func New(d Drivers) http.Handler {
 	if d.LoadTesting != nil {
 		loadTestingHandler = loadtestingsrv.New(d.LoadTesting)
 		rgPurgers = append(rgPurgers, loadTestingHandler)
+	}
+
+	// SignalR: a resource-group-scoped resource, so its handler joins the purge
+	// cascade. Registered further below.
+	var signalRHandler *signalrsrv.Handler
+	if d.SignalR != nil {
+		signalRHandler = signalrsrv.New(d.SignalR)
+		rgPurgers = append(rgPurgers, signalRHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -801,6 +812,10 @@ func New(d Drivers) http.Handler {
 
 	if loadTestingHandler != nil {
 		srv.Register(loadTestingHandler)
+	}
+
+	if signalRHandler != nil {
+		srv.Register(signalRHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —
