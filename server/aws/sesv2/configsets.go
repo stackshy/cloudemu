@@ -141,15 +141,22 @@ func (h *Handler) getConfigSet(w http.ResponseWriter, r *http.Request, name stri
 	})
 }
 
-// deliveryOptionsToJSON renders the config-set delivery options, or nil when
-// no TLS policy or sending pool is set, so an unconfigured set does not report
-// an empty delivery-options block (which drives IaC drift).
+// defaultTLSPolicy is the TLS policy SES reports for a configuration set that
+// was created without an explicit delivery block. Real SES v2 always returns a
+// DeliveryOptions block with TlsPolicy defaulted to OPTIONAL, so we emit the
+// same rather than omitting the block.
+const defaultTLSPolicy = "OPTIONAL"
+
+// deliveryOptionsToJSON renders the config-set delivery options. Like real SES,
+// the block is always present: an unconfigured set reports the OPTIONAL default
+// rather than an empty or absent block.
 func deliveryOptionsToJSON(cs *driver.ConfigurationSet) *deliveryOptionsJSON {
-	if cs.TLSPolicy == "" && cs.SendingPoolN == "" {
-		return nil
+	policy := cs.TLSPolicy
+	if policy == "" {
+		policy = defaultTLSPolicy
 	}
 
-	return &deliveryOptionsJSON{TLSPolicy: cs.TLSPolicy, SendingPoolName: cs.SendingPoolN}
+	return &deliveryOptionsJSON{TLSPolicy: policy, SendingPoolName: cs.SendingPoolN}
 }
 
 // suppressionOptionsToJSON renders the config-set suppression options, or nil

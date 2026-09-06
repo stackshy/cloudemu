@@ -343,7 +343,8 @@ func TestSDKConfigSetOptionsRoundTrip(t *testing.T) {
 		t.Fatalf("VDM options not round-tripped: %+v", got.VdmOptions)
 	}
 
-	// A set created without delivery options reports no delivery block.
+	// A set created without delivery options reports the OPTIONAL TLS-policy
+	// default, matching real SES (which always returns a DeliveryOptions block).
 	if _, err := c.CreateConfigurationSet(ctx, &awsses.CreateConfigurationSetInput{
 		ConfigurationSetName: aws.String("bare"),
 	}); err != nil {
@@ -355,8 +356,8 @@ func TestSDKConfigSetOptionsRoundTrip(t *testing.T) {
 		t.Fatalf("GetConfigurationSet(bare): %v", err)
 	}
 
-	if bare.DeliveryOptions != nil && bare.DeliveryOptions.TlsPolicy != "" {
-		t.Fatalf("bare set should report no delivery TLS policy, got %+v", bare.DeliveryOptions)
+	if bare.DeliveryOptions == nil || bare.DeliveryOptions.TlsPolicy != sestypes.TlsPolicyOptional {
+		t.Fatalf("bare set should report OPTIONAL TLS policy, got %+v", bare.DeliveryOptions)
 	}
 }
 
