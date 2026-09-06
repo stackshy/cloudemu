@@ -210,6 +210,26 @@ func parseParameterNames(form url.Values) []string {
 	return names
 }
 
+// filterParamsBySource honors the DescribeDB(Cluster)Parameters "Source" request
+// filter. Real RDS returns only parameters whose Source matches (e.g. Terraform's
+// aws_neptune_cluster_parameter_group reads with Source="user" and expects the
+// engine-default set to be excluded). An empty filter returns every parameter.
+func filterParamsBySource(params []rdsdriver.Parameter, source string) []rdsdriver.Parameter {
+	if source == "" {
+		return params
+	}
+
+	out := make([]rdsdriver.Parameter, 0, len(params))
+
+	for i := range params {
+		if params[i].Source == source {
+			out = append(out, params[i])
+		}
+	}
+
+	return out
+}
+
 func toParameterGroupXML(pg *rdsdriver.ParameterGroup) dbParameterGroupXML {
 	return dbParameterGroupXML{
 		DBParameterGroupName:   pg.Name,
@@ -347,6 +367,7 @@ func (h *Handler) deleteDBParameterGroup(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+//nolint:dupl // structurally mirrors describeDBClusterParameters by design.
 func (h *Handler) describeDBParameters(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.parameterGroupsCap()
 	if !ok {
@@ -360,6 +381,8 @@ func (h *Handler) describeDBParameters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	params = filterParamsBySource(params, r.Form.Get("Source"))
+
 	awsquery.WriteXMLResponse(w, describeDBParametersResponse{
 		Xmlns:    Namespace,
 		Result:   parametersList{Parameters: toParametersXML(params)},
@@ -367,7 +390,6 @@ func (h *Handler) describeDBParameters(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) resetDBParameterGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.parameterGroupsCap()
 	if !ok {
@@ -517,6 +539,7 @@ func (h *Handler) deleteDBClusterParameterGroup(w http.ResponseWriter, r *http.R
 	})
 }
 
+//nolint:dupl // structurally mirrors describeDBParameters by design.
 func (h *Handler) describeDBClusterParameters(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.parameterGroupsCap()
 	if !ok {
@@ -530,6 +553,8 @@ func (h *Handler) describeDBClusterParameters(w http.ResponseWriter, r *http.Req
 		return
 	}
 
+	params = filterParamsBySource(params, r.Form.Get("Source"))
+
 	awsquery.WriteXMLResponse(w, describeDBClusterParametersResponse{
 		Xmlns:    Namespace,
 		Result:   parametersList{Parameters: toParametersXML(params)},
@@ -537,7 +562,6 @@ func (h *Handler) describeDBClusterParameters(w http.ResponseWriter, r *http.Req
 	})
 }
 
-//nolint:dupl // structurally mirrors its sibling per-resource block by design.
 func (h *Handler) resetDBClusterParameterGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.parameterGroupsCap()
 	if !ok {

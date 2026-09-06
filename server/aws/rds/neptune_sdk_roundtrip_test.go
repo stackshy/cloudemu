@@ -51,8 +51,9 @@ func TestSDKNeptuneClusterCRUD(t *testing.T) {
 	ctx := context.Background()
 
 	out, err := client.CreateDBCluster(ctx, &awsneptune.CreateDBClusterInput{
-		DBClusterIdentifier: aws.String("nep1"),
-		Engine:              aws.String("neptune"),
+		DBClusterIdentifier:             aws.String("nep1"),
+		Engine:                          aws.String("neptune"),
+		EnableIAMDatabaseAuthentication: aws.Bool(true),
 	})
 	if err != nil {
 		t.Fatalf("CreateDBCluster: %v", err)
@@ -71,6 +72,12 @@ func TestSDKNeptuneClusterCRUD(t *testing.T) {
 		t.Fatalf("got port %v, want 8182", out.DBCluster.Port)
 	}
 
+	// aws_neptune_cluster reads iam_database_authentication_enabled straight
+	// back; a create that enables it must echo true or Terraform drifts.
+	if !aws.ToBool(out.DBCluster.IAMDatabaseAuthenticationEnabled) {
+		t.Fatal("IAMDatabaseAuthenticationEnabled = false, want true")
+	}
+
 	desc, err := client.DescribeDBClusters(ctx, &awsneptune.DescribeDBClustersInput{
 		DBClusterIdentifier: aws.String("nep1"),
 	})
@@ -82,11 +89,28 @@ func TestSDKNeptuneClusterCRUD(t *testing.T) {
 		t.Fatalf("got %d clusters, want 1", len(desc.DBClusters))
 	}
 
+	if !aws.ToBool(desc.DBClusters[0].IAMDatabaseAuthenticationEnabled) {
+		t.Fatal("describe IAMDatabaseAuthenticationEnabled = false, want true")
+	}
+
 	if _, err := client.ModifyDBCluster(ctx, &awsneptune.ModifyDBClusterInput{
-		DBClusterIdentifier: aws.String("nep1"),
-		EngineVersion:       aws.String("1.2.1.0"),
+		DBClusterIdentifier:             aws.String("nep1"),
+		EngineVersion:                   aws.String("1.2.1.0"),
+		EnableIAMDatabaseAuthentication: aws.Bool(false),
 	}); err != nil {
 		t.Fatalf("ModifyDBCluster: %v", err)
+	}
+
+	// The toggle to false must round-trip too (explicit-false, not "unset").
+	reDesc, err := client.DescribeDBClusters(ctx, &awsneptune.DescribeDBClustersInput{
+		DBClusterIdentifier: aws.String("nep1"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeDBClusters after modify: %v", err)
+	}
+
+	if aws.ToBool(reDesc.DBClusters[0].IAMDatabaseAuthenticationEnabled) {
+		t.Fatal("after ModifyDBCluster, IAMDatabaseAuthenticationEnabled = true, want false")
 	}
 
 	if _, err := client.DeleteDBCluster(ctx, &awsneptune.DeleteDBClusterInput{

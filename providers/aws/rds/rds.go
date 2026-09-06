@@ -1108,31 +1108,32 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg rdsdriver.ClusterConfig) (
 
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 	cluster := rdsdriver.Cluster{
-		ID:                          cfg.ID,
-		ARN:                         clusterARN(region, m.opts.AccountID, cfg.ID),
-		Engine:                      cfg.Engine,
-		EngineVersion:               cfg.EngineVersion,
-		MasterUsername:              cfg.MasterUsername,
-		DatabaseName:                cfg.DatabaseName,
-		Endpoint:                    endpointFor(cfg.ID, region, "cluster"),
-		ReaderEndpoint:              endpointFor(cfg.ID, region, "cluster-ro"),
-		Port:                        port,
-		State:                       rdsdriver.StateAvailable,
-		VPCSecurityGroups:           append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:             cfg.SubnetGroupName,
-		DBClusterParameterGroupName: cfg.DBClusterParameterGroupName,
-		BackupRetentionPeriod:       backupRetention,
-		PreferredBackupWindow:       backupWindow,
-		PreferredMaintenanceWindow:  maintenanceWindow,
-		EngineMode:                  engineMode,
-		DBClusterResourceID:         resourceID("cluster-", cfg.ID),
-		AllocatedStorage:            allocatedStorage,
-		StorageEncrypted:            cfg.StorageEncrypted,
-		KmsKeyID:                    resolveKMSKeyID(cfg.StorageEncrypted, cfg.KmsKeyID),
-		DeletionProtection:          cfg.DeletionProtection,
-		AvailabilityZones:           availabilityZones(region),
-		CreatedAt:                   m.opts.Clock.Now().UTC(),
-		Tags:                        copyTags(cfg.Tags),
+		ID:                               cfg.ID,
+		ARN:                              clusterARN(region, m.opts.AccountID, cfg.ID),
+		Engine:                           cfg.Engine,
+		EngineVersion:                    cfg.EngineVersion,
+		MasterUsername:                   cfg.MasterUsername,
+		DatabaseName:                     cfg.DatabaseName,
+		Endpoint:                         endpointFor(cfg.ID, region, "cluster"),
+		ReaderEndpoint:                   endpointFor(cfg.ID, region, "cluster-ro"),
+		Port:                             port,
+		State:                            rdsdriver.StateAvailable,
+		VPCSecurityGroups:                append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:                  cfg.SubnetGroupName,
+		DBClusterParameterGroupName:      cfg.DBClusterParameterGroupName,
+		BackupRetentionPeriod:            backupRetention,
+		PreferredBackupWindow:            backupWindow,
+		PreferredMaintenanceWindow:       maintenanceWindow,
+		EngineMode:                       engineMode,
+		DBClusterResourceID:              resourceID("cluster-", cfg.ID),
+		AllocatedStorage:                 allocatedStorage,
+		StorageEncrypted:                 cfg.StorageEncrypted,
+		KmsKeyID:                         resolveKMSKeyID(cfg.StorageEncrypted, cfg.KmsKeyID),
+		DeletionProtection:               cfg.DeletionProtection,
+		IAMDatabaseAuthenticationEnabled: cfg.IAMDatabaseAuthenticationEnabled,
+		AvailabilityZones:                availabilityZones(region),
+		CreatedAt:                        m.opts.Clock.Now().UTC(),
+		Tags:                             copyTags(cfg.Tags),
 	}
 
 	m.clusters.Set(cfg.ID, cluster)
@@ -1174,27 +1175,12 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdsdriver.Cl
 	return out, nil
 }
 
-// ModifyCluster applies changes.
+// applyClusterModify overlays the non-empty ModifyDBCluster fields onto the
+// stored cluster. Split out of ModifyCluster to keep that method's branching
+// under the cyclomatic-complexity limit.
 //
 //nolint:gocritic // input matches the driver interface signature.
-func (m *Mock) ModifyCluster(
-	ctx context.Context, id string, input rdsdriver.ModifyInstanceInput,
-) (*rdsdriver.Cluster, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	cluster, ok := m.clusters.Get(id)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "DB cluster %q not found", id)
-	}
-
-	// An Aurora cluster owns the shared database, so its master password is
-	// rotated at the cluster scope (instance-level rotation skips members). Rotate
-	// the shared engine role so the new credential AWS reports authenticates.
-	if err := m.rotateClusterPassword(ctx, id, cluster.Engine, input.MasterUserPassword); err != nil {
-		return nil, err
-	}
-
+func applyClusterModify(cluster *rdsdriver.Cluster, input rdsdriver.ModifyInstanceInput) {
 	if input.EngineVersion != "" {
 		cluster.EngineVersion = input.EngineVersion
 	}
@@ -1219,9 +1205,37 @@ func (m *Mock) ModifyCluster(
 		cluster.DeletionProtection = *input.DeletionProtection
 	}
 
+	if input.IAMDatabaseAuthenticationEnabled != nil {
+		cluster.IAMDatabaseAuthenticationEnabled = *input.IAMDatabaseAuthenticationEnabled
+	}
+
 	if input.Tags != nil {
 		cluster.Tags = copyTags(input.Tags)
 	}
+}
+
+// ModifyCluster applies changes.
+//
+//nolint:gocritic // input matches the driver interface signature.
+func (m *Mock) ModifyCluster(
+	ctx context.Context, id string, input rdsdriver.ModifyInstanceInput,
+) (*rdsdriver.Cluster, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	cluster, ok := m.clusters.Get(id)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "DB cluster %q not found", id)
+	}
+
+	// An Aurora cluster owns the shared database, so its master password is
+	// rotated at the cluster scope (instance-level rotation skips members). Rotate
+	// the shared engine role so the new credential AWS reports authenticates.
+	if err := m.rotateClusterPassword(ctx, id, cluster.Engine, input.MasterUserPassword); err != nil {
+		return nil, err
+	}
+
+	applyClusterModify(&cluster, input)
 
 	m.clusters.Set(id, cluster)
 
