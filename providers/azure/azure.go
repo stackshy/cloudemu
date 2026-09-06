@@ -227,7 +227,7 @@ func New(opts ...config.Option) *Provider {
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
 	}
-	p.wireCrossService()
+	wireCrossService(p)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAzure, o.AccountID, o.Region,
@@ -269,7 +269,7 @@ func New(opts ...config.Option) *Provider {
 // wireCrossService connects the inter-service dependencies (auto-metrics, log
 // sinks, native trigger delivery and event publishing) after every service has
 // been constructed.
-func (p *Provider) wireCrossService() {
+func wireCrossService(p *Provider) {
 	p.VirtualMachines.SetMonitoring(p.Monitor)
 	p.VirtualMachines.SetNICAttacher(p.VNet)
 	p.BlobStorage.SetMonitoring(p.Monitor)
