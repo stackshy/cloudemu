@@ -22,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmospostgresql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/databricks"
 	"github.com/stackshy/cloudemu/v2/providers/azure/datafactory"
+	"github.com/stackshy/cloudemu/v2/providers/azure/digitaltwins"
 	"github.com/stackshy/cloudemu/v2/providers/azure/dns"
 	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
 	"github.com/stackshy/cloudemu/v2/providers/azure/firewall"
@@ -173,6 +174,7 @@ type Provider struct {
 	ContainerApps      *containerapps.Mock
 	LoadTesting        *loadtesting.Mock
 	SignalR            *signalr.Mock
+	DigitalTwins       *digitaltwins.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -238,6 +240,7 @@ func New(opts ...config.Option) *Provider {
 		ContainerApps:      containerapps.New(o),
 		LoadTesting:        loadtesting.New(o),
 		SignalR:            signalr.New(o),
+		DigitalTwins:       digitaltwins.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -275,6 +278,7 @@ func New(opts ...config.Option) *Provider {
 				containerAppsDiscovery{p.ContainerApps},
 				loadTestDiscovery{p.LoadTesting},
 				signalRDiscovery{p.SignalR},
+				digitalTwinsDiscovery{p.DigitalTwins},
 			},
 		},
 	)

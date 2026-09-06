@@ -23,6 +23,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [DNS](./dns.md) | `dns` | 16 |
 | [DataFactory](./datafactory.md) | `datafactory` | 6 |
 | [Databricks](./databricks.md) | `databricks` | 46 |
+| [DigitalTwins](./digitaltwins.md) | — (provider-native) | 8 |
 | [Disks](./disks.md) | — (provider-native) | 7 |
 | [EventGrid](./eventgrid.md) | `eventbus` | 16 |
 | [Eventhub](./eventhub.md) | — (provider-native) | 14 |

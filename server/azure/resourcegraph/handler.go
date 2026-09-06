@@ -477,6 +477,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"containerapps/ContainerApp":          "microsoft.app/containerapps",
 	"loadtesting/LoadTest":                "microsoft.loadtestservice/loadtests",
 	"signalr/SignalR":                     "microsoft.signalrservice/signalr",
+	"digitaltwins/DigitalTwinsInstance":   "microsoft.digitaltwins/digitaltwinsinstances",
 }
 
 func portableToAzureType(service, typ string) string {

@@ -56,6 +56,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `datafactory` | — | [DataFactory](./azure/datafactory.md) | — | — | 6 |
 | `dataproc` | — | — | [Dataproc](./gcp/dataproc.md) | — | 6 |
 | `datastream` | — | — | [Datastream](./gcp/datastream.md) | — | 11 |
+| `digitaltwins` | — | [DigitalTwins](./azure/digitaltwins.md) | — | — | 8 |
 | `disks` | — | [Disks](./azure/disks.md) | — | — | 7 |
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | — | 16 |
 | `ecs` | [ECS](./aws/ecs.md) | — | — | — | 37 |
