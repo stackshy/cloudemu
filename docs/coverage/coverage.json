@@ -368,37 +368,37 @@
     "interface": "AppSync",
     "operations": [
       {
-        "name": "CreateApiKey"
+        "name": "CreateAPIKey"
       },
       {
         "name": "CreateDataSource"
       },
       {
-        "name": "CreateGraphqlApi"
+        "name": "CreateGraphqlAPI"
       },
       {
-        "name": "DeleteApiKey"
+        "name": "DeleteAPIKey"
       },
       {
         "name": "DeleteDataSource"
       },
       {
-        "name": "DeleteGraphqlApi"
+        "name": "DeleteGraphqlAPI"
       },
       {
         "name": "GetDataSource"
       },
       {
-        "name": "GetGraphqlApi"
+        "name": "GetGraphqlAPI"
       },
       {
-        "name": "ListApiKeys"
+        "name": "ListAPIKeys"
       },
       {
         "name": "ListDataSources"
       },
       {
-        "name": "ListGraphqlApis"
+        "name": "ListGraphqlAPIs"
       },
       {
         "name": "ListTagsForResource"
@@ -410,13 +410,13 @@
         "name": "UntagResource"
       },
       {
-        "name": "UpdateApiKey"
+        "name": "UpdateAPIKey"
       },
       {
         "name": "UpdateDataSource"
       },
       {
-        "name": "UpdateGraphqlApi"
+        "name": "UpdateGraphqlAPI"
       }
     ],
     "providers": {

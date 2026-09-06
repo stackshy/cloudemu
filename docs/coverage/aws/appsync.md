@@ -7,23 +7,23 @@ AWS's `appsync` service · portable interface `driver.AppSync` · [AWS index](./
 
 | Operation | Description |
 | --- | --- |
-| `CreateApiKey` |  |
+| `CreateAPIKey` |  |
 | `CreateDataSource` |  |
-| `CreateGraphqlApi` |  |
-| `DeleteApiKey` |  |
+| `CreateGraphqlAPI` |  |
+| `DeleteAPIKey` |  |
 | `DeleteDataSource` |  |
-| `DeleteGraphqlApi` |  |
+| `DeleteGraphqlAPI` |  |
 | `GetDataSource` |  |
-| `GetGraphqlApi` |  |
-| `ListApiKeys` |  |
+| `GetGraphqlAPI` |  |
+| `ListAPIKeys` |  |
 | `ListDataSources` |  |
-| `ListGraphqlApis` |  |
+| `ListGraphqlAPIs` |  |
 | `ListTagsForResource` |  |
 | `TagResource` |  |
 | `UntagResource` |  |
-| `UpdateApiKey` |  |
+| `UpdateAPIKey` |  |
 | `UpdateDataSource` |  |
-| `UpdateGraphqlApi` |  |
+| `UpdateGraphqlAPI` |  |
 
 ## Not in scope
 
