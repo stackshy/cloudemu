@@ -167,3 +167,72 @@ func TestSDKRouterNatPartialPatchPreservesBgp(t *testing.T) {
 		t.Error("creationTimestamp lost after patch")
 	}
 }
+
+// TestSDKRouterNatPatchReplacesNatList proves the nats field is replaced
+// wholesale by a patch rather than merged element-wise: a router created with
+// two NATs, patched to a single NAT, must end with exactly that one — so a NAT
+// can be removed. This guards the shallow per-field merge against a future
+// refactor that appended or key-merged the repeated field.
+func TestSDKRouterNatPatchReplacesNatList(t *testing.T) {
+	ts := newGCPNetServer(t)
+	ctx := context.Background()
+	client := newRoutersClient(t, ts)
+
+	nat := func(name string) *computepb.RouterNat {
+		return &computepb.RouterNat{
+			Name:                          ptrStr(name),
+			NatIpAllocateOption:           ptrStr("AUTO_ONLY"),
+			SourceSubnetworkIpRangesToNat: ptrStr("ALL_SUBNETWORKS_ALL_IP_RANGES"),
+		}
+	}
+
+	insertOp, err := client.Insert(ctx, &computepb.InsertRouterRequest{
+		Project: testProject,
+		Region:  testRegion,
+		RouterResource: &computepb.Router{
+			Name:    ptrStr("r3"),
+			Network: ptrStr("projects/" + testProject + "/global/networks/default"),
+			Bgp:     &computepb.RouterBgp{Asn: func() *uint32 { a := uint32(64516); return &a }()},
+			Nats:    []*computepb.RouterNat{nat("nat1"), nat("nat2")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+	if err := insertOp.Wait(ctx); err != nil {
+		t.Fatalf("Insert wait: %v", err)
+	}
+
+	// Patch down to a single NAT.
+	patchOp, err := client.Patch(ctx, &computepb.PatchRouterRequest{
+		Project: testProject,
+		Region:  testRegion,
+		Router:  "r3",
+		RouterResource: &computepb.Router{
+			Name: ptrStr("r3"),
+			Nats: []*computepb.RouterNat{nat("nat2")},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+	if err := patchOp.Wait(ctx); err != nil {
+		t.Fatalf("Patch wait: %v", err)
+	}
+
+	got, err := client.Get(ctx, &computepb.GetRouterRequest{
+		Project: testProject, Region: testRegion, Router: "r3",
+	})
+	if err != nil {
+		t.Fatalf("Get after patch: %v", err)
+	}
+
+	if len(got.GetNats()) != 1 || got.GetNats()[0].GetName() != "nat2" {
+		t.Fatalf("nats=%v want exactly [nat2] (list replaced, nat1 removed)", got.GetNats())
+	}
+
+	// bgp/network still survive the NAT-only patch.
+	if got.GetBgp().GetAsn() != 64516 || got.GetNetwork() == "" {
+		t.Errorf("bgp/network dropped: asn=%d network=%q", got.GetBgp().GetAsn(), got.GetNetwork())
+	}
+}
