@@ -490,6 +490,9 @@ func (h *Handler) createDBCluster(w http.ResponseWriter, r *http.Request) {
 		VPCSecurityGroups:           awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
 		SubnetGroupName:             form.Get("DBSubnetGroupName"),
 		DBClusterParameterGroupName: form.Get("DBClusterParameterGroupName"),
+		BackupRetentionPeriod:       formInt(form.Get("BackupRetentionPeriod")),
+		PreferredBackupWindow:       form.Get("PreferredBackupWindow"),
+		PreferredMaintenanceWindow:  form.Get("PreferredMaintenanceWindow"),
 		EngineMode:                  form.Get("EngineMode"),
 		StorageEncrypted:            formBool(form.Get("StorageEncrypted")),
 		KmsKeyID:                    form.Get("KmsKeyId"),
@@ -551,6 +554,9 @@ func (h *Handler) modifyDBCluster(w http.ResponseWriter, r *http.Request) {
 		EngineVersion:               form.Get("EngineVersion"),
 		MasterUserPassword:          form.Get("MasterUserPassword"),
 		DBClusterParameterGroupName: form.Get("DBClusterParameterGroupName"),
+		BackupRetentionPeriod:       formInt(form.Get("BackupRetentionPeriod")),
+		PreferredBackupWindow:       form.Get("PreferredBackupWindow"),
+		PreferredMaintenanceWindow:  form.Get("PreferredMaintenanceWindow"),
 		Tags:                        parseRDSTags(form),
 	}
 

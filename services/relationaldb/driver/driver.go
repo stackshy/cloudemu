@@ -378,6 +378,12 @@ type ClusterConfig struct {
 	VPCSecurityGroups           []string
 	SubnetGroupName             string
 	DBClusterParameterGroupName string
+	// BackupRetentionPeriod / PreferredBackupWindow are AWS RDS DBCluster create
+	// inputs shared by Aurora and DocumentDB/Neptune. The provider fills the
+	// documented defaults (retention 1; an assigned backup window) when unset so a
+	// read round-trips like real AWS. Zero/empty for non-AWS engines.
+	BackupRetentionPeriod int
+	PreferredBackupWindow string
 	// EngineMode is the AWS Aurora engine mode ("provisioned"/"serverless");
 	// empty defaults to "provisioned". StorageEncrypted / AllocatedStorage echo
 	// the corresponding create inputs. All default to zero for non-AWS engines.
@@ -436,6 +442,13 @@ type Cluster struct {
 	VPCSecurityGroups           []string
 	SubnetGroupName             string
 	DBClusterParameterGroupName string
+	// BackupRetentionPeriod / PreferredBackupWindow echo the AWS RDS DBCluster
+	// attributes on read (Aurora and DocumentDB/Neptune). AWS assigns a retention
+	// of 1 and a backup window when the create omits them, so Terraform's matching
+	// schema values (backup_retention_period default 1; a computed backup window)
+	// do not drift. Zero/empty for non-AWS engines.
+	BackupRetentionPeriod int
+	PreferredBackupWindow string
 	// EngineMode / DbClusterResourceId / AllocatedStorage / StorageEncrypted /
 	// AvailabilityZones echo AWS Aurora DBCluster attributes on read; they
 	// default to zero for non-AWS engines.
