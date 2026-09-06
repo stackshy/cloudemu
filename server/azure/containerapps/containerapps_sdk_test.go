@@ -449,6 +449,108 @@ func assertAppDefaults(t *testing.T, p *armappcontainers.ContainerAppProperties)
 	}
 }
 
+// TestSDKContainerAppIdentity proves the top-level managed-identity block
+// round-trips through the real armappcontainers SDK: a SystemAssigned identity
+// reads back its type plus a synthesized principalId/tenantId, and a
+// UserAssigned identity reads back its type plus a principal/client pair keyed
+// by the identity's ARM id. Before this was modeled the identity block was
+// dropped entirely, so azurerm_container_app with an identity block drifted on
+// every plan.
+func TestSDKContainerAppIdentity(t *testing.T) {
+	ts := newServer(t)
+	ctx := context.Background()
+
+	envClient, err := armappcontainers.NewManagedEnvironmentsClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewManagedEnvironmentsClient: %v", err)
+	}
+
+	envID := createEnvironment(t, ctx, envClient)
+
+	appClient, err := armappcontainers.NewContainerAppsClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewContainerAppsClient: %v", err)
+	}
+
+	system := putIdentityApp(t, ctx, appClient, envID, "sys-id", &armappcontainers.ManagedServiceIdentity{
+		Type: to.Ptr(armappcontainers.ManagedServiceIdentityTypeSystemAssigned),
+	})
+	assertSystemIdentity(t, system)
+
+	uaID := "/subscriptions/" + subID + "/resourceGroups/" + rgName +
+		"/providers/Microsoft.ManagedIdentity/userAssignedIdentities/uai1"
+	user := putIdentityApp(t, ctx, appClient, envID, "user-id", &armappcontainers.ManagedServiceIdentity{
+		Type:                   to.Ptr(armappcontainers.ManagedServiceIdentityTypeUserAssigned),
+		UserAssignedIdentities: map[string]*armappcontainers.UserAssignedIdentity{uaID: {}},
+	})
+	assertUserIdentity(t, user, uaID)
+}
+
+func putIdentityApp(
+	t *testing.T, ctx context.Context, c *armappcontainers.ContainerAppsClient,
+	envID, name string, identity *armappcontainers.ManagedServiceIdentity,
+) *armappcontainers.ContainerApp {
+	t.Helper()
+
+	poller, err := c.BeginCreateOrUpdate(ctx, rgName, name, armappcontainers.ContainerApp{
+		Location: to.Ptr("eastus"),
+		Identity: identity,
+		Properties: &armappcontainers.ContainerAppProperties{
+			EnvironmentID: to.Ptr(envID),
+			Template: &armappcontainers.Template{
+				Containers: []*armappcontainers.Container{{Name: to.Ptr("main"), Image: to.Ptr("nginx")}},
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate identity app %q: %v", name, err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("poll identity app %q: %v", name, err)
+	}
+
+	got, err := c.Get(ctx, rgName, name, nil)
+	if err != nil {
+		t.Fatalf("Get identity app %q: %v", name, err)
+	}
+
+	return &got.ContainerApp
+}
+
+func assertSystemIdentity(t *testing.T, app *armappcontainers.ContainerApp) {
+	t.Helper()
+
+	id := app.Identity
+	if id == nil || id.Type == nil || *id.Type != armappcontainers.ManagedServiceIdentityTypeSystemAssigned {
+		t.Fatalf("identity.type = %v, want SystemAssigned", id)
+	}
+
+	if id.PrincipalID == nil || *id.PrincipalID == "" || id.TenantID == nil || *id.TenantID == "" {
+		t.Fatalf("system identity principalId/tenantId = %v/%v, want synthesized values",
+			id.PrincipalID, id.TenantID)
+	}
+}
+
+func assertUserIdentity(t *testing.T, app *armappcontainers.ContainerApp, uaID string) {
+	t.Helper()
+
+	id := app.Identity
+	if id == nil || id.Type == nil || *id.Type != armappcontainers.ManagedServiceIdentityTypeUserAssigned {
+		t.Fatalf("identity.type = %v, want UserAssigned", id)
+	}
+
+	entry, ok := id.UserAssignedIdentities[uaID]
+	if !ok || entry == nil {
+		t.Fatalf("userAssignedIdentities = %v, want an entry for %q", id.UserAssignedIdentities, uaID)
+	}
+
+	if entry.PrincipalID == nil || *entry.PrincipalID == "" || entry.ClientID == nil || *entry.ClientID == "" {
+		t.Fatalf("user-assigned entry principal/client = %v/%v, want synthesized values",
+			entry.PrincipalID, entry.ClientID)
+	}
+}
+
 func seedRevisionEnv(t *testing.T, ctx context.Context, ts *httptest.Server) string {
 	t.Helper()
 
