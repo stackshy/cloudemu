@@ -188,6 +188,29 @@ func TestClusterAndTableLifecycle(t *testing.T) {
 		t.Fatalf("ListClusters = %d, want 2", len(clusters.GetClusters()))
 	}
 
+	// PartialUpdateCluster (LRO) with a mask: change c1's node count to 5. This
+	// is the RPC the terraform provider uses to resize a cluster.
+	puOp, err := h.instances.PartialUpdateCluster(ctx, &adminpb.PartialUpdateClusterRequest{
+		Cluster:    &adminpb.Cluster{Name: inst.GetName() + "/clusters/c1", ServeNodes: 5},
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"serve_nodes"}},
+	})
+	if err != nil {
+		t.Fatalf("PartialUpdateCluster: %v", err)
+	}
+
+	if !puOp.GetDone() {
+		t.Fatalf("PartialUpdateCluster not done synchronously")
+	}
+
+	c1, err := h.instances.GetCluster(ctx, &adminpb.GetClusterRequest{Name: inst.GetName() + "/clusters/c1"})
+	if err != nil {
+		t.Fatalf("GetCluster: %v", err)
+	}
+
+	if c1.GetServeNodes() != 5 {
+		t.Fatalf("serve nodes after PartialUpdateCluster = %d, want 5", c1.GetServeNodes())
+	}
+
 	// CreateTable is synchronous (returns the Table directly).
 	tbl, err := h.tables.CreateTable(ctx, &adminpb.CreateTableRequest{
 		Parent:  inst.GetName(),
@@ -246,6 +269,99 @@ func TestClusterAndTableLifecycle(t *testing.T) {
 
 	if _, err := h.tables.GetTable(ctx, &adminpb.GetTableRequest{Name: tbl.GetName()}); status.Code(err) != codes.NotFound {
 		t.Fatalf("GetTable after delete: code = %v, want NotFound", status.Code(err))
+	}
+}
+
+func TestAppProfileLifecycle(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	inst := h.createInstance(t, ctx)
+
+	// Create with a single-cluster routing policy + allow_transactional_writes.
+	created, err := h.instances.CreateAppProfile(ctx, &adminpb.CreateAppProfileRequest{
+		Parent:       inst.GetName(),
+		AppProfileId: "ap1",
+		AppProfile: &adminpb.AppProfile{
+			Description: "primary",
+			RoutingPolicy: &adminpb.AppProfile_SingleClusterRouting_{
+				SingleClusterRouting: &adminpb.AppProfile_SingleClusterRouting{
+					ClusterId: "c1", AllowTransactionalWrites: true,
+				},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateAppProfile: %v", err)
+	}
+
+	if created.GetName() != inst.GetName()+"/appProfiles/ap1" {
+		t.Fatalf("app profile name = %q", created.GetName())
+	}
+
+	if scr := created.GetSingleClusterRouting(); scr == nil || scr.GetClusterId() != "c1" || !scr.GetAllowTransactionalWrites() {
+		t.Fatalf("single-cluster routing round-trip failed: %v", created.GetRoutingPolicy())
+	}
+
+	// Get round-trips description + routing.
+	got, err := h.instances.GetAppProfile(ctx, &adminpb.GetAppProfileRequest{Name: created.GetName()})
+	if err != nil {
+		t.Fatalf("GetAppProfile: %v", err)
+	}
+
+	if got.GetDescription() != "primary" {
+		t.Fatalf("description = %q, want primary", got.GetDescription())
+	}
+
+	list, err := h.instances.ListAppProfiles(ctx, &adminpb.ListAppProfilesRequest{Parent: inst.GetName()})
+	if err != nil {
+		t.Fatalf("ListAppProfiles: %v", err)
+	}
+
+	if len(list.GetAppProfiles()) != 1 {
+		t.Fatalf("ListAppProfiles = %d, want 1", len(list.GetAppProfiles()))
+	}
+
+	// Update (LRO) with a mask: switch to multi-cluster routing, keep description.
+	upOp, err := h.instances.UpdateAppProfile(ctx, &adminpb.UpdateAppProfileRequest{
+		AppProfile: &adminpb.AppProfile{
+			Name: created.GetName(),
+			RoutingPolicy: &adminpb.AppProfile_MultiClusterRoutingUseAny_{
+				MultiClusterRoutingUseAny: &adminpb.AppProfile_MultiClusterRoutingUseAny{},
+			},
+		},
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"multi_cluster_routing_use_any"}},
+	})
+	if err != nil {
+		t.Fatalf("UpdateAppProfile: %v", err)
+	}
+
+	if !upOp.GetDone() {
+		t.Fatalf("UpdateAppProfile operation not done synchronously")
+	}
+
+	var updated adminpb.AppProfile
+	if err := upOp.GetResponse().UnmarshalTo(&updated); err != nil {
+		t.Fatalf("unmarshal app profile from LRO response: %v", err)
+	}
+
+	if updated.GetMultiClusterRoutingUseAny() == nil {
+		t.Fatalf("update did not switch to multi-cluster routing: %v", updated.GetRoutingPolicy())
+	}
+
+	// The unmasked description must be preserved, not wiped.
+	if updated.GetDescription() != "primary" {
+		t.Fatalf("masked update wiped description: %q", updated.GetDescription())
+	}
+
+	if _, err := h.instances.DeleteAppProfile(ctx, &adminpb.DeleteAppProfileRequest{Name: created.GetName()}); err != nil {
+		t.Fatalf("DeleteAppProfile: %v", err)
+	}
+
+	if _, err := h.instances.GetAppProfile(
+		ctx, &adminpb.GetAppProfileRequest{Name: created.GetName()},
+	); status.Code(err) != codes.NotFound {
+		t.Fatalf("GetAppProfile after delete: code = %v, want NotFound", status.Code(err))
 	}
 }
 

@@ -123,6 +123,10 @@ func reconstructResponse(ctx context.Context, db btdriver.Admin, op *btdriver.Op
 		if t, err := db.GetTable(ctx, op.TargetName); err == nil {
 			return toProtoTable(t)
 		}
+	case strings.Contains(op.Type, "appprofile"):
+		if a, err := db.GetAppProfile(ctx, op.TargetName); err == nil {
+			return toProtoAppProfile(a)
+		}
 	}
 
 	return nil

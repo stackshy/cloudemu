@@ -269,6 +269,13 @@ func lastSegment(name string) string {
 	return name
 }
 
+// normalizeMaskPath lowercases a single field-mask path and strips underscores,
+// so snake_case and camelCase spellings of the same path compare equal
+// ("display_name" and "displayName" both become "displayname").
+func normalizeMaskPath(s string) string {
+	return strings.ToLower(strings.ReplaceAll(strings.TrimSpace(s), "_", ""))
+}
+
 // normalizeMaskPaths lowercases each mask path and strips underscores, matching
 // the token form the bigtable store's UpdateInstanceConfig.UpdateMask expects
 // (so "display_name" and "displayName" both become "displayname").
@@ -276,10 +283,145 @@ func normalizeMaskPaths(paths []string) []string {
 	out := make([]string, 0, len(paths))
 
 	for _, p := range paths {
-		if n := strings.ToLower(strings.ReplaceAll(strings.TrimSpace(p), "_", "")); n != "" {
+		if n := normalizeMaskPath(p); n != "" {
 			out = append(out, n)
 		}
 	}
 
 	return out
+}
+
+// ---- app profiles ----
+
+func appProfilePriority(s string) adminpb.AppProfile_Priority {
+	return adminpb.AppProfile_Priority(adminpb.AppProfile_Priority_value[s])
+}
+
+// toProtoAppProfile maps the driver's flat app profile to the proto oneofs. The
+// routing policy is exactly one of multi-cluster / single-cluster, and priority
+// is echoed through the modern standard_isolation field (what the real API
+// returns), so terraform reads back the routing + isolation it set.
+func toProtoAppProfile(a *btdriver.AppProfile) *adminpb.AppProfile {
+	out := &adminpb.AppProfile{Name: a.Name, Description: a.Description, Etag: a.Etag}
+
+	switch {
+	case a.MultiClusterRoutingAny:
+		out.RoutingPolicy = &adminpb.AppProfile_MultiClusterRoutingUseAny_{
+			MultiClusterRoutingUseAny: &adminpb.AppProfile_MultiClusterRoutingUseAny{ClusterIds: a.MultiClusterClusterIDs},
+		}
+	case a.SingleClusterID != "":
+		out.RoutingPolicy = &adminpb.AppProfile_SingleClusterRouting_{
+			SingleClusterRouting: &adminpb.AppProfile_SingleClusterRouting{
+				ClusterId: a.SingleClusterID, AllowTransactionalWrites: a.AllowTransactionalWrites,
+			},
+		}
+	}
+
+	if p := appProfilePriority(a.Priority); p != adminpb.AppProfile_PRIORITY_UNSPECIFIED {
+		out.Isolation = &adminpb.AppProfile_StandardIsolation_{
+			StandardIsolation: &adminpb.AppProfile_StandardIsolation{Priority: p},
+		}
+	}
+
+	return out
+}
+
+func fromProtoAppProfile(parent, id string, a *adminpb.AppProfile) btdriver.CreateAppProfileConfig {
+	cfg := btdriver.CreateAppProfileConfig{Parent: parent, AppProfileID: id, Description: a.GetDescription()}
+
+	if m := a.GetMultiClusterRoutingUseAny(); m != nil {
+		cfg.MultiClusterRoutingAny = true
+		cfg.MultiClusterClusterIDs = m.GetClusterIds()
+	}
+
+	if sc := a.GetSingleClusterRouting(); sc != nil {
+		cfg.SingleClusterID = sc.GetClusterId()
+		cfg.AllowTransactionalWrites = sc.GetAllowTransactionalWrites()
+	}
+
+	// Priority is read from the modern standard_isolation field (what the real
+	// API and terraform send); the deprecated top-level priority oneof is not
+	// consulted.
+	if si := a.GetStandardIsolation(); si != nil {
+		cfg.Priority = si.GetPriority().String()
+	}
+
+	return cfg
+}
+
+// maskSet is a normalized google.protobuf.FieldMask used to overlay only
+// the named fields of an app-profile update onto the current profile. A nil mask
+// means the caller sent none, so the update replaces every field from the body.
+type maskSet struct{ paths []string }
+
+func newMaskSet(paths []string) *maskSet {
+	norm := normalizeMaskPaths(paths)
+	if len(norm) == 0 {
+		return nil
+	}
+
+	return &maskSet{paths: norm}
+}
+
+// has reports whether the mask names field exactly or as the leading segment of
+// a dotted sub-path. field is normalized by this method.
+func (m *maskSet) has(field string) bool {
+	field = normalizeMaskPath(field)
+	for _, p := range m.paths {
+		if p == field || strings.HasPrefix(p, field+".") {
+			return true
+		}
+	}
+
+	return false
+}
+
+// contains reports whether any masked path contains sub as a substring, used for
+// the routing/isolation paths whose exact spelling varies across clients. sub is
+// normalized by this method.
+func (m *maskSet) contains(sub string) bool {
+	sub = normalizeMaskPath(sub)
+	for _, p := range m.paths {
+		if strings.Contains(p, sub) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// mergeAppProfileConfig overlays the fields named by mask (from body) onto the
+// current profile, keeping every unmasked field at its current value. Routing is
+// treated as one unit: any routing path in the mask replaces the whole policy.
+func mergeAppProfileConfig(
+	parent, id string, cur *btdriver.AppProfile, body *adminpb.AppProfile, mask *maskSet,
+) btdriver.CreateAppProfileConfig {
+	cfg := btdriver.CreateAppProfileConfig{
+		Parent:                   parent,
+		AppProfileID:             id,
+		Description:              cur.Description,
+		MultiClusterRoutingAny:   cur.MultiClusterRoutingAny,
+		MultiClusterClusterIDs:   cur.MultiClusterClusterIDs,
+		SingleClusterID:          cur.SingleClusterID,
+		AllowTransactionalWrites: cur.AllowTransactionalWrites,
+		Priority:                 cur.Priority,
+	}
+
+	if mask.has("description") {
+		cfg.Description = body.GetDescription()
+	}
+
+	if mask.contains("routing") {
+		b := fromProtoAppProfile(parent, id, body)
+		cfg.MultiClusterRoutingAny = b.MultiClusterRoutingAny
+		cfg.MultiClusterClusterIDs = b.MultiClusterClusterIDs
+		cfg.SingleClusterID = b.SingleClusterID
+		cfg.AllowTransactionalWrites = b.AllowTransactionalWrites
+	}
+
+	if mask.contains("priority") || mask.contains("isolation") {
+		cfg.Priority = fromProtoAppProfile(parent, id, body).Priority
+	}
+
+	return cfg
 }

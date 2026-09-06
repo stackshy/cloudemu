@@ -12,9 +12,10 @@ import (
 )
 
 // instanceAdminServer serves google.bigtable.admin.v2.BigtableInstanceAdmin,
-// forwarding to the current bigtable Admin store. Embedding the generated
-// Unimplemented server keeps forward compatibility: RPCs outside this first cut
-// (app profiles, backups, logical/materialized views, hot tablets) report
+// forwarding to the current bigtable Admin store. Instances, clusters, app
+// profiles (see app_profile.go), and IAM are served here. Embedding the
+// generated Unimplemented server keeps forward compatibility: RPCs outside this
+// surface (backups, logical/materialized views, hot tablets) report
 // Unimplemented rather than failing the whole service.
 type instanceAdminServer struct {
 	adminpb.UnimplementedBigtableInstanceAdminServer
@@ -146,6 +147,46 @@ func (s *instanceAdminServer) ListClusters(
 	}
 
 	return out, nil
+}
+
+// UpdateCluster is the deprecated full-cluster update (a bare Cluster, no mask):
+// the caller's serve_nodes and autoscaling config replace the current scaling.
+func (s *instanceAdminServer) UpdateCluster(ctx context.Context, req *adminpb.Cluster) (*longrunningpb.Operation, error) {
+	c, op, err := s.resolve().UpdateCluster(ctx, req.GetName(), int(req.GetServeNodes()), fromProtoAutoscaling(req))
+	if err != nil {
+		return nil, toStatus(err)
+	}
+
+	return doneOp(op, toProtoCluster(c))
+}
+
+// PartialUpdateCluster applies only the masked scaling fields — this is the RPC
+// the terraform google provider uses to change a cluster's node count. An
+// unmasked serve_nodes/autoscaling is dropped so the store preserves it rather
+// than switching the cluster's scaling mode as a side effect.
+func (s *instanceAdminServer) PartialUpdateCluster(
+	ctx context.Context, req *adminpb.PartialUpdateClusterRequest,
+) (*longrunningpb.Operation, error) {
+	in := req.GetCluster()
+	serveNodes := int(in.GetServeNodes())
+	autoscaling := fromProtoAutoscaling(in)
+
+	if mask := newMaskSet(req.GetUpdateMask().GetPaths()); mask != nil {
+		if !mask.has("serveNodes") {
+			serveNodes = 0
+		}
+
+		if !mask.contains("autoscaling") {
+			autoscaling = nil
+		}
+	}
+
+	c, op, err := s.resolve().UpdateCluster(ctx, in.GetName(), serveNodes, autoscaling)
+	if err != nil {
+		return nil, toStatus(err)
+	}
+
+	return doneOp(op, toProtoCluster(c))
 }
 
 func (s *instanceAdminServer) DeleteCluster(ctx context.Context, req *adminpb.DeleteClusterRequest) (*emptypb.Empty, error) {
