@@ -47,6 +47,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `costmanagement` | — | [Costmanagement](./azure/costmanagement.md) | — | — | 1 |
 | `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | — | 24 |
 | `databricks` | — | [Databricks](./azure/databricks.md) | — | — | 46 |
+| `datafactory` | — | [DataFactory](./azure/datafactory.md) | — | — | 6 |
 | `dataproc` | — | — | [Dataproc](./gcp/dataproc.md) | — | 6 |
 | `disks` | — | [Disks](./azure/disks.md) | — | — | 7 |
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | — | 16 |
