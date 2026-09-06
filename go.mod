@@ -118,6 +118,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/sqs v1.42.27
 	github.com/aws/aws-sdk-go-v2/service/ssm v1.73.4
 	github.com/aws/aws-sdk-go-v2/service/sts v1.41.10
+	github.com/aws/aws-sdk-go-v2/service/transfer v1.81.0
 	github.com/aws/aws-sdk-go-v2/service/vpclattice v1.25.5
 	github.com/aws/aws-sdk-go-v2/service/wafv2 v1.77.3
 	github.com/aws/smithy-go v1.28.1

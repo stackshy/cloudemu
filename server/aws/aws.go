@@ -68,6 +68,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/sqs"
 	ssmsrv "github.com/stackshy/cloudemu/v2/server/aws/ssm"
 	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
+	transfersrv "github.com/stackshy/cloudemu/v2/server/aws/transfer"
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
@@ -119,6 +120,7 @@ import (
 	sesv2driver "github.com/stackshy/cloudemu/v2/services/sesv2/driver"
 	sfndriver "github.com/stackshy/cloudemu/v2/services/sfn/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
+	transferdriver "github.com/stackshy/cloudemu/v2/services/transfer/driver"
 	vpclatticedriver "github.com/stackshy/cloudemu/v2/services/vpclattice/driver"
 	wafv2driver "github.com/stackshy/cloudemu/v2/services/wafv2/driver"
 )
@@ -205,6 +207,9 @@ type Drivers struct {
 	// Athena serves the AWS Athena JSON 1.1 protocol (X-Amz-Target prefix
 	// "AmazonAthena.") against the athena driver.
 	Athena athenadriver.Athena
+	// Transfer serves the AWS Transfer Family JSON 1.1 protocol (X-Amz-Target
+	// prefix "TransferService.") against the transfer driver.
+	Transfer transferdriver.Transfer
 	// Cognito serves the AWS Cognito user-pools JSON 1.1 protocol (X-Amz-Target
 	// prefix "AWSCognitoIdentityProviderService.") against the cognito driver.
 	Cognito cognitodriver.Cognito
@@ -363,6 +368,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		CloudTrail:          p.CloudTrail,
 		Glue:                p.Glue,
 		Athena:              p.Athena,
+		Transfer:            p.Transfer,
 		Cognito:             p.Cognito,
 		Config:              p.Config,
 		GuardDuty:           p.GuardDuty,
@@ -519,6 +525,12 @@ func New(d Drivers) *server.Server {
 	// other JSON 1.1 services, so registration order is unconstrained.
 	if d.Athena != nil {
 		srv.Register(athenasrv.New(d.Athena))
+	}
+
+	// Transfer matches the X-Amz-Target prefix "TransferService." — disjoint from
+	// the other JSON 1.1 services, so registration order is unconstrained.
+	if d.Transfer != nil {
+		srv.Register(transfersrv.New(d.Transfer))
 	}
 
 	// Cognito matches the X-Amz-Target prefix
