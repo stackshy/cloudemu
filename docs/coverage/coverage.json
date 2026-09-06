@@ -312,6 +312,33 @@
     }
   },
   {
+    "service": "appinsights",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "UpdateTags"
+      }
+    ],
+    "providers": {
+      "azure": "Appinsights"
+    }
+  },
+  {
     "service": "applicationgateway",
     "interface": "AzureApplicationGateways",
     "operations": [

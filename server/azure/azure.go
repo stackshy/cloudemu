@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
 	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
+	appinsightssrv "github.com/stackshy/cloudemu/v2/server/azure/appinsights"
 	appgatewaysrv "github.com/stackshy/cloudemu/v2/server/azure/applicationgateway"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
@@ -373,6 +374,12 @@ func New(d Drivers) http.Handler {
 	synapseHandler := synapsesrv.New()
 	rgPurgers = append(rgPurgers, synapseHandler)
 
+	// Application Insights components (Microsoft.Insights/components) are
+	// resource-group-scoped, so the (always-on, driverless) handler joins the
+	// purge cascade. Registered further below.
+	appInsightsHandler := appinsightssrv.New()
+	rgPurgers = append(rgPurgers, appInsightsHandler)
+
 	// Resource groups have no driver of their own: they are containers, and the
 	// emulator tracks membership by the ids resources already carry. The
 	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
@@ -566,6 +573,14 @@ func New(d Drivers) http.Handler {
 	// driver (its state is workspace-scoped ARM containers), so it is always
 	// registered. Created above and joined to the resource-group purge cascade.
 	srv.Register(synapseHandler)
+
+	// Application Insights components share the microsoft.insights ARM provider
+	// with the Azure Monitor handler above but claim the disjoint "components"
+	// resource type, so registration order relative to it is unconstrained.
+	// Driverless and always registered; must precede the BlobStorage fallback so
+	// a components request is not swallowed as a blob call. Created above and
+	// joined to the resource-group purge cascade.
+	srv.Register(appInsightsHandler)
 
 	// Microsoft.Sql provider — distinct ARM provider name from compute and
 	// network so registration order is unconstrained.
