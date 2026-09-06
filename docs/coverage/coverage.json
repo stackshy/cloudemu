@@ -212,6 +212,30 @@
       },
       {
         "name": "PutMethod"
+      },
+      {
+        "name": "UpdateDeployment",
+        "doc": "UpdateDeployment applies a patchOperations document to a deployment"
+      },
+      {
+        "name": "UpdateIntegration",
+        "doc": "UpdateIntegration applies a patchOperations document to an integration."
+      },
+      {
+        "name": "UpdateMethod",
+        "doc": "UpdateMethod applies a patchOperations document to a method."
+      },
+      {
+        "name": "UpdateResource",
+        "doc": "UpdateResource applies a patchOperations document to a resource (rename via"
+      },
+      {
+        "name": "UpdateRestAPI",
+        "doc": "UpdateRestAPI applies a patchOperations document to a REST API and returns"
+      },
+      {
+        "name": "UpdateStage",
+        "doc": "UpdateStage applies a patchOperations document to a stage (/description,"
       }
     ],
     "providers": {

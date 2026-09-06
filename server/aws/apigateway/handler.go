@@ -144,6 +144,8 @@ func (h *Handler) createRestAPI(w http.ResponseWriter, r *http.Request) {
 	in := driver.CreateRestAPIInput{
 		Name: req.Name, Description: req.Description, Version: req.Version,
 		APIKeySource: req.APIKeySource, Tags: req.Tags, BinaryMediaTypes: req.BinaryMediaTypes,
+		DisableExecuteAPIEndpoint: req.DisableExecuteAPIEndpoint,
+		MinimumCompressionSize:    req.MinimumCompressionSize, Policy: req.Policy,
 	}
 	if req.EndpointConfiguration != nil {
 		in.EndpointConfigurationTypes = req.EndpointConfiguration.Types
@@ -158,8 +160,18 @@ func (h *Handler) createRestAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toRestAPIResponse(api))
 }
 
-// serveAPI handles /restapis/{id}: GET=GetRestApi, DELETE=DeleteRestApi.
+// serveAPI handles /restapis/{id}: GET=GetRestApi, PATCH=UpdateRestApi,
+// DELETE=DeleteRestApi.
 func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request, id string) {
+	if servePatch(w, r,
+		func(ops []driver.PatchOperation) (*driver.RestAPI, error) {
+			return h.ag.UpdateRestAPI(r.Context(), id, ops)
+		},
+		toRestAPIResponse,
+	) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		api, err := h.ag.GetRestAPI(r.Context(), id)
@@ -179,6 +191,34 @@ func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request, id string) {
 	default:
 		writeMethodNotAllowed(w)
 	}
+}
+
+// servePatch handles the PATCH verb shared by every Update* route: it decodes
+// the patchOperations body, applies it via update, and renders the result. It
+// reports whether it handled the request (true for any PATCH); a non-PATCH
+// request is left for the caller's own verb switch.
+func servePatch[T, R any](
+	w http.ResponseWriter, r *http.Request,
+	update func(ops []driver.PatchOperation) (T, error), render func(T) R,
+) bool {
+	if r.Method != http.MethodPatch {
+		return false
+	}
+
+	var req patchRequest
+	if !decodeJSON(w, r, &req) {
+		return true
+	}
+
+	v, err := update(toPatchOps(req.PatchOperations))
+	if err != nil {
+		writeErr(w, err)
+		return true
+	}
+
+	writeJSON(w, http.StatusOK, render(v))
+
+	return true
 }
 
 // serveAPISub handles /restapis/{id}/{resources|deployments|stages}.
@@ -258,8 +298,18 @@ func (h *Handler) getResources(w http.ResponseWriter, r *http.Request, id string
 }
 
 // serveResourceItem handles /restapis/{id}/resources/{resourceId}:
-// GET=GetResource, POST=CreateResource (child under {resourceId}).
+// GET=GetResource, POST=CreateResource (child under {resourceId}),
+// PATCH=UpdateResource.
 func (h *Handler) serveResourceItem(w http.ResponseWriter, r *http.Request, id, resourceID string) {
+	if servePatch(w, r,
+		func(ops []driver.PatchOperation) (*driver.Resource, error) {
+			return h.ag.UpdateResource(r.Context(), id, resourceID, ops)
+		},
+		toResourceResponse,
+	) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		res, err := h.ag.GetResource(r.Context(), id, resourceID)
@@ -295,9 +345,18 @@ func (h *Handler) serveResourceItem(w http.ResponseWriter, r *http.Request, id, 
 }
 
 // serveMethod handles /restapis/{id}/resources/{rid}/methods/{httpMethod}:
-// PUT=PutMethod, GET=GetMethod.
+// PUT=PutMethod, GET=GetMethod, PATCH=UpdateMethod.
 func (h *Handler) serveMethod(w http.ResponseWriter, r *http.Request, segs []string) {
 	id, resourceID, httpMethod := segs[0], segs[2], segs[4]
+
+	if servePatch(w, r,
+		func(ops []driver.PatchOperation) (*driver.Method, error) {
+			return h.ag.UpdateMethod(r.Context(), id, resourceID, httpMethod, ops)
+		},
+		toMethodResponse,
+	) {
+		return
+	}
 
 	switch r.Method {
 	case http.MethodPut:
@@ -345,6 +404,15 @@ func (h *Handler) serveIntegration(w http.ResponseWriter, r *http.Request, segs 
 	}
 
 	id, resourceID, httpMethod := segs[0], segs[2], segs[4]
+
+	if servePatch(w, r,
+		func(ops []driver.PatchOperation) (*driver.Integration, error) {
+			return h.ag.UpdateIntegration(r.Context(), id, resourceID, httpMethod, ops)
+		},
+		toIntegrationResponse,
+	) {
+		return
+	}
 
 	switch r.Method {
 	case http.MethodPut:
@@ -400,9 +468,14 @@ func (h *Handler) getDeployments(w http.ResponseWriter, r *http.Request, id stri
 }
 
 // serveDeploymentItem handles /restapis/{id}/deployments/{deploymentId}:
-// GET=GetDeployment, DELETE=DeleteDeployment.
+// GET=GetDeployment, PATCH=UpdateDeployment, DELETE=DeleteDeployment.
+//
+//nolint:dupl // parallel item router for deployments vs stages; the shared serveItem shape is intentional
 func (h *Handler) serveDeploymentItem(w http.ResponseWriter, r *http.Request, id, deploymentID string) {
-	serveGetDelete(w, r,
+	serveItem(w, r,
+		func(ops []driver.PatchOperation) (*driver.Deployment, error) {
+			return h.ag.UpdateDeployment(r.Context(), id, deploymentID, ops)
+		},
 		func() (*driver.Deployment, error) { return h.ag.GetDeployment(r.Context(), id, deploymentID) },
 		func() error { return h.ag.DeleteDeployment(r.Context(), id, deploymentID) },
 		toDeploymentResponse,
@@ -470,21 +543,32 @@ func (h *Handler) getStages(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 // serveStageItem handles /restapis/{id}/stages/{stageName}: GET=GetStage,
-// DELETE=DeleteStage.
+// PATCH=UpdateStage, DELETE=DeleteStage.
+//
+//nolint:dupl // parallel item router for stages vs deployments; the shared serveItem shape is intentional
 func (h *Handler) serveStageItem(w http.ResponseWriter, r *http.Request, id, stageName string) {
-	serveGetDelete(w, r,
+	serveItem(w, r,
+		func(ops []driver.PatchOperation) (*driver.Stage, error) {
+			return h.ag.UpdateStage(r.Context(), id, stageName, ops)
+		},
 		func() (*driver.Stage, error) { return h.ag.GetStage(r.Context(), id, stageName) },
 		func() error { return h.ag.DeleteStage(r.Context(), id, stageName) },
 		toStageResponse,
 	)
 }
 
-// serveGetDelete handles the common GET-one/DELETE-one shape shared by the
-// deployment and stage item routes: GET renders get()'s result with render,
-// DELETE calls del(), and any other method is rejected.
-func serveGetDelete[T, R any](
-	w http.ResponseWriter, r *http.Request, get func() (T, error), del func() error, render func(T) R,
+// serveItem handles the PATCH/GET/DELETE-one shape shared by the deployment and
+// stage item routes: PATCH applies update(), GET renders get()'s result, DELETE
+// calls del(), and any other method is rejected.
+func serveItem[T, R any](
+	w http.ResponseWriter, r *http.Request,
+	update func(ops []driver.PatchOperation) (T, error),
+	get func() (T, error), del func() error, render func(T) R,
 ) {
+	if servePatch(w, r, update, render) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		v, err := get()

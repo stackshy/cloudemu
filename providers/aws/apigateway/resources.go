@@ -2,6 +2,7 @@ package apigateway
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -57,6 +58,8 @@ func (m *Mock) CreateResource(_ context.Context, restAPIID, parentID, pathPart s
 }
 
 // GetResources lists every resource of a REST API.
+//
+//nolint:dupl // mirrors the sibling GetStages list-and-sort by design
 func (m *Mock) GetResources(_ context.Context, restAPIID string) ([]driver.Resource, error) {
 	ad, err := m.getAPI(restAPIID)
 	if err != nil {
@@ -70,6 +73,10 @@ func (m *Mock) GetResources(_ context.Context, restAPIID string) ([]driver.Resou
 	for _, r := range ad.resources {
 		out = append(out, copyResource(r))
 	}
+
+	// Deterministic order (root "/" first, then tree order) — the backing map
+	// iterates randomly, which would make GetResources non-deterministic.
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 
 	return out, nil
 }
