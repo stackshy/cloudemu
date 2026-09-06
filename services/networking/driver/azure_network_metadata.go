@@ -41,6 +41,16 @@ type AzureNSGRule struct {
 	Access                   string
 	Direction                string
 	Priority                 int
+	// SourceAddressPrefixes / DestinationAddressPrefixes and SourcePortRanges /
+	// DestinationPortRanges are the ARM plural (string[]) forms of the matching
+	// singular fields above (properties.sourceAddressPrefixes etc.). A caller
+	// sends either the singular or the plural form of each pair — never both —
+	// and real Azure round-trips exactly what was sent, so these are kept
+	// verbatim and stay empty when the singular form was used.
+	SourceAddressPrefixes      []string
+	DestinationAddressPrefixes []string
+	SourcePortRanges           []string
+	DestinationPortRanges      []string
 	// SourceASGs / DestinationASGs are the ARM resource ids of the application
 	// security groups a rule matches on (properties.sourceApplicationSecurityGroups
 	// / destinationApplicationSecurityGroups), an alternative to the address-prefix

@@ -130,6 +130,130 @@ func TestSDKSecurityRuleSubResourceCRUD(t *testing.T) {
 	}
 }
 
+// Finding (#1173 class): the plural SecurityRule properties —
+// sourceAddressPrefixes / destinationAddressPrefixes / sourcePortRanges /
+// destinationPortRanges (all string[]) — were not modeled. They survived on
+// the inline-rule path only by the generic property-echo overlay, keyed by
+// the rule's own id, so a rule created via the standalone SecurityRulesClient
+// (azurerm_network_security_rule) lost every plural field on the whole-NSG
+// GET, drifting terraform. This verifies both forms round-trip through the
+// driver on both the whole-NSG and the standalone-rule surfaces.
+func TestSDKSecurityRulePluralFormsRoundTrip(t *testing.T) {
+	ts := newVNetServer(t)
+	ctx := context.Background()
+	opts := clientOpts(ts)
+
+	nsgs, err := armnetwork.NewSecurityGroupsClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rules, err := armnetwork.NewSecurityRulesClient("sub-1", fakeCred{}, opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Inline rule using the plural address/port forms.
+	nsgP, err := nsgs.BeginCreateOrUpdate(ctx, "rg-1", "nsg-plural", armnetwork.SecurityGroup{
+		Location: to.Ptr("eastus"),
+		Properties: &armnetwork.SecurityGroupPropertiesFormat{
+			SecurityRules: []*armnetwork.SecurityRule{{
+				Name: to.Ptr("inline-plural"),
+				Properties: &armnetwork.SecurityRulePropertiesFormat{
+					Priority: to.Ptr(int32(100)), Direction: to.Ptr(armnetwork.SecurityRuleDirectionInbound),
+					Access: to.Ptr(armnetwork.SecurityRuleAccessAllow), Protocol: to.Ptr(armnetwork.SecurityRuleProtocolTCP),
+					SourceAddressPrefixes:    []*string{to.Ptr("10.0.0.0/24"), to.Ptr("10.0.1.0/24")},
+					DestinationAddressPrefix: to.Ptr("*"),
+					SourcePortRange:          to.Ptr("*"),
+					DestinationPortRanges:    []*string{to.Ptr("80"), to.Ptr("443"), to.Ptr("8080")},
+				},
+			}},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("create nsg: %v", err)
+	}
+
+	pollDone(t, nsgP)
+
+	// Standalone rule (azurerm_network_security_rule) also using plural forms.
+	rp, err := rules.BeginCreateOrUpdate(ctx, "rg-1", "nsg-plural", "standalone-plural", armnetwork.SecurityRule{
+		Properties: &armnetwork.SecurityRulePropertiesFormat{
+			Priority: to.Ptr(int32(200)), Direction: to.Ptr(armnetwork.SecurityRuleDirectionOutbound),
+			Access: to.Ptr(armnetwork.SecurityRuleAccessDeny), Protocol: to.Ptr(armnetwork.SecurityRuleProtocolUDP),
+			SourceAddressPrefix:        to.Ptr("*"),
+			DestinationAddressPrefixes: []*string{to.Ptr("192.168.0.0/16")},
+			SourcePortRanges:           []*string{to.Ptr("1000-2000"), to.Ptr("3000")},
+			DestinationPortRange:       to.Ptr("*"),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("create standalone plural rule: %v", err)
+	}
+
+	pollDone(t, rp)
+
+	// The whole-NSG GET must round-trip every plural field on BOTH rules.
+	got, err := nsgs.Get(ctx, "rg-1", "nsg-plural", nil)
+	if err != nil {
+		t.Fatalf("nsg Get: %v", err)
+	}
+
+	byName := map[string]*armnetwork.SecurityRulePropertiesFormat{}
+
+	for _, r := range got.Properties.SecurityRules {
+		if r.Name != nil && r.Properties != nil {
+			byName[*r.Name] = r.Properties
+		}
+	}
+
+	inline := byName["inline-plural"]
+	if inline == nil {
+		t.Fatal("inline-plural rule missing from whole-NSG GET")
+	}
+
+	if got := derefAll(inline.SourceAddressPrefixes); !equalStrs(got, []string{"10.0.0.0/24", "10.0.1.0/24"}) {
+		t.Fatalf("inline sourceAddressPrefixes = %v, want [10.0.0.0/24 10.0.1.0/24]", got)
+	}
+
+	if got := derefAll(inline.DestinationPortRanges); !equalStrs(got, []string{"80", "443", "8080"}) {
+		t.Fatalf("inline destinationPortRanges = %v, want [80 443 8080]", got)
+	}
+
+	standalone := byName["standalone-plural"]
+	if standalone == nil {
+		t.Fatal("standalone-plural rule missing from whole-NSG GET (plural forms lost)")
+	}
+
+	if got := derefAll(standalone.SourcePortRanges); !equalStrs(got, []string{"1000-2000", "3000"}) {
+		t.Fatalf("standalone sourcePortRanges = %v, want [1000-2000 3000]", got)
+	}
+
+	if got := derefAll(standalone.DestinationAddressPrefixes); !equalStrs(got, []string{"192.168.0.0/16"}) {
+		t.Fatalf("standalone destinationAddressPrefixes = %v, want [192.168.0.0/16]", got)
+	}
+
+	// The singular counterpart of a plural-populated field stays empty (Azure
+	// treats the two forms as mutually exclusive and echoes only what was sent).
+	if standalone.SourceAddressPrefix != nil && *standalone.SourceAddressPrefix != "*" {
+		t.Fatalf("standalone sourceAddressPrefix = %v, want the sent \"*\"", standalone.SourceAddressPrefix)
+	}
+}
+
+func equalStrs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
 // Finding: no priority validation on security rules — an out-of-range
 // priority and a duplicate priority within the same direction were both
 // silently accepted.
