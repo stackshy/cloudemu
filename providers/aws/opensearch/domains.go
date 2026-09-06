@@ -63,7 +63,7 @@ func (m *Mock) CreateDomain(_ context.Context, in driver.CreateDomainInput) (*dr
 
 	now := m.now()
 	cfg := copyClusterConfig(in.ClusterConfig)
-	raw := copyRaw(in.RawOptions)
+	raw := fillDefaultOptionBlocks(copyRaw(in.RawOptions))
 
 	// A VPC-access domain (created with VPCOptions carrying subnets) has no
 	// public Endpoint; instead it exposes Endpoints["vpc"], and AWS enriches the
@@ -122,6 +122,37 @@ func (m *Mock) CreateDomain(_ context.Context, in driver.CreateDomainInput) (*dr
 	out := snapshotStatus(status)
 
 	return &out, nil
+}
+
+// defaultOptionBlocks are the option blocks real AWS OpenSearch always includes
+// in a DescribeDomain response, even when the caller omitted them at create.
+// They are materialized at create so a minimal domain round-trips like real AWS
+// — the terraform provider's read path dereferences CognitoOptions and
+// EBSOptions without a nil check and panics if they are absent.
+func defaultOptionBlocks() map[string]json.RawMessage {
+	return map[string]json.RawMessage{
+		"EBSOptions":                  json.RawMessage(`{"EBSEnabled":false}`),
+		"CognitoOptions":              json.RawMessage(`{"Enabled":false}`),
+		"EncryptionAtRestOptions":     json.RawMessage(`{"Enabled":false}`),
+		"NodeToNodeEncryptionOptions": json.RawMessage(`{"Enabled":false}`),
+	}
+}
+
+// fillDefaultOptionBlocks adds each always-present AWS option block to raw when
+// the caller did not supply it, so DescribeDomain reflects the same blocks real
+// AWS always returns. A caller-supplied block is never overwritten.
+func fillDefaultOptionBlocks(raw map[string]json.RawMessage) map[string]json.RawMessage {
+	if raw == nil {
+		raw = map[string]json.RawMessage{}
+	}
+
+	for k, v := range defaultOptionBlocks() {
+		if _, ok := raw[k]; !ok {
+			raw[k] = append(json.RawMessage(nil), v...)
+		}
+	}
+
+	return raw
 }
 
 // vpcInput is the subset of a request's VPCOptions the emulator reads to derive
