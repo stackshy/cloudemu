@@ -288,6 +288,9 @@ type routeTableRequest struct {
 
 type routeTableRequestProps struct {
 	Routes []route `json:"routes,omitempty"`
+	// DisableBgpRoutePropagation is a pointer so an explicit false is preserved
+	// distinctly from an omitted field (azurerm always sends it, default false).
+	DisableBgpRoutePropagation *bool `json:"disableBgpRoutePropagation,omitempty"`
 }
 
 type route struct {
@@ -314,8 +317,9 @@ type routeTableResponse struct {
 }
 
 type routeTableResponseProps struct {
-	ProvisioningState string  `json:"provisioningState"`
-	Routes            []route `json:"routes"`
+	ProvisioningState          string  `json:"provisioningState"`
+	DisableBgpRoutePropagation bool    `json:"disableBgpRoutePropagation"`
+	Routes                     []route `json:"routes"`
 	// Subnets is the read-only back-reference real ARM reports on a routeTables
 	// GET once the route table is associated with a subnet (mirrors
 	// nsgResponseProps.Subnets).
@@ -324,4 +328,8 @@ type routeTableResponseProps struct {
 
 type routeTableListResponse struct {
 	Value []routeTableResponse `json:"value"`
+}
+
+type routeListResponse struct {
+	Value []route `json:"value"`
 }

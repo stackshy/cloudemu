@@ -8000,6 +8000,10 @@
             "doc": "DeleteAzureNSGRule removes a single custom security rule by name, leaving"
           },
           {
+            "name": "DeleteAzureRoute",
+            "doc": "DeleteAzureRoute removes a single route by name from the route table with"
+          },
+          {
             "name": "DeleteAzureRouteTableMetadata",
             "doc": "DeleteAzureRouteTableMetadata drops the stored metadata for id (called when"
           },
@@ -8053,6 +8057,10 @@
           {
             "name": "UpsertAzureNSGRule",
             "doc": "UpsertAzureNSGRule creates or replaces a single custom security rule by"
+          },
+          {
+            "name": "UpsertAzureRoute",
+            "doc": "UpsertAzureRoute creates or replaces a single route by name in the route"
           },
           {
             "name": "UpsertAzureVNetPeering",
