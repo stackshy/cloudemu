@@ -209,6 +209,10 @@ func cloneNSGMeta(meta driver.AzureNSGMetadata) driver.AzureNSGMetadata {
 		for i := range rules {
 			rules[i].SourceASGs = append([]string(nil), rules[i].SourceASGs...)
 			rules[i].DestinationASGs = append([]string(nil), rules[i].DestinationASGs...)
+			rules[i].SourceAddressPrefixes = append([]string(nil), rules[i].SourceAddressPrefixes...)
+			rules[i].DestinationAddressPrefixes = append([]string(nil), rules[i].DestinationAddressPrefixes...)
+			rules[i].SourcePortRanges = append([]string(nil), rules[i].SourcePortRanges...)
+			rules[i].DestinationPortRanges = append([]string(nil), rules[i].DestinationPortRanges...)
 		}
 
 		out.SecurityRules = rules
