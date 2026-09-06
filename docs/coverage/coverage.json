@@ -4682,6 +4682,49 @@
     }
   },
   {
+    "service": "datastream",
+    "interface": "Datastream",
+    "operations": [
+      {
+        "name": "CreateConnectionProfile"
+      },
+      {
+        "name": "CreateStream"
+      },
+      {
+        "name": "DeleteConnectionProfile"
+      },
+      {
+        "name": "DeleteStream"
+      },
+      {
+        "name": "GetConnectionProfile"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetStream"
+      },
+      {
+        "name": "ListConnectionProfiles"
+      },
+      {
+        "name": "ListStreams"
+      },
+      {
+        "name": "PatchConnectionProfile"
+      },
+      {
+        "name": "PatchStream"
+      }
+    ],
+    "providers": {
+      "gcp": "Datastream"
+    }
+  },
+  {
     "service": "digitaltwins",
     "interface": "provider-native",
     "operations": [
