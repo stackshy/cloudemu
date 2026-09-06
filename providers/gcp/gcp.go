@@ -32,6 +32,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/networkconnectivity"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/pubsub"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/scheduler"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/secretmanager"
@@ -71,38 +72,39 @@ func (a gkeDiscovery) DiscoverClusters(ctx context.Context) ([]resourcediscovery
 
 // Provider holds all GCP mock services.
 type Provider struct {
-	GCS              *gcs.Mock
-	GCE              *compute.Mock
-	Firestore        *firestore.Mock
-	CloudFunctions   *cloudfunctions.Mock
-	CloudRun         *cloudrun.Mock
-	VPC              *vpc.Mock
-	CloudMonitoring  *monitoring.Mock
-	IAM              *iam.Mock
-	CloudDNS         *clouddns.Mock
-	LB               *loadbalancer.Mock
-	PubSub           *pubsub.Mock
-	Memorystore      *memorystore.Mock
-	SecretManager    *secretmanager.Mock
-	CloudLogging     *cloudlogging.Mock
-	FCM              *fcm.Mock
-	ArtifactRegistry *artifactregistry.Mock
-	Eventarc         *eventarc.Mock
-	Bigtable         *bigtable.Mock
-	BigQuery         *bigquery.Mock
-	CloudSQL         *cloudsql.Mock
-	AlloyDB          *alloydb.Mock
-	GKE              *gke.Mock
-	VertexAI         *vertexai.Mock
-	Spanner          *spannerprov.Mock
-	Dataproc         *dataproc.Mock
-	Datastream       *datastream.Mock
-	Composer         *composer.Mock
-	CloudDeploy      *clouddeploy.Mock
-	Workflows        *workflows.Mock
-	Scheduler        *scheduler.Mock
-	CloudTasks       *cloudtasks.Mock
-	ServiceDirectory *servicedirectory.Mock
+	GCS                 *gcs.Mock
+	GCE                 *compute.Mock
+	Firestore           *firestore.Mock
+	CloudFunctions      *cloudfunctions.Mock
+	CloudRun            *cloudrun.Mock
+	VPC                 *vpc.Mock
+	CloudMonitoring     *monitoring.Mock
+	IAM                 *iam.Mock
+	CloudDNS            *clouddns.Mock
+	LB                  *loadbalancer.Mock
+	PubSub              *pubsub.Mock
+	Memorystore         *memorystore.Mock
+	SecretManager       *secretmanager.Mock
+	CloudLogging        *cloudlogging.Mock
+	FCM                 *fcm.Mock
+	ArtifactRegistry    *artifactregistry.Mock
+	Eventarc            *eventarc.Mock
+	Bigtable            *bigtable.Mock
+	BigQuery            *bigquery.Mock
+	CloudSQL            *cloudsql.Mock
+	AlloyDB             *alloydb.Mock
+	GKE                 *gke.Mock
+	VertexAI            *vertexai.Mock
+	Spanner             *spannerprov.Mock
+	Dataproc            *dataproc.Mock
+	Datastream          *datastream.Mock
+	NetworkConnectivity *networkconnectivity.Mock
+	Composer            *composer.Mock
+	CloudDeploy         *clouddeploy.Mock
+	Workflows           *workflows.Mock
+	Scheduler           *scheduler.Mock
+	CloudTasks          *cloudtasks.Mock
+	ServiceDirectory    *servicedirectory.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -125,41 +127,42 @@ type Provider struct {
 func New(opts ...config.Option) *Provider {
 	o := config.NewOptions(opts...)
 	p := &Provider{
-		GCS:              gcs.New(o),
-		GCE:              compute.New(o),
-		Firestore:        firestore.New(o),
-		CloudFunctions:   cloudfunctions.New(o),
-		CloudRun:         cloudrun.New(o),
-		VPC:              vpc.New(o),
-		CloudMonitoring:  monitoring.New(o),
-		IAM:              iam.New(o),
-		CloudDNS:         clouddns.New(o),
-		LB:               loadbalancer.New(o),
-		PubSub:           pubsub.New(o),
-		Memorystore:      memorystore.New(o),
-		SecretManager:    secretmanager.New(o),
-		CloudLogging:     cloudlogging.New(o),
-		FCM:              fcm.New(o),
-		ArtifactRegistry: artifactregistry.New(o),
-		Eventarc:         eventarc.New(o),
-		Bigtable:         bigtable.New(o),
-		BigQuery:         bigquery.New(o),
-		CloudSQL:         cloudsql.New(o),
-		AlloyDB:          alloydb.New(o),
-		GKE:              gke.New(o),
-		VertexAI:         vertexai.New(o),
-		Spanner:          spannerprov.New(o),
-		Dataproc:         dataproc.New(o),
-		Datastream:       datastream.New(o),
-		Composer:         composer.New(o),
-		CloudDeploy:      clouddeploy.New(o),
-		Workflows:        workflows.New(o),
-		Scheduler:        scheduler.New(o),
-		CloudTasks:       cloudtasks.New(o),
-		ServiceDirectory: servicedirectory.New(o),
-		ProjectID:        o.ProjectID,
-		Region:           o.Region,
-		Clock:            o.Clock,
+		GCS:                 gcs.New(o),
+		GCE:                 compute.New(o),
+		Firestore:           firestore.New(o),
+		CloudFunctions:      cloudfunctions.New(o),
+		CloudRun:            cloudrun.New(o),
+		VPC:                 vpc.New(o),
+		CloudMonitoring:     monitoring.New(o),
+		IAM:                 iam.New(o),
+		CloudDNS:            clouddns.New(o),
+		LB:                  loadbalancer.New(o),
+		PubSub:              pubsub.New(o),
+		Memorystore:         memorystore.New(o),
+		SecretManager:       secretmanager.New(o),
+		CloudLogging:        cloudlogging.New(o),
+		FCM:                 fcm.New(o),
+		ArtifactRegistry:    artifactregistry.New(o),
+		Eventarc:            eventarc.New(o),
+		Bigtable:            bigtable.New(o),
+		BigQuery:            bigquery.New(o),
+		CloudSQL:            cloudsql.New(o),
+		AlloyDB:             alloydb.New(o),
+		GKE:                 gke.New(o),
+		VertexAI:            vertexai.New(o),
+		Spanner:             spannerprov.New(o),
+		Dataproc:            dataproc.New(o),
+		Datastream:          datastream.New(o),
+		NetworkConnectivity: networkconnectivity.New(o),
+		Composer:            composer.New(o),
+		CloudDeploy:         clouddeploy.New(o),
+		Workflows:           workflows.New(o),
+		Scheduler:           scheduler.New(o),
+		CloudTasks:          cloudtasks.New(o),
+		ServiceDirectory:    servicedirectory.New(o),
+		ProjectID:           o.ProjectID,
+		Region:              o.Region,
+		Clock:               o.Clock,
 	}
 	p.GCE.SetMonitoring(p.CloudMonitoring)
 	p.GCS.SetMonitoring(p.CloudMonitoring)

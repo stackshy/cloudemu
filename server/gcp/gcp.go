@@ -42,6 +42,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	memorystoresrv "github.com/stackshy/cloudemu/v2/server/gcp/memorystore"
 	"github.com/stackshy/cloudemu/v2/server/gcp/monitoring"
+	networkconnectivitysrv "github.com/stackshy/cloudemu/v2/server/gcp/networkconnectivity"
 	"github.com/stackshy/cloudemu/v2/server/gcp/pubsub"
 	"github.com/stackshy/cloudemu/v2/server/gcp/resourcemanager"
 	schedulersrv "github.com/stackshy/cloudemu/v2/server/gcp/scheduler"
@@ -73,6 +74,7 @@ import (
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	nccdriver "github.com/stackshy/cloudemu/v2/services/networkconnectivity/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -130,6 +132,13 @@ type Drivers struct {
 	// every other /v1/projects/ handler, and its location-scoped operation polls
 	// are owned by the shared LRO poller.
 	Datastream datastreamdriver.Datastream
+	// NetworkConnectivity serves the networkconnectivity.googleapis.com v1 hub +
+	// spoke control plane against the networkconnectivity driver. Its paths live
+	// under /v1/projects/{p}/locations/{l}/{hubs|spokes}[/…] (hubs are global,
+	// spokes regional); the handler's Matches narrows on those resource segments,
+	// so it is disjoint from every other /v1/projects/ handler, and its
+	// location-scoped operation polls are owned by the shared LRO poller.
+	NetworkConnectivity nccdriver.NetworkConnectivity
 	// Composer serves the composer.googleapis.com v1 environment control plane
 	// against the composer driver. Its paths live under /v1/projects/{p}/
 	// locations/{l}/environments[/…]; the handler's Matches narrows on the
@@ -436,6 +445,19 @@ func New(d Drivers) *server.Server {
 		datastreamH := datastreamsrv.New(d.Datastream)
 		datastreamH.SetOperationRegistry(opsReg)
 		srv.Register(datastreamH)
+	}
+
+	// NetworkConnectivity matches /v1/projects/{p}/locations/{l}/{hubs|spokes}
+	// [/…] (hubs global, spokes regional). Its resource-segment guard is disjoint
+	// from every other /v1/projects/ handler (Composer's environments, Cloud
+	// Deploy's pipelines/targets, Datastream's connectionProfiles/streams, …), so
+	// registration order among them is unconstrained; registered before
+	// Firestore's permissive prefix. Its location-scoped operation polls are owned
+	// by the shared LRO poller, which the handler's Matches yields to.
+	if d.NetworkConnectivity != nil {
+		nccH := networkconnectivitysrv.New(d.NetworkConnectivity)
+		nccH.SetOperationRegistry(opsReg)
+		srv.Register(nccH)
 	}
 
 	// Workflows matches /v1/projects/{p}/locations/{l}/workflows[/…]. Its
