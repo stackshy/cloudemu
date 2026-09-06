@@ -17,6 +17,7 @@ import (
 	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
 	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/aws/apigateway"
 	apigatewayv2srv "github.com/stackshy/cloudemu/v2/server/aws/apigatewayv2"
+	athenasrv "github.com/stackshy/cloudemu/v2/server/aws/athena"
 	batchsrv "github.com/stackshy/cloudemu/v2/server/aws/batch"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
@@ -71,6 +72,7 @@ import (
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	apigatewaydriver "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 	apigatewayv2driver "github.com/stackshy/cloudemu/v2/services/apigatewayv2/driver"
+	athenadriver "github.com/stackshy/cloudemu/v2/services/athena/driver"
 	batchdriver "github.com/stackshy/cloudemu/v2/services/batch/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
@@ -198,6 +200,9 @@ type Drivers struct {
 	// Glue serves the AWS Glue JSON 1.1 protocol (X-Amz-Target prefix
 	// "AWSGlue.") against the glue driver.
 	Glue gluedriver.Glue
+	// Athena serves the AWS Athena JSON 1.1 protocol (X-Amz-Target prefix
+	// "AmazonAthena.") against the athena driver.
+	Athena athenadriver.Athena
 	// Config serves the AWS Config JSON 1.1 protocol (X-Amz-Target prefix
 	// "StarlingDoveService.") against the configservice driver.
 	Config configservicedriver.Config
@@ -352,6 +357,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		Kinesis:             p.Kinesis,
 		CloudTrail:          p.CloudTrail,
 		Glue:                p.Glue,
+		Athena:              p.Athena,
 		Config:              p.Config,
 		GuardDuty:           p.GuardDuty,
 		APIGateway:          p.APIGateway,
@@ -501,6 +507,12 @@ func New(d Drivers) *server.Server {
 	// JSON 1.1 services, so registration order is unconstrained.
 	if d.Glue != nil {
 		srv.Register(gluesrv.New(d.Glue))
+	}
+
+	// Athena matches the X-Amz-Target prefix "AmazonAthena." — disjoint from the
+	// other JSON 1.1 services, so registration order is unconstrained.
+	if d.Athena != nil {
+		srv.Register(athenasrv.New(d.Athena))
 	}
 
 	// AWS Config matches the X-Amz-Target prefix "StarlingDoveService." —

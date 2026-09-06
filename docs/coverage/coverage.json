@@ -364,6 +364,90 @@
     }
   },
   {
+    "service": "athena",
+    "interface": "Athena",
+    "operations": [
+      {
+        "name": "CreateNamedQuery",
+        "doc": "CreateNamedQuery saves a query and returns its generated id. The"
+      },
+      {
+        "name": "CreateWorkGroup",
+        "doc": "CreateWorkGroup creates a workgroup, materializing the effective engine"
+      },
+      {
+        "name": "DeleteNamedQuery"
+      },
+      {
+        "name": "DeleteWorkGroup",
+        "doc": "DeleteWorkGroup removes a workgroup. recursive deletes its named queries"
+      },
+      {
+        "name": "GetDataCatalog"
+      },
+      {
+        "name": "GetDatabase",
+        "doc": "GetDatabase returns a database in a data catalog, or an error tagged"
+      },
+      {
+        "name": "GetNamedQuery"
+      },
+      {
+        "name": "GetQueryExecution"
+      },
+      {
+        "name": "GetQueryResults",
+        "doc": "GetQueryResults returns the result rows for a SUCCEEDED execution. DDL and"
+      },
+      {
+        "name": "GetWorkGroup",
+        "doc": "GetWorkGroup returns a deep copy of a workgroup, or an error tagged"
+      },
+      {
+        "name": "ListDataCatalogs"
+      },
+      {
+        "name": "ListDatabases"
+      },
+      {
+        "name": "ListNamedQueries",
+        "doc": "ListNamedQueries returns the ids of saved queries in the given workgroup"
+      },
+      {
+        "name": "ListQueryExecutions",
+        "doc": "ListQueryExecutions returns execution ids in the given workgroup"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListWorkGroups",
+        "doc": "ListWorkGroups returns workgroup summaries in a deterministic order."
+      },
+      {
+        "name": "StartQueryExecution",
+        "doc": "StartQueryExecution runs a query and returns its id. Re-issuing with the"
+      },
+      {
+        "name": "StopQueryExecution",
+        "doc": "StopQueryExecution is a no-op on an already-terminal execution; it errors"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateWorkGroup",
+        "doc": "UpdateWorkGroup applies a delta: the top-level Description/State plus the"
+      }
+    ],
+    "providers": {
+      "aws": "Athena"
+    }
+  },
+  {
     "service": "azureai",
     "interface": "AzureAI",
     "operations": [
