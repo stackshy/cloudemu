@@ -17,6 +17,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `apigatewayv2` | [APIGatewayV2](./aws/apigatewayv2.md) | — | — | — | 20 |
 | `appinsights` | — | [Appinsights](./azure/appinsights.md) | — | — | 6 |
 | `applicationgateway` | — | [AppGateway](./azure/appgateway.md) | — | — | 4 |
+| `athena` | [Athena](./aws/athena.md) | — | — | — | 21 |
 | `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
 | `azurefirewall` | — | [Firewall](./azure/firewall.md) | — | — | 8 |
 | `azuresearch` | — | [Search](./azure/search.md) | — | — | 53 |

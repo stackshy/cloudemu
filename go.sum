@@ -174,6 +174,8 @@ github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36 h1:jbGY4CXLzZElOXgGsexlC3Hi+3Y
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36/go.mod h1:uBu/9aKsS/UQGc72RAt3y54kjgYQxmhut8ZD2dXCDNE=
 github.com/aws/aws-sdk-go-v2/service/acm v1.38.3 h1:Fzab84hCu3rw9R9Y3mH7SHfr/cSEHnCB0Mq1JCdr9t0=
 github.com/aws/aws-sdk-go-v2/service/acm v1.38.3/go.mod h1:yCteizCNPaHt0SnNusoGGHvy0JDB0tvGDTVhEt5anZM=
+github.com/aws/aws-sdk-go-v2/service/athena v1.49.0 h1:D+iatX9gV6gCuNd6BnUkfwfZJw/cXlEk+LwwDdSMdtw=
+github.com/aws/aws-sdk-go-v2/service/athena v1.49.0/go.mod h1:27ljwDsnZvfrZKsLzWD4WFjI4OZutEFIjvVtYfj9gHc=
 github.com/aws/aws-sdk-go-v2/service/autoscaling v1.66.1 h1:kGlbhb5GMfkP/bcqcbt3oDi50kwDTpRmNzYUY9LqbLk=
 github.com/aws/aws-sdk-go-v2/service/autoscaling v1.66.1/go.mod h1:z45kurrOonQepd3SN5LIgropAn1NGHwBn1yOMF+QVFU=
 github.com/aws/aws-sdk-go-v2/service/batch v1.74.0 h1:LTPXlivKDHTioNpyKv18fcyxnhEBDmqutThyt9sprzQ=

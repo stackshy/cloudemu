@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigateway"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigatewayv2"
+	"github.com/stackshy/cloudemu/v2/providers/aws/athena"
 	"github.com/stackshy/cloudemu/v2/providers/aws/batch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
@@ -182,6 +183,7 @@ type Provider struct {
 	SFN                 *sfn.Mock
 	CloudTrail          *cloudtrail.Mock
 	Glue                *glue.Mock
+	Athena              *athena.Mock
 	Config              *configservice.Mock
 	GuardDuty           *guardduty.Mock
 	APIGateway          *apigateway.Mock
@@ -250,6 +252,7 @@ func New(opts ...config.Option) *Provider {
 		SFN:                 sfn.New(o),
 		CloudTrail:          cloudtrail.New(o),
 		Glue:                glue.New(o),
+		Athena:              athena.New(o),
 		Config:              configservice.New(o),
 		GuardDuty:           guardduty.New(o),
 		APIGateway:          apigateway.New(o),
