@@ -15711,6 +15711,34 @@
     }
   },
   {
+    "service": "workflows",
+    "interface": "Workflows",
+    "operations": [
+      {
+        "name": "CreateWorkflow"
+      },
+      {
+        "name": "DeleteWorkflow"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetWorkflow"
+      },
+      {
+        "name": "ListWorkflows"
+      },
+      {
+        "name": "PatchWorkflow"
+      }
+    ],
+    "providers": {
+      "gcp": "Workflows"
+    }
+  },
+  {
     "service": "workrequest",
     "interface": "provider-native",
     "operations": [

@@ -37,6 +37,7 @@ import (
 	spannerprov "github.com/stackshy/cloudemu/v2/providers/gcp/spanner"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vpc"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/workflows"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
@@ -95,6 +96,7 @@ type Provider struct {
 	Dataproc         *dataproc.Mock
 	Composer         *composer.Mock
 	CloudDeploy      *clouddeploy.Mock
+	Workflows        *workflows.Mock
 	Scheduler        *scheduler.Mock
 	CloudTasks       *cloudtasks.Mock
 
@@ -146,6 +148,7 @@ func New(opts ...config.Option) *Provider {
 		Dataproc:         dataproc.New(o),
 		Composer:         composer.New(o),
 		CloudDeploy:      clouddeploy.New(o),
+		Workflows:        workflows.New(o),
 		Scheduler:        scheduler.New(o),
 		CloudTasks:       cloudtasks.New(o),
 		ProjectID:        o.ProjectID,
