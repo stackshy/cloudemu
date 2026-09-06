@@ -12872,6 +12872,60 @@
     }
   },
   {
+    "service": "servicedirectory",
+    "interface": "ServiceDirectory",
+    "operations": [
+      {
+        "name": "CreateEndpoint"
+      },
+      {
+        "name": "CreateNamespace"
+      },
+      {
+        "name": "CreateService"
+      },
+      {
+        "name": "DeleteEndpoint"
+      },
+      {
+        "name": "DeleteNamespace"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "GetEndpoint"
+      },
+      {
+        "name": "GetNamespace"
+      },
+      {
+        "name": "GetService"
+      },
+      {
+        "name": "ListEndpoints"
+      },
+      {
+        "name": "ListNamespaces"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "PatchEndpoint"
+      },
+      {
+        "name": "PatchNamespace"
+      },
+      {
+        "name": "PatchService"
+      }
+    ],
+    "providers": {
+      "gcp": "ServiceDirectory"
+    }
+  },
+  {
     "service": "servicenetworking",
     "interface": "provider-native",
     "operations": [
