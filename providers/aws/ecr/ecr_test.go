@@ -79,8 +79,21 @@ func TestCreateRepository(t *testing.T) {
 			cfg:  driver.RepositoryConfig{Name: "immutable-repo", ImageTagMutability: "IMMUTABLE"},
 		},
 		{
+			name: "with immutable-with-exclusion tag mutability",
+			cfg:  driver.RepositoryConfig{Name: "excl-repo", ImageTagMutability: "IMMUTABLE_WITH_EXCLUSION"},
+		},
+		{
+			name: "with mutable-with-exclusion tag mutability",
+			cfg:  driver.RepositoryConfig{Name: "excl-repo2", ImageTagMutability: "MUTABLE_WITH_EXCLUSION"},
+		},
+		{
 			name: "with scan on push",
 			cfg:  driver.RepositoryConfig{Name: "scan-repo", ImageScanOnPush: true},
+		},
+		{
+			name:      "invalid tag mutability is rejected",
+			cfg:       driver.RepositoryConfig{Name: "bad-mut", ImageTagMutability: "WRONG"},
+			expectErr: true,
 		},
 	}
 
@@ -103,6 +116,10 @@ func TestCreateRepository(t *testing.T) {
 			assert.NotEmpty(t, repo.URI)
 			assert.NotEmpty(t, repo.CreatedAt)
 			assert.Equal(t, 0, repo.ImageCount)
+
+			if tc.cfg.ImageTagMutability != "" {
+				assert.Equal(t, tc.cfg.ImageTagMutability, repo.ImageTagMutability)
+			}
 		})
 	}
 }
