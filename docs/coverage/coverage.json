@@ -2747,6 +2747,80 @@
     }
   },
   {
+    "service": "cognito",
+    "interface": "Cognito",
+    "operations": [
+      {
+        "name": "CreateUserPool",
+        "doc": "CreateUserPool creates a user pool, generating its id and ARN, seeding the"
+      },
+      {
+        "name": "CreateUserPoolClient",
+        "doc": "CreateUserPoolClient creates an app client, generating its 26-character id"
+      },
+      {
+        "name": "CreateUserPoolDomain"
+      },
+      {
+        "name": "DeleteUserPool",
+        "doc": "DeleteUserPool removes a user pool and its clients, domains, and tags."
+      },
+      {
+        "name": "DeleteUserPoolClient"
+      },
+      {
+        "name": "DeleteUserPoolDomain"
+      },
+      {
+        "name": "DescribeUserPool",
+        "doc": "DescribeUserPool returns a deep copy of a user pool, or a"
+      },
+      {
+        "name": "DescribeUserPoolClient"
+      },
+      {
+        "name": "DescribeUserPoolDomain",
+        "doc": "DescribeUserPoolDomain returns a domain's description. An unknown domain"
+      },
+      {
+        "name": "GetUserPoolMfaConfig",
+        "doc": "GetUserPoolMfaConfig returns a pool's MFA configuration. The Terraform AWS"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListUserPoolClients",
+        "doc": "ListUserPoolClients returns client descriptions in a user pool in a"
+      },
+      {
+        "name": "ListUserPools",
+        "doc": "ListUserPools returns pool descriptions in a deterministic order."
+      },
+      {
+        "name": "SetUserPoolMfaConfig",
+        "doc": "SetUserPoolMfaConfig replaces a pool's MFA configuration and returns the"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateUserPool",
+        "doc": "UpdateUserPool applies the mutable pool settings. A nil field is left"
+      },
+      {
+        "name": "UpdateUserPoolClient",
+        "doc": "UpdateUserPoolClient replaces the client's settings and returns the result."
+      }
+    ],
+    "providers": {
+      "aws": "Cognito"
+    }
+  },
+  {
     "service": "compute",
     "interface": "Compute",
     "operations": [

@@ -27,6 +27,7 @@ import (
 	cloudtrailsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
+	cognitosrv "github.com/stackshy/cloudemu/v2/server/aws/cognito"
 	configservicesrv "github.com/stackshy/cloudemu/v2/server/aws/configservice"
 	costexplorersrv "github.com/stackshy/cloudemu/v2/server/aws/costexplorer"
 	"github.com/stackshy/cloudemu/v2/server/aws/dynamodb"
@@ -81,6 +82,7 @@ import (
 	cfnsvc "github.com/stackshy/cloudemu/v2/services/cloudformation"
 	cloudfrontdriver "github.com/stackshy/cloudemu/v2/services/cloudfront/driver"
 	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
+	cognitodriver "github.com/stackshy/cloudemu/v2/services/cognito/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	configservicedriver "github.com/stackshy/cloudemu/v2/services/configservice/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -203,6 +205,9 @@ type Drivers struct {
 	// Athena serves the AWS Athena JSON 1.1 protocol (X-Amz-Target prefix
 	// "AmazonAthena.") against the athena driver.
 	Athena athenadriver.Athena
+	// Cognito serves the AWS Cognito user-pools JSON 1.1 protocol (X-Amz-Target
+	// prefix "AWSCognitoIdentityProviderService.") against the cognito driver.
+	Cognito cognitodriver.Cognito
 	// Config serves the AWS Config JSON 1.1 protocol (X-Amz-Target prefix
 	// "StarlingDoveService.") against the configservice driver.
 	Config configservicedriver.Config
@@ -358,6 +363,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		CloudTrail:          p.CloudTrail,
 		Glue:                p.Glue,
 		Athena:              p.Athena,
+		Cognito:             p.Cognito,
 		Config:              p.Config,
 		GuardDuty:           p.GuardDuty,
 		APIGateway:          p.APIGateway,
@@ -513,6 +519,13 @@ func New(d Drivers) *server.Server {
 	// other JSON 1.1 services, so registration order is unconstrained.
 	if d.Athena != nil {
 		srv.Register(athenasrv.New(d.Athena))
+	}
+
+	// Cognito matches the X-Amz-Target prefix
+	// "AWSCognitoIdentityProviderService." — disjoint from the other JSON 1.1
+	// services, so registration order is unconstrained.
+	if d.Cognito != nil {
+		srv.Register(cognitosrv.New(d.Cognito))
 	}
 
 	// AWS Config matches the X-Amz-Target prefix "StarlingDoveService." —
