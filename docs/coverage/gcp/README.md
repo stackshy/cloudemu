@@ -10,6 +10,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [BigQuery](./bigquery.md) | `bigquery` | 12 |
 | [Bigtable](./bigtable.md) | `bigtable` | 38 |
 | [CloudDNS](./clouddns.md) | `dns` | 16 |
+| [CloudDeploy](./clouddeploy.md) | `clouddeploy` | 11 |
 | [CloudFunctions](./cloudfunctions.md) | `serverless` | 27 |
 | [CloudLogging](./cloudlogging.md) | `logging` | 17 |
 | [CloudMonitoring](./cloudmonitoring.md) | `monitoring` | 12 |

@@ -31,6 +31,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cache` | [ElastiCache](./aws/elasticache.md) | [Cache](./azure/cache.md) | [Memorystore](./gcp/memorystore.md) | — | 17 |
 | `cloudasset` | — | — | [Cloudasset](./gcp/cloudasset.md) | — | 11 |
 | `cloudbilling` | — | — | [Cloudbilling](./gcp/cloudbilling.md) | — | 14 |
+| `clouddeploy` | — | — | [CloudDeploy](./gcp/clouddeploy.md) | — | 11 |
 | `cloudformation` | [CloudFormation](./aws/cloudformation.md) | — | — | — | 9 |
 | `cloudfront` | [CloudFront](./aws/cloudfront.md) | — | — | — | 11 |
 | `cloudrun` | — | — | [CloudRun](./gcp/cloudrun.md) | — | 18 |
