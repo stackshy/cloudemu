@@ -60,6 +60,8 @@ var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // stati
 	"CreateReplicationGroup":       {},
 	"DescribeReplicationGroups":    {},
 	"ModifyReplicationGroup":       {},
+	"IncreaseReplicaCount":         {},
+	"DecreaseReplicaCount":         {},
 	"DeleteReplicationGroup":       {},
 	"CreateSnapshot":               {},
 	"DescribeSnapshots":            {},
@@ -172,6 +174,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.describeReplicationGroups(w, r)
 	case "ModifyReplicationGroup":
 		h.modifyReplicationGroup(w, r)
+	case "IncreaseReplicaCount":
+		h.increaseReplicaCount(w, r)
+	case "DecreaseReplicaCount":
+		h.decreaseReplicaCount(w, r)
 	case "DeleteReplicationGroup":
 		h.deleteReplicationGroup(w, r)
 	case "DeleteCacheCluster":

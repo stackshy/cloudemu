@@ -65,6 +65,20 @@ type deleteReplicationGroupResponse struct {
 	Metadata responseMetadata       `xml:"ResponseMetadata"`
 }
 
+type increaseReplicaCountResponse struct {
+	XMLName  xml.Name               `xml:"IncreaseReplicaCountResponse"`
+	Xmlns    string                 `xml:"xmlns,attr"`
+	Result   replicationGroupResult `xml:"IncreaseReplicaCountResult"`
+	Metadata responseMetadata       `xml:"ResponseMetadata"`
+}
+
+type decreaseReplicaCountResponse struct {
+	XMLName  xml.Name               `xml:"DecreaseReplicaCountResponse"`
+	Xmlns    string                 `xml:"xmlns,attr"`
+	Result   replicationGroupResult `xml:"DecreaseReplicaCountResult"`
+	Metadata responseMetadata       `xml:"ResponseMetadata"`
+}
+
 type replicationGroupsList struct {
 	ReplicationGroups []replicationGroupXML `xml:"ReplicationGroups>ReplicationGroup"`
 }
@@ -173,6 +187,70 @@ func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request)
 	awsquery.WriteXMLResponse(w, modifyReplicationGroupResponse{
 		Xmlns:    Namespace,
 		Result:   replicationGroupResult{ReplicationGroup: toReplicationGroupXML(rg)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// applyReplicaCount is the shared core of Increase/DecreaseReplicaCount. Both
+// carry NewReplicaCount — the desired number of read replicas per node group.
+// The emulator models a single (cluster-mode-disabled) node group, so the total
+// member-cluster count is the primary plus NewReplicaCount. This is the path the
+// Terraform AWS provider uses to scale a replication group's num_cache_clusters
+// (it calls Increase/DecreaseReplicaCount, not ModifyReplicationGroup). When
+// NewReplicaCount is absent (the cluster-mode ReplicaConfiguration path, out of
+// scope), the member count is left unchanged.
+func (h *Handler) applyReplicaCount(w http.ResponseWriter, r *http.Request) (replicationGroupXML, bool) {
+	store, ok := h.replicationGroups()
+	if !ok {
+		writeUnsupported(w, "replication groups")
+		return replicationGroupXML{}, false
+	}
+
+	// 0 means "leave the member count unchanged" for the driver.
+	total := 0
+
+	if raw := r.Form.Get("NewReplicaCount"); raw != "" {
+		replicas, err := parseNodeCount("NewReplicaCount", raw)
+		if err != nil {
+			writeErr(w, err)
+			return replicationGroupXML{}, false
+		}
+
+		// Total member clusters = the primary plus the requested replicas.
+		total = replicas + 1
+	}
+
+	rg, err := store.ModifyReplicationGroup(r.Context(), r.Form.Get("ReplicationGroupId"), total)
+	if err != nil {
+		writeErr(w, err)
+		return replicationGroupXML{}, false
+	}
+
+	return toReplicationGroupXML(rg), true
+}
+
+func (h *Handler) increaseReplicaCount(w http.ResponseWriter, r *http.Request) {
+	rg, ok := h.applyReplicaCount(w, r)
+	if !ok {
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, increaseReplicaCountResponse{
+		Xmlns:    Namespace,
+		Result:   replicationGroupResult{ReplicationGroup: rg},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+func (h *Handler) decreaseReplicaCount(w http.ResponseWriter, r *http.Request) {
+	rg, ok := h.applyReplicaCount(w, r)
+	if !ok {
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, decreaseReplicaCountResponse{
+		Xmlns:    Namespace,
+		Result:   replicationGroupResult{ReplicationGroup: rg},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
