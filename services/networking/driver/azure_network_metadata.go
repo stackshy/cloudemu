@@ -96,6 +96,11 @@ type AzureRouteTableMetadata struct {
 	Location string
 	Routes   []AzureRoute
 	Tags     map[string]string
+	// DisableBgpRoutePropagation is Microsoft.Network's
+	// disableBgpRoutePropagation flag (default false). Kept as a pointer so an
+	// explicit false round-trips distinctly from "unset" and a repeat PUT that
+	// omits it does not silently flip the stored value.
+	DisableBgpRoutePropagation *bool
 }
 
 // Azure virtual-network peering states, matching Microsoft.Network's
@@ -192,6 +197,17 @@ type AzureNetworkMetadata interface {
 	// DeleteAzureRouteTableMetadata drops the stored metadata for id (called when
 	// the route table is deleted).
 	DeleteAzureRouteTableMetadata(ctx context.Context, id string)
+	// UpsertAzureRoute creates or replaces a single route by name in the route
+	// table with the given driver id, via an atomic read-modify-write on the
+	// stored metadata that leaves every sibling route (and the table's other
+	// fields) untouched — the routes sub-resource CRUD's (azurerm_route)
+	// mutation. Returns NotFound when no route table has that id.
+	UpsertAzureRoute(ctx context.Context, id string, route AzureRoute) (AzureRouteTableMetadata, error)
+	// DeleteAzureRoute removes a single route by name from the route table with
+	// the given driver id via an atomic read-modify-write, leaving every sibling
+	// route untouched. Returns NotFound when the route table or the route is
+	// missing.
+	DeleteAzureRoute(ctx context.Context, id, routeName string) error
 
 	// UpdateAzureNATGateway re-applies the mutable fields of an existing NAT
 	// gateway (its bound public-IP allocation and tags), keyed by its id, so a

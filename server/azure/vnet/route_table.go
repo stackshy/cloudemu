@@ -23,6 +23,17 @@ func (h *Handler) routeRouteTable(w http.ResponseWriter, r *http.Request, rp azu
 		return
 	}
 
+	// Route sub-resource (RoutesClient / azurerm_route):
+	// SubResource="routes", SubResourceName="{routeName}". Routed before the
+	// whole-route-table method switch below so a standalone route PUT/GET/DELETE
+	// never hits createRouteTable/getRouteTable/deleteRouteTable, which are scoped
+	// to rp.ResourceName (the route table's own name) — without this a route
+	// DELETE deletes the entire route table and a route PUT wipes its route list.
+	if rp.SubResource == subResRoutes {
+		h.routeRoute(w, r, rp)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createRouteTable(w, r, rp)
@@ -50,6 +61,14 @@ func (h *Handler) createRouteTable(w http.ResponseWriter, r *http.Request, rp az
 		return
 	}
 
+	azRoutes := toAzureRoutes(req.Properties.Routes)
+	for i := range azRoutes {
+		if verr := validateAzureRoute(azRoutes[i]); verr != nil {
+			azurearm.WriteCErr(w, verr)
+			return
+		}
+	}
+
 	info, err := h.upsertRouteTable(r.Context(), rp.ResourceGroup, rp.ResourceName)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -63,9 +82,10 @@ func (h *Handler) createRouteTable(w http.ResponseWriter, r *http.Request, rp az
 
 	if meta, ok := h.azureMeta(); ok {
 		_ = meta.PutAzureRouteTableMetadata(r.Context(), info.ID, netdriver.AzureRouteTableMetadata{
-			Location: loc,
-			Routes:   toAzureRoutes(req.Properties.Routes),
-			Tags:     req.Tags,
+			Location:                   loc,
+			Routes:                     azRoutes,
+			Tags:                       req.Tags,
+			DisableBgpRoutePropagation: req.Properties.DisableBgpRoutePropagation,
 		})
 	}
 
@@ -247,8 +267,9 @@ func (h *Handler) routeTableResponse(ctx context.Context, info *netdriver.RouteT
 	id := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, typeRouteTable, rp.ResourceName)
 
 	var (
-		routes []route
-		tags   map[string]string
+		routes     []route
+		tags       map[string]string
+		disableBGP bool
 	)
 
 	if meta, ok := h.azureMeta(); ok {
@@ -259,6 +280,10 @@ func (h *Handler) routeTableResponse(ctx context.Context, info *netdriver.RouteT
 
 			routes = fromAzureRoutes(id, md.Routes)
 			tags = md.Tags
+
+			if md.DisableBgpRoutePropagation != nil {
+				disableBGP = *md.DisableBgpRoutePropagation
+			}
 		}
 	}
 
@@ -274,9 +299,10 @@ func (h *Handler) routeTableResponse(ctx context.Context, info *netdriver.RouteT
 		Etag:     etagOf(id),
 		Tags:     tags,
 		Properties: routeTableResponseProps{
-			ProvisioningState: provisioningSucceeded,
-			Routes:            routes,
-			Subnets:           h.routeTableAssociatedSubnets(ctx, id),
+			ProvisioningState:          provisioningSucceeded,
+			DisableBgpRoutePropagation: disableBGP,
+			Routes:                     routes,
+			Subnets:                    h.routeTableAssociatedSubnets(ctx, id),
 		},
 	}
 }

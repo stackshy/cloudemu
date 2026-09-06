@@ -173,6 +173,81 @@ func (m *Mock) DeleteAzureRouteTableMetadata(_ context.Context, id string) {
 	m.azureRouteTableMeta.Delete(id)
 }
 
+// UpsertAzureRoute creates or replaces a single route by name via an atomic
+// read-modify-write on the stored route-table metadata, leaving every sibling
+// route (and the table's other fields) untouched — the routes sub-resource
+// CRUD's mutation.
+//
+//nolint:dupl // parallels UpsertAzureNSGRule: the same COW clone-and-mutate-one-subresource shape over a distinct metadata type by design.
+func (m *Mock) UpsertAzureRoute(_ context.Context, id string, route driver.AzureRoute) (driver.AzureRouteTableMetadata, error) {
+	var updated driver.AzureRouteTableMetadata
+
+	ok := m.azureRouteTableMeta.Update(id, func(meta driver.AzureRouteTableMetadata) driver.AzureRouteTableMetadata {
+		routes := append([]driver.AzureRoute(nil), meta.Routes...)
+
+		replaced := false
+
+		for i := range routes {
+			if routes[i].Name == route.Name {
+				routes[i] = route
+				replaced = true
+
+				break
+			}
+		}
+
+		if !replaced {
+			routes = append(routes, route)
+		}
+
+		meta.Routes = routes
+		updated = cloneRouteTableMeta(meta)
+
+		return meta
+	})
+	if !ok {
+		return driver.AzureRouteTableMetadata{}, cerrors.Newf(cerrors.NotFound, "route table %q not found", id)
+	}
+
+	return updated, nil
+}
+
+// DeleteAzureRoute removes a single route by name via an atomic
+// read-modify-write, leaving every sibling route untouched.
+func (m *Mock) DeleteAzureRoute(_ context.Context, id, routeName string) error {
+	routeMissing := false
+
+	ok := m.azureRouteTableMeta.Update(id, func(meta driver.AzureRouteTableMetadata) driver.AzureRouteTableMetadata {
+		idx := -1
+
+		for i := range meta.Routes {
+			if meta.Routes[i].Name == routeName {
+				idx = i
+				break
+			}
+		}
+
+		if idx == -1 {
+			routeMissing = true
+
+			return meta
+		}
+
+		meta.Routes = append(append([]driver.AzureRoute(nil), meta.Routes[:idx]...), meta.Routes[idx+1:]...)
+
+		return meta
+	})
+	if !ok {
+		return cerrors.Newf(cerrors.NotFound, "route table %q not found", id)
+	}
+
+	if routeMissing {
+		return cerrors.Newf(cerrors.NotFound, "route %q not found", routeName)
+	}
+
+	return nil
+}
+
 // cloneRouteTableMeta deep-copies the route slice and tag map so stored and
 // returned values never alias a caller's slice/map.
 func cloneRouteTableMeta(meta driver.AzureRouteTableMetadata) driver.AzureRouteTableMetadata {
@@ -183,6 +258,11 @@ func cloneRouteTableMeta(meta driver.AzureRouteTableMetadata) driver.AzureRouteT
 
 	if len(meta.Tags) > 0 {
 		out.Tags = copyTags(meta.Tags)
+	}
+
+	if meta.DisableBgpRoutePropagation != nil {
+		v := *meta.DisableBgpRoutePropagation
+		out.DisableBgpRoutePropagation = &v
 	}
 
 	return out

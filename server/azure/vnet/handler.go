@@ -107,6 +107,7 @@ const (
 	defaultLoc          = "eastus"
 	subResSubnets       = "subnets"
 	subResSecurityRules = "securityRules"
+	subResRoutes        = "routes"
 	subResVNetPeerings  = "virtualNetworkPeerings"
 	subResCheckIPAvail  = "CheckIPAddressAvailability"
 )
@@ -320,7 +321,7 @@ func (h *Handler) routeSubnet(w http.ResponseWriter, r *http.Request, rp azurear
 	}
 }
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; per-resource routers are the same method switch over a distinct type by design
 func (h *Handler) routeNSG(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	if rp.ResourceName == "" {
 		h.listNSGs(w, r, rp)

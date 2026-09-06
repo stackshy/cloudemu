@@ -118,6 +118,7 @@ AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
 | --- | --- |
 | `DeleteAzureNSGMetadata` |  |
 | `DeleteAzureNSGRule` | DeleteAzureNSGRule removes a single custom security rule by name, leaving |
+| `DeleteAzureRoute` | DeleteAzureRoute removes a single route by name from the route table with |
 | `DeleteAzureRouteTableMetadata` | DeleteAzureRouteTableMetadata drops the stored metadata for id (called when |
 | `DeleteAzureVNetMetadata` |  |
 | `DeleteAzureVNetPeering` | DeleteAzureVNetPeering removes a single peering by name, leaving every |
@@ -133,6 +134,7 @@ AzureNetworkMetadata is an OPTIONAL, type-asserted capability. The Azure
 | `UpdateAzureNATGateway` | UpdateAzureNATGateway re-applies the mutable fields of an existing NAT |
 | `UpdateAzurePublicIP` | UpdateAzurePublicIP overwrites the mutable fields of an existing public IP |
 | `UpsertAzureNSGRule` | UpsertAzureNSGRule creates or replaces a single custom security rule by |
+| `UpsertAzureRoute` | UpsertAzureRoute creates or replaces a single route by name in the route |
 | `UpsertAzureVNetPeering` | UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings |
 
 ### AzureNetworkTagReplacer
