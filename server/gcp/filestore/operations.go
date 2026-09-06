@@ -110,7 +110,11 @@ func (h *Handler) writeDoneOperation(w http.ResponseWriter, rt route, m *instanc
 	}
 
 	name := operationName(rt.project, rt.location, h.store.newOpID())
-	h.ops.Register(name, raw)
+	// Register the response as RawMessage: the shared LRO handler marshals a
+	// plain []byte as a base64 string, which would garble a client that polls
+	// the operation (SDK/gcloud wait loops) rather than reading the inline
+	// response.
+	h.ops.Register(name, json.RawMessage(raw))
 
 	gcprest.WriteJSON(w, http.StatusOK, operationJSON{Name: name, Done: true, Response: raw})
 }

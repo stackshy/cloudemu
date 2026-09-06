@@ -72,6 +72,53 @@ type networkModel struct {
 	connectMode     string
 }
 
+// clone returns a deep copy of the instance so callers can read it (e.g.
+// marshal to JSON) after the store lock is released without racing a concurrent
+// patch that mutates the stored model's maps and slices in place.
+func (m *instanceModel) clone() *instanceModel {
+	cp := *m
+
+	if m.labels != nil {
+		cp.labels = make(map[string]string, len(m.labels))
+
+		for k, v := range m.labels {
+			cp.labels[k] = v
+		}
+	}
+
+	if m.fileShares != nil {
+		cp.fileShares = make([]fileShareModel, len(m.fileShares))
+
+		for i, fs := range m.fileShares {
+			fsCopy := fs
+			if fs.nfsExportOptions != nil {
+				fsCopy.nfsExportOptions = make([]nfsExportModel, len(fs.nfsExportOptions))
+
+				for j, opt := range fs.nfsExportOptions {
+					optCopy := opt
+					optCopy.ipRanges = append([]string(nil), opt.ipRanges...)
+					fsCopy.nfsExportOptions[j] = optCopy
+				}
+			}
+
+			cp.fileShares[i] = fsCopy
+		}
+	}
+
+	if m.networks != nil {
+		cp.networks = make([]networkModel, len(m.networks))
+
+		for i, n := range m.networks {
+			nCopy := n
+			nCopy.modes = append([]string(nil), n.modes...)
+			nCopy.ipAddresses = append([]string(nil), n.ipAddresses...)
+			cp.networks[i] = nCopy
+		}
+	}
+
+	return &cp
+}
+
 // store is the in-memory Filestore control-plane backing state. Filestore has
 // no portable driver in cloudemu (the emulator models no NFS data plane), so —
 // like Cloud KMS, project IAM and Cloud Billing — the handler owns its state
@@ -149,7 +196,7 @@ func (s *store) get(name string) (*instanceModel, error) {
 		return nil, cerrors.Newf(cerrors.NotFound, "instance %s not found", name)
 	}
 
-	return m, nil
+	return m.clone(), nil
 }
 
 func (s *store) list(project, location string) []*instanceModel {
@@ -162,7 +209,7 @@ func (s *store) list(project, location string) []*instanceModel {
 
 	for name, m := range s.instances {
 		if len(name) >= len(prefix) && name[:len(prefix)] == prefix {
-			out = append(out, m)
+			out = append(out, m.clone())
 		}
 	}
 
@@ -194,7 +241,7 @@ func (s *store) patch(name string, upd *instancePatch) (*instanceModel, error) {
 		m.fileShares = upd.fileShares
 	}
 
-	return m, nil
+	return m.clone(), nil
 }
 
 func (s *store) delete(name string) error {

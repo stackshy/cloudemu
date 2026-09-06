@@ -2,8 +2,10 @@ package filestore_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
@@ -151,6 +153,107 @@ func TestSDKFilestoreLifecycle(t *testing.T) {
 	if !errors.As(err, &gerr) || gerr.Code != 404 {
 		t.Fatalf("Get after delete: got %v, want 404", err)
 	}
+}
+
+// TestSDKFilestoreOperationPollReturnsInstance guards that a client which POLLS
+// the create operation (rather than reading the inline response) receives the
+// Instance as a JSON object, not a base64-encoded string. The shared LRO handler
+// marshals a registered []byte as base64, so the response must be registered as
+// a json.RawMessage.
+func TestSDKFilestoreOperationPollReturnsInstance(t *testing.T) {
+	ts := newServer(t)
+	svc := newFileService(t, ts)
+	ctx := context.Background()
+
+	create := &file.Instance{
+		Tier:       "BASIC_HDD",
+		FileShares: []*file.FileShareConfig{{Name: "share1", CapacityGb: 1024}},
+		Networks:   []*file.NetworkConfig{{Network: "default", Modes: []string{"MODE_IPV4"}}},
+	}
+
+	op, err := svc.Projects.Locations.Instances.Create(parent(), create).
+		InstanceId("poll1").Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	polled, err := svc.Projects.Locations.Operations.Get(op.Name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Operations.Get: %v", err)
+	}
+
+	if !polled.Done {
+		t.Fatalf("polled operation not done: %+v", polled)
+	}
+
+	// The polled response must decode into an Instance — a base64 string would
+	// fail here (json: cannot unmarshal string into ...Instance).
+	var inst file.Instance
+	if err := json.Unmarshal(polled.Response, &inst); err != nil {
+		t.Fatalf("polled response is not an Instance object (base64-garbled?): %v; raw=%s", err, polled.Response)
+	}
+
+	if inst.Name != fsName("poll1") || inst.Tier != "BASIC_HDD" {
+		t.Fatalf("polled instance = %q/%q, want %q/BASIC_HDD", inst.Name, inst.Tier, fsName("poll1"))
+	}
+}
+
+// TestFilestoreConcurrentGetPatch guards that reads return deep copies: under
+// -race, concurrent Get and Patch on the same instance must not race on the
+// stored model's maps/slices. Pre-fix (reads returned shared pointers) this
+// reproduced a DATA RACE.
+func TestFilestoreConcurrentGetPatch(t *testing.T) {
+	ts := newServer(t)
+	svc := newFileService(t, ts)
+	ctx := context.Background()
+
+	create := &file.Instance{
+		Tier:       "BASIC_HDD",
+		Labels:     map[string]string{"env": "test"},
+		FileShares: []*file.FileShareConfig{{Name: "share1", CapacityGb: 1024}},
+		Networks:   []*file.NetworkConfig{{Network: "default", Modes: []string{"MODE_IPV4"}}},
+	}
+
+	if _, err := svc.Projects.Locations.Instances.Create(parent(), create).
+		InstanceId("race1").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	name := fsName("race1")
+
+	var wg sync.WaitGroup
+
+	for range 4 {
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			for range 20 {
+				if _, err := svc.Projects.Locations.Instances.Get(name).Context(ctx).Do(); err != nil {
+					t.Errorf("Get: %v", err)
+
+					return
+				}
+			}
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			for range 20 {
+				patch := &file.Instance{Labels: map[string]string{"env": "prod"}}
+				if _, err := svc.Projects.Locations.Instances.Patch(name, patch).
+					UpdateMask("labels").Context(ctx).Do(); err != nil {
+					t.Errorf("Patch: %v", err)
+
+					return
+				}
+			}
+		}()
+	}
+
+	wg.Wait()
 }
 
 func assertInstance(t *testing.T, got *file.Instance) {
