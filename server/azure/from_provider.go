@@ -40,6 +40,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		AKS:                p.AKS,
 		ManagedIdentity:    p.ManagedIdentity,
 		LoadTesting:        p.LoadTesting,
+		SignalR:            p.SignalR,
 		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,
 		IAM:                p.IAM,

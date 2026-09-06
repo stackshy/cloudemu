@@ -52,6 +52,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [SQL](./sql.md) | — (provider-native) | 21 |
 | [SQLVirtualMachine](./sqlvirtualmachine.md) | — (provider-native) | 9 |
 | [Search](./search.md) | `azuresearch` | 53 |
+| [SignalR](./signalr.md) | — (provider-native) | 10 |
 | [Snapshots](./snapshots.md) | — (provider-native) | 5 |
 | [Sshpublickeys](./sshpublickeys.md) | — (provider-native) | 7 |
 | [Storageaccount](./storageaccount.md) | — (provider-native) | 10 |

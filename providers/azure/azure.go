@@ -41,6 +41,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/privatedns"
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
+	"github.com/stackshy/cloudemu/v2/providers/azure/signalr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/sql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/sqlvirtualmachine"
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
@@ -171,6 +172,7 @@ type Provider struct {
 	SQLVirtualMachine  *sqlvirtualmachine.Mock
 	ContainerApps      *containerapps.Mock
 	LoadTesting        *loadtesting.Mock
+	SignalR            *signalr.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -235,6 +237,7 @@ func New(opts ...config.Option) *Provider {
 		SQLVirtualMachine:  sqlvirtualmachine.New(o),
 		ContainerApps:      containerapps.New(o),
 		LoadTesting:        loadtesting.New(o),
+		SignalR:            signalr.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -271,6 +274,7 @@ func New(opts ...config.Option) *Provider {
 				sqlVirtualMachineDiscovery{p.SQLVirtualMachine},
 				containerAppsDiscovery{p.ContainerApps},
 				loadTestDiscovery{p.LoadTesting},
+				signalRDiscovery{p.SignalR},
 			},
 		},
 	)
