@@ -5,8 +5,13 @@ package disks
 // fields our mock exercises.
 
 type diskRequest struct {
-	Location   string            `json:"location"`
-	SKU        *diskSKU          `json:"sku,omitempty"`
+	Location string   `json:"location"`
+	SKU      *diskSKU `json:"sku,omitempty"`
+	// Zones is the (single-element) availability-zone list a zonal managed disk
+	// is pinned to. Like location it is a TOP-LEVEL Disk field, not a property,
+	// so the properties-only echo overlay never preserves it — the handler must
+	// round-trip it explicitly or azurerm_managed_disk's zone drifts every plan.
+	Zones      []string          `json:"zones,omitempty"`
 	Tags       map[string]string `json:"tags,omitempty"`
 	Properties diskRequestProps  `json:"properties"`
 }
@@ -36,6 +41,9 @@ type diskResponse struct {
 	Type     string   `json:"type"`
 	Location string   `json:"location"`
 	SKU      *diskSKU `json:"sku,omitempty"`
+	// Zones echoes the disk's availability zone (a top-level Disk field). Empty
+	// for a regional (non-zonal) disk; a zonal disk carries a single entry.
+	Zones []string `json:"zones,omitempty"`
 	// ManagedBy is the ARM resource ID of the VM the disk is attached to
 	// (armcompute.Disk.ManagedBy is a top-level, read-only field — not under
 	// properties). Empty when the disk is unattached.

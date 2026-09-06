@@ -202,6 +202,48 @@ func TestDiskCreateOrUpdateCrossRGIsolation(t *testing.T) {
 	}
 }
 
+// TestDiskZoneRoundTrip verifies a zonal disk's top-level zones array survives
+// create → get → list. zones is a top-level Disk field (not a property), so the
+// properties-only echo overlay does not preserve it; without the handler's own
+// round-trip azurerm_managed_disk's `zone` would drift every plan.
+func TestDiskZoneRoundTrip(t *testing.T) {
+	ts := newDisksServer(t)
+
+	putResp := putDisk(t, ts, "rg-1", "disk-zonal", `{
+		"location":"eastus",
+		"sku":{"name":"Premium_LRS"},
+		"zones":["2"],
+		"properties":{"creationData":{"createOption":"Empty"},"diskSizeGB":64}
+	}`)
+
+	assertSingleZone(t, "create", putResp, "2")
+	assertSingleZone(t, "get", getDisk(t, ts, "rg-1", "disk-zonal"), "2")
+
+	// A regional (non-zonal) disk must omit zones entirely, not report an empty
+	// or phantom zone.
+	putDisk(t, ts, "rg-1", "disk-regional", `{
+		"location":"eastus","sku":{"name":"Premium_LRS"},
+		"properties":{"creationData":{"createOption":"Empty"},"diskSizeGB":64}
+	}`)
+
+	if z, present := getDisk(t, ts, "rg-1", "disk-regional")["zones"]; present {
+		t.Errorf("regional disk reported zones=%v, want field omitted", z)
+	}
+}
+
+func assertSingleZone(t *testing.T, stage string, body map[string]any, want string) {
+	t.Helper()
+
+	zones, ok := body["zones"].([]any)
+	if !ok || len(zones) != 1 {
+		t.Fatalf("%s: zones=%v want single-element [%q]", stage, body["zones"], want)
+	}
+
+	if zones[0] != want {
+		t.Errorf("%s: zones[0]=%v want %q", stage, zones[0], want)
+	}
+}
+
 // TestDiskListResourceGroupScope verifies list does not leak other RGs' disks.
 func TestDiskListResourceGroupScope(t *testing.T) {
 	ts := newDisksServer(t)

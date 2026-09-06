@@ -254,13 +254,14 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	}
 
 	cfg := computedriver.VolumeConfig{
-		Size:       size,
-		VolumeType: skuName(req.SKU),
-		IOPS:       req.Properties.DiskIOPSReadWrite,
-		Throughput: req.Properties.DiskMBpsReadWrite,
-		Tier:       diskTier(req.Properties.Tier, skuTier(req.SKU)),
-		Location:   req.Location,
-		Tags:       mergeDiskTags(req.Tags, rp.ResourceName, rp.ResourceGroup, createOption, sourceID),
+		Size:             size,
+		VolumeType:       skuName(req.SKU),
+		IOPS:             req.Properties.DiskIOPSReadWrite,
+		Throughput:       req.Properties.DiskMBpsReadWrite,
+		Tier:             diskTier(req.Properties.Tier, skuTier(req.SKU)),
+		Location:         req.Location,
+		AvailabilityZone: firstZone(req.Zones),
+		Tags:             mergeDiskTags(req.Tags, rp.ResourceName, rp.ResourceGroup, createOption, sourceID),
 	}
 
 	// ARM CreateOrUpdate is idempotent: an existing disk is updated in place —
@@ -502,6 +503,7 @@ func (h *Handler) toDiskResponse(
 		Name:      name,
 		Type:      providerName + "/" + resourceType,
 		Location:  location,
+		Zones:     zonesFor(vol.AvailabilityZone),
 		SKU:       sku,
 		ManagedBy: h.managedByID(ctx, rp.Subscription, vol.AttachedTo),
 		Tags:      stripInternalDiskTags(vol.Tags),
@@ -573,6 +575,27 @@ func diskStateFor(state string) string {
 	}
 
 	return diskStateUnattached
+}
+
+// firstZone returns the single availability zone a zonal disk requests, or ""
+// when the request is regional. Azure managed disks are pinned to at most one
+// zone, so only the first entry is meaningful.
+func firstZone(zones []string) string {
+	if len(zones) == 0 {
+		return ""
+	}
+
+	return zones[0]
+}
+
+// zonesFor renders the top-level zones array for a disk: a single-element list
+// for a zonal disk, or nil (omitted) for a regional one.
+func zonesFor(zone string) []string {
+	if zone == "" {
+		return nil
+	}
+
+	return []string{zone}
 }
 
 func skuName(s *diskSKU) string {
