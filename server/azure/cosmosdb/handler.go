@@ -309,6 +309,13 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
+	// A root "GET /?comp=list" is a Storage service call (list queues / list
+	// containers), not a Cosmos account probe (which carries no query). Decline
+	// it so the Queue and Blob handlers, registered after this one, serve it.
+	if rest == "/" && r.URL.Query().Get("comp") == "list" {
+		return false
+	}
+
 	return rest == "/" || rest == "/dbs" || strings.HasPrefix(rest, "/dbs/") ||
 		rest == offersPath || strings.HasPrefix(rest, offersPathPrefix)
 }

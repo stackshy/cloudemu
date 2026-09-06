@@ -199,6 +199,47 @@ func TestQueueStoragePlaneAliveOnFullServer(t *testing.T) {
 	}
 }
 
+// TestListQueuesRoutesToQueueHandlerOnFullServer guards the root-path collision
+// between "GET /?comp=list" (List Queues) and the Cosmos DB data-plane account
+// probe ("GET /"). The Cosmos handler is registered long before the Queue
+// handler, and its account probe also lives at the root path; without an explicit
+// carve-out it swallows List Queues and returns a Cosmos account JSON document,
+// so azqueue's list pager sees no queues. This asserts the real azqueue list
+// pager finds the queues it created on the full server.
+func TestListQueuesRoutesToQueueHandlerOnFullServer(t *testing.T) {
+	ts := newFullAzureServer(t)
+	ctx := context.Background()
+
+	createStorageQueue(t, ts, "alpha")
+	createStorageQueue(t, ts, "beta")
+
+	svc, err := azqueue.NewServiceClientWithNoCredential(ts.URL+"/",
+		&azqueue.ClientOptions{ClientOptions: anonOpts(ts)})
+	if err != nil {
+		t.Fatalf("new service client: %v", err)
+	}
+
+	seen := map[string]bool{}
+
+	pager := svc.NewListQueuesPager(nil)
+	for pager.More() {
+		page, err := pager.NextPage(ctx)
+		if err != nil {
+			t.Fatalf("ListQueues: %v", err)
+		}
+
+		for _, q := range page.Queues {
+			if q.Name != nil {
+				seen[*q.Name] = true
+			}
+		}
+	}
+
+	if !seen["alpha"] || !seen["beta"] {
+		t.Fatalf("List Queues on the full server did not return both queues: %v", seen)
+	}
+}
+
 // TestServiceBusUnaffectedOnFullServer confirms a Service Bus flat-queue
 // send/receive round-trip still works end-to-end on the full server.
 func TestServiceBusUnaffectedOnFullServer(t *testing.T) {

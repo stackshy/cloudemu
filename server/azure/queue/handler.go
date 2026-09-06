@@ -397,10 +397,10 @@ func (h *Handler) enqueue(w http.ResponseWriter, r *http.Request, queue string) 
 	now := time.Now().UTC()
 	resp := messagesList{Messages: []messageXML{{
 		MessageID:       out.MessageID,
-		InsertionTime:   now.Format(time.RFC1123),
-		ExpirationTime:  displayExpiry(out.ExpiresAt).UTC().Format(time.RFC1123),
+		InsertionTime:   now.Format(http.TimeFormat),
+		ExpirationTime:  displayExpiry(out.ExpiresAt).UTC().Format(http.TimeFormat),
 		PopReceipt:      out.PopReceipt,
-		TimeNextVisible: now.Add(time.Duration(visTimeout) * time.Second).Format(time.RFC1123),
+		TimeNextVisible: now.Add(time.Duration(visTimeout) * time.Second).Format(http.TimeFormat),
 	}}}
 
 	writeXML(w, http.StatusCreated, resp)
@@ -436,15 +436,15 @@ func (h *Handler) dequeue(w http.ResponseWriter, r *http.Request, queue string) 
 		effectiveVis = defaultVisibilityTimeoutSeconds
 	}
 
-	timeNextVisible := now.Add(time.Duration(effectiveVis) * time.Second).Format(time.RFC1123)
+	timeNextVisible := now.Add(time.Duration(effectiveVis) * time.Second).Format(http.TimeFormat)
 	out := messagesList{}
 
 	for i := range msgs {
 		m := &msgs[i]
 		out.Messages = append(out.Messages, messageXML{
 			MessageID:       m.MessageID,
-			InsertionTime:   m.InsertedAt.UTC().Format(time.RFC1123),
-			ExpirationTime:  displayExpiry(m.ExpiresAt).UTC().Format(time.RFC1123),
+			InsertionTime:   m.InsertedAt.UTC().Format(http.TimeFormat),
+			ExpirationTime:  displayExpiry(m.ExpiresAt).UTC().Format(http.TimeFormat),
 			PopReceipt:      m.ReceiptHandle,
 			TimeNextVisible: timeNextVisible,
 			DequeueCount:    int64(m.ReceiveCount),
@@ -500,8 +500,8 @@ func (h *Handler) peek(w http.ResponseWriter, r *http.Request, queue string) {
 	for _, m := range msgs {
 		out.Messages = append(out.Messages, peekMessageXML{
 			MessageID:      m.MessageID,
-			InsertionTime:  m.InsertedAt.UTC().Format(time.RFC1123),
-			ExpirationTime: displayExpiry(m.ExpiresAt).UTC().Format(time.RFC1123),
+			InsertionTime:  m.InsertedAt.UTC().Format(http.TimeFormat),
+			ExpirationTime: displayExpiry(m.ExpiresAt).UTC().Format(http.TimeFormat),
 			DequeueCount:   int64(m.ReceiveCount),
 			MessageText:    m.Body,
 		})
@@ -617,7 +617,7 @@ func (h *Handler) updateMessage(w http.ResponseWriter, r *http.Request, queue, m
 	}
 
 	w.Header().Set("x-ms-popreceipt", res.PopReceipt)
-	w.Header().Set("x-ms-time-next-visible", res.TimeNextVisible.UTC().Format(time.RFC1123))
+	w.Header().Set("x-ms-time-next-visible", res.TimeNextVisible.UTC().Format(http.TimeFormat))
 	w.WriteHeader(http.StatusNoContent)
 }
 
