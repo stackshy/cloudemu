@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
 	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
+	appgatewaysrv "github.com/stackshy/cloudemu/v2/server/azure/applicationgateway"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
 	containerappssrv "github.com/stackshy/cloudemu/v2/server/azure/containerapps"
@@ -75,6 +76,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/tenants"
 	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/server/azure/vnet"
+	agdriver "github.com/stackshy/cloudemu/v2/services/applicationgateway/driver"
 	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
 	azuresearchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
@@ -160,6 +162,10 @@ type Drivers struct {
 	// LB serves the Azure Load Balancer (Microsoft.Network/loadBalancers) ARM
 	// API against the loadbalancer driver.
 	LB lbdriver.LoadBalancer
+	// AppGateway serves the Azure Application Gateway
+	// (Microsoft.Network/applicationGateways) ARM API against the
+	// applicationgateway driver.
+	AppGateway agdriver.AzureApplicationGateways
 	// EventGrid serves the Azure Event Grid (Microsoft.EventGrid/topics) ARM API
 	// against the eventbus driver, mapping topics to event buses.
 	EventGrid ebdriver.EventBus
@@ -294,6 +300,7 @@ func New(d Drivers) http.Handler {
 		vmHandler      *virtualmachines.Handler
 		storageHandler *storageaccountsrv.Handler
 		lbHandler      *lbsrv.Handler
+		appGwHandler   *appgatewaysrv.Handler
 		rgPurgers      []resourcegroups.ResourceGroupPurger
 	)
 
@@ -322,6 +329,13 @@ func New(d Drivers) http.Handler {
 		}
 
 		rgPurgers = append(rgPurgers, lbHandler)
+	}
+
+	// Application Gateway is a resource-group-scoped Microsoft.Network resource,
+	// so its handler joins the purge cascade. Registered further below.
+	if d.AppGateway != nil {
+		appGwHandler = appgatewaysrv.New(d.AppGateway)
+		rgPurgers = append(rgPurgers, appGwHandler)
 	}
 
 	if d.BlobStorage != nil {
@@ -464,6 +478,14 @@ func New(d Drivers) http.Handler {
 	// unconstrained. Registered before the BlobStorage fallback.
 	if lbHandler != nil {
 		srv.Register(lbHandler)
+	}
+
+	// Application Gateway shares the Microsoft.Network ARM provider with the
+	// network / DNS / load-balancer handlers above but claims a disjoint resource
+	// type (applicationGateways), so registration order relative to them is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if appGwHandler != nil {
+		srv.Register(appGwHandler)
 	}
 
 	// Event Grid claims Microsoft.EventGrid/topics — a distinct ARM provider

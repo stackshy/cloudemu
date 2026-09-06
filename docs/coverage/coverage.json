@@ -288,6 +288,31 @@
     }
   },
   {
+    "service": "applicationgateway",
+    "interface": "AzureApplicationGateways",
+    "operations": [
+      {
+        "name": "CreateOrUpdateAzureApplicationGateway",
+        "doc": "CreateOrUpdateAzureApplicationGateway stores gw as a full replace and"
+      },
+      {
+        "name": "DeleteAzureApplicationGateway",
+        "doc": "DeleteAzureApplicationGateway removes the gateway, returning NotFound if it"
+      },
+      {
+        "name": "GetAzureApplicationGateway",
+        "doc": "GetAzureApplicationGateway returns the gateway identified by"
+      },
+      {
+        "name": "ListAzureApplicationGateways",
+        "doc": "ListAzureApplicationGateways returns the gateways in rg, or all when rg is"
+      }
+    ],
+    "providers": {
+      "azure": "AppGateway"
+    }
+  },
+  {
     "service": "azureai",
     "interface": "AzureAI",
     "operations": [
