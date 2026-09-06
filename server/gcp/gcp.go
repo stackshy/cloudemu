@@ -28,6 +28,7 @@ import (
 	dataprocsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataproc"
 	"github.com/stackshy/cloudemu/v2/server/gcp/eventarc"
 	fcmsrv "github.com/stackshy/cloudemu/v2/server/gcp/fcm"
+	filestoresrv "github.com/stackshy/cloudemu/v2/server/gcp/filestore"
 	"github.com/stackshy/cloudemu/v2/server/gcp/firestore"
 	"github.com/stackshy/cloudemu/v2/server/gcp/gcs"
 	"github.com/stackshy/cloudemu/v2/server/gcp/gke"
@@ -443,11 +444,29 @@ func New(d Drivers) *server.Server {
 		srv.Register(cloudloggingsrv.New(d.CloudLogging))
 	}
 
+	// Filestore (file.googleapis.com) shares the EXACT same path grammar as
+	// Memorystore — /v1/projects/{p}/locations/{l}/instances[/{i}] — on a
+	// different real host, and a custom-endpoint client sends the emulator's own
+	// Host, so the two cannot be told apart by URL or Host. Filestore registers
+	// BEFORE Memorystore and its Matches claims only genuinely-Filestore traffic
+	// (a create body carrying fileShares/networks, or an item/list this store
+	// owns), letting every Memorystore request fall through — the Spanner/Cloud
+	// SQL content+ownership pattern. It has no portable driver (the emulator
+	// models no NFS data plane); like Cloud KMS the handler owns its own store,
+	// so it is always registered. d.Clock (may be nil) makes createTime
+	// deterministic under a FakeClock. Registered before Firestore's permissive
+	// /v1/projects/ prefix.
+	filestoreH := filestoresrv.New(d.Clock)
+	filestoreH.SetOperationRegistry(opsReg)
+	srv.Register(filestoreH)
+
 	// Memorystore matches /v1/projects/{p}/locations/{l}/{instances|operations}
 	// — its resource-type guard is disjoint from GKE (clusters), Cloud Functions
 	// (functions), Vertex AI, and the rest of the /v1/projects/ family, so
 	// registration order among them is unconstrained. Registered before
 	// Firestore's permissive /v1/projects/ prefix so its paths aren't swallowed.
+	// Filestore (above) shares this exact instances path and is registered ahead
+	// of it; its selective Matches lets Memorystore traffic fall through here.
 	if d.Memorystore != nil {
 		msH := memorystoresrv.New(d.Memorystore)
 		msH.SetOperationRegistry(opsReg)

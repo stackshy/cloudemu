@@ -1017,7 +1017,9 @@
         "doc": "ListFirewallPolicies returns the policies in rg, or all when rg is empty"
       }
     ],
-    "providers": {}
+    "providers": {
+      "azure": "Firewall"
+    }
   },
   {
     "service": "azuresearch",
@@ -4650,10 +4652,22 @@
         "name": "AddJobFlowSteps"
       },
       {
+        "name": "AddTags"
+      },
+      {
         "name": "CancelSteps"
       },
       {
+        "name": "CreateSecurityConfiguration"
+      },
+      {
+        "name": "DeleteSecurityConfiguration"
+      },
+      {
         "name": "DescribeCluster"
+      },
+      {
+        "name": "DescribeSecurityConfiguration"
       },
       {
         "name": "DescribeStep"
@@ -4671,10 +4685,16 @@
         "name": "ListInstances"
       },
       {
+        "name": "ListSecurityConfigurations"
+      },
+      {
         "name": "ListSteps"
       },
       {
         "name": "ModifyInstanceGroups"
+      },
+      {
+        "name": "RemoveTags"
       },
       {
         "name": "RunJobFlow"
@@ -4804,44 +4824,27 @@
     }
   },
   {
-    "service": "firewall",
+    "service": "filestore",
     "interface": "provider-native",
     "operations": [
       {
-        "name": "CreateOrUpdateAzureFirewall",
-        "doc": "CreateOrUpdateAzureFirewall stores fw as a full replace and reports whether"
+        "name": "CreateInstance"
       },
       {
-        "name": "CreateOrUpdateFirewallPolicy",
-        "doc": "CreateOrUpdateFirewallPolicy stores pol as a full replace and reports"
+        "name": "DeleteInstance"
       },
       {
-        "name": "DeleteAzureFirewall",
-        "doc": "DeleteAzureFirewall removes the firewall, returning NotFound if it does not"
+        "name": "GetInstance"
       },
       {
-        "name": "DeleteFirewallPolicy",
-        "doc": "DeleteFirewallPolicy removes the policy, returning NotFound if it does not"
+        "name": "ListInstances"
       },
       {
-        "name": "GetAzureFirewall",
-        "doc": "GetAzureFirewall returns the firewall identified by (resourceGroup, name),"
-      },
-      {
-        "name": "GetFirewallPolicy",
-        "doc": "GetFirewallPolicy returns the policy identified by (resourceGroup, name),"
-      },
-      {
-        "name": "ListAzureFirewalls",
-        "doc": "ListAzureFirewalls returns the firewalls in rg, or all when rg is empty"
-      },
-      {
-        "name": "ListFirewallPolicies",
-        "doc": "ListFirewallPolicies returns the policies in rg, or all when rg is empty"
+        "name": "UpdateInstance"
       }
     ],
     "providers": {
-      "azure": "Firewall"
+      "gcp": "Filestore"
     }
   },
   {

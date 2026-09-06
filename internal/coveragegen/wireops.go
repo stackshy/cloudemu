@@ -43,9 +43,11 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"RequestServiceQuotaIncrease",
 	},
 	"aws/emr": {
-		"AddInstanceGroups", "AddJobFlowSteps", "CancelSteps", "DescribeCluster",
-		"DescribeStep", "ListBootstrapActions", "ListClusters", "ListInstanceGroups",
-		"ListInstances", "ListSteps", "ModifyInstanceGroups", "RunJobFlow",
+		"AddInstanceGroups", "AddJobFlowSteps", "AddTags", "CancelSteps",
+		"CreateSecurityConfiguration", "DeleteSecurityConfiguration", "DescribeCluster",
+		"DescribeSecurityConfiguration", "DescribeStep", "ListBootstrapActions",
+		"ListClusters", "ListInstanceGroups", "ListInstances", "ListSecurityConfigurations",
+		"ListSteps", "ModifyInstanceGroups", "RemoveTags", "RunJobFlow",
 		"TerminateJobFlows",
 	},
 	"aws/savingsplans": {
@@ -130,6 +132,9 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"gcp/cloudasset": {
 		"BatchGetAssetsHistory", "CreateFeed", "DeleteFeed", "ExportAssets", "GetFeed",
 		"GetOperation", "ListAssets", "ListFeeds", "SearchAllIamPolicies", "SearchAllResources", "UpdateFeed",
+	},
+	"gcp/filestore": {
+		"CreateInstance", "DeleteInstance", "GetInstance", "ListInstances", "UpdateInstance",
 	},
 	"gcp/lro": {
 		"GetOperation",

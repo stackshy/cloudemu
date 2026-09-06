@@ -135,6 +135,23 @@ func (s *store) fillInstances(c *cluster, g *instanceGroup, now time.Time) {
 	}
 }
 
+// masterPublicDNS returns the DNS name EMR reports for a cluster's master node,
+// taken from the first instance of the MASTER group. Clusters on a private
+// subnet report the private DNS name; the emulator always runs on private
+// addressing, so it echoes the master instance's private DNS (empty when the
+// cluster has no master instance).
+func masterPublicDNS(c *cluster) string {
+	for _, g := range c.instanceGroups {
+		if g.groupType != "MASTER" || len(g.instances) == 0 {
+			continue
+		}
+
+		return g.instances[0].privateDNS
+	}
+
+	return ""
+}
+
 // countInstances returns the total instance count across a cluster's groups.
 func countInstances(c *cluster) int {
 	total := 0
@@ -200,6 +217,12 @@ func (s *store) modifyInstanceGroups(configs []instanceGroupModifyInput) error {
 				"Instance group id '%s' is not valid.", deref(cfg.InstanceGroupID))
 		}
 
+		c := s.clusterOf(g.id)
+		if c != nil && isTerminal(c.state) {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"Instance group '%s' cannot be modified because the cluster is terminated.", g.id)
+		}
+
 		if cfg.InstanceCount == nil {
 			continue
 		}
@@ -207,7 +230,7 @@ func (s *store) modifyInstanceGroups(configs []instanceGroupModifyInput) error {
 		g.requested = *cfg.InstanceCount
 		g.running = *cfg.InstanceCount
 
-		if c := s.clusterOf(g.id); c != nil {
+		if c != nil {
 			s.fillInstances(c, g, now)
 		}
 	}
