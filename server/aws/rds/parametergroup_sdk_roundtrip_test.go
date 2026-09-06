@@ -149,6 +149,74 @@ func TestSDKRDSClusterParameterGroupLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKRDSClusterParametersSourceFilter pins that DescribeDBClusterParameters
+// honors the "Source" request filter. terraform-provider-aws reads a cluster
+// parameter group (aws_neptune_cluster_parameter_group / aws_rds_cluster_parameter_group)
+// with Source="user" and expects the engine-default set excluded — otherwise
+// every default surfaces as an unmanaged parameter block and the plan never
+// converges.
+func TestSDKRDSClusterParametersSourceFilter(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateDBClusterParameterGroup(ctx, &awsrds.CreateDBClusterParameterGroupInput{
+		DBClusterParameterGroupName: aws.String("cpg-src"),
+		DBParameterGroupFamily:      aws.String("neptune1.3"),
+		Description:                 aws.String("source filter"),
+	}); err != nil {
+		t.Fatalf("CreateDBClusterParameterGroup: %v", err)
+	}
+
+	// A brand-new group has no user-modified parameters, so Source="user" must
+	// return an empty list even though engine-defaults exist.
+	userOnly, err := client.DescribeDBClusterParameters(ctx, &awsrds.DescribeDBClusterParametersInput{
+		DBClusterParameterGroupName: aws.String("cpg-src"),
+		Source:                      aws.String("user"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeDBClusterParameters(user): %v", err)
+	}
+
+	if len(userOnly.Parameters) != 0 {
+		t.Fatalf("fresh group Source=user returned %d params, want 0", len(userOnly.Parameters))
+	}
+
+	// Modify one parameter; it becomes user-sourced and is the ONLY thing
+	// Source="user" returns.
+	if _, err := client.ModifyDBClusterParameterGroup(ctx, &awsrds.ModifyDBClusterParameterGroupInput{
+		DBClusterParameterGroupName: aws.String("cpg-src"),
+		Parameters: []awsrdstypes.Parameter{
+			{ParameterName: aws.String("max_connections"), ParameterValue: aws.String("300")},
+		},
+	}); err != nil {
+		t.Fatalf("ModifyDBClusterParameterGroup: %v", err)
+	}
+
+	userOnly, err = client.DescribeDBClusterParameters(ctx, &awsrds.DescribeDBClusterParametersInput{
+		DBClusterParameterGroupName: aws.String("cpg-src"),
+		Source:                      aws.String("user"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeDBClusterParameters(user) after modify: %v", err)
+	}
+
+	if len(userOnly.Parameters) != 1 || aws.ToString(userOnly.Parameters[0].ParameterName) != "max_connections" {
+		t.Fatalf("Source=user returned %d params, want only max_connections", len(userOnly.Parameters))
+	}
+
+	// No filter still returns the full set (engine-defaults included).
+	all, err := client.DescribeDBClusterParameters(ctx, &awsrds.DescribeDBClusterParametersInput{
+		DBClusterParameterGroupName: aws.String("cpg-src"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeDBClusterParameters(all): %v", err)
+	}
+
+	if len(all.Parameters) <= len(userOnly.Parameters) {
+		t.Fatalf("unfiltered describe returned %d params, want more than the user subset", len(all.Parameters))
+	}
+}
+
 func findSDKParam(params []awsrdstypes.Parameter, name string) *awsrdstypes.Parameter {
 	for i := range params {
 		if aws.ToString(params[i].ParameterName) == name {

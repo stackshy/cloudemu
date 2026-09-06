@@ -285,6 +285,10 @@ type ModifyInstanceInput struct {
 	StorageType                string
 	Iops                       int
 	DeletionProtection         *bool
+	// IAMDatabaseAuthenticationEnabled toggles the AWS RDS DBCluster IAM database
+	// authentication attribute on ModifyDBCluster; nil means "no change". Cluster
+	// scope only (Aurora/Neptune/DocumentDB); instances ignore it.
+	IAMDatabaseAuthenticationEnabled *bool
 	// AutoMinorVersionUpgrade updates the AWS RDS DBInstance attribute; nil means
 	// "no change". Other engines ignore it.
 	AutoMinorVersionUpgrade *bool
@@ -398,6 +402,11 @@ type ClusterConfig struct {
 	// echoes the AWS RDS DBCluster attribute and defaults to false. Zero for
 	// non-AWS engines.
 	DeletionProtection bool
+	// IAMDatabaseAuthenticationEnabled maps to the AWS RDS DBCluster
+	// EnableIAMDatabaseAuthentication create input (Aurora/Neptune/DocumentDB).
+	// Defaults to false; echoed on read so Terraform's
+	// iam_database_authentication_enabled does not drift.
+	IAMDatabaseAuthenticationEnabled bool
 	// Redshift-specific create inputs carried on the shared config (following the
 	// Azure HighAvailabilityMode precedent); zero for RDS/Aurora/Azure/GCP.
 	NodeType           string
@@ -463,6 +472,10 @@ type Cluster struct {
 	// DeletionProtection guards the cluster from deletion while set; echoes the
 	// AWS RDS DBCluster attribute and defaults to false for non-AWS engines.
 	DeletionProtection bool
+	// IAMDatabaseAuthenticationEnabled echoes the AWS RDS DBCluster
+	// IAMDatabaseAuthenticationEnabled attribute (Aurora/Neptune/DocumentDB) on
+	// read; defaults to false for non-AWS engines.
+	IAMDatabaseAuthenticationEnabled bool
 	// NodeType / NumberOfNodes / Encrypted / PubliclyAccessible /
 	// AvailabilityZone / VpcID are Redshift-specific cluster attributes carried
 	// on the shared struct (Azure HighAvailabilityMode precedent); zero for

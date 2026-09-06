@@ -162,21 +162,26 @@ type dbClusterXML struct {
 	// BackupRetentionPeriod is NOT omitempty: real RDS always emits the element
 	// (default 1) and Terraform's backup_retention_period default is 1, so a
 	// missing element reads as 0 and drifts.
-	BackupRetentionPeriod      int                   `xml:"BackupRetentionPeriod"`
-	PreferredBackupWindow      string                `xml:"PreferredBackupWindow,omitempty"`
-	PreferredMaintenanceWindow string                `xml:"PreferredMaintenanceWindow,omitempty"`
-	EngineMode                 string                `xml:"EngineMode,omitempty"`
-	DBClusterResourceID        string                `xml:"DbClusterResourceId,omitempty"`
-	AllocatedStorage           int                   `xml:"AllocatedStorage,omitempty"`
-	StorageEncrypted           bool                  `xml:"StorageEncrypted"`
-	KmsKeyID                   string                `xml:"KmsKeyId,omitempty"`
-	DeletionProtection         bool                  `xml:"DeletionProtection"`
-	AvailabilityZones          *availabilityZonesXML `xml:"AvailabilityZones,omitempty"`
-	ClusterCreateTime          string                `xml:"ClusterCreateTime,omitempty"`
-	DBClusterMembers           *dbClusterMembersXML  `xml:"DBClusterMembers,omitempty"`
-	VpcSecurityGroups          *vpcSecurityGroupsXML `xml:"VpcSecurityGroups,omitempty"`
-	AssociatedRoles            *associatedRolesXML   `xml:"AssociatedRoles,omitempty"`
-	TagList                    *tagListXML           `xml:"TagList,omitempty"`
+	BackupRetentionPeriod      int    `xml:"BackupRetentionPeriod"`
+	PreferredBackupWindow      string `xml:"PreferredBackupWindow,omitempty"`
+	PreferredMaintenanceWindow string `xml:"PreferredMaintenanceWindow,omitempty"`
+	EngineMode                 string `xml:"EngineMode,omitempty"`
+	DBClusterResourceID        string `xml:"DbClusterResourceId,omitempty"`
+	AllocatedStorage           int    `xml:"AllocatedStorage,omitempty"`
+	StorageEncrypted           bool   `xml:"StorageEncrypted"`
+	KmsKeyID                   string `xml:"KmsKeyId,omitempty"`
+	DeletionProtection         bool   `xml:"DeletionProtection"`
+	// IAMDatabaseAuthenticationEnabled is NOT omitempty: real RDS always emits the
+	// element (default false) and Terraform's aws_neptune_cluster / aws_rds_cluster
+	// / aws_docdb_cluster read it back, so a missing element would drift a config
+	// that sets iam_database_authentication_enabled = true.
+	IAMDatabaseAuthenticationEnabled bool                  `xml:"IAMDatabaseAuthenticationEnabled"`
+	AvailabilityZones                *availabilityZonesXML `xml:"AvailabilityZones,omitempty"`
+	ClusterCreateTime                string                `xml:"ClusterCreateTime,omitempty"`
+	DBClusterMembers                 *dbClusterMembersXML  `xml:"DBClusterMembers,omitempty"`
+	VpcSecurityGroups                *vpcSecurityGroupsXML `xml:"VpcSecurityGroups,omitempty"`
+	AssociatedRoles                  *associatedRolesXML   `xml:"AssociatedRoles,omitempty"`
+	TagList                          *tagListXML           `xml:"TagList,omitempty"`
 }
 
 type dbClusterRoleXML struct {
@@ -534,33 +539,34 @@ func toClusterXML(cluster *rdsdriver.Cluster) dbClusterXML {
 	}
 
 	return dbClusterXML{
-		DBClusterIdentifier:        cluster.ID,
-		DBClusterArn:               cluster.ARN,
-		Engine:                     cluster.Engine,
-		EngineVersion:              cluster.EngineVersion,
-		Status:                     cluster.State,
-		MasterUsername:             cluster.MasterUsername,
-		DatabaseName:               cluster.DatabaseName,
-		Endpoint:                   cluster.Endpoint,
-		ReaderEndpoint:             cluster.ReaderEndpoint,
-		Port:                       cluster.Port,
-		DBSubnetGroup:              cluster.SubnetGroupName,
-		DBClusterParameterGroup:    cluster.DBClusterParameterGroupName,
-		BackupRetentionPeriod:      cluster.BackupRetentionPeriod,
-		PreferredBackupWindow:      cluster.PreferredBackupWindow,
-		PreferredMaintenanceWindow: cluster.PreferredMaintenanceWindow,
-		EngineMode:                 cluster.EngineMode,
-		DBClusterResourceID:        cluster.DBClusterResourceID,
-		AllocatedStorage:           cluster.AllocatedStorage,
-		StorageEncrypted:           cluster.StorageEncrypted,
-		KmsKeyID:                   cluster.KmsKeyID,
-		DeletionProtection:         cluster.DeletionProtection,
-		AvailabilityZones:          toAvailabilityZonesXML(cluster.AvailabilityZones),
-		ClusterCreateTime:          cluster.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		DBClusterMembers:           &members,
-		VpcSecurityGroups:          toVpcSGsXML(cluster.VPCSecurityGroups),
-		AssociatedRoles:            toAssociatedRolesXML(cluster.AssociatedRoles),
-		TagList:                    toTagListXML(cluster.Tags),
+		DBClusterIdentifier:              cluster.ID,
+		DBClusterArn:                     cluster.ARN,
+		Engine:                           cluster.Engine,
+		EngineVersion:                    cluster.EngineVersion,
+		Status:                           cluster.State,
+		MasterUsername:                   cluster.MasterUsername,
+		DatabaseName:                     cluster.DatabaseName,
+		Endpoint:                         cluster.Endpoint,
+		ReaderEndpoint:                   cluster.ReaderEndpoint,
+		Port:                             cluster.Port,
+		DBSubnetGroup:                    cluster.SubnetGroupName,
+		DBClusterParameterGroup:          cluster.DBClusterParameterGroupName,
+		BackupRetentionPeriod:            cluster.BackupRetentionPeriod,
+		PreferredBackupWindow:            cluster.PreferredBackupWindow,
+		PreferredMaintenanceWindow:       cluster.PreferredMaintenanceWindow,
+		EngineMode:                       cluster.EngineMode,
+		DBClusterResourceID:              cluster.DBClusterResourceID,
+		AllocatedStorage:                 cluster.AllocatedStorage,
+		StorageEncrypted:                 cluster.StorageEncrypted,
+		KmsKeyID:                         cluster.KmsKeyID,
+		DeletionProtection:               cluster.DeletionProtection,
+		IAMDatabaseAuthenticationEnabled: cluster.IAMDatabaseAuthenticationEnabled,
+		AvailabilityZones:                toAvailabilityZonesXML(cluster.AvailabilityZones),
+		ClusterCreateTime:                cluster.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		DBClusterMembers:                 &members,
+		VpcSecurityGroups:                toVpcSGsXML(cluster.VPCSecurityGroups),
+		AssociatedRoles:                  toAssociatedRolesXML(cluster.AssociatedRoles),
+		TagList:                          toTagListXML(cluster.Tags),
 	}
 }
 
