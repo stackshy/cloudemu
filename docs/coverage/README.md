@@ -93,6 +93,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `sesv2` | [SESV2](./aws/sesv2.md) | — | — | — | 113 |
 | `sfn` | [SFN](./aws/sfn.md) | — | — | — | 37 |
 | `snapshots` | — | [Snapshots](./azure/snapshots.md) | — | — | 5 |
+| `spanner` | — | — | [Spanner](./gcp/spanner.md) | — | 12 |
 | `sql` | — | [SQL](./azure/sql.md) | — | — | 21 |
 | `sqlvirtualmachine` | — | [SQLVirtualMachine](./azure/sqlvirtualmachine.md) | — | — | 9 |
 | `sshpublickeys` | — | [Sshpublickeys](./azure/sshpublickeys.md) | — | — | 7 |

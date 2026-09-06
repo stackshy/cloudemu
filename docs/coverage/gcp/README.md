@@ -31,5 +31,6 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [Resourcemanager](./resourcemanager.md) | — (provider-native) | 3 |
 | [SecretManager](./secretmanager.md) | `secrets` | 7 |
 | [Servicenetworking](./servicenetworking.md) | — (provider-native) | 3 |
+| [Spanner](./spanner.md) | `spanner` | 12 |
 | [VPC](./vpc.md) | `networking` | 57 |
 | [VertexAI](./vertexai.md) | `vertexai` | 125 |

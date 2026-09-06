@@ -22,6 +22,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		Bigtable:         p.Bigtable,
 		BigQuery:         p.BigQuery,
 		CloudSQL:         p.CloudSQL,
+		Spanner:          p.Spanner,
 		GKE:              p.GKE,
 		VertexAI:         p.VertexAI,
 		IAM:              p.IAM,
