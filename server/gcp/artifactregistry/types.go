@@ -20,7 +20,7 @@ type repoFormat string
 //
 //nolint:gochecknoglobals // static enum lookup table, not mutable state.
 var formatNames = map[int]string{
-	0:  "FORMAT_UNSPECIFIED",
+	0:  formatUnspecified,
 	1:  "DOCKER",
 	2:  "MAVEN",
 	3:  "NPM",
@@ -30,6 +30,20 @@ var formatNames = map[int]string{
 	9:  "KFP",
 	10: "GO",
 	11: "GENERIC",
+}
+
+// isKnownFormat reports whether name is a settable Repository.format enum value,
+// i.e. a known name other than FORMAT_UNSPECIFIED. Real Artifact Registry
+// requires a concrete format on create and rejects an unknown or unspecified one
+// with INVALID_ARGUMENT.
+func isKnownFormat(name string) bool {
+	for _, known := range formatNames {
+		if known == name {
+			return name != formatUnspecified
+		}
+	}
+
+	return false
 }
 
 // UnmarshalJSON accepts the format as a JSON string or a numeric enum.
@@ -168,6 +182,7 @@ type operationJSON struct {
 
 const (
 	dockerFormat      = "DOCKER"
+	formatUnspecified = "FORMAT_UNSPECIFIED"
 	standardMode      = "STANDARD_REPOSITORY"
 	formatTag         = "cloudemu:gcpArFormat"
 	descriptionTag    = "cloudemu:gcpArDescription"
