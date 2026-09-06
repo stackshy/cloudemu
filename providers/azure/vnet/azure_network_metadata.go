@@ -79,7 +79,7 @@ func (m *Mock) DeleteAzureNSGMetadata(_ context.Context, id string) {
 // name via an atomic read-modify-write on the stored metadata, leaving every
 // sibling rule untouched — the SecurityRules sub-resource CRUD's mutation.
 //
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+//nolint:gocritic,dupl // hugeParam: fixed interface sig; dupl: parallels UpsertAzureRoute's COW clone-one-subresource shape by design.
 func (m *Mock) UpsertAzureNSGRule(_ context.Context, id string, rule driver.AzureNSGRule) (driver.AzureNSGMetadata, error) {
 	var updated driver.AzureNSGMetadata
 
