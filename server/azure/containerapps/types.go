@@ -70,11 +70,33 @@ func toEnvResponse(e *containerapps.Environment) envResponse {
 	}
 }
 
-// appRequest is the ARM PUT/PATCH body for a container app.
+// appRequest is the ARM PUT/PATCH body for a container app. identity is a
+// top-level sibling of properties in the ManagedServiceIdentity envelope, so it
+// is decoded here rather than inside appReqProps.
 type appRequest struct {
-	Location   string            `json:"location"`
-	Tags       map[string]string `json:"tags,omitempty"`
-	Properties appReqProps       `json:"properties"`
+	Location   string              `json:"location"`
+	Tags       map[string]string   `json:"tags,omitempty"`
+	Identity   *armManagedIdentity `json:"identity,omitempty"`
+	Properties appReqProps         `json:"properties"`
+}
+
+// armManagedIdentity is the shared ManagedServiceIdentity envelope carried at the
+// top level of a container app. On a request only Type and the keys of
+// UserAssignedIdentities are meaningful (its values are empty {}); on a response
+// PrincipalID/TenantID and each user-assigned identity's principal/client pair
+// are the read-only values Azure fills in.
+type armManagedIdentity struct {
+	Type                   string                        `json:"type,omitempty"`
+	PrincipalID            string                        `json:"principalId,omitempty"`
+	TenantID               string                        `json:"tenantId,omitempty"`
+	UserAssignedIdentities map[string]*armUserAssignedID `json:"userAssignedIdentities,omitempty"`
+}
+
+// armUserAssignedID is the principal/client pair returned for one attached
+// user-assigned identity. Empty ({}) in a request body.
+type armUserAssignedID struct {
+	PrincipalID string `json:"principalId,omitempty"`
+	ClientID    string `json:"clientId,omitempty"`
 }
 
 type appReqProps struct {
@@ -141,12 +163,13 @@ type appScale struct {
 }
 
 type appResponse struct {
-	ID         string            `json:"id"`
-	Name       string            `json:"name"`
-	Type       string            `json:"type"`
-	Location   string            `json:"location"`
-	Tags       map[string]string `json:"tags,omitempty"`
-	Properties appRespProps      `json:"properties"`
+	ID         string              `json:"id"`
+	Name       string              `json:"name"`
+	Type       string              `json:"type"`
+	Location   string              `json:"location"`
+	Tags       map[string]string   `json:"tags,omitempty"`
+	Identity   *armManagedIdentity `json:"identity,omitempty"`
+	Properties appRespProps        `json:"properties"`
 }
 
 type appRespProps struct {
@@ -178,6 +201,13 @@ func toAppInput(req *appRequest) containerapps.AppInput {
 
 	if t := req.Properties.Template; t != nil {
 		in.Template = toTemplateModel(t)
+	}
+
+	if id := req.Identity; id != nil {
+		in.IdentityType = id.Type
+		for k := range id.UserAssignedIdentities {
+			in.UserAssignedIDs = append(in.UserAssignedIDs, k)
+		}
 	}
 
 	return in
@@ -244,6 +274,7 @@ func toAppResponse(a *containerapps.ContainerApp) appResponse {
 		Type:     armTypeContainerApp,
 		Location: a.Location,
 		Tags:     a.Tags,
+		Identity: toIdentityResponse(a),
 		Properties: appRespProps{
 			ProvisioningState:    provisioningSucceeded,
 			EnvironmentID:        a.EnvironmentID,
@@ -253,6 +284,30 @@ func toAppResponse(a *containerapps.ContainerApp) appResponse {
 			Template:             toTemplateResponse(&a.Template),
 		},
 	}
+}
+
+// toIdentityResponse projects the stored managed-identity block onto its ARM
+// wire shape, returning nil when the app has no identity so the field is omitted
+// (matching real Azure, which returns no identity object for an app without one).
+func toIdentityResponse(a *containerapps.ContainerApp) *armManagedIdentity {
+	if a.IdentityType == "" {
+		return nil
+	}
+
+	out := &armManagedIdentity{
+		Type:        a.IdentityType,
+		PrincipalID: a.PrincipalID,
+		TenantID:    a.TenantID,
+	}
+
+	if len(a.UserAssignedIdentities) > 0 {
+		out.UserAssignedIdentities = make(map[string]*armUserAssignedID, len(a.UserAssignedIdentities))
+		for id, v := range a.UserAssignedIdentities {
+			out.UserAssignedIdentities[id] = &armUserAssignedID{PrincipalID: v.PrincipalID, ClientID: v.ClientID}
+		}
+	}
+
+	return out
 }
 
 func toConfigResponse(a *containerapps.ContainerApp) *appConfig {

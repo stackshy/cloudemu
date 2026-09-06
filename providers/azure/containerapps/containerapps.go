@@ -24,6 +24,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 )
 
@@ -46,6 +47,13 @@ const (
 	defaultActiveRevMode = "Single" // configuration.activeRevisionsMode
 	defaultTransport     = "auto"   // configuration.ingress.transport
 	defaultMaxReplicas   = 10       // template.scale.maxReplicas
+
+	// identityNone is the managed-identity type that means "no identity"; it and
+	// the empty string both clear a container app's identity block.
+	identityNone = "None"
+	// emulatorTenantID is the single Azure AD directory every emulated
+	// system-assigned identity reports, matching the ACR/managed-identity mocks.
+	emulatorTenantID = "11111111-1111-1111-1111-111111111111"
 )
 
 // AppLogsConfiguration mirrors the managed environment's log-export setting.
@@ -116,23 +124,37 @@ type Ingress struct {
 	Traffic       []TrafficWeight `json:"traffic,omitempty"`
 }
 
+// UserAssignedIdentity is the principal/client pair Azure synthesizes for one
+// user-assigned managed identity attached to a container app.
+type UserAssignedIdentity struct {
+	PrincipalID string `json:"principalId"`
+	ClientID    string `json:"clientId"`
+}
+
 // ContainerApp is a stored container app. Fqdn and LatestRevisionName are minted
 // once at create and preserved across updates. Revisions is the app's revision
 // history — a new entry is materialized every time the template changes.
+// IdentityType/PrincipalID/TenantID/UserAssignedIdentities carry the app's
+// managed-identity block, synthesized on write so a create -> read round trip
+// matches real Azure.
 type ContainerApp struct {
-	Subscription       string            `json:"subscription"`
-	ResourceGroup      string            `json:"resourceGroup"`
-	Name               string            `json:"name"`
-	Location           string            `json:"location"`
-	Tags               map[string]string `json:"tags,omitempty"`
-	EnvironmentID      string            `json:"environmentId,omitempty"`
-	ActiveRevMode      string            `json:"activeRevisionsMode,omitempty"`
-	Ingress            *Ingress          `json:"ingress,omitempty"`
-	SecretNames        []string          `json:"secretNames,omitempty"`
-	Template           Template          `json:"template"`
-	Fqdn               string            `json:"fqdn,omitempty"`
-	LatestRevisionName string            `json:"latestRevisionName"`
-	Revisions          []Revision        `json:"revisions,omitempty"`
+	Subscription           string                          `json:"subscription"`
+	ResourceGroup          string                          `json:"resourceGroup"`
+	Name                   string                          `json:"name"`
+	Location               string                          `json:"location"`
+	Tags                   map[string]string               `json:"tags,omitempty"`
+	EnvironmentID          string                          `json:"environmentId,omitempty"`
+	ActiveRevMode          string                          `json:"activeRevisionsMode,omitempty"`
+	Ingress                *Ingress                        `json:"ingress,omitempty"`
+	SecretNames            []string                        `json:"secretNames,omitempty"`
+	Template               Template                        `json:"template"`
+	Fqdn                   string                          `json:"fqdn,omitempty"`
+	LatestRevisionName     string                          `json:"latestRevisionName"`
+	Revisions              []Revision                      `json:"revisions,omitempty"`
+	IdentityType           string                          `json:"identityType,omitempty"`
+	PrincipalID            string                          `json:"principalId,omitempty"`
+	TenantID               string                          `json:"tenantId,omitempty"`
+	UserAssignedIdentities map[string]UserAssignedIdentity `json:"userAssignedIdentities,omitempty"`
 }
 
 // ARMID returns the fully-qualified ARM id for the container app.
@@ -148,14 +170,19 @@ type EnvironmentInput struct {
 }
 
 // AppInput carries the mutable fields of a container-app create/update.
+// IdentityType is the requested managed-identity type ("SystemAssigned",
+// "UserAssigned", "SystemAssigned,UserAssigned", "None" or ""); UserAssignedIDs
+// are the ARM ids of the user-assigned identities to attach.
 type AppInput struct {
-	Location      string
-	Tags          map[string]string
-	EnvironmentID string
-	ActiveRevMode string
-	Ingress       *Ingress
-	SecretNames   []string
-	Template      Template
+	Location        string
+	Tags            map[string]string
+	EnvironmentID   string
+	ActiveRevMode   string
+	Ingress         *Ingress
+	SecretNames     []string
+	Template        Template
+	IdentityType    string
+	UserAssignedIDs []string
 }
 
 // Mock is the in-memory backend for Container Apps.
@@ -301,6 +328,7 @@ func (m *Mock) CreateOrUpdateApp(
 	app.SecretNames = append([]string(nil), in.SecretNames...)
 	app.Template = cloneTemplate(in.Template)
 	applyAppDefaults(&app)
+	applyAppIdentity(&app, in.IdentityType, in.UserAssignedIDs)
 	app.Fqdn = m.appFqdnLocked(name, in.EnvironmentID, app.Ingress)
 
 	if err := m.materializeRevisionLocked(&app); err != nil {
@@ -540,6 +568,40 @@ func applyAppDefaults(app *ContainerApp) {
 	if app.Template.Scale.MaxReplicas == nil {
 		v := int32(defaultMaxReplicas)
 		app.Template.Scale.MaxReplicas = &v
+	}
+}
+
+// applyAppIdentity records the app's managed-identity block, synthesizing the
+// read-only values real Azure fills in: a deterministic principal id and the
+// emulator tenant id for a system-assigned identity, and a principal/client pair
+// per attached user-assigned identity. An empty or "None" type clears the block
+// so a create-without-identity (or an update that removes it) reports no identity,
+// matching real Azure. Called under m.mu with a freshly rebuilt app, so it fully
+// replaces any previous identity rather than merging.
+func applyAppIdentity(app *ContainerApp, identityType string, userAssigned []string) {
+	app.IdentityType = identityType
+	app.PrincipalID = ""
+	app.TenantID = ""
+	app.UserAssignedIdentities = nil
+
+	if identityType == "" || strings.EqualFold(identityType, identityNone) {
+		app.IdentityType = ""
+		return
+	}
+
+	if strings.Contains(identityType, "SystemAssigned") {
+		app.PrincipalID = idgen.SyntheticGUID("principal/containerApp/" + app.ARMID())
+		app.TenantID = emulatorTenantID
+	}
+
+	if strings.Contains(identityType, "UserAssigned") && len(userAssigned) > 0 {
+		app.UserAssignedIdentities = make(map[string]UserAssignedIdentity, len(userAssigned))
+		for _, id := range userAssigned {
+			app.UserAssignedIdentities[id] = UserAssignedIdentity{
+				PrincipalID: idgen.SyntheticGUID("uai-principal/" + id),
+				ClientID:    idgen.SyntheticGUID("uai-client/" + id),
+			}
+		}
 	}
 }
 
