@@ -55,6 +55,7 @@ import (
 	keyvaultsrv "github.com/stackshy/cloudemu/v2/server/azure/keyvault"
 	kustosrv "github.com/stackshy/cloudemu/v2/server/azure/kusto"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/azure/loadbalancer"
+	loadtestingsrv "github.com/stackshy/cloudemu/v2/server/azure/loadtesting"
 	"github.com/stackshy/cloudemu/v2/server/azure/locks"
 	loganalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/server/azure/managedcassandra"
@@ -153,6 +154,8 @@ type Drivers struct {
 	AKS              aksserver.Backend
 	// ManagedIdentity serves Microsoft.ManagedIdentity/userAssignedIdentities.
 	ManagedIdentity managedidentitysrv.Store
+	// LoadTesting serves Microsoft.LoadTestService/loadTests.
+	LoadTesting loadtestingsrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -413,6 +416,14 @@ func New(d Drivers) http.Handler {
 	if d.ManagedIdentity != nil {
 		managedIdentityHandler = managedidentitysrv.New(d.ManagedIdentity)
 		rgPurgers = append(rgPurgers, managedIdentityHandler)
+	}
+
+	// Load tests: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var loadTestingHandler *loadtestingsrv.Handler
+	if d.LoadTesting != nil {
+		loadTestingHandler = loadtestingsrv.New(d.LoadTesting)
+		rgPurgers = append(rgPurgers, loadTestingHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -786,6 +797,10 @@ func New(d Drivers) http.Handler {
 	// fallback.
 	if managedIdentityHandler != nil {
 		srv.Register(managedIdentityHandler)
+	}
+
+	if loadTestingHandler != nil {
+		srv.Register(loadTestingHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

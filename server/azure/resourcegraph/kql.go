@@ -80,6 +80,7 @@ const (
 	azureTypeMLEndpt   = "microsoft.machinelearningservices/workspaces/onlineendpoints"
 	azureTypeCognitive = "microsoft.cognitiveservices/accounts"
 	azureTypeCAEnv     = "microsoft.app/managedenvironments"
+	azureTypeLoadTest  = "microsoft.loadtestservice/loadtests"
 	azureTypeCApp      = "microsoft.app/containerapps"
 )
 
@@ -107,6 +108,7 @@ const (
 	portableAzureML      = "machinelearningservices"
 	portableCognitive    = "cognitiveservices"
 	portableContainerApp = "containerapps"
+	portableLoadTest     = "loadtesting"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -388,6 +390,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeCognitive: {portableCognitive, "Account"},
 	azureTypeCAEnv:     {portableContainerApp, "ManagedEnvironment"},
 	azureTypeCApp:      {portableContainerApp, "ContainerApp"},
+	azureTypeLoadTest:  {portableLoadTest, "LoadTest"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

@@ -76,6 +76,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `kms-gcp` | — | — | [KMS](./gcp/kms.md) | — | 17 |
 | `kusto` | — | [Kusto](./azure/kusto.md) | — | — | 14 |
 | `loadbalancer` | [ELB](./aws/elb.md) | [LB](./azure/lb.md) | [LB](./gcp/lb.md) | — | 19 |
+| `loadtesting` | — | [LoadTesting](./azure/loadtesting.md) | — | — | 8 |
 | `locks` | — | [Locks](./azure/locks.md) | — | — | 4 |
 | `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | — | 17 |
 | `lro` | — | — | [LRO](./gcp/lro.md) | — | 1 |
