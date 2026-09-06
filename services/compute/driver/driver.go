@@ -48,6 +48,11 @@ type InstanceConfig struct {
 	// meaningful on input — PrincipalID/TenantID/ClientID are provider-
 	// synthesized output, ignored here. Ignored by AWS/GCP.
 	Identity *ManagedIdentity
+	// Plan is the ARM marketplace purchase plan to record on the VM at launch
+	// (Azure VirtualMachine.plan), when the image is a third-party marketplace
+	// offering. Carried through to the Instance so GET/List echo it. Immutable
+	// after create. Ignored by AWS/GCP.
+	Plan *MarketplacePlan
 	// NetworkInterfaces are the NICs referenced by the VM's
 	// networkProfile.networkInterfaces (Azure), resolved from each entry's ARM
 	// resource id down to the (resourceGroup, name) pair the networking mock
@@ -191,6 +196,22 @@ type Instance struct {
 	// Identity is the resolved managed-identity block (Azure), nil when no
 	// identity is attached (identity.type "None" or unset).
 	Identity *ManagedIdentity
+	// Plan is the marketplace purchase plan the VM was created from (Azure
+	// VirtualMachine.plan), nil for a VM from a first-party image and for
+	// AWS/GCP.
+	Plan *MarketplacePlan
+}
+
+// MarketplacePlan is the ARM VirtualMachine.plan block: the marketplace
+// purchase plan for a third-party (BYOL / paid marketplace) image. It is a
+// top-level sibling of properties on the VM resource, immutable after create.
+// Azure-only; nil for AWS/GCP and for VMs launched from first-party (Azure)
+// images.
+type MarketplacePlan struct {
+	Name          string
+	Publisher     string
+	Product       string
+	PromotionCode string
 }
 
 // MetadataOptions is an instance's IMDS (instance metadata service)
@@ -778,8 +799,10 @@ type AzureVMController interface {
 type AzureVMPatch struct {
 	// VMSize, when non-empty, resizes the VM (hardwareProfile.vmSize).
 	VMSize string
-	// Tags, when non-nil, are merged into the existing tags (a PATCH adds or
-	// overwrites the supplied keys and leaves omitted keys in place).
+	// Tags, when non-nil, REPLACE the existing tags wholesale — real Azure's VM
+	// PATCH tags is a full replace, not a merge, despite PATCH otherwise reading
+	// as a merge-patch (a well-documented Azure Compute quirk). A nil map leaves
+	// the existing tags untouched.
 	Tags map[string]string
 	// Identity, when non-nil, replaces the managed identity block.
 	Identity *ManagedIdentity

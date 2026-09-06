@@ -168,6 +168,9 @@ type instanceData struct {
 	// Identity is the resolved managed-identity block, nil when no identity
 	// is attached.
 	Identity *driver.ManagedIdentity
+	// Plan is the marketplace purchase plan the VM was created from
+	// (VirtualMachine.plan), nil for a first-party image. Immutable after create.
+	Plan *driver.MarketplacePlan
 	// engineBacked is true when a real config.ComputeEngine backs this
 	// instance, so Terminate deprovisions it and console output is read from
 	// the engine rather than synthesized.
@@ -339,7 +342,20 @@ func toInstance(d *instanceData) driver.Instance {
 		PowerState:  d.PowerState,
 		Generalized: d.Generalized,
 		Identity:    copyIdentity(d.Identity),
+		Plan:        copyPlan(d.Plan),
 	}
+}
+
+// copyPlan deep-copies a MarketplacePlan so a caller holding the returned
+// driver.Instance cannot mutate the stored instanceData through it.
+func copyPlan(in *driver.MarketplacePlan) *driver.MarketplacePlan {
+	if in == nil {
+		return nil
+	}
+
+	out := *in
+
+	return &out
 }
 
 // copyIdentity deep-copies a ManagedIdentity so a caller holding the returned
@@ -445,6 +461,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 		}
 
 		inst.Identity = resolveIdentity(cfg.Identity, id)
+		inst.Plan = copyPlan(cfg.Plan)
 
 		// Back the instance with a real compute engine when one is configured.
 		// The engine runs the decoded customData as the boot script and may
@@ -809,6 +826,12 @@ func applyMutableConfig(inst *instanceData, cfg driver.InstanceConfig, instanceI
 
 	if cfg.Identity != nil {
 		inst.Identity = resolveIdentity(cfg.Identity, instanceID)
+	}
+
+	// Plan is immutable in real Azure: a re-PUT that resends it is a no-op, and
+	// an omitted plan preserves the existing one (mirroring Identity above).
+	if cfg.Plan != nil {
+		inst.Plan = copyPlan(cfg.Plan)
 	}
 }
 

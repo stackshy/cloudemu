@@ -116,6 +116,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		Region:            req.Location,
 		ResourceGroup:     rp.ResourceGroup,
 		Identity:          toDriverIdentity(req.Identity),
+		Plan:              toDriverPlan(req.Plan),
 		NetworkInterfaces: nicRefs,
 	}
 
@@ -1372,6 +1373,39 @@ func fromDriverIdentity(in *computedriver.ManagedIdentity) *identity {
 	return out
 }
 
+// toDriverPlan maps an inbound ARM plan block onto the driver shape. Returns
+// nil when the request carried no plan (a VM from a first-party image), so the
+// create path records no plan and an idempotent re-PUT that omits it preserves
+// whatever plan is already recorded.
+func toDriverPlan(in *plan) *computedriver.MarketplacePlan {
+	if in == nil {
+		return nil
+	}
+
+	return &computedriver.MarketplacePlan{
+		Name:          in.Name,
+		Publisher:     in.Publisher,
+		Product:       in.Product,
+		PromotionCode: in.PromotionCode,
+	}
+}
+
+// fromDriverPlan builds the ARM plan response block from the recorded driver
+// plan. Returns nil when the VM has no plan, so the response omits the field
+// entirely (matching real Azure for first-party-image VMs).
+func fromDriverPlan(in *computedriver.MarketplacePlan) *plan {
+	if in == nil {
+		return nil
+	}
+
+	return &plan{
+		Name:          in.Name,
+		Publisher:     in.Publisher,
+		Product:       in.Product,
+		PromotionCode: in.PromotionCode,
+	}
+}
+
 func osTypeFromStorage(s *storageProfile) string {
 	if s == nil || s.OSDisk == nil {
 		return ""
@@ -1450,6 +1484,7 @@ func toVMResponse(inst *computedriver.Instance, rp azurearm.ResourcePath, req vm
 		Tags:     stripInternalTags(inst.Tags),
 		Zones:    inst.Zones,
 		Identity: fromDriverIdentity(inst.Identity),
+		Plan:     fromDriverPlan(inst.Plan),
 		Properties: vmResponseProps{
 			VMID:              vmGUID(inst.ID),
 			ProvisioningState: provisioningState,
