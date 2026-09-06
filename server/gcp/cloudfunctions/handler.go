@@ -80,10 +80,11 @@ const (
 	// gen2ServiceAccountSuffix / gen1ServiceAccountSuffix are the default runtime
 	// service accounts real GCP assigns (compute default SA for gen2, App Engine
 	// default SA for gen1).
-	gen2DefaultMemory  = "256M"
-	gen2DefaultCPU     = "0.1666"
-	gen2DefaultTimeout = 60
-	buildIDBytes       = 8
+	gen2DefaultMemory      = "256M"
+	gen2DefaultCPU         = "0.1666"
+	gen2DefaultTimeout     = 60
+	gen2DefaultConcurrency = 1
+	buildIDBytes           = 8
 )
 
 // ObjectStore is the slice of the in-process GCS backend the handler needs to

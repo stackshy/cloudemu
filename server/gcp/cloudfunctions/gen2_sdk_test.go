@@ -168,6 +168,61 @@ func TestSDKGen2Patch(t *testing.T) {
 	}
 }
 
+// TestSDKGen2TrafficAndConcurrency reproduces the perpetual-drift finding: a gen2
+// function's serviceConfig must report allTrafficOnLatestRevision=true (real GCP's
+// default, which terraform's service_config default matches — omitting it diffs
+// true->false on every plan) and default maxInstanceRequestConcurrency to 1, and
+// an explicit maxInstanceRequestConcurrency must round-trip through create and a
+// masked patch.
+func TestSDKGen2TrafficAndConcurrency(t *testing.T) {
+	svc := newGCPV2Service(t)
+	ctx := context.Background()
+
+	parent := "projects/demo/locations/us-central1"
+	name := parent + "/functions/traffic"
+
+	if _, err := svc.Projects.Locations.Functions.Create(parent, &cloudfunctions2.Function{
+		BuildConfig:   &cloudfunctions2.BuildConfig{Runtime: "go121", EntryPoint: "Hello"},
+		ServiceConfig: &cloudfunctions2.ServiceConfig{AvailableMemory: "256M"},
+	}).FunctionId("traffic").Context(ctx).Do(); err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	got, err := svc.Projects.Locations.Functions.Get(name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if !got.ServiceConfig.AllTrafficOnLatestRevision {
+		t.Fatal("allTrafficOnLatestRevision = false at create, want true (real GCP default)")
+	}
+
+	if got.ServiceConfig.MaxInstanceRequestConcurrency != 1 {
+		t.Fatalf("maxInstanceRequestConcurrency = %d at create, want default 1",
+			got.ServiceConfig.MaxInstanceRequestConcurrency)
+	}
+
+	if _, err := svc.Projects.Locations.Functions.Patch(name, &cloudfunctions2.Function{
+		ServiceConfig: &cloudfunctions2.ServiceConfig{MaxInstanceRequestConcurrency: 10},
+	}).UpdateMask("serviceConfig.maxInstanceRequestConcurrency").Context(ctx).Do(); err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	got2, err := svc.Projects.Locations.Functions.Get(name).Context(ctx).Do()
+	if err != nil {
+		t.Fatalf("Get after patch: %v", err)
+	}
+
+	if got2.ServiceConfig.MaxInstanceRequestConcurrency != 10 {
+		t.Fatalf("maxInstanceRequestConcurrency = %d after patch, want 10",
+			got2.ServiceConfig.MaxInstanceRequestConcurrency)
+	}
+
+	if !got2.ServiceConfig.AllTrafficOnLatestRevision {
+		t.Fatal("allTrafficOnLatestRevision = false after patch, want true preserved")
+	}
+}
+
 // TestSDKGen2GetMissing confirms a missing gen2 function 404s.
 func TestSDKGen2GetMissing(t *testing.T) {
 	svc := newGCPV2Service(t)
