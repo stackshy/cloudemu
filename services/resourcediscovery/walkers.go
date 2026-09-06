@@ -55,6 +55,9 @@ const (
 	// ServiceContainerApps buckets Azure Container Apps resources — managed
 	// environments and the container apps that run in them (Microsoft.App).
 	ServiceContainerApps = "containerapps"
+	// ServiceLoadTesting buckets Azure Load Testing resources
+	// (Microsoft.LoadTestService/loadTests).
+	ServiceLoadTesting = "loadtesting"
 )
 
 // Resource type constants emitted by the walkers.
@@ -126,6 +129,10 @@ const (
 	TypeManagedEnvironment = "ManagedEnvironment"
 	TypeContainerApp       = "ContainerApp"
 )
+
+// TypeLoadTest is the portable type for an Azure Load Testing resource
+// (Microsoft.LoadTestService/loadTests). Azure-only, so it lives in its own line.
+const TypeLoadTest = "LoadTest"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs

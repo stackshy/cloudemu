@@ -30,6 +30,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/iam"
 	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadbalancer"
+	"github.com/stackshy/cloudemu/v2/providers/azure/loadtesting"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedcassandra"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedidentity"
@@ -169,6 +170,7 @@ type Provider struct {
 	ManagedIdentity    *managedidentity.Mock
 	SQLVirtualMachine  *sqlvirtualmachine.Mock
 	ContainerApps      *containerapps.Mock
+	LoadTesting        *loadtesting.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -232,6 +234,7 @@ func New(opts ...config.Option) *Provider {
 		ManagedIdentity:    managedidentity.New(o),
 		SQLVirtualMachine:  sqlvirtualmachine.New(o),
 		ContainerApps:      containerapps.New(o),
+		LoadTesting:        loadtesting.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -267,6 +270,7 @@ func New(opts ...config.Option) *Provider {
 				managedIdentityDiscovery{p.ManagedIdentity},
 				sqlVirtualMachineDiscovery{p.SQLVirtualMachine},
 				containerAppsDiscovery{p.ContainerApps},
+				loadTestDiscovery{p.LoadTesting},
 			},
 		},
 	)
