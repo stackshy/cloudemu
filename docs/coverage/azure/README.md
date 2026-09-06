@@ -11,6 +11,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [Aad](./aad.md) | — (provider-native) | 2 |
 | [AppGateway](./appgateway.md) | `applicationgateway` | 4 |
 | [Appinsights](./appinsights.md) | — (provider-native) | 6 |
+| [Bastion](./bastion.md) | `bastion` | 4 |
 | [BlobStorage](./blobstorage.md) | `storage` | 35 |
 | [Cache](./cache.md) | `cache` | 17 |
 | [ContainerApps](./containerapps.md) | — (provider-native) | 19 |

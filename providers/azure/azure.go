@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/ai"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
 	"github.com/stackshy/cloudemu/v2/providers/azure/applicationgateway"
+	"github.com/stackshy/cloudemu/v2/providers/azure/bastion"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
 	"github.com/stackshy/cloudemu/v2/providers/azure/containerapps"
@@ -140,6 +141,7 @@ type Provider struct {
 	LB               *loadbalancer.Mock
 	AppGateway       *applicationgateway.Mock
 	Firewall         *firewall.Mock
+	Bastion          *bastion.Mock
 	FrontDoor        *frontdoor.Mock
 	PrivateDNS       *privatedns.Mock
 	ServiceBus       *servicebus.Mock
@@ -206,6 +208,7 @@ func New(opts ...config.Option) *Provider {
 		LB:                 loadbalancer.New(o),
 		AppGateway:         applicationgateway.New(o),
 		Firewall:           firewall.New(o),
+		Bastion:            bastion.New(o),
 		FrontDoor:          frontdoor.New(o),
 		PrivateDNS:         privatedns.New(o),
 		ServiceBus:         servicebus.New(o),
