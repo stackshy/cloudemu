@@ -277,7 +277,9 @@ func (h *Handler) publishBatch(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		successes = append(successes, batchResultEntry{ID: entryID, MessageID: out.MessageID})
+		successes = append(successes, batchResultEntry{
+			ID: entryID, MessageID: out.MessageID, SequenceNumber: out.SequenceNumber,
+		})
 	}
 
 	awsquery.WriteXMLResponse(w, publishBatchResponse{

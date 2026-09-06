@@ -4,6 +4,7 @@ package sns
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"maps"
 	"strings"
 	"sync"
@@ -536,6 +537,7 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 		Message:    input.Message,
 		Attributes: attrs,
 	})
+	ordinal := len(td.messages)
 	td.mu.Unlock()
 
 	m.fanOutToSQS(ctx, td, msgID, &input)
@@ -545,7 +547,21 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 	m.emitMetric("NumberOfMessagesPublished", 1, "Count", dims)
 	m.emitMetric("PublishSize", float64(len(input.Message)), "Bytes", dims)
 
-	return &driver.PublishOutput{MessageID: msgID}, nil
+	out := &driver.PublishOutput{MessageID: msgID}
+	if td.info.FifoTopic {
+		out.SequenceNumber = fifoSequenceNumber(ordinal)
+	}
+
+	return out, nil
+}
+
+// fifoSequenceNumber renders a FIFO topic's per-message sequence number. Real
+// SNS returns a large, monotonically increasing 128-bit numeric string per
+// message; the message ordinal (persisted with the message log, so it survives
+// snapshot/restore) supplies the monotonicity, zero-padded to the width SNS
+// uses so a client parsing or comparing it as a big integer behaves the same.
+func fifoSequenceNumber(ordinal int) string {
+	return fmt.Sprintf("%020d", ordinal)
 }
 
 // PublishExternal publishes a raw message to the topic identified by its ARN,
