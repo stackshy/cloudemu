@@ -43,6 +43,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/unitycatalog"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/wsfs"
 	datafactorysrv "github.com/stackshy/cloudemu/v2/server/azure/datafactory"
+	digitaltwinssrv "github.com/stackshy/cloudemu/v2/server/azure/digitaltwins"
 	"github.com/stackshy/cloudemu/v2/server/azure/disks"
 	dnssrv "github.com/stackshy/cloudemu/v2/server/azure/dns"
 	eventgridsrv "github.com/stackshy/cloudemu/v2/server/azure/eventgrid"
@@ -159,6 +160,8 @@ type Drivers struct {
 	LoadTesting loadtestingsrv.Store
 	// SignalR serves Microsoft.SignalRService/signalR.
 	SignalR signalrsrv.Store
+	// DigitalTwins serves Microsoft.DigitalTwins/digitalTwinsInstances.
+	DigitalTwins digitaltwinssrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -435,6 +438,14 @@ func New(d Drivers) http.Handler {
 	if d.SignalR != nil {
 		signalRHandler = signalrsrv.New(d.SignalR)
 		rgPurgers = append(rgPurgers, signalRHandler)
+	}
+
+	// Digital Twins: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var digitalTwinsHandler *digitaltwinssrv.Handler
+	if d.DigitalTwins != nil {
+		digitalTwinsHandler = digitaltwinssrv.New(d.DigitalTwins)
+		rgPurgers = append(rgPurgers, digitalTwinsHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -816,6 +827,10 @@ func New(d Drivers) http.Handler {
 
 	if signalRHandler != nil {
 		srv.Register(signalRHandler)
+	}
+
+	if digitalTwinsHandler != nil {
+		srv.Register(digitalTwinsHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

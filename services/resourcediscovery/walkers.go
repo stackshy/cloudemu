@@ -61,6 +61,9 @@ const (
 	// ServiceSignalR buckets Azure SignalR Service resources
 	// (Microsoft.SignalRService/signalR).
 	ServiceSignalR = "signalr"
+	// ServiceDigitalTwins buckets Azure Digital Twins resources
+	// (Microsoft.DigitalTwins/digitalTwinsInstances).
+	ServiceDigitalTwins = "digitaltwins"
 )
 
 // Resource type constants emitted by the walkers.
@@ -140,6 +143,11 @@ const TypeLoadTest = "LoadTest"
 // TypeSignalR is the portable type for an Azure SignalR Service resource
 // (Microsoft.SignalRService/signalR). Azure-only, so it lives in its own line.
 const TypeSignalR = "SignalR"
+
+// TypeDigitalTwinsInstance is the portable type for an Azure Digital Twins
+// instance (Microsoft.DigitalTwins/digitalTwinsInstances). Azure-only, so it
+// lives in its own line.
+const TypeDigitalTwinsInstance = "DigitalTwinsInstance"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs

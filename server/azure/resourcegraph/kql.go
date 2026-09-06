@@ -83,6 +83,7 @@ const (
 	azureTypeLoadTest  = "microsoft.loadtestservice/loadtests"
 	azureTypeCApp      = "microsoft.app/containerapps"
 	azureTypeSignalR   = "microsoft.signalrservice/signalr"
+	azureTypeDTwins    = "microsoft.digitaltwins/digitaltwinsinstances"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -111,6 +112,7 @@ const (
 	portableContainerApp = "containerapps"
 	portableLoadTest     = "loadtesting"
 	portableSignalR      = "signalr"
+	portableDTwins       = "digitaltwins"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -394,6 +396,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeCApp:      {portableContainerApp, "ContainerApp"},
 	azureTypeLoadTest:  {portableLoadTest, "LoadTest"},
 	azureTypeSignalR:   {portableSignalR, "SignalR"},
+	azureTypeDTwins:    {portableDTwins, "DigitalTwinsInstance"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

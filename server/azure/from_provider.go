@@ -41,6 +41,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		ManagedIdentity:    p.ManagedIdentity,
 		LoadTesting:        p.LoadTesting,
 		SignalR:            p.SignalR,
+		DigitalTwins:       p.DigitalTwins,
 		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,
 		IAM:                p.IAM,
