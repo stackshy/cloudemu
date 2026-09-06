@@ -68,6 +68,21 @@ type gen2ServiceConfig struct {
 	Revision             string            `json:"revision,omitempty"`
 	MaxInstanceCount     int               `json:"maxInstanceCount,omitempty"`
 	MinInstanceCount     int               `json:"minInstanceCount,omitempty"`
+	// MaxInstanceRequestConcurrency is the per-instance concurrent-request cap real
+	// gen2 defaults to 1; a client (terraform max_instance_request_concurrency) that
+	// sets it must read it back, and it must be present on GET so an unset value is
+	// the real default rather than a missing field.
+	MaxInstanceRequestConcurrency int `json:"maxInstanceRequestConcurrency,omitempty"`
+	// AllTrafficOnLatestRevision reports whether 100% of traffic routes to the newest
+	// revision. Real gen2 defaults it to true, and terraform's
+	// service_config.all_traffic_on_latest_revision defaults to true too — so omitting
+	// it from the response makes terraform read false and diff true->false on every
+	// plan (perpetual drift). But false is a legitimate explicit value (GCF then honors
+	// the underlying Cloud Run service's existing traffic split), so it is modeled as a
+	// pointer: nil (unset) defaults to true, while an explicit true or false round-trips
+	// unchanged. It is not omitempty — after defaulting the pointer is always non-nil,
+	// so the field always serializes as a real bool (never null).
+	AllTrafficOnLatestRevision *bool `json:"allTrafficOnLatestRevision"`
 }
 
 type gen2EventTrigger struct {
@@ -575,6 +590,8 @@ func mergeServiceConfig(dst *gen2Function, sc *gen2ServiceConfig, mask updateMas
 	applyMaskedStr(mask, "serviceConfig.ingressSettings", &d.IngressSettings, sc.IngressSettings)
 	applyMaskedInt(mask, "serviceConfig.maxInstanceCount", &d.MaxInstanceCount, sc.MaxInstanceCount)
 	applyMaskedInt(mask, "serviceConfig.minInstanceCount", &d.MinInstanceCount, sc.MinInstanceCount)
+	applyMaskedInt(mask, "serviceConfig.maxInstanceRequestConcurrency",
+		&d.MaxInstanceRequestConcurrency, sc.MaxInstanceRequestConcurrency)
 
 	if mask.covers("serviceConfig.environmentVariables") && (mask.explicit() || sc.EnvironmentVariables != nil) {
 		d.EnvironmentVariables = sc.EnvironmentVariables
@@ -637,6 +654,19 @@ func applyServiceConfigDefaults(sc *gen2ServiceConfig, p v2Path) {
 
 	if sc.IngressSettings == "" {
 		sc.IngressSettings = defaultIngress
+	}
+
+	if sc.MaxInstanceRequestConcurrency == 0 {
+		sc.MaxInstanceRequestConcurrency = gen2DefaultConcurrency
+	}
+
+	// Real gen2 defaults allTrafficOnLatestRevision to true, so an unset (nil)
+	// value reconciles to true. An explicit client value — true OR false — is
+	// preserved: false is legitimate (GCF then honors the underlying Cloud Run
+	// service's existing traffic split), and clobbering it to true would
+	// reintroduce perpetual terraform drift for that config.
+	if sc.AllTrafficOnLatestRevision == nil {
+		sc.AllTrafficOnLatestRevision = boolPtr(true)
 	}
 }
 
@@ -706,6 +736,11 @@ func cloneGen2(fn *gen2Function) *gen2Function {
 	if fn.ServiceConfig != nil {
 		sc := *fn.ServiceConfig
 		sc.EnvironmentVariables = cloneStringMap(fn.ServiceConfig.EnvironmentVariables)
+
+		if fn.ServiceConfig.AllTrafficOnLatestRevision != nil {
+			sc.AllTrafficOnLatestRevision = boolPtr(*fn.ServiceConfig.AllTrafficOnLatestRevision)
+		}
+
 		out.ServiceConfig = &sc
 	}
 
@@ -732,6 +767,11 @@ func cloneStringMap(m map[string]string) map[string]string {
 	}
 
 	return out
+}
+
+// boolPtr returns a pointer to b, for setting *bool fields to an explicit value.
+func boolPtr(b bool) *bool {
+	return &b
 }
 
 // randomToken returns a short random hex string for synthesized ids.
