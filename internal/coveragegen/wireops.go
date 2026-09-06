@@ -137,6 +137,14 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"gcp/resourcemanager": {
 		"GetIamPolicy", "SetIamPolicy", "TestIamPermissions",
 	},
+	"gcp/kms": {
+		"CreateCryptoKey", "CreateCryptoKeyVersion", "CreateKeyRing",
+		"DestroyCryptoKeyVersion", "GetCryptoKey", "GetCryptoKeyVersion",
+		"GetIamPolicy", "GetKeyRing", "ListCryptoKeyVersions", "ListCryptoKeys",
+		"ListKeyRings", "RestoreCryptoKeyVersion", "SetIamPolicy",
+		"TestIamPermissions", "UpdateCryptoKey", "UpdateCryptoKeyPrimaryVersion",
+		"UpdateCryptoKeyVersion",
+	},
 	"gcp/cloudbilling": {
 		"CreateBillingAccount", "CreateBudget", "DeleteBudget", "GetBillingAccount",
 		"GetBudget", "GetProjectBillingInfo", "ListBillingAccounts", "ListBudgets",

@@ -32,6 +32,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/gcs"
 	"github.com/stackshy/cloudemu/v2/server/gcp/gke"
 	"github.com/stackshy/cloudemu/v2/server/gcp/iam"
+	kmssrv "github.com/stackshy/cloudemu/v2/server/gcp/kms"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	memorystoresrv "github.com/stackshy/cloudemu/v2/server/gcp/memorystore"
@@ -486,6 +487,18 @@ func New(d Drivers) *server.Server {
 	// colon-verb single-segment guard keeps it disjoint from every other
 	// /v1/projects/ handler, but it must precede Firestore's permissive prefix.
 	srv.Register(resourcemanager.New())
+
+	// Cloud KMS (cloudkms.googleapis.com) matches /v1/projects/{p}/locations/{l}/
+	// keyRings[/…]. Its keyRings resource-type guard is disjoint from every other
+	// /v1/projects/ handler (Memorystore's instances, GKE's clusters, Cloud
+	// Functions' functions, Eventarc's triggers, Scheduler's jobs, Vertex AI,
+	// Artifact Registry's repositories), so registration order among them is
+	// unconstrained. It has no portable driver — the control-plane state is a
+	// self-contained store (like Cloud Billing and project IAM above) so the
+	// handler is always registered; it must precede Firestore's permissive
+	// /v1/projects/ prefix. d.Clock (may be nil) makes create/destroy timestamps
+	// deterministic under a FakeClock.
+	srv.Register(kmssrv.New(d.Clock))
 
 	if d.Firestore != nil {
 		// The Firestore Admin API (projects.databases[.collectionGroups.indexes])
