@@ -243,11 +243,14 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 		updated.info.NodeType = cfg.NodeType
 	}
 
+	// The ARM SKU is atomic: a request carries name+family+capacity together. A
+	// wire update records the family whenever it supplies a SKU, so treat family
+	// presence as "a SKU was supplied" and apply the capacity alongside it —
+	// including capacity 0, so a scale down to the Basic/Standard C0 tier is not
+	// silently dropped. A family-less update (no SKU supplied) leaves both fields
+	// unchanged.
 	if cfg.SKUFamily != "" {
 		updated.info.SKUFamily = cfg.SKUFamily
-	}
-
-	if cfg.SKUCapacity > 0 {
 		updated.info.SKUCapacity = cfg.SKUCapacity
 	}
 
