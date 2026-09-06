@@ -23,6 +23,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cognito"
 	"github.com/stackshy/cloudemu/v2/providers/aws/configservice"
 	"github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
@@ -184,6 +185,7 @@ type Provider struct {
 	CloudTrail          *cloudtrail.Mock
 	Glue                *glue.Mock
 	Athena              *athena.Mock
+	Cognito             *cognito.Mock
 	Config              *configservice.Mock
 	GuardDuty           *guardduty.Mock
 	APIGateway          *apigateway.Mock
@@ -253,6 +255,7 @@ func New(opts ...config.Option) *Provider {
 		CloudTrail:          cloudtrail.New(o),
 		Glue:                glue.New(o),
 		Athena:              athena.New(o),
+		Cognito:             cognito.New(o),
 		Config:              configservice.New(o),
 		GuardDuty:           guardduty.New(o),
 		APIGateway:          apigateway.New(o),
