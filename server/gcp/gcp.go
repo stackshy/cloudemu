@@ -29,6 +29,7 @@ import (
 	composersrv "github.com/stackshy/cloudemu/v2/server/gcp/composer"
 	"github.com/stackshy/cloudemu/v2/server/gcp/compute"
 	dataprocsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataproc"
+	datastreamsrv "github.com/stackshy/cloudemu/v2/server/gcp/datastream"
 	"github.com/stackshy/cloudemu/v2/server/gcp/eventarc"
 	fcmsrv "github.com/stackshy/cloudemu/v2/server/gcp/fcm"
 	filestoresrv "github.com/stackshy/cloudemu/v2/server/gcp/filestore"
@@ -63,6 +64,7 @@ import (
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dataprocdriver "github.com/stackshy/cloudemu/v2/services/dataproc/driver"
+	datastreamdriver "github.com/stackshy/cloudemu/v2/services/datastream/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
@@ -121,6 +123,13 @@ type Drivers struct {
 	// and the resource segment so it is disjoint from every other /v1/projects/
 	// handler, and Compute's regional paths are under the /compute/v1/ prefix.
 	Dataproc dataprocdriver.Dataproc
+	// Datastream serves the datastream.googleapis.com v1 connection-profile and
+	// stream control plane against the datastream driver. Its paths live under
+	// /v1/projects/{p}/locations/{l}/{connectionProfiles|streams}[/…]; the
+	// handler's Matches narrows on those resource segments, so it is disjoint from
+	// every other /v1/projects/ handler, and its location-scoped operation polls
+	// are owned by the shared LRO poller.
+	Datastream datastreamdriver.Datastream
 	// Composer serves the composer.googleapis.com v1 environment control plane
 	// against the composer driver. Its paths live under /v1/projects/{p}/
 	// locations/{l}/environments[/…]; the handler's Matches narrows on the
@@ -414,6 +423,19 @@ func New(d Drivers) *server.Server {
 		clouddeployH := clouddeploysrv.New(d.CloudDeploy)
 		clouddeployH.SetOperationRegistry(opsReg)
 		srv.Register(clouddeployH)
+	}
+
+	// Datastream matches /v1/projects/{p}/locations/{l}/{connectionProfiles|
+	// streams}[/…]. Its resource-segment guard is disjoint from every other
+	// /v1/projects/ handler (Composer's environments, Cloud Deploy's pipelines/
+	// targets, Scheduler's jobs, …), so registration order among them is
+	// unconstrained; registered before Firestore's permissive prefix. Its
+	// location-scoped operation polls are owned by the shared LRO poller, which the
+	// handler's Matches yields to.
+	if d.Datastream != nil {
+		datastreamH := datastreamsrv.New(d.Datastream)
+		datastreamH.SetOperationRegistry(opsReg)
+		srv.Register(datastreamH)
 	}
 
 	// Workflows matches /v1/projects/{p}/locations/{l}/workflows[/…]. Its

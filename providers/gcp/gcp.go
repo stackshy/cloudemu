@@ -22,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/composer"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/dataproc"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/datastream"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/eventarc"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/fcm"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/firestore"
@@ -95,6 +96,7 @@ type Provider struct {
 	VertexAI         *vertexai.Mock
 	Spanner          *spannerprov.Mock
 	Dataproc         *dataproc.Mock
+	Datastream       *datastream.Mock
 	Composer         *composer.Mock
 	CloudDeploy      *clouddeploy.Mock
 	Workflows        *workflows.Mock
@@ -148,6 +150,7 @@ func New(opts ...config.Option) *Provider {
 		VertexAI:         vertexai.New(o),
 		Spanner:          spannerprov.New(o),
 		Dataproc:         dataproc.New(o),
+		Datastream:       datastream.New(o),
 		Composer:         composer.New(o),
 		CloudDeploy:      clouddeploy.New(o),
 		Workflows:        workflows.New(o),
