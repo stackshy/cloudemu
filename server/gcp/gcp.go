@@ -45,6 +45,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/resourcemanager"
 	schedulersrv "github.com/stackshy/cloudemu/v2/server/gcp/scheduler"
 	secretmanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/secretmanager"
+	servicedirectorysrv "github.com/stackshy/cloudemu/v2/server/gcp/servicedirectory"
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
 	spannersrv "github.com/stackshy/cloudemu/v2/server/gcp/spanner"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
@@ -77,6 +78,7 @@ import (
 	scheddriver "github.com/stackshy/cloudemu/v2/services/scheduler/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
+	sddriver "github.com/stackshy/cloudemu/v2/services/servicedirectory/driver"
 	spannerdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 	vertexaidriver "github.com/stackshy/cloudemu/v2/services/vertexai/driver"
@@ -139,7 +141,14 @@ type Drivers struct {
 	// on that resource segment, so it is disjoint from every other /v1/projects/
 	// handler, and its location-scoped operation polls are owned by the shared
 	// LRO poller.
-	Workflows        workflowsdriver.Workflows
+	Workflows workflowsdriver.Workflows
+	// ServiceDirectory serves the servicedirectory.googleapis.com v1 REST API
+	// (namespaces → services → endpoints) against the servicedirectory driver.
+	// Its paths live under /v1/projects/{p}/locations/{l}/namespaces[/…]; the
+	// handler's Matches narrows on the namespaces resource segment, so it is
+	// disjoint from every other /v1/projects/ handler. CRUD is synchronous REST
+	// (no long-running operations).
+	ServiceDirectory sddriver.ServiceDirectory
 	VertexAI         vertexaidriver.VertexAI
 	IAM              iamdriver.IAM
 	ArtifactRegistry crdriver.ContainerRegistry
@@ -418,6 +427,15 @@ func New(d Drivers) *server.Server {
 		workflowsH := workflowssrv.New(d.Workflows)
 		workflowsH.SetOperationRegistry(opsReg)
 		srv.Register(workflowsH)
+	}
+
+	// ServiceDirectory matches /v1/projects/{p}/locations/{l}/namespaces[/…]. Its
+	// namespaces resource-segment guard is disjoint from every other
+	// /v1/projects/ handler, so registration order among them is unconstrained;
+	// registered before Firestore's permissive prefix. CRUD is synchronous REST —
+	// no operation registry is wired.
+	if d.ServiceDirectory != nil {
+		srv.Register(servicedirectorysrv.New(d.ServiceDirectory))
 	}
 
 	// AlloyDB matches /v1/projects/{p}/locations/{l}/{clusters|backups|

@@ -34,6 +34,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/pubsub"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/scheduler"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/secretmanager"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/servicedirectory"
 	spannerprov "github.com/stackshy/cloudemu/v2/providers/gcp/spanner"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vpc"
@@ -99,6 +100,7 @@ type Provider struct {
 	Workflows        *workflows.Mock
 	Scheduler        *scheduler.Mock
 	CloudTasks       *cloudtasks.Mock
+	ServiceDirectory *servicedirectory.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -151,6 +153,7 @@ func New(opts ...config.Option) *Provider {
 		Workflows:        workflows.New(o),
 		Scheduler:        scheduler.New(o),
 		CloudTasks:       cloudtasks.New(o),
+		ServiceDirectory: servicedirectory.New(o),
 		ProjectID:        o.ProjectID,
 		Region:           o.Region,
 		Clock:            o.Clock,
