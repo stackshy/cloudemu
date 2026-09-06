@@ -88,6 +88,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `route53resolver` | [Route53Resolver](./aws/route53resolver.md) | — | — | — | 72 |
 | `sagemaker` | [SageMaker](./aws/sagemaker.md) | — | — | — | 121 |
 | `savingsplans` | [SavingsPlans](./aws/savingsplans.md) | — | — | — | 9 |
+| `scheduler` | — | — | [Scheduler](./gcp/scheduler.md) | — | 8 |
 | `secrets` | [SecretsManager](./aws/secretsmanager.md) | [KeyVault](./azure/keyvault.md) | [SecretManager](./gcp/secretmanager.md) | — | 7 |
 | `serverless` | [Lambda](./aws/lambda.md) | [Functions](./azure/functions.md) | [CloudFunctions](./gcp/cloudfunctions.md) | — | 27 |
 | `servicenetworking` | — | — | [Servicenetworking](./gcp/servicenetworking.md) | — | 3 |

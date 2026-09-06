@@ -29,6 +29,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/pubsub"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/scheduler"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/secretmanager"
 	spannerprov "github.com/stackshy/cloudemu/v2/providers/gcp/spanner"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vertexai"
@@ -89,6 +90,7 @@ type Provider struct {
 	VertexAI         *vertexai.Mock
 	Spanner          *spannerprov.Mock
 	Dataproc         *dataproc.Mock
+	Scheduler        *scheduler.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -136,6 +138,7 @@ func New(opts ...config.Option) *Provider {
 		VertexAI:         vertexai.New(o),
 		Spanner:          spannerprov.New(o),
 		Dataproc:         dataproc.New(o),
+		Scheduler:        scheduler.New(o),
 		ProjectID:        o.ProjectID,
 		Region:           o.Region,
 		Clock:            o.Clock,
