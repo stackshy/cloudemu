@@ -60,6 +60,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/mysqlflex"
 	notificationhubssrv "github.com/stackshy/cloudemu/v2/server/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/v2/server/azure/postgresflex"
+	privatednssrv "github.com/stackshy/cloudemu/v2/server/azure/privatedns"
 	providerssrv "github.com/stackshy/cloudemu/v2/server/azure/providers"
 	"github.com/stackshy/cloudemu/v2/server/azure/queue"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
@@ -100,6 +101,7 @@ import (
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	pddriver "github.com/stackshy/cloudemu/v2/services/privatedns/driver"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
@@ -173,6 +175,10 @@ type Drivers struct {
 	// Firewall Policy (Microsoft.Network/firewallPolicies) ARM APIs against the
 	// azurefirewall driver.
 	Firewall fwdriver.AzureFirewalls
+	// PrivateDNS serves the Azure Private DNS
+	// (Microsoft.Network/privateDnsZones) ARM API — private zones,
+	// virtualNetworkLinks and record sets — against the privatedns driver.
+	PrivateDNS pddriver.PrivateDNS
 	// EventGrid serves the Azure Event Grid (Microsoft.EventGrid/topics) ARM API
 	// against the eventbus driver, mapping topics to event buses.
 	EventGrid ebdriver.EventBus
@@ -309,6 +315,7 @@ func New(d Drivers) http.Handler {
 		lbHandler       *lbsrv.Handler
 		appGwHandler    *appgatewaysrv.Handler
 		firewallHandler *azurefirewallsrv.Handler
+		privateDNS      *privatednssrv.Handler
 		rgPurgers       []resourcegroups.ResourceGroupPurger
 	)
 
@@ -352,6 +359,14 @@ func New(d Drivers) http.Handler {
 	if d.Firewall != nil {
 		firewallHandler = azurefirewallsrv.New(d.Firewall)
 		rgPurgers = append(rgPurgers, firewallHandler)
+	}
+
+	// Private DNS zones (and their vnet links and records) are resource-group-
+	// scoped Microsoft.Network resources, so their handler joins the purge
+	// cascade. Registered further below.
+	if d.PrivateDNS != nil {
+		privateDNS = privatednssrv.New(d.PrivateDNS)
+		rgPurgers = append(rgPurgers, privateDNS)
 	}
 
 	if d.BlobStorage != nil {
@@ -517,6 +532,14 @@ func New(d Drivers) http.Handler {
 	// fallback.
 	if firewallHandler != nil {
 		srv.Register(firewallHandler)
+	}
+
+	// Private DNS claims Microsoft.Network/privateDnsZones — disjoint from the
+	// public DNS handler's dnsZones even case-insensitively, and from every other
+	// Microsoft.Network handler — so registration order relative to them is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if privateDNS != nil {
+		srv.Register(privateDNS)
 	}
 
 	// Event Grid claims Microsoft.EventGrid/topics — a distinct ARM provider

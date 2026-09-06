@@ -34,6 +34,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/v2/providers/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/v2/providers/azure/postgresflex"
+	"github.com/stackshy/cloudemu/v2/providers/azure/privatedns"
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/providers/azure/sql"
@@ -137,6 +138,7 @@ type Provider struct {
 	LB               *loadbalancer.Mock
 	AppGateway       *applicationgateway.Mock
 	Firewall         *firewall.Mock
+	PrivateDNS       *privatedns.Mock
 	ServiceBus       *servicebus.Mock
 	// QueueStorage backs the Azure Queue Storage data-plane handler. It reuses
 	// the messagequeue provider, but is a distinct instance from ServiceBus so
@@ -200,6 +202,7 @@ func New(opts ...config.Option) *Provider {
 		LB:                 loadbalancer.New(o),
 		AppGateway:         applicationgateway.New(o),
 		Firewall:           firewall.New(o),
+		PrivateDNS:         privatedns.New(o),
 		ServiceBus:         servicebus.New(o),
 		QueueStorage:       servicebus.New(o),
 		TableStorage:       tablestorage.New(o),
@@ -224,42 +227,7 @@ func New(opts ...config.Option) *Provider {
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
 	}
-	p.VirtualMachines.SetMonitoring(p.Monitor)
-	p.VirtualMachines.SetNICAttacher(p.VNet)
-	p.BlobStorage.SetMonitoring(p.Monitor)
-	p.CosmosDB.SetMonitoring(p.Monitor)
-	p.Functions.SetMonitoring(p.Monitor)
-	// Azure Functions invocations write execution logs (and captured stdout/
-	// stderr on the real-engine path) to Log Analytics.
-	p.Functions.SetLogSink(p.LogAnalytics)
-	p.ServiceBus.SetMonitoring(p.Monitor)
-	p.Cache.SetMonitoring(p.Monitor)
-	p.LogAnalytics.SetMonitoring(p.Monitor)
-	p.NotificationHubs.SetMonitoring(p.Monitor)
-	p.ACR.SetMonitoring(p.Monitor)
-	p.EventGrid.SetMonitoring(p.Monitor)
-	p.EventGrid.SetServiceBusDeliverer(p.ServiceBus)
-	p.EventGrid.SetFunctionInvoker(p.Functions)
-	p.EventGrid.SetStorageQueueDeliverer(p.QueueStorage)
-	// Native trigger delivery: a message enqueued to a Storage queue or Service
-	// Bus queue invokes any function whose function.json declares the matching
-	// trigger binding (queueTrigger / serviceBusTrigger) for that queue.
-	p.QueueStorage.SetFunctionTriggerSink(p.Functions, "queueTrigger")
-	p.ServiceBus.SetFunctionTriggerSink(p.Functions, "serviceBusTrigger")
-	p.BlobStorage.SetEventGridPublisher(p.EventGrid)
-	// A blob created/updated in a bound container invokes any function whose
-	// function.json declares a blobTrigger binding on that container.
-	p.BlobStorage.SetFunctionTriggerSink(p.Functions)
-	// A Cosmos DB document created/updated in a bound (database, container)
-	// invokes any function whose function.json declares a cosmosDBTrigger
-	// binding on it, mirroring Cosmos's change feed.
-	p.CosmosDB.SetFunctionTriggerSink(p.Functions)
-	p.SQL.SetMonitoring(p.Monitor)
-	p.PostgresFlex.SetMonitoring(p.Monitor)
-	p.MySQLFlex.SetMonitoring(p.Monitor)
-	p.AKS.SetMonitoring(p.Monitor)
-	p.AI.SetMonitoring(p.Monitor)
-	p.Search.SetMonitoring(p.Monitor)
+	wireCrossService(p)
 
 	p.ResourceDiscovery = resourcediscovery.New(
 		resourcediscovery.ProviderAzure, o.AccountID, o.Region,
@@ -296,6 +264,48 @@ func New(opts ...config.Option) *Provider {
 	p.engineClosers = o.EngineClosers()
 
 	return p
+}
+
+// wireCrossService connects the inter-service dependencies (auto-metrics, log
+// sinks, native trigger delivery and event publishing) after every service has
+// been constructed.
+func wireCrossService(p *Provider) {
+	p.VirtualMachines.SetMonitoring(p.Monitor)
+	p.VirtualMachines.SetNICAttacher(p.VNet)
+	p.BlobStorage.SetMonitoring(p.Monitor)
+	p.CosmosDB.SetMonitoring(p.Monitor)
+	p.Functions.SetMonitoring(p.Monitor)
+	// Azure Functions invocations write execution logs (and captured stdout/
+	// stderr on the real-engine path) to Log Analytics.
+	p.Functions.SetLogSink(p.LogAnalytics)
+	p.ServiceBus.SetMonitoring(p.Monitor)
+	p.Cache.SetMonitoring(p.Monitor)
+	p.LogAnalytics.SetMonitoring(p.Monitor)
+	p.NotificationHubs.SetMonitoring(p.Monitor)
+	p.ACR.SetMonitoring(p.Monitor)
+	p.EventGrid.SetMonitoring(p.Monitor)
+	p.EventGrid.SetServiceBusDeliverer(p.ServiceBus)
+	p.EventGrid.SetFunctionInvoker(p.Functions)
+	p.EventGrid.SetStorageQueueDeliverer(p.QueueStorage)
+	// Native trigger delivery: a message enqueued to a Storage queue or Service
+	// Bus queue invokes any function whose function.json declares the matching
+	// trigger binding (queueTrigger / serviceBusTrigger) for that queue.
+	p.QueueStorage.SetFunctionTriggerSink(p.Functions, "queueTrigger")
+	p.ServiceBus.SetFunctionTriggerSink(p.Functions, "serviceBusTrigger")
+	p.BlobStorage.SetEventGridPublisher(p.EventGrid)
+	// A blob created/updated in a bound container invokes any function whose
+	// function.json declares a blobTrigger binding on that container.
+	p.BlobStorage.SetFunctionTriggerSink(p.Functions)
+	// A Cosmos DB document created/updated in a bound (database, container)
+	// invokes any function whose function.json declares a cosmosDBTrigger
+	// binding on it, mirroring Cosmos's change feed.
+	p.CosmosDB.SetFunctionTriggerSink(p.Functions)
+	p.SQL.SetMonitoring(p.Monitor)
+	p.PostgresFlex.SetMonitoring(p.Monitor)
+	p.MySQLFlex.SetMonitoring(p.Monitor)
+	p.AKS.SetMonitoring(p.Monitor)
+	p.AI.SetMonitoring(p.Monitor)
+	p.Search.SetMonitoring(p.Monitor)
 }
 
 // Close tears down any real engines wired into the provider via
