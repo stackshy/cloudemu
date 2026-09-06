@@ -131,7 +131,8 @@ func (h *Handler) insertRouter(w http.ResponseWriter, r *http.Request, rp gcpres
 		return
 	}
 
-	h.routers.put(rp.Project, rp.ScopeName, req.Name, body)
+	h.routers.put(rp.Project, rp.ScopeName, req.Name,
+		enrichRouter(body, rp, hostOf(r), req.Name, nil))
 
 	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
 		resourceRouters, req.Name, "insert")
@@ -160,15 +161,19 @@ func (h *Handler) listRouters(w http.ResponseWriter, r *http.Request, rp gcprest
 	})
 }
 
-// patchRouter replaces the stored body.
+// patchRouter merges the patch into the stored router, matching real Compute's
+// field-level PATCH semantics.
 //
-// Real Compute merges the patch into the resource, but a caller adding NAT
-// sends the whole router back, and storing what it sent is what makes the
-// subsequent read agree with it.
+// Terraform's google_compute_router_nat adds NAT with a partial patch that
+// carries only {nats:[...]} — no name, network, or bgp — so replacing the
+// stored body would drop those and make the next google_compute_router read
+// diff (a forced replacement). Merging top-level fields, patch wins, keeps the
+// router's other settings while the caller's nats array replaces the old one.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) patchRouter(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	if _, ok := h.routers.get(rp.Project, rp.ScopeName, rp.ResourceName); !ok {
+	prior, ok := h.routers.get(rp.Project, rp.ScopeName, rp.ResourceName)
+	if !ok {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound",
 			"router "+rp.ResourceName+" not found")
 
@@ -180,7 +185,8 @@ func (h *Handler) patchRouter(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
-	h.routers.put(rp.Project, rp.ScopeName, rp.ResourceName, body)
+	h.routers.put(rp.Project, rp.ScopeName, rp.ResourceName,
+		enrichRouter(mergeRouterPatch(prior, body), rp, hostOf(r), rp.ResourceName, prior))
 
 	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeRegions, rp.ScopeName,
 		resourceRouters, rp.ResourceName, "patch")
@@ -201,6 +207,131 @@ func (h *Handler) deleteRouter(w http.ResponseWriter, r *http.Request, rp gcpres
 		resourceRouters, rp.ResourceName, "delete")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// NAT idle-timeout defaults real Compute stamps on every nat block that omits
+// them. A caller (Terraform's google_compute_router_nat, gcloud) reads these
+// back, so filling them is what stops a create from perpetually diffing against
+// an empty read.
+const (
+	natUDPIdleTimeoutDefault            = 30
+	natTCPEstablishedIdleTimeoutDefault = 1200
+	natTCPTransitoryIdleTimeoutDefault  = 30
+	natICMPIdleTimeoutDefault           = 30
+)
+
+// mergeRouterPatch overlays the caller's patch onto the prior stored body at
+// the top level (patch fields win), reproducing real Compute's partial-PATCH
+// merge so a patch that omits a field leaves the stored value intact. A nats or
+// bgp block in the patch replaces the prior one wholesale, matching the API. If
+// either side is unparseable the patch is returned unchanged (replace).
+func mergeRouterPatch(prior, patch json.RawMessage) json.RawMessage {
+	var base, over map[string]any
+	if err := json.Unmarshal(prior, &base); err != nil || base == nil {
+		return patch
+	}
+
+	if err := json.Unmarshal(patch, &over); err != nil || over == nil {
+		return patch
+	}
+
+	for k, v := range over {
+		base[k] = v
+	}
+
+	merged, err := json.Marshal(base)
+	if err != nil {
+		return patch
+	}
+
+	return merged
+}
+
+// enrichRouter stamps the server-assigned fields (kind, id, selfLink, region,
+// creationTimestamp) real Compute returns on a router, and fills the NAT
+// idle-timeout defaults on each nat block, while preserving everything the
+// caller sent (bgp, nats, interfaces). Without selfLink a Get returns a body
+// the Terraform google_compute_router provider dereferences unconditionally,
+// crashing its Read; without the timeout defaults a google_compute_router_nat
+// create never stops diffing. On patch, prior carries the stored body so the
+// original creationTimestamp survives a read-modify-write (adding a NAT).
+//
+//nolint:gocritic // rp is a request-scoped value
+func enrichRouter(raw json.RawMessage, rp gcprest.ResourcePath, host, name string, prior json.RawMessage) json.RawMessage {
+	var body map[string]any
+	if err := json.Unmarshal(raw, &body); err != nil || body == nil {
+		return raw
+	}
+
+	body["kind"] = "compute#router"
+	body["id"] = numericID(rp.Project + "/" + rp.ScopeName + "/routers/" + name)
+	body["selfLink"] = gcprest.SelfLink(host, rp.Project, gcprest.ScopeRegions, rp.ScopeName, resourceRouters, name)
+	body["region"] = host + "/compute/v1/projects/" + rp.Project + "/regions/" + rp.ScopeName
+	body["creationTimestamp"] = routerCreationTimestamp(body, prior)
+
+	qualifyGlobalRef(body, "network", host, rp.Project, "networks")
+	applyNatDefaults(body)
+
+	enriched, err := json.Marshal(body)
+	if err != nil {
+		return raw
+	}
+
+	return enriched
+}
+
+// routerCreationTimestamp keeps the creationTimestamp stable across a patch:
+// the caller's read-modify-write echoes the value we returned, and any stored
+// prior wins over it, so only a first insert stamps a fresh time.
+func routerCreationTimestamp(body map[string]any, prior json.RawMessage) string {
+	if prior != nil {
+		var p map[string]any
+		if err := json.Unmarshal(prior, &p); err == nil {
+			if ts, ok := p["creationTimestamp"].(string); ok && ts != "" {
+				return ts
+			}
+		}
+	}
+
+	if ts, ok := body["creationTimestamp"].(string); ok && ts != "" {
+		return ts
+	}
+
+	return nowRFC3339()
+}
+
+// applyNatDefaults fills the idle-timeout fields real Compute defaults on each
+// nat block that omits them, leaving any caller-supplied value untouched.
+func applyNatDefaults(body map[string]any) {
+	nats, ok := body["nats"].([]any)
+	if !ok {
+		return
+	}
+
+	for _, n := range nats {
+		nat, ok := n.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		setDefaultInt(nat, "udpIdleTimeoutSec", natUDPIdleTimeoutDefault)
+		setDefaultInt(nat, "tcpEstablishedIdleTimeoutSec", natTCPEstablishedIdleTimeoutDefault)
+		setDefaultInt(nat, "tcpTransitoryIdleTimeoutSec", natTCPTransitoryIdleTimeoutDefault)
+		setDefaultInt(nat, "icmpIdleTimeoutSec", natICMPIdleTimeoutDefault)
+	}
+}
+
+// setDefaultInt assigns v to m[key] only when the key is absent or holds the
+// zero value, so a caller that sent an explicit timeout keeps it.
+func setDefaultInt(m map[string]any, key string, v int) {
+	switch cur := m[key].(type) {
+	case nil:
+		m[key] = v
+	case float64:
+		if cur == 0 {
+			m[key] = v
+		}
+	}
 }
 
 // decodeRouter reads the request body once, returning both the raw bytes to
