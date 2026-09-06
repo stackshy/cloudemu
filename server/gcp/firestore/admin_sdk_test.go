@@ -367,3 +367,133 @@ func TestSDKFirestoreAdminIndexLifecycle(t *testing.T) {
 		t.Fatal("GetIndex after delete should 404")
 	}
 }
+
+// TestSDKFirestoreAdminFieldLifecycle exercises the collectionGroups.fields
+// surface with the real admin GAPIC client: patch (LRO -> done) sets an
+// indexConfig + ttlConfig, get/list round-trip them, and a clearing patch
+// reverts the field to the ancestor (__default__) config.
+func TestSDKFirestoreAdminFieldLifecycle(t *testing.T) {
+	_, client := newAdminTestServer(t)
+	ctx := context.Background()
+
+	dbOp, err := client.CreateDatabase(ctx, &adminpb.CreateDatabaseRequest{
+		Parent: "projects/p1", DatabaseId: "db1",
+		Database: &adminpb.Database{Type: adminpb.Database_FIRESTORE_NATIVE, LocationId: "us-central1"},
+	})
+	if err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	if _, err := dbOp.Wait(ctx); err != nil {
+		t.Fatalf("CreateDatabase Wait: %v", err)
+	}
+
+	name := "projects/p1/databases/db1/collectionGroups/chatrooms/fields/basic"
+
+	fieldOp, err := client.UpdateField(ctx, &adminpb.UpdateFieldRequest{
+		Field: &adminpb.Field{
+			Name: name,
+			IndexConfig: &adminpb.Field_IndexConfig{
+				Indexes: []*adminpb.Index{
+					{
+						QueryScope: adminpb.Index_COLLECTION,
+						Fields: []*adminpb.Index_IndexField{{
+							FieldPath: "basic",
+							ValueMode: &adminpb.Index_IndexField_Order_{Order: adminpb.Index_IndexField_ASCENDING},
+						}},
+					},
+					{
+						QueryScope: adminpb.Index_COLLECTION,
+						Fields: []*adminpb.Index_IndexField{{
+							FieldPath: "basic",
+							ValueMode: &adminpb.Index_IndexField_ArrayConfig_{ArrayConfig: adminpb.Index_IndexField_CONTAINS},
+						}},
+					},
+				},
+			},
+			TtlConfig: &adminpb.Field_TtlConfig{},
+		},
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"index_config", "ttl_config"}},
+	})
+	if err != nil {
+		t.Fatalf("UpdateField: %v", err)
+	}
+
+	fld, err := fieldOp.Wait(ctx)
+	if err != nil {
+		t.Fatalf("UpdateField Wait: %v", err)
+	}
+
+	if fld.GetName() != name {
+		t.Errorf("field name=%q want %q", fld.GetName(), name)
+	}
+
+	assertFieldConfigured(t, fld)
+
+	// Get round-trips the same config.
+	got, err := client.GetField(ctx, &adminpb.GetFieldRequest{Name: name})
+	if err != nil {
+		t.Fatalf("GetField: %v", err)
+	}
+
+	assertFieldConfigured(t, got)
+
+	// List returns the explicitly configured field.
+	it := client.ListFields(ctx, &adminpb.ListFieldsRequest{
+		Parent: "projects/p1/databases/db1/collectionGroups/chatrooms",
+	})
+
+	first, err := it.Next()
+	if err != nil {
+		t.Fatalf("ListFields Next: %v", err)
+	}
+
+	if first.GetName() != name {
+		t.Errorf("list name=%q want %q", first.GetName(), name)
+	}
+
+	// Clearing patch (terraform delete): empty indexConfig reverts to ancestor.
+	clearOp, err := client.UpdateField(ctx, &adminpb.UpdateFieldRequest{
+		Field:      &adminpb.Field{Name: name, IndexConfig: &adminpb.Field_IndexConfig{}},
+		UpdateMask: &fieldmaskpb.FieldMask{Paths: []string{"index_config"}},
+	})
+	if err != nil {
+		t.Fatalf("UpdateField clear: %v", err)
+	}
+
+	cleared, err := clearOp.Wait(ctx)
+	if err != nil {
+		t.Fatalf("UpdateField clear Wait: %v", err)
+	}
+
+	if len(cleared.GetIndexConfig().GetIndexes()) != 0 {
+		t.Errorf("cleared indexes=%d want 0", len(cleared.GetIndexConfig().GetIndexes()))
+	}
+}
+
+// assertFieldConfigured checks a field carries the two-index config + active TTL
+// set by TestSDKFirestoreAdminFieldLifecycle.
+func assertFieldConfigured(t *testing.T, fld *adminpb.Field) {
+	t.Helper()
+
+	idxs := fld.GetIndexConfig().GetIndexes()
+	if len(idxs) != 2 {
+		t.Fatalf("indexConfig indexes=%d want 2", len(idxs))
+	}
+
+	if idxs[0].GetQueryScope() != adminpb.Index_COLLECTION {
+		t.Errorf("index[0] queryScope=%v want COLLECTION", idxs[0].GetQueryScope())
+	}
+
+	if idxs[0].GetFields()[0].GetOrder() != adminpb.Index_IndexField_ASCENDING {
+		t.Errorf("index[0] order=%v want ASCENDING", idxs[0].GetFields()[0].GetOrder())
+	}
+
+	if idxs[1].GetFields()[0].GetArrayConfig() != adminpb.Index_IndexField_CONTAINS {
+		t.Errorf("index[1] arrayConfig=%v want CONTAINS", idxs[1].GetFields()[0].GetArrayConfig())
+	}
+
+	if fld.GetTtlConfig().GetState() != adminpb.Field_TtlConfig_ACTIVE {
+		t.Errorf("ttlConfig state=%v want ACTIVE", fld.GetTtlConfig().GetState())
+	}
+}
