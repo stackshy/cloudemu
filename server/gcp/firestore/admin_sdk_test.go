@@ -163,6 +163,66 @@ func patchDeleteProtection(t *testing.T, client *admin.FirestoreAdminClient, sta
 	}
 }
 
+// TestSDKFirestoreAdminVersionRetention verifies the output-only retention
+// fields track point-in-time recovery: 1 hour by default and 7 days once PITR is
+// enabled, with earliestVersionTime never before createTime (matching real
+// Firestore).
+func TestSDKFirestoreAdminVersionRetention(t *testing.T) {
+	_, client := newAdminTestServer(t)
+	ctx := context.Background()
+
+	const (
+		oneHourSecs  = 3600
+		sevenDaySecs = 604800
+	)
+
+	// PITR disabled -> 1 hour.
+	op, err := client.CreateDatabase(ctx, &adminpb.CreateDatabaseRequest{
+		Parent: "projects/rp", DatabaseId: "off",
+		Database: &adminpb.Database{Type: adminpb.Database_FIRESTORE_NATIVE, LocationId: "nam5"},
+	})
+	if err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	off, err := op.Wait(ctx)
+	if err != nil {
+		t.Fatalf("CreateDatabase Wait: %v", err)
+	}
+
+	if got := off.GetVersionRetentionPeriod().GetSeconds(); got != oneHourSecs {
+		t.Errorf("PITR-disabled versionRetentionPeriod=%ds want %ds", got, oneHourSecs)
+	}
+
+	// earliestVersionTime must not precede createTime.
+	if off.GetEarliestVersionTime().AsTime().Before(off.GetCreateTime().AsTime()) {
+		t.Errorf("earliestVersionTime %v before createTime %v",
+			off.GetEarliestVersionTime().AsTime(), off.GetCreateTime().AsTime())
+	}
+
+	// PITR enabled -> 7 days.
+	op2, err := client.CreateDatabase(ctx, &adminpb.CreateDatabaseRequest{
+		Parent: "projects/rp", DatabaseId: "on",
+		Database: &adminpb.Database{
+			Type:                          adminpb.Database_FIRESTORE_NATIVE,
+			LocationId:                    "nam5",
+			PointInTimeRecoveryEnablement: adminpb.Database_POINT_IN_TIME_RECOVERY_ENABLED,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	on, err := op2.Wait(ctx)
+	if err != nil {
+		t.Fatalf("CreateDatabase Wait: %v", err)
+	}
+
+	if got := on.GetVersionRetentionPeriod().GetSeconds(); got != sevenDaySecs {
+		t.Errorf("PITR-enabled versionRetentionPeriod=%ds want %ds", got, sevenDaySecs)
+	}
+}
+
 // TestSDKFirestoreAdminAndDataPlaneCoexist proves the routing disambiguation:
 // admin database ops and data-plane document ops both work on the SAME server.
 func TestSDKFirestoreAdminAndDataPlaneCoexist(t *testing.T) {

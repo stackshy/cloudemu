@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"strconv"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -161,9 +162,29 @@ func assignEnums(rec *dbRecord, body map[string]any) error {
 	return nil
 }
 
+// versionRetention returns the version-retention window a database reports (7
+// days when point-in-time recovery is enabled, otherwise 1 hour) together with
+// the earliest readable version time (now - retention, but never before the
+// database was created), matching real Firestore's output-only fields.
+func versionRetention(rec *dbRecord) (string, time.Time) {
+	secs := retentionDisabledSeconds
+	if rec.pointInTimeRecovery == pitrEnabled {
+		secs = retentionEnabledSeconds
+	}
+
+	earliest := time.Now().UTC().Add(-time.Duration(secs) * time.Second)
+	if earliest.Before(rec.createTime) {
+		earliest = rec.createTime
+	}
+
+	return strconv.Itoa(secs) + "s", earliest
+}
+
 // renderDatabase builds the JSON map for a Database resource, emitting enums as
 // their canonical string names.
 func renderDatabase(rec *dbRecord) map[string]any {
+	retentionPeriod, earliest := versionRetention(rec)
+
 	return map[string]any{
 		"name":                          dbKey(rec.project, rec.databaseID),
 		"uid":                           rec.uid,
@@ -173,8 +194,8 @@ func renderDatabase(rec *dbRecord) map[string]any {
 		"pointInTimeRecoveryEnablement": rec.pointInTimeRecovery,
 		"deleteProtectionState":         rec.deleteProtection,
 		"locationId":                    rec.locationID,
-		"versionRetentionPeriod":        versionRetentionDefault,
-		"earliestVersionTime":           rec.updateTime.Format(time.RFC3339Nano),
+		"versionRetentionPeriod":        retentionPeriod,
+		"earliestVersionTime":           earliest.Format(time.RFC3339Nano),
 		"createTime":                    rec.createTime.Format(time.RFC3339Nano),
 		"updateTime":                    rec.updateTime.Format(time.RFC3339Nano),
 		"etag":                          rec.etag,

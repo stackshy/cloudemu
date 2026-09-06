@@ -46,9 +46,12 @@ const (
 	segOperations       = "operations"
 )
 
-// versionRetentionDefault is the retention window a database reports when
-// point-in-time recovery is disabled (1 hour), matching real Firestore.
-const versionRetentionDefault = "3600s"
+// Version-retention windows a database reports, in seconds: 7 days when
+// point-in-time recovery is enabled, otherwise 1 hour, matching real Firestore.
+const (
+	retentionDisabledSeconds = 3600
+	retentionEnabledSeconds  = 604800
+)
 
 // dbRecord is the stored metadata for one Firestore database. It carries only
 // admin-plane configuration; document data lives in the separate data-plane
