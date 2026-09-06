@@ -18,6 +18,7 @@ import (
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
 	appinsightssrv "github.com/stackshy/cloudemu/v2/server/azure/appinsights"
 	appgatewaysrv "github.com/stackshy/cloudemu/v2/server/azure/applicationgateway"
+	azurefirewallsrv "github.com/stackshy/cloudemu/v2/server/azure/azurefirewall"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
 	containerappssrv "github.com/stackshy/cloudemu/v2/server/azure/containerapps"
@@ -79,6 +80,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/vnet"
 	agdriver "github.com/stackshy/cloudemu/v2/services/applicationgateway/driver"
 	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
+	fwdriver "github.com/stackshy/cloudemu/v2/services/azurefirewall/driver"
 	azuresearchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -167,6 +169,10 @@ type Drivers struct {
 	// (Microsoft.Network/applicationGateways) ARM API against the
 	// applicationgateway driver.
 	AppGateway agdriver.AzureApplicationGateways
+	// Firewall serves the Azure Firewall (Microsoft.Network/azureFirewalls) and
+	// Firewall Policy (Microsoft.Network/firewallPolicies) ARM APIs against the
+	// azurefirewall driver.
+	Firewall fwdriver.AzureFirewalls
 	// EventGrid serves the Azure Event Grid (Microsoft.EventGrid/topics) ARM API
 	// against the eventbus driver, mapping topics to event buses.
 	EventGrid ebdriver.EventBus
@@ -297,12 +303,13 @@ func New(d Drivers) http.Handler {
 	// each of these handlers implements ResourceGroupPurger to tear its own
 	// resources down. Other resource types are not cascaded yet.
 	var (
-		vnetHandler    *vnet.Handler
-		vmHandler      *virtualmachines.Handler
-		storageHandler *storageaccountsrv.Handler
-		lbHandler      *lbsrv.Handler
-		appGwHandler   *appgatewaysrv.Handler
-		rgPurgers      []resourcegroups.ResourceGroupPurger
+		vnetHandler     *vnet.Handler
+		vmHandler       *virtualmachines.Handler
+		storageHandler  *storageaccountsrv.Handler
+		lbHandler       *lbsrv.Handler
+		appGwHandler    *appgatewaysrv.Handler
+		firewallHandler *azurefirewallsrv.Handler
+		rgPurgers       []resourcegroups.ResourceGroupPurger
 	)
 
 	// Virtual machines are purged before the networking resources they consume
@@ -337,6 +344,14 @@ func New(d Drivers) http.Handler {
 	if d.AppGateway != nil {
 		appGwHandler = appgatewaysrv.New(d.AppGateway)
 		rgPurgers = append(rgPurgers, appGwHandler)
+	}
+
+	// Azure Firewall + Firewall Policy are resource-group-scoped
+	// Microsoft.Network resources, so their handler joins the purge cascade.
+	// Registered further below.
+	if d.Firewall != nil {
+		firewallHandler = azurefirewallsrv.New(d.Firewall)
+		rgPurgers = append(rgPurgers, firewallHandler)
 	}
 
 	if d.BlobStorage != nil {
@@ -493,6 +508,15 @@ func New(d Drivers) http.Handler {
 	// unconstrained. Registered before the BlobStorage fallback.
 	if appGwHandler != nil {
 		srv.Register(appGwHandler)
+	}
+
+	// Azure Firewall shares the Microsoft.Network ARM provider with the network /
+	// DNS / load-balancer / app-gateway handlers above but claims two disjoint
+	// resource types (azureFirewalls, firewallPolicies), so registration order
+	// relative to them is unconstrained. Registered before the BlobStorage
+	// fallback.
+	if firewallHandler != nil {
+		srv.Register(firewallHandler)
 	}
 
 	// Event Grid claims Microsoft.EventGrid/topics — a distinct ARM provider
