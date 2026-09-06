@@ -94,3 +94,56 @@ func TestSDKEventSubscriptionExplicitRetryPolicyPreserved(t *testing.T) {
 		t.Fatalf("EventDeliverySchema = %v, want CloudEventSchemaV1_0", props.EventDeliverySchema)
 	}
 }
+
+// TestSDKEventSubscriptionPartialRetryPolicyFilled proves the default stamping
+// is per-subfield: a retry policy that sets only MaxDeliveryAttempts keeps that
+// value and has its absent EventTimeToLiveInMinutes filled with the 1440 default
+// — not an all-or-nothing fill that would either overwrite the caller's value or
+// leave the TTL empty.
+func TestSDKEventSubscriptionPartialRetryPolicyFilled(t *testing.T) {
+	client := newEventGridFactory(t).NewEventSubscriptionsClient()
+	ctx := context.Background()
+
+	scope := "/subscriptions/" + testSub + "/resourceGroups/" + testRG
+
+	sub := armeventgrid.EventSubscription{
+		Properties: &armeventgrid.EventSubscriptionProperties{
+			Destination: &armeventgrid.WebHookEventSubscriptionDestination{
+				EndpointType: to.Ptr(armeventgrid.EndpointTypeWebHook),
+				Properties: &armeventgrid.WebHookEventSubscriptionDestinationProperties{
+					EndpointURL: to.Ptr("https://example.test/hook"),
+				},
+			},
+			RetryPolicy: &armeventgrid.RetryPolicy{
+				MaxDeliveryAttempts: to.Ptr(int32(7)),
+			},
+		},
+	}
+
+	poller, err := client.BeginCreateOrUpdate(ctx, scope, "partial-sub", sub, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate: %v", err)
+	}
+	if _, err = poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("CreateOrUpdate PollUntilDone: %v", err)
+	}
+
+	got, err := client.Get(ctx, scope, "partial-sub", nil)
+	if err != nil {
+		t.Fatalf("Get partial-sub: %v", err)
+	}
+
+	props := got.Properties
+	if props == nil || props.RetryPolicy == nil {
+		t.Fatalf("retryPolicy missing: %+v", props)
+	}
+
+	// The caller's explicit attempts survive; only the absent TTL is defaulted.
+	if props.RetryPolicy.MaxDeliveryAttempts == nil || *props.RetryPolicy.MaxDeliveryAttempts != 7 {
+		t.Fatalf("MaxDeliveryAttempts = %v, want 7 (caller value preserved)", props.RetryPolicy.MaxDeliveryAttempts)
+	}
+
+	if props.RetryPolicy.EventTimeToLiveInMinutes == nil || *props.RetryPolicy.EventTimeToLiveInMinutes != 1440 {
+		t.Fatalf("EventTimeToLiveInMinutes = %v, want 1440 (absent subfield defaulted)", props.RetryPolicy.EventTimeToLiveInMinutes)
+	}
+}
