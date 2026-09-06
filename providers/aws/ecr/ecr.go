@@ -97,6 +97,11 @@ func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig
 		mutability = mutableTag
 	}
 
+	if !validTagMutability(mutability) {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"invalid imageTagMutability %q; expected MUTABLE or IMMUTABLE", mutability)
+	}
+
 	tags := copyTags(cfg.Tags)
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 	uri := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s", m.opts.AccountID, region, cfg.Name)
@@ -184,6 +189,17 @@ func defaultKMSKeyARN(region, accountID, repo string) string {
 	return fmt.Sprintf("arn:aws:kms:%s:%s:key/%s", region, accountID, id)
 }
 
+// validTagMutability reports whether v is a tag-mutability value the emulator
+// models. Real ECR's enum also includes IMMUTABLE_WITH_EXCLUSION and
+// MUTABLE_WITH_EXCLUSION, but those require imageTagMutabilityExclusionFilters,
+// an exclusion-filter sub-surface the emulator does not model, so both
+// CreateRepository and PutImageTagMutability accept only the two base values
+// and reject anything else with InvalidParameterException (matching real ECR's
+// rejection of an unrecognized value).
+func validTagMutability(v string) bool {
+	return v == mutableTag || v == immutableTag
+}
+
 // PutImageTagMutability updates a repository's image tag mutability setting.
 // This is AWS-specific (not part of the portable ContainerRegistry driver), so
 // the ECR wire handler reaches it via type assertion. The new value takes effect
@@ -191,7 +207,7 @@ func defaultKMSKeyARN(region, accountID, repo string) string {
 func (m *Mock) PutImageTagMutability(
 	_ context.Context, repository, mutability string,
 ) (*driver.Repository, error) {
-	if mutability != mutableTag && mutability != immutableTag {
+	if !validTagMutability(mutability) {
 		return nil, errors.Newf(errors.InvalidArgument,
 			"invalid imageTagMutability %q; expected MUTABLE or IMMUTABLE", mutability)
 	}

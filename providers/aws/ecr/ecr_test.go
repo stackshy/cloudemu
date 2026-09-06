@@ -82,6 +82,11 @@ func TestCreateRepository(t *testing.T) {
 			name: "with scan on push",
 			cfg:  driver.RepositoryConfig{Name: "scan-repo", ImageScanOnPush: true},
 		},
+		{
+			name:      "invalid tag mutability is rejected",
+			cfg:       driver.RepositoryConfig{Name: "bad-mut", ImageTagMutability: "WRONG"},
+			expectErr: true,
+		},
 	}
 
 	for _, tc := range tests {
