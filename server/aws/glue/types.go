@@ -141,7 +141,7 @@ type errorDetailJSON struct {
 type databaseInputJSON struct {
 	Name        string            `json:"Name"`
 	Description string            `json:"Description,omitempty"`
-	LocationURI string            `json:"LocationURI,omitempty"`
+	LocationURI string            `json:"LocationUri,omitempty"`
 	Parameters  map[string]string `json:"Parameters,omitempty"`
 }
 
@@ -149,7 +149,7 @@ type databaseJSON struct {
 	CatalogID   string            `json:"CatalogId,omitempty"`
 	Name        string            `json:"Name"`
 	Description string            `json:"Description,omitempty"`
-	LocationURI string            `json:"LocationURI,omitempty"`
+	LocationURI string            `json:"LocationUri,omitempty"`
 	Parameters  map[string]string `json:"Parameters,omitempty"`
 	CreateTime  *float64          `json:"CreateTime,omitempty"`
 }

@@ -105,6 +105,34 @@ func TestSDKDatabaseTablePartitionCRUD(t *testing.T) {
 	}
 }
 
+func TestSDKDatabaseLocationUriRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	c := newGlueClient(t)
+
+	const loc = "s3://mybucket/db/"
+
+	_, err := c.CreateDatabase(ctx, &awsglue.CreateDatabaseInput{
+		DatabaseInput: &gluetypes.DatabaseInput{
+			Name:        aws.String("located"),
+			LocationUri: aws.String(loc),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateDatabase: %v", err)
+	}
+
+	getDB, err := c.GetDatabase(ctx, &awsglue.GetDatabaseInput{Name: aws.String("located")})
+	if err != nil {
+		t.Fatalf("GetDatabase: %v", err)
+	}
+
+	// The Glue wire key is "LocationUri"; a mismatched key (e.g. "LocationURI")
+	// leaves the SDK's LocationUri nil and drives Terraform into perpetual drift.
+	if got := aws.ToString(getDB.Database.LocationUri); got != loc {
+		t.Fatalf("LocationUri = %q, want %q", got, loc)
+	}
+}
+
 func TestSDKDuplicateDatabaseTypedError(t *testing.T) {
 	ctx := context.Background()
 	c := newGlueClient(t)
