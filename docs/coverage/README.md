@@ -59,6 +59,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `eventbus` | [EventBridge](./aws/eventbridge.md) | [EventGrid](./azure/eventgrid.md) | [Eventarc](./gcp/eventarc.md) | — | 16 |
 | `eventhub` | — | [Eventhub](./azure/eventhub.md) | — | — | 14 |
 | `filestore` | — | — | [Filestore](./gcp/filestore.md) | — | 5 |
+| `frontdoor` | — | [FrontDoor](./azure/frontdoor.md) | — | — | 12 |
 | `gke` | — | — | [GKE](./gcp/gke.md) | — | 18 |
 | `glue` | [Glue](./aws/glue.md) | — | — | — | 299 |
 | `guardduty` | [GuardDuty](./aws/guardduty.md) | — | — | — | 87 |

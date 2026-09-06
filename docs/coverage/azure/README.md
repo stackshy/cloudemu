@@ -26,6 +26,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [EventGrid](./eventgrid.md) | `eventbus` | 16 |
 | [Eventhub](./eventhub.md) | — (provider-native) | 14 |
 | [Firewall](./firewall.md) | `azurefirewall` | 8 |
+| [FrontDoor](./frontdoor.md) | `frontdoor` | 12 |
 | [Functions](./functions.md) | `serverless` | 27 |
 | [IAM](./iam.md) | `iam` | 40 |
 | [Images](./images.md) | — (provider-native) | 5 |

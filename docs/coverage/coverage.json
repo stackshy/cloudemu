@@ -5106,6 +5106,63 @@
     }
   },
   {
+    "service": "frontdoor",
+    "interface": "AzureFrontDoorProfiles",
+    "operations": [
+      {
+        "name": "CreateOrUpdateEndpoint",
+        "doc": "CreateOrUpdateEndpoint stores e under (rg, profile, name) as a full replace,"
+      },
+      {
+        "name": "CreateOrUpdateOriginGroup",
+        "doc": "CreateOrUpdateOriginGroup stores g under (rg, profile, name) as a full"
+      },
+      {
+        "name": "CreateOrUpdateProfile",
+        "doc": "CreateOrUpdateProfile stores p as a full replace and reports whether it did"
+      },
+      {
+        "name": "DeleteEndpoint",
+        "doc": "DeleteEndpoint removes the endpoint, returning NotFound if it does not exist."
+      },
+      {
+        "name": "DeleteOriginGroup",
+        "doc": "DeleteOriginGroup removes the origin group, returning NotFound if it does not"
+      },
+      {
+        "name": "DeleteProfile",
+        "doc": "DeleteProfile removes the profile and cascades to every endpoint and origin"
+      },
+      {
+        "name": "GetEndpoint",
+        "doc": "GetEndpoint returns the endpoint identified by (rg, profile, name), or NotFound."
+      },
+      {
+        "name": "GetOriginGroup",
+        "doc": "GetOriginGroup returns the origin group identified by (rg, profile, name), or"
+      },
+      {
+        "name": "GetProfile",
+        "doc": "GetProfile returns the profile identified by (resourceGroup, name), or NotFound."
+      },
+      {
+        "name": "ListEndpoints",
+        "doc": "ListEndpoints returns the endpoints under (rg, profile), ordered by key."
+      },
+      {
+        "name": "ListOriginGroups",
+        "doc": "ListOriginGroups returns the origin groups under (rg, profile), ordered by key."
+      },
+      {
+        "name": "ListProfiles",
+        "doc": "ListProfiles returns the profiles in rg, or all when rg is empty"
+      }
+    ],
+    "providers": {
+      "azure": "FrontDoor"
+    }
+  },
+  {
     "service": "gke",
     "interface": "provider-native",
     "operations": [
