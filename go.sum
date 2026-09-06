@@ -174,6 +174,8 @@ github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36 h1:jbGY4CXLzZElOXgGsexlC3Hi+3Y
 github.com/aws/aws-sdk-go-v2/internal/v4a v1.4.36/go.mod h1:uBu/9aKsS/UQGc72RAt3y54kjgYQxmhut8ZD2dXCDNE=
 github.com/aws/aws-sdk-go-v2/service/acm v1.38.3 h1:Fzab84hCu3rw9R9Y3mH7SHfr/cSEHnCB0Mq1JCdr9t0=
 github.com/aws/aws-sdk-go-v2/service/acm v1.38.3/go.mod h1:yCteizCNPaHt0SnNusoGGHvy0JDB0tvGDTVhEt5anZM=
+github.com/aws/aws-sdk-go-v2/service/amp v1.30.0 h1:1AQM/Lo024FKGTW/iwIDQHV8+5j8/h0iabYm+4jB5Bo=
+github.com/aws/aws-sdk-go-v2/service/amp v1.30.0/go.mod h1:4OQEJHTg0Z2Q32qQUDWquPZKmLagi5/BVzTCYtcnpJo=
 github.com/aws/aws-sdk-go-v2/service/appflow v1.59.0 h1:6UZ9qJI/5oeQPgw4cK5Jf7QnVHn4Hsno4EwiRkt3plA=
 github.com/aws/aws-sdk-go-v2/service/appflow v1.59.0/go.mod h1:C2sxquQiMXw9auPpHWD7UpLf+c1z9mXPTXei9URLMr0=
 github.com/aws/aws-sdk-go-v2/service/appsync v1.60.0 h1:GHaqk4I1wXiCnRDsNr90u5XjkM2zMfgyQ6BVi6YKj0k=

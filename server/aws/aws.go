@@ -19,6 +19,7 @@ import (
 	apigatewayv2srv "github.com/stackshy/cloudemu/v2/server/aws/apigatewayv2"
 	appflowsrv "github.com/stackshy/cloudemu/v2/server/aws/appflow"
 	appsyncsrv "github.com/stackshy/cloudemu/v2/server/aws/appsync"
+	apssrv "github.com/stackshy/cloudemu/v2/server/aws/aps"
 	athenasrv "github.com/stackshy/cloudemu/v2/server/aws/athena"
 	batchsrv "github.com/stackshy/cloudemu/v2/server/aws/batch"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
@@ -79,6 +80,7 @@ import (
 	apigatewayv2driver "github.com/stackshy/cloudemu/v2/services/apigatewayv2/driver"
 	appflowdriver "github.com/stackshy/cloudemu/v2/services/appflow/driver"
 	appsyncdriver "github.com/stackshy/cloudemu/v2/services/appsync/driver"
+	apsdriver "github.com/stackshy/cloudemu/v2/services/aps/driver"
 	athenadriver "github.com/stackshy/cloudemu/v2/services/athena/driver"
 	batchdriver "github.com/stackshy/cloudemu/v2/services/batch/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
@@ -192,6 +194,11 @@ type Drivers struct {
 	// MWAA serves the Amazon MWAA control-plane REST-JSON API (verb + path
 	// routing, e.g. PUT /environments/{Name}) against the mwaa driver.
 	MWAA mwaadriver.MWAA
+
+	// APS serves the Amazon Managed Service for Prometheus control-plane
+	// REST-JSON API (verb + path routing, e.g. POST /workspaces) against the aps
+	// driver.
+	APS apsdriver.APS
 
 	// Kafka serves the Amazon MSK REST-JSON API (path + method routing under
 	// the /v1/, /api/v2/, and /replication/v1/ version prefixes) against the
@@ -381,6 +388,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		AppSync:             p.AppSync,
 		AppFlow:             p.AppFlow,
 		MWAA:                p.MWAA,
+		APS:                 p.APS,
 		Kafka:               p.Kafka,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
@@ -672,6 +680,17 @@ func New(d Drivers) *server.Server {
 	// ARN markers.
 	if d.MWAA != nil {
 		srv.Register(mwaasrv.New(d.MWAA))
+	}
+
+	// APS (Amazon Managed Service for Prometheus) uses REST-JSON verb + path
+	// routing at the root (e.g. POST /workspaces, GET /workspaces/{id}, PUT
+	// /workspaces/{id}/rulegroupsnamespaces/{name}). Its Matches claims the
+	// /workspaces tree and /tags paths carrying an APS (:aps:) ARN, so it must
+	// run before the S3 catch-all and is disjoint from the other /tags claimants
+	// (AppFlow, MWAA, AppSync, Batch, Kafka), which scope their claims to their
+	// own ARN markers.
+	if d.APS != nil {
+		srv.Register(apssrv.New(d.APS))
 	}
 
 	// MSK (Kafka) uses REST-JSON path routing under the /v1/, /api/v2/, and

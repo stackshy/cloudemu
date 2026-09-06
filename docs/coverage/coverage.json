@@ -475,6 +475,78 @@
     }
   },
   {
+    "service": "aps",
+    "interface": "APS",
+    "operations": [
+      {
+        "name": "CreateAlertManagerDefinition"
+      },
+      {
+        "name": "CreateLoggingConfiguration"
+      },
+      {
+        "name": "CreateRuleGroupsNamespace"
+      },
+      {
+        "name": "CreateWorkspace"
+      },
+      {
+        "name": "DeleteAlertManagerDefinition"
+      },
+      {
+        "name": "DeleteLoggingConfiguration"
+      },
+      {
+        "name": "DeleteRuleGroupsNamespace"
+      },
+      {
+        "name": "DeleteWorkspace"
+      },
+      {
+        "name": "DescribeAlertManagerDefinition"
+      },
+      {
+        "name": "DescribeLoggingConfiguration"
+      },
+      {
+        "name": "DescribeRuleGroupsNamespace"
+      },
+      {
+        "name": "DescribeWorkspace"
+      },
+      {
+        "name": "ListRuleGroupsNamespaces"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListWorkspaces"
+      },
+      {
+        "name": "PutAlertManagerDefinition"
+      },
+      {
+        "name": "PutRuleGroupsNamespace"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateLoggingConfiguration"
+      },
+      {
+        "name": "UpdateWorkspaceAlias"
+      }
+    ],
+    "providers": {
+      "aws": "APS"
+    }
+  },
+  {
     "service": "athena",
     "interface": "Athena",
     "operations": [
