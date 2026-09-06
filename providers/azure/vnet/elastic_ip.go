@@ -15,6 +15,8 @@ type eipData struct {
 	InstanceID         string
 	Tags               map[string]string
 	SKU                string
+	SKUTier            string
+	IPVersion          string
 	AllocationMethod   string
 	Zones              []string
 	IdleTimeoutMinutes int
@@ -33,6 +35,47 @@ type eipData struct {
 // deterministic without threading location through ElasticIPConfig.
 const defaultFQDNRegion = "eastus"
 
+// Azure public-IP defaults applied when a request omits the field, matching the
+// values a real publicIPAddresses GET reports: Standard SKU, Regional tier,
+// Static allocation, IPv4 address family and a 4-minute TCP idle timeout.
+const (
+	defaultPublicIPSKU       = "Standard"
+	defaultPublicIPSKUTier   = "Regional"
+	defaultPublicIPAllocMeth = "Static"
+	defaultPublicIPVersion   = "IPv4"
+	defaultIdleTimeoutMin    = 4
+)
+
+// applyPublicIPDefaults fills the Azure public-IP fields ARM defaults when the
+// request omits them, so both AllocateAddress and UpdateAzurePublicIP surface
+// the same GET-visible values (sku.name, sku.tier, publicIPAllocationMethod,
+// publicIPAddressVersion, idleTimeoutInMinutes) that real Azure reports.
+//
+//nolint:gocritic // hugeParam: cfg mirrors AllocateAddress's driver signature.
+func applyPublicIPDefaults(cfg driver.ElasticIPConfig) driver.ElasticIPConfig {
+	if cfg.SKU == "" {
+		cfg.SKU = defaultPublicIPSKU
+	}
+
+	if cfg.SKUTier == "" {
+		cfg.SKUTier = defaultPublicIPSKUTier
+	}
+
+	if cfg.AllocationMethod == "" {
+		cfg.AllocationMethod = defaultPublicIPAllocMeth
+	}
+
+	if cfg.IPVersion == "" {
+		cfg.IPVersion = defaultPublicIPVersion
+	}
+
+	if cfg.IdleTimeoutMinutes == 0 {
+		cfg.IdleTimeoutMinutes = defaultIdleTimeoutMin
+	}
+
+	return cfg
+}
+
 // AllocateAddress allocates a new public IP address.
 //
 //nolint:gocritic // hugeParam: cfg is passed by value to satisfy the Networking driver interface.
@@ -41,24 +84,18 @@ func (m *Mock) AllocateAddress(
 ) (*driver.ElasticIP, error) {
 	allocID := idgen.GenerateID("ipalloc-")
 
-	// Real Azure defaults a public IP to the Standard SKU with Static allocation
-	// when the request omits them.
-	sku := cfg.SKU
-	if sku == "" {
-		sku = "Standard"
-	}
-
-	allocMethod := cfg.AllocationMethod
-	if allocMethod == "" {
-		allocMethod = "Static"
-	}
+	// Real Azure fills omitted fields with its own defaults (Standard/Regional
+	// SKU, Static allocation, IPv4, 4-minute idle timeout) and reports them on GET.
+	cfg = applyPublicIPDefaults(cfg)
 
 	eip := &eipData{
 		AllocationID:       allocID,
 		PublicIP:           mockPublicIP(allocID),
 		Tags:               copyTags(cfg.Tags),
-		SKU:                sku,
-		AllocationMethod:   allocMethod,
+		SKU:                cfg.SKU,
+		SKUTier:            cfg.SKUTier,
+		IPVersion:          cfg.IPVersion,
+		AllocationMethod:   cfg.AllocationMethod,
 		Zones:              append([]string(nil), cfg.Zones...),
 		IdleTimeoutMinutes: cfg.IdleTimeoutMinutes,
 		DNSDomainNameLabel: cfg.DNSDomainNameLabel,
@@ -84,21 +121,15 @@ func (m *Mock) AllocateAddress(
 //
 //nolint:gocritic // hugeParam: cfg mirrors AllocateAddress's driver signature.
 func (m *Mock) UpdateAzurePublicIP(_ context.Context, allocationID string, cfg driver.ElasticIPConfig) error {
-	sku := cfg.SKU
-	if sku == "" {
-		sku = "Standard"
-	}
-
-	allocMethod := cfg.AllocationMethod
-	if allocMethod == "" {
-		allocMethod = "Static"
-	}
+	cfg = applyPublicIPDefaults(cfg)
 
 	found := m.eips.Update(allocationID, func(e *eipData) *eipData {
 		cp := *e
 		cp.Tags = copyTags(cfg.Tags)
-		cp.SKU = sku
-		cp.AllocationMethod = allocMethod
+		cp.SKU = cfg.SKU
+		cp.SKUTier = cfg.SKUTier
+		cp.IPVersion = cfg.IPVersion
+		cp.AllocationMethod = cfg.AllocationMethod
 		cp.IdleTimeoutMinutes = cfg.IdleTimeoutMinutes
 		cp.DNSDomainNameLabel = cfg.DNSDomainNameLabel
 
@@ -248,6 +279,8 @@ func toEIPInfo(eip *eipData) driver.ElasticIP {
 		InstanceID:         eip.InstanceID,
 		Tags:               copyTags(eip.Tags),
 		SKU:                eip.SKU,
+		SKUTier:            eip.SKUTier,
+		IPVersion:          eip.IPVersion,
 		AllocationMethod:   eip.AllocationMethod,
 		Zones:              append([]string(nil), eip.Zones...),
 		IdleTimeoutMinutes: eip.IdleTimeoutMinutes,

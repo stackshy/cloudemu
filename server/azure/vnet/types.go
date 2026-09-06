@@ -186,10 +186,12 @@ type publicIPRequest struct {
 
 type publicIPSKU struct {
 	Name string `json:"name,omitempty"`
+	Tier string `json:"tier,omitempty"`
 }
 
 type publicIPReqProps struct {
 	PublicIPAllocationMethod string                  `json:"publicIPAllocationMethod,omitempty"`
+	PublicIPAddressVersion   string                  `json:"publicIPAddressVersion,omitempty"`
 	IdleTimeoutInMinutes     int                     `json:"idleTimeoutInMinutes,omitempty"`
 	DNSSettings              *publicIPDNSSettingsReq `json:"dnsSettings,omitempty"`
 	// PublicIPPrefix is the optional prefix a public IP is drawn from. The mock
@@ -216,6 +218,7 @@ type publicIPResponse struct {
 type publicIPRespProps struct {
 	ProvisioningState        string               `json:"provisioningState"`
 	PublicIPAllocationMethod string               `json:"publicIPAllocationMethod,omitempty"`
+	PublicIPAddressVersion   string               `json:"publicIPAddressVersion,omitempty"`
 	IPAddress                string               `json:"ipAddress,omitempty"`
 	IdleTimeoutInMinutes     int                  `json:"idleTimeoutInMinutes,omitempty"`
 	DNSSettings              *publicIPDNSSettings `json:"dnsSettings,omitempty"`
