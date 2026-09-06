@@ -76,9 +76,14 @@ func TestSDKGKEClusterAlwaysEmitsNodeConfig(t *testing.T) {
 			Name:             "nc",
 			InitialNodeCount: 1,
 			NodeConfig: &container.NodeConfig{
-				MachineType: cfMachineType,
-				DiskSizeGb:  cfDiskSizeGb,
-				OauthScopes: []string{cfOauthScope},
+				MachineType:    cfMachineType,
+				DiskSizeGb:     cfDiskSizeGb,
+				OauthScopes:    []string{cfOauthScope},
+				Labels:         map[string]string{ncLabelKey: ncLabelVal},
+				ImageType:      ncImageType,
+				Tags:           []string{ncTag},
+				Metadata:       map[string]string{ncMetaKey: ncMetaVal},
+				ServiceAccount: ncServiceAccount,
 			},
 		},
 	}).Context(ctx).Do(); err != nil {
@@ -99,6 +104,18 @@ func TestSDKGKEClusterAlwaysEmitsNodeConfig(t *testing.T) {
 			got.NodeConfig, cfMachineType, cfDiskSizeGb)
 	}
 
+	// labels round-trip at cluster level: a labels block that vanishes on read
+	// makes the Terraform google provider force-replace (destroy) the cluster.
+	assertNodeConfigExtras(t, "cluster.nodeConfig", got.NodeConfig)
+
+	// The default pool's config must carry the same fields, since Terraform reads
+	// google_container_node_pool.node_config from it too.
+	if len(got.NodePools) == 0 || got.NodePools[0].Config == nil {
+		t.Fatal("cluster missing default node pool config")
+	}
+
+	assertNodeConfigExtras(t, "nodePool[0].config", got.NodePools[0].Config)
+
 	// The same object must survive the list path (Terraform refreshes via both).
 	list, err := svc.Projects.Locations.Clusters.List(parent(project, loc)).Context(ctx).Do()
 	if err != nil {
@@ -107,6 +124,46 @@ func TestSDKGKEClusterAlwaysEmitsNodeConfig(t *testing.T) {
 
 	if len(list.Clusters) != 1 || list.Clusters[0].NodeConfig == nil {
 		t.Fatalf("list cluster missing nodeConfig: %+v", list.Clusters)
+	}
+
+	assertNodeConfigExtras(t, "list[0].nodeConfig", list.Clusters[0].NodeConfig)
+}
+
+// Node-config fields beyond the original machineType/diskSizeGb/oauthScopes that
+// the Terraform google provider reads back: labels/metadata/serviceAccount force
+// a cluster/pool replacement when they drift, and imageType/tags perpetually
+// diff, so all must survive the round-trip.
+const (
+	ncLabelKey       = "team"
+	ncLabelVal       = "platform"
+	ncImageType      = "COS_CONTAINERD"
+	ncTag            = "web"
+	ncMetaKey        = "foo"
+	ncMetaVal        = "bar"
+	ncServiceAccount = "default"
+)
+
+func assertNodeConfigExtras(t *testing.T, where string, cfg *container.NodeConfig) {
+	t.Helper()
+
+	if cfg.Labels[ncLabelKey] != ncLabelVal {
+		t.Fatalf("%s.labels = %v, want %s=%s", where, cfg.Labels, ncLabelKey, ncLabelVal)
+	}
+
+	if cfg.ImageType != ncImageType {
+		t.Fatalf("%s.imageType = %q, want %q", where, cfg.ImageType, ncImageType)
+	}
+
+	if len(cfg.Tags) != 1 || cfg.Tags[0] != ncTag {
+		t.Fatalf("%s.tags = %v, want [%s]", where, cfg.Tags, ncTag)
+	}
+
+	if cfg.Metadata[ncMetaKey] != ncMetaVal {
+		t.Fatalf("%s.metadata = %v, want %s=%s", where, cfg.Metadata, ncMetaKey, ncMetaVal)
+	}
+
+	if cfg.ServiceAccount != ncServiceAccount {
+		t.Fatalf("%s.serviceAccount = %q, want %q", where, cfg.ServiceAccount, ncServiceAccount)
 	}
 }
 

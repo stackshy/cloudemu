@@ -88,9 +88,14 @@ type gkeNodePool struct {
 }
 
 type gkeNodeConfig struct {
-	MachineType string   `json:"machineType,omitempty"`
-	DiskSizeGb  int64    `json:"diskSizeGb,omitempty"`
-	OauthScopes []string `json:"oauthScopes,omitempty"`
+	MachineType    string            `json:"machineType,omitempty"`
+	DiskSizeGb     int64             `json:"diskSizeGb,omitempty"`
+	OauthScopes    []string          `json:"oauthScopes,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	ImageType      string            `json:"imageType,omitempty"`
+	Tags           []string          `json:"tags,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+	ServiceAccount string            `json:"serviceAccount,omitempty"`
 }
 
 type gkeAutoscaling struct {
@@ -286,14 +291,22 @@ func toClusterResource(
 // provider force-replaces a cluster whose read is missing it. A cluster with no
 // stored config (e.g. restored from a pre-field snapshot) emits no nodeConfig.
 func clusterNodeConfig(c *gke.Cluster) *gkeNodeConfig {
-	if c.NodeConfig.MachineType == "" && c.NodeConfig.DiskSizeGB == 0 && len(c.NodeConfig.OauthScopes) == 0 {
+	nc := c.NodeConfig
+	if nc.MachineType == "" && nc.DiskSizeGB == 0 && len(nc.OauthScopes) == 0 &&
+		nc.ImageType == "" && nc.ServiceAccount == "" && len(nc.Labels) == 0 &&
+		len(nc.Tags) == 0 && len(nc.Metadata) == 0 {
 		return nil
 	}
 
 	return &gkeNodeConfig{
-		MachineType: c.NodeConfig.MachineType,
-		DiskSizeGb:  c.NodeConfig.DiskSizeGB,
-		OauthScopes: c.NodeConfig.OauthScopes,
+		MachineType:    nc.MachineType,
+		DiskSizeGb:     nc.DiskSizeGB,
+		OauthScopes:    nc.OauthScopes,
+		Labels:         nc.Labels,
+		ImageType:      nc.ImageType,
+		Tags:           nc.Tags,
+		Metadata:       nc.Metadata,
+		ServiceAccount: nc.ServiceAccount,
 	}
 }
 
@@ -314,9 +327,14 @@ func toNodePoolResource(np *gke.NodePool, project string, igmUrls []string) gkeN
 		Version:           np.Version,
 		InitialNodeCount:  int64Ptr(np.NodeCount),
 		Config: &gkeNodeConfig{
-			MachineType: np.MachineType,
-			DiskSizeGb:  np.DiskSizeGB,
-			OauthScopes: np.OauthScopes,
+			MachineType:    np.MachineType,
+			DiskSizeGb:     np.DiskSizeGB,
+			OauthScopes:    np.OauthScopes,
+			Labels:         np.Labels,
+			ImageType:      np.ImageType,
+			Tags:           np.Tags,
+			Metadata:       np.Metadata,
+			ServiceAccount: np.ServiceAccount,
 		},
 		Management: &gkeNodeManagement{
 			AutoUpgrade: np.AutoUpgrade,
