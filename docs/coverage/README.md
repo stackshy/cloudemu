@@ -88,6 +88,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `messagequeue` | [SQS](./aws/sqs.md) | [QueueStorage](./azure/queuestorage.md) | [PubSub](./gcp/pubsub.md) | — | 14 |
 | `monitoring` | [CloudWatch](./aws/cloudwatch.md) | [Monitor](./azure/monitor.md) | [CloudMonitoring](./gcp/cloudmonitoring.md) | [Monitoring](./oci/monitoring.md) | 12 |
 | `mwaa` | [MWAA](./aws/mwaa.md) | — | — | — | 10 |
+| `networkconnectivity` | — | — | [NetworkConnectivity](./gcp/networkconnectivity.md) | — | 11 |
 | `networkfirewall` | [NetworkFirewall](./aws/networkfirewall.md) | — | — | — | 23 |
 | `networking` | [VPC](./aws/vpc.md) | [VNet](./azure/vnet.md) | [VPC](./gcp/vpc.md) | [VCN](./oci/vcn.md) | 57 |
 | `notification` | [SNS](./aws/sns.md) | [NotificationHubs](./azure/notificationhubs.md) | [FCM](./gcp/fcm.md) | — | 9 |

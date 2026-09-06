@@ -8565,6 +8565,49 @@
     }
   },
   {
+    "service": "networkconnectivity",
+    "interface": "NetworkConnectivity",
+    "operations": [
+      {
+        "name": "CreateHub"
+      },
+      {
+        "name": "CreateSpoke"
+      },
+      {
+        "name": "DeleteHub"
+      },
+      {
+        "name": "DeleteSpoke"
+      },
+      {
+        "name": "GetHub"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetSpoke"
+      },
+      {
+        "name": "ListHubs"
+      },
+      {
+        "name": "ListSpokes"
+      },
+      {
+        "name": "PatchHub"
+      },
+      {
+        "name": "PatchSpoke"
+      }
+    ],
+    "providers": {
+      "gcp": "NetworkConnectivity"
+    }
+  },
+  {
     "service": "networkfirewall",
     "interface": "NetworkFirewall",
     "operations": [
