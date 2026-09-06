@@ -300,6 +300,12 @@ type ModifyInstanceInput struct {
 	NodeType      string
 	NumberOfNodes int
 	ClusterType   string
+	// AutomatedSnapshotRetentionPeriod is the Redshift ModifyCluster retention
+	// input; nil means "no change". A pointer (not a plain int) because 0 is a
+	// valid value that disables automated snapshots, distinct from "not sent".
+	// RDS/Aurora ignore it (they use BackupRetentionPeriod). Redshift's
+	// PreferredMaintenanceWindow reuses the shared field above.
+	AutomatedSnapshotRetentionPeriod *int
 	// GCPDatabaseFlags / GCPBackupConfig / GCPIPConfig update the Cloud SQL
 	// settings sub-objects (opaque JSON); empty means "no change". Cloud SQL-only;
 	// RDS/Redshift ignore them.
@@ -393,6 +399,12 @@ type ClusterConfig struct {
 	Encrypted          bool
 	PubliclyAccessible bool
 	AvailabilityZone   string
+	// AutomatedSnapshotRetentionPeriod is the number of days Redshift retains
+	// automatic snapshots (AWS default 1; 0 disables them). PreferredMaintenanceWindow
+	// is the weekly UTC window Redshift schedules maintenance in (AWS assigns one
+	// when unset). Both are Redshift-specific; zero for RDS/Aurora/Azure/GCP.
+	AutomatedSnapshotRetentionPeriod int
+	PreferredMaintenanceWindow       string
 	// Location is the Azure region an Azure SQL logical server lives in (ARM
 	// top-level "location"). Empty for AWS/GCP.
 	Location string
@@ -448,6 +460,12 @@ type Cluster struct {
 	PubliclyAccessible bool
 	AvailabilityZone   string
 	VpcID              string
+	// AutomatedSnapshotRetentionPeriod / PreferredMaintenanceWindow echo the
+	// Redshift cluster attributes on read so Terraform's matching schema values
+	// (retention default 1; a computed maintenance window) do not drift. Zero for
+	// RDS/Aurora/Azure/GCP.
+	AutomatedSnapshotRetentionPeriod int
+	PreferredMaintenanceWindow       string
 	// Location is the Azure region an Azure SQL logical server lives in (ARM
 	// top-level "location"), echoed on read. Empty for AWS/GCP.
 	Location  string

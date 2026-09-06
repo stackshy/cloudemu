@@ -49,11 +49,16 @@ type clusterXML struct {
 	// resolve to "enabled"/"disabled", so an unset value hangs the waiter.
 	AvailabilityZoneRelocationStatus string `xml:"AvailabilityZoneRelocationStatus"`
 	MultiAZ                          string `xml:"MultiAZ"`
-	// AllowVersionUpgrade / Automated- / ManualSnapshotRetentionPeriod are not
-	// modeled and always report the AWS account defaults; terraform reads them
-	// back into its schema (whose defaults match), so omitting them drifts.
-	AllowVersionUpgrade              bool                       `xml:"AllowVersionUpgrade"`
+	// AllowVersionUpgrade / ManualSnapshotRetentionPeriod are not modeled and
+	// always report the AWS account defaults; terraform reads them back into its
+	// schema (whose defaults match), so omitting them drifts.
+	AllowVersionUpgrade bool `xml:"AllowVersionUpgrade"`
+	// AutomatedSnapshotRetentionPeriod / PreferredMaintenanceWindow carry the
+	// cluster's stored values so a user-set retention or maintenance window
+	// round-trips instead of always reporting the create-time default (which
+	// would drift the moment terraform changes either attribute).
 	AutomatedSnapshotRetentionPeriod int                        `xml:"AutomatedSnapshotRetentionPeriod"`
+	PreferredMaintenanceWindow       string                     `xml:"PreferredMaintenanceWindow,omitempty"`
 	ManualSnapshotRetentionPeriod    int                        `xml:"ManualSnapshotRetentionPeriod"`
 	MaintenanceTrackName             string                     `xml:"MaintenanceTrackName"`
 	ClusterVersion                   string                     `xml:"ClusterVersion,omitempty"`
@@ -260,7 +265,6 @@ const (
 	// AWS cluster defaults reported for unmodeled attributes so terraform's
 	// matching schema defaults do not perpetually drift.
 	defaultAllowVersionUpgrade      = true
-	defaultAutomatedSnapshotRetain  = 1
 	defaultManualSnapshotRetainNone = -1
 	// defaultMaintenanceTrack is the maintenance track a cluster runs on by
 	// default; terraform's maintenance_track_name defaults to the same value.
@@ -298,7 +302,8 @@ func toClusterXML(cluster *rdbdriver.Cluster) clusterXML {
 		AvailabilityZoneRelocationStatus: azRelocationDisabled,
 		MultiAZ:                          multiAZDisabled,
 		AllowVersionUpgrade:              defaultAllowVersionUpgrade,
-		AutomatedSnapshotRetentionPeriod: defaultAutomatedSnapshotRetain,
+		AutomatedSnapshotRetentionPeriod: cluster.AutomatedSnapshotRetentionPeriod,
+		PreferredMaintenanceWindow:       cluster.PreferredMaintenanceWindow,
 		ManualSnapshotRetentionPeriod:    defaultManualSnapshotRetainNone,
 		MaintenanceTrackName:             defaultMaintenanceTrack,
 		ClusterVersion:                   cluster.EngineVersion,
