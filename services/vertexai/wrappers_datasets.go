@@ -24,9 +24,9 @@ func (v *VertexAI) ListDatasets(ctx context.Context, location string) ([]driver.
 	return cast[[]driver.Dataset](v.do(ctx, "ListDatasets", location, func() (any, error) { return v.drv.ListDatasets(ctx, location) }))
 }
 
-func (v *VertexAI) PatchDataset(ctx context.Context, name, displayName string) (*driver.Dataset, error) {
+func (v *VertexAI) PatchDataset(ctx context.Context, name string, upd driver.DatasetUpdate) (*driver.Dataset, error) {
 	return cast[*driver.Dataset](v.do(ctx, "PatchDataset", name, func() (any, error) {
-		return v.drv.PatchDataset(ctx, name, displayName)
+		return v.drv.PatchDataset(ctx, name, upd)
 	}))
 }
 

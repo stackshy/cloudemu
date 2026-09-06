@@ -59,16 +59,21 @@ func (m *Mock) ListDatasets(_ context.Context, location string) ([]driver.Datase
 	return out, nil
 }
 
-func (m *Mock) PatchDataset(_ context.Context, name, displayName string) (*driver.Dataset, error) {
+func (m *Mock) PatchDataset(_ context.Context, name string, upd driver.DatasetUpdate) (*driver.Dataset, error) {
 	ds, ok := m.datasets.Get(name)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "dataset %q not found", name)
 	}
 
-	// Copy-then-Set: never mutate the stored pointer in place.
+	// Copy-then-Set: never mutate the stored pointer in place. Only fields the
+	// update mask named are touched.
 	updated := *ds
-	if displayName != "" {
-		updated.DisplayName = displayName
+	if upd.DisplayName != nil {
+		updated.DisplayName = *upd.DisplayName
+	}
+
+	if upd.SetLabels {
+		updated.Labels = copyLabels(upd.Labels)
 	}
 
 	updated.UpdateTime = m.now()

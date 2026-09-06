@@ -39,4 +39,4 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [Servicenetworking](./servicenetworking.md) | — (provider-native) | 3 |
 | [Spanner](./spanner.md) | `spanner` | 12 |
 | [VPC](./vpc.md) | `networking` | 57 |
-| [VertexAI](./vertexai.md) | `vertexai` | 125 |
+| [VertexAI](./vertexai.md) | `vertexai` | 127 |

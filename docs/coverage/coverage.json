@@ -14712,6 +14712,12 @@
         "name": "PatchDataset"
       },
       {
+        "name": "PatchEndpoint"
+      },
+      {
+        "name": "PatchFeaturestore"
+      },
+      {
         "name": "PatchModel"
       },
       {

@@ -5,9 +5,22 @@ import "context"
 // EndpointConfig describes an endpoint to create.
 type EndpointConfig struct {
 	Location    string
+	EndpointID  string // client-chosen numeric id (endpointId query param); server-assigned when empty
 	DisplayName string
 	Description string
 	Labels      map[string]string
+	Network     string
+}
+
+// EndpointUpdate carries the fields a PATCH names in its update mask. A nil
+// pointer (or SetLabels=false) means the field is absent from the mask and must
+// be left untouched.
+type EndpointUpdate struct {
+	DisplayName *string
+	Description *string
+	Network     *string
+	Labels      map[string]string
+	SetLabels   bool
 }
 
 // DeployedModel is a model deployed to an endpoint.
@@ -26,11 +39,13 @@ type Endpoint struct {
 	Name           string // projects/{p}/locations/{l}/endpoints/{id}
 	DisplayName    string
 	Description    string
+	Network        string
 	DeployedModels []DeployedModel
 	TrafficSplit   map[string]int
 	Labels         map[string]string
 	CreateTime     string
 	UpdateTime     string
+	Etag           string
 }
 
 // PredictRequest is an online prediction request.
@@ -53,6 +68,7 @@ type endpointsAPI interface {
 	CreateEndpoint(ctx context.Context, cfg EndpointConfig) (*Operation, *Endpoint, error)
 	GetEndpoint(ctx context.Context, name string) (*Endpoint, error)
 	ListEndpoints(ctx context.Context, location string) ([]Endpoint, error)
+	PatchEndpoint(ctx context.Context, name string, upd EndpointUpdate) (*Endpoint, error)
 	DeleteEndpoint(ctx context.Context, name string) (*Operation, error)
 
 	DeployModel(ctx context.Context, endpoint string, dm DeployedModel) (*Operation, *Endpoint, error)

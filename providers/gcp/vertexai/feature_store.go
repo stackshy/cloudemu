@@ -211,13 +211,15 @@ func (m *Mock) FetchFeatureValues(_ context.Context, featureView, entityID strin
 // --- Classic Featurestore / EntityType (pre-FeatureGroup) ---
 
 func (m *Mock) CreateFeaturestore(_ context.Context, cfg driver.FeaturestoreConfig) (*driver.Operation, *driver.Featurestore, error) {
+	now := m.now()
 	name := m.resName(cfg.Location, "featurestores", orID(cfg.FeaturestoreID, m.newID()))
-	fs := &driver.Featurestore{Name: name, State: "STABLE", OnlineNodeCount: cfg.OnlineNodeCount, CreateTime: m.now()}
+	fs := &driver.Featurestore{
+		Name: name, State: "STABLE", OnlineNodeCount: cfg.OnlineNodeCount,
+		Labels: copyLabels(cfg.Labels), CreateTime: now, UpdateTime: now, Etag: m.newEtag(),
+	}
 	m.featurestores.Set(name, fs)
 
-	out := *fs
-
-	return m.doneOp(cfg.Location, name), &out, nil
+	return m.doneOp(cfg.Location, name), cloneFeaturestore(fs), nil
 }
 
 func (m *Mock) GetFeaturestore(_ context.Context, name string) (*driver.Featurestore, error) {
@@ -226,9 +228,7 @@ func (m *Mock) GetFeaturestore(_ context.Context, name string) (*driver.Features
 		return nil, errors.Newf(errors.NotFound, "featurestore %q not found", name)
 	}
 
-	out := *fs
-
-	return &out, nil
+	return cloneFeaturestore(fs), nil
 }
 
 func (m *Mock) ListFeaturestores(_ context.Context, location string) ([]driver.Featurestore, error) {
@@ -236,11 +236,39 @@ func (m *Mock) ListFeaturestores(_ context.Context, location string) ([]driver.F
 
 	for _, fs := range m.featurestores.All() {
 		if location == "" || locationOf(fs.Name) == location {
-			out = append(out, *fs)
+			out = append(out, *cloneFeaturestore(fs))
 		}
 	}
 
 	return out, nil
+}
+
+// PatchFeaturestore returns an already-done Operation because, unlike dataset
+// and endpoint updates (which return the resource directly), UpdateFeaturestore
+// is a long-running operation in real Vertex AI and callers poll it.
+func (m *Mock) PatchFeaturestore(
+	_ context.Context, name string, upd driver.FeaturestoreUpdate,
+) (*driver.Operation, *driver.Featurestore, error) {
+	fs, ok := m.featurestores.Get(name)
+	if !ok {
+		return nil, nil, errors.Newf(errors.NotFound, "featurestore %q not found", name)
+	}
+
+	// Copy-then-Set: only fields the update mask named are touched.
+	updated := cloneFeaturestore(fs)
+	if upd.OnlineNodeCount != nil {
+		updated.OnlineNodeCount = *upd.OnlineNodeCount
+	}
+
+	if upd.SetLabels {
+		updated.Labels = copyLabels(upd.Labels)
+	}
+
+	updated.UpdateTime = m.now()
+	updated.Etag = m.newEtag()
+	m.featurestores.Set(name, updated)
+
+	return m.doneOp(locationOf(name), name), cloneFeaturestore(updated), nil
 }
 
 func (m *Mock) DeleteFeaturestore(_ context.Context, name string) (*driver.Operation, error) {

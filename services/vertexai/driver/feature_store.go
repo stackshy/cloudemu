@@ -63,6 +63,16 @@ type FeaturestoreConfig struct {
 	Location        string
 	FeaturestoreID  string
 	OnlineNodeCount int
+	Labels          map[string]string
+}
+
+// FeaturestoreUpdate carries the fields a PATCH names in its update mask. A nil
+// OnlineNodeCount (or SetLabels=false) means the field is absent from the mask
+// and must be left untouched.
+type FeaturestoreUpdate struct {
+	OnlineNodeCount *int
+	Labels          map[string]string
+	SetLabels       bool
 }
 
 // Featurestore is the classic Vertex AI Featurestore — a container of
@@ -71,7 +81,10 @@ type Featurestore struct {
 	Name            string // projects/{p}/locations/{l}/featurestores/{id}
 	State           string
 	OnlineNodeCount int
+	Labels          map[string]string
 	CreateTime      string
+	UpdateTime      string
+	Etag            string
 }
 
 // EntityType groups features within a classic Featurestore.
@@ -88,6 +101,7 @@ type featureStoreAPI interface {
 	CreateFeaturestore(ctx context.Context, cfg FeaturestoreConfig) (*Operation, *Featurestore, error)
 	GetFeaturestore(ctx context.Context, name string) (*Featurestore, error)
 	ListFeaturestores(ctx context.Context, location string) ([]Featurestore, error)
+	PatchFeaturestore(ctx context.Context, name string, upd FeaturestoreUpdate) (*Operation, *Featurestore, error)
 	DeleteFeaturestore(ctx context.Context, name string) (*Operation, error)
 
 	CreateEntityType(ctx context.Context, parent, entityTypeID, description string) (*Operation, *EntityType, error)
