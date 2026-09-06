@@ -753,57 +753,80 @@ func (m *Mock) SetAlarmActionsEnabled(_ context.Context, names []string, enabled
 	return nil
 }
 
-// AddAlarmTags merges tags onto the named alarm, backing TagResource.
-func (m *Mock) AddAlarmTags(_ context.Context, alarmName string, tags map[string]string) error {
-	a, ok := m.alarms.Get(alarmName)
-	if !ok {
-		return errors.Newf(errors.NotFound, "alarm %q not found", alarmName)
+// alarmTagsOf resolves an alarm name to its tag map. Metric and composite
+// alarms share the same ARN shape (arn:...:alarm:NAME), so a TagResource /
+// ListTagsForResource call carries no hint of which store holds the alarm; this
+// looks in both, matching real CloudWatch where one tagging API serves both
+// alarm types. When ensure is true a nil map is initialized in place (through
+// the store's struct pointer) so the returned map is safe to write to.
+func (m *Mock) alarmTagsOf(name string, ensure bool) (map[string]string, bool) {
+	if a, ok := m.alarms.Get(name); ok {
+		if a.Tags == nil && ensure {
+			a.Tags = map[string]string{}
+		}
+
+		return a.Tags, true
 	}
 
+	if c, ok := m.compositeAlarms.Get(name); ok {
+		if c.Tags == nil && ensure {
+			c.Tags = map[string]string{}
+		}
+
+		return c.Tags, true
+	}
+
+	return nil, false
+}
+
+// AddAlarmTags merges tags onto the named alarm (metric or composite), backing
+// TagResource.
+func (m *Mock) AddAlarmTags(_ context.Context, alarmName string, tags map[string]string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if a.Tags == nil {
-		a.Tags = make(map[string]string, len(tags))
+	target, ok := m.alarmTagsOf(alarmName, true)
+	if !ok {
+		return errors.Newf(errors.NotFound, "alarm %q not found", alarmName)
 	}
 
 	for k, v := range tags {
-		a.Tags[k] = v
+		target[k] = v
 	}
 
 	return nil
 }
 
-// RemoveAlarmTags deletes the given tag keys from the named alarm, backing
-// UntagResource.
+// RemoveAlarmTags deletes the given tag keys from the named alarm (metric or
+// composite), backing UntagResource.
 func (m *Mock) RemoveAlarmTags(_ context.Context, alarmName string, keys []string) error {
-	a, ok := m.alarms.Get(alarmName)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	target, ok := m.alarmTagsOf(alarmName, false)
 	if !ok {
 		return errors.Newf(errors.NotFound, "alarm %q not found", alarmName)
 	}
 
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	for _, k := range keys {
-		delete(a.Tags, k)
+		delete(target, k)
 	}
 
 	return nil
 }
 
-// AlarmTags returns a copy of the named alarm's tags, backing
-// ListTagsForResource.
+// AlarmTags returns a copy of the named alarm's tags (metric or composite),
+// backing ListTagsForResource.
 func (m *Mock) AlarmTags(_ context.Context, alarmName string) (map[string]string, error) {
-	a, ok := m.alarms.Get(alarmName)
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	target, ok := m.alarmTagsOf(alarmName, false)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "alarm %q not found", alarmName)
 	}
 
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	return copyDims(a.Tags), nil
+	return copyDims(target), nil
 }
 
 func toAlarmInfo(a *alarmData) driver.AlarmInfo {

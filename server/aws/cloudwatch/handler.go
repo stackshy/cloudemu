@@ -57,6 +57,8 @@ const (
 	opTagResource          = "TagResource"
 	opUntagResource        = "UntagResource"
 	opListTagsForResource  = "ListTagsForResource"
+	opEnableAlarmActions   = "EnableAlarmActions"
+	opDisableAlarmActions  = "DisableAlarmActions"
 )
 
 // Handler serves CloudWatch rpc-v2-cbor requests against a monitoring driver.
@@ -164,9 +166,9 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, op string, bo
 		h.startMetricStreams(w, r, body)
 	case opStopMetricStreams:
 		h.stopMetricStreams(w, r, body)
-	case "EnableAlarmActions":
+	case opEnableAlarmActions:
 		h.setAlarmActionsEnabled(w, r, body, true)
-	case "DisableAlarmActions":
+	case opDisableAlarmActions:
 		h.setAlarmActionsEnabled(w, r, body, false)
 	case opTagResource:
 		h.tagResource(w, r, body)

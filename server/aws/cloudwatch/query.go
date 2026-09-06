@@ -59,12 +59,18 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
 		h.queryGetMetricStatistics(w, r)
 	case opPutMetricAlarm:
 		h.queryPutMetricAlarm(w, r)
+	case opPutCompositeAlarm:
+		h.queryPutCompositeAlarm(w, r)
 	case opDescribeAlarms:
 		h.queryDescribeAlarms(w, r)
 	case opDeleteAlarms:
 		h.queryDeleteAlarms(w, r)
 	case opSetAlarmState:
 		h.querySetAlarmState(w, r)
+	case opEnableAlarmActions:
+		h.querySetAlarmActionsEnabled(w, r, true)
+	case opDisableAlarmActions:
+		h.querySetAlarmActionsEnabled(w, r, false)
 	case opDescribeAlarmHistory:
 		h.queryDescribeAlarmHistory(w, r)
 	case opPutDashboard:
@@ -433,16 +439,78 @@ func toCompositeAlarmMemberXMLs(rows []compositeAlarmCBR) []compositeAlarmMember
 }
 
 func (h *Handler) queryDeleteAlarms(w http.ResponseWriter, r *http.Request) {
+	names := queryStringList(r, "AlarmNames.member.")
+
 	// AWS tolerates incorrect alarm names: valid ones are still deleted and no
 	// ResourceNotFound is returned.
-	for _, name := range queryStringList(r, "AlarmNames.member.") {
+	for _, name := range names {
 		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
 			writeQueryDriverErr(w, err)
 			return
 		}
 	}
 
+	// DeleteAlarms accepts both metric and composite alarm names in one call; a
+	// name that isn't a metric alarm (tolerated above) may be a composite alarm.
+	if store, ok := h.monitoring.(compositeAlarmStore); ok {
+		if err := store.DeleteCompositeAlarms(r.Context(), names); err != nil {
+			writeQueryDriverErr(w, err)
+			return
+		}
+	}
+
 	writeQueryResponse(w, "DeleteAlarmsResponse", nil)
+}
+
+// queryPutCompositeAlarm is the query-protocol twin of putCompositeAlarm,
+// backing `aws cloudwatch put-composite-alarm` and the Terraform
+// aws_cloudwatch_composite_alarm resource (both speak the query protocol).
+func (h *Handler) queryPutCompositeAlarm(w http.ResponseWriter, r *http.Request) {
+	store, ok := h.monitoring.(compositeAlarmStore)
+	if !ok {
+		writeQueryError(w, http.StatusBadRequest, "InvalidAction", "composite alarms not supported")
+		return
+	}
+
+	err := store.PutCompositeAlarm(r.Context(), mondriver.CompositeAlarmConfig{
+		Name:                    r.Form.Get("AlarmName"),
+		AlarmRule:               r.Form.Get("AlarmRule"),
+		AlarmDescription:        r.Form.Get("AlarmDescription"),
+		ActionsEnabled:          queryOptBool(r, "ActionsEnabled"),
+		AlarmActions:            queryStringList(r, "AlarmActions.member."),
+		OKActions:               queryStringList(r, "OKActions.member."),
+		InsufficientDataActions: queryStringList(r, "InsufficientDataActions.member."),
+		Tags:                    queryTagPairs(r, "Tags.member."),
+	})
+	if err != nil {
+		writeQueryDriverErr(w, err)
+		return
+	}
+
+	writeQueryResponse(w, "PutCompositeAlarmResponse", nil)
+}
+
+// querySetAlarmActionsEnabled is the query-protocol twin of
+// setAlarmActionsEnabled, backing `aws cloudwatch enable-alarm-actions` /
+// `disable-alarm-actions`.
+func (h *Handler) querySetAlarmActionsEnabled(w http.ResponseWriter, r *http.Request, enabled bool) {
+	toggler, ok := h.monitoring.(alarmActionsToggler)
+	if !ok {
+		writeQueryError(w, http.StatusBadRequest, "InvalidAction", "alarm actions toggle not supported")
+		return
+	}
+
+	if err := toggler.SetAlarmActionsEnabled(r.Context(), queryStringList(r, "AlarmNames.member."), enabled); err != nil {
+		writeQueryDriverErr(w, err)
+		return
+	}
+
+	root := "EnableAlarmActionsResponse"
+	if !enabled {
+		root = "DisableAlarmActionsResponse"
+	}
+
+	writeQueryResponse(w, root, nil)
 }
 
 func (h *Handler) querySetAlarmState(w http.ResponseWriter, r *http.Request) {
