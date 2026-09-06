@@ -142,7 +142,7 @@ type firewallRequest struct {
 	Name                  string             `json:"name"`
 	Network               string             `json:"network,omitempty"`
 	Description           string             `json:"description,omitempty"`
-	Priority              int                `json:"priority,omitempty"`
+	Priority              *int               `json:"priority,omitempty"`
 	Direction             string             `json:"direction,omitempty"`
 	Allowed               []firewallRule     `json:"allowed,omitempty"`
 	Denied                []firewallRule     `json:"denied,omitempty"`
@@ -173,7 +173,7 @@ type firewallResponse struct {
 	Name                  string             `json:"name"`
 	Network               string             `json:"network,omitempty"`
 	Description           string             `json:"description,omitempty"`
-	Priority              int                `json:"priority,omitempty"`
+	Priority              int                `json:"priority"`
 	Direction             string             `json:"direction,omitempty"`
 	Allowed               []firewallRule     `json:"allowed,omitempty"`
 	Denied                []firewallRule     `json:"denied,omitempty"`

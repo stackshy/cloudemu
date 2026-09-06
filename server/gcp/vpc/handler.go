@@ -920,8 +920,13 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 		req.Direction = defaultFirewallDirection
 	}
 
-	if req.Priority == 0 {
-		req.Priority = defaultFirewallPriority
+	// Priority 0 is a valid GCP value (highest precedence), so distinguish an
+	// omitted priority (nil) from an explicit 0 — only the former defaults to
+	// 1000. Forcing 0→1000 would silently alter rule precedence and drive a
+	// perpetual terraform diff.
+	if req.Priority == nil {
+		p := defaultFirewallPriority
+		req.Priority = &p
 	}
 
 	// Firewalls map onto driver SecurityGroups; the driver requires a VPC ID.
@@ -1105,8 +1110,8 @@ func mergeFirewallScalars(spec *firewallSpec, req *firewallRequest) {
 		spec.Direction = req.Direction
 	}
 
-	if req.Priority != 0 {
-		spec.Priority = req.Priority
+	if req.Priority != nil {
+		spec.Priority = *req.Priority
 	}
 
 	if req.LogConfig != nil {
@@ -1543,7 +1548,7 @@ func marshalFirewallSpec(req *firewallRequest) string {
 func specFromFirewallRequest(req *firewallRequest) firewallSpec {
 	return firewallSpec{
 		Network:               req.Network,
-		Priority:              req.Priority,
+		Priority:              derefInt(req.Priority),
 		Direction:             req.Direction,
 		Allowed:               req.Allowed,
 		Denied:                req.Denied,
@@ -1569,6 +1574,15 @@ func unmarshalFirewallSpec(s string) (firewallSpec, bool) {
 	}
 
 	return spec, true
+}
+
+// derefInt returns the pointed-to int, or 0 when the pointer is nil.
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+
+	return *p
 }
 
 func tagOr(m map[string]string, key, fallback string) string {

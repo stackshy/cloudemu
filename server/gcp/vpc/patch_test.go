@@ -336,3 +336,64 @@ func TestSDKFirewallEgressAdvancedFields(t *testing.T) {
 		t.Errorf("default priority=%d want 1000", mn.GetPriority())
 	}
 }
+
+// TestSDKFirewallExplicitPriorityZero covers the divergence where an explicit
+// priority 0 (a valid GCP value = highest precedence) was forced to the 1000
+// default, silently altering rule precedence and driving a perpetual diff. An
+// explicit 0 must survive both insert and a subsequent patch that omits it.
+func TestSDKFirewallExplicitPriorityZero(t *testing.T) {
+	ts := newGCPNetServer(t)
+	ctx := context.Background()
+
+	client := newFwClient(t, ts.URL, ts.Client())
+
+	insertOp, err := client.Insert(ctx, &computepb.InsertFirewallRequest{
+		Project: testProject,
+		FirewallResource: &computepb.Firewall{
+			Name:         ptrStr("fw-prio0"),
+			Priority:     ptrInt32(0),
+			Allowed:      []*computepb.Allowed{{IPProtocol: ptrStr("tcp"), Ports: []string{"22"}}},
+			SourceRanges: []string{"0.0.0.0/0"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Insert: %v", err)
+	}
+
+	if err := insertOp.Wait(ctx); err != nil {
+		t.Fatalf("Insert wait: %v", err)
+	}
+
+	got, err := client.Get(ctx, &computepb.GetFirewallRequest{Project: testProject, Firewall: "fw-prio0"})
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.GetPriority() != 0 {
+		t.Fatalf("explicit priority 0 not preserved: got %d", got.GetPriority())
+	}
+
+	// A patch that omits priority must not resurrect the 1000 default.
+	patchOp, err := client.Patch(ctx, &computepb.PatchFirewallRequest{
+		Project: testProject, Firewall: "fw-prio0",
+		FirewallResource: &computepb.Firewall{
+			Allowed: []*computepb.Allowed{{IPProtocol: ptrStr("tcp"), Ports: []string{"443"}}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Patch: %v", err)
+	}
+
+	if err := patchOp.Wait(ctx); err != nil {
+		t.Fatalf("Patch wait: %v", err)
+	}
+
+	got2, err := client.Get(ctx, &computepb.GetFirewallRequest{Project: testProject, Firewall: "fw-prio0"})
+	if err != nil {
+		t.Fatalf("Get after patch: %v", err)
+	}
+
+	if got2.GetPriority() != 0 {
+		t.Errorf("priority 0 lost after patch: got %d", got2.GetPriority())
+	}
+}
