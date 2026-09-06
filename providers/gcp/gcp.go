@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudlogging"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudrun"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudsql"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudtasks"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/dataproc"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/eventarc"
@@ -91,6 +92,7 @@ type Provider struct {
 	Spanner          *spannerprov.Mock
 	Dataproc         *dataproc.Mock
 	Scheduler        *scheduler.Mock
+	CloudTasks       *cloudtasks.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -139,6 +141,7 @@ func New(opts ...config.Option) *Provider {
 		Spanner:          spannerprov.New(o),
 		Dataproc:         dataproc.New(o),
 		Scheduler:        scheduler.New(o),
+		CloudTasks:       cloudtasks.New(o),
 		ProjectID:        o.ProjectID,
 		Region:           o.Region,
 		Clock:            o.Clock,

@@ -2397,6 +2397,59 @@
     }
   },
   {
+    "service": "cloudtasks",
+    "interface": "Queues",
+    "operations": [
+      {
+        "name": "CreateQueue",
+        "doc": "CreateQueue stores a queue. cfg.Name is the full resource name; the queue"
+      },
+      {
+        "name": "DeleteQueue",
+        "doc": "DeleteQueue removes a queue by its full resource name."
+      },
+      {
+        "name": "GetIamPolicy",
+        "doc": "GetIamPolicy returns the queue's stored IAM policy (an empty, versioned"
+      },
+      {
+        "name": "GetQueue",
+        "doc": "GetQueue returns a queue by its full resource name."
+      },
+      {
+        "name": "ListQueues",
+        "doc": "ListQueues returns every queue under the given parent"
+      },
+      {
+        "name": "PatchQueue",
+        "doc": "PatchQueue applies a field-mask update to an existing queue and returns it."
+      },
+      {
+        "name": "PauseQueue",
+        "doc": "PauseQueue transitions a queue to PAUSED and returns it."
+      },
+      {
+        "name": "PurgeQueue",
+        "doc": "PurgeQueue purges a queue's tasks. Tasks are out of scope, so this records"
+      },
+      {
+        "name": "ResumeQueue",
+        "doc": "ResumeQueue transitions a queue to RUNNING and returns it."
+      },
+      {
+        "name": "SetIamPolicy",
+        "doc": "SetIamPolicy stores the queue's IAM policy and returns it with a refreshed"
+      },
+      {
+        "name": "TestIamPermissions",
+        "doc": "TestIamPermissions echoes back the requested permissions (CloudEmu does not"
+      }
+    ],
+    "providers": {
+      "gcp": "CloudTasks"
+    }
+  },
+  {
     "service": "cloudtrail",
     "interface": "CloudTrail",
     "operations": [
