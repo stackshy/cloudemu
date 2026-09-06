@@ -180,6 +180,9 @@ type listSubscriptionsByTopicResponse struct {
 
 type publishResult struct {
 	MessageID string `xml:"MessageId"`
+	// SequenceNumber is emitted only for FIFO topics; standard-topic publishes
+	// omit it, matching real SNS.
+	SequenceNumber string `xml:"SequenceNumber,omitempty"`
 }
 
 type publishResponse struct {
@@ -194,6 +197,8 @@ type publishResponse struct {
 type batchResultEntry struct {
 	ID        string `xml:"Id"`
 	MessageID string `xml:"MessageId"`
+	// SequenceNumber is emitted only for FIFO topics, mirroring Publish.
+	SequenceNumber string `xml:"SequenceNumber,omitempty"`
 }
 
 type batchErrorEntry struct {

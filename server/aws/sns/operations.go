@@ -669,7 +669,7 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request) {
 
 	awsquery.WriteXMLResponse(w, publishResponse{
 		Xmlns:    Namespace,
-		Result:   publishResult{MessageID: out.MessageID},
+		Result:   publishResult{MessageID: out.MessageID, SequenceNumber: out.SequenceNumber},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
