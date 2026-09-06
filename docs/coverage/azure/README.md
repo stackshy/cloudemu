@@ -39,6 +39,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [MySQLFlex](./mysqlflex.md) | `relationaldb` | 21 |
 | [NotificationHubs](./notificationhubs.md) | `notification` | 9 |
 | [PostgresFlex](./postgresflex.md) | — (provider-native) | 21 |
+| [PrivateDNS](./privatedns.md) | `privatedns` | 13 |
 | [Providers](./providers.md) | — (provider-native) | 4 |
 | [Queue](./queue.md) | — (provider-native) | 6 |
 | [QueueStorage](./queuestorage.md) | `messagequeue` | 14 |

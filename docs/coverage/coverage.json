@@ -9692,6 +9692,67 @@
     }
   },
   {
+    "service": "privatedns",
+    "interface": "PrivateDNS",
+    "operations": [
+      {
+        "name": "CreateOrUpdatePrivateZone",
+        "doc": "CreateOrUpdatePrivateZone stores zone as a full replace and reports whether"
+      },
+      {
+        "name": "CreateOrUpdateRecordSet",
+        "doc": "CreateOrUpdateRecordSet stores rs as a full replace under an existing zone,"
+      },
+      {
+        "name": "CreateOrUpdateVirtualNetworkLink",
+        "doc": "CreateOrUpdateVirtualNetworkLink stores link as a full replace under an"
+      },
+      {
+        "name": "DeletePrivateZone",
+        "doc": "DeletePrivateZone removes the zone and cascades to its links and records,"
+      },
+      {
+        "name": "DeleteRecordSet",
+        "doc": "DeleteRecordSet removes the record set, or returns NotFound."
+      },
+      {
+        "name": "DeleteVirtualNetworkLink",
+        "doc": "DeleteVirtualNetworkLink removes the link, or returns NotFound."
+      },
+      {
+        "name": "GetPrivateZone",
+        "doc": "GetPrivateZone returns the zone with its computed counts, or NotFound."
+      },
+      {
+        "name": "GetRecordSet",
+        "doc": "GetRecordSet returns the record set, or NotFound."
+      },
+      {
+        "name": "GetVirtualNetworkLink",
+        "doc": "GetVirtualNetworkLink returns the link, or NotFound."
+      },
+      {
+        "name": "ListPrivateZones",
+        "doc": "ListPrivateZones returns the zones in rg (all when rg is empty), ordered by"
+      },
+      {
+        "name": "ListRecordSets",
+        "doc": "ListRecordSets returns every record set under a zone, ordered by key."
+      },
+      {
+        "name": "ListRecordSetsByType",
+        "doc": "ListRecordSetsByType returns the zone's record sets of one type, ordered by"
+      },
+      {
+        "name": "ListVirtualNetworkLinks",
+        "doc": "ListVirtualNetworkLinks returns the links under a zone, ordered by key."
+      }
+    ],
+    "providers": {
+      "azure": "PrivateDNS"
+    }
+  },
+  {
     "service": "providers",
     "interface": "provider-native",
     "operations": [
