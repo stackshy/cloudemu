@@ -218,6 +218,121 @@ func TestSDKNamespaceUpdateAppliesProperties(t *testing.T) {
 	}
 }
 
+// TestSDKNamespaceUpdateAppliesExplicitFalse checks that a PATCH which flips a
+// boolean property from true to an EXPLICIT false (and a numeric property from a
+// non-zero value to 0) is actually applied — the change-to-default case a naive
+// echo-of-request cannot handle. Real Azure's Namespaces - Update applies the
+// values the caller sends, so isAutoInflateEnabled=false and
+// maximumThroughputUnits=0 must be read back after the PATCH, not the stale
+// creation-time values. The SDK sends *bool/*int32 fields, so a pointer to
+// false/0 is serialized on the wire (omitempty only drops a nil pointer), making
+// the explicit-false intent observable to the server.
+func TestSDKNamespaceUpdateAppliesExplicitFalse(t *testing.T) {
+	ts := newServer(t)
+	ctx := context.Background()
+
+	c, err := armeventhub.NewNamespacesClient(subID, fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatalf("NewNamespacesClient: %v", err)
+	}
+
+	// Create the namespace with AutoInflate ON, a non-zero throughput ceiling and
+	// zoneRedundant/disableLocalAuth ON, so the PATCH below has true values to
+	// clear rather than fields that were never set.
+	poller, err := c.BeginCreateOrUpdate(ctx, rgName, nsName, armeventhub.EHNamespace{
+		Location: to.Ptr("eastus"),
+		SKU:      &armeventhub.SKU{Name: to.Ptr(armeventhub.SKUNameStandard)},
+		Properties: &armeventhub.EHNamespaceProperties{
+			IsAutoInflateEnabled:   to.Ptr(true),
+			MaximumThroughputUnits: to.Ptr[int32](10),
+			ZoneRedundant:          to.Ptr(true),
+			DisableLocalAuth:       to.Ptr(true),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreateOrUpdate namespace: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("poll namespace create: %v", err)
+	}
+
+	// Sanity: the creation values are present before the clearing PATCH.
+	got, err := c.Get(ctx, rgName, nsName, nil)
+	if err != nil {
+		t.Fatalf("Get after create: %v", err)
+	}
+
+	if got.Properties.IsAutoInflateEnabled == nil || !*got.Properties.IsAutoInflateEnabled ||
+		got.Properties.MaximumThroughputUnits == nil || *got.Properties.MaximumThroughputUnits != 10 {
+		t.Fatalf("pre-PATCH read-back = autoInflate:%v maxTU:%v, want true/10",
+			got.Properties.IsAutoInflateEnabled, got.Properties.MaximumThroughputUnits)
+	}
+
+	// PATCH the booleans to EXPLICIT false and the ceiling to 0. Because these are
+	// scalar zero values the request-echo overlay deliberately does not capture
+	// (it treats a zero scalar the response omits as a modeled default, matching
+	// the PATCH-to-clear guard), so read-back can only return them if the handler
+	// itself merged the request properties onto the stored state.
+	if _, err := c.Update(ctx, rgName, nsName, armeventhub.EHNamespace{
+		Properties: &armeventhub.EHNamespaceProperties{
+			IsAutoInflateEnabled:   to.Ptr(false),
+			MaximumThroughputUnits: to.Ptr[int32](0),
+			ZoneRedundant:          to.Ptr(false),
+			DisableLocalAuth:       to.Ptr(false),
+		},
+	}, nil); err != nil {
+		t.Fatalf("Update namespace (clear): %v", err)
+	}
+
+	got, err = c.Get(ctx, rgName, nsName, nil)
+	if err != nil {
+		t.Fatalf("Get after clearing update: %v", err)
+	}
+
+	if got.Properties.IsAutoInflateEnabled == nil || *got.Properties.IsAutoInflateEnabled {
+		t.Fatalf("read-back isAutoInflateEnabled = %v, want false (explicit-false applied)",
+			got.Properties.IsAutoInflateEnabled)
+	}
+
+	if got.Properties.MaximumThroughputUnits == nil || *got.Properties.MaximumThroughputUnits != 0 {
+		t.Fatalf("read-back maximumThroughputUnits = %v, want 0 (explicit-zero applied)",
+			got.Properties.MaximumThroughputUnits)
+	}
+
+	if got.Properties.ZoneRedundant == nil || *got.Properties.ZoneRedundant {
+		t.Fatalf("read-back zoneRedundant = %v, want false", got.Properties.ZoneRedundant)
+	}
+
+	if got.Properties.DisableLocalAuth == nil || *got.Properties.DisableLocalAuth {
+		t.Fatalf("read-back disableLocalAuth = %v, want false", got.Properties.DisableLocalAuth)
+	}
+
+	// A later tags-only PATCH omits every property; the just-cleared false must be
+	// preserved (omitted-field partial-update merge), not resurrected to its
+	// creation-time true.
+	if _, err := c.Update(ctx, rgName, nsName, armeventhub.EHNamespace{
+		Tags: map[string]*string{"team": to.Ptr("data")},
+	}, nil); err != nil {
+		t.Fatalf("tags-only Update: %v", err)
+	}
+
+	got, err = c.Get(ctx, rgName, nsName, nil)
+	if err != nil {
+		t.Fatalf("Get after tags-only update: %v", err)
+	}
+
+	if got.Properties.IsAutoInflateEnabled == nil || *got.Properties.IsAutoInflateEnabled {
+		t.Fatalf("isAutoInflateEnabled after tags-only PATCH = %v, want it preserved as false",
+			got.Properties.IsAutoInflateEnabled)
+	}
+
+	if got.Properties.MaximumThroughputUnits == nil || *got.Properties.MaximumThroughputUnits != 0 {
+		t.Fatalf("maximumThroughputUnits after tags-only PATCH = %v, want it preserved as 0",
+			got.Properties.MaximumThroughputUnits)
+	}
+}
+
 func createStandardNamespace(t *testing.T, ctx context.Context, ts *httptest.Server) {
 	t.Helper()
 
