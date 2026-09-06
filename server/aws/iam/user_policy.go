@@ -58,6 +58,11 @@ func (h *Handler) putUserPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validPolicyDocument(r.Form.Get("PolicyDocument")) {
+		writeMalformedPolicy(w, "The policy failed legacy parsing")
+		return
+	}
+
 	if err := pm.PutUserPolicy(r.Context(),
 		r.Form.Get("UserName"), r.Form.Get("PolicyName"), r.Form.Get("PolicyDocument")); err != nil {
 		writeErr(w, err)

@@ -47,6 +47,66 @@ func TestSDKUpdateRole(t *testing.T) {
 	}
 }
 
+// TestSDKUpdateRoleDescription proves UpdateRoleDescription mutates only the
+// description and returns the modified role (Terraform's aws_iam_role calls this
+// action for a description-only change; previously undispatched → InvalidAction).
+func TestSDKUpdateRoleDescription(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateRole(ctx, &iam.CreateRoleInput{
+		RoleName:                 aws.String("desc-role"),
+		AssumeRolePolicyDocument: aws.String(trustPolicy),
+		Description:              aws.String("original"),
+		MaxSessionDuration:       aws.Int32(7200),
+	}); err != nil {
+		t.Fatalf("CreateRole: %v", err)
+	}
+
+	out, err := client.UpdateRoleDescription(ctx, &iam.UpdateRoleDescriptionInput{
+		RoleName:    aws.String("desc-role"),
+		Description: aws.String("changed"),
+	})
+	if err != nil {
+		t.Fatalf("UpdateRoleDescription: %v", err)
+	}
+
+	if desc := aws.ToString(out.Role.Description); desc != "changed" {
+		t.Fatalf("returned Role.Description = %q, want %q", desc, "changed")
+	}
+
+	// MaxSessionDuration must be left untouched.
+	if d := aws.ToInt32(out.Role.MaxSessionDuration); d != 7200 {
+		t.Fatalf("returned Role.MaxSessionDuration = %d, want 7200", d)
+	}
+
+	got, err := client.GetRole(ctx, &iam.GetRoleInput{RoleName: aws.String("desc-role")})
+	if err != nil {
+		t.Fatalf("GetRole: %v", err)
+	}
+
+	if desc := aws.ToString(got.Role.Description); desc != "changed" {
+		t.Fatalf("Role.Description = %q, want %q", desc, "changed")
+	}
+}
+
+// TestSDKUpdateRoleDescriptionMissing proves a description update against an
+// unknown role is rejected with NoSuchEntity.
+func TestSDKUpdateRoleDescriptionMissing(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	_, err := client.UpdateRoleDescription(ctx, &iam.UpdateRoleDescriptionInput{
+		RoleName:    aws.String("ghost"),
+		Description: aws.String("x"),
+	})
+
+	var notFound *iamtypes.NoSuchEntityException
+	if !errors.As(err, &notFound) {
+		t.Fatalf("UpdateRoleDescription on missing role: want NoSuchEntityException, got %v", err)
+	}
+}
+
 // TestSDKUpdateAssumeRolePolicy proves the trust policy is replaced in place
 // (previously undispatched → InvalidAction).
 func TestSDKUpdateAssumeRolePolicy(t *testing.T) {

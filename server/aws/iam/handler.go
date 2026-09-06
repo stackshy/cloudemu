@@ -42,6 +42,7 @@ var iamActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"GetRole":                        {},
 	"ListRoles":                      {},
 	"UpdateRole":                     {},
+	"UpdateRoleDescription":          {},
 	"UpdateAssumeRolePolicy":         {},
 	"CreatePolicy":                   {},
 	"DeletePolicy":                   {},
@@ -227,6 +228,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listRoles(w, r)
 	case "UpdateRole":
 		h.updateRole(w, r)
+	case "UpdateRoleDescription":
+		h.updateRoleDescription(w, r)
 	case "UpdateAssumeRolePolicy":
 		h.updateAssumeRolePolicy(w, r)
 	case "CreatePolicy":

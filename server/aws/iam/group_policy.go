@@ -141,6 +141,11 @@ func (h *Handler) putGroupPolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validPolicyDocument(r.Form.Get("PolicyDocument")) {
+		writeMalformedPolicy(w, "The policy failed legacy parsing")
+		return
+	}
+
 	if err := pm.PutGroupPolicy(r.Context(),
 		r.Form.Get("GroupName"), r.Form.Get("PolicyName"), r.Form.Get("PolicyDocument")); err != nil {
 		writeErr(w, err)
