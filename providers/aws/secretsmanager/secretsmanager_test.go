@@ -75,6 +75,33 @@ func TestCreateSecret(t *testing.T) {
 	}
 }
 
+func TestCreateSecretWithoutValueHasNoVersion(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	// CreateSecret with neither SecretString nor SecretBinary is metadata-only:
+	// real Secrets Manager creates no initial version, so there is nothing to
+	// read and no AWSCURRENT until PutSecretValue adds a version.
+	_, err := m.CreateSecret(ctx, driver.SecretConfig{Name: "meta-only"}, nil)
+	require.NoError(t, err)
+
+	versions, err := m.ListSecretVersions(ctx, "meta-only")
+	require.NoError(t, err)
+	assert.Empty(t, versions)
+
+	_, err = m.GetSecretValue(ctx, "meta-only", "")
+	require.Error(t, err)
+
+	// The first PutSecretValue becomes AWSCURRENT with no AWSPREVIOUS: a phantom
+	// initial version would have wrongly become the previous.
+	first, err := m.PutSecretValue(ctx, "meta-only", []byte("v1"))
+	require.NoError(t, err)
+
+	stages, err := m.SecretVersionStages(ctx, "meta-only")
+	require.NoError(t, err)
+	assert.Equal(t, map[string][]string{first.VersionID: {stageCurrent}}, stages)
+}
+
 func TestCreateSecretValidatesKMSKey(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
