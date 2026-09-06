@@ -63,6 +63,13 @@ func cloneEndpoint(in *driver.Endpoint) *driver.Endpoint {
 	return &out
 }
 
+func cloneFeaturestore(in *driver.Featurestore) *driver.Featurestore {
+	out := *in
+	out.Labels = copyLabels(in.Labels)
+
+	return &out
+}
+
 func cloneIndexEndpoint(in *driver.IndexEndpoint) *driver.IndexEndpoint {
 	out := *in
 	if in.DeployedIndexes != nil {

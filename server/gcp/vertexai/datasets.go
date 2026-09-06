@@ -17,6 +17,7 @@ func datasetJSON(d *driver.Dataset) map[string]any {
 	}
 }
 
+//nolint:dupl // REST shim; the method-dispatch shape recurs across collections.
 func (h *Handler) serveDatasets(w http.ResponseWriter, r *http.Request, p *vPath) {
 	if p.name == "" {
 		switch r.Method {
@@ -74,7 +75,6 @@ func (h *Handler) datasetAction(w http.ResponseWriter, r *http.Request, p *vPath
 	writeOp(w, op)
 }
 
-//nolint:dupl // REST shim; the decode/dispatch shape recurs across collections.
 func (h *Handler) createDataset(w http.ResponseWriter, r *http.Request, location string) {
 	var req struct {
 		DisplayName       string            `json:"displayName"`
@@ -128,14 +128,26 @@ func (h *Handler) listDatasets(w http.ResponseWriter, r *http.Request, location 
 
 func (h *Handler) patchDataset(w http.ResponseWriter, r *http.Request, name string) {
 	var req struct {
-		DisplayName string `json:"displayName"`
+		DisplayName string            `json:"displayName"`
+		Labels      map[string]string `json:"labels"`
 	}
 
 	if !decode(w, r, &req) {
 		return
 	}
 
-	ds, err := h.svc.PatchDataset(r.Context(), name, req.DisplayName)
+	mask := r.URL.Query().Get("updateMask")
+
+	var upd driver.DatasetUpdate
+	if maskWants(mask, "displayName") {
+		upd.DisplayName = &req.DisplayName
+	}
+
+	if maskWants(mask, "labels") {
+		upd.Labels, upd.SetLabels = req.Labels, true
+	}
+
+	ds, err := h.svc.PatchDataset(r.Context(), name, upd)
 	if err != nil {
 		writeCErr(w, err)
 

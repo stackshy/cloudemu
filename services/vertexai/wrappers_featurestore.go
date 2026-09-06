@@ -30,6 +30,18 @@ func (v *VertexAI) ListFeaturestores(ctx context.Context, location string) ([]dr
 	}))
 }
 
+func (v *VertexAI) PatchFeaturestore(
+	ctx context.Context, name string, upd driver.FeaturestoreUpdate,
+) (*driver.Operation, *driver.Featurestore, error) {
+	r, err := cast[opPair[*driver.Featurestore]](v.do(ctx, "PatchFeaturestore", name, func() (any, error) {
+		op, fs, e := v.drv.PatchFeaturestore(ctx, name, upd)
+
+		return opPair[*driver.Featurestore]{op, fs}, e
+	}))
+
+	return r.op, r.res, err
+}
+
 func (v *VertexAI) DeleteFeaturestore(ctx context.Context, name string) (*driver.Operation, error) {
 	return cast[*driver.Operation](v.do(ctx, "DeleteFeaturestore", name, func() (any, error) {
 		return v.drv.DeleteFeaturestore(ctx, name)

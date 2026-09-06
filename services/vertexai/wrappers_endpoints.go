@@ -6,6 +6,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/vertexai/driver"
 )
 
+//nolint:gocritic // cfg is passed by value to match the by-value Create* convention across the driver.
 func (v *VertexAI) CreateEndpoint(ctx context.Context, cfg driver.EndpointConfig) (*driver.Operation, *driver.Endpoint, error) {
 	r, err := cast[opPair[*driver.Endpoint]](v.do(ctx, "CreateEndpoint", cfg, func() (any, error) {
 		op, ep, e := v.drv.CreateEndpoint(ctx, cfg)
@@ -22,6 +23,12 @@ func (v *VertexAI) GetEndpoint(ctx context.Context, name string) (*driver.Endpoi
 
 func (v *VertexAI) ListEndpoints(ctx context.Context, location string) ([]driver.Endpoint, error) {
 	return cast[[]driver.Endpoint](v.do(ctx, "ListEndpoints", location, func() (any, error) { return v.drv.ListEndpoints(ctx, location) }))
+}
+
+func (v *VertexAI) PatchEndpoint(ctx context.Context, name string, upd driver.EndpointUpdate) (*driver.Endpoint, error) {
+	return cast[*driver.Endpoint](v.do(ctx, "PatchEndpoint", name, func() (any, error) {
+		return v.drv.PatchEndpoint(ctx, name, upd)
+	}))
 }
 
 func (v *VertexAI) DeleteEndpoint(ctx context.Context, name string) (*driver.Operation, error) {

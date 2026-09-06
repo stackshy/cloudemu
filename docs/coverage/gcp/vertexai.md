@@ -3,7 +3,7 @@
 
 GCP's `vertexai` service · portable interface `driver.VertexAI` · [GCP index](./README.md)
 
-## Operations (125)
+## Operations (127)
 
 | Operation | Description |
 | --- | --- |
@@ -118,6 +118,8 @@ GCP's `vertexai` service · portable interface `driver.VertexAI` · [GCP index](
 | `ListTrainingPipelines` |  |
 | `ListTuningJobs` |  |
 | `PatchDataset` |  |
+| `PatchEndpoint` |  |
+| `PatchFeaturestore` |  |
 | `PatchModel` |  |
 | `PauseSchedule` |  |
 | `Predict` |  |
