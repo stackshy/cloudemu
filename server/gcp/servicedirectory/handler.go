@@ -1,8 +1,12 @@
 // Package servicedirectory implements the Google Cloud Service Directory control
-// plane (servicedirectory.googleapis.com/v1) as a server.Handler. Real
-// google.golang.org/api/servicedirectory/v1 clients, gcloud, and the Terraform
-// google provider's google_service_directory_{namespace,service,endpoint}
-// resources hit this handler unchanged.
+// plane (servicedirectory.googleapis.com) as a server.Handler on both the /v1/
+// and /v1beta1/ version prefixes. Real google.golang.org/api/servicedirectory/v1
+// clients and gcloud use /v1/; the Terraform google-beta provider's
+// google_service_directory_{namespace,service,endpoint} resources exist only in
+// google-beta and default to /v1beta1/. Both hit this handler unchanged. The two
+// versions differ only in the field name of the service/endpoint string map —
+// `annotations` in v1, `metadata` in v1beta1 — which the handler decodes from
+// either key and re-emits under the name matching the request's version.
 //
 // Coverage (registration control plane only, synchronous REST — no LRO):
 //
@@ -37,7 +41,14 @@ import (
 )
 
 const (
-	pathPrefix    = "/v1/projects/"
+	// apiV1 and apiV1Beta1 are the two API versions this handler serves. The
+	// google_service_directory_* Terraform resources exist only in the
+	// google-beta provider, whose default base path is
+	// servicedirectory.googleapis.com/v1beta1/; real
+	// google.golang.org/api/servicedirectory/v1 clients and gcloud use /v1/.
+	apiV1      = "v1"
+	apiV1Beta1 = "v1beta1"
+
 	projectsSeg   = "projects"
 	locationsSeg  = "locations"
 	namespacesSeg = "namespaces"
@@ -65,10 +76,13 @@ type Handler struct {
 // New returns a Service Directory handler backed by db.
 func New(db sddriver.ServiceDirectory) *Handler { return &Handler{db: db} }
 
-// route holds the parsed components of a Service Directory v1 path. ns/svc/ep
-// hold the addressed ids; name is the id at the deepest level, empty for a
-// collection request.
+// route holds the parsed components of a Service Directory path. version is the
+// API version the request arrived on ("v1" or "v1beta1"), which selects the
+// wire field name for the service/endpoint string map. ns/svc/ep hold the
+// addressed ids; name is the id at the deepest level, empty for a collection
+// request.
 type route struct {
+	version  string
 	project  string
 	location string
 	ns       string
@@ -78,24 +92,41 @@ type route struct {
 	name     string
 }
 
-// parseRoute extracts the components of a Service Directory v1 path. It accepts
-// only the namespaces → services → endpoints hierarchy under a locations scope.
+// parseRoute extracts the components of a Service Directory path. It accepts the
+// namespaces → services → endpoints hierarchy under a locations scope on either
+// the /v1/ or /v1beta1/ version prefix.
 func parseRoute(urlPath string) (route, bool) {
-	if !strings.HasPrefix(urlPath, pathPrefix) {
+	version, rest, ok := splitVersion(urlPath)
+	if !ok {
 		return route{}, false
 	}
 
-	parts := strings.Split(strings.TrimPrefix(urlPath, "/v1/"), "/")
+	parts := strings.Split(rest, "/")
 	if len(parts) < minParts || parts[0] != projectsSeg || parts[2] != locationsSeg || parts[4] != namespacesSeg {
 		return route{}, false
 	}
 
-	rt := route{project: parts[1], location: parts[3], level: levelNamespace}
+	rt := route{version: version, project: parts[1], location: parts[3], level: levelNamespace}
 	if !parseHierarchy(&rt, parts[5:]) {
 		return route{}, false
 	}
 
 	return rt, true
+}
+
+// splitVersion strips a leading /v1/ or /v1beta1/ version segment from a
+// projects-scoped path, returning the version and the remainder. It reports
+// false for any other prefix. The two version prefixes are disjoint, so match
+// order is irrelevant.
+func splitVersion(urlPath string) (version, rest string, ok bool) {
+	for _, v := range [...]string{apiV1, apiV1Beta1} {
+		prefix := "/" + v + "/" + projectsSeg + "/"
+		if strings.HasPrefix(urlPath, prefix) {
+			return v, strings.TrimPrefix(urlPath, "/"+v+"/"), true
+		}
+	}
+
+	return "", "", false
 }
 
 // parseHierarchy folds the segments after "namespaces" into rt by consuming
