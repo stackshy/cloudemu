@@ -15,8 +15,24 @@ type vmRequest struct {
 	// resource root (armcompute.VirtualMachine.Identity). Omitted (nil) means
 	// the request did not touch identity; real Azure then preserves whatever
 	// identity is already attached rather than clearing it.
-	Identity   *identity      `json:"identity,omitempty"`
+	Identity *identity `json:"identity,omitempty"`
+	// Plan is the marketplace purchase plan block, a top-level sibling of
+	// properties (armcompute.VirtualMachine.Plan). It is required for VMs from a
+	// third-party (paid/BYOL) marketplace image and immutable after create. The
+	// property overlay cannot reach top-level fields, so the handler models it
+	// explicitly (as it does zones/identity) to round-trip it on GET.
+	Plan       *plan          `json:"plan,omitempty"`
 	Properties vmRequestProps `json:"properties"`
+}
+
+// plan is the ARM VirtualMachine.plan block (armcompute.Plan): the marketplace
+// image's purchase plan — its offer name, publisher, product, and optional
+// promotion code.
+type plan struct {
+	Name          string `json:"name,omitempty"`
+	Publisher     string `json:"publisher,omitempty"`
+	Product       string `json:"product,omitempty"`
+	PromotionCode string `json:"promotionCode,omitempty"`
 }
 
 // identity is the ARM managed-service-identity envelope
@@ -158,7 +174,10 @@ type vmResponse struct {
 	Zones    []string          `json:"zones,omitempty"`
 	// Identity echoes the managed-identity block attached to the VM, nil when
 	// none is attached.
-	Identity   *identity       `json:"identity,omitempty"`
+	Identity *identity `json:"identity,omitempty"`
+	// Plan echoes the marketplace purchase plan the VM was created from, nil
+	// for a VM from a first-party image.
+	Plan       *plan           `json:"plan,omitempty"`
 	Properties vmResponseProps `json:"properties"`
 }
 
