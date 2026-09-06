@@ -8483,6 +8483,45 @@
     }
   },
   {
+    "service": "mwaa",
+    "interface": "MWAA",
+    "operations": [
+      {
+        "name": "CreateCliToken"
+      },
+      {
+        "name": "CreateEnvironment"
+      },
+      {
+        "name": "CreateWebLoginToken"
+      },
+      {
+        "name": "DeleteEnvironment"
+      },
+      {
+        "name": "GetEnvironment"
+      },
+      {
+        "name": "ListEnvironments"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateEnvironment"
+      }
+    ],
+    "providers": {
+      "aws": "MWAA"
+    }
+  },
+  {
     "service": "networkfirewall",
     "interface": "NetworkFirewall",
     "operations": [

@@ -51,6 +51,7 @@ import (
 	kmssrv "github.com/stackshy/cloudemu/v2/server/aws/kms"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
 	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
+	mwaasrv "github.com/stackshy/cloudemu/v2/server/aws/mwaa"
 	networkfirewallsrv "github.com/stackshy/cloudemu/v2/server/aws/networkfirewall"
 	opensearchsrv "github.com/stackshy/cloudemu/v2/server/aws/opensearch"
 	"github.com/stackshy/cloudemu/v2/server/aws/rds"
@@ -110,6 +111,7 @@ import (
 	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	mwaadriver "github.com/stackshy/cloudemu/v2/services/mwaa/driver"
 	nfdriver "github.com/stackshy/cloudemu/v2/services/networkfirewall/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
@@ -186,6 +188,10 @@ type Drivers struct {
 	// per-operation root paths, e.g. POST /create-flow) against the appflow
 	// driver.
 	AppFlow appflowdriver.AppFlow
+
+	// MWAA serves the Amazon MWAA control-plane REST-JSON API (verb + path
+	// routing, e.g. PUT /environments/{Name}) against the mwaa driver.
+	MWAA mwaadriver.MWAA
 
 	// Kafka serves the Amazon MSK REST-JSON API (path + method routing under
 	// the /v1/, /api/v2/, and /replication/v1/ version prefixes) against the
@@ -374,6 +380,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		OpenSearch:          p.OpenSearch,
 		AppSync:             p.AppSync,
 		AppFlow:             p.AppFlow,
+		MWAA:                p.MWAA,
 		Kafka:               p.Kafka,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
@@ -654,6 +661,17 @@ func New(d Drivers) *server.Server {
 	// claims only those exact paths and must run before the S3 catch-all.
 	if d.AppFlow != nil {
 		srv.Register(appflowsrv.New(d.AppFlow))
+	}
+
+	// MWAA uses REST-JSON verb + path routing at the root (e.g.
+	// PUT /environments/{Name}, GET /environments, POST /tags/{arn}). Its
+	// Matches claims the /environments tree, the /clitoken and /webtoken token
+	// paths, and /tags paths carrying an MWAA (:airflow:) ARN, so it must run
+	// before the S3 catch-all and is disjoint from the other /tags claimants
+	// (AppFlow, AppSync, Batch, Kafka), which scope their claims to their own
+	// ARN markers.
+	if d.MWAA != nil {
+		srv.Register(mwaasrv.New(d.MWAA))
 	}
 
 	// MSK (Kafka) uses REST-JSON path routing under the /v1/, /api/v2/, and

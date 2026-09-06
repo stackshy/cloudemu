@@ -260,6 +260,8 @@ github.com/aws/aws-sdk-go-v2/service/lambda v1.90.1 h1:odCeJgHXfQoXEWQUIzPkKvsJT
 github.com/aws/aws-sdk-go-v2/service/lambda v1.90.1/go.mod h1:NbtJVztitG7JkuoI4GSrDUlsB32zeXqKBvXj6bUxcMo=
 github.com/aws/aws-sdk-go-v2/service/memorydb v1.36.2 h1:GKkUvwhxKF5JVSWERui4bvPNKEv7BQe3+i7h5v8klpQ=
 github.com/aws/aws-sdk-go-v2/service/memorydb v1.36.2/go.mod h1:wRcgz/DYIlZldpS/RpJDgjtMPsk0a6hLvwMl/2tGKuY=
+github.com/aws/aws-sdk-go-v2/service/mwaa v1.47.0 h1:uF3OrkulIkb4fFQlmEyA1h0cwOczrsAHU67uNWz00OA=
+github.com/aws/aws-sdk-go-v2/service/mwaa v1.47.0/go.mod h1:eL/M8wEdJzP/px7aFq66toe15GzRo2tZ0VwYHcT23S0=
 github.com/aws/aws-sdk-go-v2/service/neptune v1.44.5 h1:v+XVk5OQnhm6EasbClY036A1gTtVdtdNdG8/Q3rLYU4=
 github.com/aws/aws-sdk-go-v2/service/neptune v1.44.5/go.mod h1:Y/yH7q6R/qaO4g6YTBbAMSu5T4NjVo+7+P1UNZ2NlzA=
 github.com/aws/aws-sdk-go-v2/service/networkfirewall v1.66.0 h1:VrfvjFVgN2ZJZUvMBsW0YGW7hN3zsqdVYy/wpko9hkQ=

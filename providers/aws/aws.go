@@ -47,6 +47,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/kmscrypto"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
+	"github.com/stackshy/cloudemu/v2/providers/aws/mwaa"
 	"github.com/stackshy/cloudemu/v2/providers/aws/networkfirewall"
 	"github.com/stackshy/cloudemu/v2/providers/aws/opensearch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/rds"
@@ -182,6 +183,7 @@ type Provider struct {
 	OpenSearch          *opensearch.Mock
 	AppSync             *appsync.Mock
 	AppFlow             *appflow.Mock
+	MWAA                *mwaa.Mock
 	Kafka               *kafka.Mock
 	VPCLattice          *vpclattice.Mock
 	WAFv2               *wafv2.Mock
@@ -255,6 +257,7 @@ func New(opts ...config.Option) *Provider {
 		OpenSearch:          opensearch.New(o),
 		AppSync:             appsync.New(o),
 		AppFlow:             appflow.New(o),
+		MWAA:                mwaa.New(o),
 		Kafka:               kafka.New(o),
 		VPCLattice:          vpclattice.New(o),
 		WAFv2:               wafv2.New(o),
