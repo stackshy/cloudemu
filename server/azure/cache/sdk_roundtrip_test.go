@@ -285,3 +285,86 @@ func TestSDKAzureCacheRejectsClusteringOnStandard(t *testing.T) {
 		t.Fatal("expected an error for clustering on a Standard SKU, got nil")
 	}
 }
+
+// TestSDKAzureCacheCapacityZeroRoundTrips covers the Basic/Standard C0 tier
+// (capacity 0) — the cheapest tier and the default in many azurerm_redis_cache
+// configs. Capacity 0 must round-trip verbatim on create, Get and update; a
+// backend that coerces 0 to 1 (or omits it) makes azurerm see a perpetual diff.
+func TestSDKAzureCacheCapacityZeroRoundTrips(t *testing.T) {
+	client := newRedisClient(t)
+	ctx := context.Background()
+
+	poller, err := client.BeginCreate(ctx, testRG, "c0-cache", armredis.CreateParameters{
+		Location: to.Ptr("eastus"),
+		Properties: &armredis.CreateProperties{
+			SKU: &armredis.SKU{
+				Name:     to.Ptr(armredis.SKUNameBasic),
+				Family:   to.Ptr(armredis.SKUFamilyC),
+				Capacity: to.Ptr(int32(0)),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	created, err := poller.PollUntilDone(ctx, nil)
+	if err != nil {
+		t.Fatalf("PollUntilDone: %v", err)
+	}
+
+	assertCapacity := func(where string, props *armredis.Properties) {
+		t.Helper()
+
+		if props == nil || props.SKU == nil || props.SKU.Capacity == nil {
+			t.Fatalf("%s: expected sku.capacity to be present, got %+v", where, props)
+		}
+
+		if *props.SKU.Capacity != 0 {
+			t.Fatalf("%s: sku.capacity = %d, want 0 (C0 tier)", where, *props.SKU.Capacity)
+		}
+
+		if props.SKU.Name == nil || *props.SKU.Name != armredis.SKUNameBasic {
+			t.Fatalf("%s: sku.name = %v, want Basic", where, props.SKU.Name)
+		}
+
+		if props.SKU.Family == nil || *props.SKU.Family != armredis.SKUFamilyC {
+			t.Fatalf("%s: sku.family = %v, want C", where, props.SKU.Family)
+		}
+	}
+
+	assertCapacity("create", created.Properties)
+
+	got, err := client.Get(ctx, testRG, "c0-cache", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	assertCapacity("get", got.Properties)
+
+	// An update that resends the C0 SKU must keep capacity 0, not coerce it up.
+	upPoller, err := client.BeginCreate(ctx, testRG, "c0-cache", armredis.CreateParameters{
+		Location: to.Ptr("eastus"),
+		Properties: &armredis.CreateProperties{
+			SKU: &armredis.SKU{
+				Name:     to.Ptr(armredis.SKUNameBasic),
+				Family:   to.Ptr(armredis.SKUFamilyC),
+				Capacity: to.Ptr(int32(0)),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate (update): %v", err)
+	}
+
+	if _, err := upPoller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("PollUntilDone (update): %v", err)
+	}
+
+	reGot, err := client.Get(ctx, testRG, "c0-cache", nil)
+	if err != nil {
+		t.Fatalf("Get after update: %v", err)
+	}
+
+	assertCapacity("get-after-update", reGot.Properties)
+}
