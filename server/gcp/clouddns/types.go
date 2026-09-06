@@ -3,6 +3,7 @@ package clouddns
 import (
 	"context"
 	"hash/fnv"
+	"math"
 	"strconv"
 	"strings"
 
@@ -230,11 +231,24 @@ func privateFor(visibility string) bool {
 
 // numericID folds the driver's zone-<uuid> id into a stable numeric string,
 // which is what the SDK's uint64 `id` field requires on the wire.
+//
+// The fold is masked to 63 bits so the value always fits in a signed int64.
+// Real Cloud DNS ids fit in int64, and Terraform's google provider reads
+// managed_zone_id as an int (its flatten does strconv.ParseInt(id, 10, 64));
+// a full-range uint64 that overflows int64 fails that parse and breaks the
+// managed-zone read ("expected type 'int', got unconvertible type 'string'").
+// Masking never yields 0 for a real zone id, but guard it so the id is always
+// a non-zero value an SDK caller can treat as present.
 func numericID(id string) string {
 	h := fnv.New64a()
 	_, _ = h.Write([]byte(id))
 
-	return strconv.FormatUint(h.Sum64(), 10)
+	n := h.Sum64() & math.MaxInt64
+	if n == 0 {
+		n = 1
+	}
+
+	return strconv.FormatUint(n, 10)
 }
 
 func toManagedZoneJSON(info *dnsdriver.ZoneInfo) managedZoneJSON {
