@@ -19,6 +19,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `applicationgateway` | — | [AppGateway](./azure/appgateway.md) | — | — | 4 |
 | `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
 | `azuresearch` | — | [Search](./azure/search.md) | — | — | 53 |
+| `batch` | [Batch](./aws/batch.md) | — | — | — | 14 |
 | `bedrock` | [Bedrock](./aws/bedrock.md) | — | — | — | 65 |
 | `bedrockagent` | [BedrockAgent](./aws/bedrockagent.md) | — | — | — | 29 |
 | `bedrockagentruntime` | [BedrockAgentRuntime](./aws/bedrockagentruntime.md) | — | — | — | 3 |
