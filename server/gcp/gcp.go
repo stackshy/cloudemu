@@ -24,6 +24,7 @@ import (
 	cloudloggingsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudlogging"
 	cloudrunsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudrun"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudsql"
+	cloudtaskssrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudtasks"
 	"github.com/stackshy/cloudemu/v2/server/gcp/compute"
 	dataprocsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataproc"
 	"github.com/stackshy/cloudemu/v2/server/gcp/eventarc"
@@ -51,6 +52,7 @@ import (
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	cloudrundriver "github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
+	ctdriver "github.com/stackshy/cloudemu/v2/services/cloudtasks/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
@@ -135,6 +137,9 @@ type Drivers struct {
 	// Scheduler serves the cloudscheduler.googleapis.com v1 REST API (job
 	// control plane) against the scheduler driver.
 	Scheduler scheddriver.Scheduler
+	// CloudTasks serves the cloudtasks.googleapis.com v2 REST API (queue control
+	// plane) against the cloudtasks driver.
+	CloudTasks ctdriver.Queues
 	// FCM serves the fcm.googleapis.com v1 messages:send API against the
 	// notification driver (Publish only; FCM has no topic/subscription CRUD).
 	FCM notifdriver.Notification
@@ -480,6 +485,15 @@ func New(d Drivers) *server.Server {
 	// synchronous (no LRO). Registered before Firestore's permissive prefix.
 	if d.Scheduler != nil {
 		srv.Register(schedulersrv.New(d.Scheduler))
+	}
+
+	// Cloud Tasks matches /v2/projects/{p}/locations/{l}/queues[/…] — its queues
+	// resource-type guard on the /v2/ prefix keeps it disjoint from Cloud Run
+	// (jobs|services, also /v2/) and from the entire /v1/projects/ family
+	// (including Firestore's permissive prefix), so registration order is
+	// unconstrained. All eleven methods are synchronous (no LRO).
+	if d.CloudTasks != nil {
+		srv.Register(cloudtaskssrv.New(d.CloudTasks))
 	}
 
 	// FCM matches /v1/projects/{p}/messages:send — disjoint from every other

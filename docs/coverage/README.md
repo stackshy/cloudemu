@@ -33,6 +33,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cloudfront` | [CloudFront](./aws/cloudfront.md) | — | — | — | 11 |
 | `cloudrun` | — | — | [CloudRun](./gcp/cloudrun.md) | — | 18 |
 | `cloudsql` | — | — | [CloudSQL](./gcp/cloudsql.md) | — | 21 |
+| `cloudtasks` | — | — | [CloudTasks](./gcp/cloudtasks.md) | — | 11 |
 | `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | — | — | — | 60 |
 | `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | — | 37 |
 | `configservice` | [Config](./aws/config.md) | — | — | — | 102 |

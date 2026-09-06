@@ -15,6 +15,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [CloudMonitoring](./cloudmonitoring.md) | `monitoring` | 12 |
 | [CloudRun](./cloudrun.md) | `cloudrun` | 18 |
 | [CloudSQL](./cloudsql.md) | — (provider-native) | 21 |
+| [CloudTasks](./cloudtasks.md) | `cloudtasks` | 11 |
 | [Cloudasset](./cloudasset.md) | — (provider-native) | 11 |
 | [Cloudbilling](./cloudbilling.md) | — (provider-native) | 14 |
 | [Dataproc](./dataproc.md) | `dataproc` | 6 |
