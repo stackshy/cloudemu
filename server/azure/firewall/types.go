@@ -1,4 +1,4 @@
-package azurefirewall
+package firewall
 
 // Azure ARM JSON wire structures for Microsoft.Network/azureFirewalls and
 // Microsoft.Network/firewallPolicies. Only the subset needed to model the shells

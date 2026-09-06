@@ -1,4 +1,4 @@
-package azurefirewall
+package firewall
 
 // Small generic-JSON extraction helpers shared by the firewall and policy
 // operations. All are defensive: a missing or wrongly-typed field yields the

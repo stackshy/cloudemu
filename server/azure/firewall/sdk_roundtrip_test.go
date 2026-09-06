@@ -1,4 +1,4 @@
-package azurefirewall_test
+package firewall_test
 
 import (
 	"context"

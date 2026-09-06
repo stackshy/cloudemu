@@ -3,7 +3,7 @@
 // (Microsoft.Network/firewallPolicies) stores. Both ARM bodies are stored
 // natively (their nested shape has no cross-cloud equivalent), keyed by
 // (resourceGroup, name).
-package azurefirewall
+package firewall
 
 import (
 	"context"

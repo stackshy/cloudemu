@@ -1017,9 +1017,7 @@
         "doc": "ListFirewallPolicies returns the policies in rg, or all when rg is empty"
       }
     ],
-    "providers": {
-      "azure": "Firewall"
-    }
+    "providers": {}
   },
   {
     "service": "azuresearch",
@@ -4803,6 +4801,47 @@
     ],
     "providers": {
       "azure": "Eventhub"
+    }
+  },
+  {
+    "service": "firewall",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdateAzureFirewall",
+        "doc": "CreateOrUpdateAzureFirewall stores fw as a full replace and reports whether"
+      },
+      {
+        "name": "CreateOrUpdateFirewallPolicy",
+        "doc": "CreateOrUpdateFirewallPolicy stores pol as a full replace and reports"
+      },
+      {
+        "name": "DeleteAzureFirewall",
+        "doc": "DeleteAzureFirewall removes the firewall, returning NotFound if it does not"
+      },
+      {
+        "name": "DeleteFirewallPolicy",
+        "doc": "DeleteFirewallPolicy removes the policy, returning NotFound if it does not"
+      },
+      {
+        "name": "GetAzureFirewall",
+        "doc": "GetAzureFirewall returns the firewall identified by (resourceGroup, name),"
+      },
+      {
+        "name": "GetFirewallPolicy",
+        "doc": "GetFirewallPolicy returns the policy identified by (resourceGroup, name),"
+      },
+      {
+        "name": "ListAzureFirewalls",
+        "doc": "ListAzureFirewalls returns the firewalls in rg, or all when rg is empty"
+      },
+      {
+        "name": "ListFirewallPolicies",
+        "doc": "ListFirewallPolicies returns the policies in rg, or all when rg is empty"
+      }
+    ],
+    "providers": {
+      "azure": "Firewall"
     }
   },
   {

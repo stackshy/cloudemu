@@ -18,7 +18,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `appinsights` | — | [Appinsights](./azure/appinsights.md) | — | — | 6 |
 | `applicationgateway` | — | [AppGateway](./azure/appgateway.md) | — | — | 4 |
 | `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
-| `azurefirewall` | — | [Firewall](./azure/firewall.md) | — | — | 8 |
+| `azurefirewall` | — | — | — | — | 8 |
 | `azuresearch` | — | [Search](./azure/search.md) | — | — | 53 |
 | `bedrock` | [Bedrock](./aws/bedrock.md) | — | — | — | 65 |
 | `bedrockagent` | [BedrockAgent](./aws/bedrockagent.md) | — | — | — | 29 |
@@ -53,6 +53,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `emr` | [EMR](./aws/emr.md) | — | — | — | 13 |
 | `eventbus` | [EventBridge](./aws/eventbridge.md) | [EventGrid](./azure/eventgrid.md) | [Eventarc](./gcp/eventarc.md) | — | 16 |
 | `eventhub` | — | [Eventhub](./azure/eventhub.md) | — | — | 14 |
+| `firewall` | — | [Firewall](./azure/firewall.md) | — | — | 8 |
 | `gke` | — | — | [GKE](./gcp/gke.md) | — | 18 |
 | `glue` | [Glue](./aws/glue.md) | — | — | — | 299 |
 | `guardduty` | [GuardDuty](./aws/guardduty.md) | — | — | — | 87 |

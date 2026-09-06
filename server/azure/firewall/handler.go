@@ -31,7 +31,7 @@
 // Every other property is preserved verbatim so deferred sub-surfaces (classic
 // rule collections, IDPS, TLS inspection, DNS proxy, rule collection groups) stay
 // echo-through-safe.
-package azurefirewall
+package firewall
 
 import (
 	"context"

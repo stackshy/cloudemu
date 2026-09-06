@@ -1,4 +1,4 @@
-package azurefirewall
+package firewall
 
 import (
 	"net/http"
