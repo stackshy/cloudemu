@@ -9,6 +9,7 @@ package oci
 import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/oci/compute"
 	"github.com/stackshy/cloudemu/v2/server/oci/identity"
 	"github.com/stackshy/cloudemu/v2/server/oci/monitoring"
 	"github.com/stackshy/cloudemu/v2/server/oci/vcn"
@@ -94,6 +95,12 @@ func New(d Drivers) *server.Server {
 
 	if d.VCN != nil {
 		srv.Register(vcn.New(d.VCN, d.WorkRequests))
+	}
+
+	// Compute shares VCN's /20160918 prefix; the two claim disjoint
+	// collections, so registration order between them does not matter.
+	if d.Compute != nil {
+		srv.Register(compute.New(d.Compute, d.WorkRequests))
 	}
 
 	return srv

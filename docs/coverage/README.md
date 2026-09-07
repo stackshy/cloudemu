@@ -50,7 +50,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cognito` | [Cognito](./aws/cognito.md) | — | — | — | 18 |
 | `communication` | — | [Communication](./azure/communication.md) | — | — | 10 |
 | `composer` | — | — | [Composer](./gcp/composer.md) | — | 6 |
-| `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | — | 37 |
+| `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | [Compute](./oci/compute.md) | 37 |
 | `configservice` | [Config](./aws/config.md) | — | — | — | 102 |
 | `containerapps` | — | [ContainerApps](./azure/containerapps.md) | — | — | 19 |
 | `containerinstances` | — | [ContainerInstances](./azure/containerinstances.md) | — | — | 10 |
