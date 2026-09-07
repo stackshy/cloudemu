@@ -8775,6 +8775,34 @@
     }
   },
   {
+    "service": "metastore",
+    "interface": "Metastore",
+    "operations": [
+      {
+        "name": "CreateService"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetService"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "PatchService"
+      }
+    ],
+    "providers": {
+      "gcp": "Metastore"
+    }
+  },
+  {
     "service": "monitoring",
     "interface": "Monitoring",
     "operations": [

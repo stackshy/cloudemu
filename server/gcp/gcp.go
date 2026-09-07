@@ -42,6 +42,7 @@ import (
 	lbsrv "github.com/stackshy/cloudemu/v2/server/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	memorystoresrv "github.com/stackshy/cloudemu/v2/server/gcp/memorystore"
+	metastoresrv "github.com/stackshy/cloudemu/v2/server/gcp/metastore"
 	"github.com/stackshy/cloudemu/v2/server/gcp/monitoring"
 	networkconnectivitysrv "github.com/stackshy/cloudemu/v2/server/gcp/networkconnectivity"
 	"github.com/stackshy/cloudemu/v2/server/gcp/pubsub"
@@ -76,6 +77,7 @@ import (
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
+	metastoredriver "github.com/stackshy/cloudemu/v2/services/metastore/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	nccdriver "github.com/stackshy/cloudemu/v2/services/networkconnectivity/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -144,6 +146,13 @@ type Drivers struct {
 	// every other /v1/projects/ handler, and its location-scoped operation polls
 	// are owned by the shared LRO poller.
 	CertificateManager certmanagerdriver.CertificateManager
+	// Metastore serves the metastore.googleapis.com v1 Dataproc Metastore service
+	// control plane against the metastore driver. Its paths live under
+	// /v1/projects/{p}/locations/{l}/services[/…]; the handler's Matches narrows on
+	// the services resource segment, so it is disjoint from every other
+	// /v1/projects/ handler, and its location-scoped operation polls are owned by
+	// the shared LRO poller.
+	Metastore metastoredriver.Metastore
 	// VPCAccess serves the vpcaccess.googleapis.com v1 Serverless VPC Access
 	// connector control plane against the vpcaccess driver. Its paths live under
 	// /v1/projects/{p}/locations/{l}/connectors[/…]; the handler's Matches narrows
@@ -477,6 +486,19 @@ func New(d Drivers) *server.Server {
 		certmanagerH := certmanagersrv.New(d.CertificateManager)
 		certmanagerH.SetOperationRegistry(opsReg)
 		srv.Register(certmanagerH)
+	}
+
+	// Metastore matches /v1/projects/{p}/locations/{l}/services[/…]. Its services
+	// resource-segment guard is disjoint from every other /v1/projects/ handler
+	// (Composer's environments, Cloud Deploy's pipelines/targets, Datastream's
+	// connectionProfiles/streams, Certificate Manager's certificates, VPC Access's
+	// connectors, …), so registration order among them is unconstrained; registered
+	// before Firestore's permissive prefix. Its location-scoped operation polls are
+	// owned by the shared LRO poller, which the handler's Matches yields to.
+	if d.Metastore != nil {
+		metastoreH := metastoresrv.New(d.Metastore)
+		metastoreH.SetOperationRegistry(opsReg)
+		srv.Register(metastoreH)
 	}
 
 	// VPCAccess matches /v1/projects/{p}/locations/{l}/connectors[/…]. Its
