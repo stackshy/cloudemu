@@ -80,6 +80,16 @@ type metricSeries struct {
 
 // PostMetricData records metric data points against a compartment.
 func (m *Mock) PostMetricData(_ context.Context, compartmentID, resourceGroup string, data []driver.MetricDatum) error {
+	return m.postMetricData(compartmentID, resourceGroup, data, false)
+}
+
+// postMetricData records metric data points. allowReserved admits the `oci_`
+// namespaces Oracle keeps for its own service metrics, which a sibling mock
+// emitting its service's metrics is the producer of and the public
+// PostMetricData is not.
+func (m *Mock) postMetricData(
+	compartmentID, resourceGroup string, data []driver.MetricDatum, allowReserved bool,
+) error {
 	if compartmentID == "" {
 		return cerrors.New(cerrors.InvalidArgument, "compartmentId is required")
 	}
@@ -89,7 +99,7 @@ func (m *Mock) PostMetricData(_ context.Context, compartmentID, resourceGroup st
 	}
 
 	for i := range data {
-		if err := validateDatum(&data[i]); err != nil {
+		if err := validateDatum(&data[i], allowReserved); err != nil {
 			return err
 		}
 	}
@@ -320,7 +330,7 @@ func resolutionOf(interval time.Duration, resolution string) (time.Duration, err
 // validateDatum rejects a data point real OCI would reject. Namespace and
 // dimension shapes are checked; the metadata, per-request datapoint cap and
 // ingestion time window are not.
-func validateDatum(d *driver.MetricDatum) error {
+func validateDatum(d *driver.MetricDatum, allowReserved bool) error {
 	switch {
 	case d.Namespace == "":
 		return cerrors.New(cerrors.InvalidArgument, "namespace is required")
@@ -329,7 +339,7 @@ func validateDatum(d *driver.MetricDatum) error {
 	case !validNamespace(d.Namespace):
 		return cerrors.Newf(cerrors.InvalidArgument,
 			"namespace %q must start with a letter and hold only letters, digits and underscores", d.Namespace)
-	case reservedNamespace(d.Namespace):
+	case !allowReserved && reservedNamespace(d.Namespace):
 		return cerrors.Newf(cerrors.InvalidArgument, "namespace %q uses a prefix Oracle reserves", d.Namespace)
 	case d.MetricName == "":
 		return cerrors.New(cerrors.InvalidArgument, "metric name is required")
