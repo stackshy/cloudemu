@@ -1355,3 +1355,50 @@ func TestSetMonitoringPublishesUnits(t *testing.T) {
 
 	assert.Subset(t, names, []string{"ReadUnits", "WriteUnits"})
 }
+
+// TestQueryOCINumericLiterals pins that a condition on a numeric column is
+// compared by value, not by the text form the row and the literal happen to
+// spell it in, while a STRING column stays a text comparison.
+func TestQueryOCINumericLiterals(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := context.Background()
+
+	_, err := m.CreateOCITable(ctx, nosql.TableSpec{
+		CompartmentID: compartmentA,
+		DDLStatement:  "CREATE TABLE readings (id STRING, level DOUBLE, code STRING, PRIMARY KEY (id))",
+		Limits:        provisioned(),
+	})
+	require.NoError(t, err)
+
+	_, err = m.PutOCIRow(ctx, compartmentA, "readings",
+		map[string]any{"id": "r1", "level": float64(5), "code": "007"}, "")
+	require.NoError(t, err)
+
+	tests := []struct {
+		name  string
+		where string
+		match bool
+	}{
+		{name: "a whole DOUBLE matches its fractional spelling", where: "level = 5.0", match: true},
+		{name: "and its whole spelling", where: "level = 5", match: true},
+		{name: "a different number does not match", where: "level = 5.5"},
+		{name: "a STRING is compared by text", where: `code = "007"`, match: true},
+		{name: "so a numerically equal STRING does not match", where: "code = 7"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rows, err := m.QueryOCI(ctx, compartmentA, "SELECT * FROM readings WHERE "+tc.where, 0)
+			require.NoError(t, err)
+
+			if tc.match {
+				require.Len(t, rows, 1)
+				assert.Equal(t, "r1", rows[0]["id"])
+
+				return
+			}
+
+			assert.Empty(t, rows)
+		})
+	}
+}

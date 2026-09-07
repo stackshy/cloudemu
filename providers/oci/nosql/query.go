@@ -125,7 +125,7 @@ func (m *Mock) matchRows(t *tableData, conds []condition) ([]map[string]any, err
 			continue
 		}
 
-		if rowMatches(item, conds) {
+		if rowMatches(t, item, conds) {
 			matched = append(matched, item)
 		}
 	}
@@ -140,14 +140,43 @@ func sortedKeys(t *tableData) []string {
 	return keys
 }
 
-func rowMatches(item map[string]any, conds []condition) bool {
+// rowMatches reports whether a row satisfies every condition. A condition on a
+// numeric column is compared numerically: a DOUBLE holding 5 and the literal
+// 5.0 are the same value, which their text forms are not. Every other column
+// is compared by text, so a STRING "007" and the literal 7 stay apart.
+func rowMatches(t *tableData, item map[string]any, conds []condition) bool {
 	for _, c := range conds {
-		if fmt.Sprintf("%v", item[c.Column]) != c.Value {
+		got := fmt.Sprintf("%v", item[c.Column])
+
+		if isNumericColumn(t, c.Column) {
+			if compareStrings(got, c.Value) != 0 {
+				return false
+			}
+
+			continue
+		}
+
+		if got != c.Value {
 			return false
 		}
 	}
 
 	return true
+}
+
+// isNumericColumn reports whether a column's declared type orders numerically.
+func isNumericColumn(t *tableData, name string) bool {
+	i := columnIndex(t, name)
+	if i < 0 {
+		return false
+	}
+
+	switch t.Schema.Columns[i].Type {
+	case typeInteger, typeLong, typeFloat, typeDouble, typeNumber:
+		return true
+	}
+
+	return false
 }
 
 // parseDML splits "<verb> [*] FROM table [WHERE conds]" and refuses the

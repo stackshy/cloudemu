@@ -437,6 +437,8 @@ func (m *Mock) liveItems(t *tableData) []map[string]any {
 // CreateTable creates a table from the portable config. OCI is DDL-driven, so
 // the equivalent statement is synthesized and reported by GetTable; every
 // column takes OCI's STRING type, which is all the portable shape declares.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateTable(_ context.Context, cfg driver.TableConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()

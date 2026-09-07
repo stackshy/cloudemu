@@ -9,6 +9,8 @@ import (
 )
 
 // CreateIndex builds a secondary index on a table.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateIndex(_ context.Context, table string, cfg driver.GSIConfig) (*driver.IndexInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()

@@ -99,6 +99,8 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 }
 
 // UpdateItem applies field-level updates to an existing row.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[string]any, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -203,6 +205,8 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 }
 
 // Scan returns every row, narrowed by filters.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryResult, error) {
 	m.mu.RLock()
 
@@ -302,7 +306,10 @@ func matchesFilters(item map[string]any, filters []driver.ScanFilter) bool {
 }
 
 // compareOp applies one comparison, ordering numerically when both sides parse
-// as numbers and lexically otherwise.
+// as numbers and lexically otherwise. Equality is text equality: the portable
+// driver carries no column types, so "5" and "5.0" cannot be told apart from a
+// STRING pair that happens to look numeric. The OCI query endpoint, which does
+// know the column type, compares numeric columns numerically — see rowMatches.
 func compareOp(val, op, want, end string) bool {
 	switch op {
 	case OpEqual:
