@@ -196,6 +196,13 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
 	}
 
+	// A route-table association belongs to the subnet and must not outlive it.
+	for assocID, a := range m.rtAssocs.All() {
+		if a.SubnetID == id {
+			m.rtAssocs.Delete(assocID)
+		}
+	}
+
 	return nil
 }
 
