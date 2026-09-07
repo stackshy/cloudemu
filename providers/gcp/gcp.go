@@ -32,6 +32,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/iam"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
+	metastoreprov "github.com/stackshy/cloudemu/v2/providers/gcp/metastore"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/networkconnectivity"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/pubsub"
@@ -101,6 +102,7 @@ type Provider struct {
 	Dataproc            *dataproc.Mock
 	Datastream          *datastream.Mock
 	CertificateManager  *certmanagerprov.Mock
+	Metastore           *metastoreprov.Mock
 	VPCAccess           *vpcaccessprov.Mock
 	NetworkConnectivity *networkconnectivity.Mock
 	Composer            *composer.Mock
@@ -158,6 +160,7 @@ func New(opts ...config.Option) *Provider {
 		Dataproc:            dataproc.New(o),
 		Datastream:          datastream.New(o),
 		CertificateManager:  certmanagerprov.New(o),
+		Metastore:           metastoreprov.New(o),
 		VPCAccess:           vpcaccessprov.New(o),
 		NetworkConnectivity: networkconnectivity.New(o),
 		Composer:            composer.New(o),
