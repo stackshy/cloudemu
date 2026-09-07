@@ -30,6 +30,7 @@ import (
 	cloudtaskssrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudtasks"
 	composersrv "github.com/stackshy/cloudemu/v2/server/gcp/composer"
 	"github.com/stackshy/cloudemu/v2/server/gcp/compute"
+	datacatalogsrv "github.com/stackshy/cloudemu/v2/server/gcp/datacatalog"
 	dataplexsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataplex"
 	dataprocsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataproc"
 	datastreamsrv "github.com/stackshy/cloudemu/v2/server/gcp/datastream"
@@ -71,6 +72,7 @@ import (
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	dcdriver "github.com/stackshy/cloudemu/v2/services/datacatalog/driver"
 	dataplexdriver "github.com/stackshy/cloudemu/v2/services/dataplex/driver"
 	dataprocdriver "github.com/stackshy/cloudemu/v2/services/dataproc/driver"
 	datastreamdriver "github.com/stackshy/cloudemu/v2/services/datastream/driver"
@@ -206,6 +208,13 @@ type Drivers struct {
 	// disjoint from every other /v1/projects/ handler. CRUD is synchronous REST
 	// (no long-running operations).
 	ServiceDirectory sddriver.ServiceDirectory
+	// DataCatalog serves the datacatalog.googleapis.com v1 REST API (entry groups
+	// → entries → tags, and tag templates → fields) against the datacatalog
+	// driver. Its paths live under /v1/projects/{p}/locations/{l}/{entryGroups|
+	// tagTemplates}[/…]; the handler's Matches narrows on those resource segments,
+	// so it is disjoint from every other /v1/projects/ handler. CRUD is
+	// synchronous REST (no long-running operations).
+	DataCatalog dcdriver.DataCatalog
 	// APIGateway serves the apigateway.googleapis.com control plane (apis, their
 	// api configs, and gateways) against the apigateway driver. Its resources
 	// exist only in the terraform-provider-google-beta provider, whose default
@@ -583,6 +592,15 @@ func New(d Drivers) *server.Server {
 	// no operation registry is wired.
 	if d.ServiceDirectory != nil {
 		srv.Register(servicedirectorysrv.New(d.ServiceDirectory))
+	}
+
+	// DataCatalog matches /v1/projects/{p}/locations/{l}/{entryGroups|tagTemplates}
+	// [/…]. Its entryGroups/tagTemplates resource-segment guard is disjoint from
+	// every other /v1/projects/ handler, so registration order among them is
+	// unconstrained; registered before Firestore's permissive prefix. CRUD is
+	// synchronous REST — no operation registry is wired.
+	if d.DataCatalog != nil {
+		srv.Register(datacatalogsrv.New(d.DataCatalog))
 	}
 
 	// API Gateway matches /{v1beta,v1}/projects/{p}/locations/{l}/{apis|gateways}
