@@ -178,6 +178,8 @@ github.com/aws/aws-sdk-go-v2/service/amp v1.30.0 h1:1AQM/Lo024FKGTW/iwIDQHV8+5j8
 github.com/aws/aws-sdk-go-v2/service/amp v1.30.0/go.mod h1:4OQEJHTg0Z2Q32qQUDWquPZKmLagi5/BVzTCYtcnpJo=
 github.com/aws/aws-sdk-go-v2/service/appflow v1.59.0 h1:6UZ9qJI/5oeQPgw4cK5Jf7QnVHn4Hsno4EwiRkt3plA=
 github.com/aws/aws-sdk-go-v2/service/appflow v1.59.0/go.mod h1:C2sxquQiMXw9auPpHWD7UpLf+c1z9mXPTXei9URLMr0=
+github.com/aws/aws-sdk-go-v2/service/apprunner v1.39.14 h1:C8XTHmSZQtTrOcmYXkzQUiHD97mINN/MnoOG7/vv9pk=
+github.com/aws/aws-sdk-go-v2/service/apprunner v1.39.14/go.mod h1:7QwBy8GT8JH3GJKNcn7gEKqJhoTC7MvLeD94S4Balo0=
 github.com/aws/aws-sdk-go-v2/service/appsync v1.60.0 h1:GHaqk4I1wXiCnRDsNr90u5XjkM2zMfgyQ6BVi6YKj0k=
 github.com/aws/aws-sdk-go-v2/service/appsync v1.60.0/go.mod h1:LfEjiVP+TYEsX5CFroazubKcQN8HX+2oDQfW1sUmYYE=
 github.com/aws/aws-sdk-go-v2/service/athena v1.49.0 h1:D+iatX9gV6gCuNd6BnUkfwfZJw/cXlEk+LwwDdSMdtw=

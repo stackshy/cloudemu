@@ -19,6 +19,7 @@ import (
 	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/aws/apigateway"
 	apigatewayv2srv "github.com/stackshy/cloudemu/v2/server/aws/apigatewayv2"
 	appflowsrv "github.com/stackshy/cloudemu/v2/server/aws/appflow"
+	apprunnersrv "github.com/stackshy/cloudemu/v2/server/aws/apprunner"
 	appsyncsrv "github.com/stackshy/cloudemu/v2/server/aws/appsync"
 	apssrv "github.com/stackshy/cloudemu/v2/server/aws/aps"
 	athenasrv "github.com/stackshy/cloudemu/v2/server/aws/athena"
@@ -91,6 +92,7 @@ import (
 	apigatewaydriver "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 	apigatewayv2driver "github.com/stackshy/cloudemu/v2/services/apigatewayv2/driver"
 	appflowdriver "github.com/stackshy/cloudemu/v2/services/appflow/driver"
+	apprunnerdriver "github.com/stackshy/cloudemu/v2/services/apprunner/driver"
 	appsyncdriver "github.com/stackshy/cloudemu/v2/services/appsync/driver"
 	apsdriver "github.com/stackshy/cloudemu/v2/services/aps/driver"
 	athenadriver "github.com/stackshy/cloudemu/v2/services/athena/driver"
@@ -306,6 +308,11 @@ type Drivers struct {
 	// "HealthLake.") against the healthlake driver: FHIR data stores and their
 	// resource tags.
 	HealthLake healthlakedriver.HealthLake
+	// AppRunner serves the AWS App Runner JSON 1.0 protocol (X-Amz-Target prefix
+	// "AppRunner.") against the apprunner driver: services and their operation
+	// history, plus auto scaling configurations, connections, VPC connectors and
+	// observability configurations.
+	AppRunner apprunnerdriver.AppRunner
 	// Transfer serves the AWS Transfer Family JSON 1.1 protocol (X-Amz-Target
 	// prefix "TransferService.") against the transfer driver.
 	Transfer transferdriver.Transfer
@@ -482,6 +489,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		Athena:              p.Athena,
 		TimestreamWrite:     p.TimestreamWrite,
 		HealthLake:          p.HealthLake,
+		AppRunner:           p.AppRunner,
 		Transfer:            p.Transfer,
 		Cognito:             p.Cognito,
 		Config:              p.Config,
@@ -666,6 +674,12 @@ func New(d Drivers) *server.Server {
 	// the other JSON-RPC services, so registration order is unconstrained.
 	if d.HealthLake != nil {
 		srv.Register(healthlakesrv.New(d.HealthLake))
+	}
+
+	// AppRunner matches the X-Amz-Target prefix "AppRunner." — disjoint from the
+	// other JSON-RPC services, so registration order is unconstrained.
+	if d.AppRunner != nil {
+		srv.Register(apprunnersrv.New(d.AppRunner))
 	}
 
 	// Transfer matches the X-Amz-Target prefix "TransferService." — disjoint from
