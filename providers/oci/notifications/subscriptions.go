@@ -117,8 +117,8 @@ func (m *Mock) CreateSubscription(_ context.Context, spec SubscriptionSpec) (*Su
 		return nil, err
 	}
 
-	if spec.Endpoint == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "endpoint is required")
+	if err := validateEndpoint(protocol, spec.Endpoint); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -390,6 +390,30 @@ func checkToken(sub *Subscription, token, protocol string) error {
 	if want != sub.Protocol {
 		return cerrors.Newf(cerrors.InvalidArgument,
 			"protocol %s does not match subscription %q", want, sub.ID)
+	}
+
+	return nil
+}
+
+// validateEndpoint applies the endpoint shape each protocol delivers to. ONS
+// rejects a malformed endpoint at create rather than failing the first
+// delivery, so the emulator does too, naming what is wrong.
+func validateEndpoint(protocol, endpoint string) error {
+	if endpoint == "" {
+		return cerrors.New(cerrors.InvalidArgument, "endpoint is required")
+	}
+
+	switch protocol {
+	case ProtocolEmail:
+		if !strings.Contains(endpoint, "@") {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"endpoint %q is not an email address; an %s endpoint must hold an @", endpoint, ProtocolEmail)
+		}
+	case ProtocolHTTPS, ProtocolSlack, ProtocolPagerDuty:
+		if !strings.HasPrefix(strings.ToLower(endpoint), "https://") {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"endpoint %q is not https; a %s endpoint must be an https URL", endpoint, protocol)
+		}
 	}
 
 	return nil

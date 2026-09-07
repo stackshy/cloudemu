@@ -99,7 +99,7 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, subscriptionWire(sub))
+	ocirest.WriteJSON(w, r, http.StatusCreated, subscriptionWire(sub))
 }
 
 func (h *Handler) getSubscription(w http.ResponseWriter, r *http.Request, id string) {
@@ -148,6 +148,10 @@ func (h *Handler) updateSubscription(w http.ResponseWriter, r *http.Request, id 
 		return
 	}
 
+	if !h.subscriptionIfMatch(w, r, id) {
+		return
+	}
+
 	sub, err := h.extras.UpdateSubscription(r.Context(), id, notifprovider.SubscriptionPatch{
 		DeliveryPolicy: toDriverPolicy(req.DeliveryPolicy),
 		FreeformTags:   req.FreeformTags,
@@ -161,6 +165,10 @@ func (h *Handler) updateSubscription(w http.ResponseWriter, r *http.Request, id 
 }
 
 func (h *Handler) deleteSubscription(w http.ResponseWriter, r *http.Request, id string) {
+	if !h.subscriptionIfMatch(w, r, id) {
+		return
+	}
+
 	if err := h.notif.Unsubscribe(r.Context(), id); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
@@ -255,6 +263,18 @@ func (h *Handler) changeSubscriptionCompartment(w http.ResponseWriter, r *http.R
 	}
 
 	ocirest.WriteJSON(w, r, http.StatusNoContent, nil)
+}
+
+// subscriptionIfMatch enforces an if-match precondition against a
+// subscription's stored etag. An unknown subscription passes through to the
+// driver's own 404.
+func (h *Handler) subscriptionIfMatch(w http.ResponseWriter, r *http.Request, id string) bool {
+	sub, err := h.extras.GetSubscription(r.Context(), id)
+	if err != nil {
+		return true
+	}
+
+	return checkIfMatch(w, r, sub.Etag)
 }
 
 // tokenParams reads the token and protocol the confirmation endpoints
