@@ -41,6 +41,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [IAM](./iam.md) | `iam` | 40 |
 | [KMS](./kms.md) | `kms` | 46 |
 | [Kafka](./kafka.md) | `kafka` | 59 |
+| [Kendra](./kendra.md) | `kendra` | 13 |
 | [Keyspaces](./keyspaces.md) | `keyspaces` | 18 |
 | [Kinesis](./kinesis.md) | `kinesis` | 39 |
 | [Lambda](./lambda.md) | `serverless` | 27 |

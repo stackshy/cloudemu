@@ -81,6 +81,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `iam` | [IAM](./aws/iam.md) | [IAM](./azure/iam.md) | [IAM](./gcp/iam.md) | [Identity](./oci/identity.md) | 40 |
 | `images` | — | [Images](./azure/images.md) | — | — | 5 |
 | `kafka` | [Kafka](./aws/kafka.md) | — | — | — | 59 |
+| `kendra` | [Kendra](./aws/kendra.md) | — | — | — | 13 |
 | `keyspaces` | [Keyspaces](./aws/keyspaces.md) | — | — | — | 18 |
 | `kinesis` | [Kinesis](./aws/kinesis.md) | — | — | — | 39 |
 | `kms` | [KMS](./aws/kms.md) | — | — | — | 46 |
