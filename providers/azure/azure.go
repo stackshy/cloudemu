@@ -47,6 +47,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/postgresflex"
 	"github.com/stackshy/cloudemu/v2/providers/azure/privatedns"
 	"github.com/stackshy/cloudemu/v2/providers/azure/purview"
+	"github.com/stackshy/cloudemu/v2/providers/azure/redisenterprise"
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/providers/azure/signalr"
@@ -191,6 +192,7 @@ type Provider struct {
 	ChaosStudio        *chaosstudio.Mock
 	ElasticSan         *elasticsan.Mock
 	AppConfiguration   *appconfiguration.Mock
+	RedisEnterprise    *redisenterprise.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -265,6 +267,7 @@ func New(opts ...config.Option) *Provider {
 		ChaosStudio:        chaosstudio.New(o),
 		ElasticSan:         elasticsan.New(o),
 		AppConfiguration:   appconfiguration.New(o),
+		RedisEnterprise:    redisenterprise.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -311,6 +314,7 @@ func New(opts ...config.Option) *Provider {
 				chaosStudioDiscovery{p.ChaosStudio},
 				elasticSanDiscovery{p.ElasticSan},
 				appConfigurationDiscovery{p.AppConfiguration},
+				redisEnterpriseDiscovery{p.RedisEnterprise},
 			},
 		},
 	)

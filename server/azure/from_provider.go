@@ -50,6 +50,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		ChaosStudio:        p.ChaosStudio,
 		ElasticSan:         p.ElasticSan,
 		AppConfiguration:   p.AppConfiguration,
+		RedisEnterprise:    p.RedisEnterprise,
 		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,
 		IAM:                p.IAM,

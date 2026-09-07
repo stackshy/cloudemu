@@ -486,6 +486,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"chaosstudio/Experiment":              "microsoft.chaos/experiments",
 	"elasticsan/ElasticSan":               "microsoft.elasticsan/elasticsans",
 	"appconfiguration/ConfigurationStore": "microsoft.appconfiguration/configurationstores",
+	"redisenterprise/RedisEnterprise":     "microsoft.cache/redisenterprise",
 }
 
 func portableToAzureType(service, typ string) string {

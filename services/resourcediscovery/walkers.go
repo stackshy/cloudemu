@@ -88,6 +88,9 @@ const (
 	// ServiceAppConfiguration buckets Azure App Configuration resources
 	// (Microsoft.AppConfiguration/configurationStores).
 	ServiceAppConfiguration = "appconfiguration"
+	// ServiceRedisEnterprise buckets Azure Redis Enterprise resources
+	// (Microsoft.Cache/redisEnterprise).
+	ServiceRedisEnterprise = "redisenterprise"
 )
 
 // Resource type constants emitted by the walkers.
@@ -206,6 +209,10 @@ const TypeElasticSan = "ElasticSan"
 // resource (Microsoft.AppConfiguration/configurationStores). Azure-only, so it
 // lives in its own line.
 const TypeConfigurationStore = "ConfigurationStore"
+
+// TypeRedisEnterprise is the portable type for an Azure Redis Enterprise cluster
+// (Microsoft.Cache/redisEnterprise). Azure-only, so it lives in its own line.
+const TypeRedisEnterprise = "RedisEnterprise"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs
