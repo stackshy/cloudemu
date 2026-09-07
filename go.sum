@@ -266,6 +266,8 @@ github.com/aws/aws-sdk-go-v2/service/kms v1.50.3 h1:s/zDSG/a/Su9aX+v0Ld9cimUCdkr
 github.com/aws/aws-sdk-go-v2/service/kms v1.50.3/go.mod h1:/iSgiUor15ZuxFGQSTf3lA2FmKxFsQoc2tADOarQBSw=
 github.com/aws/aws-sdk-go-v2/service/lambda v1.90.1 h1:odCeJgHXfQoXEWQUIzPkKvsJTWcLMsaOWowNpovPFFw=
 github.com/aws/aws-sdk-go-v2/service/lambda v1.90.1/go.mod h1:NbtJVztitG7JkuoI4GSrDUlsB32zeXqKBvXj6bUxcMo=
+github.com/aws/aws-sdk-go-v2/service/location v1.58.0 h1:busdTcl0W3bjLuGEbpNULyS029AuSEs/2KRJd4eyiKY=
+github.com/aws/aws-sdk-go-v2/service/location v1.58.0/go.mod h1:pQRbkj+3AL5fstcAbG27TAWNyEtgcjOL41xMhQ7RaVs=
 github.com/aws/aws-sdk-go-v2/service/memorydb v1.36.2 h1:GKkUvwhxKF5JVSWERui4bvPNKEv7BQe3+i7h5v8klpQ=
 github.com/aws/aws-sdk-go-v2/service/memorydb v1.36.2/go.mod h1:wRcgz/DYIlZldpS/RpJDgjtMPsk0a6hLvwMl/2tGKuY=
 github.com/aws/aws-sdk-go-v2/service/mq v1.43.0 h1:0BV7DaO19dA1g1D2Kgziq7YW6O2IQRg5oY5SS5kWxDU=
