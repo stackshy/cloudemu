@@ -58,6 +58,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | — | 24 |
 | `databricks` | — | [Databricks](./azure/databricks.md) | — | — | 46 |
 | `datafactory` | — | [DataFactory](./azure/datafactory.md) | — | — | 6 |
+| `dataplex` | — | — | [Dataplex](./gcp/dataplex.md) | — | 16 |
 | `dataproc` | — | — | [Dataproc](./gcp/dataproc.md) | — | 6 |
 | `datastream` | — | — | [Datastream](./gcp/datastream.md) | — | 11 |
 | `devcenter` | — | [DevCenter](./azure/devcenter.md) | — | — | 8 |
