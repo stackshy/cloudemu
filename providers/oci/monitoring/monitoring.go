@@ -81,9 +81,12 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
-// PutMetricData stores metric data points in the default compartment.
+// PutMetricData stores metric data points in the default compartment. It is
+// the seam the other emulated OCI services publish through, so it reaches the
+// recorder directly: a service metric legitimately lands in an
+// Oracle-reserved namespace such as oci_objectstorage.
 func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) error {
-	return m.PostMetricData(ctx, m.opts.CompartmentID, "", data)
+	return m.postMetricData(ctx, m.opts.CompartmentID, "", data)
 }
 
 // GetMetricData aggregates the matching series in the default compartment into
