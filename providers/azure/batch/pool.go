@@ -95,11 +95,11 @@ func (m *Mock) CreateOrUpdatePool(
 
 	applyPoolInput(&p, in)
 
-	// On create (or an update that renames the fixed-scale targets) the emulator
-	// settles nodes immediately: current tracks target and allocationState stays
-	// Steady. A resize/stopResize action is the only path that parks the pool in
-	// the Resizing state.
-	if created {
+	// On create, or on an update that changes the fixed-scale targets while the
+	// pool is Steady, the emulator settles nodes immediately: current tracks
+	// target and allocationState stays Steady. A resize/stopResize action is the
+	// only path that parks the pool in the Resizing state.
+	if created || p.AllocationState == allocationSteady {
 		p.CurrentDedicatedNodes = p.TargetDedicatedNodes
 		p.CurrentLowPriorityNodes = p.TargetLowPriorityNodes
 	}

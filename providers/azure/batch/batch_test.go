@@ -213,6 +213,32 @@ func TestCreatePoolSettlesSteady(t *testing.T) {
 	}
 }
 
+func TestPoolUpdateSettlesSteadyOnNewTarget(t *testing.T) {
+	ctx := context.Background()
+	m := newMock()
+	createAccount(t, m)
+	createPool(t, m)
+
+	// A PUT that raises the fixed-scale target while the pool is Steady settles
+	// immediately: current tracks the new target and allocationState stays Steady
+	// (a resize action is the only path to Resizing).
+	in := standardPool()
+	in.TargetDedicatedNodes = iptr(7)
+
+	p, isNew, err := m.CreateOrUpdatePool(ctx, "sub", "rg", "acct1", "pool1", in)
+	if err != nil || isNew {
+		t.Fatalf("update pool: err=%v isNew=%v", err, isNew)
+	}
+
+	if p.AllocationState != "Steady" {
+		t.Errorf("allocationState = %q, want Steady", p.AllocationState)
+	}
+
+	if p.TargetDedicatedNodes != 7 || p.CurrentDedicatedNodes != 7 {
+		t.Errorf("dedicated target/current = %d/%d, want 7/7", p.TargetDedicatedNodes, p.CurrentDedicatedNodes)
+	}
+}
+
 func TestPoolCreateRequiresParentAccount(t *testing.T) {
 	m := newMock()
 
