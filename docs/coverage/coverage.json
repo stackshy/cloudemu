@@ -306,6 +306,64 @@
     }
   },
   {
+    "service": "apigatewaygcp",
+    "interface": "APIGateway",
+    "operations": [
+      {
+        "name": "CreateAPI"
+      },
+      {
+        "name": "CreateAPIConfig"
+      },
+      {
+        "name": "CreateGateway"
+      },
+      {
+        "name": "DeleteAPI"
+      },
+      {
+        "name": "DeleteAPIConfig"
+      },
+      {
+        "name": "DeleteGateway"
+      },
+      {
+        "name": "GetAPI"
+      },
+      {
+        "name": "GetAPIConfig"
+      },
+      {
+        "name": "GetGateway"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for the"
+      },
+      {
+        "name": "ListAPIConfigs"
+      },
+      {
+        "name": "ListAPIs"
+      },
+      {
+        "name": "ListGateways"
+      },
+      {
+        "name": "PatchAPI"
+      },
+      {
+        "name": "PatchAPIConfig"
+      },
+      {
+        "name": "PatchGateway"
+      }
+    ],
+    "providers": {
+      "gcp": "APIGateway"
+    }
+  },
+  {
     "service": "apigatewayv2",
     "interface": "APIGatewayV2",
     "operations": [

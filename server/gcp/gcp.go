@@ -14,6 +14,7 @@ import (
 	gcpmon "github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/server"
 	alloydbsrv "github.com/stackshy/cloudemu/v2/server/gcp/alloydb"
+	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/gcp/apigateway"
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
 	bigqueryserver "github.com/stackshy/cloudemu/v2/server/gcp/bigquery"
 	bigtableserver "github.com/stackshy/cloudemu/v2/server/gcp/bigtable"
@@ -58,6 +59,7 @@ import (
 	vpcaccesssrv "github.com/stackshy/cloudemu/v2/server/gcp/vpcaccess"
 	workflowssrv "github.com/stackshy/cloudemu/v2/server/gcp/workflows"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	agdriver "github.com/stackshy/cloudemu/v2/services/apigatewaygcp/driver"
 	bqdriver "github.com/stackshy/cloudemu/v2/services/bigquery/driver"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
@@ -204,6 +206,17 @@ type Drivers struct {
 	// disjoint from every other /v1/projects/ handler. CRUD is synchronous REST
 	// (no long-running operations).
 	ServiceDirectory sddriver.ServiceDirectory
+	// APIGateway serves the apigateway.googleapis.com control plane (apis, their
+	// api configs, and gateways) against the apigateway driver. Its resources
+	// exist only in the terraform-provider-google-beta provider, whose default
+	// base path is /v1beta/; the handler serves both /v1beta/ and /v1/. Its paths
+	// live under /{v}/projects/{p}/locations/{l}/{apis|gateways}[/…]; the handler's
+	// Matches narrows on those resource segments, so it is disjoint from every
+	// other /v1/projects/ handler. The google-beta provider polls operations at
+	// its /v1beta/ base path — a space the shared LRO poller does not own — so the
+	// handler serves its own /v1beta/ operation polls and yields the /v1/ ones to
+	// the shared poller.
+	APIGateway       agdriver.APIGateway
 	VertexAI         vertexaidriver.VertexAI
 	IAM              iamdriver.IAM
 	ArtifactRegistry crdriver.ContainerRegistry
@@ -570,6 +583,20 @@ func New(d Drivers) *server.Server {
 	// no operation registry is wired.
 	if d.ServiceDirectory != nil {
 		srv.Register(servicedirectorysrv.New(d.ServiceDirectory))
+	}
+
+	// API Gateway matches /{v1beta,v1}/projects/{p}/locations/{l}/{apis|gateways}
+	// [/…]. Its apis/gateways resource-segment guard is disjoint from every other
+	// /v1/projects/ handler, so registration order among them is unconstrained;
+	// registered before Firestore's permissive prefix. It serves its own /v1beta/
+	// operation polls (the shared LRO poller, registered above, owns only the /v1/
+	// operations space, which the handler yields to it); the handler still
+	// registers created operations into the shared poller so a /v1/ SDK poll
+	// resolves their typed response.
+	if d.APIGateway != nil {
+		apigatewayH := apigatewaysrv.New(d.APIGateway)
+		apigatewayH.SetOperationRegistry(opsReg)
+		srv.Register(apigatewayH)
 	}
 
 	// AlloyDB matches /v1/projects/{p}/locations/{l}/{clusters|backups|
