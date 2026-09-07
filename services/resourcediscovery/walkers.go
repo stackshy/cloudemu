@@ -85,6 +85,9 @@ const (
 	// ServiceElasticSan buckets Azure Elastic SAN resources
 	// (Microsoft.ElasticSan/elasticSans).
 	ServiceElasticSan = "elasticsan"
+	// ServiceManagedLustre buckets Azure Managed Lustre resources
+	// (Microsoft.StorageCache/amlFilesystems).
+	ServiceManagedLustre = "managedlustre"
 	// ServiceAppConfiguration buckets Azure App Configuration resources
 	// (Microsoft.AppConfiguration/configurationStores).
 	ServiceAppConfiguration = "appconfiguration"
@@ -204,6 +207,11 @@ const TypeChaosExperiment = "Experiment"
 // TypeElasticSan is the portable type for an Azure Elastic SAN resource
 // (Microsoft.ElasticSan/elasticSans). Azure-only, so it lives in its own line.
 const TypeElasticSan = "ElasticSan"
+
+// TypeAmlFilesystem is the portable type for an Azure Managed Lustre resource
+// (Microsoft.StorageCache/amlFilesystems). Azure-only, so it lives in its own
+// line.
+const TypeAmlFilesystem = "AmlFilesystem"
 
 // TypeConfigurationStore is the portable type for an Azure App Configuration
 // resource (Microsoft.AppConfiguration/configurationStores). Azure-only, so it

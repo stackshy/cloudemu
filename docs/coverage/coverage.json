@@ -9202,6 +9202,51 @@
     }
   },
   {
+    "service": "managedlustre",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "Archive"
+      },
+      {
+        "name": "CancelArchive"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverAmlFilesystems"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "LustreVersion"
+      },
+      {
+        "name": "MountCommand"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "ManagedLustre"
+    }
+  },
+  {
     "service": "memorydb",
     "interface": "MemoryDB",
     "operations": [

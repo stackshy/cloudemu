@@ -41,6 +41,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedcassandra"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedgrafana"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedidentity"
+	"github.com/stackshy/cloudemu/v2/providers/azure/managedlustre"
 	"github.com/stackshy/cloudemu/v2/providers/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/v2/providers/azure/notificationhubs"
@@ -191,6 +192,7 @@ type Provider struct {
 	Purview            *purview.Mock
 	ChaosStudio        *chaosstudio.Mock
 	ElasticSan         *elasticsan.Mock
+	ManagedLustre      *managedlustre.Mock
 	AppConfiguration   *appconfiguration.Mock
 	RedisEnterprise    *redisenterprise.Mock
 
@@ -266,6 +268,7 @@ func New(opts ...config.Option) *Provider {
 		Purview:            purview.New(o),
 		ChaosStudio:        chaosstudio.New(o),
 		ElasticSan:         elasticsan.New(o),
+		ManagedLustre:      managedlustre.New(o),
 		AppConfiguration:   appconfiguration.New(o),
 		RedisEnterprise:    redisenterprise.New(o),
 		SubscriptionID:     o.AccountID,
@@ -313,6 +316,7 @@ func New(opts ...config.Option) *Provider {
 				purviewDiscovery{p.Purview},
 				chaosStudioDiscovery{p.ChaosStudio},
 				elasticSanDiscovery{p.ElasticSan},
+				managedLustreDiscovery{p.ManagedLustre},
 				appConfigurationDiscovery{p.AppConfiguration},
 				redisEnterpriseDiscovery{p.RedisEnterprise},
 			},
