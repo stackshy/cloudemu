@@ -94,6 +94,9 @@ const (
 	// ServiceRedisEnterprise buckets Azure Redis Enterprise resources
 	// (Microsoft.Cache/redisEnterprise).
 	ServiceRedisEnterprise = "redisenterprise"
+	// ServiceMongoCluster buckets Azure Cosmos DB for MongoDB (vCore) resources
+	// (Microsoft.DocumentDB/mongoClusters).
+	ServiceMongoCluster = "mongocluster"
 )
 
 // Resource type constants emitted by the walkers.
@@ -221,6 +224,11 @@ const TypeConfigurationStore = "ConfigurationStore"
 // TypeRedisEnterprise is the portable type for an Azure Redis Enterprise cluster
 // (Microsoft.Cache/redisEnterprise). Azure-only, so it lives in its own line.
 const TypeRedisEnterprise = "RedisEnterprise"
+
+// TypeMongoCluster is the portable type for an Azure Cosmos DB for MongoDB (vCore)
+// cluster (Microsoft.DocumentDB/mongoClusters). Azure-only, so it lives in its own
+// line.
+const TypeMongoCluster = "MongoCluster"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs

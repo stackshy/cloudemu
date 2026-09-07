@@ -94,6 +94,7 @@ const (
 	azureTypeManagedLus = "microsoft.storagecache/amlfilesystems"
 	azureTypeAppConfig  = "microsoft.appconfiguration/configurationstores"
 	azureTypeRedisEnt   = "microsoft.cache/redisenterprise"
+	azureTypeMongoClus  = "microsoft.documentdb/mongoclusters"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -133,6 +134,7 @@ const (
 	portableManagedLus   = "managedlustre"
 	portableAppConfig    = "appconfiguration"
 	portableRedisEnt     = "redisenterprise"
+	portableMongoClus    = "mongocluster"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -427,6 +429,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeManagedLus: {portableManagedLus, "AmlFilesystem"},
 	azureTypeAppConfig:  {portableAppConfig, "ConfigurationStore"},
 	azureTypeRedisEnt:   {portableRedisEnt, "RedisEnterprise"},
+	azureTypeMongoClus:  {portableMongoClus, "MongoCluster"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

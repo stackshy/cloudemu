@@ -9553,6 +9553,42 @@
     }
   },
   {
+    "service": "mongocluster",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdateCluster"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DiscoverClusters"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "ListClustersByResourceGroup"
+      },
+      {
+        "name": "ListClustersBySubscription"
+      },
+      {
+        "name": "ListConnectionStrings"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "MongoCluster"
+    }
+  },
+  {
     "service": "monitoring",
     "interface": "Monitoring",
     "operations": [
