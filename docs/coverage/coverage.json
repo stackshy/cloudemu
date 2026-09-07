@@ -8650,6 +8650,99 @@
     }
   },
   {
+    "service": "location",
+    "interface": "Location",
+    "operations": [
+      {
+        "name": "CreateGeofenceCollection"
+      },
+      {
+        "name": "CreateMap"
+      },
+      {
+        "name": "CreatePlaceIndex"
+      },
+      {
+        "name": "CreateRouteCalculator"
+      },
+      {
+        "name": "CreateTracker"
+      },
+      {
+        "name": "DeleteGeofenceCollection"
+      },
+      {
+        "name": "DeleteMap"
+      },
+      {
+        "name": "DeletePlaceIndex"
+      },
+      {
+        "name": "DeleteRouteCalculator"
+      },
+      {
+        "name": "DeleteTracker"
+      },
+      {
+        "name": "DescribeGeofenceCollection"
+      },
+      {
+        "name": "DescribeMap"
+      },
+      {
+        "name": "DescribePlaceIndex"
+      },
+      {
+        "name": "DescribeRouteCalculator"
+      },
+      {
+        "name": "DescribeTracker"
+      },
+      {
+        "name": "ListGeofenceCollections"
+      },
+      {
+        "name": "ListMaps"
+      },
+      {
+        "name": "ListPlaceIndexes"
+      },
+      {
+        "name": "ListRouteCalculators"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTrackers"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateGeofenceCollection"
+      },
+      {
+        "name": "UpdateMap"
+      },
+      {
+        "name": "UpdatePlaceIndex"
+      },
+      {
+        "name": "UpdateRouteCalculator"
+      },
+      {
+        "name": "UpdateTracker"
+      }
+    ],
+    "providers": {
+      "aws": "Location"
+    }
+  },
+  {
     "service": "locks",
     "interface": "provider-native",
     "operations": [

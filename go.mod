@@ -101,6 +101,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/kinesisvideo v1.40.0
 	github.com/aws/aws-sdk-go-v2/service/kms v1.50.3
 	github.com/aws/aws-sdk-go-v2/service/lambda v1.90.1
+	github.com/aws/aws-sdk-go-v2/service/location v1.58.0
 	github.com/aws/aws-sdk-go-v2/service/memorydb v1.36.2
 	github.com/aws/aws-sdk-go-v2/service/mq v1.43.0
 	github.com/aws/aws-sdk-go-v2/service/mwaa v1.47.0

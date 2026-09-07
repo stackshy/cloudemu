@@ -56,6 +56,7 @@ import (
 	kinesisvideosrv "github.com/stackshy/cloudemu/v2/server/aws/kinesisvideo"
 	kmssrv "github.com/stackshy/cloudemu/v2/server/aws/kms"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
+	locationsrv "github.com/stackshy/cloudemu/v2/server/aws/location"
 	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
 	mqsrv "github.com/stackshy/cloudemu/v2/server/aws/mq"
 	mwaasrv "github.com/stackshy/cloudemu/v2/server/aws/mwaa"
@@ -120,6 +121,7 @@ import (
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
+	locationdriver "github.com/stackshy/cloudemu/v2/services/location/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
@@ -256,6 +258,11 @@ type Drivers struct {
 	// API (POST to per-operation action paths, e.g. POST /createStream) against
 	// the kinesisvideo driver. Distinct from Kinesis (Data Streams).
 	KinesisVideo kinesisvideodriver.KinesisVideo
+	// Location serves the Amazon Location Service control-plane REST-JSON API
+	// (verb + versioned path, e.g. POST /maps/v0/maps) against the location
+	// driver: maps, place indexes, route calculators, geofence collections and
+	// trackers plus their tags.
+	Location locationdriver.Location
 	// CloudFormation serves the CloudFormation query protocol (CreateStack,
 	// DescribeStacks, …) against the stack orchestrator.
 	CloudFormation cfnsvc.API
@@ -439,6 +446,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		ACM:                 p.ACM,
 		Kinesis:             p.Kinesis,
 		KinesisVideo:        p.KinesisVideo,
+		Location:            p.Location,
 		CloudTrail:          p.CloudTrail,
 		Glue:                p.Glue,
 		Athena:              p.Athena,
@@ -669,6 +677,17 @@ func New(d Drivers) *server.Server {
 	// ARN falls through to it) and before S3's permissive REST fallback.
 	if d.KinesisVideo != nil {
 		srv.Register(kinesisvideosrv.New(d.KinesisVideo))
+	}
+
+	// Location is a REST-JSON service dispatched on verb + versioned path (e.g.
+	// POST /maps/v0/maps, GET /maps/v0/maps/{MapName}, POST
+	// /geofencing/v0/collections). Its versioned roots (/maps/v0/, /places/v0/,
+	// /routes/v0/, /geofencing/v0/, /tracking/v0/) are unique to Location, but its
+	// resource-level tagging path (/tags/{ResourceArn}) is shared, so its Matches
+	// scopes that path to a Location (:geo:) ARN; it must register before S3's
+	// permissive REST fallback.
+	if d.Location != nil {
+		srv.Register(locationsrv.New(d.Location))
 	}
 
 	// Savings Plans is a REST-JSON service dispatched on POST /{OperationName}
