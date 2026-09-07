@@ -221,3 +221,55 @@ func TestMalformedNotificationsPath(t *testing.T) {
 	w := f.do(http.MethodGet, "/20181201/topics/a/b/c/d", nil)
 	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
 }
+
+// Real ONS answers 201 Created, not 200, on both creates.
+func TestCreateAnswers201(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+
+	topic := f.do(http.MethodPost, "/20181201/topics", map[string]any{
+		"name": "alerts", "compartmentId": compartment,
+	})
+	require.Equal(t, http.StatusCreated, topic.Code, topic.Body.String())
+
+	topicID, _ := decode(t, topic)["topicId"].(string)
+
+	sub := f.do(http.MethodPost, "/20181201/subscriptions", map[string]any{
+		"topicId": topicID, "compartmentId": compartment,
+		"protocol": "EMAIL", "endpoint": "ops@example.com",
+	})
+	assert.Equal(t, http.StatusCreated, sub.Code, sub.Body.String())
+}
+
+// An if-match carrying the current etag proceeds; a stale one is a 412 and
+// leaves the topic alone.
+func TestTopicIfMatch(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	id := f.newTopic("alerts", compartment)
+
+	get := f.do(http.MethodGet, "/20181201/topics/"+id, nil)
+	require.Equal(t, http.StatusOK, get.Code, get.Body.String())
+	etag, _ := decode(t, get)["etag"].(string)
+	require.NotEmpty(t, etag)
+
+	ok := f.doIfMatch(http.MethodPut, "/20181201/topics/"+id, etag, map[string]any{"description": "fresh"})
+	require.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
+	assert.Equal(t, "fresh", decode(t, ok)["description"])
+
+	// The update rotated the etag, so the one just used is now stale.
+	stale := f.doIfMatch(http.MethodPut, "/20181201/topics/"+id, etag, map[string]any{"description": "ignored"})
+	require.Equal(t, http.StatusPreconditionFailed, stale.Code, stale.Body.String())
+
+	unchanged := f.do(http.MethodGet, "/20181201/topics/"+id, nil)
+	assert.Equal(t, "fresh", decode(t, unchanged)["description"])
+
+	staleDelete := f.doIfMatch(http.MethodDelete, "/20181201/topics/"+id, etag, nil)
+	require.Equal(t, http.StatusPreconditionFailed, staleDelete.Code, staleDelete.Body.String())
+
+	current, _ := decode(t, f.do(http.MethodGet, "/20181201/topics/"+id, nil))["etag"].(string)
+	freshDelete := f.doIfMatch(http.MethodDelete, "/20181201/topics/"+id, current, nil)
+	assert.Equal(t, http.StatusNoContent, freshDelete.Code, freshDelete.Body.String())
+}

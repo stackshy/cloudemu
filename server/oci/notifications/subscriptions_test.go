@@ -173,3 +173,54 @@ func TestListSubscriptionsPaginates(t *testing.T) {
 	second := f.do(http.MethodGet, base+"&limit=2&page=2", nil)
 	assert.Len(t, decodeList(t, second), 1)
 }
+
+func TestSubscriptionIfMatch(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	topicID := f.newTopic("alerts", compartment)
+	id, _ := f.newSubscription(topicID, "ops@example.com")
+
+	get := f.do(http.MethodGet, "/20181201/subscriptions/"+id, nil)
+	require.Equal(t, http.StatusOK, get.Code, get.Body.String())
+	etag, _ := decode(t, get)["etag"].(string)
+	require.NotEmpty(t, etag)
+
+	ok := f.doIfMatch(http.MethodPut, "/20181201/subscriptions/"+id, etag,
+		map[string]any{"freeformTags": map[string]string{"team": "ops"}})
+	require.Equal(t, http.StatusOK, ok.Code, ok.Body.String())
+
+	stale := f.doIfMatch(http.MethodPut, "/20181201/subscriptions/"+id, etag,
+		map[string]any{"freeformTags": map[string]string{"team": "ignored"}})
+	require.Equal(t, http.StatusPreconditionFailed, stale.Code, stale.Body.String())
+
+	staleDelete := f.doIfMatch(http.MethodDelete, "/20181201/subscriptions/"+id, etag, nil)
+	assert.Equal(t, http.StatusPreconditionFailed, staleDelete.Code, staleDelete.Body.String())
+}
+
+// ONS rejects an endpoint the protocol cannot deliver to, naming what is wrong.
+func TestCreateSubscriptionRejectsAMalformedEndpoint(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	topicID := f.newTopic("alerts", compartment)
+
+	cases := map[string]struct{ protocol, endpoint, want string }{
+		"email without an at": {"EMAIL", "ops-example.com", "@"},
+		"https over http":     {"CUSTOM_HTTPS", "http://hooks.example.com/x", "https"},
+		"slack over http":     {"SLACK", "http://hooks.slack.com/x", "https"},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			w := f.do(http.MethodPost, "/20181201/subscriptions", map[string]any{
+				"topicId": topicID, "compartmentId": compartment,
+				"protocol": tc.protocol, "endpoint": tc.endpoint,
+			})
+			require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+			assert.Contains(t, w.Body.String(), tc.want)
+		})
+	}
+}

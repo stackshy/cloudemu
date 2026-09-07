@@ -67,6 +67,28 @@ func (f *fixture) do(method, target string, body any) *httptest.ResponseRecorder
 	return w
 }
 
+// doIfMatch sends a request carrying an if-match precondition.
+func (f *fixture) doIfMatch(method, target, etag string, body any) *httptest.ResponseRecorder {
+	f.t.Helper()
+
+	var reader *bytes.Reader
+
+	if body != nil {
+		raw, err := json.Marshal(body)
+		require.NoError(f.t, err)
+		reader = bytes.NewReader(raw)
+	} else {
+		reader = bytes.NewReader(nil)
+	}
+
+	r := httptest.NewRequest(method, target, reader)
+	r.Header.Set("if-match", etag)
+	w := httptest.NewRecorder()
+	f.handler.ServeHTTP(w, r)
+
+	return w
+}
+
 func decode(t *testing.T, w *httptest.ResponseRecorder) map[string]any {
 	t.Helper()
 
@@ -95,7 +117,7 @@ func (f *fixture) newTopic(name, compartmentID string) string {
 		"compartmentId": compartmentID,
 		"description":   "topic " + name,
 	})
-	require.Equal(f.t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(f.t, http.StatusCreated, w.Code, w.Body.String())
 
 	id, _ := decode(f.t, w)["topicId"].(string)
 
@@ -113,7 +135,7 @@ func (f *fixture) newSubscription(topicID, endpoint string) (id, token string) {
 		"protocol":      "EMAIL",
 		"endpoint":      endpoint,
 	})
-	require.Equal(f.t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(f.t, http.StatusCreated, w.Code, w.Body.String())
 
 	body := decode(f.t, w)
 	id, _ = body["id"].(string)
@@ -182,7 +204,7 @@ func TestCreateTopicWire(t *testing.T) {
 		"description":   "production alerts",
 		"freeformTags":  map[string]string{"env": "prod"},
 	})
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 
 	body := decode(t, w)
 	assert.Contains(t, body["topicId"], "ocid1.onstopic.oc1.iad.")
@@ -353,7 +375,7 @@ func TestCreateSubscriptionWire(t *testing.T) {
 		"protocol":      "EMAIL",
 		"endpoint":      "ops@example.com",
 	})
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 
 	body := decode(t, w)
 	assert.Contains(t, body["id"], "ocid1.onssubscription.oc1.iad.")
@@ -515,7 +537,7 @@ func TestListSubscriptions(t *testing.T) {
 	w := f.do(http.MethodPost, "/20181201/subscriptions", map[string]any{
 		"topicId": theirs, "compartmentId": otherCompartment, "protocol": "EMAIL", "endpoint": "b@example.com",
 	})
-	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 
 	w = f.do(http.MethodGet, "/20181201/subscriptions?compartmentId="+compartment, nil)
 	require.Equal(t, http.StatusOK, w.Code)

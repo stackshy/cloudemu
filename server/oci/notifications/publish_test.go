@@ -2,6 +2,7 @@ package notifications_test
 
 import (
 	"net/http"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -81,4 +82,23 @@ func TestPublishDeliversOnlyToConfirmedSubscriptions(t *testing.T) {
 	delivered := f.mock.Deliveries(subID)
 	require.Len(t, delivered, 1)
 	assert.Equal(t, "after confirming", delivered[0].Body)
+}
+
+// ONS caps a published message at 64 KB.
+func TestPublishRejectsAnOversizedBody(t *testing.T) {
+	t.Parallel()
+
+	f := newFixture(t)
+	id := f.newTopic("alerts", compartment)
+
+	w := f.do(http.MethodPost, "/20181201/topics/"+id+"/messages", map[string]any{
+		"body": strings.Repeat("x", 64*1024+1),
+	})
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	assert.Contains(t, w.Body.String(), "65536")
+
+	atLimit := f.do(http.MethodPost, "/20181201/topics/"+id+"/messages", map[string]any{
+		"body": strings.Repeat("x", 64*1024),
+	})
+	assert.Equal(t, http.StatusOK, atLimit.Code, atLimit.Body.String())
 }

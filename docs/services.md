@@ -1527,6 +1527,11 @@ than answered in an arbitrary order.
 `definedTags` are rejected rather than echoed back empty;
 `freeformTags` round-trip.
 
+Both creates answer `201 Created`. Updating or deleting a topic or a
+subscription honours an `if-match` precondition against the stored etag, which
+rotates on every mutation: a stale etag is a `412` with code `NoEtagMatch` and
+the resource is left alone. An absent `if-match` is unconditional.
+
 Real ONS splits the control plane from the data plane **by host, not by API
 prefix**: `PublishMessage` goes to the topic's own `apiEndpoint` rather than to
 a differently-prefixed path. CloudEmu serves both on one listener, so every
@@ -1542,8 +1547,11 @@ create response, and `GET .../confirmation?token=…&protocol=…` flips it to
 succeeds and delivers to nobody. `.../unsubscription` takes the same token pair
 and removes the subscription. Protocols are `EMAIL`, `SMS`, `CUSTOM_HTTPS`,
 `SLACK`, `PAGERDUTY` and `ORACLE_FUNCTIONS` (`HTTP` / `HTTPS` alias onto
-`CUSTOM_HTTPS`); anything else is rejected rather than stored unused. Message
-bodies are `RAW_TEXT` or `JSON`.
+`CUSTOM_HTTPS`); anything else is rejected rather than stored unused. The
+endpoint is checked against the protocol at create rather than at first
+delivery: an `EMAIL` endpoint must hold an `@`, and a `CUSTOM_HTTPS`, `SLACK`
+or `PAGERDUTY` endpoint must be an `https` URL. Message bodies are `RAW_TEXT`
+or `JSON` and are capped at ONS's 64 KB.
 
 `DeleteTopic` is the one asynchronous mutation: it answers **`204` with an
 `opc-work-request-id`**, not the `202` the rest of OCI uses for async work, and

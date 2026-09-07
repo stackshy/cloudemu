@@ -55,11 +55,11 @@ func TestUnsubscribeByTokenErrors(t *testing.T) {
 		id, token, protocol string
 		code                cerrors.Code
 	}{
-		"no token":         {sub.ID, "", "EMAIL", cerrors.InvalidArgument},
-		"unknown id":       {"ocid1.onssubscription.oc1..missing", sub.ConfirmationToken, "", cerrors.NotFound},
-		"wrong token":      {sub.ID, "token-wrong", "", cerrors.InvalidArgument},
-		"bad protocol":     {sub.ID, sub.ConfirmationToken, "CARRIER_PIGEON", cerrors.InvalidArgument},
-		"other protocol":   {sub.ID, sub.ConfirmationToken, "SMS", cerrors.InvalidArgument},
+		"no token":       {sub.ID, "", "EMAIL", cerrors.InvalidArgument},
+		"unknown id":     {"ocid1.onssubscription.oc1..missing", sub.ConfirmationToken, "", cerrors.NotFound},
+		"wrong token":    {sub.ID, "token-wrong", "", cerrors.InvalidArgument},
+		"bad protocol":   {sub.ID, sub.ConfirmationToken, "CARRIER_PIGEON", cerrors.InvalidArgument},
+		"other protocol": {sub.ID, sub.ConfirmationToken, "SMS", cerrors.InvalidArgument},
 	}
 
 	for name, tc := range tests {
@@ -108,4 +108,42 @@ func TestChangeSubscriptionCompartmentErrors(t *testing.T) {
 	err := m.ChangeSubscriptionCompartment(ctx, "ocid1.onssubscription.oc1..missing", otherCompartment)
 	require.Error(t, err)
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+}
+
+// The endpoint shape each protocol delivers to is checked at create, naming
+// what is wrong rather than failing the first delivery.
+func TestCreateSubscriptionEndpointValidation(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+	topicID := newTopic(t, m, "alpha", compartment)
+
+	tests := map[string]struct {
+		protocol, endpoint string
+		wantErr            bool
+	}{
+		"email":               {"EMAIL", "ops@example.com", false},
+		"email without an at": {"EMAIL", "ops-example.com", true},
+		"https":               {"CUSTOM_HTTPS", "https://hooks.example.com/x", false},
+		"https over http":     {"CUSTOM_HTTPS", "http://hooks.example.com/x", true},
+		"slack over http":     {"SLACK", "http://hooks.slack.com/x", true},
+		"pagerduty https":     {"PAGERDUTY", "https://events.pagerduty.com/x", false},
+		"sms is unchecked":    {"SMS", "+15550100", false},
+		"empty":               {"EMAIL", "", true},
+	}
+
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			_, err := m.CreateSubscription(ctx, notifications.SubscriptionSpec{
+				TopicID: topicID, CompartmentID: compartment,
+				Protocol: tc.protocol, Endpoint: tc.endpoint,
+			})
+			if !tc.wantErr {
+				require.NoError(t, err)
+				return
+			}
+
+			require.Error(t, err)
+			assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+		})
+	}
 }
