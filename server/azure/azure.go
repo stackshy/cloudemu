@@ -68,6 +68,7 @@ import (
 	managedgrafanasrv "github.com/stackshy/cloudemu/v2/server/azure/managedgrafana"
 	managedidentitysrv "github.com/stackshy/cloudemu/v2/server/azure/managedidentity"
 	managedlustresrv "github.com/stackshy/cloudemu/v2/server/azure/managedlustre"
+	mongoclustersrv "github.com/stackshy/cloudemu/v2/server/azure/mongocluster"
 	"github.com/stackshy/cloudemu/v2/server/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/server/azure/mysqlflex"
 	notificationhubssrv "github.com/stackshy/cloudemu/v2/server/azure/notificationhubs"
@@ -193,6 +194,9 @@ type Drivers struct {
 	// RedisEnterprise serves Microsoft.Cache/redisEnterprise plus its nested
 	// databases child resource.
 	RedisEnterprise redisenterprisesrv.Store
+	// MongoCluster serves Microsoft.DocumentDB/mongoClusters — Cosmos DB for
+	// MongoDB (vCore) — plus its listConnectionStrings action.
+	MongoCluster mongoclustersrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -558,6 +562,15 @@ func New(d Drivers) http.Handler {
 	if d.RedisEnterprise != nil {
 		redisEnterpriseHandler = redisenterprisesrv.New(d.RedisEnterprise)
 		rgPurgers = append(rgPurgers, redisEnterpriseHandler)
+	}
+
+	// Mongo clusters: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Deleting the group tears down every mongo cluster.
+	// Registered further below.
+	var mongoClusterHandler *mongoclustersrv.Handler
+	if d.MongoCluster != nil {
+		mongoClusterHandler = mongoclustersrv.New(d.MongoCluster)
+		rgPurgers = append(rgPurgers, mongoClusterHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -986,6 +999,13 @@ func New(d Drivers) http.Handler {
 	// registration order relative to it is unconstrained.
 	if redisEnterpriseHandler != nil {
 		srv.Register(redisEnterpriseHandler)
+	}
+
+	// Mongo clusters claim Microsoft.DocumentDB/mongoClusters — a distinct resource
+	// type from the Cosmos DB core (Microsoft.DocumentDB/databaseAccounts), so
+	// registration order relative to it is unconstrained.
+	if mongoClusterHandler != nil {
+		srv.Register(mongoClusterHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

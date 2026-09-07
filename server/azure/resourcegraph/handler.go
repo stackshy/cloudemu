@@ -488,6 +488,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"managedlustre/AmlFilesystem":         "microsoft.storagecache/amlfilesystems",
 	"appconfiguration/ConfigurationStore": "microsoft.appconfiguration/configurationstores",
 	"redisenterprise/RedisEnterprise":     "microsoft.cache/redisenterprise",
+	"mongocluster/MongoCluster":           "microsoft.documentdb/mongoclusters",
 }
 
 func portableToAzureType(service, typ string) string {
