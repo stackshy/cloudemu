@@ -36,6 +36,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		ServiceDirectory:    p.ServiceDirectory,
 		Dataform:            p.Dataform,
 		APIGateway:          p.APIGateway,
+		DataCatalog:         p.DataCatalog,
 		GKE:                 p.GKE,
 		VertexAI:            p.VertexAI,
 		IAM:                 p.IAM,

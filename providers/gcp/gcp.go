@@ -23,6 +23,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudtasks"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/composer"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/compute"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/datacatalog"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/dataform"
 	dataplexprov "github.com/stackshy/cloudemu/v2/providers/gcp/dataplex"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/dataproc"
@@ -117,6 +118,7 @@ type Provider struct {
 	ServiceDirectory    *servicedirectory.Mock
 	Dataform            *dataform.Mock
 	APIGateway          *apigatewayprov.Mock
+	DataCatalog         *datacatalog.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -178,6 +180,7 @@ func New(opts ...config.Option) *Provider {
 		ServiceDirectory:    servicedirectory.New(o),
 		Dataform:            dataform.New(o),
 		APIGateway:          apigatewayprov.New(o),
+		DataCatalog:         datacatalog.New(o),
 		ProjectID:           o.ProjectID,
 		Region:              o.Region,
 		Clock:               o.Clock,

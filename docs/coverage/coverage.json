@@ -4939,6 +4939,78 @@
     }
   },
   {
+    "service": "datacatalog",
+    "interface": "DataCatalog",
+    "operations": [
+      {
+        "name": "CreateEntry"
+      },
+      {
+        "name": "CreateEntryGroup"
+      },
+      {
+        "name": "CreateTag"
+      },
+      {
+        "name": "CreateTagTemplate"
+      },
+      {
+        "name": "CreateTagTemplateField"
+      },
+      {
+        "name": "DeleteEntry"
+      },
+      {
+        "name": "DeleteEntryGroup"
+      },
+      {
+        "name": "DeleteTag"
+      },
+      {
+        "name": "DeleteTagTemplate"
+      },
+      {
+        "name": "DeleteTagTemplateField"
+      },
+      {
+        "name": "GetEntry"
+      },
+      {
+        "name": "GetEntryGroup"
+      },
+      {
+        "name": "GetTagTemplate"
+      },
+      {
+        "name": "ListEntries"
+      },
+      {
+        "name": "ListEntryGroups"
+      },
+      {
+        "name": "ListTags"
+      },
+      {
+        "name": "PatchEntry"
+      },
+      {
+        "name": "PatchEntryGroup"
+      },
+      {
+        "name": "PatchTag"
+      },
+      {
+        "name": "PatchTagTemplate"
+      },
+      {
+        "name": "PatchTagTemplateField"
+      }
+    ],
+    "providers": {
+      "gcp": "DataCatalog"
+    }
+  },
+  {
     "service": "datafactory",
     "interface": "Factories",
     "operations": [
