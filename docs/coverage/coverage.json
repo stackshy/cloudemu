@@ -433,6 +433,42 @@
     }
   },
   {
+    "service": "appconfiguration",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "ConnectionString"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverConfigurationStores"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "AppConfiguration"
+    }
+  },
+  {
     "service": "appflow",
     "interface": "AppFlow",
     "operations": [

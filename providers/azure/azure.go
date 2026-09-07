@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/ai"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/appconfiguration"
 	"github.com/stackshy/cloudemu/v2/providers/azure/applicationgateway"
 	"github.com/stackshy/cloudemu/v2/providers/azure/bastion"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
@@ -189,6 +190,7 @@ type Provider struct {
 	Purview            *purview.Mock
 	ChaosStudio        *chaosstudio.Mock
 	ElasticSan         *elasticsan.Mock
+	AppConfiguration   *appconfiguration.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -262,6 +264,7 @@ func New(opts ...config.Option) *Provider {
 		Purview:            purview.New(o),
 		ChaosStudio:        chaosstudio.New(o),
 		ElasticSan:         elasticsan.New(o),
+		AppConfiguration:   appconfiguration.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -307,6 +310,7 @@ func New(opts ...config.Option) *Provider {
 				purviewDiscovery{p.Purview},
 				chaosStudioDiscovery{p.ChaosStudio},
 				elasticSanDiscovery{p.ElasticSan},
+				appConfigurationDiscovery{p.AppConfiguration},
 			},
 		},
 	)

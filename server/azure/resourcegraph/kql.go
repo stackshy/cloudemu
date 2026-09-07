@@ -91,6 +91,7 @@ const (
 	azureTypePurview    = "microsoft.purview/accounts"
 	azureTypeChaosExp   = "microsoft.chaos/experiments"
 	azureTypeElasticSan = "microsoft.elasticsan/elasticsans"
+	azureTypeAppConfig  = "microsoft.appconfiguration/configurationstores"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -127,6 +128,7 @@ const (
 	portablePurview      = "purview"
 	portableChaosStudio  = "chaosstudio"
 	portableElasticSan   = "elasticsan"
+	portableAppConfig    = "appconfiguration"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -418,6 +420,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypePurview:    {portablePurview, "Account"},
 	azureTypeChaosExp:   {portableChaosStudio, "Experiment"},
 	azureTypeElasticSan: {portableElasticSan, "ElasticSan"},
+	azureTypeAppConfig:  {portableAppConfig, "ConfigurationStore"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the
