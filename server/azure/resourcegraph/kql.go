@@ -91,6 +91,7 @@ const (
 	azureTypePurview    = "microsoft.purview/accounts"
 	azureTypeChaosExp   = "microsoft.chaos/experiments"
 	azureTypeElasticSan = "microsoft.elasticsan/elasticsans"
+	azureTypeManagedLus = "microsoft.storagecache/amlfilesystems"
 	azureTypeAppConfig  = "microsoft.appconfiguration/configurationstores"
 	azureTypeRedisEnt   = "microsoft.cache/redisenterprise"
 )
@@ -129,6 +130,7 @@ const (
 	portablePurview      = "purview"
 	portableChaosStudio  = "chaosstudio"
 	portableElasticSan   = "elasticsan"
+	portableManagedLus   = "managedlustre"
 	portableAppConfig    = "appconfiguration"
 	portableRedisEnt     = "redisenterprise"
 )
@@ -422,6 +424,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypePurview:    {portablePurview, "Account"},
 	azureTypeChaosExp:   {portableChaosStudio, "Experiment"},
 	azureTypeElasticSan: {portableElasticSan, "ElasticSan"},
+	azureTypeManagedLus: {portableManagedLus, "AmlFilesystem"},
 	azureTypeAppConfig:  {portableAppConfig, "ConfigurationStore"},
 	azureTypeRedisEnt:   {portableRedisEnt, "RedisEnterprise"},
 }

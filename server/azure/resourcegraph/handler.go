@@ -485,6 +485,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"purview/Account":                     "microsoft.purview/accounts",
 	"chaosstudio/Experiment":              "microsoft.chaos/experiments",
 	"elasticsan/ElasticSan":               "microsoft.elasticsan/elasticsans",
+	"managedlustre/AmlFilesystem":         "microsoft.storagecache/amlfilesystems",
 	"appconfiguration/ConfigurationStore": "microsoft.appconfiguration/configurationstores",
 	"redisenterprise/RedisEnterprise":     "microsoft.cache/redisenterprise",
 }

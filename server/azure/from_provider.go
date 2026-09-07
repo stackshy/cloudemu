@@ -49,6 +49,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		Purview:            p.Purview,
 		ChaosStudio:        p.ChaosStudio,
 		ElasticSan:         p.ElasticSan,
+		ManagedLustre:      p.ManagedLustre,
 		AppConfiguration:   p.AppConfiguration,
 		RedisEnterprise:    p.RedisEnterprise,
 		SQLVirtualMachine:  p.SQLVirtualMachine,

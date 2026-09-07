@@ -67,6 +67,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/managedcassandra"
 	managedgrafanasrv "github.com/stackshy/cloudemu/v2/server/azure/managedgrafana"
 	managedidentitysrv "github.com/stackshy/cloudemu/v2/server/azure/managedidentity"
+	managedlustresrv "github.com/stackshy/cloudemu/v2/server/azure/managedlustre"
 	"github.com/stackshy/cloudemu/v2/server/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/server/azure/mysqlflex"
 	notificationhubssrv "github.com/stackshy/cloudemu/v2/server/azure/notificationhubs"
@@ -185,6 +186,8 @@ type Drivers struct {
 	ChaosStudio chaosstudiosrv.Store
 	// ElasticSan serves Microsoft.ElasticSan/elasticSans.
 	ElasticSan elasticsansrv.Store
+	// ManagedLustre serves Microsoft.StorageCache/amlFilesystems.
+	ManagedLustre managedlustresrv.Store
 	// AppConfiguration serves Microsoft.AppConfiguration/configurationStores.
 	AppConfiguration appconfigsrv.Store
 	// RedisEnterprise serves Microsoft.Cache/redisEnterprise plus its nested
@@ -530,6 +533,14 @@ func New(d Drivers) http.Handler {
 	if d.ElasticSan != nil {
 		elasticSanHandler = elasticsansrv.New(d.ElasticSan)
 		rgPurgers = append(rgPurgers, elasticSanHandler)
+	}
+
+	// Managed Lustre: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var managedLustreHandler *managedlustresrv.Handler
+	if d.ManagedLustre != nil {
+		managedLustreHandler = managedlustresrv.New(d.ManagedLustre)
+		rgPurgers = append(rgPurgers, managedLustreHandler)
 	}
 
 	// App Configuration: a resource-group-scoped resource, so its handler joins
@@ -960,6 +971,10 @@ func New(d Drivers) http.Handler {
 
 	if elasticSanHandler != nil {
 		srv.Register(elasticSanHandler)
+	}
+
+	if managedLustreHandler != nil {
+		srv.Register(managedLustreHandler)
 	}
 
 	if appConfigHandler != nil {

@@ -90,6 +90,8 @@ linters:
       line-length: 140
     misspell:
       locale: US
+      ignore-rules:
+        - lustre
     mnd:
       checks:
         - argument
