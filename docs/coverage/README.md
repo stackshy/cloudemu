@@ -106,6 +106,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `postgresflex` | — | [PostgresFlex](./azure/postgresflex.md) | — | — | 21 |
 | `privatedns` | — | [PrivateDNS](./azure/privatedns.md) | — | — | 13 |
 | `providers` | — | [Providers](./azure/providers.md) | — | — | 4 |
+| `purview` | — | [Purview](./azure/purview.md) | — | — | 9 |
 | `queue` | — | [Queue](./azure/queue.md) | — | — | 6 |
 | `rds` | [RDS](./aws/rds.md) | — | — | — | 21 |
 | `relationaldb` | [Redshift](./aws/redshift.md) | [MySQLFlex](./azure/mysqlflex.md) | [AlloyDB](./gcp/alloydb.md) | — | 21 |

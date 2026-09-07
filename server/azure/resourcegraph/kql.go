@@ -88,6 +88,7 @@ const (
 	azureTypeDTwins    = "microsoft.digitaltwins/digitaltwinsinstances"
 	azureTypeGrafana   = "microsoft.dashboard/grafana"
 	azureTypeDevCenter = "microsoft.devcenter/devcenters"
+	azureTypePurview   = "microsoft.purview/accounts"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -121,6 +122,7 @@ const (
 	portableDTwins       = "digitaltwins"
 	portableManagedGraf  = "managedgrafana"
 	portableDevCenter    = "devcenter"
+	portablePurview      = "purview"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -409,6 +411,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeDTwins:    {portableDTwins, "DigitalTwinsInstance"},
 	azureTypeGrafana:   {portableManagedGraf, "Grafana"},
 	azureTypeDevCenter: {portableDevCenter, "DevCenter"},
+	azureTypePurview:   {portablePurview, "Account"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

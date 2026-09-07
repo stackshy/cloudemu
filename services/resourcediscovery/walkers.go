@@ -76,6 +76,9 @@ const (
 	// ServiceDevCenter buckets Azure Dev Center resources
 	// (Microsoft.DevCenter/devcenters).
 	ServiceDevCenter = "devcenter"
+	// ServicePurview buckets Microsoft Purview resources
+	// (Microsoft.Purview/accounts).
+	ServicePurview = "purview"
 )
 
 // Resource type constants emitted by the walkers.
@@ -177,6 +180,10 @@ const TypeGrafana = "Grafana"
 // TypeDevCenter is the portable type for an Azure Dev Center resource
 // (Microsoft.DevCenter/devcenters). Azure-only, so it lives in its own line.
 const TypeDevCenter = "DevCenter"
+
+// TypePurviewAccount is the portable type for a Microsoft Purview resource
+// (Microsoft.Purview/accounts). Azure-only, so it lives in its own line.
+const TypePurviewAccount = "Account"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs
