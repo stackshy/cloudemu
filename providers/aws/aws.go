@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigateway"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigatewayv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/appflow"
+	"github.com/stackshy/cloudemu/v2/providers/aws/apprunner"
 	"github.com/stackshy/cloudemu/v2/providers/aws/appsync"
 	"github.com/stackshy/cloudemu/v2/providers/aws/aps"
 	"github.com/stackshy/cloudemu/v2/providers/aws/athena"
@@ -216,6 +217,7 @@ type Provider struct {
 	Athena              *athena.Mock
 	TimestreamWrite     *timestreamwrite.Mock
 	HealthLake          *healthlake.Mock
+	AppRunner           *apprunner.Mock
 	Transfer            *transfer.Mock
 	Cognito             *cognito.Mock
 	Config              *configservice.Mock
@@ -302,6 +304,7 @@ func New(opts ...config.Option) *Provider {
 		Athena:              athena.New(o),
 		TimestreamWrite:     timestreamwrite.New(o),
 		HealthLake:          healthlake.New(o),
+		AppRunner:           apprunner.New(o),
 		Transfer:            transfer.New(o),
 		Cognito:             cognito.New(o),
 		Config:              configservice.New(o),

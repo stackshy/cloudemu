@@ -572,6 +572,102 @@
     }
   },
   {
+    "service": "apprunner",
+    "interface": "AppRunner",
+    "operations": [
+      {
+        "name": "CreateAutoScalingConfiguration"
+      },
+      {
+        "name": "CreateConnection"
+      },
+      {
+        "name": "CreateObservabilityConfiguration"
+      },
+      {
+        "name": "CreateService"
+      },
+      {
+        "name": "CreateVpcConnector"
+      },
+      {
+        "name": "DeleteAutoScalingConfiguration"
+      },
+      {
+        "name": "DeleteConnection"
+      },
+      {
+        "name": "DeleteObservabilityConfiguration"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "DeleteVpcConnector"
+      },
+      {
+        "name": "DescribeAutoScalingConfiguration"
+      },
+      {
+        "name": "DescribeObservabilityConfiguration"
+      },
+      {
+        "name": "DescribeService"
+      },
+      {
+        "name": "DescribeVpcConnector"
+      },
+      {
+        "name": "ListAutoScalingConfigurationRevisions"
+      },
+      {
+        "name": "ListAutoScalingConfigurations"
+      },
+      {
+        "name": "ListConnections"
+      },
+      {
+        "name": "ListObservabilityConfigurationRevisions"
+      },
+      {
+        "name": "ListObservabilityConfigurations"
+      },
+      {
+        "name": "ListOperations"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListVpcConnectors"
+      },
+      {
+        "name": "PauseService"
+      },
+      {
+        "name": "ResumeService"
+      },
+      {
+        "name": "StartDeployment"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateService"
+      }
+    ],
+    "providers": {
+      "aws": "AppRunner"
+    }
+  },
+  {
     "service": "appsync",
     "interface": "AppSync",
     "operations": [

@@ -62,6 +62,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/acm v1.38.3
 	github.com/aws/aws-sdk-go-v2/service/amp v1.30.0
 	github.com/aws/aws-sdk-go-v2/service/appflow v1.59.0
+	github.com/aws/aws-sdk-go-v2/service/apprunner v1.39.14
 	github.com/aws/aws-sdk-go-v2/service/appsync v1.60.0
 	github.com/aws/aws-sdk-go-v2/service/athena v1.49.0
 	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.66.1
