@@ -42,6 +42,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		LoadTesting:        p.LoadTesting,
 		SignalR:            p.SignalR,
 		WebPubSub:          p.WebPubSub,
+		Communication:      p.Communication,
 		DigitalTwins:       p.DigitalTwins,
 		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,
