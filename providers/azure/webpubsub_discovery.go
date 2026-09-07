@@ -12,8 +12,6 @@ import (
 // surface in Resource Graph / `az resource list`. Web PubSub is Azure-only with
 // no shared cross-cloud driver, so this rides the generic GenericResources
 // projection (like signalRDiscovery) rather than a shared walker.
-//
-//nolint:dupl // parallel-shaped to signalr_discovery.go, distinct resource type
 type webPubSubDiscovery struct{ m *webpubsub.Mock }
 
 func (d webPubSubDiscovery) DiscoverResources(
