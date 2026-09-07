@@ -15,6 +15,9 @@ const (
 	MessageTypeJSON    = "JSON"
 )
 
+// maxMessageBytes is the 64 KB ONS caps a published message body at.
+const maxMessageBytes = 64 * 1024
+
 // MessageSpec is a message to publish to a topic.
 type MessageSpec struct {
 	Title string
@@ -34,6 +37,8 @@ type Message struct {
 
 // Publish publishes a message to a topic. It is the portable entry point onto
 // PublishMessage.
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.PublishOutput, error) {
 	// ONS carries no per-message attributes, so accepting them would drop
 	// them silently.
@@ -59,6 +64,11 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 func (m *Mock) PublishMessage(_ context.Context, topicID string, spec MessageSpec) (*Message, error) {
 	if spec.Body == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "message body is required")
+	}
+
+	if len(spec.Body) > maxMessageBytes {
+		return nil, cerrors.Newf(cerrors.InvalidArgument,
+			"message body is %d bytes; ONS caps a message at %d", len(spec.Body), maxMessageBytes)
 	}
 
 	msgType, err := normalizeMessageType(spec.Type)

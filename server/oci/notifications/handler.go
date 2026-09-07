@@ -63,6 +63,7 @@ const (
 	codeMethodNotAllowed = "MethodNotAllowed"
 	codeNotImplemented   = "NotImplemented"
 	codeNotFound         = "NotAuthorizedOrNotFound"
+	codeNoEtagMatch      = "NoEtagMatch"
 )
 
 // maxPathSegments is /{version}/{collection}/{id}/{sub}/{action}.
@@ -197,6 +198,20 @@ func refuseDefinedTags(w http.ResponseWriter, r *http.Request, tags definedTags)
 
 	ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
 		"definedTags are not modeled by this emulator; use freeformTags")
+
+	return false
+}
+
+// checkIfMatch enforces the caller's if-match precondition against the stored
+// etag. An absent header is unconditional, as ONS treats it.
+func checkIfMatch(w http.ResponseWriter, r *http.Request, etag string) bool {
+	want := r.Header.Get("If-Match")
+	if want == "" || want == etag {
+		return true
+	}
+
+	ocirest.WriteError(w, r, http.StatusPreconditionFailed, codeNoEtagMatch,
+		"if-match "+want+" does not match the current etag")
 
 	return false
 }

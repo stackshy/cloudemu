@@ -99,7 +99,7 @@ func (h *Handler) createTopic(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ocirest.WriteJSON(w, r, http.StatusOK, h.topicWire(r, info))
+	ocirest.WriteJSON(w, r, http.StatusCreated, h.topicWire(r, info))
 }
 
 func (h *Handler) getTopic(w http.ResponseWriter, r *http.Request, id string) {
@@ -161,6 +161,10 @@ func (h *Handler) updateTopic(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
+	if !h.topicIfMatch(w, r, id) {
+		return
+	}
+
 	info, err := h.notif.UpdateTopic(r.Context(), notifdriver.TopicConfig{
 		Name:        id,
 		DisplayName: req.Description,
@@ -185,6 +189,10 @@ func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, id string)
 	info, err := h.notif.GetTopic(r.Context(), id)
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
+		return
+	}
+
+	if !h.topicIfMatch(w, r, id) {
 		return
 	}
 
@@ -272,6 +280,17 @@ func (h *Handler) topicWire(r *http.Request, info *notifdriver.TopicInfo) topicR
 	}
 
 	return out
+}
+
+// topicIfMatch enforces an if-match precondition against a topic's stored
+// etag. An unknown topic passes through to the driver's own 404.
+func (h *Handler) topicIfMatch(w http.ResponseWriter, r *http.Request, id string) bool {
+	details, ok := h.extras.TopicDetails(id)
+	if !ok {
+		return true
+	}
+
+	return checkIfMatch(w, r, details.Etag)
 }
 
 // topicMatches applies ONS's id, name and lifecycleState narrowing.

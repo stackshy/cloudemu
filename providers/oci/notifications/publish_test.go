@@ -2,6 +2,7 @@ package notifications_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -54,4 +55,19 @@ func TestPublishEmitsMetrics(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, names, "PublishedMessages")
 	assert.Contains(t, names, "DeliveredMessages")
+}
+
+// ONS caps a published message body at 64 KB.
+func TestPublishMessageSizeCap(t *testing.T) {
+	ctx := context.Background()
+	m := newMock(t)
+	id := newTopic(t, m, "alpha", compartment)
+
+	_, err := m.PublishMessage(ctx, id, notifications.MessageSpec{Body: strings.Repeat("x", 64*1024)})
+	require.NoError(t, err)
+
+	_, err = m.PublishMessage(ctx, id, notifications.MessageSpec{Body: strings.Repeat("x", 64*1024+1)})
+	require.Error(t, err)
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+	assert.Contains(t, err.Error(), "65536")
 }
