@@ -31,6 +31,7 @@ import (
 	cloudtrailsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
+	codeartifactsrv "github.com/stackshy/cloudemu/v2/server/aws/codeartifact"
 	cognitosrv "github.com/stackshy/cloudemu/v2/server/aws/cognito"
 	configservicesrv "github.com/stackshy/cloudemu/v2/server/aws/configservice"
 	costexplorersrv "github.com/stackshy/cloudemu/v2/server/aws/costexplorer"
@@ -99,6 +100,7 @@ import (
 	cfnsvc "github.com/stackshy/cloudemu/v2/services/cloudformation"
 	cloudfrontdriver "github.com/stackshy/cloudemu/v2/services/cloudfront/driver"
 	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
+	codeartifactdriver "github.com/stackshy/cloudemu/v2/services/codeartifact/driver"
 	cognitodriver "github.com/stackshy/cloudemu/v2/services/cognito/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	configservicedriver "github.com/stackshy/cloudemu/v2/services/configservice/driver"
@@ -214,6 +216,12 @@ type Drivers struct {
 	// MQ serves the Amazon MQ control-plane REST-JSON API (verb + path routing
 	// under the /v1/ prefix, e.g. POST /v1/brokers) against the mq driver.
 	MQ amazonmqdriver.MQ
+
+	// CodeArtifact serves the AWS CodeArtifact control-plane REST-JSON API (verb +
+	// path routing under the /v1/ prefix with query-string parameters, e.g.
+	// POST /v1/domain?domain=, POST /v1/repository?domain=&repository=) against
+	// the codeartifact driver.
+	CodeArtifact codeartifactdriver.CodeArtifact
 
 	// Grafana serves the Amazon Managed Grafana control-plane REST-JSON API
 	// (verb + path routing, e.g. POST /workspaces) against the grafana driver.
@@ -440,6 +448,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		AppFlow:             p.AppFlow,
 		MWAA:                p.MWAA,
 		MQ:                  p.MQ,
+		CodeArtifact:        p.CodeArtifact,
 		Grafana:             p.Grafana,
 		Scheduler:           p.Scheduler,
 		AOSS:                p.AOSS,
@@ -795,6 +804,20 @@ func New(d Drivers) *server.Server {
 	// AppSync's /v1/apis and Kafka's /v1/clusters, so it shadows none of them.
 	if d.MQ != nil {
 		srv.Register(mqsrv.New(d.MQ))
+	}
+
+	// CodeArtifact uses REST-JSON verb + path routing under the /v1/ prefix with
+	// the resource identity in the QUERY STRING (e.g. POST /v1/domain?domain=,
+	// GET /v1/repository?domain=&repository=, POST /v1/repositories). Its Matches
+	// claims the /v1/domain(s) and /v1/repository(ies) trees — distinct from the
+	// other /v1/ claimants (MQ's /v1/brokers, AppSync's /v1/apis, Kafka's
+	// /v1/clusters) — and the shared /v1/tag, /v1/tags and /v1/untag roots only
+	// when their ?resourceArn= names a CodeArtifact (:codeartifact:) ARN, so it
+	// must run before the S3 catch-all and shadows none of them. CodeArtifact's
+	// /v1/tags carries no path segment (it takes ?resourceArn=), unlike the
+	// /v1/tags/{arn} path style of MQ, Batch, AppSync and Kafka.
+	if d.CodeArtifact != nil {
+		srv.Register(codeartifactsrv.New(d.CodeArtifact))
 	}
 
 	// Grafana (Amazon Managed Grafana) uses REST-JSON verb + path routing at the
