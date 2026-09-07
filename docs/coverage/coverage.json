@@ -5560,6 +5560,51 @@
     }
   },
   {
+    "service": "eventbridgescheduler",
+    "interface": "Scheduler",
+    "operations": [
+      {
+        "name": "CreateSchedule"
+      },
+      {
+        "name": "CreateScheduleGroup"
+      },
+      {
+        "name": "DeleteSchedule"
+      },
+      {
+        "name": "DeleteScheduleGroup"
+      },
+      {
+        "name": "GetSchedule"
+      },
+      {
+        "name": "GetScheduleGroup"
+      },
+      {
+        "name": "ListScheduleGroups"
+      },
+      {
+        "name": "ListSchedules"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateSchedule"
+      }
+    ],
+    "providers": {
+      "aws": "Scheduler"
+    }
+  },
+  {
     "service": "eventbus",
     "interface": "EventBus",
     "operations": [

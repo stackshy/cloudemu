@@ -44,6 +44,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
 	emrsrv "github.com/stackshy/cloudemu/v2/server/aws/emr"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
+	schedulersrv "github.com/stackshy/cloudemu/v2/server/aws/eventbridgescheduler"
 	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
 	grafanasrv "github.com/stackshy/cloudemu/v2/server/aws/grafana"
 	guarddutysrv "github.com/stackshy/cloudemu/v2/server/aws/guardduty"
@@ -103,6 +104,7 @@ import (
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
 	efsdriver "github.com/stackshy/cloudemu/v2/services/efs/driver"
+	schedulerdriver "github.com/stackshy/cloudemu/v2/services/eventbridgescheduler/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
 	grafanadriver "github.com/stackshy/cloudemu/v2/services/grafana/driver"
@@ -208,6 +210,11 @@ type Drivers struct {
 	// Grafana serves the Amazon Managed Grafana control-plane REST-JSON API
 	// (verb + path routing, e.g. POST /workspaces) against the grafana driver.
 	Grafana grafanadriver.Grafana
+
+	// Scheduler serves the Amazon EventBridge Scheduler control-plane REST-JSON
+	// API (verb + path routing, e.g. POST /schedules/{Name}, GET /schedule-groups)
+	// against the scheduler driver.
+	Scheduler schedulerdriver.Scheduler
 	// AOSS serves the Amazon OpenSearch Serverless JSON 1.0 protocol (X-Amz-Target
 	// prefix "OpenSearchServerless.") against the aoss driver. Distinct from
 	// OpenSearch (provisioned domains), which uses restJson1.
@@ -407,6 +414,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		MWAA:                p.MWAA,
 		MQ:                  p.MQ,
 		Grafana:             p.Grafana,
+		Scheduler:           p.Scheduler,
 		AOSS:                p.AOSS,
 		APS:                 p.APS,
 		Kafka:               p.Kafka,
@@ -730,6 +738,18 @@ func New(d Drivers) *server.Server {
 	// to their own ARN markers.
 	if d.Grafana != nil {
 		srv.Register(grafanasrv.New(d.Grafana))
+	}
+
+	// Scheduler (Amazon EventBridge Scheduler) uses REST-JSON verb + path routing
+	// at the root (e.g. POST /schedules/{Name}, GET /schedules/{Name}?groupName=,
+	// GET /schedule-groups, POST /tags/{arn}). Its Matches claims the /schedules
+	// and /schedule-groups trees (unique among the registered handlers) and /tags
+	// paths carrying a Scheduler (:scheduler:) ARN, so it must run before the S3
+	// catch-all and is disjoint from the other /tags claimants (AppFlow, MWAA,
+	// AppSync, Batch, Kafka, Grafana, APS), which scope their claims to their own
+	// ARN markers.
+	if d.Scheduler != nil {
+		srv.Register(schedulersrv.New(d.Scheduler))
 	}
 
 	// APS (Amazon Managed Service for Prometheus) uses REST-JSON verb + path

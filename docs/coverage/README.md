@@ -68,6 +68,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `efs` | [EFS](./aws/efs.md) | — | — | — | 27 |
 | `eks` | [EKS](./aws/eks.md) | — | — | — | 29 |
 | `emr` | [EMR](./aws/emr.md) | — | — | — | 19 |
+| `eventbridgescheduler` | [Scheduler](./aws/scheduler.md) | — | — | — | 12 |
 | `eventbus` | [EventBridge](./aws/eventbridge.md) | [EventGrid](./azure/eventgrid.md) | [Eventarc](./gcp/eventarc.md) | — | 16 |
 | `eventhub` | — | [Eventhub](./azure/eventhub.md) | — | — | 14 |
 | `filestore` | — | — | [Filestore](./gcp/filestore.md) | — | 5 |
