@@ -48,6 +48,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
+	"github.com/stackshy/cloudemu/v2/providers/azure/webpubsub"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
@@ -174,6 +175,7 @@ type Provider struct {
 	ContainerApps      *containerapps.Mock
 	LoadTesting        *loadtesting.Mock
 	SignalR            *signalr.Mock
+	WebPubSub          *webpubsub.Mock
 	DigitalTwins       *digitaltwins.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
@@ -240,6 +242,7 @@ func New(opts ...config.Option) *Provider {
 		ContainerApps:      containerapps.New(o),
 		LoadTesting:        loadtesting.New(o),
 		SignalR:            signalr.New(o),
+		WebPubSub:          webpubsub.New(o),
 		DigitalTwins:       digitaltwins.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
@@ -278,6 +281,7 @@ func New(opts ...config.Option) *Provider {
 				containerAppsDiscovery{p.ContainerApps},
 				loadTestDiscovery{p.LoadTesting},
 				signalRDiscovery{p.SignalR},
+				webPubSubDiscovery{p.WebPubSub},
 				digitalTwinsDiscovery{p.DigitalTwins},
 			},
 		},
