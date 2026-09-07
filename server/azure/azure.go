@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
 	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
+	appconfigsrv "github.com/stackshy/cloudemu/v2/server/azure/appconfiguration"
 	appinsightssrv "github.com/stackshy/cloudemu/v2/server/azure/appinsights"
 	appgatewaysrv "github.com/stackshy/cloudemu/v2/server/azure/applicationgateway"
 	bastionsrv "github.com/stackshy/cloudemu/v2/server/azure/bastion"
@@ -183,6 +184,8 @@ type Drivers struct {
 	ChaosStudio chaosstudiosrv.Store
 	// ElasticSan serves Microsoft.ElasticSan/elasticSans.
 	ElasticSan elasticsansrv.Store
+	// AppConfiguration serves Microsoft.AppConfiguration/configurationStores.
+	AppConfiguration appconfigsrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -523,6 +526,14 @@ func New(d Drivers) http.Handler {
 	if d.ElasticSan != nil {
 		elasticSanHandler = elasticsansrv.New(d.ElasticSan)
 		rgPurgers = append(rgPurgers, elasticSanHandler)
+	}
+
+	// App Configuration: a resource-group-scoped resource, so its handler joins
+	// the purge cascade. Registered further below.
+	var appConfigHandler *appconfigsrv.Handler
+	if d.AppConfiguration != nil {
+		appConfigHandler = appconfigsrv.New(d.AppConfiguration)
+		rgPurgers = append(rgPurgers, appConfigHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -936,6 +947,10 @@ func New(d Drivers) http.Handler {
 
 	if elasticSanHandler != nil {
 		srv.Register(elasticSanHandler)
+	}
+
+	if appConfigHandler != nil {
+		srv.Register(appConfigHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

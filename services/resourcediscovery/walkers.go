@@ -85,6 +85,9 @@ const (
 	// ServiceElasticSan buckets Azure Elastic SAN resources
 	// (Microsoft.ElasticSan/elasticSans).
 	ServiceElasticSan = "elasticsan"
+	// ServiceAppConfiguration buckets Azure App Configuration resources
+	// (Microsoft.AppConfiguration/configurationStores).
+	ServiceAppConfiguration = "appconfiguration"
 )
 
 // Resource type constants emitted by the walkers.
@@ -198,6 +201,11 @@ const TypeChaosExperiment = "Experiment"
 // TypeElasticSan is the portable type for an Azure Elastic SAN resource
 // (Microsoft.ElasticSan/elasticSans). Azure-only, so it lives in its own line.
 const TypeElasticSan = "ElasticSan"
+
+// TypeConfigurationStore is the portable type for an Azure App Configuration
+// resource (Microsoft.AppConfiguration/configurationStores). Azure-only, so it
+// lives in its own line.
+const TypeConfigurationStore = "ConfigurationStore"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs
