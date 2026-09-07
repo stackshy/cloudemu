@@ -48,6 +48,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/kendra"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kinesis"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kinesisvideo"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kmscrypto"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
@@ -185,6 +186,7 @@ type Provider struct {
 	EFS                 *efs.Mock
 	Batch               *batch.Mock
 	Kinesis             *kinesis.Mock
+	KinesisVideo        *kinesisvideo.Mock
 	SESV2               *sesv2.Mock
 	OpenSearch          *opensearch.Mock
 	AppSync             *appsync.Mock
@@ -265,6 +267,7 @@ func New(opts ...config.Option) *Provider {
 		EFS:                 efs.New(o),
 		Batch:               batch.New(o),
 		Kinesis:             kinesis.New(o),
+		KinesisVideo:        kinesisvideo.New(o),
 		SESV2:               sesv2.New(o),
 		OpenSearch:          opensearch.New(o),
 		AppSync:             appsync.New(o),

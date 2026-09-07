@@ -7896,6 +7896,66 @@
     }
   },
   {
+    "service": "kinesisvideo",
+    "interface": "KinesisVideo",
+    "operations": [
+      {
+        "name": "CreateSignalingChannel"
+      },
+      {
+        "name": "CreateStream"
+      },
+      {
+        "name": "DeleteSignalingChannel"
+      },
+      {
+        "name": "DeleteStream"
+      },
+      {
+        "name": "DescribeSignalingChannel"
+      },
+      {
+        "name": "DescribeStream"
+      },
+      {
+        "name": "ListSignalingChannels"
+      },
+      {
+        "name": "ListStreams"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTagsForStream"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "TagStream"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UntagStream"
+      },
+      {
+        "name": "UpdateDataRetention"
+      },
+      {
+        "name": "UpdateSignalingChannel"
+      },
+      {
+        "name": "UpdateStream"
+      }
+    ],
+    "providers": {
+      "aws": "KinesisVideo"
+    }
+  },
+  {
     "service": "kms",
     "interface": "KMS",
     "operations": [

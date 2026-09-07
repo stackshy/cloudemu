@@ -53,6 +53,7 @@ import (
 	kendrasrv "github.com/stackshy/cloudemu/v2/server/aws/kendra"
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
 	kinesissrv "github.com/stackshy/cloudemu/v2/server/aws/kinesis"
+	kinesisvideosrv "github.com/stackshy/cloudemu/v2/server/aws/kinesisvideo"
 	kmssrv "github.com/stackshy/cloudemu/v2/server/aws/kms"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
 	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
@@ -115,6 +116,7 @@ import (
 	kendradriver "github.com/stackshy/cloudemu/v2/services/kendra/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
+	kinesisvideodriver "github.com/stackshy/cloudemu/v2/services/kinesisvideo/driver"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
@@ -249,6 +251,11 @@ type Drivers struct {
 
 	// Kinesis serves the Kinesis Data Streams JSON 1.1 protocol against the kinesis driver.
 	Kinesis kinesisdriver.Kinesis
+
+	// KinesisVideo serves the Amazon Kinesis Video Streams control-plane REST-JSON
+	// API (POST to per-operation action paths, e.g. POST /createStream) against
+	// the kinesisvideo driver. Distinct from Kinesis (Data Streams).
+	KinesisVideo kinesisvideodriver.KinesisVideo
 	// CloudFormation serves the CloudFormation query protocol (CreateStack,
 	// DescribeStacks, …) against the stack orchestrator.
 	CloudFormation cfnsvc.API
@@ -431,6 +438,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		KMS:                 p.KMS,
 		ACM:                 p.ACM,
 		Kinesis:             p.Kinesis,
+		KinesisVideo:        p.KinesisVideo,
 		CloudTrail:          p.CloudTrail,
 		Glue:                p.Glue,
 		Athena:              p.Athena,
@@ -649,6 +657,18 @@ func New(d Drivers) *server.Server {
 	// in-memory cluster/step store (no backing driver).
 	if d.EMR {
 		srv.Register(emrsrv.New(d.AccountID, d.Region, d.Clock))
+	}
+
+	// Kinesis Video Streams is a REST-JSON service dispatched on POST to
+	// per-operation action paths (e.g. POST /createStream, /describeStream,
+	// /createSignalingChannel). Its stream and channel paths are unique, but its
+	// resource-level tagging paths (/TagResource, /UntagResource,
+	// /ListTagsForResource) are also claimed by Savings Plans, so its Matches
+	// scopes those three to a Kinesis Video (:kinesisvideo:) ARN in the request
+	// body; it must therefore register before Savings Plans (a non-Kinesis-Video
+	// ARN falls through to it) and before S3's permissive REST fallback.
+	if d.KinesisVideo != nil {
+		srv.Register(kinesisvideosrv.New(d.KinesisVideo))
 	}
 
 	// Savings Plans is a REST-JSON service dispatched on POST /{OperationName}
