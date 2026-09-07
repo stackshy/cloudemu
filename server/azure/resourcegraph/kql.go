@@ -87,6 +87,7 @@ const (
 	azureTypeCommComms = "microsoft.communication/communicationservices"
 	azureTypeDTwins    = "microsoft.digitaltwins/digitaltwinsinstances"
 	azureTypeGrafana   = "microsoft.dashboard/grafana"
+	azureTypeDevCenter = "microsoft.devcenter/devcenters"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -119,6 +120,7 @@ const (
 	portableCommunicatn  = "communication"
 	portableDTwins       = "digitaltwins"
 	portableManagedGraf  = "managedgrafana"
+	portableDevCenter    = "devcenter"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -406,6 +408,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeCommComms: {portableCommunicatn, "CommunicationService"},
 	azureTypeDTwins:    {portableDTwins, "DigitalTwinsInstance"},
 	azureTypeGrafana:   {portableManagedGraf, "Grafana"},
+	azureTypeDevCenter: {portableDevCenter, "DevCenter"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

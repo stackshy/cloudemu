@@ -44,6 +44,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/unitycatalog"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/wsfs"
 	datafactorysrv "github.com/stackshy/cloudemu/v2/server/azure/datafactory"
+	devcentersrv "github.com/stackshy/cloudemu/v2/server/azure/devcenter"
 	digitaltwinssrv "github.com/stackshy/cloudemu/v2/server/azure/digitaltwins"
 	"github.com/stackshy/cloudemu/v2/server/azure/disks"
 	dnssrv "github.com/stackshy/cloudemu/v2/server/azure/dns"
@@ -171,6 +172,8 @@ type Drivers struct {
 	DigitalTwins digitaltwinssrv.Store
 	// ManagedGrafana serves Microsoft.Dashboard/grafana.
 	ManagedGrafana managedgrafanasrv.Store
+	// DevCenter serves Microsoft.DevCenter/devcenters.
+	DevCenter devcentersrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -479,6 +482,14 @@ func New(d Drivers) http.Handler {
 	if d.ManagedGrafana != nil {
 		managedGrafanaHandler = managedgrafanasrv.New(d.ManagedGrafana)
 		rgPurgers = append(rgPurgers, managedGrafanaHandler)
+	}
+
+	// Dev Center: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var devCenterHandler *devcentersrv.Handler
+	if d.DevCenter != nil {
+		devCenterHandler = devcentersrv.New(d.DevCenter)
+		rgPurgers = append(rgPurgers, devCenterHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -876,6 +887,10 @@ func New(d Drivers) http.Handler {
 
 	if managedGrafanaHandler != nil {
 		srv.Register(managedGrafanaHandler)
+	}
+
+	if devCenterHandler != nil {
+		srv.Register(devCenterHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —
