@@ -53,6 +53,7 @@ import (
 	kmssrv "github.com/stackshy/cloudemu/v2/server/aws/kms"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
 	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
+	mqsrv "github.com/stackshy/cloudemu/v2/server/aws/mq"
 	mwaasrv "github.com/stackshy/cloudemu/v2/server/aws/mwaa"
 	networkfirewallsrv "github.com/stackshy/cloudemu/v2/server/aws/networkfirewall"
 	opensearchsrv "github.com/stackshy/cloudemu/v2/server/aws/opensearch"
@@ -115,6 +116,7 @@ import (
 	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	amazonmqdriver "github.com/stackshy/cloudemu/v2/services/mq/driver"
 	mwaadriver "github.com/stackshy/cloudemu/v2/services/mwaa/driver"
 	nfdriver "github.com/stackshy/cloudemu/v2/services/networkfirewall/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -196,6 +198,10 @@ type Drivers struct {
 	// MWAA serves the Amazon MWAA control-plane REST-JSON API (verb + path
 	// routing, e.g. PUT /environments/{Name}) against the mwaa driver.
 	MWAA mwaadriver.MWAA
+
+	// MQ serves the Amazon MQ control-plane REST-JSON API (verb + path routing
+	// under the /v1/ prefix, e.g. POST /v1/brokers) against the mq driver.
+	MQ amazonmqdriver.MQ
 
 	// Grafana serves the Amazon Managed Grafana control-plane REST-JSON API
 	// (verb + path routing, e.g. POST /workspaces) against the grafana driver.
@@ -393,6 +399,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		AppSync:             p.AppSync,
 		AppFlow:             p.AppFlow,
 		MWAA:                p.MWAA,
+		MQ:                  p.MQ,
 		Grafana:             p.Grafana,
 		APS:                 p.APS,
 		Kafka:               p.Kafka,
@@ -686,6 +693,18 @@ func New(d Drivers) *server.Server {
 	// ARN markers.
 	if d.MWAA != nil {
 		srv.Register(mwaasrv.New(d.MWAA))
+	}
+
+	// MQ (Amazon MQ) uses REST-JSON verb + path routing under the /v1/ prefix
+	// (e.g. POST /v1/brokers, GET /v1/brokers/{brokerId}, POST /v1/configurations).
+	// Its Matches claims the /v1/brokers and /v1/configurations trees and /v1/tags
+	// paths carrying an MQ (:mq:) ARN, so it must run before the S3 catch-all and
+	// is disjoint from the other /v1/tags claimants (Batch, AppSync, Kafka), which
+	// scope their claims to their own ARN markers. The /v1/brokers and
+	// /v1/configurations roots are distinct from Batch's operation-name roots,
+	// AppSync's /v1/apis and Kafka's /v1/clusters, so it shadows none of them.
+	if d.MQ != nil {
+		srv.Register(mqsrv.New(d.MQ))
 	}
 
 	// Grafana (Amazon Managed Grafana) uses REST-JSON verb + path routing at the

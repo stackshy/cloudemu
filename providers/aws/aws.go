@@ -49,6 +49,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/kmscrypto"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
+	"github.com/stackshy/cloudemu/v2/providers/aws/mq"
 	"github.com/stackshy/cloudemu/v2/providers/aws/mwaa"
 	"github.com/stackshy/cloudemu/v2/providers/aws/networkfirewall"
 	"github.com/stackshy/cloudemu/v2/providers/aws/opensearch"
@@ -186,6 +187,7 @@ type Provider struct {
 	AppSync             *appsync.Mock
 	AppFlow             *appflow.Mock
 	MWAA                *mwaa.Mock
+	MQ                  *mq.Mock
 	Grafana             *grafana.Mock
 	APS                 *aps.Mock
 	Kafka               *kafka.Mock
@@ -262,6 +264,7 @@ func New(opts ...config.Option) *Provider {
 		AppSync:             appsync.New(o),
 		AppFlow:             appflow.New(o),
 		MWAA:                mwaa.New(o),
+		MQ:                  mq.New(o),
 		Grafana:             grafana.New(o),
 		APS:                 aps.New(o),
 		Kafka:               kafka.New(o),

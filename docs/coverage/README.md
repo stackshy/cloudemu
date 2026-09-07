@@ -93,6 +93,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `memorydb` | [MemoryDB](./aws/memorydb.md) | — | — | — | 33 |
 | `messagequeue` | [SQS](./aws/sqs.md) | [QueueStorage](./azure/queuestorage.md) | [PubSub](./gcp/pubsub.md) | — | 14 |
 | `monitoring` | [CloudWatch](./aws/cloudwatch.md) | [Monitor](./azure/monitor.md) | [CloudMonitoring](./gcp/cloudmonitoring.md) | [Monitoring](./oci/monitoring.md) | 12 |
+| `mq` | [MQ](./aws/mq.md) | — | — | — | 19 |
 | `mwaa` | [MWAA](./aws/mwaa.md) | — | — | — | 10 |
 | `networkconnectivity` | — | — | [NetworkConnectivity](./gcp/networkconnectivity.md) | — | 11 |
 | `networkfirewall` | [NetworkFirewall](./aws/networkfirewall.md) | — | — | — | 23 |
