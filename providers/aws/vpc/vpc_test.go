@@ -1579,3 +1579,38 @@ func assertNotEmpty(t *testing.T, s string) {
 		t.Error("expected non-empty string")
 	}
 }
+
+// Real EC2 drops a subnet's route-table associations with the subnet, so the
+// standard teardown (delete subnets, then their route tables) must succeed.
+func TestDeleteSubnet_CascadesRouteTableAssociations(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+	v := createTestVPC(m)
+	s, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.1.0/24"})
+	rt, _ := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: v.ID})
+	assoc, err := m.AssociateRouteTable(ctx, rt.ID, s.ID)
+	requireNoError(t, err)
+
+	requireNoError(t, m.DeleteSubnet(ctx, s.ID))
+
+	t.Run("association is gone", func(t *testing.T) {
+		assertError(t, m.DisassociateRouteTable(ctx, assoc.ID), true)
+	})
+
+	t.Run("route table can now be deleted", func(t *testing.T) {
+		requireNoError(t, m.DeleteRouteTable(ctx, rt.ID))
+	})
+
+	t.Run("other subnets' associations survive", func(t *testing.T) {
+		s2, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.2.0/24"})
+		s3, _ := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: v.ID, CIDRBlock: "10.0.3.0/24"})
+		rt2, _ := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: v.ID})
+		_, _ = m.AssociateRouteTable(ctx, rt2.ID, s2.ID)
+		keep, _ := m.AssociateRouteTable(ctx, rt2.ID, s3.ID)
+
+		requireNoError(t, m.DeleteSubnet(ctx, s2.ID))
+		// s3 is still associated, so the table must still refuse to go.
+		assertError(t, m.DeleteRouteTable(ctx, rt2.ID), true)
+		requireNoError(t, m.DisassociateRouteTable(ctx, keep.ID))
+	})
+}

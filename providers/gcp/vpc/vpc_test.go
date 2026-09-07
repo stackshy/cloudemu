@@ -1566,3 +1566,22 @@ func TestDeleteVPCInUseByChild(t *testing.T) {
 		require.NoError(t, m.DeleteVPC(ctx, vpc.ID))
 	})
 }
+
+// Portable-API parity with AWS/Azure: a route-table association must not
+// outlive its subnet.
+func TestDeleteSubnet_CascadesRouteTableAssociations(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	vpc, err := m.CreateVPC(ctx, driver.VPCConfig{CIDRBlock: "10.0.0.0/16"})
+	require.NoError(t, err)
+	s, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: vpc.ID, CIDRBlock: "10.0.1.0/24"})
+	require.NoError(t, err)
+	rt, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: vpc.ID})
+	require.NoError(t, err)
+	assoc, err := m.AssociateRouteTable(ctx, rt.ID, s.ID)
+	require.NoError(t, err)
+
+	require.NoError(t, m.DeleteSubnet(ctx, s.ID))
+	require.Error(t, m.DisassociateRouteTable(ctx, assoc.ID), "association must die with the subnet")
+}
