@@ -25,6 +25,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		Spanner:             p.Spanner,
 		Dataproc:            p.Dataproc,
 		Datastream:          p.Datastream,
+		CertificateManager:  p.CertificateManager,
 		NetworkConnectivity: p.NetworkConnectivity,
 		Composer:            p.Composer,
 		CloudDeploy:         p.CloudDeploy,
