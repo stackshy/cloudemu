@@ -42,6 +42,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `clouddeploy` | — | — | [CloudDeploy](./gcp/clouddeploy.md) | — | 11 |
 | `cloudformation` | [CloudFormation](./aws/cloudformation.md) | — | — | — | 9 |
 | `cloudfront` | [CloudFront](./aws/cloudfront.md) | — | — | — | 11 |
+| `cloudids` | — | — | [CloudIDS](./gcp/cloudids.md) | — | 6 |
 | `cloudrun` | — | — | [CloudRun](./gcp/cloudrun.md) | — | 18 |
 | `cloudsql` | — | — | [CloudSQL](./gcp/cloudsql.md) | — | 21 |
 | `cloudtasks` | — | — | [CloudTasks](./gcp/cloudtasks.md) | — | 11 |

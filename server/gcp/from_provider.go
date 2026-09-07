@@ -29,6 +29,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		Dataplex:            p.Dataplex,
 		Metastore:           p.Metastore,
 		VPCAccess:           p.VPCAccess,
+		CloudIDS:            p.CloudIDS,
 		NetworkConnectivity: p.NetworkConnectivity,
 		Composer:            p.Composer,
 		CloudDeploy:         p.CloudDeploy,
