@@ -14093,6 +14093,55 @@
     }
   },
   {
+    "service": "securesourcemanager",
+    "interface": "SecureSourceManager",
+    "operations": [
+      {
+        "name": "CreateInstance",
+        "doc": "CreateInstance provisions a new instance and returns its completed LRO."
+      },
+      {
+        "name": "CreateRepository",
+        "doc": "CreateRepository provisions a new repository and returns its completed LRO."
+      },
+      {
+        "name": "DeleteInstance",
+        "doc": "DeleteInstance removes an instance and returns its completed LRO."
+      },
+      {
+        "name": "DeleteRepository",
+        "doc": "DeleteRepository removes a repository and returns its completed LRO."
+      },
+      {
+        "name": "GetInstance",
+        "doc": "GetInstance returns an instance by identity."
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetRepository",
+        "doc": "GetRepository returns a repository by identity."
+      },
+      {
+        "name": "ListInstances",
+        "doc": "ListInstances returns every instance in a project+location."
+      },
+      {
+        "name": "ListRepositories",
+        "doc": "ListRepositories returns every repository in a project+location."
+      },
+      {
+        "name": "PatchRepository",
+        "doc": "PatchRepository applies a masked update to a repository (the one real"
+      }
+    ],
+    "providers": {
+      "gcp": "SecureSourceManager"
+    }
+  },
+  {
     "service": "serverless",
     "interface": "Serverless",
     "operations": [
