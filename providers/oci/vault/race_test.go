@@ -26,7 +26,14 @@ func TestConcurrentVersionWritesAndReads(t *testing.T) {
 
 	m := newTestMock()
 	ctx := context.Background()
-	s := newSecret(t, m, testCompartment, "hot", "initial")
+
+	// Created through the portable driver so PutSecretValue, which resolves a
+	// bare name inside the portable driver's vault, addresses this secret.
+	created, err := m.CreateSecret(ctx, driver.SecretConfig{Name: "hot"}, []byte("initial"))
+	require.NoError(t, err)
+
+	s, err := m.GetOCISecret(created.ID)
+	require.NoError(t, err)
 
 	var wg sync.WaitGroup
 

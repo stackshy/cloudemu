@@ -114,8 +114,8 @@ func (m *Mock) validateSecretSpecLocked(spec *SecretSpec) error {
 		return cerrors.Newf(cerrors.InvalidArgument, "key %s does not belong to vault %s", spec.KeyID, spec.VaultID)
 	}
 
-	if _, ok := m.secretByNameLocked(spec.Name); ok {
-		return cerrors.Newf(cerrors.AlreadyExists, "secret %q already exists", spec.Name)
+	if _, ok := m.secretByNameLocked(spec.VaultID, spec.Name); ok {
+		return cerrors.Newf(cerrors.AlreadyExists, "secret %q already exists in vault %s", spec.Name, spec.VaultID)
 	}
 
 	return nil
@@ -322,7 +322,8 @@ func scheduleSecret(s *secretData, when string) error {
 }
 
 // CancelOCISecretDeletion returns a secret scheduled for deletion to ACTIVE.
-// It fails if another secret has taken its name in the meantime.
+// It fails if another secret in the same vault has taken its name in the
+// meantime.
 func (m *Mock) CancelOCISecretDeletion(id string) (*SecretInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -336,7 +337,7 @@ func (m *Mock) CancelOCISecretDeletion(id string) (*SecretInfo, error) {
 		return nil, cerrors.Newf(cerrors.FailedPrecondition, "secret %s is not scheduled for deletion", id)
 	}
 
-	if other, ok := m.secretByNameLocked(s.Name); ok && other.ID != s.ID {
+	if other, ok := m.secretByNameLocked(s.VaultID, s.Name); ok && other.ID != s.ID {
 		return nil, cerrors.Newf(cerrors.AlreadyExists,
 			"secret %q was recreated as %s while this one was pending deletion", s.Name, other.ID)
 	}
@@ -392,10 +393,24 @@ func (m *Mock) secretLocked(id string) (*secretData, error) {
 	return s, nil
 }
 
-// secretByNameLocked finds a live secret by name. A secret pending deletion
-// releases its name, so the portable driver can delete and recreate one; the
-// pending secret stays reachable by OCID until its deletion is canceled.
-func (m *Mock) secretByNameLocked(name string) (*secretData, bool) {
+// secretByNameLocked finds a live secret by name within one vault. OCI scopes
+// secret names to the vault, so the same name in another vault is a different
+// secret. A secret pending deletion releases its name, so the portable driver
+// can delete and recreate one; the pending secret stays reachable by OCID
+// until its deletion is canceled.
+func (m *Mock) secretByNameLocked(vaultID, name string) (*secretData, bool) {
+	for _, s := range m.secrets.SortedValues() {
+		if s.VaultID == vaultID && s.Name == name && s.LifecycleState == StateActive {
+			return s, true
+		}
+	}
+
+	return nil, false
+}
+
+// liveSecretByNameLocked finds the first live secret of that name in any vault.
+// The portable create uses it to refuse a name it could not then read back.
+func (m *Mock) liveSecretByNameLocked(name string) (*secretData, bool) {
 	for _, s := range m.secrets.SortedValues() {
 		if s.Name == name && s.LifecycleState == StateActive {
 			return s, true
@@ -405,7 +420,8 @@ func (m *Mock) secretByNameLocked(name string) (*secretData, bool) {
 	return nil, false
 }
 
-// secretByVaultAndNameLocked resolves OCI's getByName addressing.
+// secretByVaultAndNameLocked resolves OCI's getByName addressing. An active
+// secret wins over one pending deletion that still holds the same name.
 func (m *Mock) secretByVaultAndNameLocked(vaultID, name string) (*secretData, error) {
 	if vaultID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "vaultId is required")
@@ -413,6 +429,10 @@ func (m *Mock) secretByVaultAndNameLocked(vaultID, name string) (*secretData, er
 
 	if name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "secretName is required")
+	}
+
+	if s, ok := m.secretByNameLocked(vaultID, name); ok {
+		return s, nil
 	}
 
 	for _, s := range m.secrets.SortedValues() {

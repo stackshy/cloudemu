@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 	"time"
 
@@ -14,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	vaultprovider "github.com/stackshy/cloudemu/v2/providers/oci/vault"
 	ocivault "github.com/stackshy/cloudemu/v2/server/oci/vault"
 	"github.com/stackshy/cloudemu/v2/server/oci/workrequest"
@@ -357,7 +359,7 @@ func TestKeyLifecycleAndRotationOverTheWire(t *testing.T) {
 
 	canceled := f.do(http.MethodPost, "/20180608/keys/"+keyID+"/actions/cancelDeletion", nil)
 	require.Equal(t, http.StatusOK, canceled.Code)
-	assert.Equal(t, "ACTIVE", decode(t, canceled)["lifecycleState"])
+	assert.Equal(t, "ENABLED", decode(t, canceled)["lifecycleState"])
 }
 
 func TestKeyErrors(t *testing.T) {
@@ -772,4 +774,564 @@ func (portableOnly) GetSecretValue(context.Context, string, string) (*secretsdri
 }
 func (portableOnly) ListSecretVersions(context.Context, string) ([]secretsdriver.SecretVersion, error) {
 	return nil, nil
+}
+
+// Verbs a collection does not serve, and path shapes the handler claims via
+// Matches but does not route, must answer cleanly rather than fall through.
+func TestUnsupportedVerbsAndUnservedShapes(t *testing.T) {
+	f := newFixture(t)
+	vaultID := f.newVault()
+	keyID := f.newKey(vaultID)
+	secretID := f.newSecret(vaultID, keyID, "verbs", "v")
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		expect int
+	}{
+		// Verbs the resource paths do not serve.
+		{
+			name: "delete a vault", method: http.MethodDelete,
+			target: "/20180608/vaults/" + vaultID, expect: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "delete a key", method: http.MethodDelete,
+			target: "/20180608/keys/" + keyID, expect: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "delete a secret", method: http.MethodDelete,
+			target: "/20180608/secrets/" + secretID, expect: http.StatusMethodNotAllowed,
+		},
+
+		// Verbs the collections do not serve.
+		{
+			name: "delete the vault collection", method: http.MethodDelete,
+			target: "/20180608/vaults", expect: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "delete the key collection", method: http.MethodDelete,
+			target: "/20180608/keys", expect: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "delete the secret collection", method: http.MethodDelete,
+			target: "/20180608/secrets", expect: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "put the key version collection", method: http.MethodPut,
+			target: "/20180608/keys/" + keyID + "/keyVersions", expect: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "delete a key version", method: http.MethodDelete,
+			target: "/20180608/keys/" + keyID + "/keyVersions/x", expect: http.StatusMethodNotAllowed,
+		},
+
+		// Actions are POST-only, except getByName which is GET-only.
+		{
+			name: "get a vault action", method: http.MethodGet,
+			target: "/20180608/vaults/" + vaultID + "/actions/scheduleDeletion",
+			expect: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "get a key action", method: http.MethodGet,
+			target: "/20180608/keys/" + keyID + "/actions/scheduleDeletion",
+			expect: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "get a secret action", method: http.MethodGet,
+			target: "/20180608/secrets/" + secretID + "/actions/scheduleDeletion",
+			expect: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "post getByName", method: http.MethodPost,
+			target: "/20180608/secrets/actions/getByName?vaultId=" + vaultID + "&secretName=verbs",
+			expect: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "post a secret version action as GET", method: http.MethodGet,
+			target: "/20180608/secrets/" + secretID + "/versions/1/actions/scheduleDeletion",
+			expect: http.StatusMethodNotAllowed,
+		},
+		{
+			name: "post a bundle read", method: http.MethodPost,
+			target: "/20190301/secretbundles/" + secretID, expect: http.StatusMethodNotAllowed,
+		},
+
+		// Actions the collections do not define.
+		{
+			name: "unknown vault action", method: http.MethodPost,
+			target: "/20180608/vaults/" + vaultID + "/actions/rotate", expect: http.StatusNotFound,
+		},
+		{
+			name: "unknown key action", method: http.MethodPost,
+			target: "/20180608/keys/" + keyID + "/actions/rotate", expect: http.StatusNotFound,
+		},
+		{
+			name: "unknown secret action", method: http.MethodPost,
+			target: "/20180608/secrets/" + secretID + "/actions/rotate", expect: http.StatusNotFound,
+		},
+		{
+			name: "unknown secret collection action", method: http.MethodGet,
+			target: "/20180608/secrets/actions/search", expect: http.StatusNotFound,
+		},
+		{
+			name: "unknown secret version action", method: http.MethodPost,
+			target: "/20180608/secrets/" + secretID + "/versions/1/actions/promote",
+			expect: http.StatusNotFound,
+		},
+		{
+			name: "unknown bundle action", method: http.MethodGet,
+			target: "/20190301/secretbundles/actions/search", expect: http.StatusNotFound,
+		},
+
+		// Path shapes the handler claims but does not serve.
+		{
+			name: "unknown vault sub-collection", method: http.MethodGet,
+			target: "/20180608/vaults/" + vaultID + "/replicas", expect: http.StatusNotFound,
+		},
+		{
+			name: "unknown key sub-collection", method: http.MethodGet,
+			target: "/20180608/keys/" + keyID + "/replicas", expect: http.StatusNotFound,
+		},
+		{
+			name: "unknown secret sub-collection", method: http.MethodGet,
+			target: "/20180608/secrets/" + secretID + "/replicas", expect: http.StatusNotFound,
+		},
+		{
+			name: "secret version sub-shape that is not an action", method: http.MethodGet,
+			target: "/20180608/secrets/" + secretID + "/versions/1/rotate/now",
+			expect: http.StatusNotFound,
+		},
+		{
+			name: "unknown bundle sub-collection", method: http.MethodGet,
+			target: "/20190301/secretbundles/" + secretID + "/replicas", expect: http.StatusNotFound,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := f.do(tc.method, tc.target, nil)
+			assert.Equal(t, tc.expect, w.Code, w.Body.String())
+		})
+	}
+}
+
+// A malformed path under a claimed prefix is a 400, not a panic.
+func TestMalformedPathIsRejected(t *testing.T) {
+	f := newFixture(t)
+
+	w := f.do(http.MethodGet, "/20180608/", nil)
+	assert.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+}
+
+// failingExtras satisfies Extras with a driver that fails every call, so the
+// handler's error paths are reachable for the reads that cannot fail against
+// the real mock.
+type failingExtras struct {
+	portableOnly
+}
+
+var errDriver = cerrors.New(cerrors.NotFound, "driver is unavailable")
+
+func (failingExtras) CreateVault(*vaultprovider.VaultSpec) (*vaultprovider.VaultInfo, error) {
+	return nil, errDriver
+}
+func (failingExtras) GetVault(string) (*vaultprovider.VaultInfo, error) { return nil, errDriver }
+func (failingExtras) ListVaults(string) ([]vaultprovider.VaultInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) UpdateVault(string, vaultprovider.Update) (*vaultprovider.VaultInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) ScheduleVaultDeletion(string, string) (*vaultprovider.VaultInfo, error) {
+	return nil, errDriver
+}
+func (failingExtras) CancelVaultDeletion(string) (*vaultprovider.VaultInfo, error) {
+	return nil, errDriver
+}
+func (failingExtras) ChangeVaultCompartment(string, string) error { return errDriver }
+func (failingExtras) VaultCompartment(string) string              { return "" }
+
+func (failingExtras) CreateKey(*vaultprovider.KeySpec) (*vaultprovider.KeyInfo, error) {
+	return nil, errDriver
+}
+func (failingExtras) GetKey(string) (*vaultprovider.KeyInfo, error) { return nil, errDriver }
+func (failingExtras) ListKeys(string, string) ([]vaultprovider.KeyInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) UpdateKey(string, vaultprovider.Update) (*vaultprovider.KeyInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) ScheduleKeyDeletion(string, string) (*vaultprovider.KeyInfo, error) {
+	return nil, errDriver
+}
+func (failingExtras) CancelKeyDeletion(string) (*vaultprovider.KeyInfo, error) {
+	return nil, errDriver
+}
+func (failingExtras) ChangeKeyCompartment(string, string) error { return errDriver }
+func (failingExtras) KeyCompartment(string) string              { return "" }
+func (failingExtras) CreateKeyVersion(string) (*vaultprovider.KeyVersionInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) GetKeyVersion(string, string) (*vaultprovider.KeyVersionInfo, error) {
+	return nil, errDriver
+}
+func (failingExtras) ListKeyVersions(string) ([]vaultprovider.KeyVersionInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) CreateOCISecret(*vaultprovider.SecretSpec) (*vaultprovider.SecretInfo, error) {
+	return nil, errDriver
+}
+func (failingExtras) GetOCISecret(string) (*vaultprovider.SecretInfo, error) { return nil, errDriver }
+func (failingExtras) GetOCISecretByName(string, string) (*vaultprovider.SecretInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) ListOCISecrets(string, string, string) ([]vaultprovider.SecretInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) UpdateOCISecret(string, *vaultprovider.SecretUpdate) (
+	*vaultprovider.SecretInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) ScheduleOCISecretDeletion(string, string) (*vaultprovider.SecretInfo, error) {
+	return nil, errDriver
+}
+func (failingExtras) CancelOCISecretDeletion(string) (*vaultprovider.SecretInfo, error) {
+	return nil, errDriver
+}
+func (failingExtras) ChangeSecretCompartment(string, string) error { return errDriver }
+func (failingExtras) SecretCompartment(string) string              { return "" }
+func (failingExtras) ListOCISecretVersions(string) ([]vaultprovider.SecretVersionInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) GetOCISecretVersion(string, int64) (*vaultprovider.SecretVersionInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) ScheduleSecretVersionDeletion(string, int64, string) (
+	*vaultprovider.SecretVersionInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) CancelSecretVersionDeletion(string, int64) (
+	*vaultprovider.SecretVersionInfo, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) GetSecretBundle(string, vaultprovider.BundleSelector) (
+	*vaultprovider.SecretBundle, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) GetSecretBundleByName(string, string, vaultprovider.BundleSelector) (
+	*vaultprovider.SecretBundle, error) {
+	return nil, errDriver
+}
+
+func (failingExtras) ListSecretBundleVersions(string) ([]vaultprovider.SecretVersionInfo, error) {
+	return nil, errDriver
+}
+
+// Every route surfaces a driver failure rather than swallowing it or writing a
+// half-formed success.
+func TestDriverErrorsAreSurfaced(t *testing.T) {
+	h := ocivault.New(failingExtras{}, workrequest.New(config.NewOptions()))
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		body   any
+	}{
+		{name: "create vault", method: http.MethodPost, target: "/20180608/vaults",
+			body: map[string]any{"compartmentId": compartment, "displayName": "v"}},
+		{name: "get vault", method: http.MethodGet, target: "/20180608/vaults/v1"},
+		{name: "list vaults", method: http.MethodGet, target: "/20180608/vaults?compartmentId=" + compartment},
+		{name: "update vault", method: http.MethodPut, target: "/20180608/vaults/v1",
+			body: map[string]any{"displayName": "n"}},
+		{name: "schedule vault deletion", method: http.MethodPost,
+			target: "/20180608/vaults/v1/actions/scheduleDeletion"},
+		{name: "cancel vault deletion", method: http.MethodPost,
+			target: "/20180608/vaults/v1/actions/cancelDeletion"},
+		{name: "change vault compartment", method: http.MethodPost,
+			target: "/20180608/vaults/v1/actions/changeCompartment",
+			body:   map[string]any{"compartmentId": otherCompartment}},
+
+		{name: "create key", method: http.MethodPost, target: "/20180608/keys?vaultId=v1",
+			body: map[string]any{"compartmentId": compartment, "displayName": "k",
+				"keyShape": map[string]any{"algorithm": "AES", "length": 32}}},
+		{name: "get key", method: http.MethodGet, target: "/20180608/keys/k1"},
+		{name: "list keys", method: http.MethodGet, target: "/20180608/keys?compartmentId=" + compartment},
+		{name: "update key", method: http.MethodPut, target: "/20180608/keys/k1",
+			body: map[string]any{"displayName": "n"}},
+		{name: "schedule key deletion", method: http.MethodPost,
+			target: "/20180608/keys/k1/actions/scheduleDeletion"},
+		{name: "cancel key deletion", method: http.MethodPost,
+			target: "/20180608/keys/k1/actions/cancelDeletion"},
+		{name: "change key compartment", method: http.MethodPost,
+			target: "/20180608/keys/k1/actions/changeCompartment",
+			body:   map[string]any{"compartmentId": otherCompartment}},
+		{name: "create key version", method: http.MethodPost, target: "/20180608/keys/k1/keyVersions"},
+		{name: "list key versions", method: http.MethodGet, target: "/20180608/keys/k1/keyVersions"},
+		{name: "get key version", method: http.MethodGet, target: "/20180608/keys/k1/keyVersions/kv1"},
+
+		{name: "create secret", method: http.MethodPost, target: "/20180608/secrets",
+			body: map[string]any{"compartmentId": compartment, "vaultId": "v1", "keyId": "k1",
+				"secretName": "s", "secretContent": map[string]any{"contentType": "BASE64", "content": "dg=="}}},
+		{name: "get secret", method: http.MethodGet, target: "/20180608/secrets/s1"},
+		{name: "list secrets", method: http.MethodGet, target: "/20180608/secrets?compartmentId=" + compartment},
+		{name: "get secret by name", method: http.MethodGet,
+			target: "/20180608/secrets/actions/getByName?vaultId=v1&secretName=s"},
+		{name: "update secret", method: http.MethodPut, target: "/20180608/secrets/s1",
+			body: map[string]any{"description": "d"}},
+		{name: "schedule secret deletion", method: http.MethodPost,
+			target: "/20180608/secrets/s1/actions/scheduleDeletion"},
+		{name: "cancel secret deletion", method: http.MethodPost,
+			target: "/20180608/secrets/s1/actions/cancelDeletion"},
+		{name: "change secret compartment", method: http.MethodPost,
+			target: "/20180608/secrets/s1/actions/changeCompartment",
+			body:   map[string]any{"compartmentId": otherCompartment}},
+		{name: "list secret versions", method: http.MethodGet, target: "/20180608/secrets/s1/versions"},
+		{name: "get secret version", method: http.MethodGet, target: "/20180608/secrets/s1/versions/1"},
+		{name: "schedule secret version deletion", method: http.MethodPost,
+			target: "/20180608/secrets/s1/versions/1/actions/scheduleDeletion"},
+		{name: "cancel secret version deletion", method: http.MethodPost,
+			target: "/20180608/secrets/s1/versions/1/actions/cancelDeletion"},
+
+		{name: "get bundle", method: http.MethodGet, target: "/20190301/secretbundles/s1"},
+		{name: "get bundle by name", method: http.MethodGet,
+			target: "/20190301/secretbundles/actions/getByName?vaultId=v1&secretName=s"},
+		{name: "list bundle versions", method: http.MethodGet,
+			target: "/20190301/secretbundles/s1/versions"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			var reader *bytes.Reader
+
+			if tc.body != nil {
+				raw, err := json.Marshal(tc.body)
+				require.NoError(t, err)
+				reader = bytes.NewReader(raw)
+			} else {
+				reader = bytes.NewReader(nil)
+			}
+
+			w := httptest.NewRecorder()
+			h.ServeHTTP(w, httptest.NewRequest(tc.method, tc.target, reader))
+			assert.Equal(t, http.StatusNotFound, w.Code, w.Body.String())
+		})
+	}
+}
+
+// A client walks a list by following opc-next-page until the header stops
+// coming, and the last page carries no cursor.
+func TestListPaginationWalksEveryPage(t *testing.T) {
+	f := newFixture(t)
+	vaultID := f.newVault()
+	keyID := f.newKey(vaultID)
+
+	const total = 5
+
+	for i := range total {
+		f.newSecret(vaultID, keyID, "paged-"+strconv.Itoa(i), "v")
+	}
+
+	var (
+		seen  []string
+		page  string
+		pages int
+	)
+
+	for {
+		target := "/20180608/secrets?compartmentId=" + compartment + "&limit=2"
+		if page != "" {
+			target += "&page=" + page
+		}
+
+		w := f.do(http.MethodGet, target, nil)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		for _, item := range decodeList(t, w) {
+			seen = append(seen, item["secretName"].(string))
+		}
+
+		pages++
+
+		if page = w.Header().Get("opc-next-page"); page == "" {
+			break
+		}
+
+		require.LessOrEqual(t, pages, total, "pagination did not terminate")
+	}
+
+	assert.Equal(t, 3, pages)
+	assert.Len(t, seen, total)
+	assert.Equal(t,
+		[]string{"paged-0", "paged-1", "paged-2", "paged-3", "paged-4"}, seen)
+}
+
+// A page cursor past the end is an empty page, rendered as [] rather than null.
+func TestPageBeyondTheEndIsEmpty(t *testing.T) {
+	f := newFixture(t)
+	f.newVault()
+
+	w := f.do(http.MethodGet, "/20180608/vaults?compartmentId="+compartment+"&page=99", nil)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+	assert.JSONEq(t, "[]", w.Body.String())
+	assert.Empty(t, w.Header().Get("opc-next-page"))
+}
+
+// OCI scopes secret names to the vault, so the same name in a second vault is
+// a second secret over the wire too.
+func TestSameSecretNameInTwoVaults(t *testing.T) {
+	f := newFixture(t)
+
+	vaultA := f.newVault()
+	keyA := f.newKey(vaultA)
+	vaultB := f.newVault()
+	keyB := f.newKey(vaultB)
+
+	idA := f.newSecret(vaultA, keyA, "db-password", "from-a")
+	idB := f.newSecret(vaultB, keyB, "db-password", "from-b")
+	require.NotEqual(t, idA, idB)
+
+	// getByName resolves within the vault it is given.
+	for _, tc := range []struct{ vaultID, want string }{{vaultA, idA}, {vaultB, idB}} {
+		w := f.do(http.MethodGet,
+			"/20180608/secrets/actions/getByName?vaultId="+tc.vaultID+"&secretName=db-password", nil)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+		assert.Equal(t, tc.want, decode(t, w)["id"])
+	}
+
+	// Each secret keeps its own value.
+	for _, tc := range []struct{ id, want string }{{idA, "from-a"}, {idB, "from-b"}} {
+		w := f.do(http.MethodGet, "/20190301/secretbundles/"+tc.id, nil)
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		content := decode(t, w)["secretBundleContent"].(map[string]any)
+		raw, err := base64.StdEncoding.DecodeString(content["content"].(string))
+		require.NoError(t, err)
+		assert.Equal(t, tc.want, string(raw))
+	}
+
+	// The name is still taken within one vault.
+	w := f.do(http.MethodPost, "/20180608/secrets", map[string]any{
+		"compartmentId": compartment, "vaultId": vaultA, "keyId": keyA,
+		"secretName": "db-password",
+		"secretContent": map[string]any{
+			"contentType": "BASE64",
+			"content":     base64.StdEncoding.EncodeToString([]byte("dup")),
+		},
+	})
+	assert.Equal(t, http.StatusConflict, w.Code, w.Body.String())
+}
+
+// Inputs the handler parses itself, before any driver call.
+func TestHandlerLevelInputRejections(t *testing.T) {
+	f := newFixture(t)
+	vaultID := f.newVault()
+	keyID := f.newKey(vaultID)
+	secretID := f.newSecret(vaultID, keyID, "parsed", "v")
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		body   any
+		expect int
+	}{
+		{
+			name: "version number is not a number", method: http.MethodGet,
+			target: "/20180608/secrets/" + secretID + "/versions/latest",
+			expect: http.StatusBadRequest,
+		},
+		{
+			name: "version number is zero", method: http.MethodGet,
+			target: "/20180608/secrets/" + secretID + "/versions/0",
+			expect: http.StatusBadRequest,
+		},
+		{
+			name: "version action on a bad version number", method: http.MethodPost,
+			target: "/20180608/secrets/" + secretID + "/versions/x/actions/scheduleDeletion",
+			expect: http.StatusBadRequest,
+		},
+		{
+			name: "bundle versionNumber is not a number", method: http.MethodGet,
+			target: "/20190301/secretbundles/" + secretID + "?versionNumber=x",
+			expect: http.StatusBadRequest,
+		},
+		{
+			name: "malformed scheduleDeletion body", method: http.MethodPost,
+			target: "/20180608/vaults/" + vaultID + "/actions/scheduleDeletion",
+			body:   "not-an-object", expect: http.StatusBadRequest,
+		},
+		{
+			name: "changeCompartment without a compartment", method: http.MethodPost,
+			target: "/20180608/vaults/" + vaultID + "/actions/changeCompartment",
+			body:   map[string]any{}, expect: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			w := f.do(tc.method, tc.target, tc.body)
+			assert.Equal(t, tc.expect, w.Code, w.Body.String())
+		})
+	}
+}
+
+// Without a work request store the compartment moves cannot be served, and the
+// handler says so rather than moving the resource untracked.
+func TestChangeCompartmentWithoutWorkRequestsIs501(t *testing.T) {
+	h := ocivault.New(vaultprovider.New(config.NewOptions()), nil)
+
+	w := httptest.NewRecorder()
+	h.ServeHTTP(w, httptest.NewRequest(http.MethodPost,
+		"/20180608/vaults/v1/actions/changeCompartment", bytes.NewReader([]byte(`{"compartmentId":"c"}`))))
+
+	assert.Equal(t, http.StatusNotImplemented, w.Code, w.Body.String())
+}
+
+// Secrets management and KMS are separate OCI services sharing the /20180608
+// prefix, and they answer their deletion actions differently: a secret's is 204
+// with no body, a key's and a vault's are 200 carrying the entity. Pinned so
+// the asymmetry is not "tidied" into consistency.
+func TestDeletionActionStatusCodesMatchTheService(t *testing.T) {
+	f := newFixture(t)
+	vaultID := f.newVault()
+	keyID := f.newKey(vaultID)
+	secretID := f.newSecret(vaultID, keyID, "codes", "v")
+
+	// Secrets: 204, no body.
+	for _, action := range []string{"scheduleDeletion", "cancelDeletion"} {
+		w := f.do(http.MethodPost, "/20180608/secrets/"+secretID+"/actions/"+action, nil)
+		require.Equal(t, http.StatusNoContent, w.Code, w.Body.String())
+		assert.Empty(t, w.Body.String())
+		assert.NotEmpty(t, w.Header().Get("opc-work-request-id"))
+	}
+
+	// Keys and vaults: 200 with the entity.
+	for _, tc := range []struct{ path, state string }{
+		{"/20180608/keys/" + keyID, "ENABLED"},
+		{"/20180608/vaults/" + vaultID, "ACTIVE"},
+	} {
+		scheduled := f.do(http.MethodPost, tc.path+"/actions/scheduleDeletion", nil)
+		require.Equal(t, http.StatusOK, scheduled.Code, scheduled.Body.String())
+		assert.Equal(t, "PENDING_DELETION", decode(t, scheduled)["lifecycleState"])
+
+		canceled := f.do(http.MethodPost, tc.path+"/actions/cancelDeletion", nil)
+		require.Equal(t, http.StatusOK, canceled.Code, canceled.Body.String())
+		assert.Equal(t, tc.state, decode(t, canceled)["lifecycleState"])
+	}
 }

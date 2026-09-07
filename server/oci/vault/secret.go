@@ -171,7 +171,12 @@ func (h *Handler) createSecret(w http.ResponseWriter, r *http.Request) {
 }
 
 // writeSecretAction records the work request for a secret mutation OCI answers
-// with headers only.
+// with headers only: 204 and no body, unlike the key and vault equivalents,
+// which are 200 carrying the entity. The asymmetry is real OCI's — secrets
+// management and KMS are separate services that merely share the /20180608
+// prefix, and the SDK's ScheduleSecretDeletionResponse carries only
+// opc-request-id and opc-work-request-id where ScheduleKeyDeletionResponse
+// carries a Key.
 func (h *Handler) writeSecretAction(
 	w http.ResponseWriter, r *http.Request, info *vaultprovider.SecretInfo, err error, operation string,
 ) {

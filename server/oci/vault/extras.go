@@ -4,11 +4,10 @@ import (
 	vaultprovider "github.com/stackshy/cloudemu/v2/providers/oci/vault"
 )
 
-// VaultManagement is the KMS vault surface.
-//
+// VaultManagement is the KMS vault surface. The portable secrets driver has no
 // container above a secret at all, so every vault operation lives here.
 //
-//nolint:revive // Management alone would not distinguish it from the key and secret surfaces. The portable secrets driver has no
+//nolint:revive // Management alone would not distinguish it from the key and secret surfaces.
 type VaultManagement interface {
 	CreateVault(spec *vaultprovider.VaultSpec) (*vaultprovider.VaultInfo, error)
 	GetVault(id string) (*vaultprovider.VaultInfo, error)

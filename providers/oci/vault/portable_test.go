@@ -181,3 +181,117 @@ func TestPortablePutSecretValueStagesLikeOCI(t *testing.T) {
 		2: {StageCurrent, StageLatest},
 	}, stagesOf(t, m, created.ID))
 }
+
+// A secret created through the OCI-shaped surface, in a vault the portable
+// driver never made, is still addressable by the portable operations.
+func TestPortableReadsReachAnotherVault(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	vaultID, keyID := newVaultAndKey(t, m, testCompartment)
+
+	native, err := m.CreateOCISecret(&SecretSpec{
+		CompartmentID: testCompartment,
+		VaultID:       vaultID, KeyID: keyID,
+		Name: "elsewhere", Content: []byte("native"),
+	})
+	require.NoError(t, err)
+
+	got, err := m.GetSecret(ctx, "elsewhere")
+	require.NoError(t, err)
+	assert.Equal(t, native.ID, got.ID)
+
+	v, err := m.GetSecretValue(ctx, "elsewhere", "")
+	require.NoError(t, err)
+	assert.Equal(t, []byte("native"), v.Value)
+
+	versions, err := m.ListSecretVersions(ctx, "elsewhere")
+	require.NoError(t, err)
+	assert.Len(t, versions, 1)
+
+	list, err := m.ListSecrets(ctx)
+	require.NoError(t, err)
+	require.Len(t, list, 1)
+	assert.Equal(t, native.ID, list[0].ID)
+
+	// And it is writable through the portable surface.
+	_, err = m.PutSecretValue(ctx, "elsewhere", []byte("v2"))
+	require.NoError(t, err)
+}
+
+// OCI scopes secret names to the vault, so one bare name can reach two
+// secrets. Every portable operation that keys by name rejects that rather than
+// silently picking one, and names both vaults so the caller can tell them apart.
+func TestPortableRejectsAnAmbiguousName(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	vaultA, keyA := newVaultAndKey(t, m, testCompartment)
+	vaultB, keyB := newVaultAndKey(t, m, testCompartment)
+
+	for _, v := range []struct{ vaultID, keyID, value string }{
+		{vaultA, keyA, "a"}, {vaultB, keyB, "b"},
+	} {
+		_, err := m.CreateOCISecret(&SecretSpec{
+			CompartmentID: testCompartment,
+			VaultID:       v.vaultID, KeyID: v.keyID,
+			Name: "shared", Content: []byte(v.value),
+		})
+		require.NoError(t, err)
+	}
+
+	_, err := m.GetSecret(ctx, "shared")
+	require.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+	assert.Contains(t, err.Error(), vaultA)
+	assert.Contains(t, err.Error(), vaultB)
+
+	_, err = m.GetSecretValue(ctx, "shared", "")
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+
+	_, err = m.PutSecretValue(ctx, "shared", []byte("v"))
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+
+	_, err = m.ListSecretVersions(ctx, "shared")
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+
+	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(m.DeleteSecret(ctx, "shared")))
+
+	// Listing still reports both: it needs no name to address them.
+	list, err := m.ListSecrets(ctx)
+	require.NoError(t, err)
+	assert.Len(t, list, 2)
+
+	// Scheduling one for deletion releases its name, so the other resolves.
+	byName, err := m.GetOCISecretByName(vaultA, "shared")
+	require.NoError(t, err)
+	_, err = m.ScheduleOCISecretDeletion(byName.ID, "")
+	require.NoError(t, err)
+
+	got, err := m.GetSecret(ctx, "shared")
+	require.NoError(t, err)
+	assert.NotEqual(t, byName.ID, got.ID)
+}
+
+// The portable create refuses a name another vault already holds, rather than
+// minting a secret its own reads would then call ambiguous.
+func TestPortableCreateRefusesANameAnotherVaultHolds(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	vaultID, keyID := newVaultAndKey(t, m, testCompartment)
+
+	_, err := m.CreateOCISecret(&SecretSpec{
+		CompartmentID: testCompartment,
+		VaultID:       vaultID, KeyID: keyID,
+		Name: "taken", Content: []byte("native"),
+	})
+	require.NoError(t, err)
+
+	_, err = m.CreateSecret(ctx, driver.SecretConfig{Name: "taken"}, []byte("portable"))
+	require.Equal(t, cerrors.AlreadyExists, cerrors.GetCode(err))
+	assert.Contains(t, err.Error(), vaultID)
+
+	// A free name is unaffected.
+	_, err = m.CreateSecret(ctx, driver.SecretConfig{Name: "free"}, []byte("portable"))
+	require.NoError(t, err)
+}

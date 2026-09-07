@@ -259,3 +259,88 @@ func TestChangeSecretCompartment(t *testing.T) {
 		cerrors.GetCode(m.ChangeSecretCompartment("ocid1.vaultsecret.oc1.iad.x", otherCompart)))
 	assert.Empty(t, m.SecretCompartment("ocid1.vaultsecret.oc1.iad.x"))
 }
+
+// OCI scopes secret names to the vault, so the same name in two vaults is two
+// secrets rather than a conflict.
+func TestSecretNamesAreUniquePerVault(t *testing.T) {
+	m := newTestMock()
+	vaultA, keyA := newVaultAndKey(t, m, testCompartment)
+	vaultB, keyB := newVaultAndKey(t, m, testCompartment)
+
+	first, err := m.CreateOCISecret(&SecretSpec{
+		CompartmentID: testCompartment,
+		VaultID:       vaultA, KeyID: keyA,
+		Name: "db-password", Content: []byte("a"),
+	})
+	require.NoError(t, err)
+
+	second, err := m.CreateOCISecret(&SecretSpec{
+		CompartmentID: testCompartment,
+		VaultID:       vaultB, KeyID: keyB,
+		Name: "db-password", Content: []byte("b"),
+	})
+	require.NoError(t, err)
+
+	assert.NotEqual(t, first.ID, second.ID)
+	assert.Equal(t, vaultA, first.VaultID)
+	assert.Equal(t, vaultB, second.VaultID)
+
+	// Each vault's getByName resolves to its own secret.
+	got, err := m.GetOCISecretByName(vaultA, "db-password")
+	require.NoError(t, err)
+	assert.Equal(t, first.ID, got.ID)
+
+	got, err = m.GetOCISecretByName(vaultB, "db-password")
+	require.NoError(t, err)
+	assert.Equal(t, second.ID, got.ID)
+
+	// Within one vault the name is still taken.
+	_, err = m.CreateOCISecret(&SecretSpec{
+		CompartmentID: testCompartment,
+		VaultID:       vaultA, KeyID: keyA,
+		Name: "db-password", Content: []byte("c"),
+	})
+	assert.Equal(t, cerrors.AlreadyExists, cerrors.GetCode(err))
+}
+
+// An unrelated vault reusing the name must not block a restore.
+func TestCancelDeletionAllowsTheSameNameInAnotherVault(t *testing.T) {
+	m := newTestMock()
+	first := newSecret(t, m, testCompartment, "shared", "a")
+	vaultB, keyB := newVaultAndKey(t, m, testCompartment)
+
+	_, err := m.ScheduleOCISecretDeletion(first.ID, "")
+	require.NoError(t, err)
+
+	_, err = m.CreateOCISecret(&SecretSpec{
+		CompartmentID: testCompartment,
+		VaultID:       vaultB, KeyID: keyB,
+		Name: "shared", Content: []byte("b"),
+	})
+	require.NoError(t, err)
+
+	restored, err := m.CancelOCISecretDeletion(first.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StateActive, restored.LifecycleState)
+}
+
+// A pending-deletion secret keeps its name until the deletion is cancelled, so
+// getByName must not return it in preference to the live secret beside it.
+func TestGetOCISecretByNamePrefersTheActiveSecret(t *testing.T) {
+	m := newTestMock()
+	first := newSecret(t, m, testCompartment, "reused", "a")
+
+	_, err := m.ScheduleOCISecretDeletion(first.ID, "")
+	require.NoError(t, err)
+
+	second, err := m.CreateOCISecret(&SecretSpec{
+		CompartmentID: testCompartment,
+		VaultID:       first.VaultID, KeyID: first.KeyID,
+		Name: "reused", Content: []byte("b"),
+	})
+	require.NoError(t, err)
+
+	got, err := m.GetOCISecretByName(first.VaultID, "reused")
+	require.NoError(t, err)
+	assert.Equal(t, second.ID, got.ID)
+}

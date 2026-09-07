@@ -85,7 +85,7 @@ func TestCreateKey(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, tc.expectMode, info.ProtectionMode)
-			assert.Equal(t, StateActive, info.LifecycleState)
+			assert.Equal(t, StateEnabled, info.LifecycleState)
 			assert.True(t, strings.HasPrefix(info.ID, "ocid1.key.oc1.iad."), "got %q", info.ID)
 			assert.True(t, strings.HasPrefix(info.CurrentKeyVersion, "ocid1.keyversion.oc1.iad."),
 				"got %q", info.CurrentKeyVersion)
@@ -155,7 +155,7 @@ func TestKeyScheduledDeletionAndCancellation(t *testing.T) {
 
 	restored, err := m.CancelKeyDeletion(keyID)
 	require.NoError(t, err)
-	assert.Equal(t, StateActive, restored.LifecycleState)
+	assert.Equal(t, StateEnabled, restored.LifecycleState)
 
 	_, err = m.CancelKeyDeletion(keyID)
 	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
@@ -216,4 +216,42 @@ func TestUpdateAndMoveKey(t *testing.T) {
 
 	_, err = m.GetKey("ocid1.key.oc1.iad.x")
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+}
+
+// The KMS surface and the secret surface report different live states. Per the
+// SDK's KeyLifecycleStateEnum a key and a key version are ENABLED and never
+// ACTIVE, while a vault and a secret are ACTIVE and never ENABLED —
+// terraform-provider-oci's oci_kms_key waits on ENABLED, so a key reporting
+// ACTIVE hangs the apply.
+func TestKeyStatesAreEnabledAndResourceStatesAreActive(t *testing.T) {
+	m := newTestMock()
+
+	v, err := m.CreateVault(&VaultSpec{CompartmentID: testCompartment, DisplayName: "v"})
+	require.NoError(t, err)
+	assert.Equal(t, StateActive, v.LifecycleState, "a vault is ACTIVE")
+
+	k, err := m.CreateKey(&KeySpec{
+		CompartmentID: testCompartment, VaultID: v.ID, DisplayName: "k",
+		Shape: KeyShape{Algorithm: AlgorithmAES, Length: 32},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, StateEnabled, k.LifecycleState, "a key is ENABLED, never ACTIVE")
+
+	kv, err := m.GetKeyVersion(k.ID, k.CurrentKeyVersion)
+	require.NoError(t, err)
+	assert.Equal(t, StateEnabled, kv.LifecycleState, "a key version is ENABLED, never ACTIVE")
+
+	rotated, err := m.CreateKeyVersion(k.ID)
+	require.NoError(t, err)
+	assert.Equal(t, StateEnabled, rotated.LifecycleState, "a rotated key version is ENABLED")
+
+	s, err := m.CreateOCISecret(&SecretSpec{
+		CompartmentID: testCompartment, VaultID: v.ID, KeyID: k.ID,
+		Name: "s", Content: []byte("v"),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, StateActive, s.LifecycleState, "a secret is ACTIVE")
+
+	// The two vocabularies stay distinct.
+	assert.NotEqual(t, StateActive, StateEnabled)
 }

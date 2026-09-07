@@ -25,9 +25,17 @@ const timeFormat = time.RFC3339
 // day is the unit OCI states its deletion windows in.
 const day = 24 * time.Hour
 
-// Lifecycle states an OCI Vault resource reports.
+// Lifecycle states an OCI Vault resource reports. The KMS surface and the
+// secret surface do not share a live state: per the SDK's
+// KeyLifecycleStateEnum a key or key version is ENABLED, never ACTIVE, while
+// VaultLifecycleStateEnum and SecretLifecycleStateEnum both use ACTIVE.
+// terraform-provider-oci's oci_kms_key waits on ENABLED, so the distinction is
+// load-bearing. The rest of KeyLifecycleStateEnum — ENABLING, DISABLING,
+// DISABLED — arrives with the enableKey/disableKey operations, which this
+// handler does not serve.
 const (
 	StateActive          = "ACTIVE"
+	StateEnabled         = "ENABLED"
 	StatePendingDeletion = "PENDING_DELETION"
 )
 

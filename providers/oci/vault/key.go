@@ -139,7 +139,7 @@ func (m *Mock) newKeyLocked(spec *KeySpec, mode string) *keyData {
 		DisplayName:    spec.DisplayName,
 		Shape:          spec.Shape,
 		ProtectionMode: mode,
-		LifecycleState: StateActive,
+		LifecycleState: StateEnabled,
 		TimeCreated:    m.now(),
 		Scope:          scope.Scope{Compartment: m.compartmentOr(spec.CompartmentID)},
 		FreeformTags:   copyTags(spec.FreeformTags),
@@ -266,7 +266,7 @@ func (m *Mock) CancelKeyDeletion(id string) (*KeyInfo, error) {
 		return nil, cerrors.Newf(cerrors.FailedPrecondition, "key %s is not scheduled for deletion", id)
 	}
 
-	k.LifecycleState = StateActive
+	k.LifecycleState = StateEnabled
 	k.TimeOfDeletion = ""
 
 	info := toKeyInfo(k)
@@ -318,7 +318,7 @@ func (m *Mock) CreateKeyVersion(keyID string) (*KeyVersionInfo, error) {
 		return nil, err
 	}
 
-	if k.LifecycleState != StateActive {
+	if k.LifecycleState != StateEnabled {
 		return nil, cerrors.Newf(cerrors.FailedPrecondition, "key %s is %s", keyID, k.LifecycleState)
 	}
 
@@ -442,7 +442,7 @@ func toKeyVersionInfo(kv *keyVersionData) KeyVersionInfo {
 		KeyID:          kv.KeyID,
 		VaultID:        kv.VaultID,
 		CompartmentID:  kv.Scope.Compartment,
-		LifecycleState: StateActive,
+		LifecycleState: StateEnabled,
 		TimeCreated:    kv.TimeCreated,
 	}
 }
