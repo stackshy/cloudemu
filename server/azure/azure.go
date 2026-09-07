@@ -21,6 +21,7 @@ import (
 	bastionsrv "github.com/stackshy/cloudemu/v2/server/azure/bastion"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
+	chaosstudiosrv "github.com/stackshy/cloudemu/v2/server/azure/chaosstudio"
 	communicationsrv "github.com/stackshy/cloudemu/v2/server/azure/communication"
 	containerappssrv "github.com/stackshy/cloudemu/v2/server/azure/containerapps"
 	containerinstancessrv "github.com/stackshy/cloudemu/v2/server/azure/containerinstances"
@@ -177,6 +178,8 @@ type Drivers struct {
 	DevCenter devcentersrv.Store
 	// Purview serves Microsoft.Purview/accounts.
 	Purview purviewsrv.Store
+	// ChaosStudio serves Microsoft.Chaos/experiments.
+	ChaosStudio chaosstudiosrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -501,6 +504,14 @@ func New(d Drivers) http.Handler {
 	if d.Purview != nil {
 		purviewHandler = purviewsrv.New(d.Purview)
 		rgPurgers = append(rgPurgers, purviewHandler)
+	}
+
+	// Chaos Studio: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var chaosStudioHandler *chaosstudiosrv.Handler
+	if d.ChaosStudio != nil {
+		chaosStudioHandler = chaosstudiosrv.New(d.ChaosStudio)
+		rgPurgers = append(rgPurgers, chaosStudioHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -906,6 +917,10 @@ func New(d Drivers) http.Handler {
 
 	if purviewHandler != nil {
 		srv.Register(purviewHandler)
+	}
+
+	if chaosStudioHandler != nil {
+		srv.Register(chaosStudioHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

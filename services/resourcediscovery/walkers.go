@@ -79,6 +79,9 @@ const (
 	// ServicePurview buckets Microsoft Purview resources
 	// (Microsoft.Purview/accounts).
 	ServicePurview = "purview"
+	// ServiceChaosStudio buckets Azure Chaos Studio resources
+	// (Microsoft.Chaos/experiments).
+	ServiceChaosStudio = "chaosstudio"
 )
 
 // Resource type constants emitted by the walkers.
@@ -184,6 +187,10 @@ const TypeDevCenter = "DevCenter"
 // TypePurviewAccount is the portable type for a Microsoft Purview resource
 // (Microsoft.Purview/accounts). Azure-only, so it lives in its own line.
 const TypePurviewAccount = "Account"
+
+// TypeChaosExperiment is the portable type for an Azure Chaos Studio resource
+// (Microsoft.Chaos/experiments). Azure-only, so it lives in its own line.
+const TypeChaosExperiment = "Experiment"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs

@@ -47,6 +47,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		ManagedGrafana:     p.ManagedGrafana,
 		DevCenter:          p.DevCenter,
 		Purview:            p.Purview,
+		ChaosStudio:        p.ChaosStudio,
 		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,
 		IAM:                p.IAM,

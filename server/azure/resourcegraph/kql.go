@@ -89,6 +89,7 @@ const (
 	azureTypeGrafana   = "microsoft.dashboard/grafana"
 	azureTypeDevCenter = "microsoft.devcenter/devcenters"
 	azureTypePurview   = "microsoft.purview/accounts"
+	azureTypeChaosExp  = "microsoft.chaos/experiments"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -123,6 +124,7 @@ const (
 	portableManagedGraf  = "managedgrafana"
 	portableDevCenter    = "devcenter"
 	portablePurview      = "purview"
+	portableChaosStudio  = "chaosstudio"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -412,6 +414,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeGrafana:   {portableManagedGraf, "Grafana"},
 	azureTypeDevCenter: {portableDevCenter, "DevCenter"},
 	azureTypePurview:   {portablePurview, "Account"},
+	azureTypeChaosExp:  {portableChaosStudio, "Experiment"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the
