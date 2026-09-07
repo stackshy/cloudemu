@@ -70,6 +70,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [Scheduler](./scheduler.md) | `eventbridgescheduler` | 12 |
 | [SecretsManager](./secretsmanager.md) | `secrets` | 7 |
 | [ServiceQuotas](./servicequotas.md) | — (provider-native) | 6 |
+| [TimestreamWrite](./timestreamwrite.md) | `timestreamwrite` | 13 |
 | [Transfer](./transfer.md) | `transfer` | 17 |
 | [VPC](./vpc.md) | `networking` | 57 |
 | [VPCLattice](./vpclattice.md) | `vpclattice` | 73 |

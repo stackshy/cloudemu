@@ -15892,6 +15892,54 @@
     }
   },
   {
+    "service": "timestreamwrite",
+    "interface": "Timestream",
+    "operations": [
+      {
+        "name": "CreateDatabase"
+      },
+      {
+        "name": "CreateTable"
+      },
+      {
+        "name": "DeleteDatabase"
+      },
+      {
+        "name": "DeleteTable"
+      },
+      {
+        "name": "DescribeDatabase"
+      },
+      {
+        "name": "DescribeTable"
+      },
+      {
+        "name": "ListDatabases"
+      },
+      {
+        "name": "ListTables"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateDatabase"
+      },
+      {
+        "name": "UpdateTable"
+      }
+    ],
+    "providers": {
+      "aws": "TimestreamWrite"
+    }
+  },
+  {
     "service": "transfer",
     "interface": "Transfer",
     "operations": [

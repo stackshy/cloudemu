@@ -79,6 +79,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/sqs"
 	ssmsrv "github.com/stackshy/cloudemu/v2/server/aws/ssm"
 	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
+	timestreamwritesrv "github.com/stackshy/cloudemu/v2/server/aws/timestreamwrite"
 	transfersrv "github.com/stackshy/cloudemu/v2/server/aws/transfer"
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
@@ -142,6 +143,7 @@ import (
 	sesv2driver "github.com/stackshy/cloudemu/v2/services/sesv2/driver"
 	sfndriver "github.com/stackshy/cloudemu/v2/services/sfn/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
+	timestreamwritedriver "github.com/stackshy/cloudemu/v2/services/timestreamwrite/driver"
 	transferdriver "github.com/stackshy/cloudemu/v2/services/transfer/driver"
 	vpclatticedriver "github.com/stackshy/cloudemu/v2/services/vpclattice/driver"
 	wafv2driver "github.com/stackshy/cloudemu/v2/services/wafv2/driver"
@@ -278,6 +280,10 @@ type Drivers struct {
 	// Athena serves the AWS Athena JSON 1.1 protocol (X-Amz-Target prefix
 	// "AmazonAthena.") against the athena driver.
 	Athena athenadriver.Athena
+	// TimestreamWrite serves the Amazon Timestream Write JSON 1.0 protocol
+	// (X-Amz-Target prefix "Timestream_20181101.") against the timestreamwrite
+	// driver: databases and the tables that belong to them.
+	TimestreamWrite timestreamwritedriver.Timestream
 	// Transfer serves the AWS Transfer Family JSON 1.1 protocol (X-Amz-Target
 	// prefix "TransferService.") against the transfer driver.
 	Transfer transferdriver.Transfer
@@ -450,6 +456,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		CloudTrail:          p.CloudTrail,
 		Glue:                p.Glue,
 		Athena:              p.Athena,
+		TimestreamWrite:     p.TimestreamWrite,
 		Transfer:            p.Transfer,
 		Cognito:             p.Cognito,
 		Config:              p.Config,
@@ -621,6 +628,13 @@ func New(d Drivers) *server.Server {
 	// other JSON 1.1 services, so registration order is unconstrained.
 	if d.Athena != nil {
 		srv.Register(athenasrv.New(d.Athena))
+	}
+
+	// TimestreamWrite matches the X-Amz-Target prefix "Timestream_20181101." —
+	// disjoint from the other JSON-RPC services, so registration order is
+	// unconstrained.
+	if d.TimestreamWrite != nil {
+		srv.Register(timestreamwritesrv.New(d.TimestreamWrite))
 	}
 
 	// Transfer matches the X-Amz-Target prefix "TransferService." — disjoint from
