@@ -5342,6 +5342,46 @@
     }
   },
   {
+    "service": "datafusion",
+    "interface": "DataFusion",
+    "operations": [
+      {
+        "name": "CreateInstance"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "GetInstance"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListInstances"
+      },
+      {
+        "name": "Owns",
+        "doc": "Owns reports whether this store holds the named instance, so the wire"
+      },
+      {
+        "name": "OwnsAnyIn",
+        "doc": "OwnsAnyIn reports whether this store holds any instance in the scope, so a"
+      },
+      {
+        "name": "PatchInstance"
+      },
+      {
+        "name": "RestartInstance",
+        "doc": "RestartInstance runs an ACTIVE instance through RESTARTING back to ACTIVE."
+      }
+    ],
+    "providers": {
+      "gcp": "DataFusion"
+    }
+  },
+  {
     "service": "dataplex",
     "interface": "Dataplex",
     "operations": [
