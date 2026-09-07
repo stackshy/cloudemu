@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigquery"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigtable"
+	certmanagerprov "github.com/stackshy/cloudemu/v2/providers/gcp/certificatemanager"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddeploy"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudfunctions"
@@ -98,6 +99,7 @@ type Provider struct {
 	Spanner             *spannerprov.Mock
 	Dataproc            *dataproc.Mock
 	Datastream          *datastream.Mock
+	CertificateManager  *certmanagerprov.Mock
 	NetworkConnectivity *networkconnectivity.Mock
 	Composer            *composer.Mock
 	CloudDeploy         *clouddeploy.Mock
@@ -153,6 +155,7 @@ func New(opts ...config.Option) *Provider {
 		Spanner:             spannerprov.New(o),
 		Dataproc:            dataproc.New(o),
 		Datastream:          datastream.New(o),
+		CertificateManager:  certmanagerprov.New(o),
 		NetworkConnectivity: networkconnectivity.New(o),
 		Composer:            composer.New(o),
 		CloudDeploy:         clouddeploy.New(o),

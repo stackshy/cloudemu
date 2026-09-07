@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
 	bigqueryserver "github.com/stackshy/cloudemu/v2/server/gcp/bigquery"
 	bigtableserver "github.com/stackshy/cloudemu/v2/server/gcp/bigtable"
+	certmanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/certificatemanager"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudasset"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudbilling"
 	clouddeploysrv "github.com/stackshy/cloudemu/v2/server/gcp/clouddeploy"
@@ -57,6 +58,7 @@ import (
 	bqdriver "github.com/stackshy/cloudemu/v2/services/bigquery/driver"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
+	certmanagerdriver "github.com/stackshy/cloudemu/v2/services/certificatemanager/driver"
 	clouddeploydriver "github.com/stackshy/cloudemu/v2/services/clouddeploy/driver"
 	cloudrundriver "github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
 	ctdriver "github.com/stackshy/cloudemu/v2/services/cloudtasks/driver"
@@ -132,6 +134,14 @@ type Drivers struct {
 	// every other /v1/projects/ handler, and its location-scoped operation polls
 	// are owned by the shared LRO poller.
 	Datastream datastreamdriver.Datastream
+	// CertificateManager serves the certificatemanager.googleapis.com v1
+	// certificate, certificate-map, and DNS-authorization control plane against
+	// the certificatemanager driver. Its paths live under /v1/projects/{p}/
+	// locations/{l}/{certificates|certificateMaps|dnsAuthorizations}[/…]; the
+	// handler's Matches narrows on those resource segments, so it is disjoint from
+	// every other /v1/projects/ handler, and its location-scoped operation polls
+	// are owned by the shared LRO poller.
+	CertificateManager certmanagerdriver.CertificateManager
 	// NetworkConnectivity serves the networkconnectivity.googleapis.com v1 hub +
 	// spoke control plane against the networkconnectivity driver. Its paths live
 	// under /v1/projects/{p}/locations/{l}/{hubs|spokes}[/…] (hubs are global,
@@ -445,6 +455,19 @@ func New(d Drivers) *server.Server {
 		datastreamH := datastreamsrv.New(d.Datastream)
 		datastreamH.SetOperationRegistry(opsReg)
 		srv.Register(datastreamH)
+	}
+
+	// CertificateManager matches /v1/projects/{p}/locations/{l}/{certificates|
+	// certificateMaps|dnsAuthorizations}[/…]. Its resource-segment guard is
+	// disjoint from every other /v1/projects/ handler (Composer's environments,
+	// Cloud Deploy's pipelines/targets, Datastream's connectionProfiles/streams,
+	// …), so registration order among them is unconstrained; registered before
+	// Firestore's permissive prefix. Its location-scoped operation polls are owned
+	// by the shared LRO poller, which the handler's Matches yields to.
+	if d.CertificateManager != nil {
+		certmanagerH := certmanagersrv.New(d.CertificateManager)
+		certmanagerH.SetOperationRegistry(opsReg)
+		srv.Register(certmanagerH)
 	}
 
 	// NetworkConnectivity matches /v1/projects/{p}/locations/{l}/{hubs|spokes}

@@ -2358,6 +2358,64 @@
     }
   },
   {
+    "service": "certificatemanager",
+    "interface": "CertificateManager",
+    "operations": [
+      {
+        "name": "CreateCertificate"
+      },
+      {
+        "name": "CreateCertificateMap"
+      },
+      {
+        "name": "CreateDNSAuthorization"
+      },
+      {
+        "name": "DeleteCertificate"
+      },
+      {
+        "name": "DeleteCertificateMap"
+      },
+      {
+        "name": "DeleteDNSAuthorization"
+      },
+      {
+        "name": "GetCertificate"
+      },
+      {
+        "name": "GetCertificateMap"
+      },
+      {
+        "name": "GetDNSAuthorization"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListCertificateMaps"
+      },
+      {
+        "name": "ListCertificates"
+      },
+      {
+        "name": "ListDNSAuthorizations"
+      },
+      {
+        "name": "PatchCertificate"
+      },
+      {
+        "name": "PatchCertificateMap"
+      },
+      {
+        "name": "PatchDNSAuthorization"
+      }
+    ],
+    "providers": {
+      "gcp": "CertificateManager"
+    }
+  },
+  {
     "service": "cloudasset",
     "interface": "provider-native",
     "operations": [
