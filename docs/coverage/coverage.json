@@ -6306,6 +6306,49 @@
     }
   },
   {
+    "service": "gkebackup",
+    "interface": "GKEBackup",
+    "operations": [
+      {
+        "name": "CreateBackupPlan"
+      },
+      {
+        "name": "CreateRestorePlan"
+      },
+      {
+        "name": "DeleteBackupPlan"
+      },
+      {
+        "name": "DeleteRestorePlan"
+      },
+      {
+        "name": "GetBackupPlan"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetRestorePlan"
+      },
+      {
+        "name": "ListBackupPlans"
+      },
+      {
+        "name": "ListRestorePlans"
+      },
+      {
+        "name": "PatchBackupPlan"
+      },
+      {
+        "name": "PatchRestorePlan"
+      }
+    ],
+    "providers": {
+      "gcp": "GKEBackup"
+    }
+  },
+  {
     "service": "glue",
     "interface": "Glue",
     "operations": [

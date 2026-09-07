@@ -42,6 +42,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/firestore"
 	"github.com/stackshy/cloudemu/v2/server/gcp/gcs"
 	"github.com/stackshy/cloudemu/v2/server/gcp/gke"
+	gkebackupsrv "github.com/stackshy/cloudemu/v2/server/gcp/gkebackup"
 	"github.com/stackshy/cloudemu/v2/server/gcp/iam"
 	kmssrv "github.com/stackshy/cloudemu/v2/server/gcp/kms"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/gcp/loadbalancer"
@@ -83,6 +84,7 @@ import (
 	datastreamdriver "github.com/stackshy/cloudemu/v2/services/datastream/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	gkebackupdriver "github.com/stackshy/cloudemu/v2/services/gkebackup/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
@@ -158,6 +160,13 @@ type Drivers struct {
 	// every other /v1/projects/ handler, and its location-scoped operation polls
 	// are owned by the shared LRO poller.
 	CertificateManager certmanagerdriver.CertificateManager
+	// GKEBackup serves the gkebackup.googleapis.com v1 backup-plan and
+	// restore-plan control plane against the gkebackup driver. Its paths live
+	// under /v1/projects/{p}/locations/{l}/{backupPlans|restorePlans}[/…]; the
+	// handler's Matches narrows on those resource segments, so it is disjoint from
+	// every other /v1/projects/ handler, and its location-scoped operation polls
+	// are owned by the shared LRO poller.
+	GKEBackup gkebackupdriver.GKEBackup
 	// Dataplex serves the dataplex.googleapis.com v1 lake → zone → asset control
 	// plane against the dataplex driver. Its paths live under /v1/projects/{p}/
 	// locations/{l}/lakes[/{lake}/zones[/{zone}/assets[/…]]]; the handler's Matches
@@ -546,6 +555,19 @@ func New(d Drivers) *server.Server {
 		certmanagerH := certmanagersrv.New(d.CertificateManager)
 		certmanagerH.SetOperationRegistry(opsReg)
 		srv.Register(certmanagerH)
+	}
+
+	// GKEBackup matches /v1/projects/{p}/locations/{l}/{backupPlans|restorePlans}
+	// [/…]. Its resource-segment guard is disjoint from every other /v1/projects/
+	// handler (Composer's environments, Cloud Deploy's pipelines/targets,
+	// Certificate Manager's certificates, Datastream's streams, …), so
+	// registration order among them is unconstrained; registered before
+	// Firestore's permissive prefix. Its location-scoped operation polls are owned
+	// by the shared LRO poller, which the handler's Matches yields to.
+	if d.GKEBackup != nil {
+		gkebackupH := gkebackupsrv.New(d.GKEBackup)
+		gkebackupH.SetOperationRegistry(opsReg)
+		srv.Register(gkebackupH)
 	}
 
 	// Dataplex matches /v1/projects/{p}/locations/{l}/lakes[/{lake}/zones[/{zone}/

@@ -26,6 +26,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		Dataproc:            p.Dataproc,
 		Datastream:          p.Datastream,
 		CertificateManager:  p.CertificateManager,
+		GKEBackup:           p.GKEBackup,
 		Dataplex:            p.Dataplex,
 		Metastore:           p.Metastore,
 		VPCAccess:           p.VPCAccess,
