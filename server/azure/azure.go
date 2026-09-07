@@ -70,6 +70,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/postgresflex"
 	privatednssrv "github.com/stackshy/cloudemu/v2/server/azure/privatedns"
 	providerssrv "github.com/stackshy/cloudemu/v2/server/azure/providers"
+	purviewsrv "github.com/stackshy/cloudemu/v2/server/azure/purview"
 	"github.com/stackshy/cloudemu/v2/server/azure/queue"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
@@ -174,6 +175,8 @@ type Drivers struct {
 	ManagedGrafana managedgrafanasrv.Store
 	// DevCenter serves Microsoft.DevCenter/devcenters.
 	DevCenter devcentersrv.Store
+	// Purview serves Microsoft.Purview/accounts.
+	Purview purviewsrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -490,6 +493,14 @@ func New(d Drivers) http.Handler {
 	if d.DevCenter != nil {
 		devCenterHandler = devcentersrv.New(d.DevCenter)
 		rgPurgers = append(rgPurgers, devCenterHandler)
+	}
+
+	// Purview: a resource-group-scoped resource, so its handler joins the purge
+	// cascade. Registered further below.
+	var purviewHandler *purviewsrv.Handler
+	if d.Purview != nil {
+		purviewHandler = purviewsrv.New(d.Purview)
+		rgPurgers = append(rgPurgers, purviewHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -891,6 +902,10 @@ func New(d Drivers) http.Handler {
 
 	if devCenterHandler != nil {
 		srv.Register(devCenterHandler)
+	}
+
+	if purviewHandler != nil {
+		srv.Register(purviewHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

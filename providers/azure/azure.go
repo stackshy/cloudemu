@@ -43,6 +43,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/v2/providers/azure/postgresflex"
 	"github.com/stackshy/cloudemu/v2/providers/azure/privatedns"
+	"github.com/stackshy/cloudemu/v2/providers/azure/purview"
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/providers/azure/signalr"
@@ -183,6 +184,7 @@ type Provider struct {
 	DigitalTwins       *digitaltwins.Mock
 	ManagedGrafana     *managedgrafana.Mock
 	DevCenter          *devcenter.Mock
+	Purview            *purview.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -253,6 +255,7 @@ func New(opts ...config.Option) *Provider {
 		DigitalTwins:       digitaltwins.New(o),
 		ManagedGrafana:     managedgrafana.New(o),
 		DevCenter:          devcenter.New(o),
+		Purview:            purview.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -295,6 +298,7 @@ func New(opts ...config.Option) *Provider {
 				digitalTwinsDiscovery{p.DigitalTwins},
 				managedGrafanaDiscovery{p.ManagedGrafana},
 				devCenterDiscovery{p.DevCenter},
+				purviewDiscovery{p.Purview},
 			},
 		},
 	)
