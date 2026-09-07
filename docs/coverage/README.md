@@ -61,6 +61,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `databricks` | — | [Databricks](./azure/databricks.md) | — | — | 46 |
 | `datacatalog` | — | — | [DataCatalog](./gcp/datacatalog.md) | — | 21 |
 | `datafactory` | — | [DataFactory](./azure/datafactory.md) | — | — | 6 |
+| `dataform` | — | — | [Dataform](./gcp/dataform.md) | — | 5 |
 | `dataplex` | — | — | [Dataplex](./gcp/dataplex.md) | — | 16 |
 | `dataproc` | — | — | [Dataproc](./gcp/dataproc.md) | — | 6 |
 | `datastream` | — | — | [Datastream](./gcp/datastream.md) | — | 11 |
@@ -94,6 +95,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `kusto` | — | [Kusto](./azure/kusto.md) | — | — | 14 |
 | `loadbalancer` | [ELB](./aws/elb.md) | [LB](./azure/lb.md) | [LB](./gcp/lb.md) | — | 19 |
 | `loadtesting` | — | [LoadTesting](./azure/loadtesting.md) | — | — | 8 |
+| `location` | [Location](./aws/location.md) | — | — | — | 28 |
 | `locks` | — | [Locks](./azure/locks.md) | — | — | 4 |
 | `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | — | 17 |
 | `lro` | — | — | [LRO](./gcp/lro.md) | — | 1 |

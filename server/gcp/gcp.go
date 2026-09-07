@@ -31,6 +31,7 @@ import (
 	composersrv "github.com/stackshy/cloudemu/v2/server/gcp/composer"
 	"github.com/stackshy/cloudemu/v2/server/gcp/compute"
 	datacatalogsrv "github.com/stackshy/cloudemu/v2/server/gcp/datacatalog"
+	dataformsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataform"
 	dataplexsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataplex"
 	dataprocsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataproc"
 	datastreamsrv "github.com/stackshy/cloudemu/v2/server/gcp/datastream"
@@ -73,6 +74,7 @@ import (
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dcdriver "github.com/stackshy/cloudemu/v2/services/datacatalog/driver"
+	dataformdriver "github.com/stackshy/cloudemu/v2/services/dataform/driver"
 	dataplexdriver "github.com/stackshy/cloudemu/v2/services/dataplex/driver"
 	dataprocdriver "github.com/stackshy/cloudemu/v2/services/dataproc/driver"
 	datastreamdriver "github.com/stackshy/cloudemu/v2/services/datastream/driver"
@@ -215,6 +217,13 @@ type Drivers struct {
 	// so it is disjoint from every other /v1/projects/ handler. CRUD is
 	// synchronous REST (no long-running operations).
 	DataCatalog dcdriver.DataCatalog
+	// Dataform serves the dataform.googleapis.com/v1beta1 REST API (region-scoped
+	// repositories) against the dataform driver. Dataform ships a v1beta1 API only,
+	// so the google-beta google_dataform_repository resource and SDK clients target
+	// /v1beta1/. The handler's Matches narrows on the repositories resource segment,
+	// so it is disjoint from every other /v1beta1/projects/ handler. CRUD is
+	// synchronous REST (no long-running operations).
+	Dataform dataformdriver.Dataform
 	// APIGateway serves the apigateway.googleapis.com control plane (apis, their
 	// api configs, and gateways) against the apigateway driver. Its resources
 	// exist only in the terraform-provider-google-beta provider, whose default
@@ -601,6 +610,15 @@ func New(d Drivers) *server.Server {
 	// synchronous REST — no operation registry is wired.
 	if d.DataCatalog != nil {
 		srv.Register(datacatalogsrv.New(d.DataCatalog))
+	}
+
+	// Dataform matches /v1beta1/projects/{p}/locations/{l}/repositories[/…]. Its
+	// repositories resource-segment guard is disjoint from every other
+	// /v1beta1/projects/ handler, so registration order among them is
+	// unconstrained; registered before Firestore's permissive prefix. CRUD is
+	// synchronous REST — no operation registry is wired.
+	if d.Dataform != nil {
+		srv.Register(dataformsrv.New(d.Dataform))
 	}
 
 	// API Gateway matches /{v1beta,v1}/projects/{p}/locations/{l}/{apis|gateways}

@@ -24,6 +24,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/composer"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/datacatalog"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/dataform"
 	dataplexprov "github.com/stackshy/cloudemu/v2/providers/gcp/dataplex"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/dataproc"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/datastream"
@@ -115,6 +116,7 @@ type Provider struct {
 	Scheduler           *scheduler.Mock
 	CloudTasks          *cloudtasks.Mock
 	ServiceDirectory    *servicedirectory.Mock
+	Dataform            *dataform.Mock
 	APIGateway          *apigatewayprov.Mock
 	DataCatalog         *datacatalog.Mock
 
@@ -176,6 +178,7 @@ func New(opts ...config.Option) *Provider {
 		Scheduler:           scheduler.New(o),
 		CloudTasks:          cloudtasks.New(o),
 		ServiceDirectory:    servicedirectory.New(o),
+		Dataform:            dataform.New(o),
 		APIGateway:          apigatewayprov.New(o),
 		DataCatalog:         datacatalog.New(o),
 		ProjectID:           o.ProjectID,
