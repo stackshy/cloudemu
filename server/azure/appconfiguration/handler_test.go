@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -246,11 +245,36 @@ func TestWireListKeysShapeAndStability(t *testing.T) {
 		t.Errorf("listKeys not stable:\n a=%s\n b=%s", raw, raw2)
 	}
 
-	// regenerateKey returns the same deterministic keys.
+	// regenerateKey returns a SINGLE ApiKey (not the listKeys envelope) for the
+	// key named by the request body's "id".
 	regenPath := basePath + "store1/regenerateKey" + apiVer
-	if code, rraw := do(t, srv, http.MethodPost, regenPath, `{"id":"Primary"}`); code != http.StatusOK ||
-		!strings.Contains(string(rraw), "\"Primary\"") {
-		t.Errorf("regenerateKey = %d (%s)", code, rraw)
+
+	code, rraw := do(t, srv, http.MethodPost, regenPath, `{"id":"Primary"}`)
+	if code != http.StatusOK {
+		t.Fatalf("regenerateKey = %d (%s)", code, rraw)
+	}
+
+	var single struct {
+		Name     string `json:"name"`
+		ID       string `json:"id"`
+		Value    string `json:"value"`
+		ReadOnly bool   `json:"readOnly"`
+	}
+	if err := json.Unmarshal(rraw, &single); err != nil {
+		t.Fatalf("unmarshal regenerateKey: %v", err)
+	}
+
+	if bytes.Contains(rraw, []byte(`"value":[`)) {
+		t.Errorf("regenerateKey returned a list envelope, want a single ApiKey: %s", rraw)
+	}
+
+	if single.Name != "Primary" || single.ID == "" || single.Value == "" {
+		t.Errorf("regenerateKey single key wrong: %+v (%s)", single, rraw)
+	}
+
+	// An unknown key id is rejected.
+	if code, rraw := do(t, srv, http.MethodPost, regenPath, `{"id":"Nope"}`); code != http.StatusNotFound {
+		t.Errorf("regenerateKey unknown id = %d (%s), want 404", code, rraw)
 	}
 }
 

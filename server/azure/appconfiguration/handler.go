@@ -12,6 +12,7 @@ package appconfiguration
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -112,8 +113,7 @@ func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp *azurea
 	case "listKeys":
 		h.listKeys(w, r, rp)
 	case "regenerateKey":
-		// Keys are deterministic and stable; a regenerate returns the same keys.
-		h.listKeys(w, r, rp)
+		h.regenerateKey(w, r, rp)
 	default:
 		azurearm.WriteError(w, http.StatusNotFound, "InvalidResourceType", "unknown action "+rp.SubResource)
 	}
@@ -207,6 +207,35 @@ func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request, rp *azurearm.
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, toKeysResponse(&s))
+}
+
+// regenerateKey returns the single ApiKey named by the request body's "id"
+// field. The emulator's keys are deterministic and stable, so the returned key
+// value is unchanged; only the ARM wire shape (a single ApiKey, not the listKeys
+// envelope) and the id selection matter for client compatibility.
+func (h *Handler) regenerateKey(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var body struct {
+		ID string `json:"id"`
+	}
+
+	if r.Body != nil {
+		_ = json.NewDecoder(r.Body).Decode(&body)
+	}
+
+	s, err := h.store.Get(r.Context(), rp.Subscription, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	for i := range s.Keys {
+		if s.Keys[i].Name == body.ID {
+			azurearm.WriteJSON(w, http.StatusOK, toKeyWire(&s, &s.Keys[i]))
+			return
+		}
+	}
+
+	azurearm.WriteError(w, http.StatusNotFound, "KeyNotFound", "access key "+body.ID+" not found")
 }
 
 func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

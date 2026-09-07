@@ -142,19 +142,23 @@ func toPropertiesResponse(s *appconfiguration.ConfigurationStore) propertiesResp
 	}
 }
 
+// toKeyWire projects one stored key onto its ARM apiKeyWire representation.
+func toKeyWire(s *appconfiguration.ConfigurationStore, k *appconfiguration.AccessKey) apiKeyWire {
+	return apiKeyWire{
+		ID:               k.ID,
+		Name:             k.Name,
+		Value:            k.Value,
+		ConnectionString: s.ConnectionString(k),
+		LastModified:     s.CreationDate,
+		ReadOnly:         k.ReadOnly,
+	}
+}
+
 func toKeysResponse(s *appconfiguration.ConfigurationStore) keysResponse {
 	out := keysResponse{Value: make([]apiKeyWire, 0, len(s.Keys))}
 
 	for i := range s.Keys {
-		k := &s.Keys[i]
-		out.Value = append(out.Value, apiKeyWire{
-			ID:               k.ID,
-			Name:             k.Name,
-			Value:            k.Value,
-			ConnectionString: s.ConnectionString(k),
-			LastModified:     s.CreationDate,
-			ReadOnly:         k.ReadOnly,
-		})
+		out.Value = append(out.Value, toKeyWire(s, &s.Keys[i]))
 	}
 
 	return out
