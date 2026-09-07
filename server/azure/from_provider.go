@@ -45,6 +45,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		Communication:      p.Communication,
 		DigitalTwins:       p.DigitalTwins,
 		ManagedGrafana:     p.ManagedGrafana,
+		DevCenter:          p.DevCenter,
 		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,
 		IAM:                p.IAM,

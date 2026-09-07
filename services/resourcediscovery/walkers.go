@@ -73,6 +73,9 @@ const (
 	// ServiceManagedGrafana buckets Azure Managed Grafana resources
 	// (Microsoft.Dashboard/grafana).
 	ServiceManagedGrafana = "managedgrafana"
+	// ServiceDevCenter buckets Azure Dev Center resources
+	// (Microsoft.DevCenter/devcenters).
+	ServiceDevCenter = "devcenter"
 )
 
 // Resource type constants emitted by the walkers.
@@ -170,6 +173,10 @@ const TypeDigitalTwinsInstance = "DigitalTwinsInstance"
 // TypeGrafana is the portable type for an Azure Managed Grafana resource
 // (Microsoft.Dashboard/grafana). Azure-only, so it lives in its own line.
 const TypeGrafana = "Grafana"
+
+// TypeDevCenter is the portable type for an Azure Dev Center resource
+// (Microsoft.DevCenter/devcenters). Azure-only, so it lives in its own line.
+const TypeDevCenter = "DevCenter"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs

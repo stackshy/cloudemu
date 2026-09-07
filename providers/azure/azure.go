@@ -23,6 +23,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmospostgresql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/databricks"
 	"github.com/stackshy/cloudemu/v2/providers/azure/datafactory"
+	"github.com/stackshy/cloudemu/v2/providers/azure/devcenter"
 	"github.com/stackshy/cloudemu/v2/providers/azure/digitaltwins"
 	"github.com/stackshy/cloudemu/v2/providers/azure/dns"
 	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
@@ -181,6 +182,7 @@ type Provider struct {
 	Communication      *communication.Mock
 	DigitalTwins       *digitaltwins.Mock
 	ManagedGrafana     *managedgrafana.Mock
+	DevCenter          *devcenter.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -250,6 +252,7 @@ func New(opts ...config.Option) *Provider {
 		Communication:      communication.New(o),
 		DigitalTwins:       digitaltwins.New(o),
 		ManagedGrafana:     managedgrafana.New(o),
+		DevCenter:          devcenter.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -291,6 +294,7 @@ func New(opts ...config.Option) *Provider {
 				communicationDiscovery{p.Communication},
 				digitalTwinsDiscovery{p.DigitalTwins},
 				managedGrafanaDiscovery{p.ManagedGrafana},
+				devCenterDiscovery{p.DevCenter},
 			},
 		},
 	)
