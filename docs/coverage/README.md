@@ -19,6 +19,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `appinsights` | — | [Appinsights](./azure/appinsights.md) | — | — | 6 |
 | `applicationgateway` | — | [AppGateway](./azure/appgateway.md) | — | — | 4 |
 | `appsync` | [AppSync](./aws/appsync.md) | — | — | — | 17 |
+| `aps` | [APS](./aws/aps.md) | — | — | — | 21 |
 | `athena` | [Athena](./aws/athena.md) | — | — | — | 21 |
 | `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
 | `azurefirewall` | — | [Firewall](./azure/firewall.md) | — | — | 8 |
