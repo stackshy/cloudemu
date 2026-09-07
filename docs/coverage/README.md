@@ -125,6 +125,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `opensearch` | [OpenSearch](./aws/opensearch.md) | — | — | — | 96 |
 | `parameterstore` | [SSM](./aws/ssm.md) | — | — | — | 9 |
 | `postgresflex` | — | [PostgresFlex](./azure/postgresflex.md) | — | — | 21 |
+| `privateca` | — | — | [PrivateCA](./gcp/privateca.md) | — | 26 |
 | `privatedns` | — | [PrivateDNS](./azure/privatedns.md) | — | — | 13 |
 | `providers` | — | [Providers](./azure/providers.md) | — | — | 4 |
 | `purview` | — | [Purview](./azure/purview.md) | — | — | 9 |

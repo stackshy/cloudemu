@@ -41,6 +41,7 @@ import (
 	metastoreprov "github.com/stackshy/cloudemu/v2/providers/gcp/metastore"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/networkconnectivity"
+	privatecaprov "github.com/stackshy/cloudemu/v2/providers/gcp/privateca"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/pubsub"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/scheduler"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/secretmanager"
@@ -109,6 +110,7 @@ type Provider struct {
 	Dataproc            *dataproc.Mock
 	Datastream          *datastream.Mock
 	CertificateManager  *certmanagerprov.Mock
+	PrivateCA           *privatecaprov.Mock
 	Dataplex            *dataplexprov.Mock
 	Metastore           *metastoreprov.Mock
 	VPCAccess           *vpcaccessprov.Mock
@@ -174,6 +176,7 @@ func New(opts ...config.Option) *Provider {
 		Dataproc:            dataproc.New(o),
 		Datastream:          datastream.New(o),
 		CertificateManager:  certmanagerprov.New(o),
+		PrivateCA:           privatecaprov.New(o),
 		Dataplex:            dataplexprov.New(o),
 		Metastore:           metastoreprov.New(o),
 		VPCAccess:           vpcaccessprov.New(o),

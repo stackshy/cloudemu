@@ -11830,6 +11830,94 @@
     }
   },
   {
+    "service": "privateca",
+    "interface": "PrivateCA",
+    "operations": [
+      {
+        "name": "ActivateCertificateAuthority"
+      },
+      {
+        "name": "CreateCaPool"
+      },
+      {
+        "name": "CreateCertificate"
+      },
+      {
+        "name": "CreateCertificateAuthority"
+      },
+      {
+        "name": "CreateCertificateTemplate"
+      },
+      {
+        "name": "DeleteCaPool"
+      },
+      {
+        "name": "DeleteCertificateAuthority"
+      },
+      {
+        "name": "DeleteCertificateTemplate"
+      },
+      {
+        "name": "DisableCertificateAuthority"
+      },
+      {
+        "name": "EnableCertificateAuthority"
+      },
+      {
+        "name": "FetchCertificateAuthorityCSR"
+      },
+      {
+        "name": "GetCaPool"
+      },
+      {
+        "name": "GetCertificate"
+      },
+      {
+        "name": "GetCertificateAuthority"
+      },
+      {
+        "name": "GetCertificateTemplate"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListCaPools"
+      },
+      {
+        "name": "ListCertificateAuthorities"
+      },
+      {
+        "name": "ListCertificateTemplates"
+      },
+      {
+        "name": "ListCertificates"
+      },
+      {
+        "name": "PatchCaPool"
+      },
+      {
+        "name": "PatchCertificate"
+      },
+      {
+        "name": "PatchCertificateAuthority"
+      },
+      {
+        "name": "PatchCertificateTemplate"
+      },
+      {
+        "name": "RevokeCertificate"
+      },
+      {
+        "name": "UndeleteCertificateAuthority"
+      }
+    ],
+    "providers": {
+      "gcp": "PrivateCA"
+    }
+  },
+  {
     "service": "privatedns",
     "interface": "PrivateDNS",
     "operations": [
