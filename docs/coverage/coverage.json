@@ -11614,6 +11614,51 @@
     }
   },
   {
+    "service": "redisenterprise",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdateCluster"
+      },
+      {
+        "name": "CreateOrUpdateDatabase"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteDatabase"
+      },
+      {
+        "name": "DiscoverClusters"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetDatabase"
+      },
+      {
+        "name": "ListClustersByResourceGroup"
+      },
+      {
+        "name": "ListClustersBySubscription"
+      },
+      {
+        "name": "ListDatabasesByCluster"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "RedisEnterprise"
+    }
+  },
+  {
     "service": "relationaldb",
     "interface": "RelationalDB",
     "operations": [

@@ -75,6 +75,7 @@ import (
 	providerssrv "github.com/stackshy/cloudemu/v2/server/azure/providers"
 	purviewsrv "github.com/stackshy/cloudemu/v2/server/azure/purview"
 	"github.com/stackshy/cloudemu/v2/server/azure/queue"
+	redisenterprisesrv "github.com/stackshy/cloudemu/v2/server/azure/redisenterprise"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	azuresearchserver "github.com/stackshy/cloudemu/v2/server/azure/search"
@@ -186,6 +187,9 @@ type Drivers struct {
 	ElasticSan elasticsansrv.Store
 	// AppConfiguration serves Microsoft.AppConfiguration/configurationStores.
 	AppConfiguration appconfigsrv.Store
+	// RedisEnterprise serves Microsoft.Cache/redisEnterprise plus its nested
+	// databases child resource.
+	RedisEnterprise redisenterprisesrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -534,6 +538,15 @@ func New(d Drivers) http.Handler {
 	if d.AppConfiguration != nil {
 		appConfigHandler = appconfigsrv.New(d.AppConfiguration)
 		rgPurgers = append(rgPurgers, appConfigHandler)
+	}
+
+	// Redis Enterprise: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Deleting the group tears down every cluster and its databases.
+	// Registered further below.
+	var redisEnterpriseHandler *redisenterprisesrv.Handler
+	if d.RedisEnterprise != nil {
+		redisEnterpriseHandler = redisenterprisesrv.New(d.RedisEnterprise)
+		rgPurgers = append(rgPurgers, redisEnterpriseHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -951,6 +964,13 @@ func New(d Drivers) http.Handler {
 
 	if appConfigHandler != nil {
 		srv.Register(appConfigHandler)
+	}
+
+	// Redis Enterprise claims Microsoft.Cache/redisEnterprise — a distinct resource
+	// type from the standard Azure Cache for Redis (Microsoft.Cache/redis), so
+	// registration order relative to it is unconstrained.
+	if redisEnterpriseHandler != nil {
+		srv.Register(redisEnterpriseHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —
