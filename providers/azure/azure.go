@@ -35,6 +35,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadtesting"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedcassandra"
+	"github.com/stackshy/cloudemu/v2/providers/azure/managedgrafana"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedidentity"
 	"github.com/stackshy/cloudemu/v2/providers/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
@@ -179,6 +180,7 @@ type Provider struct {
 	WebPubSub          *webpubsub.Mock
 	Communication      *communication.Mock
 	DigitalTwins       *digitaltwins.Mock
+	ManagedGrafana     *managedgrafana.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -247,6 +249,7 @@ func New(opts ...config.Option) *Provider {
 		WebPubSub:          webpubsub.New(o),
 		Communication:      communication.New(o),
 		DigitalTwins:       digitaltwins.New(o),
+		ManagedGrafana:     managedgrafana.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -287,6 +290,7 @@ func New(opts ...config.Option) *Provider {
 				webPubSubDiscovery{p.WebPubSub},
 				communicationDiscovery{p.Communication},
 				digitalTwinsDiscovery{p.DigitalTwins},
+				managedGrafanaDiscovery{p.ManagedGrafana},
 			},
 		},
 	)

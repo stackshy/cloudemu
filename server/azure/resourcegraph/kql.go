@@ -86,6 +86,7 @@ const (
 	azureTypeWebPubSub = "microsoft.signalrservice/webpubsub"
 	azureTypeCommComms = "microsoft.communication/communicationservices"
 	azureTypeDTwins    = "microsoft.digitaltwins/digitaltwinsinstances"
+	azureTypeGrafana   = "microsoft.dashboard/grafana"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -117,6 +118,7 @@ const (
 	portableWebPubSub    = "webpubsub"
 	portableCommunicatn  = "communication"
 	portableDTwins       = "digitaltwins"
+	portableManagedGraf  = "managedgrafana"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -403,6 +405,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeWebPubSub: {portableWebPubSub, "WebPubSub"},
 	azureTypeCommComms: {portableCommunicatn, "CommunicationService"},
 	azureTypeDTwins:    {portableDTwins, "DigitalTwinsInstance"},
+	azureTypeGrafana:   {portableManagedGraf, "Grafana"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

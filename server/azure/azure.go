@@ -61,6 +61,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/locks"
 	loganalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/server/azure/managedcassandra"
+	managedgrafanasrv "github.com/stackshy/cloudemu/v2/server/azure/managedgrafana"
 	managedidentitysrv "github.com/stackshy/cloudemu/v2/server/azure/managedidentity"
 	"github.com/stackshy/cloudemu/v2/server/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/server/azure/mysqlflex"
@@ -168,6 +169,8 @@ type Drivers struct {
 	Communication communicationsrv.Store
 	// DigitalTwins serves Microsoft.DigitalTwins/digitalTwinsInstances.
 	DigitalTwins digitaltwinssrv.Store
+	// ManagedGrafana serves Microsoft.Dashboard/grafana.
+	ManagedGrafana managedgrafanasrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -468,6 +471,14 @@ func New(d Drivers) http.Handler {
 	if d.DigitalTwins != nil {
 		digitalTwinsHandler = digitaltwinssrv.New(d.DigitalTwins)
 		rgPurgers = append(rgPurgers, digitalTwinsHandler)
+	}
+
+	// Managed Grafana: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var managedGrafanaHandler *managedgrafanasrv.Handler
+	if d.ManagedGrafana != nil {
+		managedGrafanaHandler = managedgrafanasrv.New(d.ManagedGrafana)
+		rgPurgers = append(rgPurgers, managedGrafanaHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -861,6 +872,10 @@ func New(d Drivers) http.Handler {
 
 	if digitalTwinsHandler != nil {
 		srv.Register(digitalTwinsHandler)
+	}
+
+	if managedGrafanaHandler != nil {
+		srv.Register(managedGrafanaHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

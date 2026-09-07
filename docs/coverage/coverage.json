@@ -8398,6 +8398,39 @@
     }
   },
   {
+    "service": "managedgrafana",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverGrafana"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "ManagedGrafana"
+    }
+  },
+  {
     "service": "managedidentity",
     "interface": "provider-native",
     "operations": [

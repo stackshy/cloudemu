@@ -44,6 +44,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		WebPubSub:          p.WebPubSub,
 		Communication:      p.Communication,
 		DigitalTwins:       p.DigitalTwins,
+		ManagedGrafana:     p.ManagedGrafana,
 		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,
 		IAM:                p.IAM,
