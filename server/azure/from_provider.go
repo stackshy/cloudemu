@@ -53,6 +53,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		AppConfiguration:   p.AppConfiguration,
 		RedisEnterprise:    p.RedisEnterprise,
 		MongoCluster:       p.MongoCluster,
+		Batch:              p.Batch,
 		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,
 		IAM:                p.IAM,

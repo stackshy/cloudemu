@@ -1883,6 +1883,66 @@
     }
   },
   {
+    "service": "batch-azure",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "AccountExists"
+      },
+      {
+        "name": "CreateOrUpdateAccount"
+      },
+      {
+        "name": "CreateOrUpdatePool"
+      },
+      {
+        "name": "DeleteAccount"
+      },
+      {
+        "name": "DeletePool"
+      },
+      {
+        "name": "DiscoverAccounts"
+      },
+      {
+        "name": "GetAccount"
+      },
+      {
+        "name": "GetPool"
+      },
+      {
+        "name": "ListAccountsByResourceGroup"
+      },
+      {
+        "name": "ListAccountsBySubscription"
+      },
+      {
+        "name": "ListKeys"
+      },
+      {
+        "name": "ListPoolsByAccount"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "RegenerateKey"
+      },
+      {
+        "name": "Resize"
+      },
+      {
+        "name": "StopResize"
+      }
+    ],
+    "providers": {
+      "azure": "Batch"
+    }
+  },
+  {
     "service": "bedrock",
     "interface": "Bedrock",
     "operations": [

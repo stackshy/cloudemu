@@ -29,6 +29,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `azuresearch` | — | [Search](./azure/search.md) | — | — | 53 |
 | `bastion` | — | [Bastion](./azure/bastion.md) | — | — | 4 |
 | `batch` | [Batch](./aws/batch.md) | — | — | — | 14 |
+| `batch-azure` | — | [Batch](./azure/batch.md) | — | — | 17 |
 | `bedrock` | [Bedrock](./aws/bedrock.md) | — | — | — | 65 |
 | `bedrockagent` | [BedrockAgent](./aws/bedrockagent.md) | — | — | — | 29 |
 | `bedrockagentruntime` | [BedrockAgentRuntime](./aws/bedrockagentruntime.md) | — | — | — | 3 |
