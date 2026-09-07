@@ -16013,6 +16013,45 @@
     }
   },
   {
+    "service": "webpubsub",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverWebPubSub"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PrimaryConnectionString"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "SecondaryConnectionString"
+      }
+    ],
+    "providers": {
+      "azure": "WebPubSub"
+    }
+  },
+  {
     "service": "workflows",
     "interface": "Workflows",
     "operations": [

@@ -85,6 +85,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/tenants"
 	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/server/azure/vnet"
+	webpubsubsrv "github.com/stackshy/cloudemu/v2/server/azure/webpubsub"
 	agdriver "github.com/stackshy/cloudemu/v2/services/applicationgateway/driver"
 	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
 	fwdriver "github.com/stackshy/cloudemu/v2/services/azurefirewall/driver"
@@ -160,6 +161,8 @@ type Drivers struct {
 	LoadTesting loadtestingsrv.Store
 	// SignalR serves Microsoft.SignalRService/signalR.
 	SignalR signalrsrv.Store
+	// WebPubSub serves Microsoft.SignalRService/webPubSub.
+	WebPubSub webpubsubsrv.Store
 	// DigitalTwins serves Microsoft.DigitalTwins/digitalTwinsInstances.
 	DigitalTwins digitaltwinssrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
@@ -438,6 +441,14 @@ func New(d Drivers) http.Handler {
 	if d.SignalR != nil {
 		signalRHandler = signalrsrv.New(d.SignalR)
 		rgPurgers = append(rgPurgers, signalRHandler)
+	}
+
+	// Web PubSub: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var webPubSubHandler *webpubsubsrv.Handler
+	if d.WebPubSub != nil {
+		webPubSubHandler = webpubsubsrv.New(d.WebPubSub)
+		rgPurgers = append(rgPurgers, webPubSubHandler)
 	}
 
 	// Digital Twins: a resource-group-scoped resource, so its handler joins the
@@ -827,6 +838,10 @@ func New(d Drivers) http.Handler {
 
 	if signalRHandler != nil {
 		srv.Register(signalRHandler)
+	}
+
+	if webPubSubHandler != nil {
+		srv.Register(webPubSubHandler)
 	}
 
 	if digitalTwinsHandler != nil {
