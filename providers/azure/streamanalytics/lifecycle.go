@@ -6,6 +6,32 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
+// Valid outputStartMode values for a streaming-job start request.
+const (
+	outputStartModeJobStartTime        = "JobStartTime"
+	outputStartModeCustomTime          = "CustomTime"
+	outputStartModeLastOutputEventTime = "LastOutputEventTime"
+)
+
+// validateStartMode enforces the outputStartMode enum and the CustomTime ->
+// outputStartTime dependency that real Stream Analytics requires (an unknown
+// mode, or CustomTime without outputStartTime, is a 400 BadRequest).
+func validateStartMode(mode, startTime string) error {
+	switch mode {
+	case "", outputStartModeJobStartTime, outputStartModeLastOutputEventTime:
+		return nil
+	case outputStartModeCustomTime:
+		if startTime == "" {
+			return cerrors.New(cerrors.InvalidArgument,
+				"outputStartTime is required when outputStartMode is CustomTime")
+		}
+
+		return nil
+	default:
+		return cerrors.Newf(cerrors.InvalidArgument, "invalid outputStartMode %q", mode)
+	}
+}
+
 // StartJob transitions a job into the Running state. In the synchronous
 // emulator model the job settles to Running immediately (real Azure runs this
 // as a long-running Starting -> Running transition). A start is legal only from
@@ -18,6 +44,10 @@ func (m *Mock) StartJob(
 ) (StreamingJob, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if err := validateStartMode(outputStartMode, outputStartTime); err != nil {
+		return StreamingJob{}, err
+	}
 
 	k := jobKey(sub, rg, name)
 

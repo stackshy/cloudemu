@@ -120,6 +120,32 @@ func TestStartStopStateMachine(t *testing.T) {
 	}
 }
 
+func TestStartOutputStartModeValidation(t *testing.T) {
+	m := newMock()
+	createJob(t, m)
+	ctx := context.Background()
+
+	// CustomTime without outputStartTime is a 400 (InvalidArgument), and the job
+	// must not have transitioned.
+	if _, err := m.StartJob(ctx, "sub", "rg", "job1", "CustomTime", ""); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("CustomTime without outputStartTime = %v, want InvalidArgument", err)
+	}
+
+	if got, err := m.GetJob(ctx, "sub", "rg", "job1"); err != nil || got.JobState == streamanalytics.JobStateRunning {
+		t.Fatalf("job should not have started (state=%q err=%v)", got.JobState, err)
+	}
+
+	// An unknown outputStartMode is rejected.
+	if _, err := m.StartJob(ctx, "sub", "rg", "job1", "Whenever", ""); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("unknown outputStartMode = %v, want InvalidArgument", err)
+	}
+
+	// CustomTime WITH outputStartTime is accepted.
+	if _, err := m.StartJob(ctx, "sub", "rg", "job1", "CustomTime", "2026-01-01T00:00:00Z"); err != nil {
+		t.Fatalf("CustomTime with outputStartTime: %v", err)
+	}
+}
+
 func TestIllegalTransitionsRejected(t *testing.T) {
 	m := newMock()
 	createJob(t, m)
