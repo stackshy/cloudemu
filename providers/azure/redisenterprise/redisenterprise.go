@@ -247,7 +247,14 @@ func (m *Mock) CreateOrUpdateCluster(
 	}
 
 	applyClusterInput(&c, in)
-	c.Identity = m.resolveIdentity(in.Identity, sub, rg, name)
+
+	// Identity follows the same merge-on-nil model as the other mutable fields:
+	// a PATCH/PUT that omits the identity block preserves the stored value
+	// (ARM merge-patch semantics), so an unrelated tags-only update never wipes
+	// a system-assigned identity. An explicit block re-resolves it.
+	if in.Identity != nil {
+		c.Identity = m.resolveIdentity(in.Identity, sub, rg, name)
+	}
 
 	m.clusters.Set(k, &c)
 

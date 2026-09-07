@@ -147,6 +147,42 @@ func TestSystemAssignedIdentityMintsIDs(t *testing.T) {
 	}
 }
 
+// A PATCH that omits the identity block must preserve the stored identity
+// (ARM merge-patch), not wipe it.
+func TestPatchOmittingIdentityPreservesIt(t *testing.T) {
+	ctx := context.Background()
+	m := newMock()
+
+	in := standardCluster()
+	in.Identity = &redisenterprise.Identity{Type: "SystemAssigned"}
+
+	created, _, err := m.CreateOrUpdateCluster(ctx, "sub", "rg", "cache1", "West US", in)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if created.Identity == nil || created.Identity.PrincipalID == "" {
+		t.Fatalf("identity not minted on create: %+v", created.Identity)
+	}
+
+	// A tags-only update (no identity block) must keep the identity.
+	patch := standardCluster()
+	patch.Identity = nil
+	patch.Tags = map[string]string{"env": "prod"}
+
+	updated, _, err := m.CreateOrUpdateCluster(ctx, "sub", "rg", "cache1", "West US", patch)
+	if err != nil {
+		t.Fatalf("patch: %v", err)
+	}
+
+	if updated.Identity == nil ||
+		updated.Identity.PrincipalID != created.Identity.PrincipalID ||
+		updated.Identity.TenantID != created.Identity.TenantID {
+		t.Errorf("identity wiped/changed by identity-omitting patch: before=%+v after=%+v",
+			created.Identity, updated.Identity)
+	}
+}
+
 func standardDatabase() *redisenterprise.DatabaseInput {
 	return &redisenterprise.DatabaseInput{
 		ClientProtocol:   sptr("Encrypted"),
