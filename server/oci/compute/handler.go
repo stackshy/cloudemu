@@ -110,6 +110,7 @@ const maxPathSegments = 5
 type Extras interface {
 	Scope(id string) scope.Scope
 	SetScope(id string, s scope.Scope)
+	LaunchedResourceIDs(instanceID string) []string
 	Created(id string) string
 	SetTags(id string, tags map[string]string) error
 
@@ -436,6 +437,17 @@ func (h *Handler) accept(w http.ResponseWriter, operation, compartmentID, entity
 // place records the compartment a create call named.
 func (h *Handler) place(id, compartmentID string) {
 	h.extras.SetScope(id, scope.Scope{Compartment: compartmentID})
+}
+
+// placeInstance puts an instance and everything its launch created with it —
+// the boot volume and the boot-volume and VNIC attachments — in the caller's
+// compartment, which is where real OCI lists them.
+func (h *Handler) placeInstance(id, compartmentID string) {
+	h.place(id, compartmentID)
+
+	for _, child := range h.extras.LaunchedResourceIDs(id) {
+		h.place(child, compartmentID)
+	}
 }
 
 // inCompartment reports whether a resource is visible under a compartment filter.

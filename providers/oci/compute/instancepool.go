@@ -2,9 +2,11 @@ package compute
 
 import (
 	"context"
+	"encoding/json"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/services/compute"
 	"github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
 
@@ -45,6 +47,45 @@ type poolData struct {
 	HealthGrace     int
 	Launch          driver.InstanceConfig
 	policies        *memstore.Store[driver.ScalingPolicy]
+}
+
+// poolFields is poolData's field set without its JSON methods, so the two
+// below can marshal the plain fields without recursing.
+type poolFields poolData
+
+// poolJSON is poolData's snapshot form. The scaling policies live in a nested
+// store JSON cannot see, so they round-trip as a map beside the plain fields.
+type poolJSON struct {
+	poolFields
+	Policies map[string]driver.ScalingPolicy `json:"policies,omitempty"`
+}
+
+// MarshalJSON dumps the pool with its scaling policies.
+func (p *poolData) MarshalJSON() ([]byte, error) {
+	out := poolJSON{poolFields: poolFields(*p)}
+	if p.policies != nil {
+		out.Policies = p.policies.All()
+	}
+
+	return json.Marshal(out)
+}
+
+// UnmarshalJSON rebuilds the pool and its policy store, which is never nil on
+// a live pool and must not be after a restore either.
+func (p *poolData) UnmarshalJSON(data []byte) error {
+	var in poolJSON
+	if err := json.Unmarshal(data, &in); err != nil {
+		return err
+	}
+
+	*p = poolData(in.poolFields)
+	p.policies = memstore.New[driver.ScalingPolicy]()
+
+	for name, policy := range in.Policies {
+		p.policies.Set(name, policy)
+	}
+
+	return nil
 }
 
 // CreateAutoScalingGroup creates an instance pool and launches its instances.
@@ -172,7 +213,11 @@ func (m *Mock) syncPool(ctx context.Context, name string) error {
 
 			m.addPoolMember(delta.PoolID, instances[0].ID)
 		case delta.Have > delta.Want:
-			if err := m.TerminateInstance(ctx, delta.Newest, false); err != nil {
+			// m.mu is released across the terminate, so a concurrent resize may
+			// have taken this instance already. It being gone is the shrink
+			// this iteration wanted, not an error.
+			err := m.TerminateInstance(ctx, delta.Newest, false)
+			if err != nil && cerrors.GetCode(err) != cerrors.NotFound {
 				return err
 			}
 
@@ -635,6 +680,22 @@ func (m *Mock) renamePool(id string, upd Update) error {
 	return nil
 }
 
+// membersInState narrows a pool's instances to those in the given state.
+func (m *Mock) membersInState(ids []string, state string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]string, 0, len(ids))
+
+	for _, id := range ids {
+		if inst, ok := m.instances.Get(id); ok && inst.State == state {
+			out = append(out, id)
+		}
+	}
+
+	return out
+}
+
 // InstancePoolAction starts, stops or resets every instance in a pool.
 func (m *Mock) InstancePoolAction(ctx context.Context, id, action string) (*InstancePool, error) {
 	members, err := m.poolMemberIDs(id)
@@ -648,7 +709,9 @@ func (m *Mock) InstancePoolAction(ctx context.Context, id, action string) (*Inst
 	case PoolActionStart:
 		err, state = m.StartInstances(ctx, members), poolRunning
 	case PoolActionStop:
-		err, state = m.StopInstances(ctx, members), poolStopped
+		// A pool action applies to the pool, so members already stopped are
+		// skipped rather than failing the whole pool on STOP's IncorrectState.
+		err, state = m.StopInstances(ctx, m.membersInState(members, compute.StateRunning)), poolStopped
 	case PoolActionReset:
 		err, state = m.RebootInstances(ctx, members), poolRunning
 	default:

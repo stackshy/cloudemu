@@ -85,7 +85,7 @@ func (h *Handler) launchInstance(w http.ResponseWriter, r *http.Request) {
 	}
 
 	inst := &instances[0]
-	h.place(inst.ID, req.CompartmentID)
+	h.placeInstance(inst.ID, req.CompartmentID)
 
 	if err := h.extras.SetInstanceDetails(inst.ID, launchDetails(&req, imageID, source)); err != nil {
 		ocirest.WriteDriverError(w, r, err)

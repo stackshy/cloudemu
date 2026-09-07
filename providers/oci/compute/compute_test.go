@@ -180,9 +180,14 @@ func TestInstanceLifecycle(t *testing.T) {
 	require.NoError(t, f.compute.StopInstances(f.ctx, []string{inst.ID}))
 	assert.Equal(t, "stopped", f.state(t, inst.ID))
 
-	// A second stop is the documented no-op, not an error.
-	require.NoError(t, f.compute.StopInstances(f.ctx, []string{inst.ID}))
+	// Real OCI answers a STOP on a STOPPED instance with IncorrectState, not
+	// an idempotent 200.
+	err := f.compute.StopInstances(f.ctx, []string{inst.ID})
+	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
+	assert.Equal(t, "stopped", f.state(t, inst.ID))
 
+	// START on a RUNNING instance stays the documented no-op.
+	require.NoError(t, f.compute.StartInstances(f.ctx, []string{inst.ID}))
 	require.NoError(t, f.compute.StartInstances(f.ctx, []string{inst.ID}))
 	assert.Equal(t, "running", f.state(t, inst.ID))
 

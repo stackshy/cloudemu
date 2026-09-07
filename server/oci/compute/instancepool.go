@@ -79,7 +79,7 @@ func (h *Handler) placePool(pool *ocicompute.InstancePool, compartmentID string)
 	h.place(pool.ID, compartmentID)
 
 	for _, id := range pool.InstanceIDs {
-		h.place(id, compartmentID)
+		h.placeInstance(id, compartmentID)
 	}
 }
 

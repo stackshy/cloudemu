@@ -52,10 +52,10 @@ type instanceData struct {
 	AD              string
 	Managed         bool
 	Principal       string
-	// engineBacked is true when a real config.ComputeEngine backs this
+	// EngineBacked is true when a real config.ComputeEngine backs this
 	// instance, so its address came from the engine and terminating it has to
-	// tear the backing down.
-	engineBacked bool
+	// tear the backing down. Exported so it survives a snapshot.
+	EngineBacked bool
 }
 
 // RunInstances launches instances, creating a VNIC for each in the requested
@@ -136,7 +136,7 @@ func (m *Mock) provision(ctx context.Context, cfg *driver.InstanceConfig, inst *
 	defer m.mu.Unlock()
 
 	inst.PrivateIP = di.PrivateIP
-	inst.engineBacked = true
+	inst.EngineBacked = true
 
 	return nil
 }
@@ -251,10 +251,12 @@ func (m *Mock) StartInstances(ctx context.Context, instanceIDs []string) error {
 		[]string{compute.StateStopped}, []string{compute.StateRunning}, runningMetrics)
 }
 
-// StopInstances stops running instances.
+// StopInstances stops running instances. OCI's STOP action on an already
+// stopped instance is an IncorrectState conflict rather than the no-op START
+// is, so a stopped instance is rejected instead of skipped.
 func (m *Mock) StopInstances(ctx context.Context, instanceIDs []string) error {
 	return m.transition(ctx, instanceIDs, compute.StateStopped, "stop",
-		[]string{compute.StateRunning}, []string{compute.StateStopped}, stoppedMetrics)
+		[]string{compute.StateRunning}, nil, stoppedMetrics)
 }
 
 // RebootInstances resets instances, OCI's RESET and SOFTRESET actions.
@@ -296,13 +298,45 @@ func (m *Mock) TerminateInstance(ctx context.Context, id string, preserveBootVol
 	return nil
 }
 
+// launchedResourceCount is what a launch creates besides the instance: the boot
+// volume and its attachment, and the VNIC attachment.
+const launchedResourceCount = 3
+
+// LaunchedResourceIDs returns the resources OCI creates alongside an instance:
+// its boot volume and the boot-volume and VNIC attachments. A wire caller
+// places them in the instance's compartment, which a launch cannot know here.
+func (m *Mock) LaunchedResourceIDs(instanceID string) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := make([]string, 0, launchedResourceCount)
+
+	if d, ok := m.details.Get(instanceID); ok && d.BootVolumeID != "" {
+		out = append(out, d.BootVolumeID)
+	}
+
+	for _, a := range m.bootAttach.All() {
+		if a.InstanceID == instanceID {
+			out = append(out, a.ID)
+		}
+	}
+
+	for _, a := range m.vnicAttach.All() {
+		if a.InstanceID == instanceID {
+			out = append(out, a.ID)
+		}
+	}
+
+	return out
+}
+
 // GetConsoleOutput returns the console output the configured compute engine
 // captured for the instance's boot script. It is empty when no engine backs
 // the instance, which is every instance until one is wired.
 func (m *Mock) GetConsoleOutput(ctx context.Context, instanceID string) ([]byte, error) {
 	m.mu.RLock()
 	inst, ok := m.instances.Get(instanceID)
-	backed := ok && inst.engineBacked
+	backed := ok && inst.EngineBacked
 	m.mu.RUnlock()
 
 	if !ok {
@@ -361,7 +395,7 @@ func (m *Mock) removeInstance(id string, preserveBootVolume bool) (vnicID string
 	m.details.Delete(id)
 	m.forget(id)
 
-	return details.VNICID, inst.engineBacked, nil
+	return details.VNICID, inst.EngineBacked, nil
 }
 
 // transition moves instances into a state, rejecting the transitions OCI

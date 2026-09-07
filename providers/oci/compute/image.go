@@ -90,6 +90,8 @@ func (m *Mock) seedImages() {
 }
 
 // CreateImage captures a custom image from an instance.
+//
+//nolint:gocritic // hugeParam: the driver interface fixes the signature.
 func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
