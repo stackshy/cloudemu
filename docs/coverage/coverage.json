@@ -15607,6 +15607,34 @@
     }
   },
   {
+    "service": "vpcaccess",
+    "interface": "VPCAccess",
+    "operations": [
+      {
+        "name": "CreateConnector"
+      },
+      {
+        "name": "DeleteConnector"
+      },
+      {
+        "name": "GetConnector"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListConnectors"
+      },
+      {
+        "name": "PatchConnector"
+      }
+    ],
+    "providers": {
+      "gcp": "VPCAccess"
+    }
+  },
+  {
     "service": "vpclattice",
     "interface": "VPCLattice",
     "operations": [

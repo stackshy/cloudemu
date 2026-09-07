@@ -138,6 +138,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `tenants` | — | [Tenants](./azure/tenants.md) | — | — | 1 |
 | `transfer` | [Transfer](./aws/transfer.md) | — | — | — | 17 |
 | `vertexai` | — | — | [VertexAI](./gcp/vertexai.md) | — | 127 |
+| `vpcaccess` | — | — | [VPCAccess](./gcp/vpcaccess.md) | — | 6 |
 | `vpclattice` | [VPCLattice](./aws/vpclattice.md) | — | — | — | 73 |
 | `wafv2` | [WAFv2](./aws/wafv2.md) | — | — | — | 39 |
 | `webpubsub` | — | [WebPubSub](./azure/webpubsub.md) | — | — | 10 |
