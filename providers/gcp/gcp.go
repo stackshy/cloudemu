@@ -43,6 +43,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/pubsub"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/scheduler"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/secretmanager"
+	securesourcemanagerprov "github.com/stackshy/cloudemu/v2/providers/gcp/securesourcemanager"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/servicedirectory"
 	spannerprov "github.com/stackshy/cloudemu/v2/providers/gcp/spanner"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vertexai"
@@ -111,6 +112,7 @@ type Provider struct {
 	Metastore           *metastoreprov.Mock
 	VPCAccess           *vpcaccessprov.Mock
 	CloudIDS            *cloudidsprov.Mock
+	SecureSourceManager *securesourcemanagerprov.Mock
 	NetworkConnectivity *networkconnectivity.Mock
 	Composer            *composer.Mock
 	CloudDeploy         *clouddeploy.Mock
@@ -174,6 +176,7 @@ func New(opts ...config.Option) *Provider {
 		Metastore:           metastoreprov.New(o),
 		VPCAccess:           vpcaccessprov.New(o),
 		CloudIDS:            cloudidsprov.New(o),
+		SecureSourceManager: securesourcemanagerprov.New(o),
 		NetworkConnectivity: networkconnectivity.New(o),
 		Composer:            composer.New(o),
 		CloudDeploy:         clouddeploy.New(o),

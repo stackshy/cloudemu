@@ -54,6 +54,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/resourcemanager"
 	schedulersrv "github.com/stackshy/cloudemu/v2/server/gcp/scheduler"
 	secretmanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/secretmanager"
+	securesourcemanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/securesourcemanager"
 	servicedirectorysrv "github.com/stackshy/cloudemu/v2/server/gcp/servicedirectory"
 	"github.com/stackshy/cloudemu/v2/server/gcp/servicenetworking"
 	spannersrv "github.com/stackshy/cloudemu/v2/server/gcp/spanner"
@@ -96,6 +97,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 	scheddriver "github.com/stackshy/cloudemu/v2/services/scheduler/driver"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
+	securesourcemanagerdriver "github.com/stackshy/cloudemu/v2/services/securesourcemanager/driver"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	sddriver "github.com/stackshy/cloudemu/v2/services/servicedirectory/driver"
 	spannerdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
@@ -184,6 +186,15 @@ type Drivers struct {
 	// /v1/projects/ handler, and its location-scoped operation polls are owned by
 	// the shared LRO poller.
 	CloudIDS cloudidsdriver.CloudIDs
+	// SecureSourceManager serves the securesourcemanager.googleapis.com v1
+	// instance + repository control plane against the securesourcemanager driver.
+	// Its paths live under /v1/projects/{p}/locations/{l}/{instances|repositories}
+	// [/…]. Both collections collide on the identical path with greedy
+	// fall-through services (instances with Filestore/Memorystore, repositories
+	// with Artifact Registry), so its Matches claims each selectively by content
+	// (create) and ownership (item/list). Its location-scoped operation polls are
+	// owned by the shared LRO poller.
+	SecureSourceManager securesourcemanagerdriver.SecureSourceManager
 	// NetworkConnectivity serves the networkconnectivity.googleapis.com v1 hub +
 	// spoke control plane against the networkconnectivity driver. Its paths live
 	// under /v1/projects/{p}/locations/{l}/{hubs|spokes}[/…] (hubs are global,
@@ -588,6 +599,23 @@ func New(d Drivers) *server.Server {
 		cloudidsH := cloudidssrv.New(d.CloudIDS)
 		cloudidsH.SetOperationRegistry(opsReg)
 		srv.Register(cloudidsH)
+	}
+
+	// SecureSourceManager matches /v1/projects/{p}/locations/{l}/{instances|
+	// repositories}[/…]. Both collections collide on the identical path with
+	// greedy fall-through services registered AFTER it (instances with Filestore/
+	// Memorystore, repositories with Artifact Registry), so its Matches claims
+	// each only for genuinely-Secure-Source-Manager traffic — a create body with
+	// no Filestore/Redis signal / carrying the required repository `instance`
+	// reference, and item/list only for resources it owns — letting the sibling
+	// services' requests fall through. This is the same content/ownership pattern
+	// Filestore uses; being registered first is therefore safe. Its
+	// location-scoped operation polls are owned by the shared LRO poller, which
+	// the handler's Matches yields to.
+	if d.SecureSourceManager != nil {
+		ssmH := securesourcemanagersrv.New(d.SecureSourceManager)
+		ssmH.SetOperationRegistry(opsReg)
+		srv.Register(ssmH)
 	}
 
 	// NetworkConnectivity matches /v1/projects/{p}/locations/{l}/{hubs|spokes}
