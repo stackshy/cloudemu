@@ -34,6 +34,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/firestore"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gcs"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
+	gkebackupprov "github.com/stackshy/cloudemu/v2/providers/gcp/gkebackup"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/iam"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
@@ -123,6 +124,7 @@ type Provider struct {
 	Dataform            *dataform.Mock
 	APIGateway          *apigatewayprov.Mock
 	DataCatalog         *datacatalog.Mock
+	GKEBackup           *gkebackupprov.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -187,6 +189,7 @@ func New(opts ...config.Option) *Provider {
 		Dataform:            dataform.New(o),
 		APIGateway:          apigatewayprov.New(o),
 		DataCatalog:         datacatalog.New(o),
+		GKEBackup:           gkebackupprov.New(o),
 		ProjectID:           o.ProjectID,
 		Region:              o.Region,
 		Clock:               o.Clock,
