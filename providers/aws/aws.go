@@ -39,6 +39,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/providers/aws/glue"
+	"github.com/stackshy/cloudemu/v2/providers/aws/grafana"
 	"github.com/stackshy/cloudemu/v2/providers/aws/guardduty"
 	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kafka"
@@ -185,6 +186,7 @@ type Provider struct {
 	AppSync             *appsync.Mock
 	AppFlow             *appflow.Mock
 	MWAA                *mwaa.Mock
+	Grafana             *grafana.Mock
 	APS                 *aps.Mock
 	Kafka               *kafka.Mock
 	VPCLattice          *vpclattice.Mock
@@ -260,6 +262,7 @@ func New(opts ...config.Option) *Provider {
 		AppSync:             appsync.New(o),
 		AppFlow:             appflow.New(o),
 		MWAA:                mwaa.New(o),
+		Grafana:             grafana.New(o),
 		APS:                 aps.New(o),
 		Kafka:               kafka.New(o),
 		VPCLattice:          vpclattice.New(o),
