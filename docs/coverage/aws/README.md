@@ -40,6 +40,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [Glue](./glue.md) | `glue` | 299 |
 | [Grafana](./grafana.md) | `grafana` | 12 |
 | [GuardDuty](./guardduty.md) | `guardduty` | 87 |
+| [HealthLake](./healthlake.md) | `healthlake` | 7 |
 | [IAM](./iam.md) | `iam` | 40 |
 | [KMS](./kms.md) | `kms` | 46 |
 | [Kafka](./kafka.md) | `kafka` | 59 |

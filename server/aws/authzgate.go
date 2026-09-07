@@ -70,6 +70,7 @@ var jsonRPCServiceByTarget = map[string]string{
 	"ResourceGroupsTaggingAPI_20170126.":    "tag",
 	"TransferService.":                      "transfer",
 	"Timestream_20181101.":                  "timestream",
+	"HealthLake.":                           "healthlake",
 }
 
 // authorize is the authorization step layered on top of the SigV4 authentication

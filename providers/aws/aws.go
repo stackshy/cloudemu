@@ -45,6 +45,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/glue"
 	"github.com/stackshy/cloudemu/v2/providers/aws/grafana"
 	"github.com/stackshy/cloudemu/v2/providers/aws/guardduty"
+	"github.com/stackshy/cloudemu/v2/providers/aws/healthlake"
 	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kafka"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kendra"
@@ -214,6 +215,7 @@ type Provider struct {
 	Glue                *glue.Mock
 	Athena              *athena.Mock
 	TimestreamWrite     *timestreamwrite.Mock
+	HealthLake          *healthlake.Mock
 	Transfer            *transfer.Mock
 	Cognito             *cognito.Mock
 	Config              *configservice.Mock
@@ -299,6 +301,7 @@ func New(opts ...config.Option) *Provider {
 		Glue:                glue.New(o),
 		Athena:              athena.New(o),
 		TimestreamWrite:     timestreamwrite.New(o),
+		HealthLake:          healthlake.New(o),
 		Transfer:            transfer.New(o),
 		Cognito:             cognito.New(o),
 		Config:              configservice.New(o),

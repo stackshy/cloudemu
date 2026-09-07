@@ -244,6 +244,8 @@ github.com/aws/aws-sdk-go-v2/service/grafana v1.43.0 h1:4HjNK8Njs9/EYXFaRLeju2p0
 github.com/aws/aws-sdk-go-v2/service/grafana v1.43.0/go.mod h1:oDJnCBssGTzSDKD9xxalnZ7Uktut9MgLBYzxmtlK5ug=
 github.com/aws/aws-sdk-go-v2/service/guardduty v1.79.3 h1:AGUhgPCJKoXbNbk93EtLt6nzu7WoaFyln1g753W9E6g=
 github.com/aws/aws-sdk-go-v2/service/guardduty v1.79.3/go.mod h1:OOwqiU2hPl8v3FomNDgNPj3RCCsTfrsjzgWmuqHidhw=
+github.com/aws/aws-sdk-go-v2/service/healthlake v1.48.0 h1:SdYhtuEJuq5SsoAjgxytzwWo+qtTytiJdNl0L1zZsUA=
+github.com/aws/aws-sdk-go-v2/service/healthlake v1.48.0/go.mod h1:mBFbj4PWDoj631GbC2tQI18ucCT8/NoWT63sR4SvyqE=
 github.com/aws/aws-sdk-go-v2/service/iam v1.53.10 h1:kcN3I3llO7VwIY5w3Pc5FmEonpsr23Ou7Cwk4qf7dik=
 github.com/aws/aws-sdk-go-v2/service/iam v1.53.10/go.mod h1:1vkJzjCYC3byO0kIrBqLPzvZpuvYhPXkuyARs6E7tM4=
 github.com/aws/aws-sdk-go-v2/service/internal/accept-encoding v1.13.14 h1:SA43nfaY7+1jjMNIc2ywu99JLJLButtIdLP6j+bT870=
