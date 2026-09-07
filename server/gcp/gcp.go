@@ -51,6 +51,7 @@ import (
 	metastoresrv "github.com/stackshy/cloudemu/v2/server/gcp/metastore"
 	"github.com/stackshy/cloudemu/v2/server/gcp/monitoring"
 	networkconnectivitysrv "github.com/stackshy/cloudemu/v2/server/gcp/networkconnectivity"
+	privatecasrv "github.com/stackshy/cloudemu/v2/server/gcp/privateca"
 	"github.com/stackshy/cloudemu/v2/server/gcp/pubsub"
 	"github.com/stackshy/cloudemu/v2/server/gcp/resourcemanager"
 	schedulersrv "github.com/stackshy/cloudemu/v2/server/gcp/scheduler"
@@ -95,6 +96,7 @@ import (
 	nccdriver "github.com/stackshy/cloudemu/v2/services/networkconnectivity/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	privatecadriver "github.com/stackshy/cloudemu/v2/services/privateca/driver"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 	scheddriver "github.com/stackshy/cloudemu/v2/services/scheduler/driver"
@@ -160,6 +162,15 @@ type Drivers struct {
 	// every other /v1/projects/ handler, and its location-scoped operation polls
 	// are owned by the shared LRO poller.
 	CertificateManager certmanagerdriver.CertificateManager
+	// PrivateCA serves the privateca.googleapis.com v1 Certificate Authority
+	// Service control plane (CA pools, certificate authorities, certificate
+	// templates, certificates) against the privateca driver. Its paths live under
+	// /v1/projects/{p}/locations/{l}/{caPools|certificateTemplates}[/…]; the
+	// handler's Matches narrows on those resource segments, so it is disjoint from
+	// every other /v1/projects/ handler (its certificates are nested under a caPool
+	// and never collide with certificatemanager's location-level certificates), and
+	// its location-scoped operation polls are owned by the shared LRO poller.
+	PrivateCA privatecadriver.PrivateCA
 	// GKEBackup serves the gkebackup.googleapis.com v1 backup-plan and
 	// restore-plan control plane against the gkebackup driver. Its paths live
 	// under /v1/projects/{p}/locations/{l}/{backupPlans|restorePlans}[/…]; the
@@ -555,6 +566,20 @@ func New(d Drivers) *server.Server {
 		certmanagerH := certmanagersrv.New(d.CertificateManager)
 		certmanagerH.SetOperationRegistry(opsReg)
 		srv.Register(certmanagerH)
+	}
+
+	// PrivateCA matches /v1/projects/{p}/locations/{l}/{caPools|certificateTemplates|
+	// operations}[/…], including the certificateAuthorities and certificates
+	// collections nested under a caPool. Its resource-segment guard is disjoint from
+	// every other /v1/projects/ handler — notably certificatemanager, whose
+	// certificates live at the location level, not nested under a caPool — so
+	// registration order among them is unconstrained; registered before Firestore's
+	// permissive prefix. Its location-scoped operation polls are owned by the shared
+	// LRO poller, which the handler's Matches yields to.
+	if d.PrivateCA != nil {
+		privatecaH := privatecasrv.New(d.PrivateCA)
+		privatecaH.SetOperationRegistry(opsReg)
+		srv.Register(privatecaH)
 	}
 
 	// GKEBackup matches /v1/projects/{p}/locations/{l}/{backupPlans|restorePlans}
