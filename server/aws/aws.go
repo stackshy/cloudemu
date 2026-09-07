@@ -50,6 +50,7 @@ import (
 	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
 	grafanasrv "github.com/stackshy/cloudemu/v2/server/aws/grafana"
 	guarddutysrv "github.com/stackshy/cloudemu/v2/server/aws/guardduty"
+	healthlakesrv "github.com/stackshy/cloudemu/v2/server/aws/healthlake"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	kafkasrv "github.com/stackshy/cloudemu/v2/server/aws/kafka"
 	kendrasrv "github.com/stackshy/cloudemu/v2/server/aws/kendra"
@@ -117,6 +118,7 @@ import (
 	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
 	grafanadriver "github.com/stackshy/cloudemu/v2/services/grafana/driver"
 	guarddutydriver "github.com/stackshy/cloudemu/v2/services/guardduty/driver"
+	healthlakedriver "github.com/stackshy/cloudemu/v2/services/healthlake/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	kafkadriver "github.com/stackshy/cloudemu/v2/services/kafka/driver"
 	kendradriver "github.com/stackshy/cloudemu/v2/services/kendra/driver"
@@ -300,6 +302,10 @@ type Drivers struct {
 	// (X-Amz-Target prefix "Timestream_20181101.") against the timestreamwrite
 	// driver: databases and the tables that belong to them.
 	TimestreamWrite timestreamwritedriver.Timestream
+	// HealthLake serves the AWS HealthLake JSON 1.0 protocol (X-Amz-Target prefix
+	// "HealthLake.") against the healthlake driver: FHIR data stores and their
+	// resource tags.
+	HealthLake healthlakedriver.HealthLake
 	// Transfer serves the AWS Transfer Family JSON 1.1 protocol (X-Amz-Target
 	// prefix "TransferService.") against the transfer driver.
 	Transfer transferdriver.Transfer
@@ -475,6 +481,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		Glue:                p.Glue,
 		Athena:              p.Athena,
 		TimestreamWrite:     p.TimestreamWrite,
+		HealthLake:          p.HealthLake,
 		Transfer:            p.Transfer,
 		Cognito:             p.Cognito,
 		Config:              p.Config,
@@ -653,6 +660,12 @@ func New(d Drivers) *server.Server {
 	// unconstrained.
 	if d.TimestreamWrite != nil {
 		srv.Register(timestreamwritesrv.New(d.TimestreamWrite))
+	}
+
+	// HealthLake matches the X-Amz-Target prefix "HealthLake." — disjoint from
+	// the other JSON-RPC services, so registration order is unconstrained.
+	if d.HealthLake != nil {
+		srv.Register(healthlakesrv.New(d.HealthLake))
 	}
 
 	// Transfer matches the X-Amz-Target prefix "TransferService." — disjoint from

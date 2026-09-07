@@ -87,6 +87,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `glue` | [Glue](./aws/glue.md) | — | — | — | 299 |
 | `grafana` | [Grafana](./aws/grafana.md) | — | — | — | 12 |
 | `guardduty` | [GuardDuty](./aws/guardduty.md) | — | — | — | 87 |
+| `healthlake` | [HealthLake](./aws/healthlake.md) | — | — | — | 7 |
 | `iam` | [IAM](./aws/iam.md) | [IAM](./azure/iam.md) | [IAM](./gcp/iam.md) | [Identity](./oci/identity.md) | 40 |
 | `images` | — | [Images](./azure/images.md) | — | — | 5 |
 | `kafka` | [Kafka](./aws/kafka.md) | — | — | — | 59 |

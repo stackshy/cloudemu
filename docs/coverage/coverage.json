@@ -7550,6 +7550,36 @@
     }
   },
   {
+    "service": "healthlake",
+    "interface": "HealthLake",
+    "operations": [
+      {
+        "name": "CreateFHIRDatastore"
+      },
+      {
+        "name": "DeleteFHIRDatastore"
+      },
+      {
+        "name": "DescribeFHIRDatastore"
+      },
+      {
+        "name": "ListFHIRDatastores"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      }
+    ],
+    "providers": {
+      "aws": "HealthLake"
+    }
+  },
+  {
     "service": "iam",
     "interface": "IAM",
     "operations": [
