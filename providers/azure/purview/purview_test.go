@@ -113,6 +113,36 @@ func TestExplicitManagedResourceGroupName(t *testing.T) {
 	}
 }
 
+func TestManagedResourceGroupNameImmutableOnUpdate(t *testing.T) {
+	ctx := context.Background()
+	m := newMock()
+
+	created, _, err := m.CreateOrUpdate(ctx, "sub", "rg", "pv1", "East US", &purview.Input{})
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// A subsequent update supplying a different managed resource group name must
+	// be ignored (ForceNew in the real API); the computed managedResources must
+	// not shift.
+	updated, _, err := m.CreateOrUpdate(ctx, "sub", "rg", "pv1", "East US", &purview.Input{
+		ManagedResourceGroupName: ptr("HACKED-rg"),
+	})
+	if err != nil {
+		t.Fatalf("update: %v", err)
+	}
+
+	if updated.ManagedResourceGroupName != created.ManagedResourceGroupName {
+		t.Errorf("managedResourceGroupName changed on update: %q -> %q",
+			created.ManagedResourceGroupName, updated.ManagedResourceGroupName)
+	}
+
+	if updated.ManagedResources.ResourceGroup != created.ManagedResources.ResourceGroup {
+		t.Errorf("managedResources.resourceGroup changed on update: %q -> %q",
+			created.ManagedResources.ResourceGroup, updated.ManagedResources.ResourceGroup)
+	}
+}
+
 func TestListKeysStable(t *testing.T) {
 	ctx := context.Background()
 	m := newMock()

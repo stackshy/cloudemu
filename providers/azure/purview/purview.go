@@ -201,7 +201,7 @@ func (m *Mock) CreateOrUpdate(_ context.Context, sub, rg, name, location string,
 		s = newAccount(sub, rg, name, location)
 	}
 
-	applyInput(&s, in)
+	applyInput(&s, in, created)
 
 	// Identity is re-resolved only when the request supplies one; a PATCH that
 	// omits identity preserves the stored value (an explicit "None" clears it).
@@ -322,7 +322,7 @@ func (m *Mock) filter(pred func(*Account) bool) []Account {
 // applyInput overlays the mutable request fields onto s, leaving the computed
 // fields and the immutable location untouched. A nil pointer field means "not
 // supplied": the stored value is preserved.
-func applyInput(s *Account, in *Input) {
+func applyInput(s *Account, in *Input, created bool) {
 	if in.Tags != nil {
 		s.Tags = maps.Clone(in.Tags)
 	}
@@ -335,8 +335,9 @@ func applyInput(s *Account, in *Input) {
 	overlayEnum(&s.ManagedEventHubState, in.ManagedEventHubState)
 
 	// The managed resource group name is fixed once at create (ForceNew in
-	// Terraform); it is only adopted from the request when explicitly supplied.
-	if in.ManagedResourceGroupName != nil && *in.ManagedResourceGroupName != "" {
+	// Terraform); it is adopted from the request only on create, never on a
+	// subsequent update, so the computed managedResources stay stable.
+	if created && in.ManagedResourceGroupName != nil && *in.ManagedResourceGroupName != "" {
 		s.ManagedResourceGroupName = *in.ManagedResourceGroupName
 	}
 }
