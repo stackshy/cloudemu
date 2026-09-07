@@ -2479,6 +2479,39 @@
     }
   },
   {
+    "service": "chaosstudio",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverExperiments"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "ChaosStudio"
+    }
+  },
+  {
     "service": "cloudasset",
     "interface": "provider-native",
     "operations": [

@@ -483,6 +483,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"managedgrafana/Grafana":              "microsoft.dashboard/grafana",
 	"devcenter/DevCenter":                 "microsoft.devcenter/devcenters",
 	"purview/Account":                     "microsoft.purview/accounts",
+	"chaosstudio/Experiment":              "microsoft.chaos/experiments",
 }
 
 func portableToAzureType(service, typ string) string {

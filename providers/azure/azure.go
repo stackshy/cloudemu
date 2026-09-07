@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/bastion"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
+	"github.com/stackshy/cloudemu/v2/providers/azure/chaosstudio"
 	"github.com/stackshy/cloudemu/v2/providers/azure/communication"
 	"github.com/stackshy/cloudemu/v2/providers/azure/containerapps"
 	"github.com/stackshy/cloudemu/v2/providers/azure/containerinstances"
@@ -185,6 +186,7 @@ type Provider struct {
 	ManagedGrafana     *managedgrafana.Mock
 	DevCenter          *devcenter.Mock
 	Purview            *purview.Mock
+	ChaosStudio        *chaosstudio.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -256,6 +258,7 @@ func New(opts ...config.Option) *Provider {
 		ManagedGrafana:     managedgrafana.New(o),
 		DevCenter:          devcenter.New(o),
 		Purview:            purview.New(o),
+		ChaosStudio:        chaosstudio.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -299,6 +302,7 @@ func New(opts ...config.Option) *Provider {
 				managedGrafanaDiscovery{p.ManagedGrafana},
 				devCenterDiscovery{p.DevCenter},
 				purviewDiscovery{p.Purview},
+				chaosStudioDiscovery{p.ChaosStudio},
 			},
 		},
 	)
