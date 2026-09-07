@@ -263,9 +263,41 @@ func (m *Mock) PatchCaPool(_ context.Context, cfg *pcadriver.Config, mask []stri
 	return m.patch(m.pools, caPoolsColl, cfg, mask)
 }
 
-// DeleteCaPool removes a CA pool.
+// DeleteCaPool removes a CA pool. Real CA Service refuses to delete a pool that
+// still holds a live certificate authority, so an in-use pool returns
+// FailedPrecondition rather than stranding its CAs. Soft-deleted (DELETED) CAs
+// and issued certificates do not block deletion — a Terraform destroy soft-deletes
+// each CA before removing the pool, and certificates are immutable.
 func (m *Mock) DeleteCaPool(_ context.Context, project, location, id string) (*pcadriver.Operation, error) {
-	return m.del(m.pools, caPoolsColl, project, location, id)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	key := resourceKey(caPoolsColl, project, location, "", id)
+	if !m.pools.Has(key) {
+		return nil, notFoundErr(caPoolsColl, project, location, "", id)
+	}
+
+	if m.poolHasLiveAuthority(project, location, id) {
+		return nil, cerrors.Newf(cerrors.FailedPrecondition,
+			"caPool %q still has certificate authorities; delete them first", id)
+	}
+
+	m.pools.Delete(key)
+
+	return m.newOp(project, location, "delete", key), nil
+}
+
+// poolHasLiveAuthority reports whether any non-DELETED certificate authority still
+// lives under the given CA pool. The caller holds the write lock.
+func (m *Mock) poolHasLiveAuthority(project, location, pool string) bool {
+	prefix := listPrefix(authoritiesColl, project, location, pool)
+	for k, ca := range m.authorities.All() {
+		if strings.HasPrefix(k, prefix) && caState(&ca) != stateDeleted {
+			return true
+		}
+	}
+
+	return false
 }
 
 // CreateCertificateTemplate provisions a new certificate template.

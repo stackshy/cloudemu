@@ -9,9 +9,10 @@ import (
 )
 
 // CreateCertificateAuthority provisions a new certificate authority under a CA
-// pool. A self-signed CA is created ENABLED with deterministic self-signed PEM
-// material; a subordinate CA is created AWAITING_USER_ACTIVATION with no signed
-// certificate until :activate is called. The parent pool must exist.
+// pool. A self-signed CA is created STAGED with deterministic self-signed PEM
+// material (a follow-up :enable moves it to ENABLED); a subordinate CA is created
+// AWAITING_USER_ACTIVATION with no signed certificate until :activate is called.
+// The parent pool must exist.
 func (m *Mock) CreateCertificateAuthority(_ context.Context, cfg *pcadriver.Config) (
 	*pcadriver.Resource, *pcadriver.Operation, error,
 ) {

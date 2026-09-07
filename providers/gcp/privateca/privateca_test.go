@@ -70,6 +70,37 @@ func TestCaPoolLifecycleAndDefaultTier(t *testing.T) {
 	}
 }
 
+func TestDeleteNonEmptyCaPoolFailsPrecondition(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+	mustCreatePool(t, m, "pool")
+
+	if _, _, err := m.CreateCertificateAuthority(ctx, &pcadriver.Config{
+		Project: "p", Location: "us-central1", CaPool: "pool", ID: "root",
+		Fields: rawFields(map[string]string{"type": "SELF_SIGNED"}),
+	}); err != nil {
+		t.Fatalf("CreateCertificateAuthority: %v", err)
+	}
+
+	// A pool that still holds a CA cannot be deleted; the CA survives.
+	if _, err := m.DeleteCaPool(ctx, "p", "us-central1", "pool"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("DeleteCaPool on non-empty pool = %v, want FailedPrecondition", err)
+	}
+
+	if _, err := m.GetCaPool(ctx, "p", "us-central1", "pool"); err != nil {
+		t.Fatalf("GetCaPool after rejected delete = %v, want the pool to survive", err)
+	}
+
+	// Once the CA is soft-deleted out of the pool, the pool deletes cleanly.
+	if _, err := m.DeleteCertificateAuthority(ctx, "p", "us-central1", "pool", "root"); err != nil {
+		t.Fatalf("DeleteCertificateAuthority: %v", err)
+	}
+
+	if _, err := m.DeleteCaPool(ctx, "p", "us-central1", "pool"); err != nil {
+		t.Fatalf("DeleteCaPool on empty pool: %v", err)
+	}
+}
+
 func TestSelfSignedCAStateMachineAndPemStability(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
