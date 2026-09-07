@@ -3274,6 +3274,60 @@
     }
   },
   {
+    "service": "codeartifact",
+    "interface": "CodeArtifact",
+    "operations": [
+      {
+        "name": "AssociateExternalConnection"
+      },
+      {
+        "name": "CreateDomain"
+      },
+      {
+        "name": "CreateRepository"
+      },
+      {
+        "name": "DeleteDomain"
+      },
+      {
+        "name": "DeleteRepository"
+      },
+      {
+        "name": "DescribeDomain"
+      },
+      {
+        "name": "DescribeRepository"
+      },
+      {
+        "name": "DisassociateExternalConnection"
+      },
+      {
+        "name": "ListDomains"
+      },
+      {
+        "name": "ListRepositories"
+      },
+      {
+        "name": "ListRepositoriesInDomain"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateRepository"
+      }
+    ],
+    "providers": {
+      "aws": "CodeArtifact"
+    }
+  },
+  {
     "service": "cognito",
     "interface": "Cognito",
     "operations": [

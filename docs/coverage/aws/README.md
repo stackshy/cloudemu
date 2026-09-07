@@ -22,6 +22,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [CloudTrail](./cloudtrail.md) | `cloudtrail` | 60 |
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |
 | [CloudWatchLogs](./cloudwatchlogs.md) | `logging` | 17 |
+| [CodeArtifact](./codeartifact.md) | `codeartifact` | 15 |
 | [Cognito](./cognito.md) | `cognito` | 18 |
 | [Config](./config.md) | `configservice` | 102 |
 | [CostExplorer](./costexplorer.md) | — (provider-native) | 4 |

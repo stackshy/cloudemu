@@ -27,6 +27,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
+	"github.com/stackshy/cloudemu/v2/providers/aws/codeartifact"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cognito"
 	"github.com/stackshy/cloudemu/v2/providers/aws/configservice"
 	"github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
@@ -196,6 +197,7 @@ type Provider struct {
 	AppFlow             *appflow.Mock
 	MWAA                *mwaa.Mock
 	MQ                  *mq.Mock
+	CodeArtifact        *codeartifact.Mock
 	Grafana             *grafana.Mock
 	Scheduler           *eventbridgescheduler.Mock
 	AOSS                *aoss.Mock
@@ -279,6 +281,7 @@ func New(opts ...config.Option) *Provider {
 		AppFlow:             appflow.New(o),
 		MWAA:                mwaa.New(o),
 		MQ:                  mq.New(o),
+		CodeArtifact:        codeartifact.New(o),
 		Grafana:             grafana.New(o),
 		Scheduler:           eventbridgescheduler.New(o),
 		AOSS:                aoss.New(o),

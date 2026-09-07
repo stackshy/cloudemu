@@ -47,6 +47,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cloudsql` | — | — | [CloudSQL](./gcp/cloudsql.md) | — | 21 |
 | `cloudtasks` | — | — | [CloudTasks](./gcp/cloudtasks.md) | — | 11 |
 | `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | — | — | — | 60 |
+| `codeartifact` | [CodeArtifact](./aws/codeartifact.md) | — | — | — | 15 |
 | `cognito` | [Cognito](./aws/cognito.md) | — | — | — | 18 |
 | `communication` | — | [Communication](./azure/communication.md) | — | — | 10 |
 | `composer` | — | — | [Composer](./gcp/composer.md) | — | 6 |
