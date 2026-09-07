@@ -186,6 +186,8 @@ github.com/aws/aws-sdk-go-v2/service/athena v1.49.0 h1:D+iatX9gV6gCuNd6BnUkfwfZJ
 github.com/aws/aws-sdk-go-v2/service/athena v1.49.0/go.mod h1:27ljwDsnZvfrZKsLzWD4WFjI4OZutEFIjvVtYfj9gHc=
 github.com/aws/aws-sdk-go-v2/service/autoscaling v1.66.1 h1:kGlbhb5GMfkP/bcqcbt3oDi50kwDTpRmNzYUY9LqbLk=
 github.com/aws/aws-sdk-go-v2/service/autoscaling v1.66.1/go.mod h1:z45kurrOonQepd3SN5LIgropAn1NGHwBn1yOMF+QVFU=
+github.com/aws/aws-sdk-go-v2/service/backup v1.64.0 h1:+wse1x49hFkyZcrn7A9yjZDrY5dEov/Jyyc4MAPYgLY=
+github.com/aws/aws-sdk-go-v2/service/backup v1.64.0/go.mod h1:Icviuja3eutvd5i+sMuphBIfrXEeEczrEHqfIRtiK7w=
 github.com/aws/aws-sdk-go-v2/service/batch v1.74.0 h1:LTPXlivKDHTioNpyKv18fcyxnhEBDmqutThyt9sprzQ=
 github.com/aws/aws-sdk-go-v2/service/batch v1.74.0/go.mod h1:GWZfjK4LbVjIxPZ6GOavjcrsgNwtSo2Q0/9SbFJQUU8=
 github.com/aws/aws-sdk-go-v2/service/bedrock v1.64.0 h1:jZOg03lM41zl89h17avGr6AFqAb9g3s/rZytTQslz14=

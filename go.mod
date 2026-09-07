@@ -66,6 +66,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/appsync v1.60.0
 	github.com/aws/aws-sdk-go-v2/service/athena v1.49.0
 	github.com/aws/aws-sdk-go-v2/service/autoscaling v1.66.1
+	github.com/aws/aws-sdk-go-v2/service/backup v1.64.0
 	github.com/aws/aws-sdk-go-v2/service/batch v1.74.0
 	github.com/aws/aws-sdk-go-v2/service/bedrock v1.64.0
 	github.com/aws/aws-sdk-go-v2/service/bedrockagent v1.58.0

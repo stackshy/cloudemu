@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/appsync"
 	"github.com/stackshy/cloudemu/v2/providers/aws/aps"
 	"github.com/stackshy/cloudemu/v2/providers/aws/athena"
+	"github.com/stackshy/cloudemu/v2/providers/aws/backup"
 	"github.com/stackshy/cloudemu/v2/providers/aws/batch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
@@ -202,6 +203,7 @@ type Provider struct {
 	MQ                  *mq.Mock
 	CodeArtifact        *codeartifact.Mock
 	FIS                 *fis.Mock
+	Backup              *backup.Mock
 	Grafana             *grafana.Mock
 	Scheduler           *eventbridgescheduler.Mock
 	AOSS                *aoss.Mock
@@ -289,6 +291,7 @@ func New(opts ...config.Option) *Provider {
 		MQ:                  mq.New(o),
 		CodeArtifact:        codeartifact.New(o),
 		FIS:                 fis.New(o),
+		Backup:              backup.New(o),
 		Grafana:             grafana.New(o),
 		Scheduler:           eventbridgescheduler.New(o),
 		AOSS:                aoss.New(o),
