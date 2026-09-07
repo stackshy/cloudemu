@@ -4972,6 +4972,30 @@
     }
   },
   {
+    "service": "dataform",
+    "interface": "Dataform",
+    "operations": [
+      {
+        "name": "CreateRepository"
+      },
+      {
+        "name": "DeleteRepository"
+      },
+      {
+        "name": "GetRepository"
+      },
+      {
+        "name": "ListRepositories"
+      },
+      {
+        "name": "PatchRepository"
+      }
+    ],
+    "providers": {
+      "gcp": "Dataform"
+    }
+  },
+  {
     "service": "dataplex",
     "interface": "Dataplex",
     "operations": [
