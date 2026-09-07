@@ -21,6 +21,7 @@ import (
 	bastionsrv "github.com/stackshy/cloudemu/v2/server/azure/bastion"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
+	communicationsrv "github.com/stackshy/cloudemu/v2/server/azure/communication"
 	containerappssrv "github.com/stackshy/cloudemu/v2/server/azure/containerapps"
 	containerinstancessrv "github.com/stackshy/cloudemu/v2/server/azure/containerinstances"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmosaccount"
@@ -163,6 +164,8 @@ type Drivers struct {
 	SignalR signalrsrv.Store
 	// WebPubSub serves Microsoft.SignalRService/webPubSub.
 	WebPubSub webpubsubsrv.Store
+	// Communication serves Microsoft.Communication/communicationServices.
+	Communication communicationsrv.Store
 	// DigitalTwins serves Microsoft.DigitalTwins/digitalTwinsInstances.
 	DigitalTwins digitaltwinssrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
@@ -449,6 +452,14 @@ func New(d Drivers) http.Handler {
 	if d.WebPubSub != nil {
 		webPubSubHandler = webpubsubsrv.New(d.WebPubSub)
 		rgPurgers = append(rgPurgers, webPubSubHandler)
+	}
+
+	// Communication Services: a resource-group-scoped resource, so its handler
+	// joins the purge cascade. Registered further below.
+	var communicationHandler *communicationsrv.Handler
+	if d.Communication != nil {
+		communicationHandler = communicationsrv.New(d.Communication)
+		rgPurgers = append(rgPurgers, communicationHandler)
 	}
 
 	// Digital Twins: a resource-group-scoped resource, so its handler joins the
@@ -842,6 +853,10 @@ func New(d Drivers) http.Handler {
 
 	if webPubSubHandler != nil {
 		srv.Register(webPubSubHandler)
+	}
+
+	if communicationHandler != nil {
+		srv.Register(communicationHandler)
 	}
 
 	if digitalTwinsHandler != nil {

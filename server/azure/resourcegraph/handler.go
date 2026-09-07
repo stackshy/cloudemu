@@ -478,6 +478,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"loadtesting/LoadTest":                "microsoft.loadtestservice/loadtests",
 	"signalr/SignalR":                     "microsoft.signalrservice/signalr",
 	"webpubsub/WebPubSub":                 "microsoft.signalrservice/webpubsub",
+	"communication/CommunicationService":  "microsoft.communication/communicationservices",
 	"digitaltwins/DigitalTwinsInstance":   "microsoft.digitaltwins/digitaltwinsinstances",
 }
 

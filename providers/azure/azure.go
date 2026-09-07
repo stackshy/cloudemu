@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/bastion"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
+	"github.com/stackshy/cloudemu/v2/providers/azure/communication"
 	"github.com/stackshy/cloudemu/v2/providers/azure/containerapps"
 	"github.com/stackshy/cloudemu/v2/providers/azure/containerinstances"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmosdb"
@@ -176,6 +177,7 @@ type Provider struct {
 	LoadTesting        *loadtesting.Mock
 	SignalR            *signalr.Mock
 	WebPubSub          *webpubsub.Mock
+	Communication      *communication.Mock
 	DigitalTwins       *digitaltwins.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
@@ -243,6 +245,7 @@ func New(opts ...config.Option) *Provider {
 		LoadTesting:        loadtesting.New(o),
 		SignalR:            signalr.New(o),
 		WebPubSub:          webpubsub.New(o),
+		Communication:      communication.New(o),
 		DigitalTwins:       digitaltwins.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
@@ -282,6 +285,7 @@ func New(opts ...config.Option) *Provider {
 				loadTestDiscovery{p.LoadTesting},
 				signalRDiscovery{p.SignalR},
 				webPubSubDiscovery{p.WebPubSub},
+				communicationDiscovery{p.Communication},
 				digitalTwinsDiscovery{p.DigitalTwins},
 			},
 		},

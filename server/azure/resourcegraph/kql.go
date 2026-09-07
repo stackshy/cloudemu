@@ -84,6 +84,7 @@ const (
 	azureTypeCApp      = "microsoft.app/containerapps"
 	azureTypeSignalR   = "microsoft.signalrservice/signalr"
 	azureTypeWebPubSub = "microsoft.signalrservice/webpubsub"
+	azureTypeCommComms = "microsoft.communication/communicationservices"
 	azureTypeDTwins    = "microsoft.digitaltwins/digitaltwinsinstances"
 )
 
@@ -114,6 +115,7 @@ const (
 	portableLoadTest     = "loadtesting"
 	portableSignalR      = "signalr"
 	portableWebPubSub    = "webpubsub"
+	portableCommunicatn  = "communication"
 	portableDTwins       = "digitaltwins"
 )
 
@@ -399,6 +401,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeLoadTest:  {portableLoadTest, "LoadTest"},
 	azureTypeSignalR:   {portableSignalR, "SignalR"},
 	azureTypeWebPubSub: {portableWebPubSub, "WebPubSub"},
+	azureTypeCommComms: {portableCommunicatn, "CommunicationService"},
 	azureTypeDTwins:    {portableDTwins, "DigitalTwinsInstance"},
 }
 
