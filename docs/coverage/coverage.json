@@ -8715,6 +8715,72 @@
     }
   },
   {
+    "service": "mq",
+    "interface": "MQ",
+    "operations": [
+      {
+        "name": "CreateBroker"
+      },
+      {
+        "name": "CreateConfiguration"
+      },
+      {
+        "name": "CreateTags"
+      },
+      {
+        "name": "CreateUser"
+      },
+      {
+        "name": "DeleteBroker"
+      },
+      {
+        "name": "DeleteTags"
+      },
+      {
+        "name": "DeleteUser"
+      },
+      {
+        "name": "DescribeBroker"
+      },
+      {
+        "name": "DescribeConfiguration"
+      },
+      {
+        "name": "DescribeConfigurationRevision"
+      },
+      {
+        "name": "DescribeUser"
+      },
+      {
+        "name": "ListBrokers"
+      },
+      {
+        "name": "ListConfigurations"
+      },
+      {
+        "name": "ListTags"
+      },
+      {
+        "name": "ListUsers"
+      },
+      {
+        "name": "RebootBroker"
+      },
+      {
+        "name": "UpdateBroker"
+      },
+      {
+        "name": "UpdateConfiguration"
+      },
+      {
+        "name": "UpdateUser"
+      }
+    ],
+    "providers": {
+      "aws": "MQ"
+    }
+  },
+  {
     "service": "mwaa",
     "interface": "MWAA",
     "operations": [
