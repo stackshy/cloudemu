@@ -15,6 +15,7 @@ import (
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
 	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
+	aosssrv "github.com/stackshy/cloudemu/v2/server/aws/aoss"
 	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/aws/apigateway"
 	apigatewayv2srv "github.com/stackshy/cloudemu/v2/server/aws/apigatewayv2"
 	appflowsrv "github.com/stackshy/cloudemu/v2/server/aws/appflow"
@@ -78,6 +79,7 @@ import (
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
+	aossdriver "github.com/stackshy/cloudemu/v2/services/aoss/driver"
 	apigatewaydriver "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 	apigatewayv2driver "github.com/stackshy/cloudemu/v2/services/apigatewayv2/driver"
 	appflowdriver "github.com/stackshy/cloudemu/v2/services/appflow/driver"
@@ -206,6 +208,10 @@ type Drivers struct {
 	// Grafana serves the Amazon Managed Grafana control-plane REST-JSON API
 	// (verb + path routing, e.g. POST /workspaces) against the grafana driver.
 	Grafana grafanadriver.Grafana
+	// AOSS serves the Amazon OpenSearch Serverless JSON 1.0 protocol (X-Amz-Target
+	// prefix "OpenSearchServerless.") against the aoss driver. Distinct from
+	// OpenSearch (provisioned domains), which uses restJson1.
+	AOSS aossdriver.AOSS
 	// APS serves the Amazon Managed Service for Prometheus control-plane
 	// REST-JSON API (verb + path routing, e.g. POST /workspaces) against the aps
 	// driver.
@@ -401,6 +407,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		MWAA:                p.MWAA,
 		MQ:                  p.MQ,
 		Grafana:             p.Grafana,
+		AOSS:                p.AOSS,
 		APS:                 p.APS,
 		Kafka:               p.Kafka,
 		Route53Resolver:     p.Route53Resolver,
@@ -562,6 +569,13 @@ func New(d Drivers) *server.Server {
 	// JSON 1.1 services, so registration order is unconstrained.
 	if d.Glue != nil {
 		srv.Register(gluesrv.New(d.Glue))
+	}
+
+	// AOSS (OpenSearch Serverless) matches the X-Amz-Target prefix
+	// "OpenSearchServerless." — disjoint from the other JSON-RPC services, so
+	// registration order is unconstrained.
+	if d.AOSS != nil {
+		srv.Register(aosssrv.New(d.AOSS))
 	}
 
 	// Athena matches the X-Amz-Target prefix "AmazonAthena." — disjoint from the

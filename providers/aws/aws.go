@@ -11,6 +11,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
+	"github.com/stackshy/cloudemu/v2/providers/aws/aoss"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigateway"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigatewayv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/appflow"
@@ -189,6 +190,7 @@ type Provider struct {
 	MWAA                *mwaa.Mock
 	MQ                  *mq.Mock
 	Grafana             *grafana.Mock
+	AOSS                *aoss.Mock
 	APS                 *aps.Mock
 	Kafka               *kafka.Mock
 	VPCLattice          *vpclattice.Mock
@@ -266,6 +268,7 @@ func New(opts ...config.Option) *Provider {
 		MWAA:                mwaa.New(o),
 		MQ:                  mq.New(o),
 		Grafana:             grafana.New(o),
+		AOSS:                aoss.New(o),
 		APS:                 aps.New(o),
 		Kafka:               kafka.New(o),
 		VPCLattice:          vpclattice.New(o),
