@@ -70,6 +70,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/sns"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ssm"
+	"github.com/stackshy/cloudemu/v2/providers/aws/timestreamwrite"
 	"github.com/stackshy/cloudemu/v2/providers/aws/transfer"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpclattice"
@@ -208,6 +209,7 @@ type Provider struct {
 	CloudTrail          *cloudtrail.Mock
 	Glue                *glue.Mock
 	Athena              *athena.Mock
+	TimestreamWrite     *timestreamwrite.Mock
 	Transfer            *transfer.Mock
 	Cognito             *cognito.Mock
 	Config              *configservice.Mock
@@ -290,6 +292,7 @@ func New(opts ...config.Option) *Provider {
 		CloudTrail:          cloudtrail.New(o),
 		Glue:                glue.New(o),
 		Athena:              athena.New(o),
+		TimestreamWrite:     timestreamwrite.New(o),
 		Transfer:            transfer.New(o),
 		Cognito:             cognito.New(o),
 		Config:              configservice.New(o),

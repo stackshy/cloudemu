@@ -152,6 +152,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `tablestorage` | — | [TableStorage](./azure/tablestorage.md) | — | — | 9 |
 | `tags` | — | [Tags](./azure/tags.md) | — | — | 4 |
 | `tenants` | — | [Tenants](./azure/tenants.md) | — | — | 1 |
+| `timestreamwrite` | [TimestreamWrite](./aws/timestreamwrite.md) | — | — | — | 13 |
 | `transfer` | [Transfer](./aws/transfer.md) | — | — | — | 17 |
 | `vertexai` | — | — | [VertexAI](./gcp/vertexai.md) | — | 127 |
 | `vpcaccess` | — | — | [VPCAccess](./gcp/vpcaccess.md) | — | 6 |
