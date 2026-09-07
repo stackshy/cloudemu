@@ -101,7 +101,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `loadtesting` | — | [LoadTesting](./azure/loadtesting.md) | — | — | 8 |
 | `location` | [Location](./aws/location.md) | — | — | — | 28 |
 | `locks` | — | [Locks](./azure/locks.md) | — | — | 4 |
-| `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | — | 17 |
+| `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | [Logging](./oci/logging.md) | 17 |
 | `lro` | — | — | [LRO](./gcp/lro.md) | — | 1 |
 | `managedcassandra` | — | [ManagedCassandra](./azure/managedcassandra.md) | — | — | 15 |
 | `managedgrafana` | — | [ManagedGrafana](./azure/managedgrafana.md) | — | — | 8 |
