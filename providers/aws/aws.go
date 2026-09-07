@@ -39,6 +39,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
+	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridgescheduler"
 	"github.com/stackshy/cloudemu/v2/providers/aws/glue"
 	"github.com/stackshy/cloudemu/v2/providers/aws/grafana"
 	"github.com/stackshy/cloudemu/v2/providers/aws/guardduty"
@@ -190,6 +191,7 @@ type Provider struct {
 	MWAA                *mwaa.Mock
 	MQ                  *mq.Mock
 	Grafana             *grafana.Mock
+	Scheduler           *eventbridgescheduler.Mock
 	AOSS                *aoss.Mock
 	APS                 *aps.Mock
 	Kafka               *kafka.Mock
@@ -268,6 +270,7 @@ func New(opts ...config.Option) *Provider {
 		MWAA:                mwaa.New(o),
 		MQ:                  mq.New(o),
 		Grafana:             grafana.New(o),
+		Scheduler:           eventbridgescheduler.New(o),
 		AOSS:                aoss.New(o),
 		APS:                 aps.New(o),
 		Kafka:               kafka.New(o),
