@@ -9,6 +9,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/alloydb"
+	apigatewayprov "github.com/stackshy/cloudemu/v2/providers/gcp/apigateway"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigquery"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigtable"
@@ -113,6 +114,7 @@ type Provider struct {
 	Scheduler           *scheduler.Mock
 	CloudTasks          *cloudtasks.Mock
 	ServiceDirectory    *servicedirectory.Mock
+	APIGateway          *apigatewayprov.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -172,6 +174,7 @@ func New(opts ...config.Option) *Provider {
 		Scheduler:           scheduler.New(o),
 		CloudTasks:          cloudtasks.New(o),
 		ServiceDirectory:    servicedirectory.New(o),
+		APIGateway:          apigatewayprov.New(o),
 		ProjectID:           o.ProjectID,
 		Region:              o.Region,
 		Clock:               o.Clock,
