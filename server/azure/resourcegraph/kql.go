@@ -96,6 +96,7 @@ const (
 	azureTypeRedisEnt   = "microsoft.cache/redisenterprise"
 	azureTypeMongoClus  = "microsoft.documentdb/mongoclusters"
 	azureTypeBatchAcct  = "microsoft.batch/batchaccounts"
+	azureTypeStreamAnl  = "microsoft.streamanalytics/streamingjobs"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -137,6 +138,7 @@ const (
 	portableRedisEnt     = "redisenterprise"
 	portableMongoClus    = "mongocluster"
 	portableBatch        = "batch"
+	portableStreamAnl    = "streamanalytics"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -433,6 +435,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeRedisEnt:   {portableRedisEnt, "RedisEnterprise"},
 	azureTypeMongoClus:  {portableMongoClus, "MongoCluster"},
 	azureTypeBatchAcct:  {portableBatch, "BatchAccount"},
+	azureTypeStreamAnl:  {portableStreamAnl, "StreamingJob"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

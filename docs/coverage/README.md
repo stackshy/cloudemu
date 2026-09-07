@@ -157,6 +157,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `sshpublickeys` | — | [Sshpublickeys](./azure/sshpublickeys.md) | — | — | 7 |
 | `storage` | [S3](./aws/s3.md) | [BlobStorage](./azure/blobstorage.md) | [GCS](./gcp/gcs.md) | — | 35 |
 | `storageaccount` | — | [Storageaccount](./azure/storageaccount.md) | — | — | 10 |
+| `streamanalytics` | — | [StreamAnalytics](./azure/streamanalytics.md) | — | — | 19 |
 | `sts` | [STS](./aws/sts.md) | — | — | — | 8 |
 | `subscriptions` | — | [Subscriptions](./azure/subscriptions.md) | — | — | 3 |
 | `synapse` | — | [Synapse](./azure/synapse.md) | — | — | 11 |
