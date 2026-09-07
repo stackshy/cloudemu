@@ -14,6 +14,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [CloudDNS](./clouddns.md) | `dns` | 16 |
 | [CloudDeploy](./clouddeploy.md) | `clouddeploy` | 11 |
 | [CloudFunctions](./cloudfunctions.md) | `serverless` | 27 |
+| [CloudIDS](./cloudids.md) | `cloudids` | 6 |
 | [CloudLogging](./cloudlogging.md) | `logging` | 17 |
 | [CloudMonitoring](./cloudmonitoring.md) | `monitoring` | 12 |
 | [CloudRun](./cloudrun.md) | `cloudrun` | 18 |

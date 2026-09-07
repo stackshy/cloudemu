@@ -2823,6 +2823,34 @@
     }
   },
   {
+    "service": "cloudids",
+    "interface": "CloudIDs",
+    "operations": [
+      {
+        "name": "CreateEndpoint"
+      },
+      {
+        "name": "DeleteEndpoint"
+      },
+      {
+        "name": "GetEndpoint"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListEndpoints"
+      },
+      {
+        "name": "PatchEndpoint"
+      }
+    ],
+    "providers": {
+      "gcp": "CloudIDS"
+    }
+  },
+  {
     "service": "cloudrun",
     "interface": "CloudRun",
     "operations": [

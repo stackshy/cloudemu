@@ -17,6 +17,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddeploy"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudfunctions"
+	cloudidsprov "github.com/stackshy/cloudemu/v2/providers/gcp/cloudids"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudlogging"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudrun"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/cloudsql"
@@ -109,6 +110,7 @@ type Provider struct {
 	Dataplex            *dataplexprov.Mock
 	Metastore           *metastoreprov.Mock
 	VPCAccess           *vpcaccessprov.Mock
+	CloudIDS            *cloudidsprov.Mock
 	NetworkConnectivity *networkconnectivity.Mock
 	Composer            *composer.Mock
 	CloudDeploy         *clouddeploy.Mock
@@ -171,6 +173,7 @@ func New(opts ...config.Option) *Provider {
 		Dataplex:            dataplexprov.New(o),
 		Metastore:           metastoreprov.New(o),
 		VPCAccess:           vpcaccessprov.New(o),
+		CloudIDS:            cloudidsprov.New(o),
 		NetworkConnectivity: networkconnectivity.New(o),
 		Composer:            composer.New(o),
 		CloudDeploy:         clouddeploy.New(o),

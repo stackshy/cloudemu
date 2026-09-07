@@ -24,6 +24,7 @@ import (
 	clouddeploysrv "github.com/stackshy/cloudemu/v2/server/gcp/clouddeploy"
 	"github.com/stackshy/cloudemu/v2/server/gcp/clouddns"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudfunctions"
+	cloudidssrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudids"
 	cloudloggingsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudlogging"
 	cloudrunsrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudrun"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudsql"
@@ -67,6 +68,7 @@ import (
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	certmanagerdriver "github.com/stackshy/cloudemu/v2/services/certificatemanager/driver"
 	clouddeploydriver "github.com/stackshy/cloudemu/v2/services/clouddeploy/driver"
+	cloudidsdriver "github.com/stackshy/cloudemu/v2/services/cloudids/driver"
 	cloudrundriver "github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
 	ctdriver "github.com/stackshy/cloudemu/v2/services/cloudtasks/driver"
 	composerdriver "github.com/stackshy/cloudemu/v2/services/composer/driver"
@@ -175,6 +177,13 @@ type Drivers struct {
 	// /v1/projects/ handler, and its location-scoped operation polls are owned by
 	// the shared LRO poller.
 	VPCAccess vpcaccessdriver.VPCAccess
+	// CloudIDS serves the ids.googleapis.com v1 Cloud IDS endpoint control plane
+	// against the cloudids driver. Its paths live under
+	// /v1/projects/{p}/locations/{l}/endpoints[/…]; the handler's Matches narrows
+	// on the endpoints resource segment, so it is disjoint from every other
+	// /v1/projects/ handler, and its location-scoped operation polls are owned by
+	// the shared LRO poller.
+	CloudIDS cloudidsdriver.CloudIDs
 	// NetworkConnectivity serves the networkconnectivity.googleapis.com v1 hub +
 	// spoke control plane against the networkconnectivity driver. Its paths live
 	// under /v1/projects/{p}/locations/{l}/{hubs|spokes}[/…] (hubs are global,
@@ -566,6 +575,19 @@ func New(d Drivers) *server.Server {
 		vpcaccessH := vpcaccesssrv.New(d.VPCAccess)
 		vpcaccessH.SetOperationRegistry(opsReg)
 		srv.Register(vpcaccessH)
+	}
+
+	// CloudIDS matches /v1/projects/{p}/locations/{l}/endpoints[/…]. Its endpoints
+	// resource-segment guard is disjoint from every other /v1/projects/ handler
+	// (Composer's environments, Cloud Deploy's pipelines/targets, Datastream's
+	// connectionProfiles/streams, Certificate Manager's certificates, VPC Access's
+	// connectors, …), so registration order among them is unconstrained; registered
+	// before Firestore's permissive prefix. Its location-scoped operation polls are
+	// owned by the shared LRO poller, which the handler's Matches yields to.
+	if d.CloudIDS != nil {
+		cloudidsH := cloudidssrv.New(d.CloudIDS)
+		cloudidsH.SetOperationRegistry(opsReg)
+		srv.Register(cloudidsH)
 	}
 
 	// NetworkConnectivity matches /v1/projects/{p}/locations/{l}/{hubs|spokes}
