@@ -60,7 +60,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cosmospostgresql` | — | [CosmosPostgreSQL](./azure/cosmospostgresql.md) | — | — | 34 |
 | `costexplorer` | [CostExplorer](./aws/costexplorer.md) | — | — | — | 4 |
 | `costmanagement` | — | [Costmanagement](./azure/costmanagement.md) | — | — | 1 |
-| `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | — | 24 |
+| `database` | [DynamoDB](./aws/dynamodb.md) | [CosmosDB](./azure/cosmosdb.md) | [Firestore](./gcp/firestore.md) | [NoSQL](./oci/nosql.md) | 24 |
 | `databricks` | — | [Databricks](./azure/databricks.md) | — | — | 46 |
 | `datacatalog` | — | — | [DataCatalog](./gcp/datacatalog.md) | — | 21 |
 | `datafactory` | — | [DataFactory](./azure/datafactory.md) | — | — | 6 |
