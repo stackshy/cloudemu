@@ -86,6 +86,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `kendra` | [Kendra](./aws/kendra.md) | — | — | — | 13 |
 | `keyspaces` | [Keyspaces](./aws/keyspaces.md) | — | — | — | 18 |
 | `kinesis` | [Kinesis](./aws/kinesis.md) | — | — | — | 39 |
+| `kinesisvideo` | [KinesisVideo](./aws/kinesisvideo.md) | — | — | — | 17 |
 | `kms` | [KMS](./aws/kms.md) | — | — | — | 46 |
 | `kms-gcp` | — | — | [KMS](./gcp/kms.md) | — | 17 |
 | `kusto` | — | [Kusto](./azure/kusto.md) | — | — | 14 |
