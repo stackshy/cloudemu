@@ -40,6 +40,27 @@ func TestDefaultGroupImplicit(t *testing.T) {
 	}
 }
 
+func TestDefaultGroupTimestampsStableAcrossReads(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	first, err := m.GetScheduleGroup(ctx, "default")
+	requireNoError(t, err)
+
+	second, err := m.GetScheduleGroup(ctx, "default")
+	requireNoError(t, err)
+
+	if !first.CreationDate.Equal(second.CreationDate) {
+		t.Errorf("default group CreationDate drifted across reads: %v -> %v",
+			first.CreationDate, second.CreationDate)
+	}
+
+	if !first.LastModificationDate.Equal(second.LastModificationDate) {
+		t.Errorf("default group LastModificationDate drifted across reads: %v -> %v",
+			first.LastModificationDate, second.LastModificationDate)
+	}
+}
+
 func TestGetScheduleGroupEmptyResolvesDefault(t *testing.T) {
 	m := newMock()
 

@@ -108,17 +108,16 @@ func (m *Mock) ListScheduleGroups(_ context.Context, f driver.GroupFilter) (grou
 	return out, next, nil
 }
 
-// defaultGroup synthesizes the always-present default group. Its timestamps come
-// from the clock so a control-plane read is well-formed; the group is not stored
-// until a schedule or an explicit action materializes state.
+// defaultGroup synthesizes the always-present default group. Its timestamps are
+// pinned once at construction (defaultGroupTime) so repeated reads of the
+// unmaterialized default group are byte-stable; the group is not stored until a
+// schedule or an explicit action materializes state.
 func (m *Mock) defaultGroup() *driver.ScheduleGroup {
-	now := m.now()
-
 	return &driver.ScheduleGroup{
 		Name:                 driver.DefaultGroupName,
 		Arn:                  m.groupARN(driver.DefaultGroupName),
 		State:                driver.GroupActive,
-		CreationDate:         now,
-		LastModificationDate: now,
+		CreationDate:         m.defaultGroupTime,
+		LastModificationDate: m.defaultGroupTime,
 	}
 }

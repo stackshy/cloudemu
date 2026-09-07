@@ -35,15 +35,22 @@ type Mock struct {
 	schedules *memstore.Store[driver.Schedule]
 	groups    *memstore.Store[driver.ScheduleGroup]
 	opts      *config.Options
+	// defaultGroupTime pins the timestamps of the always-present, unmaterialized
+	// default group so repeated reads of it are byte-stable (minted once here,
+	// not re-derived from the clock on every synthesis).
+	defaultGroupTime time.Time
 }
 
 // New creates a new Scheduler mock with the given configuration options.
 func New(opts *config.Options) *Mock {
-	return &Mock{
+	m := &Mock{
 		schedules: memstore.New[driver.Schedule](),
 		groups:    memstore.New[driver.ScheduleGroup](),
 		opts:      opts,
 	}
+	m.defaultGroupTime = m.now()
+
+	return m
 }
 
 func (m *Mock) now() time.Time {
