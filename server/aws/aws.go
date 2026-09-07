@@ -46,6 +46,7 @@ import (
 	emrsrv "github.com/stackshy/cloudemu/v2/server/aws/emr"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	schedulersrv "github.com/stackshy/cloudemu/v2/server/aws/eventbridgescheduler"
+	fissrv "github.com/stackshy/cloudemu/v2/server/aws/fis"
 	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
 	grafanasrv "github.com/stackshy/cloudemu/v2/server/aws/grafana"
 	guarddutysrv "github.com/stackshy/cloudemu/v2/server/aws/guardduty"
@@ -112,6 +113,7 @@ import (
 	efsdriver "github.com/stackshy/cloudemu/v2/services/efs/driver"
 	schedulerdriver "github.com/stackshy/cloudemu/v2/services/eventbridgescheduler/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	fisdriver "github.com/stackshy/cloudemu/v2/services/fis/driver"
 	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
 	grafanadriver "github.com/stackshy/cloudemu/v2/services/grafana/driver"
 	guarddutydriver "github.com/stackshy/cloudemu/v2/services/guardduty/driver"
@@ -222,6 +224,12 @@ type Drivers struct {
 	// POST /v1/domain?domain=, POST /v1/repository?domain=&repository=) against
 	// the codeartifact driver.
 	CodeArtifact codeartifactdriver.CodeArtifact
+
+	// FIS serves the AWS Fault Injection Simulator control-plane REST-JSON API
+	// (verb + path routing at the root, e.g. POST /experimentTemplates,
+	// GET /experimentTemplates/{id}, POST /experiments, DELETE /experiments/{id})
+	// against the fis driver.
+	FIS fisdriver.FIS
 
 	// Grafana serves the Amazon Managed Grafana control-plane REST-JSON API
 	// (verb + path routing, e.g. POST /workspaces) against the grafana driver.
@@ -449,6 +457,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		MWAA:                p.MWAA,
 		MQ:                  p.MQ,
 		CodeArtifact:        p.CodeArtifact,
+		FIS:                 p.FIS,
 		Grafana:             p.Grafana,
 		Scheduler:           p.Scheduler,
 		AOSS:                p.AOSS,
@@ -818,6 +827,18 @@ func New(d Drivers) *server.Server {
 	// /v1/tags/{arn} path style of MQ, Batch, AppSync and Kafka.
 	if d.CodeArtifact != nil {
 		srv.Register(codeartifactsrv.New(d.CodeArtifact))
+	}
+
+	// FIS (Fault Injection Simulator) uses REST-JSON verb + path routing at the
+	// root (e.g. POST /experimentTemplates, GET /experimentTemplates/{id},
+	// POST /experiments, DELETE /experiments/{id}, POST /tags/{arn}). Its Matches
+	// claims the /experimentTemplates and /experiments trees — distinct from the
+	// other root claimants (Grafana's /workspaces) — and the shared /tags paths
+	// only when the ARN names a FIS (:fis:) resource, so it must run before the S3
+	// catch-all and is disjoint from the other /tags claimants, which scope their
+	// claims to their own ARN markers.
+	if d.FIS != nil {
+		srv.Register(fissrv.New(d.FIS))
 	}
 
 	// Grafana (Amazon Managed Grafana) uses REST-JSON verb + path routing at the

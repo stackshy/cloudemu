@@ -6141,6 +6141,51 @@
     }
   },
   {
+    "service": "fis",
+    "interface": "FIS",
+    "operations": [
+      {
+        "name": "CreateExperimentTemplate"
+      },
+      {
+        "name": "DeleteExperimentTemplate"
+      },
+      {
+        "name": "GetExperiment"
+      },
+      {
+        "name": "GetExperimentTemplate"
+      },
+      {
+        "name": "ListExperimentTemplates"
+      },
+      {
+        "name": "ListExperiments"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "StartExperiment"
+      },
+      {
+        "name": "StopExperiment"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateExperimentTemplate"
+      }
+    ],
+    "providers": {
+      "aws": "FIS"
+    }
+  },
+  {
     "service": "frontdoor",
     "interface": "AzureFrontDoorProfiles",
     "operations": [
