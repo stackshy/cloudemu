@@ -5643,6 +5643,39 @@
     }
   },
   {
+    "service": "elasticsan",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverElasticSans"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "ElasticSan"
+    }
+  },
+  {
     "service": "emr",
     "interface": "provider-native",
     "operations": [
