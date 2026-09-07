@@ -51,6 +51,7 @@ var jsonRPCServiceByTarget = map[string]string{
 	"Kinesis_20131202.":                     "kinesis",
 	"CloudTrail_20131101.":                  "cloudtrail",
 	"AWSGlue.":                              "glue",
+	"OpenSearchServerless.":                 "aoss",
 	"AmazonAthena.":                         "athena",
 	"AWSCognitoIdentityProviderService.":    "cognito-idp",
 	"StarlingDoveService.":                  "config",

@@ -138,6 +138,69 @@
     }
   },
   {
+    "service": "aoss",
+    "interface": "AOSS",
+    "operations": [
+      {
+        "name": "BatchGetCollection"
+      },
+      {
+        "name": "CreateAccessPolicy"
+      },
+      {
+        "name": "CreateCollection"
+      },
+      {
+        "name": "CreateSecurityPolicy"
+      },
+      {
+        "name": "DeleteAccessPolicy"
+      },
+      {
+        "name": "DeleteCollection"
+      },
+      {
+        "name": "DeleteSecurityPolicy"
+      },
+      {
+        "name": "GetAccessPolicy"
+      },
+      {
+        "name": "GetSecurityPolicy"
+      },
+      {
+        "name": "ListAccessPolicies"
+      },
+      {
+        "name": "ListCollections"
+      },
+      {
+        "name": "ListSecurityPolicies"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAccessPolicy"
+      },
+      {
+        "name": "UpdateCollection"
+      },
+      {
+        "name": "UpdateSecurityPolicy"
+      }
+    ],
+    "providers": {
+      "aws": "AOSS"
+    }
+  },
+  {
     "service": "apigateway",
     "interface": "APIGateway",
     "operations": [
