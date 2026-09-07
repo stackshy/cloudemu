@@ -56,6 +56,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/signalr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/sql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/sqlvirtualmachine"
+	"github.com/stackshy/cloudemu/v2/providers/azure/streamanalytics"
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
@@ -199,6 +200,7 @@ type Provider struct {
 	RedisEnterprise    *redisenterprise.Mock
 	MongoCluster       *mongocluster.Mock
 	Batch              *batch.Mock
+	StreamAnalytics    *streamanalytics.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -277,6 +279,7 @@ func New(opts ...config.Option) *Provider {
 		RedisEnterprise:    redisenterprise.New(o),
 		MongoCluster:       mongocluster.New(o),
 		Batch:              batch.New(o),
+		StreamAnalytics:    streamanalytics.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -327,6 +330,7 @@ func New(opts ...config.Option) *Provider {
 				redisEnterpriseDiscovery{p.RedisEnterprise},
 				mongoClusterDiscovery{p.MongoCluster},
 				batchDiscovery{p.Batch},
+				streamAnalyticsDiscovery{p.StreamAnalytics},
 			},
 		},
 	)

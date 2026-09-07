@@ -99,6 +99,9 @@ const (
 	ServiceMongoCluster = "mongocluster"
 	// ServiceBatch buckets Azure Batch resources (Microsoft.Batch/batchAccounts).
 	ServiceBatch = "batch"
+	// ServiceStreamAnalytics buckets Azure Stream Analytics resources
+	// (Microsoft.StreamAnalytics/streamingjobs).
+	ServiceStreamAnalytics = "streamanalytics"
 )
 
 // Resource type constants emitted by the walkers.
@@ -235,6 +238,11 @@ const TypeMongoCluster = "MongoCluster"
 // TypeBatchAccount is the portable type for an Azure Batch account
 // (Microsoft.Batch/batchAccounts). Azure-only, so it lives in its own line.
 const TypeBatchAccount = "BatchAccount"
+
+// TypeStreamingJob is the portable type for an Azure Stream Analytics job
+// (Microsoft.StreamAnalytics/streamingjobs). Azure-only, so it lives in its own
+// line.
+const TypeStreamingJob = "StreamingJob"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs

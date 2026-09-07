@@ -89,6 +89,7 @@ import (
 	sqlvirtualmachinesrv "github.com/stackshy/cloudemu/v2/server/azure/sqlvirtualmachine"
 	"github.com/stackshy/cloudemu/v2/server/azure/sshpublickeys"
 	storageaccountsrv "github.com/stackshy/cloudemu/v2/server/azure/storageaccount"
+	streamanalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/streamanalytics"
 	"github.com/stackshy/cloudemu/v2/server/azure/subscriptions"
 	synapsesrv "github.com/stackshy/cloudemu/v2/server/azure/synapse"
 	tablesrv "github.com/stackshy/cloudemu/v2/server/azure/tablestorage"
@@ -201,6 +202,10 @@ type Drivers struct {
 	// Batch serves Microsoft.Batch/batchAccounts plus its nested pools child
 	// resource and the account-key / pool-resize actions.
 	Batch batchsrv.Store
+	// StreamAnalytics serves Microsoft.StreamAnalytics/streamingjobs plus its
+	// nested transformation/inputs/outputs/functions child resources and the
+	// job start/stop/scale actions.
+	StreamAnalytics streamanalyticssrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -584,6 +589,15 @@ func New(d Drivers) http.Handler {
 	if d.Batch != nil {
 		batchHandler = batchsrv.New(d.Batch)
 		rgPurgers = append(rgPurgers, batchHandler)
+	}
+
+	// Stream Analytics: a resource-group-scoped resource, so its handler joins
+	// the purge cascade. Deleting the group tears down every job and its
+	// transformation/inputs/outputs/functions. Registered further below.
+	var streamAnalyticsHandler *streamanalyticssrv.Handler
+	if d.StreamAnalytics != nil {
+		streamAnalyticsHandler = streamanalyticssrv.New(d.StreamAnalytics)
+		rgPurgers = append(rgPurgers, streamAnalyticsHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -1025,6 +1039,13 @@ func New(d Drivers) http.Handler {
 	// from every other Azure handler, so registration order is unconstrained.
 	if batchHandler != nil {
 		srv.Register(batchHandler)
+	}
+
+	// Stream Analytics claims Microsoft.StreamAnalytics/streamingjobs — a distinct
+	// ARM provider name from every other Azure handler, so registration order is
+	// unconstrained.
+	if streamAnalyticsHandler != nil {
+		srv.Register(streamAnalyticsHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

@@ -68,6 +68,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [Snapshots](./snapshots.md) | — (provider-native) | 5 |
 | [Sshpublickeys](./sshpublickeys.md) | — (provider-native) | 7 |
 | [Storageaccount](./storageaccount.md) | — (provider-native) | 10 |
+| [StreamAnalytics](./streamanalytics.md) | — (provider-native) | 19 |
 | [Subscriptions](./subscriptions.md) | — (provider-native) | 3 |
 | [Synapse](./synapse.md) | — (provider-native) | 11 |
 | [TableStorage](./tablestorage.md) | `tablestorage` | 9 |

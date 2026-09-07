@@ -490,6 +490,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"redisenterprise/RedisEnterprise":     "microsoft.cache/redisenterprise",
 	"mongocluster/MongoCluster":           "microsoft.documentdb/mongoclusters",
 	"batch/BatchAccount":                  "microsoft.batch/batchaccounts",
+	"streamanalytics/StreamingJob":        "microsoft.streamanalytics/streamingjobs",
 }
 
 func portableToAzureType(service, typ string) string {

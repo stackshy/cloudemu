@@ -16384,6 +16384,72 @@
     }
   },
   {
+    "service": "streamanalytics",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "ARMType"
+      },
+      {
+        "name": "CreateOrUpdateChild"
+      },
+      {
+        "name": "CreateOrUpdateJob"
+      },
+      {
+        "name": "DeleteChild"
+      },
+      {
+        "name": "DeleteJob"
+      },
+      {
+        "name": "DiscoverJobs"
+      },
+      {
+        "name": "GetChild"
+      },
+      {
+        "name": "GetJob"
+      },
+      {
+        "name": "JobChildren"
+      },
+      {
+        "name": "JobExists"
+      },
+      {
+        "name": "ListChildren"
+      },
+      {
+        "name": "ListJobsByResourceGroup"
+      },
+      {
+        "name": "ListJobsBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "ScaleJob"
+      },
+      {
+        "name": "StartJob"
+      },
+      {
+        "name": "StopJob"
+      },
+      {
+        "name": "TestChild"
+      }
+    ],
+    "providers": {
+      "azure": "StreamAnalytics"
+    }
+  },
+  {
     "service": "sts",
     "interface": "provider-native",
     "operations": [
