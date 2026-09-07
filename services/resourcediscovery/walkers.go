@@ -70,6 +70,9 @@ const (
 	// ServiceDigitalTwins buckets Azure Digital Twins resources
 	// (Microsoft.DigitalTwins/digitalTwinsInstances).
 	ServiceDigitalTwins = "digitaltwins"
+	// ServiceManagedGrafana buckets Azure Managed Grafana resources
+	// (Microsoft.Dashboard/grafana).
+	ServiceManagedGrafana = "managedgrafana"
 )
 
 // Resource type constants emitted by the walkers.
@@ -163,6 +166,10 @@ const TypeCommunicationService = "CommunicationService"
 // instance (Microsoft.DigitalTwins/digitalTwinsInstances). Azure-only, so it
 // lives in its own line.
 const TypeDigitalTwinsInstance = "DigitalTwinsInstance"
+
+// TypeGrafana is the portable type for an Azure Managed Grafana resource
+// (Microsoft.Dashboard/grafana). Azure-only, so it lives in its own line.
+const TypeGrafana = "Grafana"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs
