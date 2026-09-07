@@ -81,9 +81,11 @@ func New(opts *config.Options) *Mock {
 	}
 }
 
-// PutMetricData stores metric data points in the default compartment.
-func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) error {
-	return m.PostMetricData(ctx, m.opts.CompartmentID, "", data)
+// PutMetricData stores metric data points in the default compartment. It is
+// the in-process path a sibling mock emits its own service metrics on, so it
+// admits the `oci_` namespaces those metrics live under.
+func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error {
+	return m.postMetricData(m.opts.CompartmentID, "", data, true)
 }
 
 // GetMetricData aggregates the matching series in the default compartment into
