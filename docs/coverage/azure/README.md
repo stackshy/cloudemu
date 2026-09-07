@@ -28,6 +28,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [DevCenter](./devcenter.md) | — (provider-native) | 8 |
 | [DigitalTwins](./digitaltwins.md) | — (provider-native) | 8 |
 | [Disks](./disks.md) | — (provider-native) | 7 |
+| [ElasticSan](./elasticsan.md) | — (provider-native) | 8 |
 | [EventGrid](./eventgrid.md) | `eventbus` | 16 |
 | [Eventhub](./eventhub.md) | — (provider-native) | 14 |
 | [Firewall](./firewall.md) | `azurefirewall` | 8 |

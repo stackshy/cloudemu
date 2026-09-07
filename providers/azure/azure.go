@@ -27,6 +27,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/devcenter"
 	"github.com/stackshy/cloudemu/v2/providers/azure/digitaltwins"
 	"github.com/stackshy/cloudemu/v2/providers/azure/dns"
+	"github.com/stackshy/cloudemu/v2/providers/azure/elasticsan"
 	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
 	"github.com/stackshy/cloudemu/v2/providers/azure/firewall"
 	"github.com/stackshy/cloudemu/v2/providers/azure/frontdoor"
@@ -187,6 +188,7 @@ type Provider struct {
 	DevCenter          *devcenter.Mock
 	Purview            *purview.Mock
 	ChaosStudio        *chaosstudio.Mock
+	ElasticSan         *elasticsan.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -259,6 +261,7 @@ func New(opts ...config.Option) *Provider {
 		DevCenter:          devcenter.New(o),
 		Purview:            purview.New(o),
 		ChaosStudio:        chaosstudio.New(o),
+		ElasticSan:         elasticsan.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -303,6 +306,7 @@ func New(opts ...config.Option) *Provider {
 				devCenterDiscovery{p.DevCenter},
 				purviewDiscovery{p.Purview},
 				chaosStudioDiscovery{p.ChaosStudio},
+				elasticSanDiscovery{p.ElasticSan},
 			},
 		},
 	)

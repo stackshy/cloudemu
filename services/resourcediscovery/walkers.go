@@ -82,6 +82,9 @@ const (
 	// ServiceChaosStudio buckets Azure Chaos Studio resources
 	// (Microsoft.Chaos/experiments).
 	ServiceChaosStudio = "chaosstudio"
+	// ServiceElasticSan buckets Azure Elastic SAN resources
+	// (Microsoft.ElasticSan/elasticSans).
+	ServiceElasticSan = "elasticsan"
 )
 
 // Resource type constants emitted by the walkers.
@@ -191,6 +194,10 @@ const TypePurviewAccount = "Account"
 // TypeChaosExperiment is the portable type for an Azure Chaos Studio resource
 // (Microsoft.Chaos/experiments). Azure-only, so it lives in its own line.
 const TypeChaosExperiment = "Experiment"
+
+// TypeElasticSan is the portable type for an Azure Elastic SAN resource
+// (Microsoft.ElasticSan/elasticSans). Azure-only, so it lives in its own line.
+const TypeElasticSan = "ElasticSan"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs
