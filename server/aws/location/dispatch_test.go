@@ -33,6 +33,12 @@ func TestMatches(t *testing.T) {
 		// Unrelated paths are not claimed.
 		{http.MethodPost, "/maps/v1/maps", false},
 		{http.MethodGet, "/example-bucket/key", false},
+		// A path-style S3 request to a bucket named like a versioned root, with a
+		// non-collection third segment, falls through to S3 (not claimed here).
+		{http.MethodGet, "/maps/v0/tile.png", false},
+		{http.MethodGet, "/maps/v0/v0/tiles/1.png", false},
+		{http.MethodGet, "/routes/v0/some-object-key", false},
+		{http.MethodGet, "/maps/v0", false},
 	}
 
 	for _, tc := range cases {

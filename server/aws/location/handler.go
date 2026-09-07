@@ -65,15 +65,22 @@ func New(d driver.Location) *Handler {
 	return h
 }
 
-// isVersionedRoot reports whether segs names a claimed /{root}/v0/... path.
+// isVersionedRoot reports whether segs names a claimed /{root}/v0/{coll|listPath}
+// path. The third segment must be the resource's collection or list sub-path;
+// every real Location call carries it, so requiring it lets an unrelated
+// path-style S3 request to a bucket literally named e.g. "maps" with a "v0/..."
+// key fall through to S3 instead of being mis-claimed here.
 func (h *Handler) isVersionedRoot(segs []string) bool {
-	if len(segs) < 2 || segs[1] != segVersion {
+	if len(segs) < 3 || segs[1] != segVersion {
 		return false
 	}
 
-	_, ok := h.routes[segs[0]]
+	res, ok := h.routes[segs[0]]
+	if !ok {
+		return false
+	}
 
-	return ok
+	return segs[2] == res.coll || segs[2] == res.listPath
 }
 
 // Matches claims the Location path shapes. The versioned roots are unique to
