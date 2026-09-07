@@ -50,6 +50,7 @@ import (
 	guarddutysrv "github.com/stackshy/cloudemu/v2/server/aws/guardduty"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	kafkasrv "github.com/stackshy/cloudemu/v2/server/aws/kafka"
+	kendrasrv "github.com/stackshy/cloudemu/v2/server/aws/kendra"
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
 	kinesissrv "github.com/stackshy/cloudemu/v2/server/aws/kinesis"
 	kmssrv "github.com/stackshy/cloudemu/v2/server/aws/kms"
@@ -111,6 +112,7 @@ import (
 	guarddutydriver "github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	kafkadriver "github.com/stackshy/cloudemu/v2/services/kafka/driver"
+	kendradriver "github.com/stackshy/cloudemu/v2/services/kendra/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
@@ -223,6 +225,11 @@ type Drivers struct {
 	// REST-JSON API (verb + path routing, e.g. POST /workspaces) against the aps
 	// driver.
 	APS apsdriver.APS
+
+	// Kendra serves the Amazon Kendra JSON 1.1 protocol (X-Amz-Target prefix
+	// "AWSKendraFrontendService.") against the kendra driver: indexes and the
+	// data source connectors that belong to them.
+	Kendra kendradriver.Kendra
 
 	// Kafka serves the Amazon MSK REST-JSON API (path + method routing under
 	// the /v1/, /api/v2/, and /replication/v1/ version prefixes) against the
@@ -417,6 +424,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		Scheduler:           p.Scheduler,
 		AOSS:                p.AOSS,
 		APS:                 p.APS,
+		Kendra:              p.Kendra,
 		Kafka:               p.Kafka,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
@@ -584,6 +592,13 @@ func New(d Drivers) *server.Server {
 	// registration order is unconstrained.
 	if d.AOSS != nil {
 		srv.Register(aosssrv.New(d.AOSS))
+	}
+
+	// Kendra matches the X-Amz-Target prefix "AWSKendraFrontendService." —
+	// disjoint from the other JSON 1.1 services, so registration order is
+	// unconstrained.
+	if d.Kendra != nil {
+		srv.Register(kendrasrv.New(d.Kendra))
 	}
 
 	// Athena matches the X-Amz-Target prefix "AmazonAthena." — disjoint from the

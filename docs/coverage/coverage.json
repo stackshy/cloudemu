@@ -7550,6 +7550,54 @@
     }
   },
   {
+    "service": "kendra",
+    "interface": "Kendra",
+    "operations": [
+      {
+        "name": "CreateDataSource"
+      },
+      {
+        "name": "CreateIndex"
+      },
+      {
+        "name": "DeleteDataSource"
+      },
+      {
+        "name": "DeleteIndex"
+      },
+      {
+        "name": "DescribeDataSource"
+      },
+      {
+        "name": "DescribeIndex"
+      },
+      {
+        "name": "ListDataSources"
+      },
+      {
+        "name": "ListIndices"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateDataSource"
+      },
+      {
+        "name": "UpdateIndex"
+      }
+    ],
+    "providers": {
+      "aws": "Kendra"
+    }
+  },
+  {
     "service": "keyspaces",
     "interface": "Keyspaces",
     "operations": [

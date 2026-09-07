@@ -45,6 +45,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/guardduty"
 	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kafka"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kendra"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kinesis"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
@@ -194,6 +195,7 @@ type Provider struct {
 	Scheduler           *eventbridgescheduler.Mock
 	AOSS                *aoss.Mock
 	APS                 *aps.Mock
+	Kendra              *kendra.Mock
 	Kafka               *kafka.Mock
 	VPCLattice          *vpclattice.Mock
 	WAFv2               *wafv2.Mock
@@ -273,6 +275,7 @@ func New(opts ...config.Option) *Provider {
 		Scheduler:           eventbridgescheduler.New(o),
 		AOSS:                aoss.New(o),
 		APS:                 aps.New(o),
+		Kendra:              kendra.New(o),
 		Kafka:               kafka.New(o),
 		VPCLattice:          vpclattice.New(o),
 		WAFv2:               wafv2.New(o),

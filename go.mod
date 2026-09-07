@@ -95,6 +95,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/guardduty v1.79.3
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.10
 	github.com/aws/aws-sdk-go-v2/service/kafka v1.49.2
+	github.com/aws/aws-sdk-go-v2/service/kendra v1.68.0
 	github.com/aws/aws-sdk-go-v2/service/keyspaces v1.28.2
 	github.com/aws/aws-sdk-go-v2/service/kinesis v1.46.4
 	github.com/aws/aws-sdk-go-v2/service/kms v1.50.3
