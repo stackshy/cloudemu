@@ -25,17 +25,19 @@ type createTableRequest struct {
 // updateTableRequest is OCI's UpdateTableDetails. Every field is optional, so
 // the pointers distinguish "absent" from "set to the zero value".
 type updateTableRequest struct {
+	CompartmentID     string            `json:"compartmentId"`
 	DDLStatement      string            `json:"ddlStatement"`
 	TableLimits       *tableLimitsBody  `json:"tableLimits"`
 	IsAutoReclaimable *bool             `json:"isAutoReclaimable"`
 	FreeformTags      map[string]string `json:"freeformTags"`
 }
 
-// changeCompartmentRequest is OCI's ChangeTableCompartmentDetails. Real OCI
-// also accepts fromCompartmentId; CloudEmu moves the table wherever it
-// currently sits, so naming the source would be accepted and ignored.
+// changeCompartmentRequest is OCI's ChangeTableCompartmentDetails.
+// fromCompartmentId scopes the table name in the path, which is unique within
+// a compartment only; it is redundant when the path carries an OCID.
 type changeCompartmentRequest struct {
-	ToCompartmentID string `json:"toCompartmentId"`
+	FromCompartmentID string `json:"fromCompartmentId"`
+	ToCompartmentID   string `json:"toCompartmentId"`
 }
 
 // columnBody is OCI's Column model.

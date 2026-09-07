@@ -16,11 +16,11 @@ const (
 
 // GetOCIRow returns one row by primary key. The key arrives as the wire's
 // column:value strings and is coerced to the column types the schema declares.
-func (m *Mock) GetOCIRow(_ context.Context, nameOrID string, key map[string]string) (*Row, error) {
+func (m *Mock) GetOCIRow(_ context.Context, compartmentID, nameOrID string, key map[string]string) (*Row, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, err := m.resolve(nameOrID)
+	t, err := m.resolve(compartmentID, nameOrID)
 	if err != nil {
 		return nil, err
 	}
@@ -40,11 +40,13 @@ func (m *Mock) GetOCIRow(_ context.Context, nameOrID string, key map[string]stri
 
 // PutOCIRow writes a row. The option, when set, makes the write conditional on
 // the row's absence or presence, as OCI's IF_ABSENT and IF_PRESENT do.
-func (m *Mock) PutOCIRow(_ context.Context, nameOrID string, value map[string]any, option string) (*Row, error) {
+func (m *Mock) PutOCIRow(
+	_ context.Context, compartmentID, nameOrID string, value map[string]any, option string,
+) (*Row, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.resolve(nameOrID)
+	t, err := m.resolve(compartmentID, nameOrID)
 	if err != nil {
 		return nil, err
 	}
@@ -76,11 +78,11 @@ func (m *Mock) PutOCIRow(_ context.Context, nameOrID string, value map[string]an
 
 // DeleteOCIRow removes one row, reporting whether it was there. OCI's
 // DeleteRow answers 200 either way.
-func (m *Mock) DeleteOCIRow(_ context.Context, nameOrID string, key map[string]string) (bool, error) {
+func (m *Mock) DeleteOCIRow(_ context.Context, compartmentID, nameOrID string, key map[string]string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.resolve(nameOrID)
+	t, err := m.resolve(compartmentID, nameOrID)
 	if err != nil {
 		return false, err
 	}

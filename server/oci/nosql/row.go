@@ -29,12 +29,14 @@ func (h *Handler) getRow(w http.ResponseWriter, r *http.Request, tableID string)
 		return
 	}
 
-	if _, err := h.findTable(r, tableID); err != nil {
+	compartmentID := ocirest.CompartmentID(r)
+
+	if _, err := h.findTable(r, compartmentID, tableID); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
-	row, err := h.extras.GetOCIRow(r.Context(), tableID, key)
+	row, err := h.extras.GetOCIRow(r.Context(), compartmentID, tableID, key)
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
@@ -58,11 +60,14 @@ func (h *Handler) putRow(w http.ResponseWriter, r *http.Request, tableID string)
 		return
 	}
 
-	if !h.rowCompartmentMatches(w, r, tableID, req.CompartmentID) {
+	compartmentID := compartmentOf(r, req.CompartmentID)
+
+	if _, err := h.findTable(r, compartmentID, tableID); err != nil {
+		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
-	if _, err := h.extras.PutOCIRow(r.Context(), tableID, req.Value, req.Option); err != nil {
+	if _, err := h.extras.PutOCIRow(r.Context(), compartmentID, tableID, req.Value, req.Option); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
@@ -76,35 +81,20 @@ func (h *Handler) deleteRow(w http.ResponseWriter, r *http.Request, tableID stri
 		return
 	}
 
-	if _, err := h.findTable(r, tableID); err != nil {
+	compartmentID := ocirest.CompartmentID(r)
+
+	if _, err := h.findTable(r, compartmentID, tableID); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
-	deleted, err := h.extras.DeleteOCIRow(r.Context(), tableID, key)
+	deleted, err := h.extras.DeleteOCIRow(r.Context(), compartmentID, tableID, key)
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
 	ocirest.WriteJSON(w, r, http.StatusOK, deleteRowResult{IsSuccess: deleted})
-}
-
-// rowCompartmentMatches checks a body-supplied compartmentId against the
-// table's, the way the query-parameter form is checked on the read paths.
-func (h *Handler) rowCompartmentMatches(w http.ResponseWriter, r *http.Request, tableID, compartmentID string) bool {
-	table, err := h.extras.GetOCITable(r.Context(), tableID)
-	if err != nil {
-		ocirest.WriteDriverError(w, r, err)
-		return false
-	}
-
-	if compartmentID != "" && table.CompartmentID != compartmentID {
-		ocirest.WriteDriverError(w, r, notFound(tableID))
-		return false
-	}
-
-	return true
 }
 
 // decodeKey reads OCI's repeated key parameter, each entry a "column:value"

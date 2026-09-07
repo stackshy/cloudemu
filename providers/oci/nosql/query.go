@@ -8,7 +8,6 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Statement kinds the query endpoint runs. OCI's NoSQL REST API has no
@@ -61,7 +60,7 @@ func (m *Mock) runSelect(compartmentID, stmt string, limit int) ([]map[string]an
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, err := m.scopedTable(table, compartmentID)
+	t, err := m.lookup(compartmentID, table)
 	if err != nil {
 		return nil, err
 	}
@@ -92,7 +91,7 @@ func (m *Mock) runDelete(compartmentID, stmt string) ([]map[string]any, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.scopedTable(table, compartmentID)
+	t, err := m.lookup(compartmentID, table)
 	if err != nil {
 		return nil, err
 	}
@@ -107,21 +106,6 @@ func (m *Mock) runDelete(compartmentID, stmt string) ([]map[string]any, error) {
 	}
 
 	return []map[string]any{{deletedRowsField: len(matched)}}, nil
-}
-
-// scopedTable resolves a table and checks it is visible from the caller's
-// compartment. Callers must hold m.mu.
-func (m *Mock) scopedTable(name, compartmentID string) (*tableData, error) {
-	t, err := m.resolve(name)
-	if err != nil {
-		return nil, err
-	}
-
-	if !t.Scope.Matches(scope.Scope{Compartment: compartmentID}) {
-		return nil, cerrors.Newf(cerrors.NotFound, "table %q not found", name)
-	}
-
-	return t, nil
 }
 
 // matchRows returns the unexpired rows satisfying every condition, in a

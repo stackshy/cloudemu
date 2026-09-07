@@ -88,33 +88,35 @@ const maxPathSegments = 5
 // Extras is the OCI-only surface the portable database driver cannot express:
 // tables are created from a DDL statement rather than a key list, carry an
 // OCID, a compartment and capacity limits, and rows are addressed by typed
-// primary key columns. *providers/oci/nosql.Mock satisfies it; any driver
+// primary key columns. Every table-addressing method takes the compartment
+// alongside the name-or-OCID, as OCI's own request models do: a table name is
+// unique within a compartment only. *providers/oci/nosql.Mock satisfies it; any driver
 // that does not is served 501 for every path this handler claims.
 type Extras interface {
 	CreateOCITable(ctx context.Context, spec nosqlprovider.TableSpec) (*nosqlprovider.Table, error)
-	GetOCITable(ctx context.Context, nameOrID string) (*nosqlprovider.Table, error)
+	GetOCITable(ctx context.Context, compartmentID, nameOrID string) (*nosqlprovider.Table, error)
 	ListOCITables(ctx context.Context, compartmentID, name string) ([]nosqlprovider.Table, error)
 	UpdateOCITable(
-		ctx context.Context, nameOrID string, upd nosqlprovider.TableUpdate,
+		ctx context.Context, compartmentID, nameOrID string, upd nosqlprovider.TableUpdate,
 	) (*nosqlprovider.Table, error)
-	DeleteOCITable(ctx context.Context, nameOrID string) error
-	ChangeOCITableCompartment(ctx context.Context, nameOrID, compartmentID string) error
+	DeleteOCITable(ctx context.Context, compartmentID, nameOrID string) error
+	ChangeOCITableCompartment(ctx context.Context, compartmentID, nameOrID, toCompartmentID string) error
 
 	CreateOCIIndex(
-		ctx context.Context, nameOrID string, spec nosqlprovider.IndexSpec, ifNotExists bool,
+		ctx context.Context, compartmentID, nameOrID string, spec nosqlprovider.IndexSpec, ifNotExists bool,
 	) (*nosqlprovider.Index, error)
-	GetOCIIndex(ctx context.Context, nameOrID, indexName string) (*nosqlprovider.Index, error)
-	ListOCIIndexes(ctx context.Context, nameOrID, indexName string) ([]nosqlprovider.Index, error)
-	DeleteOCIIndex(ctx context.Context, nameOrID, indexName string, ifExists bool) error
+	GetOCIIndex(ctx context.Context, compartmentID, nameOrID, indexName string) (*nosqlprovider.Index, error)
+	ListOCIIndexes(ctx context.Context, compartmentID, nameOrID, indexName string) ([]nosqlprovider.Index, error)
+	DeleteOCIIndex(ctx context.Context, compartmentID, nameOrID, indexName string, ifExists bool) error
 
-	GetOCIRow(ctx context.Context, nameOrID string, key map[string]string) (*nosqlprovider.Row, error)
-	PutOCIRow(
-		ctx context.Context, nameOrID string, value map[string]any, option string,
+	GetOCIRow(
+		ctx context.Context, compartmentID, nameOrID string, key map[string]string,
 	) (*nosqlprovider.Row, error)
-	DeleteOCIRow(ctx context.Context, nameOrID string, key map[string]string) (bool, error)
+	PutOCIRow(
+		ctx context.Context, compartmentID, nameOrID string, value map[string]any, option string,
+	) (*nosqlprovider.Row, error)
+	DeleteOCIRow(ctx context.Context, compartmentID, nameOrID string, key map[string]string) (bool, error)
 	QueryOCI(ctx context.Context, compartmentID, statement string, limit int) ([]map[string]any, error)
-
-	OCITableScope(nameOrID string) string
 }
 
 // Handler serves OCI NoSQL Database against a database driver.

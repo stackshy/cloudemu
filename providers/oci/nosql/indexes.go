@@ -13,7 +13,7 @@ func (m *Mock) CreateIndex(_ context.Context, table string, cfg driver.GSIConfig
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return nil, err
 	}
@@ -68,7 +68,7 @@ func (m *Mock) DeleteIndex(_ context.Context, table, indexName string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return err
 	}
@@ -97,7 +97,7 @@ func (m *Mock) DescribeIndex(_ context.Context, table, indexName string) (*drive
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return nil, err
 	}
@@ -115,7 +115,7 @@ func (m *Mock) ListIndexes(_ context.Context, table string) ([]driver.IndexInfo,
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return nil, err
 	}
@@ -157,7 +157,7 @@ func (m *Mock) UpdateTTL(_ context.Context, table string, cfg driver.TTLConfig) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return err
 	}
@@ -180,7 +180,7 @@ func (m *Mock) DescribeTTL(_ context.Context, table string) (*driver.TTLConfig, 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return nil, err
 	}
@@ -197,7 +197,7 @@ func (m *Mock) UpdateStreamConfig(_ context.Context, table string, _ driver.Stre
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if _, err := m.lookup(table); err != nil {
+	if _, err := m.lookup("", table); err != nil {
 		return err
 	}
 
@@ -211,7 +211,7 @@ func (m *Mock) GetStreamRecords(
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if _, err := m.lookup(table); err != nil {
+	if _, err := m.lookup("", table); err != nil {
 		return nil, err
 	}
 
@@ -223,7 +223,7 @@ func (m *Mock) TagResource(_ context.Context, table string, tags map[string]stri
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return err
 	}
@@ -243,7 +243,7 @@ func (m *Mock) UntagResource(_ context.Context, table string, tagKeys []string) 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return err
 	}
@@ -262,7 +262,7 @@ func (m *Mock) ListTagsOfResource(_ context.Context, table string) (map[string]s
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return nil, err
 	}

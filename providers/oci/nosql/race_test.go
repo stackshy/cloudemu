@@ -36,7 +36,7 @@ func TestConcurrentRowsAndTableReads(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			_, err := m.PutOCIRow(ctx, "users", map[string]any{
+			_, err := m.PutOCIRow(ctx, compartmentA, "users", map[string]any{
 				"id": float64(i), "email": fmt.Sprintf("u%d@x.com", i), "name": "n",
 			}, "")
 			assert.NoError(t, err)
@@ -46,7 +46,7 @@ func TestConcurrentRowsAndTableReads(t *testing.T) {
 			defer wg.Done()
 
 			// Missing rows are expected while the writers are still running.
-			_, _ = m.GetOCIRow(ctx, "users", map[string]string{
+			_, _ = m.GetOCIRow(ctx, compartmentA, "users", map[string]string{
 				"id": fmt.Sprint(i), "email": fmt.Sprintf("u%d@x.com", i),
 			})
 		}()
@@ -54,7 +54,7 @@ func TestConcurrentRowsAndTableReads(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			_, err := m.GetOCITable(ctx, "users")
+			_, err := m.GetOCITable(ctx, compartmentA, "users")
 			assert.NoError(t, err)
 		}()
 
@@ -99,7 +99,7 @@ func TestConcurrentTableMutationAndProjection(t *testing.T) {
 
 			// Exactly one goroutine wins each column name; the rest see
 			// AlreadyExists, never a corrupted column list.
-			_, err := m.UpdateOCITable(ctx, "users", nosql.TableUpdate{
+			_, err := m.UpdateOCITable(ctx, compartmentA, "users", nosql.TableUpdate{
 				DDLStatement: fmt.Sprintf("ALTER TABLE users (ADD c%d STRING)", i),
 			})
 			assert.NoError(t, err)
@@ -108,7 +108,7 @@ func TestConcurrentTableMutationAndProjection(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			_, err := m.CreateOCIIndex(ctx, "users",
+			_, err := m.CreateOCIIndex(ctx, compartmentA, "users",
 				nosql.IndexSpec{Name: fmt.Sprintf("i%d", i), Columns: []string{"name"}}, true)
 			assert.NoError(t, err)
 		}()
@@ -116,7 +116,7 @@ func TestConcurrentTableMutationAndProjection(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			table, err := m.GetOCITable(ctx, "users")
+			table, err := m.GetOCITable(ctx, compartmentA, "users")
 			if assert.NoError(t, err) {
 				assert.NotEmpty(t, table.Schema.PrimaryKey)
 			}
@@ -125,18 +125,18 @@ func TestConcurrentTableMutationAndProjection(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			_, err := m.ListOCIIndexes(ctx, "users", "")
+			_, err := m.ListOCIIndexes(ctx, compartmentA, "users", "")
 			assert.NoError(t, err)
 		}()
 	}
 
 	wg.Wait()
 
-	table, err := m.GetOCITable(ctx, "users")
+	table, err := m.GetOCITable(ctx, compartmentA, "users")
 	require.NoError(t, err)
 	assert.Len(t, table.Schema.Columns, 3+raceGoroutines)
 
-	indexes, err := m.ListOCIIndexes(ctx, "users", "")
+	indexes, err := m.ListOCIIndexes(ctx, compartmentA, "users", "")
 	require.NoError(t, err)
 	assert.Len(t, indexes, raceGoroutines)
 }
@@ -158,7 +158,7 @@ func TestConcurrentQueryDelete(t *testing.T) {
 		go func() {
 			defer wg.Done()
 
-			_, err := m.PutOCIRow(ctx, "users", map[string]any{
+			_, err := m.PutOCIRow(ctx, compartmentA, "users", map[string]any{
 				"id": float64(i), "email": "x@y.z", "name": "n",
 			}, "")
 			assert.NoError(t, err)

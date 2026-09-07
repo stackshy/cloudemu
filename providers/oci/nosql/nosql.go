@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"maps"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -172,9 +173,11 @@ type Mock struct {
 	// resolve a name or OCID before touching the rows behind it.
 	mu sync.RWMutex
 
+	// tables is keyed by tableKey: OCI scopes a table name to its compartment,
+	// so the same name in two compartments is two tables.
 	tables *memstore.Store[*tableData]
-	// names maps a table OCID onto its name, so OCI callers can address a
-	// table either way.
+	// names maps a table OCID onto its store key, so OCI callers can address
+	// a table either way.
 	names      *memstore.Store[string]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
@@ -210,24 +213,80 @@ func (m *Mock) now() string {
 	return m.opts.Clock.Now().UTC().Format(timeFormat)
 }
 
-// lookup returns a table by name. Callers must hold m.mu.
-func (m *Mock) lookup(name string) (*tableData, error) {
-	t, ok := m.tables.Get(name)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "table %q not found", name)
+// keySeparator joins a compartment and a table name into one store key. It
+// cannot appear in either, so no pair of them collides.
+const keySeparator = "\x00"
+
+// tableKey scopes a table name to the compartment holding it.
+func tableKey(compartmentID, name string) string {
+	return compartmentID + keySeparator + name
+}
+
+// nameOf splits the table name back out of a store key.
+func nameOf(key string) string {
+	_, name, _ := strings.Cut(key, keySeparator)
+
+	return name
+}
+
+// lookup returns a table by name from a compartment. An empty compartment is
+// the portable driver, whose shape carries none: it reads the compartment new
+// resources default to, then the sole compartment holding that name, so a
+// table created over the OCI surface elsewhere is still reachable and a
+// duplicated name is never picked between. Callers must hold m.mu.
+func (m *Mock) lookup(compartmentID, name string) (*tableData, error) {
+	if compartmentID != "" {
+		if t, ok := m.tables.Get(tableKey(compartmentID, name)); ok {
+			return t, nil
+		}
+
+		return nil, cerrors.Newf(cerrors.NotFound, "table %q not found in compartment %q", name, compartmentID)
 	}
 
-	return t, nil
+	if t, ok := m.tables.Get(tableKey(m.opts.CompartmentID, name)); ok {
+		return t, nil
+	}
+
+	if t, ok := m.soleTable(name); ok {
+		return t, nil
+	}
+
+	return nil, cerrors.Newf(cerrors.NotFound, "table %q not found", name)
+}
+
+// soleTable returns the table of that name when exactly one compartment holds
+// it. Callers must hold m.mu.
+func (m *Mock) soleTable(name string) (*tableData, bool) {
+	var found *tableData
+
+	for _, key := range m.tables.Keys() {
+		if nameOf(key) != name {
+			continue
+		}
+
+		if found != nil {
+			return nil, false
+		}
+
+		found, _ = m.tables.Get(key)
+	}
+
+	return found, found != nil
 }
 
 // resolve returns a table addressed by either its name or its OCID, which is
-// what OCI's tableNameOrId path parameter accepts. Callers must hold m.mu.
-func (m *Mock) resolve(nameOrID string) (*tableData, error) {
-	if name, ok := m.names.Get(nameOrID); ok {
-		return m.lookup(name)
+// what OCI's tableNameOrId path parameter accepts. An OCID is unique across
+// the tenancy and resolves on its own; a name needs the compartment scoping
+// it, which is why OCI's request models carry compartmentId alongside it.
+// Callers must hold m.mu.
+func (m *Mock) resolve(compartmentID, nameOrID string) (*tableData, error) {
+	if key, ok := m.names.Get(nameOrID); ok {
+		if t, ok := m.tables.Get(key); ok {
+			return t, nil
+		}
 	}
 
-	return m.lookup(nameOrID)
+	return m.lookup(compartmentID, nameOrID)
 }
 
 // itemKey is a row's identity: the shard key, then the sort key when the
@@ -392,7 +451,7 @@ func (m *Mock) CreateTable(_ context.Context, cfg driver.TableConfig) error {
 
 	schema := schemaFromConfig(&cfg)
 
-	t, err := m.newTable(cfg.Name, ddlFromSchema(cfg.Name, &schema), &schema, defaultLimits())
+	t, err := m.newTable(m.opts.CompartmentID, cfg.Name, ddlFromSchema(cfg.Name, &schema), &schema, defaultLimits())
 	if err != nil {
 		return err
 	}
@@ -412,10 +471,13 @@ func defaultLimits() TableLimits {
 	return TableLimits{CapacityMode: CapacityOnDemand}
 }
 
-// newTable records a new table. Callers must hold m.mu.
-func (m *Mock) newTable(name, ddl string, schema *Schema, limits TableLimits) (*tableData, error) {
-	if m.tables.Has(name) {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "table %q already exists", name)
+// newTable records a new table in a compartment. Callers must hold m.mu.
+func (m *Mock) newTable(
+	compartmentID, name, ddl string, schema *Schema, limits TableLimits,
+) (*tableData, error) {
+	key := tableKey(compartmentID, name)
+	if m.tables.Has(key) {
+		return nil, cerrors.Newf(cerrors.AlreadyExists, "table %q already exists in compartment %q", name, compartmentID)
 	}
 
 	now := m.now()
@@ -428,12 +490,12 @@ func (m *Mock) newTable(name, ddl string, schema *Schema, limits TableLimits) (*
 		LifecycleState: StateActive,
 		TimeCreated:    now,
 		TimeUpdated:    now,
-		Scope:          scope.Scope{Compartment: m.opts.CompartmentID},
+		Scope:          scope.Scope{Compartment: compartmentID},
 		items:          memstore.New[map[string]any](),
 	}
 
-	m.tables.Set(name, t)
-	m.names.Set(t.ID, name)
+	m.tables.Set(key, t)
+	m.names.Set(t.ID, key)
 
 	return t, nil
 }
@@ -443,20 +505,20 @@ func (m *Mock) DeleteTable(_ context.Context, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	return m.dropTable(name)
-}
-
-// dropTable removes a table by name. Callers must hold m.mu.
-func (m *Mock) dropTable(name string) error {
-	t, err := m.lookup(name)
+	t, err := m.lookup("", name)
 	if err != nil {
 		return err
 	}
 
-	m.tables.Delete(name)
-	m.names.Delete(t.ID)
+	m.dropTable(t)
 
 	return nil
+}
+
+// dropTable removes a table. Callers must hold m.mu.
+func (m *Mock) dropTable(t *tableData) {
+	m.tables.Delete(tableKey(t.Scope.Compartment, t.Name))
+	m.names.Delete(t.ID)
 }
 
 // DescribeTable returns the portable projection of a table.
@@ -464,7 +526,7 @@ func (m *Mock) DescribeTable(_ context.Context, name string) (*driver.TableConfi
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, err := m.lookup(name)
+	t, err := m.lookup("", name)
 	if err != nil {
 		return nil, err
 	}
@@ -474,12 +536,30 @@ func (m *Mock) DescribeTable(_ context.Context, name string) (*driver.TableConfi
 	return &cfg, nil
 }
 
-// ListTables returns every table name, ordered.
+// ListTables returns every table name the portable driver can address, which
+// is every name lookup resolves without a compartment: a name held by two
+// compartments neither of which is the default one is reachable over the OCI
+// surface only, and is left out rather than listed twice.
 func (m *Mock) ListTables(_ context.Context) ([]string, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	names := m.tables.Keys()
+	seen := make(map[string]struct{})
+	names := make([]string, 0, len(m.tables.Keys()))
+
+	for _, key := range m.tables.Keys() {
+		name := nameOf(key)
+		if _, ok := seen[name]; ok {
+			continue
+		}
+
+		seen[name] = struct{}{}
+
+		if _, err := m.lookup("", name); err == nil {
+			names = append(names, name)
+		}
+	}
+
 	sort.Strings(names)
 
 	return names, nil

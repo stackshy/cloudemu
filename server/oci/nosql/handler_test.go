@@ -737,3 +737,395 @@ func TestWorkRequestsUnconfiguredIsNotImplemented(t *testing.T) {
 type plainDriver struct {
 	dbdriver.Database
 }
+
+// TestSameTableNameInTwoCompartments is the per-compartment naming contract on
+// the wire: an SDK that reuses a table name across compartments creates two
+// tables, and each compartmentId addresses its own.
+func TestSameTableNameInTwoCompartments(t *testing.T) {
+	h, _ := newHandler(t)
+
+	idA := createTable(t, h)
+
+	rec := do(t, h, http.MethodPost, "/20190828/tables", map[string]any{
+		"compartmentId": compartmentB,
+		"ddlStatement":  usersDDL,
+		"tableLimits": map[string]any{
+			"maxReadUnits": 50, "maxWriteUnits": 50, "maxStorageInGBs": 1, "capacityMode": "PROVISIONED",
+		},
+	})
+	require.Equal(t, http.StatusAccepted, rec.Code)
+
+	var inB struct {
+		ID            string `json:"id"`
+		CompartmentID string `json:"compartmentId"`
+	}
+
+	got := do(t, h, http.MethodGet, "/20190828/tables/users?compartmentId="+compartmentB, nil)
+	require.Equal(t, http.StatusOK, got.Code)
+	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &inB))
+
+	assert.NotEqual(t, idA, inB.ID)
+	assert.Equal(t, compartmentB, inB.CompartmentID)
+
+	// A row written to one is invisible to the other.
+	rec = do(t, h, http.MethodPut, "/20190828/tables/users/rows", map[string]any{
+		"compartmentId": compartmentB,
+		"value":         map[string]any{"id": 1, "email": "b@example.com", "name": "Bea"},
+	})
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	rec = do(t, h, http.MethodGet,
+		"/20190828/tables/users/rows?compartmentId="+compartmentA+"&key=id:1&key=email:b@example.com", nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	// Each listing sees one table.
+	for _, c := range []string{compartmentA, compartmentB} {
+		rec = do(t, h, http.MethodGet, "/20190828/tables?compartmentId="+c, nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var list struct {
+			Items []struct {
+				Name string `json:"name"`
+			} `json:"items"`
+		}
+
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
+		require.Len(t, list.Items, 1)
+		assert.Equal(t, "users", list.Items[0].Name)
+	}
+
+	// Deleting one leaves the other.
+	rec = do(t, h, http.MethodDelete, "/20190828/tables/users?compartmentId="+compartmentB, nil)
+	require.Equal(t, http.StatusAccepted, rec.Code)
+
+	rec = do(t, h, http.MethodGet, "/20190828/tables/users?compartmentId="+compartmentA, nil)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	rec = do(t, h, http.MethodGet, "/20190828/tables/users?compartmentId="+compartmentB, nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+}
+
+// TestIndexesScopePerCompartment pins that an index is created on the table in
+// the compartment the request names, not on a same-named one elsewhere.
+func TestIndexesScopePerCompartment(t *testing.T) {
+	h, _ := newHandler(t)
+
+	createTable(t, h)
+
+	rec := do(t, h, http.MethodPost, "/20190828/tables", map[string]any{
+		"compartmentId": compartmentB,
+		"ddlStatement":  usersDDL,
+		"tableLimits": map[string]any{
+			"maxReadUnits": 50, "maxWriteUnits": 50, "maxStorageInGBs": 1, "capacityMode": "PROVISIONED",
+		},
+	})
+	require.Equal(t, http.StatusAccepted, rec.Code)
+
+	rec = do(t, h, http.MethodPost, "/20190828/tables/users/indexes", map[string]any{
+		"compartmentId": compartmentB,
+		"name":          "byName",
+		"keys":          []map[string]any{{"columnName": "name"}},
+	})
+	require.Equal(t, http.StatusAccepted, rec.Code)
+
+	rec = do(t, h, http.MethodGet, "/20190828/tables/users/indexes?compartmentId="+compartmentB, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), "byName")
+
+	rec = do(t, h, http.MethodGet, "/20190828/tables/users/indexes?compartmentId="+compartmentA, nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.NotContains(t, rec.Body.String(), "byName")
+}
+
+// TestChangeCompartmentScopesFromCompartment moves the table the request's
+// fromCompartmentId names, leaving a same-named table elsewhere alone.
+func TestChangeCompartmentScopesFromCompartment(t *testing.T) {
+	h, _ := newHandler(t)
+
+	idA := createTable(t, h)
+	toC := "ocid1.compartment.oc1..cccc"
+
+	rec := do(t, h, http.MethodPost, "/20190828/tables/users/actions/changeCompartment", map[string]any{
+		"fromCompartmentId": compartmentA,
+		"toCompartmentId":   toC,
+	})
+	require.Equal(t, http.StatusAccepted, rec.Code)
+
+	got := do(t, h, http.MethodGet, "/20190828/tables/users?compartmentId="+toC, nil)
+	require.Equal(t, http.StatusOK, got.Code)
+	assert.Contains(t, got.Body.String(), idA)
+
+	got = do(t, h, http.MethodGet, "/20190828/tables/users?compartmentId="+compartmentA, nil)
+	assert.Equal(t, http.StatusNotFound, got.Code)
+}
+
+// TestAsyncPathsNeedWorkRequests: every mutation real OCI runs asynchronously
+// reports the missing work request store rather than half-serving the request.
+func TestAsyncPathsNeedWorkRequests(t *testing.T) {
+	h := ocinosql.New(nosqlprovider.New(config.NewOptions()), nil)
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+	}{
+		{name: "update table", method: http.MethodPut, target: "/20190828/tables/users"},
+		{name: "delete table", method: http.MethodDelete, target: "/20190828/tables/users"},
+		{name: "create index", method: http.MethodPost, target: "/20190828/tables/users/indexes"},
+		{name: "delete index", method: http.MethodDelete, target: "/20190828/tables/users/indexes/byName"},
+		{
+			name: "change compartment", method: http.MethodPost,
+			target: "/20190828/tables/users/actions/changeCompartment",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, h, tc.method, tc.target, map[string]any{})
+			assert.Equal(t, http.StatusNotImplemented, rec.Code)
+		})
+	}
+}
+
+// TestMalformedBodies refuses a body that is not the JSON the route models.
+func TestMalformedBodies(t *testing.T) {
+	h, _ := newHandler(t)
+	createTable(t, h)
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+	}{
+		{name: "create table", method: http.MethodPost, target: "/20190828/tables"},
+		{name: "update table", method: http.MethodPut, target: "/20190828/tables/users"},
+		{name: "create index", method: http.MethodPost, target: "/20190828/tables/users/indexes"},
+		{name: "update row", method: http.MethodPut, target: "/20190828/tables/users/rows"},
+		{name: "query", method: http.MethodPost, target: "/20190828/query"},
+		{
+			name: "change compartment", method: http.MethodPost,
+			target: "/20190828/tables/users/actions/changeCompartment",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			h.ServeHTTP(rec, httptest.NewRequest(tc.method, tc.target, strings.NewReader("{")))
+
+			assert.Equal(t, http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
+// TestTableMutationErrors drives the failure branches of the mutating table
+// routes: a statement of the wrong kind, and a table that is not there.
+func TestTableMutationErrors(t *testing.T) {
+	h, _ := newHandler(t)
+	createTable(t, h)
+
+	rec := do(t, h, http.MethodPut, "/20190828/tables/users", map[string]any{
+		"compartmentId": compartmentA,
+		"ddlStatement":  usersDDL,
+	})
+	assert.Equal(t, http.StatusBadRequest, rec.Code)
+
+	rec = do(t, h, http.MethodPut, "/20190828/tables/missing", map[string]any{
+		"compartmentId": compartmentA,
+		"ddlStatement":  "ALTER TABLE missing (ADD nickname STRING)",
+	})
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	rec = do(t, h, http.MethodDelete, "/20190828/tables/missing?compartmentId="+compartmentA, nil)
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	rec = do(t, h, http.MethodPost, "/20190828/tables/missing/actions/changeCompartment", map[string]any{
+		"fromCompartmentId": compartmentA,
+		"toCompartmentId":   compartmentB,
+	})
+	assert.Equal(t, http.StatusNotFound, rec.Code)
+
+	// A move into a compartment already holding that name is a conflict.
+	rec = do(t, h, http.MethodPost, "/20190828/tables", map[string]any{
+		"compartmentId": compartmentB,
+		"ddlStatement":  usersDDL,
+		"tableLimits":   map[string]any{"capacityMode": "ON_DEMAND"},
+	})
+	require.Equal(t, http.StatusAccepted, rec.Code)
+
+	rec = do(t, h, http.MethodPost, "/20190828/tables/users/actions/changeCompartment", map[string]any{
+		"fromCompartmentId": compartmentA,
+		"toCompartmentId":   compartmentB,
+	})
+	assert.Equal(t, http.StatusConflict, rec.Code)
+}
+
+// TestIndexAndRowErrors drives the failure branches of the index and row
+// routes: a table that is not there, and an index that is not.
+func TestIndexAndRowErrors(t *testing.T) {
+	h, _ := newHandler(t)
+	createTable(t, h)
+
+	tests := []struct {
+		name   string
+		method string
+		target string
+		body   any
+		expect int
+	}{
+		{
+			name: "create index on a missing table", method: http.MethodPost,
+			target: "/20190828/tables/missing/indexes",
+			body:   map[string]any{"compartmentId": compartmentA, "name": "byName"},
+			expect: http.StatusNotFound,
+		},
+		{
+			name: "create index with no key column", method: http.MethodPost,
+			target: "/20190828/tables/users/indexes",
+			body:   map[string]any{"compartmentId": compartmentA, "name": "byNothing"},
+			expect: http.StatusBadRequest,
+		},
+		{
+			name: "list indexes of a missing table", method: http.MethodGet,
+			target: "/20190828/tables/missing/indexes?compartmentId=" + compartmentA,
+			expect: http.StatusNotFound,
+		},
+		{
+			name: "get a missing index", method: http.MethodGet,
+			target: "/20190828/tables/users/indexes/byNothing?compartmentId=" + compartmentA,
+			expect: http.StatusNotFound,
+		},
+		{
+			name: "get an index of a missing table", method: http.MethodGet,
+			target: "/20190828/tables/missing/indexes/byName?compartmentId=" + compartmentA,
+			expect: http.StatusNotFound,
+		},
+		{
+			name: "delete a missing index", method: http.MethodDelete,
+			target: "/20190828/tables/users/indexes/byNothing?compartmentId=" + compartmentA,
+			expect: http.StatusNotFound,
+		},
+		{
+			name: "delete an index of a missing table", method: http.MethodDelete,
+			target: "/20190828/tables/missing/indexes/byName?compartmentId=" + compartmentA,
+			expect: http.StatusNotFound,
+		},
+		{
+			name: "get a row of a missing table", method: http.MethodGet,
+			target: "/20190828/tables/missing/rows?compartmentId=" + compartmentA + "&key=id:1",
+			expect: http.StatusNotFound,
+		},
+		{
+			name: "delete a row of a missing table", method: http.MethodDelete,
+			target: "/20190828/tables/missing/rows?compartmentId=" + compartmentA + "&key=id:1",
+			expect: http.StatusNotFound,
+		},
+		{
+			name: "put a row to a missing table", method: http.MethodPut,
+			target: "/20190828/tables/missing/rows",
+			body: map[string]any{
+				"compartmentId": compartmentA,
+				"value":         map[string]any{"id": 1, "email": "a@example.com"},
+			},
+			expect: http.StatusNotFound,
+		},
+		{
+			name: "delete a row named by no key", method: http.MethodDelete,
+			target: "/20190828/tables/users/rows?compartmentId=" + compartmentA,
+			expect: http.StatusBadRequest,
+		},
+		{
+			name: "delete a row whose key is not a pair", method: http.MethodDelete,
+			target: "/20190828/tables/users/rows?compartmentId=" + compartmentA + "&key=id",
+			expect: http.StatusBadRequest,
+		},
+		{
+			name: "delete a row whose key is not a primary key column", method: http.MethodDelete,
+			target: "/20190828/tables/users/rows?compartmentId=" + compartmentA + "&key=name:Ada",
+			expect: http.StatusBadRequest,
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rec := do(t, h, tc.method, tc.target, tc.body)
+			assert.Equal(t, tc.expect, rec.Code)
+		})
+	}
+}
+
+// TestIndexIfNotExistsAndIfExists takes the idempotent branches OCI's
+// isIfNotExists and isIfExists parameters select.
+func TestIndexIfNotExistsAndIfExists(t *testing.T) {
+	h, _ := newHandler(t)
+	createTable(t, h)
+
+	body := map[string]any{
+		"compartmentId": compartmentA,
+		"name":          "byName",
+		"keys":          []map[string]any{{"columnName": "name"}},
+		"isIfNotExists": true,
+	}
+
+	for range 2 {
+		rec := do(t, h, http.MethodPost, "/20190828/tables/users/indexes", body)
+		require.Equal(t, http.StatusAccepted, rec.Code)
+	}
+
+	rec := do(t, h, http.MethodDelete,
+		"/20190828/tables/users/indexes/byName?compartmentId="+compartmentA+"&isIfExists=true", nil)
+	require.Equal(t, http.StatusAccepted, rec.Code)
+
+	rec = do(t, h, http.MethodDelete,
+		"/20190828/tables/users/indexes/byName?compartmentId="+compartmentA+"&isIfExists=true", nil)
+	assert.Equal(t, http.StatusAccepted, rec.Code)
+}
+
+// TestListPaginates walks a listing a page at a time with OCI's limit and the
+// opaque page cursor the previous response stamped.
+func TestListPaginates(t *testing.T) {
+	h, _ := newHandler(t)
+	createTable(t, h)
+
+	for _, column := range []string{"name", "email"} {
+		rec := do(t, h, http.MethodPost, "/20190828/tables/users/indexes", map[string]any{
+			"compartmentId": compartmentA,
+			"name":          "by" + column,
+			"keys":          []map[string]any{{"columnName": column}},
+		})
+		require.Equal(t, http.StatusAccepted, rec.Code)
+	}
+
+	seen := make([]string, 0, 2)
+	page := ""
+
+	for range 2 {
+		target := "/20190828/tables/users/indexes?compartmentId=" + compartmentA + "&limit=1"
+		if page != "" {
+			target += "&page=" + page
+		}
+
+		rec := do(t, h, http.MethodGet, target, nil)
+		require.Equal(t, http.StatusOK, rec.Code)
+
+		var list struct {
+			Items []struct {
+				Name string `json:"name"`
+			} `json:"items"`
+		}
+
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &list))
+		require.Len(t, list.Items, 1)
+
+		seen = append(seen, list.Items[0].Name)
+		page = rec.Header().Get(ocirest.HeaderNextPage)
+	}
+
+	assert.ElementsMatch(t, []string{"byname", "byemail"}, seen)
+
+	// A cursor past the end is an empty page, not an error.
+	rec := do(t, h, http.MethodGet,
+		"/20190828/tables/users/indexes?compartmentId="+compartmentA+"&page=99", nil)
+	require.Equal(t, http.StatusOK, rec.Code)
+	assert.Contains(t, rec.Body.String(), `"items":[]`)
+}

@@ -13,6 +13,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/oci/nosql"
 	"github.com/stackshy/cloudemu/v2/services/database/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 const (
@@ -173,7 +174,7 @@ func TestGetOCITableByNameOrOCID(t *testing.T) {
 	table := createUsers(t, m)
 
 	for _, addr := range []string{"users", table.ID} {
-		got, err := m.GetOCITable(context.Background(), addr)
+		got, err := m.GetOCITable(context.Background(), compartmentA, addr)
 		require.NoError(t, err)
 		assert.Equal(t, table.ID, got.ID)
 	}
@@ -182,7 +183,7 @@ func TestGetOCITableByNameOrOCID(t *testing.T) {
 func TestGetOCITableNotFound(t *testing.T) {
 	m, _ := newMock(t)
 
-	_, err := m.GetOCITable(context.Background(), "missing")
+	_, err := m.GetOCITable(context.Background(), compartmentA, "missing")
 
 	require.Error(t, err)
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
@@ -233,7 +234,7 @@ func TestChangeOCITableCompartment(t *testing.T) {
 	m, _ := newMock(t)
 	createUsers(t, m)
 
-	require.NoError(t, m.ChangeOCITableCompartment(context.Background(), "users", compartmentB))
+	require.NoError(t, m.ChangeOCITableCompartment(context.Background(), compartmentA, "users", compartmentB))
 
 	inA, err := m.ListOCITables(context.Background(), compartmentA, "")
 	require.NoError(t, err)
@@ -251,7 +252,7 @@ func TestUpdateOCITable(t *testing.T) {
 
 	reclaim := true
 
-	table, err := m.UpdateOCITable(context.Background(), "users", nosql.TableUpdate{
+	table, err := m.UpdateOCITable(context.Background(), compartmentA, "users", nosql.TableUpdate{
 		DDLStatement:      "ALTER TABLE users (ADD nickname STRING)",
 		Limits:            &nosql.TableLimits{CapacityMode: nosql.CapacityOnDemand},
 		IsAutoReclaimable: &reclaim,
@@ -323,7 +324,7 @@ func TestUpdateOCITableErrors(t *testing.T) {
 			m, _ := newMock(t)
 			createUsers(t, m)
 
-			_, err := m.UpdateOCITable(context.Background(), tc.table, tc.update)
+			_, err := m.UpdateOCITable(context.Background(), compartmentA, tc.table, tc.update)
 
 			require.Error(t, err)
 			assert.Equal(t, tc.expectCode, cerrors.GetCode(err))
@@ -336,24 +337,24 @@ func TestDeleteOCITable(t *testing.T) {
 	m, _ := newMock(t)
 	table := createUsers(t, m)
 
-	require.NoError(t, m.DeleteOCITable(context.Background(), table.ID))
+	require.NoError(t, m.DeleteOCITable(context.Background(), compartmentA, table.ID))
 
-	_, err := m.GetOCITable(context.Background(), "users")
+	_, err := m.GetOCITable(context.Background(), compartmentA, "users")
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
 
 	assert.Equal(t, cerrors.NotFound,
-		cerrors.GetCode(m.DeleteOCITable(context.Background(), "users")))
+		cerrors.GetCode(m.DeleteOCITable(context.Background(), compartmentA, "users")))
 }
 
 func TestOCIRowRoundTrip(t *testing.T) {
 	m, _ := newMock(t)
 	createUsers(t, m)
 
-	_, err := m.PutOCIRow(context.Background(), "users",
+	_, err := m.PutOCIRow(context.Background(), compartmentA, "users",
 		map[string]any{"id": float64(1), "email": "a@example.com", "name": "Ada"}, "")
 	require.NoError(t, err)
 
-	row, err := m.GetOCIRow(context.Background(), "users", map[string]string{"id": "1", "email": "a@example.com"})
+	row, err := m.GetOCIRow(context.Background(), compartmentA, "users", map[string]string{"id": "1", "email": "a@example.com"})
 	require.NoError(t, err)
 
 	assert.Equal(t, "Ada", row.Value["name"])
@@ -361,12 +362,12 @@ func TestOCIRowRoundTrip(t *testing.T) {
 	assert.Equal(t, int64(1), row.Value["id"])
 	assert.Empty(t, row.TimeOfExpiration)
 
-	deleted, err := m.DeleteOCIRow(context.Background(), "users",
+	deleted, err := m.DeleteOCIRow(context.Background(), compartmentA, "users",
 		map[string]string{"id": "1", "email": "a@example.com"})
 	require.NoError(t, err)
 	assert.True(t, deleted)
 
-	_, err = m.GetOCIRow(context.Background(), "users", map[string]string{"id": "1", "email": "a@example.com"})
+	_, err = m.GetOCIRow(context.Background(), compartmentA, "users", map[string]string{"id": "1", "email": "a@example.com"})
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
 }
 
@@ -374,7 +375,7 @@ func TestDeleteOCIRowReportsAbsence(t *testing.T) {
 	m, _ := newMock(t)
 	createUsers(t, m)
 
-	deleted, err := m.DeleteOCIRow(context.Background(), "users", map[string]string{"id": "9", "email": "x@y.z"})
+	deleted, err := m.DeleteOCIRow(context.Background(), compartmentA, "users", map[string]string{"id": "9", "email": "x@y.z"})
 	require.NoError(t, err)
 	assert.False(t, deleted)
 }
@@ -385,18 +386,18 @@ func TestPutOCIRowOptions(t *testing.T) {
 
 	row := map[string]any{"id": float64(1), "email": "a@example.com", "name": "Ada"}
 
-	_, err := m.PutOCIRow(context.Background(), "users", row, nosql.OptionIfPresent)
+	_, err := m.PutOCIRow(context.Background(), compartmentA, "users", row, nosql.OptionIfPresent)
 	require.Error(t, err)
 	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
 
-	_, err = m.PutOCIRow(context.Background(), "users", row, nosql.OptionIfAbsent)
+	_, err = m.PutOCIRow(context.Background(), compartmentA, "users", row, nosql.OptionIfAbsent)
 	require.NoError(t, err)
 
-	_, err = m.PutOCIRow(context.Background(), "users", row, nosql.OptionIfAbsent)
+	_, err = m.PutOCIRow(context.Background(), compartmentA, "users", row, nosql.OptionIfAbsent)
 	require.Error(t, err)
 	assert.Equal(t, cerrors.FailedPrecondition, cerrors.GetCode(err))
 
-	_, err = m.PutOCIRow(context.Background(), "users", row, "MAYBE")
+	_, err = m.PutOCIRow(context.Background(), compartmentA, "users", row, "MAYBE")
 	require.Error(t, err)
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
 }
@@ -439,7 +440,7 @@ func TestPutOCIRowValidation(t *testing.T) {
 			m, _ := newMock(t)
 			createUsers(t, m)
 
-			_, err := m.PutOCIRow(context.Background(), "users", tc.value, "")
+			_, err := m.PutOCIRow(context.Background(), compartmentA, "users", tc.value, "")
 
 			require.Error(t, err)
 			assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
@@ -452,7 +453,7 @@ func TestGetOCIRowRejectsNonKeyColumn(t *testing.T) {
 	m, _ := newMock(t)
 	createUsers(t, m)
 
-	_, err := m.GetOCIRow(context.Background(), "users", map[string]string{"name": "Ada"})
+	_, err := m.GetOCIRow(context.Background(), compartmentA, "users", map[string]string{"name": "Ada"})
 
 	require.Error(t, err)
 	assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
@@ -471,11 +472,11 @@ func TestTableTTLExpiresRows(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	written, err := m.PutOCIRow(context.Background(), "sessions", map[string]any{"id": "s1"}, "")
+	written, err := m.PutOCIRow(context.Background(), compartmentA, "sessions", map[string]any{"id": "s1"}, "")
 	require.NoError(t, err)
 	assert.NotEmpty(t, written.TimeOfExpiration)
 
-	row, err := m.GetOCIRow(context.Background(), "sessions", map[string]string{"id": "s1"})
+	row, err := m.GetOCIRow(context.Background(), compartmentA, "sessions", map[string]string{"id": "s1"})
 	require.NoError(t, err)
 	assert.NotEmpty(t, row.TimeOfExpiration)
 	// The expiry is metadata, not a column the caller sees in the value.
@@ -483,7 +484,7 @@ func TestTableTTLExpiresRows(t *testing.T) {
 
 	clock.Advance(3 * 24 * time.Hour)
 
-	_, err = m.GetOCIRow(context.Background(), "sessions", map[string]string{"id": "s1"})
+	_, err = m.GetOCIRow(context.Background(), compartmentA, "sessions", map[string]string{"id": "s1"})
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
 }
 
@@ -493,41 +494,41 @@ func TestOCIIndexes(t *testing.T) {
 
 	spec := nosql.IndexSpec{Name: "byName", Columns: []string{"name"}}
 
-	idx, err := m.CreateOCIIndex(context.Background(), "users", spec, false)
+	idx, err := m.CreateOCIIndex(context.Background(), compartmentA, "users", spec, false)
 	require.NoError(t, err)
 	assert.Equal(t, nosql.StateActive, idx.LifecycleState)
 	assert.Equal(t, []nosql.IndexKey{{ColumnName: "name"}}, idx.Keys)
 
-	_, err = m.CreateOCIIndex(context.Background(), "users", spec, false)
+	_, err = m.CreateOCIIndex(context.Background(), compartmentA, "users", spec, false)
 	require.Error(t, err)
 	assert.Equal(t, cerrors.AlreadyExists, cerrors.GetCode(err))
 
-	again, err := m.CreateOCIIndex(context.Background(), "users", spec, true)
+	again, err := m.CreateOCIIndex(context.Background(), compartmentA, "users", spec, true)
 	require.NoError(t, err)
 	assert.Equal(t, "byName", again.Name)
 
-	got, err := m.GetOCIIndex(context.Background(), "users", "byName")
+	got, err := m.GetOCIIndex(context.Background(), compartmentA, "users", "byName")
 	require.NoError(t, err)
 	assert.Equal(t, "byName", got.Name)
 
-	list, err := m.ListOCIIndexes(context.Background(), "users", "")
+	list, err := m.ListOCIIndexes(context.Background(), compartmentA, "users", "")
 	require.NoError(t, err)
 	require.Len(t, list, 1)
 
-	require.NoError(t, m.DeleteOCIIndex(context.Background(), "users", "byName", false))
+	require.NoError(t, m.DeleteOCIIndex(context.Background(), compartmentA, "users", "byName", false))
 
-	err = m.DeleteOCIIndex(context.Background(), "users", "byName", false)
+	err = m.DeleteOCIIndex(context.Background(), compartmentA, "users", "byName", false)
 	require.Error(t, err)
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
 
-	require.NoError(t, m.DeleteOCIIndex(context.Background(), "users", "byName", true))
+	require.NoError(t, m.DeleteOCIIndex(context.Background(), compartmentA, "users", "byName", true))
 }
 
 func TestCreateOCIIndexRejectsUndeclaredColumn(t *testing.T) {
 	m, _ := newMock(t)
 	createUsers(t, m)
 
-	_, err := m.CreateOCIIndex(context.Background(), "users",
+	_, err := m.CreateOCIIndex(context.Background(), compartmentA, "users",
 		nosql.IndexSpec{Name: "bad", Columns: []string{"nope"}}, false)
 
 	require.Error(t, err)
@@ -540,12 +541,12 @@ func TestQueryOCISelectAndDelete(t *testing.T) {
 	createUsers(t, m)
 
 	for _, email := range []string{"a@x.com", "b@x.com"} {
-		_, err := m.PutOCIRow(context.Background(), "users",
+		_, err := m.PutOCIRow(context.Background(), compartmentA, "users",
 			map[string]any{"id": float64(1), "email": email, "name": "Ada"}, "")
 		require.NoError(t, err)
 	}
 
-	_, err := m.PutOCIRow(context.Background(), "users",
+	_, err := m.PutOCIRow(context.Background(), compartmentA, "users",
 		map[string]any{"id": float64(2), "email": "c@x.com", "name": "Grace"}, "")
 	require.NoError(t, err)
 
@@ -668,7 +669,7 @@ func TestPortableTableCRUD(t *testing.T) {
 	assert.Equal(t, []string{"portable"}, names)
 
 	// A table created portably still reports the DDL OCI callers expect.
-	table, err := m.GetOCITable(ctx, "portable")
+	table, err := m.GetOCITable(ctx, compartmentA, "portable")
 	require.NoError(t, err)
 	assert.Equal(t, "CREATE TABLE portable (pk STRING, sk STRING, PRIMARY KEY (SHARD(pk), sk))", table.DDLStatement)
 	assert.Equal(t, nosql.CapacityOnDemand, table.Limits.CapacityMode)
@@ -922,10 +923,435 @@ func TestPortableTags(t *testing.T) {
 	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
 }
 
-func TestOCITableScope(t *testing.T) {
+// TestTableNamesScopePerCompartment is the per-compartment naming contract:
+// real OCI scopes a NoSQL table name to its compartment, so the same name in
+// two compartments is two tables, each addressing its own rows.
+func TestTableNamesScopePerCompartment(t *testing.T) {
 	m, _ := newMock(t)
+	ctx := context.Background()
+
+	inA := createUsers(t, m)
+
+	inB, err := m.CreateOCITable(ctx, nosql.TableSpec{
+		CompartmentID: compartmentB,
+		DDLStatement:  usersDDL,
+		Limits:        provisioned(),
+	})
+	require.NoError(t, err)
+	assert.NotEqual(t, inA.ID, inB.ID)
+
+	got, err := m.GetOCITable(ctx, compartmentB, "users")
+	require.NoError(t, err)
+	assert.Equal(t, inB.ID, got.ID)
+
+	_, err = m.PutOCIRow(ctx, compartmentB, "users",
+		map[string]any{"id": float64(1), "email": "b@example.com", "name": "Bea"}, "")
+	require.NoError(t, err)
+
+	_, err = m.GetOCIRow(ctx, compartmentA, "users", map[string]string{"id": "1", "email": "b@example.com"})
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+
+	listA, err := m.ListOCITables(ctx, compartmentA, "")
+	require.NoError(t, err)
+	require.Len(t, listA, 1)
+	assert.Equal(t, inA.ID, listA[0].ID)
+
+	require.NoError(t, m.DeleteOCITable(ctx, compartmentB, "users"))
+
+	_, err = m.GetOCITable(ctx, compartmentA, "users")
+	require.NoError(t, err)
+}
+
+// TestGetOCITableRejectsOtherCompartment pins that naming a table from a
+// compartment that does not hold it is a 404, whether it is addressed by name
+// or by the OCID the handler checks the compartment of.
+func TestGetOCITableRejectsOtherCompartment(t *testing.T) {
+	m, _ := newMock(t)
+	table := createUsers(t, m)
+
+	_, err := m.GetOCITable(context.Background(), compartmentB, "users")
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+
+	// An OCID is unique across the tenancy, so it still resolves; the handler
+	// is what collapses the compartment mismatch into a 404.
+	got, err := m.GetOCITable(context.Background(), compartmentB, table.ID)
+	require.NoError(t, err)
+	assert.Equal(t, compartmentA, got.CompartmentID)
+}
+
+// TestChangeOCITableCompartmentNameTaken refuses a move that would collide
+// with a table of the same name already in the destination.
+func TestChangeOCITableCompartmentNameTaken(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := context.Background()
+
 	createUsers(t, m)
 
-	assert.Equal(t, compartmentA, m.OCITableScope("users"))
-	assert.Empty(t, m.OCITableScope("missing"))
+	_, err := m.CreateOCITable(ctx, nosql.TableSpec{
+		CompartmentID: compartmentB,
+		DDLStatement:  usersDDL,
+		Limits:        provisioned(),
+	})
+	require.NoError(t, err)
+
+	err = m.ChangeOCITableCompartment(ctx, compartmentA, "users", compartmentB)
+	assert.Equal(t, cerrors.AlreadyExists, cerrors.GetCode(err))
+
+	require.Error(t, m.ChangeOCITableCompartment(ctx, compartmentA, "users", ""))
+}
+
+// TestPortableAddressesTablesAcrossCompartments pins how the portable driver,
+// whose shape carries no compartment, addresses a table once names are scoped:
+// the compartment new resources default to, then the sole compartment holding
+// that name.
+func TestPortableAddressesTablesAcrossCompartments(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := context.Background()
+
+	_, err := m.CreateOCITable(ctx, nosql.TableSpec{
+		CompartmentID: compartmentB,
+		DDLStatement:  "CREATE TABLE audits (id STRING, PRIMARY KEY (id))",
+		Limits:        provisioned(),
+	})
+	require.NoError(t, err)
+
+	// Held by one compartment only, so the portable driver reaches it.
+	cfg, err := m.DescribeTable(ctx, "audits")
+	require.NoError(t, err)
+	assert.Equal(t, "id", cfg.PartitionKey)
+
+	names, err := m.ListTables(ctx)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"audits"}, names)
+
+	// Duplicated across compartments, one of them the default: that one wins.
+	createUsers(t, m)
+
+	_, err = m.CreateOCITable(ctx, nosql.TableSpec{
+		CompartmentID: compartmentB,
+		DDLStatement:  usersDDL,
+		Limits:        provisioned(),
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, m.PutItem(ctx, "users", map[string]any{"id": int64(1), "email": "a@example.com"}))
+
+	row, err := m.GetOCIRow(ctx, compartmentA, "users", map[string]string{"id": "1", "email": "a@example.com"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(1), row.Value["id"])
+
+	_, err = m.GetOCIRow(ctx, compartmentB, "users", map[string]string{"id": "1", "email": "a@example.com"})
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+}
+
+// TestPortableSkipsAmbiguousNames leaves a name held by two non-default
+// compartments unaddressable rather than picking one of them.
+func TestPortableSkipsAmbiguousNames(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := context.Background()
+
+	for _, c := range []string{compartmentB, "ocid1.compartment.oc1..cccc"} {
+		_, err := m.CreateOCITable(ctx, nosql.TableSpec{
+			CompartmentID: c,
+			DDLStatement:  "CREATE TABLE audits (id STRING, PRIMARY KEY (id))",
+			Limits:        provisioned(),
+		})
+		require.NoError(t, err)
+	}
+
+	_, err := m.DescribeTable(ctx, "audits")
+	assert.Equal(t, cerrors.NotFound, cerrors.GetCode(err))
+
+	names, err := m.ListTables(ctx)
+	require.NoError(t, err)
+	assert.Empty(t, names)
+}
+
+// TestQueryOCIScopesTableByCompartment runs the same statement in two
+// compartments and gets each compartment's own rows back.
+func TestQueryOCIScopesTableByCompartment(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := context.Background()
+
+	createUsers(t, m)
+
+	_, err := m.CreateOCITable(ctx, nosql.TableSpec{
+		CompartmentID: compartmentB,
+		DDLStatement:  usersDDL,
+		Limits:        provisioned(),
+	})
+	require.NoError(t, err)
+
+	_, err = m.PutOCIRow(ctx, compartmentA, "users",
+		map[string]any{"id": float64(1), "email": "a@example.com", "name": "Ada"}, "")
+	require.NoError(t, err)
+
+	rows, err := m.QueryOCI(ctx, compartmentA, "SELECT * FROM users", 0)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	assert.Equal(t, "Ada", rows[0]["name"])
+
+	rows, err = m.QueryOCI(ctx, compartmentB, "SELECT * FROM users", 0)
+	require.NoError(t, err)
+	assert.Empty(t, rows)
+}
+
+// TestPortableQuerySortOperators runs every sort-key operator the portable
+// driver declares, on both a lexical and a numeric sort key: the comparison
+// orders numerically when both sides parse as numbers and lexically otherwise.
+func TestPortableQuerySortOperators(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := context.Background()
+
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "t", PartitionKey: "pk", SortKey: "sk"}))
+	require.NoError(t, m.BatchPutItems(ctx, "t", []map[string]any{
+		{"pk": "a", "sk": "2"},
+		{"pk": "a", "sk": "10"},
+		{"pk": "a", "sk": "30"},
+		{"pk": "a", "sk": "beta"},
+	}))
+
+	tests := []struct {
+		name   string
+		op     string
+		val    any
+		end    any
+		expect []string
+	}{
+		{name: "less than orders numerically", op: nosql.OpLessThan, val: "30", expect: []string{"10", "2"}},
+		{name: "greater than", op: nosql.OpGreaterThan, val: "2", expect: []string{"10", "30", "beta"}},
+		{name: "less or equal", op: nosql.OpLessEqual, val: "10", expect: []string{"10", "2"}},
+		// "beta" parses as no number, so it is compared lexically and sorts above every digit.
+		{name: "greater or equal", op: nosql.OpGreaterEqual, val: "30", expect: []string{"30", "beta"}},
+		{name: "between spans both ends", op: nosql.OpBetween, val: "2", end: "10", expect: []string{"10", "2"}},
+		{name: "begins with is lexical", op: nosql.OpBeginsWith, val: "be", expect: []string{"beta"}},
+		{name: "contains is lexical", op: nosql.OpContains, val: "et", expect: []string{"beta"}},
+		{name: "not equal", op: nosql.OpNotEqual, val: "beta", expect: []string{"10", "2", "30"}},
+		{name: "an unknown operator matches nothing", op: "LIKE", val: "beta"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := m.Query(ctx, driver.QueryInput{
+				Table: "t",
+				KeyCondition: driver.KeyCondition{
+					PartitionKey: "pk", PartitionVal: "a",
+					SortOp: tc.op, SortVal: tc.val, SortValEnd: tc.end,
+				},
+			})
+			require.NoError(t, err)
+
+			got := make([]string, 0, len(res.Items))
+			for _, item := range res.Items {
+				got = append(got, item["sk"].(string))
+			}
+
+			assert.ElementsMatch(t, tc.expect, got)
+		})
+	}
+}
+
+// TestPortableScanFilterOperators runs the same comparisons through Scan's
+// filters, which is the other caller of the shared operator.
+func TestPortableScanFilterOperators(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := context.Background()
+
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "t", PartitionKey: "pk"}))
+	require.NoError(t, m.BatchPutItems(ctx, "t", []map[string]any{
+		{"pk": "a", "n": "5", "s": "alpha"},
+		{"pk": "b", "n": "40", "s": "beta"},
+	}))
+
+	tests := []struct {
+		name   string
+		filter driver.ScanFilter
+		expect int
+	}{
+		{name: "numeric less than", filter: driver.ScanFilter{Field: "n", Op: nosql.OpLessThan, Value: "40"}, expect: 1},
+		{name: "numeric greater equal", filter: driver.ScanFilter{Field: "n", Op: nosql.OpGreaterEqual, Value: "5"}, expect: 2},
+		{name: "lexical greater than", filter: driver.ScanFilter{Field: "s", Op: nosql.OpGreaterThan, Value: "alpha"}, expect: 1},
+		{name: "lexical less equal", filter: driver.ScanFilter{Field: "s", Op: nosql.OpLessEqual, Value: "alpha"}, expect: 1},
+		{name: "contains", filter: driver.ScanFilter{Field: "s", Op: nosql.OpContains, Value: "eta"}, expect: 1},
+		{name: "begins with", filter: driver.ScanFilter{Field: "s", Op: nosql.OpBeginsWith, Value: "al"}, expect: 1},
+		{name: "not equal", filter: driver.ScanFilter{Field: "s", Op: nosql.OpNotEqual, Value: "beta"}, expect: 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			res, err := m.Scan(ctx, driver.ScanInput{Table: "t", Filters: []driver.ScanFilter{tc.filter}})
+			require.NoError(t, err)
+			assert.Equal(t, tc.expect, res.Count)
+		})
+	}
+}
+
+// TestPortableQueryOnIndex orders and filters on an index's own key columns
+// rather than the table's.
+func TestPortableQueryOnIndex(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := context.Background()
+
+	_, err := m.CreateOCITable(ctx, nosql.TableSpec{
+		CompartmentID: compartmentA,
+		DDLStatement: "CREATE TABLE people (pk STRING, sk STRING, city STRING, age STRING, " +
+			"PRIMARY KEY (SHARD(pk), sk))",
+		Limits: provisioned(),
+	})
+	require.NoError(t, err)
+
+	_, err = m.CreateOCIIndex(ctx, compartmentA, "people",
+		nosql.IndexSpec{Name: "byCity", Columns: []string{"city", "age"}}, false)
+	require.NoError(t, err)
+
+	require.NoError(t, m.BatchPutItems(ctx, "people", []map[string]any{
+		{"pk": "1", "sk": "a", "city": "pune", "age": "30"},
+		{"pk": "2", "sk": "b", "city": "pune", "age": "40"},
+		{"pk": "3", "sk": "c", "city": "goa", "age": "50"},
+	}))
+
+	res, err := m.Query(ctx, driver.QueryInput{
+		Table:     "people",
+		IndexName: "byCity",
+		KeyCondition: driver.KeyCondition{
+			PartitionKey: "city", PartitionVal: "pune", SortOp: nosql.OpGreaterThan, SortVal: "30",
+		},
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, res.Count)
+	assert.Equal(t, "2", res.Items[0]["pk"])
+}
+
+// TestTypedColumnCoercion covers every column type a row value is fitted to,
+// through the wire's string key form and the JSON body's decoded form.
+func TestTypedColumnCoercion(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := context.Background()
+
+	ddl := "CREATE TABLE typed (id LONG, ratio DOUBLE, score FLOAT, amount NUMBER, ok BOOLEAN, " +
+		"blob BINARY, at TIMESTAMP, doc JSON, PRIMARY KEY (id))"
+
+	_, err := m.CreateOCITable(ctx, nosql.TableSpec{
+		CompartmentID: compartmentA, DDLStatement: ddl, Limits: provisioned(),
+	})
+	require.NoError(t, err)
+
+	value := map[string]any{
+		"id": float64(7), "ratio": 1.5, "score": 2.5, "amount": 3.5, "ok": true,
+		"blob": "YWJj", "at": "2026-08-21T12:00:00Z", "doc": map[string]any{"k": "v"},
+	}
+
+	_, err = m.PutOCIRow(ctx, compartmentA, "typed", value, "")
+	require.NoError(t, err)
+
+	// The LONG key round-trips through parseTyped's string form.
+	row, err := m.GetOCIRow(ctx, compartmentA, "typed", map[string]string{"id": "7"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(7), row.Value["id"])
+	assert.InEpsilon(t, 1.5, row.Value["ratio"], 1e-9)
+	assert.Equal(t, true, row.Value["ok"])
+	assert.Equal(t, "YWJj", row.Value["blob"])
+	assert.Equal(t, map[string]any{"k": "v"}, row.Value["doc"])
+}
+
+func TestTypedColumnCoercionErrors(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := context.Background()
+
+	ddl := "CREATE TABLE typed (id LONG, ratio DOUBLE, ok BOOLEAN, at TIMESTAMP, PRIMARY KEY (id))"
+
+	_, err := m.CreateOCITable(ctx, nosql.TableSpec{
+		CompartmentID: compartmentA, DDLStatement: ddl, Limits: provisioned(),
+	})
+	require.NoError(t, err)
+
+	tests := []struct {
+		name  string
+		value map[string]any
+	}{
+		{name: "a LONG takes no fraction", value: map[string]any{"id": 1.5}},
+		{name: "a LONG takes no string", value: map[string]any{"id": "seven"}},
+		{name: "a DOUBLE takes no string", value: map[string]any{"id": float64(1), "ratio": "1.5"}},
+		{name: "a BOOLEAN takes no string", value: map[string]any{"id": float64(1), "ok": "yes"}},
+		{name: "a TIMESTAMP takes no number", value: map[string]any{"id": float64(1), "at": float64(1)}},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := m.PutOCIRow(ctx, compartmentA, "typed", tc.value, "")
+			require.Error(t, err)
+			assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+		})
+	}
+
+	// A key value that does not parse as its column's type is refused too.
+	for _, key := range []map[string]string{{"id": "seven"}} {
+		_, err := m.GetOCIRow(ctx, compartmentA, "typed", key)
+		require.Error(t, err)
+		assert.Equal(t, cerrors.InvalidArgument, cerrors.GetCode(err))
+	}
+}
+
+// TestTypedColumnDefaults fills an absent column from its DDL default, parsed
+// into the column's type rather than left as the declared text.
+func TestTypedColumnDefaults(t *testing.T) {
+	m, _ := newMock(t)
+	ctx := context.Background()
+
+	ddl := "CREATE TABLE defs (id LONG, hits LONG DEFAULT 3, ratio DOUBLE DEFAULT 1.5, " +
+		"ok BOOLEAN DEFAULT true, tag STRING, PRIMARY KEY (id))"
+
+	_, err := m.CreateOCITable(ctx, nosql.TableSpec{
+		CompartmentID: compartmentA, DDLStatement: ddl, Limits: provisioned(),
+	})
+	require.NoError(t, err)
+
+	_, err = m.PutOCIRow(ctx, compartmentA, "defs", map[string]any{"id": float64(1)}, "")
+	require.NoError(t, err)
+
+	row, err := m.GetOCIRow(ctx, compartmentA, "defs", map[string]string{"id": "1"})
+	require.NoError(t, err)
+	assert.Equal(t, int64(3), row.Value["hits"])
+	assert.InEpsilon(t, 1.5, row.Value["ratio"], 1e-9)
+	assert.Equal(t, true, row.Value["ok"])
+	assert.Nil(t, row.Value["tag"])
+}
+
+// captureMonitoring records the metric data the mock publishes. The embedded
+// interface stays nil: emitMetric calls PutMetricData and nothing else.
+type captureMonitoring struct {
+	mondriver.Monitoring
+
+	data []mondriver.MetricDatum
+}
+
+func (c *captureMonitoring) PutMetricData(_ context.Context, data []mondriver.MetricDatum) error {
+	c.data = append(c.data, data...)
+
+	return nil
+}
+
+// TestSetMonitoringPublishesUnits points the mock at a monitoring service and
+// checks read and write unit consumption reaches it, dimensioned by table.
+func TestSetMonitoringPublishesUnits(t *testing.T) {
+	m, _ := newMock(t)
+	mon := &captureMonitoring{}
+	m.SetMonitoring(mon)
+
+	ctx := context.Background()
+	require.NoError(t, m.CreateTable(ctx, driver.TableConfig{Name: "t", PartitionKey: "pk"}))
+	require.NoError(t, m.PutItem(ctx, "t", map[string]any{"pk": "a"}))
+
+	_, err := m.GetItem(ctx, "t", map[string]any{"pk": "a"})
+	require.NoError(t, err)
+
+	names := make([]string, 0, len(mon.data))
+	for _, d := range mon.data {
+		assert.Equal(t, "oci_nosql", d.Namespace)
+		assert.Equal(t, "t", d.Dimensions["tableName"])
+
+		names = append(names, d.MetricName)
+	}
+
+	assert.Subset(t, names, []string{"ReadUnits", "WriteUnits"})
 }

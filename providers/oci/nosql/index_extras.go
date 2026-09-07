@@ -8,11 +8,13 @@ import (
 )
 
 // CreateOCIIndex builds a secondary index from OCI's key list.
-func (m *Mock) CreateOCIIndex(_ context.Context, nameOrID string, spec IndexSpec, ifNotExists bool) (*Index, error) {
+func (m *Mock) CreateOCIIndex(
+	_ context.Context, compartmentID, nameOrID string, spec IndexSpec, ifNotExists bool,
+) (*Index, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.resolve(nameOrID)
+	t, err := m.resolve(compartmentID, nameOrID)
 	if err != nil {
 		return nil, err
 	}
@@ -34,11 +36,11 @@ func (m *Mock) CreateOCIIndex(_ context.Context, nameOrID string, spec IndexSpec
 }
 
 // GetOCIIndex returns one index on a table.
-func (m *Mock) GetOCIIndex(_ context.Context, nameOrID, indexName string) (*Index, error) {
+func (m *Mock) GetOCIIndex(_ context.Context, compartmentID, nameOrID, indexName string) (*Index, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, err := m.resolve(nameOrID)
+	t, err := m.resolve(compartmentID, nameOrID)
 	if err != nil {
 		return nil, err
 	}
@@ -53,11 +55,11 @@ func (m *Mock) GetOCIIndex(_ context.Context, nameOrID, indexName string) (*Inde
 
 // ListOCIIndexes returns a table's indexes ordered by name. A non-empty
 // indexName narrows the listing, as OCI's name query parameter does.
-func (m *Mock) ListOCIIndexes(_ context.Context, nameOrID, indexName string) ([]Index, error) {
+func (m *Mock) ListOCIIndexes(_ context.Context, compartmentID, nameOrID, indexName string) ([]Index, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, err := m.resolve(nameOrID)
+	t, err := m.resolve(compartmentID, nameOrID)
 	if err != nil {
 		return nil, err
 	}
@@ -79,11 +81,11 @@ func (m *Mock) ListOCIIndexes(_ context.Context, nameOrID, indexName string) ([]
 
 // DeleteOCIIndex drops an index. isIfExists makes dropping a missing index a
 // no-op, as OCI's query parameter of that name does.
-func (m *Mock) DeleteOCIIndex(_ context.Context, nameOrID, indexName string, ifExists bool) error {
+func (m *Mock) DeleteOCIIndex(_ context.Context, compartmentID, nameOrID, indexName string, ifExists bool) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.resolve(nameOrID)
+	t, err := m.resolve(compartmentID, nameOrID)
 	if err != nil {
 		return err
 	}
@@ -97,20 +99,6 @@ func (m *Mock) DeleteOCIIndex(_ context.Context, nameOrID, indexName string, ifE
 	}
 
 	return nil
-}
-
-// OCITableScope returns the compartment a table lives in, which the handler
-// stamps on the work requests it records.
-func (m *Mock) OCITableScope(nameOrID string) string {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	t, err := m.resolve(nameOrID)
-	if err != nil {
-		return ""
-	}
-
-	return t.Scope.Compartment
 }
 
 func cloneIndex(idx *Index) *Index {

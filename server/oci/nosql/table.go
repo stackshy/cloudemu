@@ -48,7 +48,7 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 	// CreateTableDetails carries a name alongside the DDL; the two must agree,
 	// since the DDL is what actually names the table.
 	if req.Name != "" && req.Name != table.Name {
-		_ = h.extras.DeleteOCITable(r.Context(), table.Name)
+		_ = h.extras.DeleteOCITable(r.Context(), table.CompartmentID, table.Name)
 
 		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
 			"name "+req.Name+" does not match the table named by ddlStatement, "+table.Name)
@@ -86,7 +86,7 @@ func (h *Handler) listTables(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getTable(w http.ResponseWriter, r *http.Request, id string) {
-	table, err := h.findTable(r, id)
+	table, err := h.findTable(r, ocirest.CompartmentID(r), id)
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
@@ -118,7 +118,7 @@ func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request, id string)
 		upd.Limits = &limits
 	}
 
-	table, err := h.extras.UpdateOCITable(r.Context(), id, upd)
+	table, err := h.extras.UpdateOCITable(r.Context(), compartmentOf(r, req.CompartmentID), id, upd)
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
@@ -136,13 +136,15 @@ func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request, id string)
 		return
 	}
 
-	table, err := h.findTable(r, id)
+	compartmentID := ocirest.CompartmentID(r)
+
+	table, err := h.findTable(r, compartmentID, id)
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
-	if err := h.extras.DeleteOCITable(r.Context(), id); err != nil {
+	if err := h.extras.DeleteOCITable(r.Context(), compartmentID, id); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
@@ -170,13 +172,15 @@ func (h *Handler) changeCompartment(w http.ResponseWriter, r *http.Request, id s
 		return
 	}
 
-	table, err := h.findTable(r, id)
+	compartmentID := compartmentOf(r, req.FromCompartmentID)
+
+	table, err := h.findTable(r, compartmentID, id)
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
-	if err := h.extras.ChangeOCITableCompartment(r.Context(), id, req.ToCompartmentID); err != nil {
+	if err := h.extras.ChangeOCITableCompartment(r.Context(), compartmentID, id, req.ToCompartmentID); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
@@ -188,18 +192,30 @@ func (h *Handler) changeCompartment(w http.ResponseWriter, r *http.Request, id s
 	})
 }
 
-// findTable resolves a table by name or OCID and, when the caller names a
-// compartment, checks the table is visible from it. OCI collapses a table in
-// another compartment into the same 404 a missing one gets.
-func (h *Handler) findTable(r *http.Request, id string) (*nosqlprovider.Table, error) {
-	table, err := h.extras.GetOCITable(r.Context(), id)
+// findTable resolves a table by name or OCID within the caller's compartment,
+// then checks the table is visible from it — the scoped lookup already is, but
+// an OCID resolves across the tenancy. OCI collapses a table in another
+// compartment into the same 404 a missing one gets.
+func (h *Handler) findTable(r *http.Request, compartmentID, id string) (*nosqlprovider.Table, error) {
+	table, err := h.extras.GetOCITable(r.Context(), compartmentID, id)
 	if err != nil {
 		return nil, err
 	}
 
-	if compartmentID := ocirest.CompartmentID(r); compartmentID != "" && table.CompartmentID != compartmentID {
+	if compartmentID != "" && table.CompartmentID != compartmentID {
 		return nil, notFound(id)
 	}
 
 	return table, nil
+}
+
+// compartmentOf takes the compartment a request body names, falling back to
+// the compartmentId query parameter. OCI puts it in the body on the routes
+// that have one and in the query string on the rest.
+func compartmentOf(r *http.Request, body string) string {
+	if body != "" {
+		return body
+	}
+
+	return ocirest.CompartmentID(r)
 }

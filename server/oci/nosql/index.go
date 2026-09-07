@@ -50,13 +50,15 @@ func (h *Handler) createIndex(w http.ResponseWriter, r *http.Request, tableID st
 		spec.Columns = append(spec.Columns, k.ColumnName)
 	}
 
-	table, err := h.findTable(r, tableID)
+	compartmentID := compartmentOf(r, req.CompartmentID)
+
+	table, err := h.findTable(r, compartmentID, tableID)
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
-	if _, err := h.extras.CreateOCIIndex(r.Context(), tableID, spec, req.IsIfNotExists); err != nil {
+	if _, err := h.extras.CreateOCIIndex(r.Context(), compartmentID, tableID, spec, req.IsIfNotExists); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
@@ -71,16 +73,17 @@ func (h *Handler) createIndex(w http.ResponseWriter, r *http.Request, tableID st
 // listIndexes returns a table's indexes. Real OCI marks compartmentId
 // optional here; CloudEmu requires it so every list is compartment-scoped.
 func (h *Handler) listIndexes(w http.ResponseWriter, r *http.Request, tableID string) {
-	if _, given := ocirest.RequireCompartmentID(w, r); !given {
+	compartmentID, given := ocirest.RequireCompartmentID(w, r)
+	if !given {
 		return
 	}
 
-	if _, err := h.findTable(r, tableID); err != nil {
+	if _, err := h.findTable(r, compartmentID, tableID); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
-	indexes, err := h.extras.ListOCIIndexes(r.Context(), tableID, r.URL.Query().Get("name"))
+	indexes, err := h.extras.ListOCIIndexes(r.Context(), compartmentID, tableID, r.URL.Query().Get("name"))
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
@@ -95,12 +98,14 @@ func (h *Handler) listIndexes(w http.ResponseWriter, r *http.Request, tableID st
 }
 
 func (h *Handler) getIndex(w http.ResponseWriter, r *http.Request, tableID, name string) {
-	if _, err := h.findTable(r, tableID); err != nil {
+	compartmentID := ocirest.CompartmentID(r)
+
+	if _, err := h.findTable(r, compartmentID, tableID); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}
 
-	idx, err := h.extras.GetOCIIndex(r.Context(), tableID, name)
+	idx, err := h.extras.GetOCIIndex(r.Context(), compartmentID, tableID, name)
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
@@ -114,7 +119,9 @@ func (h *Handler) deleteIndex(w http.ResponseWriter, r *http.Request, tableID, n
 		return
 	}
 
-	table, err := h.findTable(r, tableID)
+	compartmentID := ocirest.CompartmentID(r)
+
+	table, err := h.findTable(r, compartmentID, tableID)
 	if err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
@@ -122,7 +129,7 @@ func (h *Handler) deleteIndex(w http.ResponseWriter, r *http.Request, tableID, n
 
 	ifExists := r.URL.Query().Get("isIfExists") == "true"
 
-	if err := h.extras.DeleteOCIIndex(r.Context(), tableID, name, ifExists); err != nil {
+	if err := h.extras.DeleteOCIIndex(r.Context(), compartmentID, tableID, name, ifExists); err != nil {
 		ocirest.WriteDriverError(w, r, err)
 		return
 	}

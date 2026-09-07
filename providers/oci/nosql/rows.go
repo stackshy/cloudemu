@@ -29,7 +29,7 @@ const (
 func (m *Mock) PutItem(_ context.Context, table string, item map[string]any) error {
 	m.mu.Lock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		m.mu.Unlock()
 		return err
@@ -74,7 +74,7 @@ func (m *Mock) expiryOf(t *tableData) int64 {
 func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map[string]any, error) {
 	m.mu.RLock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		m.mu.RUnlock()
 		return nil, err
@@ -103,7 +103,7 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.lookup(input.Table)
+	t, err := m.lookup("", input.Table)
 	if err != nil {
 		return nil, err
 	}
@@ -138,7 +138,7 @@ func (m *Mock) UpdateItem(_ context.Context, input driver.UpdateItemInput) (map[
 func (m *Mock) DeleteItem(_ context.Context, table string, key map[string]any) error {
 	m.mu.Lock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		m.mu.Unlock()
 		return err
@@ -159,7 +159,7 @@ func (m *Mock) DeleteItem(_ context.Context, table string, key map[string]any) e
 func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryResult, error) {
 	m.mu.RLock()
 
-	t, err := m.lookup(input.Table)
+	t, err := m.lookup("", input.Table)
 	if err != nil {
 		m.mu.RUnlock()
 		return nil, err
@@ -206,7 +206,7 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryResult, error) {
 	m.mu.RLock()
 
-	t, err := m.lookup(input.Table)
+	t, err := m.lookup("", input.Table)
 	if err != nil {
 		m.mu.RUnlock()
 		return nil, err
@@ -361,7 +361,7 @@ func (m *Mock) BatchPutItems(_ context.Context, table string, items []map[string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return err
 	}
@@ -379,7 +379,7 @@ func (m *Mock) BatchGetItems(_ context.Context, table string, keys []map[string]
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return nil, err
 	}
@@ -407,7 +407,7 @@ func (m *Mock) TransactWriteItems(
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.lookup(table)
+	t, err := m.lookup("", table)
 	if err != nil {
 		return err
 	}

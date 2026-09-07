@@ -35,20 +35,20 @@ func (m *Mock) CreateOCITable(_ context.Context, spec TableSpec) (*Table, error)
 		return nil, err
 	}
 
-	if existing, ok := m.tables.Get(d.Table); ok {
+	if existing, ok := m.tables.Get(tableKey(spec.CompartmentID, d.Table)); ok {
 		if d.IfNotExists {
 			return ptr(toTable(existing)), nil
 		}
 
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "table %q already exists", d.Table)
+		return nil, cerrors.Newf(cerrors.AlreadyExists,
+			"table %q already exists in compartment %q", d.Table, spec.CompartmentID)
 	}
 
-	t, err := m.newTable(d.Table, normaliseStatement(spec.DDLStatement), &d.Schema, limits)
+	t, err := m.newTable(spec.CompartmentID, d.Table, normaliseStatement(spec.DDLStatement), &d.Schema, limits)
 	if err != nil {
 		return nil, err
 	}
 
-	t.Scope = scope.Scope{Compartment: spec.CompartmentID}
 	t.IsAutoReclaimable = spec.IsAutoReclaimable
 	t.Tags = maps.Clone(spec.FreeformTags)
 
@@ -87,11 +87,11 @@ func normaliseLimits(l TableLimits) (TableLimits, error) {
 }
 
 // GetOCITable returns a table by name or OCID.
-func (m *Mock) GetOCITable(_ context.Context, nameOrID string) (*Table, error) {
+func (m *Mock) GetOCITable(_ context.Context, compartmentID, nameOrID string) (*Table, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	t, err := m.resolve(nameOrID)
+	t, err := m.resolve(compartmentID, nameOrID)
 	if err != nil {
 		return nil, err
 	}
@@ -107,13 +107,11 @@ func (m *Mock) ListOCITables(_ context.Context, compartmentID, name string) ([]T
 	defer m.mu.RUnlock()
 
 	filter := scope.Scope{Compartment: compartmentID}
-	names := m.tables.Keys()
-	sort.Strings(names)
+	keys := m.tables.Keys()
+	out := make([]Table, 0, len(keys))
 
-	out := make([]Table, 0, len(names))
-
-	for _, n := range names {
-		t, ok := m.tables.Get(n)
+	for _, k := range keys {
+		t, ok := m.tables.Get(k)
 		if !ok || !t.Scope.Matches(filter) {
 			continue
 		}
@@ -125,16 +123,18 @@ func (m *Mock) ListOCITables(_ context.Context, compartmentID, name string) ([]T
 		out = append(out, toTable(t))
 	}
 
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+
 	return out, nil
 }
 
 // UpdateOCITable applies an ALTER TABLE statement, new limits, tags and the
 // auto-reclaim flag. Every field is optional, as UpdateTable's are.
-func (m *Mock) UpdateOCITable(_ context.Context, nameOrID string, upd TableUpdate) (*Table, error) {
+func (m *Mock) UpdateOCITable(_ context.Context, compartmentID, nameOrID string, upd TableUpdate) (*Table, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.resolve(nameOrID)
+	t, err := m.resolve(compartmentID, nameOrID)
 	if err != nil {
 		return nil, err
 	}
@@ -243,34 +243,51 @@ func isKeyColumn(t *tableData, name string) bool {
 }
 
 // DeleteOCITable drops a table addressed by name or OCID.
-func (m *Mock) DeleteOCITable(_ context.Context, nameOrID string) error {
+func (m *Mock) DeleteOCITable(_ context.Context, compartmentID, nameOrID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	t, err := m.resolve(nameOrID)
+	t, err := m.resolve(compartmentID, nameOrID)
 	if err != nil {
 		return err
 	}
 
-	return m.dropTable(t.Name)
+	m.dropTable(t)
+
+	return nil
 }
 
-// ChangeOCITableCompartment moves a table into another compartment.
-func (m *Mock) ChangeOCITableCompartment(_ context.Context, nameOrID, compartmentID string) error {
+// ChangeOCITableCompartment moves a table into another compartment, which
+// re-keys it: the destination refuses the move when it already holds a table
+// of that name.
+func (m *Mock) ChangeOCITableCompartment(_ context.Context, compartmentID, nameOrID, toCompartmentID string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if compartmentID == "" {
-		return cerrors.New(cerrors.InvalidArgument, "compartmentId is required")
+	if toCompartmentID == "" {
+		return cerrors.New(cerrors.InvalidArgument, "toCompartmentId is required")
 	}
 
-	t, err := m.resolve(nameOrID)
+	t, err := m.resolve(compartmentID, nameOrID)
 	if err != nil {
 		return err
 	}
 
-	t.Scope = scope.Scope{Compartment: compartmentID}
+	if toCompartmentID == t.Scope.Compartment {
+		return nil
+	}
+
+	key := tableKey(toCompartmentID, t.Name)
+	if m.tables.Has(key) {
+		return cerrors.Newf(cerrors.AlreadyExists,
+			"table %q already exists in compartment %q", t.Name, toCompartmentID)
+	}
+
+	m.tables.Delete(tableKey(t.Scope.Compartment, t.Name))
+	t.Scope = scope.Scope{Compartment: toCompartmentID}
 	t.TimeUpdated = m.now()
+	m.tables.Set(key, t)
+	m.names.Set(t.ID, key)
 
 	return nil
 }
