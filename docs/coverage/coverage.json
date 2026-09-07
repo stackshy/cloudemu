@@ -6470,6 +6470,51 @@
     }
   },
   {
+    "service": "grafana",
+    "interface": "Grafana",
+    "operations": [
+      {
+        "name": "CreateWorkspace"
+      },
+      {
+        "name": "DeleteWorkspace"
+      },
+      {
+        "name": "DescribeWorkspace"
+      },
+      {
+        "name": "DescribeWorkspaceAuthentication"
+      },
+      {
+        "name": "DescribeWorkspaceConfiguration"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListWorkspaces"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateWorkspace"
+      },
+      {
+        "name": "UpdateWorkspaceAuthentication"
+      },
+      {
+        "name": "UpdateWorkspaceConfiguration"
+      }
+    ],
+    "providers": {
+      "aws": "Grafana"
+    }
+  },
+  {
     "service": "guardduty",
     "interface": "GuardDuty",
     "operations": [

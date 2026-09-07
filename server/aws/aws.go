@@ -43,6 +43,7 @@ import (
 	emrsrv "github.com/stackshy/cloudemu/v2/server/aws/emr"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
+	grafanasrv "github.com/stackshy/cloudemu/v2/server/aws/grafana"
 	guarddutysrv "github.com/stackshy/cloudemu/v2/server/aws/guardduty"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	kafkasrv "github.com/stackshy/cloudemu/v2/server/aws/kafka"
@@ -99,6 +100,7 @@ import (
 	efsdriver "github.com/stackshy/cloudemu/v2/services/efs/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
+	grafanadriver "github.com/stackshy/cloudemu/v2/services/grafana/driver"
 	guarddutydriver "github.com/stackshy/cloudemu/v2/services/guardduty/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	kafkadriver "github.com/stackshy/cloudemu/v2/services/kafka/driver"
@@ -192,6 +194,10 @@ type Drivers struct {
 	// MWAA serves the Amazon MWAA control-plane REST-JSON API (verb + path
 	// routing, e.g. PUT /environments/{Name}) against the mwaa driver.
 	MWAA mwaadriver.MWAA
+
+	// Grafana serves the Amazon Managed Grafana control-plane REST-JSON API
+	// (verb + path routing, e.g. POST /workspaces) against the grafana driver.
+	Grafana grafanadriver.Grafana
 
 	// Kafka serves the Amazon MSK REST-JSON API (path + method routing under
 	// the /v1/, /api/v2/, and /replication/v1/ version prefixes) against the
@@ -381,6 +387,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		AppSync:             p.AppSync,
 		AppFlow:             p.AppFlow,
 		MWAA:                p.MWAA,
+		Grafana:             p.Grafana,
 		Kafka:               p.Kafka,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
@@ -672,6 +679,17 @@ func New(d Drivers) *server.Server {
 	// ARN markers.
 	if d.MWAA != nil {
 		srv.Register(mwaasrv.New(d.MWAA))
+	}
+
+	// Grafana (Amazon Managed Grafana) uses REST-JSON verb + path routing at the
+	// root (e.g. POST /workspaces, GET /workspaces/{id},
+	// PUT /workspaces/{id}/configuration, POST /tags/{arn}). Its Matches claims
+	// the /workspaces tree and /tags paths carrying a Grafana (:grafana:) ARN, so
+	// it must run before the S3 catch-all and is disjoint from the other /tags
+	// claimants (AppFlow, AppSync, Batch, Kafka, MWAA), which scope their claims
+	// to their own ARN markers.
+	if d.Grafana != nil {
+		srv.Register(grafanasrv.New(d.Grafana))
 	}
 
 	// MSK (Kafka) uses REST-JSON path routing under the /v1/, /api/v2/, and

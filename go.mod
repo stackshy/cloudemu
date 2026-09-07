@@ -90,6 +90,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/service/emr v1.64.8
 	github.com/aws/aws-sdk-go-v2/service/eventbridge v1.47.0
 	github.com/aws/aws-sdk-go-v2/service/glue v1.152.0
+	github.com/aws/aws-sdk-go-v2/service/grafana v1.43.0
 	github.com/aws/aws-sdk-go-v2/service/guardduty v1.79.3
 	github.com/aws/aws-sdk-go-v2/service/iam v1.53.10
 	github.com/aws/aws-sdk-go-v2/service/kafka v1.49.2
