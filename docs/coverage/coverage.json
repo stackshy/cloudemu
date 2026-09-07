@@ -4881,6 +4881,64 @@
     }
   },
   {
+    "service": "dataplex",
+    "interface": "Dataplex",
+    "operations": [
+      {
+        "name": "CreateAsset"
+      },
+      {
+        "name": "CreateLake"
+      },
+      {
+        "name": "CreateZone"
+      },
+      {
+        "name": "DeleteAsset"
+      },
+      {
+        "name": "DeleteLake"
+      },
+      {
+        "name": "DeleteZone"
+      },
+      {
+        "name": "GetAsset"
+      },
+      {
+        "name": "GetLake"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetZone"
+      },
+      {
+        "name": "ListAssets"
+      },
+      {
+        "name": "ListLakes"
+      },
+      {
+        "name": "ListZones"
+      },
+      {
+        "name": "PatchAsset"
+      },
+      {
+        "name": "PatchLake"
+      },
+      {
+        "name": "PatchZone"
+      }
+    ],
+    "providers": {
+      "gcp": "Dataplex"
+    }
+  },
+  {
     "service": "dataproc",
     "interface": "Dataproc",
     "operations": [

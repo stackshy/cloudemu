@@ -29,6 +29,7 @@ import (
 	cloudtaskssrv "github.com/stackshy/cloudemu/v2/server/gcp/cloudtasks"
 	composersrv "github.com/stackshy/cloudemu/v2/server/gcp/composer"
 	"github.com/stackshy/cloudemu/v2/server/gcp/compute"
+	dataplexsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataplex"
 	dataprocsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataproc"
 	datastreamsrv "github.com/stackshy/cloudemu/v2/server/gcp/datastream"
 	"github.com/stackshy/cloudemu/v2/server/gcp/eventarc"
@@ -68,6 +69,7 @@ import (
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
+	dataplexdriver "github.com/stackshy/cloudemu/v2/services/dataplex/driver"
 	dataprocdriver "github.com/stackshy/cloudemu/v2/services/dataproc/driver"
 	datastreamdriver "github.com/stackshy/cloudemu/v2/services/datastream/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
@@ -146,6 +148,13 @@ type Drivers struct {
 	// every other /v1/projects/ handler, and its location-scoped operation polls
 	// are owned by the shared LRO poller.
 	CertificateManager certmanagerdriver.CertificateManager
+	// Dataplex serves the dataplex.googleapis.com v1 lake → zone → asset control
+	// plane against the dataplex driver. Its paths live under /v1/projects/{p}/
+	// locations/{l}/lakes[/{lake}/zones[/{zone}/assets[/…]]]; the handler's Matches
+	// narrows on the lakes resource segment, so it is disjoint from every other
+	// /v1/projects/ handler, and its location-scoped operation polls are owned by
+	// the shared LRO poller.
+	Dataplex dataplexdriver.Dataplex
 	// Metastore serves the metastore.googleapis.com v1 Dataproc Metastore service
 	// control plane against the metastore driver. Its paths live under
 	// /v1/projects/{p}/locations/{l}/services[/…]; the handler's Matches narrows on
@@ -486,6 +495,19 @@ func New(d Drivers) *server.Server {
 		certmanagerH := certmanagersrv.New(d.CertificateManager)
 		certmanagerH.SetOperationRegistry(opsReg)
 		srv.Register(certmanagerH)
+	}
+
+	// Dataplex matches /v1/projects/{p}/locations/{l}/lakes[/{lake}/zones[/{zone}/
+	// assets[/…]]]. Its lakes resource-segment guard is disjoint from every other
+	// /v1/projects/ handler (Composer's environments, Cloud Deploy's pipelines,
+	// Datastream's streams, Certificate Manager's certificates, Metastore's
+	// services, …), so registration order among them is unconstrained; registered
+	// before Firestore's permissive prefix. Its location-scoped operation polls are
+	// owned by the shared LRO poller, which the handler's Matches yields to.
+	if d.Dataplex != nil {
+		dataplexH := dataplexsrv.New(d.Dataplex)
+		dataplexH.SetOperationRegistry(opsReg)
+		srv.Register(dataplexH)
 	}
 
 	// Metastore matches /v1/projects/{p}/locations/{l}/services[/…]. Its services
