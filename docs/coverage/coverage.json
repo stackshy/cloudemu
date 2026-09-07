@@ -14035,7 +14035,8 @@
     "providers": {
       "aws": "SecretsManager",
       "azure": "KeyVault",
-      "gcp": "SecretManager"
+      "gcp": "SecretManager",
+      "oci": "Vault"
     }
   },
   {
