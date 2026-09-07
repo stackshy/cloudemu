@@ -97,6 +97,8 @@ const (
 	// ServiceMongoCluster buckets Azure Cosmos DB for MongoDB (vCore) resources
 	// (Microsoft.DocumentDB/mongoClusters).
 	ServiceMongoCluster = "mongocluster"
+	// ServiceBatch buckets Azure Batch resources (Microsoft.Batch/batchAccounts).
+	ServiceBatch = "batch"
 )
 
 // Resource type constants emitted by the walkers.
@@ -229,6 +231,10 @@ const TypeRedisEnterprise = "RedisEnterprise"
 // cluster (Microsoft.DocumentDB/mongoClusters). Azure-only, so it lives in its own
 // line.
 const TypeMongoCluster = "MongoCluster"
+
+// TypeBatchAccount is the portable type for an Azure Batch account
+// (Microsoft.Batch/batchAccounts). Azure-only, so it lives in its own line.
+const TypeBatchAccount = "BatchAccount"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs

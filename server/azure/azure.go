@@ -20,6 +20,7 @@ import (
 	appinsightssrv "github.com/stackshy/cloudemu/v2/server/azure/appinsights"
 	appgatewaysrv "github.com/stackshy/cloudemu/v2/server/azure/applicationgateway"
 	bastionsrv "github.com/stackshy/cloudemu/v2/server/azure/bastion"
+	batchsrv "github.com/stackshy/cloudemu/v2/server/azure/batch"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
 	chaosstudiosrv "github.com/stackshy/cloudemu/v2/server/azure/chaosstudio"
@@ -197,6 +198,9 @@ type Drivers struct {
 	// MongoCluster serves Microsoft.DocumentDB/mongoClusters — Cosmos DB for
 	// MongoDB (vCore) — plus its listConnectionStrings action.
 	MongoCluster mongoclustersrv.Store
+	// Batch serves Microsoft.Batch/batchAccounts plus its nested pools child
+	// resource and the account-key / pool-resize actions.
+	Batch batchsrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -571,6 +575,15 @@ func New(d Drivers) http.Handler {
 	if d.MongoCluster != nil {
 		mongoClusterHandler = mongoclustersrv.New(d.MongoCluster)
 		rgPurgers = append(rgPurgers, mongoClusterHandler)
+	}
+
+	// Batch: a resource-group-scoped resource, so its handler joins the purge
+	// cascade. Deleting the group tears down every account and its pools.
+	// Registered further below.
+	var batchHandler *batchsrv.Handler
+	if d.Batch != nil {
+		batchHandler = batchsrv.New(d.Batch)
+		rgPurgers = append(rgPurgers, batchHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -1006,6 +1019,12 @@ func New(d Drivers) http.Handler {
 	// registration order relative to it is unconstrained.
 	if mongoClusterHandler != nil {
 		srv.Register(mongoClusterHandler)
+	}
+
+	// Batch claims Microsoft.Batch/batchAccounts — a distinct ARM provider name
+	// from every other Azure handler, so registration order is unconstrained.
+	if batchHandler != nil {
+		srv.Register(batchHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

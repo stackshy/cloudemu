@@ -95,6 +95,7 @@ const (
 	azureTypeAppConfig  = "microsoft.appconfiguration/configurationstores"
 	azureTypeRedisEnt   = "microsoft.cache/redisenterprise"
 	azureTypeMongoClus  = "microsoft.documentdb/mongoclusters"
+	azureTypeBatchAcct  = "microsoft.batch/batchaccounts"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -135,6 +136,7 @@ const (
 	portableAppConfig    = "appconfiguration"
 	portableRedisEnt     = "redisenterprise"
 	portableMongoClus    = "mongocluster"
+	portableBatch        = "batch"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -430,6 +432,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeAppConfig:  {portableAppConfig, "ConfigurationStore"},
 	azureTypeRedisEnt:   {portableRedisEnt, "RedisEnterprise"},
 	azureTypeMongoClus:  {portableMongoClus, "MongoCluster"},
+	azureTypeBatchAcct:  {portableBatch, "BatchAccount"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

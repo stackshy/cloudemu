@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/appconfiguration"
 	"github.com/stackshy/cloudemu/v2/providers/azure/applicationgateway"
 	"github.com/stackshy/cloudemu/v2/providers/azure/bastion"
+	"github.com/stackshy/cloudemu/v2/providers/azure/batch"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
 	"github.com/stackshy/cloudemu/v2/providers/azure/chaosstudio"
@@ -197,6 +198,7 @@ type Provider struct {
 	AppConfiguration   *appconfiguration.Mock
 	RedisEnterprise    *redisenterprise.Mock
 	MongoCluster       *mongocluster.Mock
+	Batch              *batch.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -274,6 +276,7 @@ func New(opts ...config.Option) *Provider {
 		AppConfiguration:   appconfiguration.New(o),
 		RedisEnterprise:    redisenterprise.New(o),
 		MongoCluster:       mongocluster.New(o),
+		Batch:              batch.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -323,6 +326,7 @@ func New(opts ...config.Option) *Provider {
 				appConfigurationDiscovery{p.AppConfiguration},
 				redisEnterpriseDiscovery{p.RedisEnterprise},
 				mongoClusterDiscovery{p.MongoCluster},
+				batchDiscovery{p.Batch},
 			},
 		},
 	)
