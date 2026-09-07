@@ -53,6 +53,7 @@ import (
 	spannersrv "github.com/stackshy/cloudemu/v2/server/gcp/spanner"
 	vertexaisrv "github.com/stackshy/cloudemu/v2/server/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
+	vpcaccesssrv "github.com/stackshy/cloudemu/v2/server/gcp/vpcaccess"
 	workflowssrv "github.com/stackshy/cloudemu/v2/server/gcp/workflows"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	bqdriver "github.com/stackshy/cloudemu/v2/services/bigquery/driver"
@@ -88,6 +89,7 @@ import (
 	spannerdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 	vertexaidriver "github.com/stackshy/cloudemu/v2/services/vertexai/driver"
+	vpcaccessdriver "github.com/stackshy/cloudemu/v2/services/vpcaccess/driver"
 	workflowsdriver "github.com/stackshy/cloudemu/v2/services/workflows/driver"
 )
 
@@ -142,6 +144,13 @@ type Drivers struct {
 	// every other /v1/projects/ handler, and its location-scoped operation polls
 	// are owned by the shared LRO poller.
 	CertificateManager certmanagerdriver.CertificateManager
+	// VPCAccess serves the vpcaccess.googleapis.com v1 Serverless VPC Access
+	// connector control plane against the vpcaccess driver. Its paths live under
+	// /v1/projects/{p}/locations/{l}/connectors[/…]; the handler's Matches narrows
+	// on the connectors resource segment, so it is disjoint from every other
+	// /v1/projects/ handler, and its location-scoped operation polls are owned by
+	// the shared LRO poller.
+	VPCAccess vpcaccessdriver.VPCAccess
 	// NetworkConnectivity serves the networkconnectivity.googleapis.com v1 hub +
 	// spoke control plane against the networkconnectivity driver. Its paths live
 	// under /v1/projects/{p}/locations/{l}/{hubs|spokes}[/…] (hubs are global,
@@ -468,6 +477,20 @@ func New(d Drivers) *server.Server {
 		certmanagerH := certmanagersrv.New(d.CertificateManager)
 		certmanagerH.SetOperationRegistry(opsReg)
 		srv.Register(certmanagerH)
+	}
+
+	// VPCAccess matches /v1/projects/{p}/locations/{l}/connectors[/…]. Its
+	// connectors resource-segment guard is disjoint from every other
+	// /v1/projects/ handler (Composer's environments, Cloud Deploy's pipelines/
+	// targets, Datastream's connectionProfiles/streams, Certificate Manager's
+	// certificates, …), so registration order among them is unconstrained;
+	// registered before Firestore's permissive prefix. Its location-scoped
+	// operation polls are owned by the shared LRO poller, which the handler's
+	// Matches yields to.
+	if d.VPCAccess != nil {
+		vpcaccessH := vpcaccesssrv.New(d.VPCAccess)
+		vpcaccessH.SetOperationRegistry(opsReg)
+		srv.Register(vpcaccessH)
 	}
 
 	// NetworkConnectivity matches /v1/projects/{p}/locations/{l}/{hubs|spokes}

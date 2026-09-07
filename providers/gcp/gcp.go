@@ -41,6 +41,7 @@ import (
 	spannerprov "github.com/stackshy/cloudemu/v2/providers/gcp/spanner"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vertexai"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/vpc"
+	vpcaccessprov "github.com/stackshy/cloudemu/v2/providers/gcp/vpcaccess"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/workflows"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
@@ -100,6 +101,7 @@ type Provider struct {
 	Dataproc            *dataproc.Mock
 	Datastream          *datastream.Mock
 	CertificateManager  *certmanagerprov.Mock
+	VPCAccess           *vpcaccessprov.Mock
 	NetworkConnectivity *networkconnectivity.Mock
 	Composer            *composer.Mock
 	CloudDeploy         *clouddeploy.Mock
@@ -156,6 +158,7 @@ func New(opts ...config.Option) *Provider {
 		Dataproc:            dataproc.New(o),
 		Datastream:          datastream.New(o),
 		CertificateManager:  certmanagerprov.New(o),
+		VPCAccess:           vpcaccessprov.New(o),
 		NetworkConnectivity: networkconnectivity.New(o),
 		Composer:            composer.New(o),
 		CloudDeploy:         clouddeploy.New(o),
