@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigatewayv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/appflow"
 	"github.com/stackshy/cloudemu/v2/providers/aws/appsync"
+	"github.com/stackshy/cloudemu/v2/providers/aws/aps"
 	"github.com/stackshy/cloudemu/v2/providers/aws/athena"
 	"github.com/stackshy/cloudemu/v2/providers/aws/batch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
@@ -186,6 +187,7 @@ type Provider struct {
 	AppFlow             *appflow.Mock
 	MWAA                *mwaa.Mock
 	Grafana             *grafana.Mock
+	APS                 *aps.Mock
 	Kafka               *kafka.Mock
 	VPCLattice          *vpclattice.Mock
 	WAFv2               *wafv2.Mock
@@ -261,6 +263,7 @@ func New(opts ...config.Option) *Provider {
 		AppFlow:             appflow.New(o),
 		MWAA:                mwaa.New(o),
 		Grafana:             grafana.New(o),
+		APS:                 aps.New(o),
 		Kafka:               kafka.New(o),
 		VPCLattice:          vpclattice.New(o),
 		WAFv2:               wafv2.New(o),

@@ -64,3 +64,4 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [Tenants](./tenants.md) | — (provider-native) | 1 |
 | [VNet](./vnet.md) | `networking` | 57 |
 | [VirtualMachines](./virtualmachines.md) | `compute` | 37 |
+| [WebPubSub](./webpubsub.md) | — (provider-native) | 10 |

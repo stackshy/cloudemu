@@ -61,6 +61,9 @@ const (
 	// ServiceSignalR buckets Azure SignalR Service resources
 	// (Microsoft.SignalRService/signalR).
 	ServiceSignalR = "signalr"
+	// ServiceWebPubSub buckets Azure Web PubSub Service resources
+	// (Microsoft.SignalRService/webPubSub).
+	ServiceWebPubSub = "webpubsub"
 	// ServiceDigitalTwins buckets Azure Digital Twins resources
 	// (Microsoft.DigitalTwins/digitalTwinsInstances).
 	ServiceDigitalTwins = "digitaltwins"
@@ -143,6 +146,10 @@ const TypeLoadTest = "LoadTest"
 // TypeSignalR is the portable type for an Azure SignalR Service resource
 // (Microsoft.SignalRService/signalR). Azure-only, so it lives in its own line.
 const TypeSignalR = "SignalR"
+
+// TypeWebPubSub is the portable type for an Azure Web PubSub Service resource
+// (Microsoft.SignalRService/webPubSub). Azure-only, so it lives in its own line.
+const TypeWebPubSub = "WebPubSub"
 
 // TypeDigitalTwinsInstance is the portable type for an Azure Digital Twins
 // instance (Microsoft.DigitalTwins/digitalTwinsInstances). Azure-only, so it

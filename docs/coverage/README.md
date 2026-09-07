@@ -19,6 +19,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `appinsights` | — | [Appinsights](./azure/appinsights.md) | — | — | 6 |
 | `applicationgateway` | — | [AppGateway](./azure/appgateway.md) | — | — | 4 |
 | `appsync` | [AppSync](./aws/appsync.md) | — | — | — | 17 |
+| `aps` | [APS](./aws/aps.md) | — | — | — | 21 |
 | `athena` | [Athena](./aws/athena.md) | — | — | — | 21 |
 | `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
 | `azurefirewall` | — | [Firewall](./azure/firewall.md) | — | — | 8 |
@@ -136,5 +137,6 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `vertexai` | — | — | [VertexAI](./gcp/vertexai.md) | — | 127 |
 | `vpclattice` | [VPCLattice](./aws/vpclattice.md) | — | — | — | 73 |
 | `wafv2` | [WAFv2](./aws/wafv2.md) | — | — | — | 39 |
+| `webpubsub` | — | [WebPubSub](./azure/webpubsub.md) | — | — | 10 |
 | `workflows` | — | — | [Workflows](./gcp/workflows.md) | — | 6 |
 | `workrequest` | — | — | — | [Workrequest](./oci/workrequest.md) | 4 |

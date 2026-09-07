@@ -475,6 +475,78 @@
     }
   },
   {
+    "service": "aps",
+    "interface": "APS",
+    "operations": [
+      {
+        "name": "CreateAlertManagerDefinition"
+      },
+      {
+        "name": "CreateLoggingConfiguration"
+      },
+      {
+        "name": "CreateRuleGroupsNamespace"
+      },
+      {
+        "name": "CreateWorkspace"
+      },
+      {
+        "name": "DeleteAlertManagerDefinition"
+      },
+      {
+        "name": "DeleteLoggingConfiguration"
+      },
+      {
+        "name": "DeleteRuleGroupsNamespace"
+      },
+      {
+        "name": "DeleteWorkspace"
+      },
+      {
+        "name": "DescribeAlertManagerDefinition"
+      },
+      {
+        "name": "DescribeLoggingConfiguration"
+      },
+      {
+        "name": "DescribeRuleGroupsNamespace"
+      },
+      {
+        "name": "DescribeWorkspace"
+      },
+      {
+        "name": "ListRuleGroupsNamespaces"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListWorkspaces"
+      },
+      {
+        "name": "PutAlertManagerDefinition"
+      },
+      {
+        "name": "PutRuleGroupsNamespace"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateLoggingConfiguration"
+      },
+      {
+        "name": "UpdateWorkspaceAlias"
+      }
+    ],
+    "providers": {
+      "aws": "APS"
+    }
+  },
+  {
     "service": "athena",
     "interface": "Athena",
     "operations": [
@@ -16055,6 +16127,45 @@
     ],
     "providers": {
       "aws": "WAFv2"
+    }
+  },
+  {
+    "service": "webpubsub",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverWebPubSub"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PrimaryConnectionString"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "SecondaryConnectionString"
+      }
+    ],
+    "providers": {
+      "azure": "WebPubSub"
     }
   },
   {
