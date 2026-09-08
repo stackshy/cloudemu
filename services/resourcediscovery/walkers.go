@@ -105,6 +105,9 @@ const (
 	// ServiceRecoveryServices buckets Azure Recovery Services resources
 	// (Microsoft.RecoveryServices/vaults).
 	ServiceRecoveryServices = "recoveryservices"
+	// ServiceIoTHub buckets Azure IoT Hub resources
+	// (Microsoft.Devices/IotHubs).
+	ServiceIoTHub = "iothub"
 )
 
 // Resource type constants emitted by the walkers.
@@ -250,6 +253,10 @@ const TypeStreamingJob = "StreamingJob"
 // TypeRecoveryVault is the portable type for an Azure Recovery Services vault
 // (Microsoft.RecoveryServices/vaults). Azure-only, so it lives in its own line.
 const TypeRecoveryVault = "Vault"
+
+// TypeIoTHub is the portable type for an Azure IoT Hub
+// (Microsoft.Devices/IotHubs). Azure-only, so it lives in its own line.
+const TypeIoTHub = "IotHub"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs

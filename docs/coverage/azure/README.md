@@ -38,6 +38,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [Functions](./functions.md) | `serverless` | 27 |
 | [IAM](./iam.md) | `iam` | 40 |
 | [Images](./images.md) | — (provider-native) | 5 |
+| [IoTHub](./iothub.md) | — (provider-native) | 15 |
 | [KeyVault](./keyvault.md) | `secrets` | 7 |
 | [Kusto](./kusto.md) | — (provider-native) | 14 |
 | [LB](./lb.md) | `loadbalancer` | 19 |
