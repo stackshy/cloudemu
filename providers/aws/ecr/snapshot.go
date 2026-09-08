@@ -51,6 +51,9 @@ type imageSnapshot struct {
 // Snapshot captures every repository's state as JSON. includeAssets is unused —
 // ECR stores image manifests/metadata, not object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	snap := ecrSnapshot{
 		RegistryPolicy: m.registryPolicy,
 		Replication:    m.replication,
@@ -112,6 +115,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return fmt.Errorf("ecr: parse snapshot: %w", err)
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	for name, rs := range snap.Repos {
 		rd, err := restoreRepo(rs)
