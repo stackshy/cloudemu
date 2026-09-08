@@ -59,6 +59,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/functions"
 	"github.com/stackshy/cloudemu/v2/server/azure/iam"
 	"github.com/stackshy/cloudemu/v2/server/azure/images"
+	iothubsrv "github.com/stackshy/cloudemu/v2/server/azure/iothub"
 	keyvaultsrv "github.com/stackshy/cloudemu/v2/server/azure/keyvault"
 	kustosrv "github.com/stackshy/cloudemu/v2/server/azure/kusto"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/azure/loadbalancer"
@@ -211,6 +212,9 @@ type Drivers struct {
 	// backupPolicies collection and the backupconfig / backupstorageconfig
 	// singletons.
 	RecoveryServices recoveryservicessrv.Store
+	// IoTHub serves Microsoft.Devices/IotHubs plus its listkeys /
+	// getKeysForKeyName actions and the nested event-hub consumer groups.
+	IoTHub iothubsrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -612,6 +616,15 @@ func New(d Drivers) http.Handler {
 	if d.RecoveryServices != nil {
 		recoveryServicesHandler = recoveryservicessrv.New(d.RecoveryServices)
 		rgPurgers = append(rgPurgers, recoveryServicesHandler)
+	}
+
+	// IoT Hub: a resource-group-scoped resource, so its handler joins the purge
+	// cascade. Deleting the group tears down every hub and its consumer groups.
+	// Registered further below.
+	var iotHubHandler *iothubsrv.Handler
+	if d.IoTHub != nil {
+		iotHubHandler = iothubsrv.New(d.IoTHub)
+		rgPurgers = append(rgPurgers, iotHubHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -1067,6 +1080,12 @@ func New(d Drivers) http.Handler {
 	// unconstrained.
 	if recoveryServicesHandler != nil {
 		srv.Register(recoveryServicesHandler)
+	}
+
+	// IoT Hub claims Microsoft.Devices/IotHubs — a distinct ARM provider name from
+	// every other Azure handler, so registration order is unconstrained.
+	if iotHubHandler != nil {
+		srv.Register(iotHubHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

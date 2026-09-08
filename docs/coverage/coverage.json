@@ -8222,6 +8222,60 @@
     }
   },
   {
+    "service": "iothub",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "ARMType"
+      },
+      {
+        "name": "CreateOrUpdateConsumerGroup"
+      },
+      {
+        "name": "CreateOrUpdateHub"
+      },
+      {
+        "name": "DeleteConsumerGroup"
+      },
+      {
+        "name": "DeleteHub"
+      },
+      {
+        "name": "DiscoverHubs"
+      },
+      {
+        "name": "GetConsumerGroup"
+      },
+      {
+        "name": "GetHub"
+      },
+      {
+        "name": "GetKeysForKeyName"
+      },
+      {
+        "name": "ListConsumerGroups"
+      },
+      {
+        "name": "ListHubsByResourceGroup"
+      },
+      {
+        "name": "ListHubsBySubscription"
+      },
+      {
+        "name": "ListKeys"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "IoTHub"
+    }
+  },
+  {
     "service": "kafka",
     "interface": "Kafka",
     "operations": [

@@ -98,6 +98,7 @@ const (
 	azureTypeBatchAcct  = "microsoft.batch/batchaccounts"
 	azureTypeStreamAnl  = "microsoft.streamanalytics/streamingjobs"
 	azureTypeRecovery   = "microsoft.recoveryservices/vaults"
+	azureTypeIoTHub     = "microsoft.devices/iothubs"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -141,6 +142,7 @@ const (
 	portableBatch        = "batch"
 	portableStreamAnl    = "streamanalytics"
 	portableRecovery     = "recoveryservices"
+	portableIoTHub       = "iothub"
 )
 
 // parsedKQL is the result of KQL parsing — an engine Query plus the limit
@@ -439,6 +441,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeBatchAcct:  {portableBatch, "BatchAccount"},
 	azureTypeStreamAnl:  {portableStreamAnl, "StreamingJob"},
 	azureTypeRecovery:   {portableRecovery, "Vault"},
+	azureTypeIoTHub:     {portableIoTHub, "IotHub"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

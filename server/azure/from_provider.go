@@ -56,6 +56,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		Batch:              p.Batch,
 		StreamAnalytics:    p.StreamAnalytics,
 		RecoveryServices:   p.RecoveryServices,
+		IoTHub:             p.IoTHub,
 		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,
 		IAM:                p.IAM,
