@@ -37,6 +37,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [GCS](./gcs.md) | `storage` | 35 |
 | [GKE](./gke.md) | — (provider-native) | 18 |
 | [GKEBackup](./gkebackup.md) | `gkebackup` | 11 |
+| [GKEHub](./gkehub.md) | `gkehub` | 16 |
 | [IAM](./iam.md) | `iam` | 40 |
 | [KMS](./kms.md) | — (provider-native) | 17 |
 | [LB](./lb.md) | `loadbalancer` | 19 |
