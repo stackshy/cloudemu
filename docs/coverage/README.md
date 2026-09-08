@@ -37,6 +37,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `bedrockagentruntime` | [BedrockAgentRuntime](./aws/bedrockagentruntime.md) | — | — | — | 3 |
 | `bigquery` | — | — | [BigQuery](./gcp/bigquery.md) | — | 12 |
 | `bigtable` | — | — | [Bigtable](./gcp/bigtable.md) | — | 38 |
+| `binaryauthorization` | — | — | [BinaryAuthorization](./gcp/binaryauthorization.md) | — | 10 |
 | `cache` | [ElastiCache](./aws/elasticache.md) | [Cache](./azure/cache.md) | [Memorystore](./gcp/memorystore.md) | — | 17 |
 | `certificatemanager` | — | — | [CertificateManager](./gcp/certificatemanager.md) | — | 16 |
 | `chaosstudio` | — | [ChaosStudio](./azure/chaosstudio.md) | — | — | 8 |

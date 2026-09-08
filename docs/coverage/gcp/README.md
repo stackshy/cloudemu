@@ -10,6 +10,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [ArtifactRegistry](./artifactregistry.md) | `containerregistry` | 15 |
 | [BigQuery](./bigquery.md) | `bigquery` | 12 |
 | [Bigtable](./bigtable.md) | `bigtable` | 38 |
+| [BinaryAuthorization](./binaryauthorization.md) | `binaryauthorization` | 10 |
 | [CertificateManager](./certificatemanager.md) | `certificatemanager` | 16 |
 | [CloudDNS](./clouddns.md) | `dns` | 16 |
 | [CloudDeploy](./clouddeploy.md) | `clouddeploy` | 11 |
