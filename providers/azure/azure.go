@@ -34,6 +34,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/firewall"
 	"github.com/stackshy/cloudemu/v2/providers/azure/frontdoor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
+	"github.com/stackshy/cloudemu/v2/providers/azure/healthcareapis"
 	"github.com/stackshy/cloudemu/v2/providers/azure/iam"
 	"github.com/stackshy/cloudemu/v2/providers/azure/iothub"
 	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
@@ -205,6 +206,7 @@ type Provider struct {
 	StreamAnalytics    *streamanalytics.Mock
 	RecoveryServices   *recoveryservices.Mock
 	IoTHub             *iothub.Mock
+	HealthcareApis     *healthcareapis.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -286,6 +288,7 @@ func New(opts ...config.Option) *Provider {
 		StreamAnalytics:    streamanalytics.New(o),
 		RecoveryServices:   recoveryservices.New(o),
 		IoTHub:             iothub.New(o),
+		HealthcareApis:     healthcareapis.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -339,6 +342,7 @@ func New(opts ...config.Option) *Provider {
 				streamAnalyticsDiscovery{p.StreamAnalytics},
 				recoveryServicesDiscovery{p.RecoveryServices},
 				iotHubDiscovery{p.IoTHub},
+				healthcareApisDiscovery{p.HealthcareApis},
 			},
 		},
 	)

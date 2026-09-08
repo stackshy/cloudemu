@@ -57,6 +57,7 @@ import (
 	azurefirewallsrv "github.com/stackshy/cloudemu/v2/server/azure/firewall"
 	frontdoorsrv "github.com/stackshy/cloudemu/v2/server/azure/frontdoor"
 	"github.com/stackshy/cloudemu/v2/server/azure/functions"
+	healthcareapissrv "github.com/stackshy/cloudemu/v2/server/azure/healthcareapis"
 	"github.com/stackshy/cloudemu/v2/server/azure/iam"
 	"github.com/stackshy/cloudemu/v2/server/azure/images"
 	iothubsrv "github.com/stackshy/cloudemu/v2/server/azure/iothub"
@@ -198,6 +199,9 @@ type Drivers struct {
 	// RedisEnterprise serves Microsoft.Cache/redisEnterprise plus its nested
 	// databases child resource.
 	RedisEnterprise redisenterprisesrv.Store
+	// HealthcareApis serves Microsoft.HealthcareApis/workspaces plus its nested
+	// fhirservices and dicomservices child resources.
+	HealthcareApis healthcareapissrv.Store
 	// MongoCluster serves Microsoft.DocumentDB/mongoClusters — Cosmos DB for
 	// MongoDB (vCore) — plus its listConnectionStrings action.
 	MongoCluster mongoclustersrv.Store
@@ -580,6 +584,15 @@ func New(d Drivers) http.Handler {
 	if d.RedisEnterprise != nil {
 		redisEnterpriseHandler = redisenterprisesrv.New(d.RedisEnterprise)
 		rgPurgers = append(rgPurgers, redisEnterpriseHandler)
+	}
+
+	// Health Data Services: a resource-group-scoped resource, so its handler joins
+	// the purge cascade. Deleting the group tears down every workspace and its
+	// FHIR/DICOM services. Registered further below.
+	var healthcareApisHandler *healthcareapissrv.Handler
+	if d.HealthcareApis != nil {
+		healthcareApisHandler = healthcareapissrv.New(d.HealthcareApis)
+		rgPurgers = append(rgPurgers, healthcareApisHandler)
 	}
 
 	// Mongo clusters: a resource-group-scoped resource, so its handler joins the
@@ -1053,6 +1066,13 @@ func New(d Drivers) http.Handler {
 	// registration order relative to it is unconstrained.
 	if redisEnterpriseHandler != nil {
 		srv.Register(redisEnterpriseHandler)
+	}
+
+	// Health Data Services claims Microsoft.HealthcareApis/workspaces — a distinct
+	// provider namespace, so registration order relative to other services is
+	// unconstrained.
+	if healthcareApisHandler != nil {
+		srv.Register(healthcareApisHandler)
 	}
 
 	// Mongo clusters claim Microsoft.DocumentDB/mongoClusters — a distinct resource

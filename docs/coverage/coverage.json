@@ -8056,6 +8056,63 @@
     }
   },
   {
+    "service": "healthcareapis",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdateDicom"
+      },
+      {
+        "name": "CreateOrUpdateFhir"
+      },
+      {
+        "name": "CreateOrUpdateWorkspace"
+      },
+      {
+        "name": "DeleteDicom"
+      },
+      {
+        "name": "DeleteFhir"
+      },
+      {
+        "name": "DeleteWorkspace"
+      },
+      {
+        "name": "DiscoverWorkspaces"
+      },
+      {
+        "name": "GetDicom"
+      },
+      {
+        "name": "GetFhir"
+      },
+      {
+        "name": "GetWorkspace"
+      },
+      {
+        "name": "ListDicomByWorkspace"
+      },
+      {
+        "name": "ListFhirByWorkspace"
+      },
+      {
+        "name": "ListWorkspacesByResourceGroup"
+      },
+      {
+        "name": "ListWorkspacesBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "HealthcareApis"
+    }
+  },
+  {
     "service": "healthlake",
     "interface": "HealthLake",
     "operations": [

@@ -94,6 +94,7 @@ const (
 	azureTypeManagedLus = "microsoft.storagecache/amlfilesystems"
 	azureTypeAppConfig  = "microsoft.appconfiguration/configurationstores"
 	azureTypeRedisEnt   = "microsoft.cache/redisenterprise"
+	azureTypeHealthWks  = "microsoft.healthcareapis/workspaces"
 	azureTypeMongoClus  = "microsoft.documentdb/mongoclusters"
 	azureTypeBatchAcct  = "microsoft.batch/batchaccounts"
 	azureTypeStreamAnl  = "microsoft.streamanalytics/streamingjobs"
@@ -138,6 +139,7 @@ const (
 	portableManagedLus   = "managedlustre"
 	portableAppConfig    = "appconfiguration"
 	portableRedisEnt     = "redisenterprise"
+	portableHealthApis   = "healthcareapis"
 	portableMongoClus    = "mongocluster"
 	portableBatch        = "batch"
 	portableStreamAnl    = "streamanalytics"
@@ -437,6 +439,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeManagedLus: {portableManagedLus, "AmlFilesystem"},
 	azureTypeAppConfig:  {portableAppConfig, "ConfigurationStore"},
 	azureTypeRedisEnt:   {portableRedisEnt, "RedisEnterprise"},
+	azureTypeHealthWks:  {portableHealthApis, "Workspace"},
 	azureTypeMongoClus:  {portableMongoClus, "MongoCluster"},
 	azureTypeBatchAcct:  {portableBatch, "BatchAccount"},
 	azureTypeStreamAnl:  {portableStreamAnl, "StreamingJob"},
