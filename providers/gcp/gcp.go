@@ -36,6 +36,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gcs"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 	gkebackupprov "github.com/stackshy/cloudemu/v2/providers/gcp/gkebackup"
+	gkehubprov "github.com/stackshy/cloudemu/v2/providers/gcp/gkehub"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/iam"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
@@ -128,6 +129,7 @@ type Provider struct {
 	APIGateway          *apigatewayprov.Mock
 	DataCatalog         *datacatalog.Mock
 	GKEBackup           *gkebackupprov.Mock
+	GKEHub              *gkehubprov.Mock
 	DataFusion          *datafusionprov.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
@@ -195,6 +197,7 @@ func New(opts ...config.Option) *Provider {
 		APIGateway:          apigatewayprov.New(o),
 		DataCatalog:         datacatalog.New(o),
 		GKEBackup:           gkebackupprov.New(o),
+		GKEHub:              gkehubprov.New(o),
 		DataFusion:          datafusionprov.New(o),
 		ProjectID:           o.ProjectID,
 		Region:              o.Region,

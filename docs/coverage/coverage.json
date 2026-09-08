@@ -6636,6 +6636,64 @@
     }
   },
   {
+    "service": "gkehub",
+    "interface": "GKEHub",
+    "operations": [
+      {
+        "name": "CreateFeature"
+      },
+      {
+        "name": "CreateFleet"
+      },
+      {
+        "name": "CreateMembership"
+      },
+      {
+        "name": "DeleteFeature"
+      },
+      {
+        "name": "DeleteFleet"
+      },
+      {
+        "name": "DeleteMembership"
+      },
+      {
+        "name": "GetFeature"
+      },
+      {
+        "name": "GetFleet"
+      },
+      {
+        "name": "GetMembership"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListFeatures"
+      },
+      {
+        "name": "ListFleets"
+      },
+      {
+        "name": "ListMemberships"
+      },
+      {
+        "name": "PatchFeature"
+      },
+      {
+        "name": "PatchFleet"
+      },
+      {
+        "name": "PatchMembership"
+      }
+    ],
+    "providers": {
+      "gcp": "GKEHub"
+    }
+  },
+  {
     "service": "glue",
     "interface": "Glue",
     "operations": [
