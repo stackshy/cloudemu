@@ -94,6 +94,9 @@ const (
 	// ServiceRedisEnterprise buckets Azure Redis Enterprise resources
 	// (Microsoft.Cache/redisEnterprise).
 	ServiceRedisEnterprise = "redisenterprise"
+	// ServiceHealthcareApis buckets Azure Health Data Services resources
+	// (Microsoft.HealthcareApis/workspaces).
+	ServiceHealthcareApis = "healthcareapis"
 	// ServiceMongoCluster buckets Azure Cosmos DB for MongoDB (vCore) resources
 	// (Microsoft.DocumentDB/mongoClusters).
 	ServiceMongoCluster = "mongocluster"
@@ -235,6 +238,11 @@ const TypeConfigurationStore = "ConfigurationStore"
 // TypeRedisEnterprise is the portable type for an Azure Redis Enterprise cluster
 // (Microsoft.Cache/redisEnterprise). Azure-only, so it lives in its own line.
 const TypeRedisEnterprise = "RedisEnterprise"
+
+// TypeHealthcareWorkspace is the portable type for an Azure Health Data Services
+// workspace (Microsoft.HealthcareApis/workspaces). Azure-only, so it lives in its
+// own line.
+const TypeHealthcareWorkspace = "Workspace"
 
 // TypeMongoCluster is the portable type for an Azure Cosmos DB for MongoDB (vCore)
 // cluster (Microsoft.DocumentDB/mongoClusters). Azure-only, so it lives in its own

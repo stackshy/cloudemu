@@ -52,6 +52,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		ManagedLustre:      p.ManagedLustre,
 		AppConfiguration:   p.AppConfiguration,
 		RedisEnterprise:    p.RedisEnterprise,
+		HealthcareApis:     p.HealthcareApis,
 		MongoCluster:       p.MongoCluster,
 		Batch:              p.Batch,
 		StreamAnalytics:    p.StreamAnalytics,
