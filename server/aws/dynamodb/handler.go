@@ -230,9 +230,16 @@ func (*Handler) Matches(r *http.Request) bool {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
-	if h.routeTables(w, r, op) || h.routeItems(w, r, op) || h.routeBatch(w, r, op) ||
-		h.routeTags(w, r, op) || h.routeTTL(w, r, op) || h.routeBackups(w, r, op) {
-		return
+	routes := []func(http.ResponseWriter, *http.Request, string) bool{
+		h.routeTables, h.routeItems, h.routeBatch, h.routeTags, h.routeTTL,
+		h.routeBackups, h.routeGlobalTables, h.routeKinesis,
+		h.routeContributorInsights, h.routeLimits,
+	}
+
+	for _, route := range routes {
+		if route(w, r, op) {
+			return
+		}
 	}
 
 	wire.WriteJSONError(w, http.StatusBadRequest,
