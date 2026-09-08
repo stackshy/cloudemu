@@ -301,13 +301,15 @@ func writeDeleteStatus(w http.ResponseWriter, existed bool) {
 // hubTail returns the path segments after the hub name in an IoT Hub ARM URL.
 // azurearm.ParsePath captures only four trailing segments, but the consumer-group
 // path is deeper (eventHubEndpoints/events/ConsumerGroups/{name}), so the tail is
-// recovered directly from the raw path. The hub name is matched
-// case-insensitively; segments before and including it are dropped.
+// recovered directly from the raw path. It anchors forward on the IotHubs/{hub}
+// pair (both matched case-insensitively) so a hub or consumer group whose name
+// collides with a later path segment — e.g. a group named after its hub, or a hub
+// literally named "events" — still resolves to the correct tail.
 func hubTail(urlPath, hub string) []string {
 	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
-	for i := len(parts) - 1; i >= 0; i-- {
-		if strings.EqualFold(parts[i], hub) {
-			return parts[i+1:]
+	for i := 0; i+1 < len(parts); i++ {
+		if strings.EqualFold(parts[i], hubType) && strings.EqualFold(parts[i+1], hub) {
+			return parts[i+2:]
 		}
 	}
 

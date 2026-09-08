@@ -175,6 +175,46 @@ func TestConsumerGroupLifecycle(t *testing.T) {
 	}
 }
 
+func TestConsumerGroupNameCollidesWithHub(t *testing.T) {
+	srv := newServer(t)
+	createHub(t, srv)
+
+	// A consumer group named identically to its hub must resolve to the CG, not
+	// silently fall back to the hub (forward-anchored hubTail).
+	cgPath := hubBase + "hub1/eventHubEndpoints/events/ConsumerGroups/hub1" + apiVer
+
+	if s, _ := do(t, srv, http.MethodPut, cgPath, ""); s != http.StatusCreated {
+		t.Fatalf("create cg named after hub: status = %d, want 201", s)
+	}
+
+	sGet, bGet := do(t, srv, http.MethodGet, cgPath, "")
+	if sGet != 200 {
+		t.Fatalf("get cg named after hub: status = %d", sGet)
+	}
+
+	if !bytes.Contains(bGet, []byte(`ConsumerGroups`)) || bytes.Contains(bGet, []byte(`"hostName"`)) {
+		t.Errorf("get returned the hub body, not the consumer group: %s", bGet)
+	}
+}
+
+func TestHubNamedEventsConsumerGroups(t *testing.T) {
+	srv := newServer(t)
+
+	// A hub literally named "events" collides with the eventHubEndpoints/events
+	// segment; listing its consumer groups must still return $Default, not 404.
+	body := `{"location":"westus","sku":{"name":"S1","capacity":1}}`
+	if s, _ := do(t, srv, http.MethodPut, hubBase+"events"+apiVer, body); s != http.StatusCreated {
+		t.Fatalf("create hub named events: status = %d, want 201", s)
+	}
+
+	listPath := hubBase + "events/eventHubEndpoints/events/ConsumerGroups" + apiVer
+
+	s, b := do(t, srv, http.MethodGet, listPath, "")
+	if s != 200 || !bytes.Contains(b, []byte(`"$Default"`)) {
+		t.Fatalf("list cg for hub named events: status=%d body=%s", s, b)
+	}
+}
+
 func TestPatchTagsReplace(t *testing.T) {
 	srv := newServer(t)
 	createHub(t, srv)
