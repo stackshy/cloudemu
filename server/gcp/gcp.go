@@ -33,6 +33,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/compute"
 	datacatalogsrv "github.com/stackshy/cloudemu/v2/server/gcp/datacatalog"
 	dataformsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataform"
+	datafusionsrv "github.com/stackshy/cloudemu/v2/server/gcp/datafusion"
 	dataplexsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataplex"
 	dataprocsrv "github.com/stackshy/cloudemu/v2/server/gcp/dataproc"
 	datastreamsrv "github.com/stackshy/cloudemu/v2/server/gcp/datastream"
@@ -80,6 +81,7 @@ import (
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dcdriver "github.com/stackshy/cloudemu/v2/services/datacatalog/driver"
 	dataformdriver "github.com/stackshy/cloudemu/v2/services/dataform/driver"
+	datafusiondriver "github.com/stackshy/cloudemu/v2/services/datafusion/driver"
 	dataplexdriver "github.com/stackshy/cloudemu/v2/services/dataplex/driver"
 	dataprocdriver "github.com/stackshy/cloudemu/v2/services/dataproc/driver"
 	datastreamdriver "github.com/stackshy/cloudemu/v2/services/datastream/driver"
@@ -178,6 +180,14 @@ type Drivers struct {
 	// every other /v1/projects/ handler, and its location-scoped operation polls
 	// are owned by the shared LRO poller.
 	GKEBackup gkebackupdriver.GKEBackup
+	// DataFusion serves the datafusion.googleapis.com v1 instance control plane
+	// against the datafusion driver. Its paths live under /v1/projects/{p}/
+	// locations/{l}/instances[/{i}[:restart]] — the same grammar Memorystore and
+	// Filestore share — so the handler's Matches claims only genuinely-Data-Fusion
+	// traffic (a create body with a `type`, the :restart verb, or an item/list it
+	// owns), letting Redis/Filestore requests fall through. Its location-scoped
+	// operation polls are owned by the shared LRO poller.
+	DataFusion datafusiondriver.DataFusion
 	// Dataplex serves the dataplex.googleapis.com v1 lake → zone → asset control
 	// plane against the dataplex driver. Its paths live under /v1/projects/{p}/
 	// locations/{l}/lakes[/{lake}/zones[/{zone}/assets[/…]]]; the handler's Matches
@@ -646,6 +656,21 @@ func New(d Drivers) *server.Server {
 		cloudidsH := cloudidssrv.New(d.CloudIDS)
 		cloudidsH.SetOperationRegistry(opsReg)
 		srv.Register(cloudidsH)
+	}
+
+	// Data Fusion (datafusion.googleapis.com) shares the EXACT same instances path
+	// grammar as Secure Source Manager (below), Memorystore, and Filestore. It
+	// registers BEFORE all of them so its narrow Matches wins: it claims only
+	// genuinely-Data-Fusion traffic — a create body carrying a `type`
+	// (BASIC/ENTERPRISE/DEVELOPER, which the sibling instance bodies lack), the
+	// Data-Fusion-only :restart verb, or an item/list it owns — letting Secure
+	// Source Manager / Redis / Filestore requests fall through. Its location-
+	// scoped operation polls are owned by the shared LRO poller, which the
+	// handler's Matches yields to.
+	if d.DataFusion != nil {
+		datafusionH := datafusionsrv.New(d.DataFusion)
+		datafusionH.SetOperationRegistry(opsReg)
+		srv.Register(datafusionH)
 	}
 
 	// SecureSourceManager matches /v1/projects/{p}/locations/{l}/{instances|

@@ -68,6 +68,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `datacatalog` | — | — | [DataCatalog](./gcp/datacatalog.md) | — | 21 |
 | `datafactory` | — | [DataFactory](./azure/datafactory.md) | — | — | 6 |
 | `dataform` | — | — | [Dataform](./gcp/dataform.md) | — | 5 |
+| `datafusion` | — | — | [DataFusion](./gcp/datafusion.md) | — | 9 |
 | `dataplex` | — | — | [Dataplex](./gcp/dataplex.md) | — | 16 |
 | `dataproc` | — | — | [Dataproc](./gcp/dataproc.md) | — | 6 |
 | `datastream` | — | — | [Datastream](./gcp/datastream.md) | — | 11 |

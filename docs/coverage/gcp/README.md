@@ -24,6 +24,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [Cloudbilling](./cloudbilling.md) | — (provider-native) | 14 |
 | [Composer](./composer.md) | `composer` | 6 |
 | [DataCatalog](./datacatalog.md) | `datacatalog` | 21 |
+| [DataFusion](./datafusion.md) | `datafusion` | 9 |
 | [Dataform](./dataform.md) | `dataform` | 5 |
 | [Dataplex](./dataplex.md) | `dataplex` | 16 |
 | [Dataproc](./dataproc.md) | `dataproc` | 6 |
