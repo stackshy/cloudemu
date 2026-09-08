@@ -23,6 +23,7 @@ import (
 	appsyncsrv "github.com/stackshy/cloudemu/v2/server/aws/appsync"
 	apssrv "github.com/stackshy/cloudemu/v2/server/aws/aps"
 	athenasrv "github.com/stackshy/cloudemu/v2/server/aws/athena"
+	backupsrv "github.com/stackshy/cloudemu/v2/server/aws/backup"
 	batchsrv "github.com/stackshy/cloudemu/v2/server/aws/batch"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
@@ -96,6 +97,7 @@ import (
 	appsyncdriver "github.com/stackshy/cloudemu/v2/services/appsync/driver"
 	apsdriver "github.com/stackshy/cloudemu/v2/services/aps/driver"
 	athenadriver "github.com/stackshy/cloudemu/v2/services/athena/driver"
+	backupdriver "github.com/stackshy/cloudemu/v2/services/backup/driver"
 	batchdriver "github.com/stackshy/cloudemu/v2/services/batch/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
@@ -228,6 +230,11 @@ type Drivers struct {
 	// POST /v1/domain?domain=, POST /v1/repository?domain=&repository=) against
 	// the codeartifact driver.
 	CodeArtifact codeartifactdriver.CodeArtifact
+
+	// Backup serves the AWS Backup control-plane REST-JSON API (verb + path
+	// routing at the root, e.g. PUT /backup-vaults/{name}, POST /backup/plans,
+	// GET /backup/plans/{id}/versions) against the backup driver.
+	Backup backupdriver.Backup
 
 	// FIS serves the AWS Fault Injection Simulator control-plane REST-JSON API
 	// (verb + path routing at the root, e.g. POST /experimentTemplates,
@@ -470,6 +477,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		MWAA:                p.MWAA,
 		MQ:                  p.MQ,
 		CodeArtifact:        p.CodeArtifact,
+		Backup:              p.Backup,
 		FIS:                 p.FIS,
 		Grafana:             p.Grafana,
 		Scheduler:           p.Scheduler,
@@ -854,6 +862,17 @@ func New(d Drivers) *server.Server {
 	// /v1/tags/{arn} path style of MQ, Batch, AppSync and Kafka.
 	if d.CodeArtifact != nil {
 		srv.Register(codeartifactsrv.New(d.CodeArtifact))
+	}
+
+	// Backup (AWS Backup) uses REST-JSON verb + path routing at the root (e.g.
+	// PUT /backup-vaults/{name}, POST /backup/plans, GET /backup/plans/{id}). Its
+	// Matches claims the /backup-vaults and /backup/plans trees (distinctive to
+	// AWS Backup) and the shared /tags and /untag paths only when the ARN names a
+	// Backup (:backup:) resource, so it must run before the S3 catch-all and is
+	// disjoint from the other /tags claimants (FIS, Grafana, Scheduler, APS, ...),
+	// which scope their claims to their own ARN markers.
+	if d.Backup != nil {
+		srv.Register(backupsrv.New(d.Backup))
 	}
 
 	// FIS (Fault Injection Simulator) uses REST-JSON verb + path routing at the

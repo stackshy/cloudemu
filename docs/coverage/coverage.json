@@ -1899,6 +1899,97 @@
     }
   },
   {
+    "service": "backup",
+    "interface": "Backup",
+    "operations": [
+      {
+        "name": "CreateBackupPlan",
+        "doc": "Plans."
+      },
+      {
+        "name": "CreateBackupSelection",
+        "doc": "Selections."
+      },
+      {
+        "name": "CreateBackupVault",
+        "doc": "Vaults."
+      },
+      {
+        "name": "DeleteBackupPlan"
+      },
+      {
+        "name": "DeleteBackupSelection"
+      },
+      {
+        "name": "DeleteBackupVault"
+      },
+      {
+        "name": "DeleteBackupVaultAccessPolicy"
+      },
+      {
+        "name": "DeleteBackupVaultLockConfiguration"
+      },
+      {
+        "name": "DeleteBackupVaultNotifications"
+      },
+      {
+        "name": "DescribeBackupVault"
+      },
+      {
+        "name": "GetBackupPlan"
+      },
+      {
+        "name": "GetBackupSelection"
+      },
+      {
+        "name": "GetBackupVaultAccessPolicy"
+      },
+      {
+        "name": "GetBackupVaultNotifications"
+      },
+      {
+        "name": "ListBackupPlanVersions"
+      },
+      {
+        "name": "ListBackupPlans"
+      },
+      {
+        "name": "ListBackupSelections"
+      },
+      {
+        "name": "ListBackupVaults"
+      },
+      {
+        "name": "ListTags"
+      },
+      {
+        "name": "PutBackupVaultAccessPolicy",
+        "doc": "Vault access policy."
+      },
+      {
+        "name": "PutBackupVaultLockConfiguration",
+        "doc": "Vault Lock."
+      },
+      {
+        "name": "PutBackupVaultNotifications",
+        "doc": "Vault notifications."
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tagging."
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateBackupPlan"
+      }
+    ],
+    "providers": {
+      "aws": "Backup"
+    }
+  },
+  {
     "service": "bastion",
     "interface": "BastionHosts",
     "operations": [

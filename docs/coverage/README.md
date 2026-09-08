@@ -28,6 +28,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `azureai` | — | [AI](./azure/ai.md) | — | — | 92 |
 | `azurefirewall` | — | [Firewall](./azure/firewall.md) | — | — | 8 |
 | `azuresearch` | — | [Search](./azure/search.md) | — | — | 53 |
+| `backup` | [Backup](./aws/backup.md) | — | — | — | 25 |
 | `bastion` | — | [Bastion](./azure/bastion.md) | — | — | 4 |
 | `batch` | [Batch](./aws/batch.md) | — | — | — | 14 |
 | `batch-azure` | — | [Batch](./azure/batch.md) | — | — | 17 |
