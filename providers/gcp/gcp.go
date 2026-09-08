@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/artifactregistry"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigquery"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigtable"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/binaryauthorization"
 	certmanagerprov "github.com/stackshy/cloudemu/v2/providers/gcp/certificatemanager"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddeploy"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/clouddns"
@@ -124,6 +125,7 @@ type Provider struct {
 	Workflows           *workflows.Mock
 	Scheduler           *scheduler.Mock
 	CloudTasks          *cloudtasks.Mock
+	BinaryAuthorization *binaryauthorization.Mock
 	ServiceDirectory    *servicedirectory.Mock
 	Dataform            *dataform.Mock
 	APIGateway          *apigatewayprov.Mock
@@ -192,6 +194,7 @@ func New(opts ...config.Option) *Provider {
 		Workflows:           workflows.New(o),
 		Scheduler:           scheduler.New(o),
 		CloudTasks:          cloudtasks.New(o),
+		BinaryAuthorization: binaryauthorization.New(o),
 		ServiceDirectory:    servicedirectory.New(o),
 		Dataform:            dataform.New(o),
 		APIGateway:          apigatewayprov.New(o),

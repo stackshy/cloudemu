@@ -55,6 +55,7 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		Memorystore:         p.Memorystore,
 		Scheduler:           p.Scheduler,
 		CloudTasks:          p.CloudTasks,
+		BinaryAuthorization: p.BinaryAuthorization,
 		FCM:                 p.FCM,
 		// K8sAPI is left nil; injected by the caller when a shared cluster is desired.
 		K8sAPI: nil,

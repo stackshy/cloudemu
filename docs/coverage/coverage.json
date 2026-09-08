@@ -2628,6 +2628,55 @@
     }
   },
   {
+    "service": "binaryauthorization",
+    "interface": "BinaryAuthorization",
+    "operations": [
+      {
+        "name": "CreateAttestor",
+        "doc": "CreateAttestor stores a new attestor under projects/{project}/attestors/"
+      },
+      {
+        "name": "DeleteAttestor",
+        "doc": "DeleteAttestor removes an attestor by its full resource name."
+      },
+      {
+        "name": "GetAttestor",
+        "doc": "GetAttestor returns an attestor by its full resource name."
+      },
+      {
+        "name": "GetIamPolicy",
+        "doc": "GetIamPolicy returns the attestor's stored IAM policy (an empty, versioned"
+      },
+      {
+        "name": "GetPolicy",
+        "doc": "GetPolicy returns the project's policy. A project that has never set a"
+      },
+      {
+        "name": "ListAttestors",
+        "doc": "ListAttestors returns every attestor under the given project, in"
+      },
+      {
+        "name": "SetIamPolicy",
+        "doc": "SetIamPolicy stores the attestor's IAM policy and returns it with a"
+      },
+      {
+        "name": "TestIamPermissions",
+        "doc": "TestIamPermissions echoes back the requested permissions (CloudEmu does not"
+      },
+      {
+        "name": "UpdateAttestor",
+        "doc": "UpdateAttestor fully replaces the mutable fields of an existing attestor"
+      },
+      {
+        "name": "UpdatePolicy",
+        "doc": "UpdatePolicy fully replaces the project's policy and returns it. The policy"
+      }
+    ],
+    "providers": {
+      "gcp": "BinaryAuthorization"
+    }
+  },
+  {
     "service": "cache",
     "interface": "Cache",
     "operations": [

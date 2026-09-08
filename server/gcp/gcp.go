@@ -18,6 +18,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
 	bigqueryserver "github.com/stackshy/cloudemu/v2/server/gcp/bigquery"
 	bigtableserver "github.com/stackshy/cloudemu/v2/server/gcp/bigtable"
+	binauthzsrv "github.com/stackshy/cloudemu/v2/server/gcp/binaryauthorization"
 	certmanagersrv "github.com/stackshy/cloudemu/v2/server/gcp/certificatemanager"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudasset"
 	"github.com/stackshy/cloudemu/v2/server/gcp/cloudbilling"
@@ -70,6 +71,7 @@ import (
 	agdriver "github.com/stackshy/cloudemu/v2/services/apigatewaygcp/driver"
 	bqdriver "github.com/stackshy/cloudemu/v2/services/bigquery/driver"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
+	badriver "github.com/stackshy/cloudemu/v2/services/binaryauthorization/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	certmanagerdriver "github.com/stackshy/cloudemu/v2/services/certificatemanager/driver"
 	clouddeploydriver "github.com/stackshy/cloudemu/v2/services/clouddeploy/driver"
@@ -321,6 +323,10 @@ type Drivers struct {
 	// CloudTasks serves the cloudtasks.googleapis.com v2 REST API (queue control
 	// plane) against the cloudtasks driver.
 	CloudTasks ctdriver.Queues
+	// BinaryAuthorization serves the binaryauthorization.googleapis.com v1 REST
+	// API (the per-project policy singleton + attestor control plane) against the
+	// binaryauthorization driver.
+	BinaryAuthorization badriver.BinaryAuthorization
 	// FCM serves the fcm.googleapis.com v1 messages:send API against the
 	// notification driver (Publish only; FCM has no topic/subscription CRUD).
 	FCM notifdriver.Notification
@@ -917,6 +923,15 @@ func New(d Drivers) *server.Server {
 	// unconstrained. All eleven methods are synchronous (no LRO).
 	if d.CloudTasks != nil {
 		srv.Register(cloudtaskssrv.New(d.CloudTasks))
+	}
+
+	// Binary Authorization matches /v1/projects/{p}/policy and
+	// /v1/projects/{p}/attestors[/…] — its policy|attestors resource-type guard
+	// keeps it disjoint from every other /v1/projects/ handler, and it never
+	// claims operations. All ten methods are synchronous (no LRO). Registered
+	// before Firestore's permissive /v1/projects/ prefix.
+	if d.BinaryAuthorization != nil {
+		srv.Register(binauthzsrv.New(d.BinaryAuthorization))
 	}
 
 	// FCM matches /v1/projects/{p}/messages:send — disjoint from every other
