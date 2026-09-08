@@ -163,6 +163,28 @@ func TestFhirParentMustExist(t *testing.T) {
 	}
 }
 
+func TestListChildrenUnderMissingWorkspace(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	// Listing child services under a workspace that does not exist is a NotFound
+	// (the wire layer maps it to ParentResourceNotFound), not a 200 empty set.
+	if _, err := m.ListFhirByWorkspace(ctx, "sub", "rg", "ghost"); !cerrors.IsNotFound(err) {
+		t.Errorf("list fhir under missing workspace: err=%v, want NotFound", err)
+	}
+
+	if _, err := m.ListDicomByWorkspace(ctx, "sub", "rg", "ghost"); !cerrors.IsNotFound(err) {
+		t.Errorf("list dicom under missing workspace: err=%v, want NotFound", err)
+	}
+
+	// Once the workspace exists, listing succeeds (empty until children are added).
+	createWorkspace(t, m)
+
+	if _, err := m.ListFhirByWorkspace(ctx, "sub", "rg", "ws1"); err != nil {
+		t.Errorf("list fhir under existing workspace: %v", err)
+	}
+}
+
 func TestDicomComputedServiceURLAndAuth(t *testing.T) {
 	m := newMock()
 	createWorkspace(t, m)

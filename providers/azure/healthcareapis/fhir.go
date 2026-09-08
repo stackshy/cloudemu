@@ -193,7 +193,7 @@ func (m *Mock) DeleteFhir(_ context.Context, sub, rg, workspace, name string) (b
 func (m *Mock) ListFhirByWorkspace(_ context.Context, sub, rg, workspace string) ([]FhirService, error) {
 	prefix := workspaceKey(sub, rg, workspace) + "/" + fhirType + "/"
 
-	return listChildren(m, m.fhir, prefix, cloneFhir, func(f *FhirService) string { return f.Name }), nil
+	return listChildren(m, m.fhir, sub, rg, workspace, prefix, cloneFhir, func(f *FhirService) string { return f.Name })
 }
 
 // cloneFhir deep-copies a stored FHIR service so callers never alias the backing

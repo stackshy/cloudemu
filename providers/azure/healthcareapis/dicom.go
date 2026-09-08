@@ -131,7 +131,7 @@ func (m *Mock) DeleteDicom(_ context.Context, sub, rg, workspace, name string) (
 func (m *Mock) ListDicomByWorkspace(_ context.Context, sub, rg, workspace string) ([]DicomService, error) {
 	prefix := workspaceKey(sub, rg, workspace) + "/" + dicomType + "/"
 
-	return listChildren(m, m.dicom, prefix, cloneDicom, func(d *DicomService) string { return d.Name }), nil
+	return listChildren(m, m.dicom, sub, rg, workspace, prefix, cloneDicom, func(d *DicomService) string { return d.Name })
 }
 
 // cloneDicom deep-copies a stored DICOM service so callers never alias the backing

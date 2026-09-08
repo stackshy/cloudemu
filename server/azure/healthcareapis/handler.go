@@ -402,7 +402,7 @@ func serveList[T, R any](
 
 	items, err := fetch()
 	if err != nil {
-		azurearm.WriteCErr(w, err)
+		writeChildErr(w, err)
 		return
 	}
 

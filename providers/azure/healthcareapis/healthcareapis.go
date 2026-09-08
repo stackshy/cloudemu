@@ -372,12 +372,19 @@ func createChild[T any](
 }
 
 // listChildren returns every stored child whose key carries prefix, deep-copied via
-// clone and sorted by the name accessor. It takes the read lock.
+// clone and sorted by the name accessor. The parent workspace must exist —
+// otherwise it returns a NotFound error (the wire layer maps it to
+// ParentResourceNotFound), mirroring real ARM, which 404s a list under a
+// nonexistent parent rather than returning an empty set. It takes the read lock.
 func listChildren[T any](
-	m *Mock, store *memstore.Store[*T], prefix string, clone func(*T) T, name func(*T) string,
-) []T {
+	m *Mock, store *memstore.Store[*T], sub, rg, workspace, prefix string, clone func(*T) T, name func(*T) string,
+) ([]T, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
+
+	if _, ok := m.workspaces.Get(workspaceKey(sub, rg, workspace)); !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "healthcareapis workspace %q not found", workspace)
+	}
 
 	var out []T
 
@@ -389,7 +396,7 @@ func listChildren[T any](
 
 	sort.Slice(out, func(i, j int) bool { return name(&out[i]) < name(&out[j]) })
 
-	return out
+	return out, nil
 }
 
 // resolveIdentity normalizes an incoming managed identity, synthesizing the
