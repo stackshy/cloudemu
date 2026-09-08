@@ -44,6 +44,9 @@ func TestMatchesNarrowing(t *testing.T) {
 		want   bool
 	}{
 		{"create with datafusion type", http.MethodPost, base + "/instances", `{"type":"BASIC"}`, true},
+		{"create with numeric enum type", http.MethodPost, base + "/instances", `{"type":2}`, true},
+		{"create with unspecified numeric type falls through", http.MethodPost, base + "/instances", `{"type":0}`, false},
+		{"create with unspecified string type falls through", http.MethodPost, base + "/instances", `{"type":"TYPE_UNSPECIFIED"}`, false},
 		{"create redis body (no type) falls through", http.MethodPost, base + "/instances", `{"tier":"BASIC","memorySizeGb":1}`, false},
 		{"create filestore body (no type) falls through", http.MethodPost, base + "/instances", `{"tier":"STANDARD","fileShares":[{}]}`, false},
 		{"restart verb always claimed", http.MethodPost, base + "/instances/df:restart", "", true},

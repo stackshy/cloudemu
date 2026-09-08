@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
@@ -66,14 +67,36 @@ func bodyLooksLikeDataFusion(r *http.Request) bool {
 	}
 
 	var probe struct {
-		Type string `json:"type"`
+		Type json.RawMessage `json:"type"`
 	}
 
 	if json.Unmarshal(raw, &probe) != nil {
 		return false
 	}
 
-	return probe.Type != ""
+	return typeClaimsDataFusion(probe.Type)
+}
+
+// typeClaimsDataFusion reports whether a create body's `type` field designates a
+// Data Fusion instance. Data Fusion requires a non-UNSPECIFIED instance type, so
+// a non-empty string enum (BASIC/ENTERPRISE/DEVELOPER) or a positive
+// protojson-integer enum claims the request; TYPE_UNSPECIFIED (0 / "") and an
+// absent type do not. Accepting the integer form keeps the dispatch probe
+// consistent with normalizeEnumNumbers, which the handler applies to the body.
+func typeClaimsDataFusion(raw json.RawMessage) bool {
+	s := strings.TrimSpace(string(raw))
+	if s == "" || s == "null" {
+		return false
+	}
+
+	if s[0] == '"' {
+		var str string
+		return json.Unmarshal(raw, &str) == nil && str != "" && str != "TYPE_UNSPECIFIED"
+	}
+
+	var n int
+
+	return json.Unmarshal(raw, &n) == nil && n > 0
 }
 
 // decodeBody reads the request body once, normalizes integer enums to their
