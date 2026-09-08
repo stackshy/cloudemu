@@ -13,6 +13,7 @@ import (
 	gkeprov "github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 	gcpmon "github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
 	"github.com/stackshy/cloudemu/v2/server"
+	acmsrv "github.com/stackshy/cloudemu/v2/server/gcp/accesscontextmanager"
 	alloydbsrv "github.com/stackshy/cloudemu/v2/server/gcp/alloydb"
 	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/gcp/apigateway"
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
@@ -68,6 +69,7 @@ import (
 	vpcaccesssrv "github.com/stackshy/cloudemu/v2/server/gcp/vpcaccess"
 	workflowssrv "github.com/stackshy/cloudemu/v2/server/gcp/workflows"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
+	acmdriver "github.com/stackshy/cloudemu/v2/services/accesscontextmanager/driver"
 	agdriver "github.com/stackshy/cloudemu/v2/services/apigatewaygcp/driver"
 	bqdriver "github.com/stackshy/cloudemu/v2/services/bigquery/driver"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
@@ -168,6 +170,15 @@ type Drivers struct {
 	// every other /v1/projects/ handler, and its location-scoped operation polls
 	// are owned by the shared LRO poller.
 	CertificateManager certmanagerdriver.CertificateManager
+	// AccessContextManager serves the accesscontextmanager.googleapis.com v1 VPC
+	// Service Controls control plane (access policies + access levels + service
+	// perimeters) against the accesscontextmanager driver. Unlike every
+	// /v1/projects/ handler its resources are organization-scoped, rooted at
+	// /v1/accessPolicies, and its long-running operations live at the service
+	// root /v1/operations/{id}; the handler is registered ahead of Cloud
+	// Functions (which also mints root operations) and claims a root operation
+	// path only when it minted that operation.
+	AccessContextManager acmdriver.AccessContextManager
 	// PrivateCA serves the privateca.googleapis.com v1 Certificate Authority
 	// Service control plane (CA pools, certificate authorities, certificate
 	// templates, certificates) against the privateca driver. Its paths live under
@@ -447,6 +458,19 @@ func New(d Drivers) *server.Server {
 	// GCP JSON error envelope instead of the dispatcher's bare-text 501.
 	if d.Compute != nil || d.Networking != nil || d.LB != nil {
 		srv.Register(compute.NewFallback())
+	}
+
+	// Access Context Manager owns /v1/accessPolicies[/…] and, at the service
+	// root, /v1/operations/{id}. Cloud Functions gen1 also mints root
+	// /v1/operations/{id} names, so this handler is registered AHEAD of Cloud
+	// Functions and claims a root operation path only when it minted that
+	// operation (its Matches consults HasOperation); every other root operation
+	// falls through to Cloud Functions. Its accessPolicies grammar never
+	// collides with a /v1/projects/ handler.
+	if d.AccessContextManager != nil {
+		acmH := acmsrv.New(d.AccessContextManager)
+		acmH.SetOperationRegistry(opsReg)
+		srv.Register(acmH)
 	}
 
 	// CloudFunctions matches /v1/projects/{p}/locations/{l}/functions paths
