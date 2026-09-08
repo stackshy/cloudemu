@@ -926,14 +926,25 @@ func TestDDBTypedErrors(t *testing.T) {
 	})
 
 	t.Run("unrouted operation is UnknownOperationException", func(t *testing.T) {
-		// DescribeLimits has no HTTP surface in the emulator.
-		_, err := client.DescribeLimits(ctx, &dynamodb.DescribeLimitsInput{})
+		// ExecuteStatement (PartiQL) has no HTTP surface in the emulator.
+		_, err := client.ExecuteStatement(ctx, &dynamodb.ExecuteStatementInput{
+			Statement: aws.String("SELECT * FROM errs"),
+		})
 		require.Error(t, err)
 
 		var apiErr smithy.APIError
 
 		require.True(t, errors.As(err, &apiErr))
 		assert.Equal(t, "UnknownOperationException", apiErr.ErrorCode())
+	})
+
+	t.Run("DescribeLimits reports account and table capacity ceilings", func(t *testing.T) {
+		out, err := client.DescribeLimits(ctx, &dynamodb.DescribeLimitsInput{})
+		require.NoError(t, err)
+		assert.Equal(t, int64(80000), aws.ToInt64(out.AccountMaxReadCapacityUnits))
+		assert.Equal(t, int64(80000), aws.ToInt64(out.AccountMaxWriteCapacityUnits))
+		assert.Equal(t, int64(40000), aws.ToInt64(out.TableMaxReadCapacityUnits))
+		assert.Equal(t, int64(40000), aws.ToInt64(out.TableMaxWriteCapacityUnits))
 	})
 }
 

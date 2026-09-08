@@ -19,8 +19,9 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // flag. Items are keyed by their internal store key so they restore under the
 // same identity.
 type dynamoSnapshot struct {
-	Tables  map[string]*tableSnapshot  `json:"tables,omitempty"`
-	Backups map[string]*backupSnapshot `json:"backups,omitempty"`
+	Tables       map[string]*tableSnapshot          `json:"tables,omitempty"`
+	Backups      map[string]*backupSnapshot         `json:"backups,omitempty"`
+	GlobalTables map[string]*driver.GlobalTableInfo `json:"globalTables,omitempty"`
 }
 
 // backupSnapshot is one on-demand backup's serialized state: its description
@@ -31,14 +32,22 @@ type backupSnapshot struct {
 }
 
 type tableSnapshot struct {
-	Config        driver.TableConfig        `json:"config"`
-	Items         map[string]map[string]any `json:"items,omitempty"`
-	TTLConfig     driver.TTLConfig          `json:"ttlConfig,omitempty"`
-	StreamConfig  driver.StreamConfig       `json:"streamConfig,omitempty"`
-	StreamRecords []driver.StreamRecord     `json:"streamRecords,omitempty"`
-	SeqCounter    int64                     `json:"seqCounter,omitempty"`
-	Tags          map[string]string         `json:"tags,omitempty"`
-	PITREnabled   bool                      `json:"pitrEnabled,omitempty"`
+	Config        driver.TableConfig                   `json:"config"`
+	Items         map[string]map[string]any            `json:"items,omitempty"`
+	TTLConfig     driver.TTLConfig                     `json:"ttlConfig,omitempty"`
+	StreamConfig  driver.StreamConfig                  `json:"streamConfig,omitempty"`
+	StreamRecords []driver.StreamRecord                `json:"streamRecords,omitempty"`
+	SeqCounter    int64                                `json:"seqCounter,omitempty"`
+	Tags          map[string]string                    `json:"tags,omitempty"`
+	PITREnabled   bool                                 `json:"pitrEnabled,omitempty"`
+	KinesisDests  map[string]driver.KinesisDestination `json:"kinesisDests,omitempty"`
+	CI            map[string]ciSnapshot                `json:"contributorInsights,omitempty"`
+}
+
+// ciSnapshot is one table/index Contributor Insights record's serialized state.
+type ciSnapshot struct {
+	Status         string  `json:"status"`
+	LastUpdateUnix float64 `json:"lastUpdateUnix,omitempty"`
 }
 
 // Snapshot captures every table's full state as JSON. includeAssets is unused —
@@ -59,6 +68,17 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 			SeqCounter:    td.seqCounter.Load(),
 			Tags:          td.tags,
 			PITREnabled:   td.pitrEnabled,
+			KinesisDests:  td.kinesisDests,
+			CI:            ciToSnapshot(td.ci),
+		}
+	}
+
+	if len(m.globalTables) > 0 {
+		snap.GlobalTables = make(map[string]*driver.GlobalTableInfo, len(m.globalTables))
+
+		for name, info := range m.globalTables {
+			cp := copyGlobalTable(info)
+			snap.GlobalTables[name] = &cp
 		}
 	}
 
@@ -92,6 +112,8 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 			streamRecords: ts.StreamRecords,
 			tags:          ts.Tags,
 			pitrEnabled:   ts.PITREnabled,
+			kinesisDests:  ts.KinesisDests,
+			ci:            ciFromSnapshot(ts.CI),
 		}
 		td.seqCounter.Store(ts.SeqCounter)
 
@@ -111,5 +133,40 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.backups[arn] = &backupData{info: bs.Info, items: items}
 	}
 
+	for name, info := range snap.GlobalTables {
+		cp := copyGlobalTable(info)
+		m.globalTables[name] = &cp
+	}
+
 	return nil
+}
+
+// ciToSnapshot converts a table's in-memory Contributor Insights records to
+// their serialized form.
+func ciToSnapshot(ci map[string]ciRecord) map[string]ciSnapshot {
+	if len(ci) == 0 {
+		return nil
+	}
+
+	out := make(map[string]ciSnapshot, len(ci))
+	for index, rec := range ci {
+		out[index] = ciSnapshot{Status: rec.status, LastUpdateUnix: rec.lastUpdateUnix}
+	}
+
+	return out
+}
+
+// ciFromSnapshot rebuilds a table's Contributor Insights records from their
+// serialized form.
+func ciFromSnapshot(snap map[string]ciSnapshot) map[string]ciRecord {
+	if len(snap) == 0 {
+		return nil
+	}
+
+	out := make(map[string]ciRecord, len(snap))
+	for index, s := range snap {
+		out[index] = ciRecord{status: s.Status, lastUpdateUnix: s.LastUpdateUnix}
+	}
+
+	return out
 }

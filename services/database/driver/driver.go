@@ -88,6 +88,17 @@ type TableConfig struct {
 	TableID       string
 }
 
+// HasGSI reports whether the table declares a Global Secondary Index named name.
+func (c *TableConfig) HasGSI(name string) bool {
+	for i := range c.GSIs {
+		if c.GSIs[i].Name == name {
+			return true
+		}
+	}
+
+	return false
+}
+
 // AttributeDef is a DynamoDB attribute definition (name + scalar type S/N/B).
 type AttributeDef struct {
 	Name string

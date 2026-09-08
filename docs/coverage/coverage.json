@@ -5038,6 +5038,68 @@
         ]
       },
       {
+        "name": "ContributorInsighter",
+        "doc": "ContributorInsighter is an OPTIONAL capability, discovered by type assertion",
+        "operations": [
+          {
+            "name": "DescribeContributorInsights",
+            "doc": "DescribeContributorInsights returns the Contributor Insights status of the"
+          },
+          {
+            "name": "ListContributorInsights",
+            "doc": "ListContributorInsights returns a summary for every table/index that has a"
+          },
+          {
+            "name": "UpdateContributorInsights",
+            "doc": "UpdateContributorInsights enables or disables Contributor Insights for the"
+          }
+        ]
+      },
+      {
+        "name": "GlobalTabler",
+        "doc": "GlobalTabler is an OPTIONAL capability, discovered by type assertion (like",
+        "operations": [
+          {
+            "name": "CreateGlobalTable",
+            "doc": "CreateGlobalTable creates a global table named after an existing table with"
+          },
+          {
+            "name": "DescribeGlobalTable",
+            "doc": "DescribeGlobalTable returns the global table identified by name."
+          },
+          {
+            "name": "ListGlobalTables",
+            "doc": "ListGlobalTables returns every global table ordered by name, optionally"
+          },
+          {
+            "name": "UpdateGlobalTable",
+            "doc": "UpdateGlobalTable adds and/or removes replica regions, returning the"
+          }
+        ]
+      },
+      {
+        "name": "KinesisStreamer",
+        "doc": "KinesisStreamer is an OPTIONAL capability, discovered by type assertion (like",
+        "operations": [
+          {
+            "name": "DescribeKinesisStreamingDestination",
+            "doc": "DescribeKinesisStreamingDestination returns every destination attached to"
+          },
+          {
+            "name": "DisableKinesisStreamingDestination",
+            "doc": "DisableKinesisStreamingDestination marks the table's streamArn destination"
+          },
+          {
+            "name": "EnableKinesisStreamingDestination",
+            "doc": "EnableKinesisStreamingDestination attaches streamArn to the table (or"
+          },
+          {
+            "name": "UpdateKinesisStreamingDestination",
+            "doc": "UpdateKinesisStreamingDestination changes the precision of the table's"
+          }
+        ]
+      },
+      {
         "name": "TableAttributes",
         "doc": "TableAttributes is an OPTIONAL capability, discovered by type assertion (like",
         "operations": [

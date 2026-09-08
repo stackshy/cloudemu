@@ -75,6 +75,11 @@ type tableData struct {
 	seqCounter    atomic.Int64
 	tags          map[string]string
 	pitrEnabled   bool
+	// kinesisDests holds the table's Kinesis Data Streams destinations, keyed
+	// by StreamArn (see kinesis.go). ci holds its Contributor Insights records,
+	// keyed by index name ("" for the table itself; see contributorinsights.go).
+	kinesisDests map[string]driver.KinesisDestination
+	ci           map[string]ciRecord
 }
 
 // DynamoDB table/GSI lifecycle states and their settle durations. A real table
@@ -126,6 +131,16 @@ type Mock struct {
 	// replays them into a new table regardless of later mutations. Guarded by
 	// m.mu; see backup.go.
 	backups map[string]*backupData
+	// globalTables holds version-2017 global tables keyed by name, each with its
+	// replication group (see globaltable.go). Guarded by m.mu.
+	globalTables map[string]*driver.GlobalTableInfo
+}
+
+// ciRecord is one table/index Contributor Insights record: its current status
+// and the Unix-seconds time of the last status change (0 when never changed).
+type ciRecord struct {
+	status         string
+	lastUpdateUnix float64
 }
 
 // StreamEventInvoker delivers a DynamoDB Streams event batch to whatever Lambda
@@ -174,6 +189,7 @@ func New(opts *config.Options) *Mock {
 		opts:          opts,
 		txIdempotency: make(map[string]txIdempotencyRecord),
 		backups:       make(map[string]*backupData),
+		globalTables:  make(map[string]*driver.GlobalTableInfo),
 		tableSettle:   settle.NewSet(),
 		gsiSettle:     settle.NewSet(),
 	}
