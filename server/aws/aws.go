@@ -49,6 +49,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
 	schedulersrv "github.com/stackshy/cloudemu/v2/server/aws/eventbridgescheduler"
 	fissrv "github.com/stackshy/cloudemu/v2/server/aws/fis"
+	globalacceleratorsrv "github.com/stackshy/cloudemu/v2/server/aws/globalaccelerator"
 	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
 	grafanasrv "github.com/stackshy/cloudemu/v2/server/aws/grafana"
 	guarddutysrv "github.com/stackshy/cloudemu/v2/server/aws/guardduty"
@@ -119,6 +120,7 @@ import (
 	schedulerdriver "github.com/stackshy/cloudemu/v2/services/eventbridgescheduler/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 	fisdriver "github.com/stackshy/cloudemu/v2/services/fis/driver"
+	globalacceleratordriver "github.com/stackshy/cloudemu/v2/services/globalaccelerator/driver"
 	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
 	grafanadriver "github.com/stackshy/cloudemu/v2/services/grafana/driver"
 	guarddutydriver "github.com/stackshy/cloudemu/v2/services/guardduty/driver"
@@ -315,6 +317,11 @@ type Drivers struct {
 	// "HealthLake.") against the healthlake driver: FHIR data stores and their
 	// resource tags.
 	HealthLake healthlakedriver.HealthLake
+	// GlobalAccelerator serves the AWS Global Accelerator JSON 1.1 protocol
+	// (X-Amz-Target prefix "GlobalAccelerator_V20180706.") against the
+	// globalaccelerator driver: accelerators, listeners, endpoint groups,
+	// attributes and tags.
+	GlobalAccelerator globalacceleratordriver.GlobalAccelerator
 	// AppRunner serves the AWS App Runner JSON 1.0 protocol (X-Amz-Target prefix
 	// "AppRunner.") against the apprunner driver: services and their operation
 	// history, plus auto scaling configurations, connections, VPC connectors and
@@ -498,6 +505,7 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		TimestreamWrite:     p.TimestreamWrite,
 		HealthLake:          p.HealthLake,
 		AppRunner:           p.AppRunner,
+		GlobalAccelerator:   p.GlobalAccelerator,
 		Transfer:            p.Transfer,
 		Cognito:             p.Cognito,
 		Config:              p.Config,
@@ -682,6 +690,12 @@ func New(d Drivers) *server.Server {
 	// the other JSON-RPC services, so registration order is unconstrained.
 	if d.HealthLake != nil {
 		srv.Register(healthlakesrv.New(d.HealthLake))
+	}
+
+	// GlobalAccelerator matches the X-Amz-Target prefix
+	// "GlobalAccelerator_V20180706." — disjoint from the other JSON-RPC targets.
+	if d.GlobalAccelerator != nil {
+		srv.Register(globalacceleratorsrv.New(d.GlobalAccelerator))
 	}
 
 	// AppRunner matches the X-Amz-Target prefix "AppRunner." — disjoint from the

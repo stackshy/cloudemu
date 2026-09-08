@@ -90,6 +90,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `gke` | — | — | [GKE](./gcp/gke.md) | — | 18 |
 | `gkebackup` | — | — | [GKEBackup](./gcp/gkebackup.md) | — | 11 |
 | `gkehub` | — | — | [GKEHub](./gcp/gkehub.md) | — | 16 |
+| `globalaccelerator` | [GlobalAccelerator](./aws/globalaccelerator.md) | — | — | — | 20 |
 | `glue` | [Glue](./aws/glue.md) | — | — | — | 299 |
 | `grafana` | [Grafana](./aws/grafana.md) | — | — | — | 12 |
 | `guardduty` | [GuardDuty](./aws/guardduty.md) | — | — | — | 87 |

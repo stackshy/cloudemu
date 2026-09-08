@@ -44,6 +44,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridgescheduler"
 	"github.com/stackshy/cloudemu/v2/providers/aws/fis"
+	"github.com/stackshy/cloudemu/v2/providers/aws/globalaccelerator"
 	"github.com/stackshy/cloudemu/v2/providers/aws/glue"
 	"github.com/stackshy/cloudemu/v2/providers/aws/grafana"
 	"github.com/stackshy/cloudemu/v2/providers/aws/guardduty"
@@ -220,6 +221,7 @@ type Provider struct {
 	TimestreamWrite     *timestreamwrite.Mock
 	HealthLake          *healthlake.Mock
 	AppRunner           *apprunner.Mock
+	GlobalAccelerator   *globalaccelerator.Mock
 	Transfer            *transfer.Mock
 	Cognito             *cognito.Mock
 	Config              *configservice.Mock
@@ -308,6 +310,7 @@ func New(opts ...config.Option) *Provider {
 		TimestreamWrite:     timestreamwrite.New(o),
 		HealthLake:          healthlake.New(o),
 		AppRunner:           apprunner.New(o),
+		GlobalAccelerator:   globalaccelerator.New(o),
 		Transfer:            transfer.New(o),
 		Cognito:             cognito.New(o),
 		Config:              configservice.New(o),

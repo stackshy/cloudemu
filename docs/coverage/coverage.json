@@ -6694,6 +6694,75 @@
     }
   },
   {
+    "service": "globalaccelerator",
+    "interface": "GlobalAccelerator",
+    "operations": [
+      {
+        "name": "CreateAccelerator"
+      },
+      {
+        "name": "CreateEndpointGroup"
+      },
+      {
+        "name": "CreateListener"
+      },
+      {
+        "name": "DeleteAccelerator"
+      },
+      {
+        "name": "DeleteEndpointGroup"
+      },
+      {
+        "name": "DeleteListener"
+      },
+      {
+        "name": "DescribeAccelerator"
+      },
+      {
+        "name": "DescribeAcceleratorAttributes"
+      },
+      {
+        "name": "DescribeEndpointGroup"
+      },
+      {
+        "name": "DescribeListener"
+      },
+      {
+        "name": "ListAccelerators"
+      },
+      {
+        "name": "ListEndpointGroups"
+      },
+      {
+        "name": "ListListeners"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAccelerator"
+      },
+      {
+        "name": "UpdateAcceleratorAttributes"
+      },
+      {
+        "name": "UpdateEndpointGroup"
+      },
+      {
+        "name": "UpdateListener"
+      }
+    ],
+    "providers": {
+      "aws": "GlobalAccelerator"
+    }
+  },
+  {
     "service": "glue",
     "interface": "Glue",
     "operations": [
