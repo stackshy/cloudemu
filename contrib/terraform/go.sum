@@ -97,6 +97,8 @@ github.com/aws/aws-sdk-go-v2/service/eventbridge v1.47.0 h1:LuPLDBMCmldgg779sq8s
 github.com/aws/aws-sdk-go-v2/service/eventbridge v1.47.0/go.mod h1:3g/foYPw/4CT8yV7/A1QsbvnhDZW/2x2uzl4vkqX49o=
 github.com/aws/aws-sdk-go-v2/service/fis v1.44.0 h1:5viRgBFfSPQR//yvQUx5X64bfD+q+uXG24e/uWNHd+o=
 github.com/aws/aws-sdk-go-v2/service/fis v1.44.0/go.mod h1:Ymapb7t7cfrf/yw++nxAOB+DFvsadf/rMHXv2KmKXcg=
+github.com/aws/aws-sdk-go-v2/service/globalaccelerator v1.43.0 h1:FkH8bt9W9Sy8uqTPfKB7Q1VwG2N0D2Z1+JrmhPtVtnY=
+github.com/aws/aws-sdk-go-v2/service/globalaccelerator v1.43.0/go.mod h1:ZlUO7upCOQMLPs1qzZl7BWCAHaEY4buOh8uF4v/gzXg=
 github.com/aws/aws-sdk-go-v2/service/glue v1.152.0 h1:82K11SuRv2c5gmlwJXImQrs2+nzro1KF/MOjr5qzVZ0=
 github.com/aws/aws-sdk-go-v2/service/glue v1.152.0/go.mod h1:3kgUanQ41XP3SMxOurl1gu9cQ2B4AltelI+0srIz0Yg=
 github.com/aws/aws-sdk-go-v2/service/grafana v1.43.0 h1:4HjNK8Njs9/EYXFaRLeju2p0sWJMnRq25Bk3ep8DX9E=
