@@ -55,6 +55,17 @@ type Mock struct {
 	repos      *memstore.Store[*repoData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+
+	// Registry-level (not per-repository) state. These back the AWS ECR
+	// registry-scoped operations (replication, pull-through cache, registry
+	// scanning configuration, registry policy, account settings), all guarded by
+	// mu. They are plain fields rather than memstore.Store because the surface is
+	// small and singular per registry.
+	registryPolicy  string
+	replication     *driver.ReplicationConfiguration
+	pullThrough     map[string]*driver.PullThroughCacheRule
+	registryScan    *driver.RegistryScanningConfiguration
+	accountSettings map[string]string
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -76,8 +87,10 @@ func (m *Mock) emitMetric(metricName string, value float64, dims map[string]stri
 // New creates a new ECR mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		repos: memstore.New[*repoData](),
-		opts:  opts,
+		repos:           memstore.New[*repoData](),
+		opts:            opts,
+		pullThrough:     make(map[string]*driver.PullThroughCacheRule),
+		accountSettings: make(map[string]string),
 	}
 }
 

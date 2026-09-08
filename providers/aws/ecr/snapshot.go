@@ -20,6 +20,12 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // helper. The mutex and the wired deps (opts, monitoring) are not serialized.
 type ecrSnapshot struct {
 	Repos map[string]*repoSnapshot `json:"repos,omitempty"`
+	// Registry-level (not per-repository) state.
+	RegistryPolicy  string                                  `json:"registryPolicy,omitempty"`
+	Replication     *driver.ReplicationConfiguration        `json:"replication,omitempty"`
+	PullThrough     map[string]*driver.PullThroughCacheRule `json:"pullThrough,omitempty"`
+	RegistryScan    *driver.RegistryScanningConfiguration   `json:"registryScan,omitempty"`
+	AccountSettings map[string]string                       `json:"accountSettings,omitempty"`
 }
 
 // repoSnapshot mirrors repoData, promoting its unexported settings and nested
@@ -45,20 +51,34 @@ type imageSnapshot struct {
 // Snapshot captures every repository's state as JSON. includeAssets is unused —
 // ECR stores image manifests/metadata, not object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
-	snap := ecrSnapshot{}
-	if m.repos.Len() == 0 {
-		return json.Marshal(snap)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	snap := ecrSnapshot{
+		RegistryPolicy: m.registryPolicy,
+		Replication:    m.replication,
+		RegistryScan:   m.registryScan,
 	}
 
-	snap.Repos = make(map[string]*repoSnapshot, m.repos.Len())
+	if len(m.pullThrough) > 0 {
+		snap.PullThrough = m.pullThrough
+	}
 
-	for name, rd := range m.repos.All() {
-		rs, err := snapshotRepo(rd)
-		if err != nil {
-			return nil, err
+	if len(m.accountSettings) > 0 {
+		snap.AccountSettings = m.accountSettings
+	}
+
+	if m.repos.Len() > 0 {
+		snap.Repos = make(map[string]*repoSnapshot, m.repos.Len())
+
+		for name, rd := range m.repos.All() {
+			rs, err := snapshotRepo(rd)
+			if err != nil {
+				return nil, err
+			}
+
+			snap.Repos[name] = rs
 		}
-
-		snap.Repos[name] = rs
 	}
 
 	return json.Marshal(snap)
@@ -96,6 +116,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return fmt.Errorf("ecr: parse snapshot: %w", err)
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	for name, rs := range snap.Repos {
 		rd, err := restoreRepo(rs)
 		if err != nil {
@@ -103,6 +126,18 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		}
 
 		m.repos.Set(name, rd)
+	}
+
+	m.registryPolicy = snap.RegistryPolicy
+	m.replication = snap.Replication
+	m.registryScan = snap.RegistryScan
+
+	if snap.PullThrough != nil {
+		m.pullThrough = snap.PullThrough
+	}
+
+	if snap.AccountSettings != nil {
+		m.accountSettings = snap.AccountSettings
 	}
 
 	return nil

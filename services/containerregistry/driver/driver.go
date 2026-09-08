@@ -147,6 +147,70 @@ type ScanResult struct {
 	CompletedAt   string
 }
 
+// ReplicationConfiguration is an AWS ECR registry-level cross-region/cross-account
+// replication configuration. AWS-specific (Azure ACR and GCP Artifact Registry have
+// no equivalent registry-level replication API), so it is not part of the
+// ContainerRegistry interface below — the AWS provider exposes registry-level
+// methods the ECR wire handler reaches via type assertion, the same pattern used for
+// LifecyclePreviewResult.
+type ReplicationConfiguration struct {
+	Rules []ReplicationRule
+}
+
+// ReplicationRule is one replication rule: a set of destinations plus optional
+// repository filters that scope which repositories the rule replicates.
+type ReplicationRule struct {
+	Destinations      []ReplicationDestination
+	RepositoryFilters []ReplicationFilter
+}
+
+// ReplicationDestination is a replication target region/registry.
+type ReplicationDestination struct {
+	Region     string
+	RegistryID string
+}
+
+// ReplicationFilter scopes a replication rule to matching repositories.
+// FilterType is "PREFIX_MATCH".
+type ReplicationFilter struct {
+	Filter     string
+	FilterType string
+}
+
+// PullThroughCacheRule is an AWS ECR registry-level pull-through cache rule,
+// mapping a local repository prefix to an upstream registry. AWS-specific.
+type PullThroughCacheRule struct {
+	ECRRepositoryPrefix string
+	UpstreamRegistryURL string
+	UpstreamRegistry    string
+	CredentialARN       string
+	RegistryID          string
+	CreatedAt           string
+	UpdatedAt           string
+}
+
+// RegistryScanningConfiguration is an AWS ECR registry-level scanning
+// configuration. ScanType is "BASIC" (the default) or "ENHANCED". AWS-specific.
+type RegistryScanningConfiguration struct {
+	ScanType string
+	Rules    []RegistryScanningRule
+}
+
+// RegistryScanningRule is one registry scanning rule: a scan frequency plus the
+// repository filters it applies to. ScanFrequency is "SCAN_ON_PUSH",
+// "CONTINUOUS_SCAN", or "MANUAL".
+type RegistryScanningRule struct {
+	ScanFrequency     string
+	RepositoryFilters []ScanningRepositoryFilter
+}
+
+// ScanningRepositoryFilter scopes a registry scanning rule. FilterType is
+// "WILDCARD".
+type ScanningRepositoryFilter struct {
+	Filter     string
+	FilterType string
+}
+
 // ContainerRegistry is the interface that container registry providers must implement.
 type ContainerRegistry interface {
 	// Repository management

@@ -15,6 +15,9 @@ const (
 	excRepositoryPolicyNotFound = "RepositoryPolicyNotFoundException"
 	excLifecyclePolicyNotFound  = "LifecyclePolicyNotFoundException"
 	excImageAlreadyExists       = "ImageAlreadyExistsException"
+	excRegistryPolicyNotFound   = "RegistryPolicyNotFoundException"
+	excPullThroughRuleNotFound  = "PullThroughCacheRuleNotFoundException"
+	excPullThroughRuleExists    = "PullThroughCacheRuleAlreadyExistsException"
 )
 
 // apiError pairs a canonical cloudemu error with the precise ECR exception name

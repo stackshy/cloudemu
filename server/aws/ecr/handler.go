@@ -62,9 +62,16 @@ func (*Handler) Matches(r *http.Request) bool {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
-	if h.routeRepositories(w, r, op) || h.routeImages(w, r, op) ||
-		h.routeTags(w, r, op) || h.routeLifecycle(w, r, op) || h.routeScanning(w, r, op) {
-		return
+	routes := []func(http.ResponseWriter, *http.Request, string) bool{
+		h.routeRepositories, h.routeImages, h.routeTags, h.routeLifecycle, h.routeScanning,
+		h.routeRegistryPolicy, h.routeReplication, h.routePullThrough,
+		h.routeRegistryScanning, h.routeAccountSetting,
+	}
+
+	for _, route := range routes {
+		if route(w, r, op) {
+			return
+		}
 	}
 
 	wire.WriteJSONError(w, http.StatusBadRequest, "UnknownOperationException", "unknown ECR operation: "+op)
