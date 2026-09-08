@@ -78,6 +78,7 @@ import (
 	providerssrv "github.com/stackshy/cloudemu/v2/server/azure/providers"
 	purviewsrv "github.com/stackshy/cloudemu/v2/server/azure/purview"
 	"github.com/stackshy/cloudemu/v2/server/azure/queue"
+	recoveryservicessrv "github.com/stackshy/cloudemu/v2/server/azure/recoveryservices"
 	redisenterprisesrv "github.com/stackshy/cloudemu/v2/server/azure/redisenterprise"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
@@ -206,6 +207,10 @@ type Drivers struct {
 	// nested transformation/inputs/outputs/functions child resources and the
 	// job start/stop/scale actions.
 	StreamAnalytics streamanalyticssrv.Store
+	// RecoveryServices serves Microsoft.RecoveryServices/vaults plus its nested
+	// backupPolicies collection and the backupconfig / backupstorageconfig
+	// singletons.
+	RecoveryServices recoveryservicessrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -598,6 +603,15 @@ func New(d Drivers) http.Handler {
 	if d.StreamAnalytics != nil {
 		streamAnalyticsHandler = streamanalyticssrv.New(d.StreamAnalytics)
 		rgPurgers = append(rgPurgers, streamAnalyticsHandler)
+	}
+
+	// Recovery Services: a resource-group-scoped resource, so its handler joins
+	// the purge cascade. Deleting the group tears down every vault and its backup
+	// policies / configs. Registered further below.
+	var recoveryServicesHandler *recoveryservicessrv.Handler
+	if d.RecoveryServices != nil {
+		recoveryServicesHandler = recoveryservicessrv.New(d.RecoveryServices)
+		rgPurgers = append(rgPurgers, recoveryServicesHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -1046,6 +1060,13 @@ func New(d Drivers) http.Handler {
 	// unconstrained.
 	if streamAnalyticsHandler != nil {
 		srv.Register(streamAnalyticsHandler)
+	}
+
+	// Recovery Services claims Microsoft.RecoveryServices/vaults — a distinct ARM
+	// provider name from every other Azure handler, so registration order is
+	// unconstrained.
+	if recoveryServicesHandler != nil {
+		srv.Register(recoveryServicesHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

@@ -102,6 +102,9 @@ const (
 	// ServiceStreamAnalytics buckets Azure Stream Analytics resources
 	// (Microsoft.StreamAnalytics/streamingjobs).
 	ServiceStreamAnalytics = "streamanalytics"
+	// ServiceRecoveryServices buckets Azure Recovery Services resources
+	// (Microsoft.RecoveryServices/vaults).
+	ServiceRecoveryServices = "recoveryservices"
 )
 
 // Resource type constants emitted by the walkers.
@@ -243,6 +246,10 @@ const TypeBatchAccount = "BatchAccount"
 // (Microsoft.StreamAnalytics/streamingjobs). Azure-only, so it lives in its own
 // line.
 const TypeStreamingJob = "StreamingJob"
+
+// TypeRecoveryVault is the portable type for an Azure Recovery Services vault
+// (Microsoft.RecoveryServices/vaults). Azure-only, so it lives in its own line.
+const TypeRecoveryVault = "Vault"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs

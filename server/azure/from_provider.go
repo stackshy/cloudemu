@@ -55,6 +55,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		MongoCluster:       p.MongoCluster,
 		Batch:              p.Batch,
 		StreamAnalytics:    p.StreamAnalytics,
+		RecoveryServices:   p.RecoveryServices,
 		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,
 		IAM:                p.IAM,

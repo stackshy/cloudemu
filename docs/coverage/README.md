@@ -133,6 +133,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `purview` | — | [Purview](./azure/purview.md) | — | — | 9 |
 | `queue` | — | [Queue](./azure/queue.md) | — | — | 6 |
 | `rds` | [RDS](./aws/rds.md) | — | — | — | 21 |
+| `recoveryservices` | — | [RecoveryServices](./azure/recoveryservices.md) | — | — | 18 |
 | `redisenterprise` | — | [RedisEnterprise](./azure/redisenterprise.md) | — | — | 12 |
 | `relationaldb` | [Redshift](./aws/redshift.md) | [MySQLFlex](./azure/mysqlflex.md) | [AlloyDB](./gcp/alloydb.md) | — | 21 |
 | `resourceexplorer2` | [Resourceexplorer2](./aws/resourceexplorer2.md) | — | — | — | 10 |

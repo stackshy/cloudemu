@@ -12270,6 +12270,69 @@
     }
   },
   {
+    "service": "recoveryservices",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "ARMType"
+      },
+      {
+        "name": "CreateOrUpdatePolicy"
+      },
+      {
+        "name": "CreateOrUpdateVault"
+      },
+      {
+        "name": "DeletePolicy"
+      },
+      {
+        "name": "DeleteVault"
+      },
+      {
+        "name": "DiscoverVaults"
+      },
+      {
+        "name": "GetPolicy"
+      },
+      {
+        "name": "GetStorageConfig"
+      },
+      {
+        "name": "GetVault"
+      },
+      {
+        "name": "GetVaultConfig"
+      },
+      {
+        "name": "ListPolicies"
+      },
+      {
+        "name": "ListVaultsByResourceGroup"
+      },
+      {
+        "name": "ListVaultsBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "UpdateStorageConfig"
+      },
+      {
+        "name": "UpdateVault"
+      },
+      {
+        "name": "UpdateVaultConfig"
+      }
+    ],
+    "providers": {
+      "azure": "RecoveryServices"
+    }
+  },
+  {
     "service": "redisenterprise",
     "interface": "provider-native",
     "operations": [

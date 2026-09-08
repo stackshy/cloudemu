@@ -50,6 +50,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/postgresflex"
 	"github.com/stackshy/cloudemu/v2/providers/azure/privatedns"
 	"github.com/stackshy/cloudemu/v2/providers/azure/purview"
+	"github.com/stackshy/cloudemu/v2/providers/azure/recoveryservices"
 	"github.com/stackshy/cloudemu/v2/providers/azure/redisenterprise"
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
@@ -201,6 +202,7 @@ type Provider struct {
 	MongoCluster       *mongocluster.Mock
 	Batch              *batch.Mock
 	StreamAnalytics    *streamanalytics.Mock
+	RecoveryServices   *recoveryservices.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -280,6 +282,7 @@ func New(opts ...config.Option) *Provider {
 		MongoCluster:       mongocluster.New(o),
 		Batch:              batch.New(o),
 		StreamAnalytics:    streamanalytics.New(o),
+		RecoveryServices:   recoveryservices.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -331,6 +334,7 @@ func New(opts ...config.Option) *Provider {
 				mongoClusterDiscovery{p.MongoCluster},
 				batchDiscovery{p.Batch},
 				streamAnalyticsDiscovery{p.StreamAnalytics},
+				recoveryServicesDiscovery{p.RecoveryServices},
 			},
 		},
 	)

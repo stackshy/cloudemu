@@ -58,6 +58,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [Purview](./purview.md) | — (provider-native) | 9 |
 | [Queue](./queue.md) | — (provider-native) | 6 |
 | [QueueStorage](./queuestorage.md) | `messagequeue` | 14 |
+| [RecoveryServices](./recoveryservices.md) | — (provider-native) | 18 |
 | [RedisEnterprise](./redisenterprise.md) | — (provider-native) | 12 |
 | [Resourcegraph](./resourcegraph.md) | — (provider-native) | 3 |
 | [Resourcegroups](./resourcegroups.md) | — (provider-native) | 7 |
