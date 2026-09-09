@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strconv"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
 )
@@ -110,8 +111,9 @@ func (h *Handler) regenerateTopicKey(w http.ResponseWriter, r *http.Request, rp 
 }
 
 // enrichSubscriptionProperties parses stored properties, stamps the read-only
-// topic id and provisioning state, and re-marshals. When props is empty a
-// minimal object with just those read-only fields is produced.
+// topic id and provisioning state, fills the read-only Event Grid defaults the
+// caller omitted (retryPolicy, eventDeliverySchema), and re-marshals. When props
+// is empty a minimal object with just those read-only fields is produced.
 func enrichSubscriptionProperties(props []byte, topicID string) json.RawMessage {
 	obj := map[string]any{}
 	if len(props) > 0 {
@@ -120,6 +122,7 @@ func enrichSubscriptionProperties(props []byte, topicID string) json.RawMessage 
 
 	obj["topic"] = topicID
 	obj["provisioningState"] = subscriptionProvisionedGood
+	stampSubscriptionDefaults(obj)
 
 	out, err := json.Marshal(obj)
 	if err != nil {
@@ -127,6 +130,41 @@ func enrichSubscriptionProperties(props []byte, topicID string) json.RawMessage 
 	}
 
 	return out
+}
+
+// stampSubscriptionDefaults fills the read-only defaults Event Grid reports for
+// an event subscription when the caller did not set them: eventDeliverySchema
+// (EventGridSchema) and a retryPolicy of 30 delivery attempts / 1440-minute
+// event TTL. Caller-supplied values are preserved — only absent fields are
+// filled, matching real Azure's GET response, so a subscription created with an
+// explicit retry policy or delivery schema round-trips unchanged while one
+// created without still reports the documented defaults.
+func stampSubscriptionDefaults(obj map[string]any) {
+	if _, ok := obj["eventDeliverySchema"]; !ok {
+		obj["eventDeliverySchema"] = defaultEventDeliverySchema
+	}
+
+	obj["retryPolicy"] = retryPolicyWithDefaults(obj["retryPolicy"])
+}
+
+// retryPolicyWithDefaults returns the retry policy to report: the caller's, with
+// each unset field filled from Event Grid's defaults (30 attempts, 1440-minute
+// TTL). A missing or non-object retryPolicy yields the full default policy.
+func retryPolicyWithDefaults(existing any) map[string]any {
+	rp, _ := existing.(map[string]any)
+	if rp == nil {
+		rp = map[string]any{}
+	}
+
+	if _, ok := rp["maxDeliveryAttempts"]; !ok {
+		rp["maxDeliveryAttempts"] = defaultMaxDeliveryAttempts
+	}
+
+	if _, ok := rp["eventTimeToLiveInMinutes"]; !ok {
+		rp["eventTimeToLiveInMinutes"] = defaultEventTTLMinutes
+	}
+
+	return rp
 }
 
 func subscriptionID(rp *azurearm.ResourcePath) string {
@@ -259,10 +297,13 @@ func (h *Handler) getEventSubscription(w http.ResponseWriter, r *http.Request, r
 	azurearm.WriteJSON(w, http.StatusOK, toEventSubscriptionJSON(rp, rule))
 }
 
-// deleteEventSubscription removes the subscription. The SDK's BeginDelete LRO
-// completes on a 200 first response.
+// deleteEventSubscription removes the subscription. Delete is idempotent,
+// matching real ARM and every other delete path in this package: deleting an
+// already-absent subscription (or one whose topic is already gone) still
+// succeeds rather than surfacing the driver's NotFound. The SDK's BeginDelete
+// LRO completes on a 200 first response.
 func (h *Handler) deleteEventSubscription(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.bus.DeleteRule(r.Context(), rp.ResourceName, rp.SubResourceName); err != nil {
+	if err := h.bus.DeleteRule(r.Context(), rp.ResourceName, rp.SubResourceName); err != nil && !cerrors.IsNotFound(err) {
 		azurearm.WriteCErr(w, err)
 		return
 	}

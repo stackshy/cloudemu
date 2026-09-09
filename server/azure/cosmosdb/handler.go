@@ -309,6 +309,13 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
+	// A root "GET /?comp=list" is a Storage service call (list queues / list
+	// containers), not a Cosmos account probe (which carries no query). Decline
+	// it so the Queue and Blob handlers, registered after this one, serve it.
+	if rest == "/" && r.URL.Query().Get("comp") == "list" {
+		return false
+	}
+
 	return rest == "/" || rest == "/dbs" || strings.HasPrefix(rest, "/dbs/") ||
 		rest == offersPath || strings.HasPrefix(rest, offersPathPrefix)
 }
@@ -1425,14 +1432,14 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NotFound", err.Error())
+		writeError(w, http.StatusNotFound, "NotFound", cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "Conflict", err.Error())
+		writeError(w, http.StatusConflict, "Conflict", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "BadRequest", err.Error())
+		writeError(w, http.StatusBadRequest, "BadRequest", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusPreconditionFailed, "PreconditionFailed", err.Error())
+		writeError(w, http.StatusPreconditionFailed, "PreconditionFailed", cerrors.Message(err))
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalServerError", cerrors.Message(err))
 	}
 }

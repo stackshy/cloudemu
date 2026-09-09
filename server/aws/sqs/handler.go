@@ -154,6 +154,12 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request) {
 		ContentBasedDeduplication:     req.Attributes["ContentBasedDeduplication"] == attrTrue,
 		RedrivePolicy:                 req.Attributes["RedrivePolicy"],
 		RedriveAllowPolicy:            req.Attributes["RedriveAllowPolicy"],
+		Policy:                        req.Attributes["Policy"],
+		KmsMasterKeyID:                req.Attributes["KmsMasterKeyId"],
+		KmsDataKeyReusePeriodSeconds:  atoiAttr(req.Attributes, "KmsDataKeyReusePeriodSeconds"),
+		SqsManagedSseEnabled:          req.Attributes["SqsManagedSseEnabled"] == attrTrue,
+		DeduplicationScope:            req.Attributes["DeduplicationScope"],
+		FifoThroughputLimit:           req.Attributes["FifoThroughputLimit"],
 	}
 
 	info, err := h.mq.CreateQueue(r.Context(), cfg)
@@ -357,6 +363,15 @@ func (h *Handler) receiveMessage(w http.ResponseWriter, r *http.Request) {
 
 	sysNames := append(append([]string{}, req.AttributeNames...), req.MessageSystemAttrs...)
 
+	// Real SQS omits the Messages field entirely when no messages are returned
+	// (the AwsJson1_0 body is {}), rather than emitting an empty array. Match
+	// that so clients that distinguish an absent field from an empty list — and
+	// wire-level snapshots — see identical bytes.
+	if len(msgs) == 0 {
+		wire.WriteJSON(w, map[string]any{})
+		return
+	}
+
 	out := make([]map[string]any, 0, len(msgs))
 	for i := range msgs {
 		out = append(out, buildReceiveEntry(&msgs[i], sysNames, req.MessageAttributeNames))
@@ -430,7 +445,7 @@ func (h *Handler) changeMessageVisibility(w http.ResponseWriter, r *http.Request
 // missing queue keeps the standard QueueDoesNotExist mapping.
 func writeReceiptErr(w http.ResponseWriter, err error) {
 	if cerrors.IsFailedPrecondition(err) {
-		wire.WriteJSONError(w, http.StatusBadRequest, "ReceiptHandleIsInvalid", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ReceiptHandleIsInvalid", cerrors.Message(err))
 		return
 	}
 
@@ -468,7 +483,7 @@ func (h *Handler) changeMessageVisibilityBatch(w http.ResponseWriter, r *http.Re
 		if err != nil {
 			failed = append(failed, map[string]any{
 				"Id": req.Entries[i].ID, "Code": "ReceiptHandleIsInvalid",
-				"Message": err.Error(), "SenderFault": true,
+				"Message": cerrors.Message(err), "SenderFault": true,
 			})
 
 			continue
@@ -922,14 +937,14 @@ func moveTaskResult(t *mqdriver.MessageMoveTask) map[string]any {
 func writeMoveTaskErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
 		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest,
-			"UnsupportedOperation", errQueryCodeUnsupportedOperation, err.Error())
+			"UnsupportedOperation", errQueryCodeUnsupportedOperation, cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterValue", cerrors.Message(err))
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalError", cerrors.Message(err))
 	}
 }
 
@@ -1036,13 +1051,22 @@ func (h *Handler) getQueueAttributes(w http.ResponseWriter, r *http.Request) {
 		"ReceiveMessageWaitTimeSeconds":         strconv.Itoa(attrs.ReceiveMessageWaitTimeSeconds),
 		"CreatedTimestamp":                      strconv.FormatInt(attrs.CreatedAt.Unix(), 10),
 		"LastModifiedTimestamp":                 strconv.FormatInt(attrs.LastModifiedAt.Unix(), 10),
-		"SqsManagedSseEnabled":                  "false",
+		"SqsManagedSseEnabled":                  strconv.FormatBool(attrs.SqsManagedSseEnabled),
 	}
 
-	// SQS returns FifoQueue/ContentBasedDeduplication only for FIFO queues.
+	// SQS returns FifoQueue/ContentBasedDeduplication and the high-throughput
+	// attributes only for FIFO queues.
 	if attrs.FifoQueue {
 		all["FifoQueue"] = attrTrue
 		all["ContentBasedDeduplication"] = strconv.FormatBool(attrs.ContentBasedDeduplication)
+		all["DeduplicationScope"] = attrs.DeduplicationScope
+		all["FifoThroughputLimit"] = attrs.FifoThroughputLimit
+	}
+
+	// SSE-KMS attributes appear only when a KMS key is configured, matching real
+	// SQS (a plain or SSE-SQS queue omits them).
+	if attrs.KmsMasterKeyID != "" {
+		all["KmsDataKeyReusePeriodSeconds"] = strconv.Itoa(attrs.KmsDataKeyReusePeriodSeconds)
 	}
 
 	if attrs.RedrivePolicy != "" {
@@ -1159,12 +1183,12 @@ func (h *Handler) purgeQueue(w http.ResponseWriter, r *http.Request) {
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest, errNonExistentQueue, errQueryCodeNonExistentQueue, err.Error())
+		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest, errNonExistentQueue, errQueryCodeNonExistentQueue, cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):
-		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest, "QueueNameExists", errQueryCodeQueueAlreadyExists, err.Error())
+		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest, "QueueNameExists", errQueryCodeQueueAlreadyExists, cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterValue", err.Error())
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidParameterValue", cerrors.Message(err))
 	default:
-		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalError", cerrors.Message(err))
 	}
 }

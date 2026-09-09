@@ -70,3 +70,71 @@ func TestDefaultHealthCheckProtocolExplicitOverride(t *testing.T) {
 
 	assertEqual(t, "HTTPS", tg.HealthCheck.Protocol)
 }
+
+// TestDefaultHealthCheckTimeoutByProtocol proves HealthCheckTimeoutSeconds
+// defaults per the CreateTargetGroup API reference: HTTP is 6, HTTPS/TCP/TLS
+// (and the other TCP-family protocols) are 10, and GENEVE is 5. The prior flat
+// 5 under-reported the timeout real AWS returns for every non-GENEVE protocol.
+func TestDefaultHealthCheckTimeoutByProtocol(t *testing.T) {
+	cases := []struct {
+		protocol string
+		want     int
+	}{
+		{"HTTP", 6},
+		{"HTTPS", 10},
+		{"TCP", 10},
+		{"TLS", 10},
+		{"UDP", 10},
+		{"TCP_UDP", 10},
+	}
+
+	for _, c := range cases {
+		m := newTestMock()
+
+		tg, err := m.CreateTargetGroup(context.Background(), driver.TargetGroupConfig{
+			Name: "to-tg-" + c.protocol, Protocol: c.protocol, Port: 80, TargetType: "instance",
+		})
+		requireNoError(t, err)
+
+		if tg.HealthCheck.TimeoutSeconds != c.want {
+			t.Errorf("protocol %s: timeout = %d, want %d", c.protocol, tg.HealthCheck.TimeoutSeconds, c.want)
+		}
+	}
+}
+
+// TestDefaultHealthCheckTimeoutExplicit proves an explicitly supplied timeout is
+// preserved rather than overwritten by the protocol default.
+func TestDefaultHealthCheckTimeoutExplicit(t *testing.T) {
+	m := newTestMock()
+
+	tg, err := m.CreateTargetGroup(context.Background(), driver.TargetGroupConfig{
+		Name: "to-explicit", Protocol: "TCP", Port: 80, TargetType: "instance",
+		HealthCheck: driver.HealthCheck{TimeoutSeconds: 8},
+	})
+	requireNoError(t, err)
+
+	assertEqual(t, 8, tg.HealthCheck.TimeoutSeconds)
+}
+
+// TestDefaultHealthCheckLambda proves a lambda target group defaults with no
+// health-check protocol, port, or path (health checks are disabled by default),
+// and with the lambda-specific numeric defaults: interval 35, timeout 30, and
+// both threshold counts 5. Returning a protocol here made Terraform reject the
+// group with "health_check.protocol cannot be specified when target_type is
+// lambda".
+func TestDefaultHealthCheckLambda(t *testing.T) {
+	m := newTestMock()
+
+	tg, err := m.CreateTargetGroup(context.Background(), driver.TargetGroupConfig{
+		Name: "lambda-tg", TargetType: "lambda",
+	})
+	requireNoError(t, err)
+
+	assertEqual(t, "", tg.HealthCheck.Protocol)
+	assertEqual(t, "", tg.HealthCheck.Port)
+	assertEqual(t, "", tg.HealthCheck.Path)
+	assertEqual(t, 35, tg.HealthCheck.IntervalSeconds)
+	assertEqual(t, 30, tg.HealthCheck.TimeoutSeconds)
+	assertEqual(t, 5, tg.HealthCheck.HealthyThreshold)
+	assertEqual(t, 5, tg.HealthCheck.UnhealthyThreshold)
+}

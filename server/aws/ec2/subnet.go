@@ -248,15 +248,23 @@ func writeSubnetErr(w http.ResponseWriter, err error) {
 // InvalidSubnet.Range for a CIDR outside the VPC block, falling back to the
 // shared subnet error mapping otherwise.
 func writeCreateSubnetErr(w http.ResponseWriter, err error) {
+	// A CreateSubnet naming a VpcId that doesn't exist is a missing-VPC error,
+	// not a missing-subnet one (the subnet isn't created yet).
+	if writeInvalidVPCIfMissing(w, err) {
+		return
+	}
+
 	if cerrors.IsAlreadyExists(err) {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSubnet.Conflict", cerrors.Message(err))
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSubnet.Conflict",
+			stripCodePrefix(cerrors.Message(err), "InvalidSubnet.Conflict: "))
 		return
 	}
 
 	// A subnet CIDR outside the VPC's CIDR block is InvalidSubnet.Range, not the
 	// generic InvalidParameterValue the shared mapper would emit.
 	if cerrors.IsInvalidArgument(err) && strings.Contains(err.Error(), "InvalidSubnet.Range:") {
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSubnet.Range", cerrors.Message(err))
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidSubnet.Range",
+			stripCodePrefix(cerrors.Message(err), "InvalidSubnet.Range: "))
 		return
 	}
 

@@ -376,3 +376,239 @@ func TestDeleteParameters(t *testing.T) {
 		t.Fatalf("invalid = %v, want [/d/missing]", invalid)
 	}
 }
+
+// TestGetParameterSelectorIncludesColon covers a real-user e2e finding: real
+// Parameter Store's GetParameter/GetParameters Selector field is ":<version>"
+// or ":<label>" (colon included), not the bare version/label text.
+func TestGetParameterSelectorIncludesColon(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{Name: "/sel/p", Value: "v1", Type: driver.TypeString}); err != nil {
+		t.Fatalf("Put v1: %v", err)
+	}
+
+	if _, _, err := m.LabelParameterVersion(ctx, "/sel/p", 1, []string{"prod"}); err != nil {
+		t.Fatalf("LabelParameterVersion: %v", err)
+	}
+
+	byVersion, err := m.GetParameter(ctx, "/sel/p:1", false)
+	if err != nil {
+		t.Fatalf("GetParameter(:1): %v", err)
+	}
+
+	if byVersion.Selector != ":1" {
+		t.Fatalf("Selector = %q, want %q", byVersion.Selector, ":1")
+	}
+
+	byLabel, err := m.GetParameter(ctx, "/sel/p:prod", false)
+	if err != nil {
+		t.Fatalf("GetParameter(:prod): %v", err)
+	}
+
+	if byLabel.Selector != ":prod" {
+		t.Fatalf("Selector = %q, want %q", byLabel.Selector, ":prod")
+	}
+
+	latest, err := m.GetParameter(ctx, "/sel/p", false)
+	if err != nil {
+		t.Fatalf("GetParameter(latest): %v", err)
+	}
+
+	if latest.Selector != "" {
+		t.Fatalf("Selector = %q, want empty for an unselectored read", latest.Selector)
+	}
+}
+
+// TestGetParametersAlphabeticalOrder covers a real-user e2e finding: real
+// GetParameters always returns results in alphabetical order by name,
+// regardless of the order Names was requested in.
+func TestGetParametersAlphabeticalOrder(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	for _, name := range []string{"/zzz/p", "/aaa/p", "/mid/p"} {
+		if _, _, err := m.PutParameter(ctx, driver.PutConfig{Name: name, Value: "v", Type: driver.TypeString}); err != nil {
+			t.Fatalf("Put %s: %v", name, err)
+		}
+	}
+
+	found, _, err := m.GetParameters(ctx, []string{"/zzz/p", "/aaa/p", "/mid/p"}, false)
+	if err != nil {
+		t.Fatalf("GetParameters: %v", err)
+	}
+
+	got := paramNamesOf(found)
+	want := []string{"/aaa/p", "/mid/p", "/zzz/p"}
+
+	if len(got) != len(want) {
+		t.Fatalf("names = %v, want %v", got, want)
+	}
+
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("names = %v, want %v (alphabetical)", got, want)
+		}
+	}
+}
+
+// TestPutParameterValueSizeLimitByTier covers a real-user e2e finding: real
+// Parameter Store rejects a Value over 4 KB on the (default) Standard tier and
+// over 8 KB on the Advanced tier with ValidationException, instead of
+// silently accepting an over-limit value.
+func TestPutParameterValueSizeLimitByTier(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	standardOversized := make([]byte, driver.StandardTierMaxValueBytes+1)
+	advancedOversized := make([]byte, driver.AdvancedTierMaxValueBytes+1)
+	advancedFits := make([]byte, driver.StandardTierMaxValueBytes+1) // over Standard, under Advanced
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/size/std", Value: string(standardOversized), Type: driver.TypeString,
+	}); !errors.Is(err, driver.ErrValueTooLarge) {
+		t.Fatalf("Standard-tier oversized Put: want ErrValueTooLarge, got %v", err)
+	}
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/size/adv", Value: string(advancedFits), Type: driver.TypeString, Tier: "Advanced",
+	}); err != nil {
+		t.Fatalf("Advanced-tier Put within limit: %v", err)
+	}
+
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/size/adv2", Value: string(advancedOversized), Type: driver.TypeString, Tier: "Advanced",
+	}); !errors.Is(err, driver.ErrValueTooLarge) {
+		t.Fatalf("Advanced-tier oversized Put: want ErrValueTooLarge, got %v", err)
+	}
+}
+
+// TestPutParameterReservedNamePrefixRejected covers a real-user e2e finding:
+// real Parameter Store rejects a customer parameter name whose leading path
+// segment is "aws" or "ssm" (case-insensitive) — that namespace is reserved
+// for AWS-published parameters.
+func TestPutParameterReservedNamePrefixRejected(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	for _, name := range []string{"aws.reserved", "/aws/reserved", "SSM.reserved", "/Ssm/reserved"} {
+		if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+			Name: name, Value: "v", Type: driver.TypeString,
+		}); !errors.Is(err, driver.ErrReservedNamePrefix) {
+			t.Fatalf("PutParameter(%q): want ErrReservedNamePrefix, got %v", name, err)
+		}
+	}
+
+	// A name that merely contains "aws"/"ssm" past the leading segment is fine.
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/app/aws-region", Value: "v", Type: driver.TypeString,
+	}); err != nil {
+		t.Fatalf("PutParameter(/app/aws-region): %v", err)
+	}
+}
+
+// TestPutOverwriteRetainsTierWhenOmittedAndRejectsDowngrade covers a
+// real-user e2e finding: real Parameter Store retains an Advanced parameter's
+// tier across an Overwrite that omits Tier (mirroring Type retention), and
+// never lets an Advanced parameter silently revert to Standard.
+func TestPutOverwriteRetainsTierWhenOmittedAndRejectsDowngrade(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	if _, tier, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/tier/p", Value: "v1", Type: driver.TypeString, Tier: "Advanced",
+	}); err != nil || tier != "Advanced" {
+		t.Fatalf("create: tier=%q err=%v, want Advanced, nil", tier, err)
+	}
+
+	// Overwrite without Tier must retain Advanced, not reset to Standard.
+	if _, tier, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/tier/p", Value: "v2", Type: driver.TypeString, Overwrite: true,
+	}); err != nil || tier != "Advanced" {
+		t.Fatalf("overwrite (no Tier): tier=%q err=%v, want Advanced, nil", tier, err)
+	}
+
+	// Explicitly requesting Standard on a currently-Advanced parameter is rejected.
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/tier/p", Value: "v3", Type: driver.TypeString, Tier: "Standard", Overwrite: true,
+	}); !errors.Is(err, driver.ErrCannotRevertTier) {
+		t.Fatalf("overwrite (explicit Standard downgrade): want ErrCannotRevertTier, got %v", err)
+	}
+
+	// The tier must still be Advanced after the rejected downgrade attempt.
+	got, err := m.GetParameter(ctx, "/tier/p", false)
+	if err != nil {
+		t.Fatalf("GetParameter: %v", err)
+	}
+
+	if got.Value != "v2" || got.Version != 2 {
+		t.Fatalf("after rejected downgrade: value=%q version=%d, want v2/2 (unchanged)", got.Value, got.Version)
+	}
+}
+
+// toggleKMSCrypto is a minimal reversible KMSCrypto fake: Encrypt/Decrypt are
+// identity transforms (so a value sealed while working can be unsealed later),
+// but both fail once fail is set — modeling a key that becomes disabled after
+// a value was already sealed under it.
+type toggleKMSCrypto struct {
+	fail bool
+}
+
+func (k *toggleKMSCrypto) Encrypt(_ context.Context, _ string, plaintext []byte) ([]byte, error) {
+	if k.fail {
+		return nil, cerrors.New(cerrors.FailedPrecondition, "key is disabled")
+	}
+
+	return plaintext, nil
+}
+
+func (k *toggleKMSCrypto) Decrypt(_ context.Context, ciphertext []byte) ([]byte, error) {
+	if k.fail {
+		return nil, cerrors.New(cerrors.FailedPrecondition, "key is disabled")
+	}
+
+	return ciphertext, nil
+}
+
+// TestSecureStringUnusableKMSKeyIsInvalidKeyID covers a real-user e2e finding:
+// when the KMS key behind a SecureString can't be used, real Parameter Store
+// surfaces the distinct InvalidKeyId error on PutParameter and on a decrypting
+// GetParameter/GetParameterHistory read — not a generic internal error
+// carrying the raw KMS failure message.
+func TestSecureStringUnusableKMSKeyIsInvalidKeyID(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	kms := &toggleKMSCrypto{}
+	m.SetKMSCrypto(kms)
+
+	// Seal successfully while the key still works.
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/secure/p", Value: "s1", Type: driver.TypeSecureString,
+	}); err != nil {
+		t.Fatalf("PutParameter(create): %v", err)
+	}
+
+	// The key becomes unusable (e.g. disabled) after the value was sealed.
+	kms.fail = true
+
+	if _, err := m.GetParameter(ctx, "/secure/p", true); !errors.Is(err, driver.ErrInvalidKeyID) {
+		t.Fatalf("GetParameter(WithDecryption) with disabled key: want ErrInvalidKeyID, got %v", err)
+	}
+
+	// Reading without decryption is unaffected — it never calls into KMS.
+	if _, err := m.GetParameter(ctx, "/secure/p", false); err != nil {
+		t.Fatalf("GetParameter(no decryption) with disabled key: %v", err)
+	}
+
+	if _, err := m.GetParameterHistory(ctx, "/secure/p", true); !errors.Is(err, driver.ErrInvalidKeyID) {
+		t.Fatalf("GetParameterHistory(WithDecryption) with disabled key: want ErrInvalidKeyID, got %v", err)
+	}
+
+	// A brand-new SecureString can't even be sealed while the key is unusable.
+	if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+		Name: "/secure/new", Value: "s2", Type: driver.TypeSecureString,
+	}); !errors.Is(err, driver.ErrInvalidKeyID) {
+		t.Fatalf("PutParameter with disabled key: want ErrInvalidKeyID, got %v", err)
+	}
+}

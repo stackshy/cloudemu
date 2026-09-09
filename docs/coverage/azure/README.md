@@ -8,8 +8,16 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [ACR](./acr.md) | `containerregistry` | 15 |
 | [AI](./ai.md) | `azureai` | 92 |
 | [AKS](./aks.md) | — (provider-native) | 18 |
+| [Aad](./aad.md) | — (provider-native) | 2 |
+| [AppConfiguration](./appconfiguration.md) | — (provider-native) | 9 |
+| [AppGateway](./appgateway.md) | `applicationgateway` | 4 |
+| [Appinsights](./appinsights.md) | — (provider-native) | 6 |
+| [Bastion](./bastion.md) | `bastion` | 4 |
+| [Batch](./batch.md) | — (provider-native) | 17 |
 | [BlobStorage](./blobstorage.md) | `storage` | 35 |
 | [Cache](./cache.md) | `cache` | 17 |
+| [ChaosStudio](./chaosstudio.md) | — (provider-native) | 8 |
+| [Communication](./communication.md) | — (provider-native) | 10 |
 | [ContainerApps](./containerapps.md) | — (provider-native) | 19 |
 | [ContainerInstances](./containerinstances.md) | `containerinstances` | 10 |
 | [CosmosDB](./cosmosdb.md) | `database` | 24 |
@@ -17,35 +25,53 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [Cosmosaccount](./cosmosaccount.md) | — (provider-native) | 10 |
 | [Costmanagement](./costmanagement.md) | — (provider-native) | 1 |
 | [DNS](./dns.md) | `dns` | 16 |
+| [DataFactory](./datafactory.md) | `datafactory` | 6 |
 | [Databricks](./databricks.md) | `databricks` | 46 |
+| [DevCenter](./devcenter.md) | — (provider-native) | 8 |
+| [DigitalTwins](./digitaltwins.md) | — (provider-native) | 8 |
 | [Disks](./disks.md) | — (provider-native) | 7 |
+| [ElasticSan](./elasticsan.md) | — (provider-native) | 8 |
 | [EventGrid](./eventgrid.md) | `eventbus` | 16 |
 | [Eventhub](./eventhub.md) | — (provider-native) | 14 |
+| [Firewall](./firewall.md) | `azurefirewall` | 8 |
+| [FrontDoor](./frontdoor.md) | `frontdoor` | 12 |
 | [Functions](./functions.md) | `serverless` | 27 |
+| [HealthcareApis](./healthcareapis.md) | — (provider-native) | 16 |
 | [IAM](./iam.md) | `iam` | 40 |
 | [Images](./images.md) | — (provider-native) | 5 |
+| [IoTHub](./iothub.md) | — (provider-native) | 15 |
 | [KeyVault](./keyvault.md) | `secrets` | 7 |
 | [Kusto](./kusto.md) | — (provider-native) | 14 |
 | [LB](./lb.md) | `loadbalancer` | 19 |
+| [LoadTesting](./loadtesting.md) | — (provider-native) | 8 |
 | [Locks](./locks.md) | — (provider-native) | 4 |
 | [LogAnalytics](./loganalytics.md) | `logging` | 17 |
 | [ManagedCassandra](./managedcassandra.md) | `managedcassandra` | 15 |
+| [ManagedGrafana](./managedgrafana.md) | — (provider-native) | 8 |
 | [ManagedIdentity](./managedidentity.md) | — (provider-native) | 8 |
+| [ManagedLustre](./managedlustre.md) | — (provider-native) | 12 |
+| [MongoCluster](./mongocluster.md) | — (provider-native) | 9 |
 | [Monitor](./monitor.md) | `monitoring` | 12 |
 | [MySQLFlex](./mysqlflex.md) | `relationaldb` | 21 |
 | [NotificationHubs](./notificationhubs.md) | `notification` | 9 |
 | [PostgresFlex](./postgresflex.md) | — (provider-native) | 21 |
+| [PrivateDNS](./privatedns.md) | `privatedns` | 13 |
 | [Providers](./providers.md) | — (provider-native) | 4 |
+| [Purview](./purview.md) | — (provider-native) | 9 |
 | [Queue](./queue.md) | — (provider-native) | 6 |
 | [QueueStorage](./queuestorage.md) | `messagequeue` | 14 |
+| [RecoveryServices](./recoveryservices.md) | — (provider-native) | 18 |
+| [RedisEnterprise](./redisenterprise.md) | — (provider-native) | 12 |
 | [Resourcegraph](./resourcegraph.md) | — (provider-native) | 3 |
 | [Resourcegroups](./resourcegroups.md) | — (provider-native) | 7 |
 | [SQL](./sql.md) | — (provider-native) | 21 |
 | [SQLVirtualMachine](./sqlvirtualmachine.md) | — (provider-native) | 9 |
 | [Search](./search.md) | `azuresearch` | 53 |
+| [SignalR](./signalr.md) | — (provider-native) | 10 |
 | [Snapshots](./snapshots.md) | — (provider-native) | 5 |
 | [Sshpublickeys](./sshpublickeys.md) | — (provider-native) | 7 |
 | [Storageaccount](./storageaccount.md) | — (provider-native) | 10 |
+| [StreamAnalytics](./streamanalytics.md) | — (provider-native) | 19 |
 | [Subscriptions](./subscriptions.md) | — (provider-native) | 3 |
 | [Synapse](./synapse.md) | — (provider-native) | 11 |
 | [TableStorage](./tablestorage.md) | `tablestorage` | 9 |
@@ -53,3 +79,4 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | [Tenants](./tenants.md) | — (provider-native) | 1 |
 | [VNet](./vnet.md) | `networking` | 57 |
 | [VirtualMachines](./virtualmachines.md) | `compute` | 37 |
+| [WebPubSub](./webpubsub.md) | — (provider-native) | 10 |

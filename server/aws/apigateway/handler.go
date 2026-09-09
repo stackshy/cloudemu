@@ -144,6 +144,8 @@ func (h *Handler) createRestAPI(w http.ResponseWriter, r *http.Request) {
 	in := driver.CreateRestAPIInput{
 		Name: req.Name, Description: req.Description, Version: req.Version,
 		APIKeySource: req.APIKeySource, Tags: req.Tags, BinaryMediaTypes: req.BinaryMediaTypes,
+		DisableExecuteAPIEndpoint: req.DisableExecuteAPIEndpoint,
+		MinimumCompressionSize:    req.MinimumCompressionSize, Policy: req.Policy,
 	}
 	if req.EndpointConfiguration != nil {
 		in.EndpointConfigurationTypes = req.EndpointConfiguration.Types
@@ -158,8 +160,18 @@ func (h *Handler) createRestAPI(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, toRestAPIResponse(api))
 }
 
-// serveAPI handles /restapis/{id}: GET=GetRestApi, DELETE=DeleteRestApi.
+// serveAPI handles /restapis/{id}: GET=GetRestApi, PATCH=UpdateRestApi,
+// DELETE=DeleteRestApi.
 func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request, id string) {
+	if servePatch(w, r,
+		func(ops []driver.PatchOperation) (*driver.RestAPI, error) {
+			return h.ag.UpdateRestAPI(r.Context(), id, ops)
+		},
+		toRestAPIResponse,
+	) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		api, err := h.ag.GetRestAPI(r.Context(), id)
@@ -181,30 +193,85 @@ func (h *Handler) serveAPI(w http.ResponseWriter, r *http.Request, id string) {
 	}
 }
 
+// servePatch handles the PATCH verb shared by every Update* route: it decodes
+// the patchOperations body, applies it via update, and renders the result. It
+// reports whether it handled the request (true for any PATCH); a non-PATCH
+// request is left for the caller's own verb switch.
+func servePatch[T, R any](
+	w http.ResponseWriter, r *http.Request,
+	update func(ops []driver.PatchOperation) (T, error), render func(T) R,
+) bool {
+	if r.Method != http.MethodPatch {
+		return false
+	}
+
+	var req patchRequest
+	if !decodeJSON(w, r, &req) {
+		return true
+	}
+
+	v, err := update(toPatchOps(req.PatchOperations))
+	if err != nil {
+		writeErr(w, err)
+		return true
+	}
+
+	writeJSON(w, http.StatusOK, render(v))
+
+	return true
+}
+
 // serveAPISub handles /restapis/{id}/{resources|deployments|stages}.
 func (h *Handler) serveAPISub(w http.ResponseWriter, r *http.Request, id, sub string) {
 	switch sub {
 	case subResources:
 		h.getResources(w, r, id)
 	case subDeployments:
-		h.createDeployment(w, r, id)
+		h.serveDeployments(w, r, id)
 	case subStages:
-		h.createStage(w, r, id)
+		h.serveStages(w, r, id)
 	default:
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
 	}
 }
 
-// serveAPISubItem handles /restapis/{id}/resources/{resourceId} and
-// /restapis/{id}/stages/{stageName}.
+// serveDeployments handles /restapis/{id}/deployments: GET=GetDeployments,
+// POST=CreateDeployment.
+func (h *Handler) serveDeployments(w http.ResponseWriter, r *http.Request, id string) {
+	switch r.Method {
+	case http.MethodGet:
+		h.getDeployments(w, r, id)
+	case http.MethodPost:
+		h.createDeployment(w, r, id)
+	default:
+		writeMethodNotAllowed(w)
+	}
+}
+
+// serveStages handles /restapis/{id}/stages: GET=GetStages, POST=CreateStage.
+func (h *Handler) serveStages(w http.ResponseWriter, r *http.Request, id string) {
+	switch r.Method {
+	case http.MethodGet:
+		h.getStages(w, r, id)
+	case http.MethodPost:
+		h.createStage(w, r, id)
+	default:
+		writeMethodNotAllowed(w)
+	}
+}
+
+// serveAPISubItem handles /restapis/{id}/resources/{resourceId},
+// /restapis/{id}/deployments/{deploymentId} and /restapis/{id}/stages/{stageName}.
 func (h *Handler) serveAPISubItem(w http.ResponseWriter, r *http.Request, segs []string) {
 	id, sub, item := segs[0], segs[1], segs[2]
 
 	switch sub {
 	case subResources:
 		h.serveResourceItem(w, r, id, item)
+	case subDeployments:
+		h.serveDeploymentItem(w, r, id, item)
 	case subStages:
-		h.getStage(w, r, id, item)
+		h.serveStageItem(w, r, id, item)
 	default:
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
 	}
@@ -231,8 +298,18 @@ func (h *Handler) getResources(w http.ResponseWriter, r *http.Request, id string
 }
 
 // serveResourceItem handles /restapis/{id}/resources/{resourceId}:
-// GET=GetResource, POST=CreateResource (child under {resourceId}).
+// GET=GetResource, POST=CreateResource (child under {resourceId}),
+// PATCH=UpdateResource.
 func (h *Handler) serveResourceItem(w http.ResponseWriter, r *http.Request, id, resourceID string) {
+	if servePatch(w, r,
+		func(ops []driver.PatchOperation) (*driver.Resource, error) {
+			return h.ag.UpdateResource(r.Context(), id, resourceID, ops)
+		},
+		toResourceResponse,
+	) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		res, err := h.ag.GetResource(r.Context(), id, resourceID)
@@ -255,15 +332,31 @@ func (h *Handler) serveResourceItem(w http.ResponseWriter, r *http.Request, id, 
 		}
 
 		writeJSON(w, http.StatusCreated, toResourceResponse(res))
+	case http.MethodDelete:
+		if err := h.ag.DeleteResource(r.Context(), id, resourceID); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
 	default:
 		writeMethodNotAllowed(w)
 	}
 }
 
 // serveMethod handles /restapis/{id}/resources/{rid}/methods/{httpMethod}:
-// PUT=PutMethod, GET=GetMethod.
+// PUT=PutMethod, GET=GetMethod, PATCH=UpdateMethod.
 func (h *Handler) serveMethod(w http.ResponseWriter, r *http.Request, segs []string) {
 	id, resourceID, httpMethod := segs[0], segs[2], segs[4]
+
+	if servePatch(w, r,
+		func(ops []driver.PatchOperation) (*driver.Method, error) {
+			return h.ag.UpdateMethod(r.Context(), id, resourceID, httpMethod, ops)
+		},
+		toMethodResponse,
+	) {
+		return
+	}
 
 	switch r.Method {
 	case http.MethodPut:
@@ -289,6 +382,13 @@ func (h *Handler) serveMethod(w http.ResponseWriter, r *http.Request, segs []str
 		}
 
 		writeJSON(w, http.StatusOK, toMethodResponse(mth))
+	case http.MethodDelete:
+		if err := h.ag.DeleteMethod(r.Context(), id, resourceID, httpMethod); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
 	default:
 		writeMethodNotAllowed(w)
 	}
@@ -305,6 +405,15 @@ func (h *Handler) serveIntegration(w http.ResponseWriter, r *http.Request, segs 
 
 	id, resourceID, httpMethod := segs[0], segs[2], segs[4]
 
+	if servePatch(w, r,
+		func(ops []driver.PatchOperation) (*driver.Integration, error) {
+			return h.ag.UpdateIntegration(r.Context(), id, resourceID, httpMethod, ops)
+		},
+		toIntegrationResponse,
+	) {
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		var req putIntegrationRequest
@@ -315,6 +424,7 @@ func (h *Handler) serveIntegration(w http.ResponseWriter, r *http.Request, segs 
 		ig, err := h.ag.PutIntegration(r.Context(), id, resourceID, httpMethod, driver.PutIntegrationInput{
 			Type: req.Type, IntegrationHTTPMethod: req.IntegrationHTTPMethod,
 			URI: req.URI, PassthroughBehavior: req.PassthroughBehavior,
+			TimeoutInMillis: req.TimeoutInMillis,
 		})
 		if err != nil {
 			writeErr(w, err)
@@ -330,9 +440,46 @@ func (h *Handler) serveIntegration(w http.ResponseWriter, r *http.Request, segs 
 		}
 
 		writeJSON(w, http.StatusOK, toIntegrationResponse(ig))
+	case http.MethodDelete:
+		if err := h.ag.DeleteIntegration(r.Context(), id, resourceID, httpMethod); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
 	default:
 		writeMethodNotAllowed(w)
 	}
+}
+
+func (h *Handler) getDeployments(w http.ResponseWriter, r *http.Request, id string) {
+	deps, err := h.ag.GetDeployments(r.Context(), id)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	out := listDeploymentsResponse{Item: make([]deploymentResponse, 0, len(deps))}
+	for i := range deps {
+		out.Item = append(out.Item, toDeploymentResponse(&deps[i]))
+	}
+
+	writeJSON(w, http.StatusOK, out)
+}
+
+// serveDeploymentItem handles /restapis/{id}/deployments/{deploymentId}:
+// GET=GetDeployment, PATCH=UpdateDeployment, DELETE=DeleteDeployment.
+//
+//nolint:dupl // parallel item router for deployments vs stages; the shared serveItem shape is intentional
+func (h *Handler) serveDeploymentItem(w http.ResponseWriter, r *http.Request, id, deploymentID string) {
+	serveItem(w, r,
+		func(ops []driver.PatchOperation) (*driver.Deployment, error) {
+			return h.ag.UpdateDeployment(r.Context(), id, deploymentID, ops)
+		},
+		func() (*driver.Deployment, error) { return h.ag.GetDeployment(r.Context(), id, deploymentID) },
+		func() error { return h.ag.DeleteDeployment(r.Context(), id, deploymentID) },
+		toDeploymentResponse,
+	)
 }
 
 func (h *Handler) createDeployment(w http.ResponseWriter, r *http.Request, id string) {
@@ -354,9 +501,7 @@ func (h *Handler) createDeployment(w http.ResponseWriter, r *http.Request, id st
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, deploymentResponse{
-		ID: dep.ID, Description: dep.Description, CreatedDate: dep.CreatedDate,
-	})
+	writeJSON(w, http.StatusCreated, toDeploymentResponse(dep))
 }
 
 func (h *Handler) createStage(w http.ResponseWriter, r *http.Request, id string) {
@@ -382,19 +527,67 @@ func (h *Handler) createStage(w http.ResponseWriter, r *http.Request, id string)
 	writeJSON(w, http.StatusCreated, toStageResponse(st))
 }
 
-func (h *Handler) getStage(w http.ResponseWriter, r *http.Request, id, stageName string) {
-	if r.Method != http.MethodGet {
-		writeMethodNotAllowed(w)
-		return
-	}
-
-	st, err := h.ag.GetStage(r.Context(), id, stageName)
+func (h *Handler) getStages(w http.ResponseWriter, r *http.Request, id string) {
+	stages, err := h.ag.GetStages(r.Context(), id)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toStageResponse(st))
+	out := listStagesResponse{Item: make([]stageResponse, 0, len(stages))}
+	for i := range stages {
+		out.Item = append(out.Item, toStageResponse(&stages[i]))
+	}
+
+	writeJSON(w, http.StatusOK, out)
+}
+
+// serveStageItem handles /restapis/{id}/stages/{stageName}: GET=GetStage,
+// PATCH=UpdateStage, DELETE=DeleteStage.
+//
+//nolint:dupl // parallel item router for stages vs deployments; the shared serveItem shape is intentional
+func (h *Handler) serveStageItem(w http.ResponseWriter, r *http.Request, id, stageName string) {
+	serveItem(w, r,
+		func(ops []driver.PatchOperation) (*driver.Stage, error) {
+			return h.ag.UpdateStage(r.Context(), id, stageName, ops)
+		},
+		func() (*driver.Stage, error) { return h.ag.GetStage(r.Context(), id, stageName) },
+		func() error { return h.ag.DeleteStage(r.Context(), id, stageName) },
+		toStageResponse,
+	)
+}
+
+// serveItem handles the PATCH/GET/DELETE-one shape shared by the deployment and
+// stage item routes: PATCH applies update(), GET renders get()'s result, DELETE
+// calls del(), and any other method is rejected.
+func serveItem[T, R any](
+	w http.ResponseWriter, r *http.Request,
+	update func(ops []driver.PatchOperation) (T, error),
+	get func() (T, error), del func() error, render func(T) R,
+) {
+	if servePatch(w, r, update, render) {
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		v, err := get()
+		if err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		writeJSON(w, http.StatusOK, render(v))
+	case http.MethodDelete:
+		if err := del(); err != nil {
+			writeErr(w, err)
+			return
+		}
+
+		w.WriteHeader(http.StatusAccepted)
+	default:
+		writeMethodNotAllowed(w)
+	}
 }
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
@@ -433,7 +626,7 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusNotFound, "NotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):
 		writeError(w, http.StatusConflict, "ConflictException", msg)
-	case cerrors.IsInvalidArgument(err):
+	case cerrors.IsInvalidArgument(err), cerrors.IsFailedPrecondition(err):
 		writeError(w, http.StatusBadRequest, "BadRequestException", msg)
 	default:
 		writeError(w, http.StatusInternalServerError, "ApiGatewayException", msg)

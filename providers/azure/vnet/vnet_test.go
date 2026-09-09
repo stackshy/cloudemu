@@ -1434,3 +1434,21 @@ func TestDeleteVPCCascadesSubnets(t *testing.T) {
 
 	require.Error(t, m.DeleteVPC(ctx, "vnet-missing"))
 }
+
+// A route-table association is a property of the subnet in Azure, so it must
+// not outlive the subnet.
+func TestDeleteSubnet_CascadesRouteTableAssociations(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	vpcID := createTestVPC(t, m)
+
+	s, err := m.CreateSubnet(ctx, driver.SubnetConfig{VPCID: vpcID, CIDRBlock: "10.0.1.0/24"})
+	require.NoError(t, err)
+	rt, err := m.CreateRouteTable(ctx, driver.RouteTableConfig{VPCID: vpcID})
+	require.NoError(t, err)
+	assoc, err := m.AssociateRouteTable(ctx, rt.ID, s.ID)
+	require.NoError(t, err)
+
+	require.NoError(t, m.DeleteSubnet(ctx, s.ID))
+	require.Error(t, m.DisassociateRouteTable(ctx, assoc.ID), "association must die with the subnet")
+}

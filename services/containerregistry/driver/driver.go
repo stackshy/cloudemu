@@ -25,6 +25,13 @@ type Repository struct {
 	ImageTagMutability string
 	// ScanOnPush reflects the repository's scan-on-push configuration.
 	ScanOnPush bool
+	// EncryptionType is the at-rest encryption mode (AWS ECR): "AES256" (the
+	// default) or "KMS". Real ECR always reports an encryptionConfiguration on
+	// every repository, so the AWS provider populates this for every repository.
+	EncryptionType string
+	// KmsKey is the KMS key ARN backing a KMS-encrypted repository (AWS ECR);
+	// empty for AES256 repositories.
+	KmsKey string
 }
 
 // ImmutableTagsReservedTag is the reserved Repository.Tags key GCP Artifact
@@ -45,6 +52,19 @@ type RepositoryConfig struct {
 	Tags               map[string]string
 	ImageScanOnPush    bool
 	ImageTagMutability string // "MUTABLE" or "IMMUTABLE"
+	// Encryption is the optional at-rest encryption configuration (AWS ECR). Nil
+	// means the provider's default (ECR: AES256). Ignored by providers that do
+	// not model encryption configuration.
+	Encryption *EncryptionConfig
+}
+
+// EncryptionConfig is a repository's at-rest encryption configuration (AWS ECR).
+type EncryptionConfig struct {
+	// Type is the encryption mode: "AES256" (the default when empty), "KMS", or
+	// "KMS_DSSE".
+	Type string
+	// KmsKey is the optional KMS key ARN/id for a KMS-encrypted repository.
+	KmsKey string
 }
 
 // ImageDetail describes a container image.
@@ -125,6 +145,70 @@ type ScanResult struct {
 	Status        string         // "COMPLETE", "IN_PROGRESS", "FAILED"
 	FindingCounts map[string]int // severity -> count (CRITICAL, HIGH, MEDIUM, LOW, INFORMATIONAL)
 	CompletedAt   string
+}
+
+// ReplicationConfiguration is an AWS ECR registry-level cross-region/cross-account
+// replication configuration. AWS-specific (Azure ACR and GCP Artifact Registry have
+// no equivalent registry-level replication API), so it is not part of the
+// ContainerRegistry interface below — the AWS provider exposes registry-level
+// methods the ECR wire handler reaches via type assertion, the same pattern used for
+// LifecyclePreviewResult.
+type ReplicationConfiguration struct {
+	Rules []ReplicationRule
+}
+
+// ReplicationRule is one replication rule: a set of destinations plus optional
+// repository filters that scope which repositories the rule replicates.
+type ReplicationRule struct {
+	Destinations      []ReplicationDestination
+	RepositoryFilters []ReplicationFilter
+}
+
+// ReplicationDestination is a replication target region/registry.
+type ReplicationDestination struct {
+	Region     string
+	RegistryID string
+}
+
+// ReplicationFilter scopes a replication rule to matching repositories.
+// FilterType is "PREFIX_MATCH".
+type ReplicationFilter struct {
+	Filter     string
+	FilterType string
+}
+
+// PullThroughCacheRule is an AWS ECR registry-level pull-through cache rule,
+// mapping a local repository prefix to an upstream registry. AWS-specific.
+type PullThroughCacheRule struct {
+	ECRRepositoryPrefix string
+	UpstreamRegistryURL string
+	UpstreamRegistry    string
+	CredentialARN       string
+	RegistryID          string
+	CreatedAt           string
+	UpdatedAt           string
+}
+
+// RegistryScanningConfiguration is an AWS ECR registry-level scanning
+// configuration. ScanType is "BASIC" (the default) or "ENHANCED". AWS-specific.
+type RegistryScanningConfiguration struct {
+	ScanType string
+	Rules    []RegistryScanningRule
+}
+
+// RegistryScanningRule is one registry scanning rule: a scan frequency plus the
+// repository filters it applies to. ScanFrequency is "SCAN_ON_PUSH",
+// "CONTINUOUS_SCAN", or "MANUAL".
+type RegistryScanningRule struct {
+	ScanFrequency     string
+	RepositoryFilters []ScanningRepositoryFilter
+}
+
+// ScanningRepositoryFilter scopes a registry scanning rule. FilterType is
+// "WILDCARD".
+type ScanningRepositoryFilter struct {
+	Filter     string
+	FilterType string
 }
 
 // ContainerRegistry is the interface that container registry providers must implement.

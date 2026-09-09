@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sfn/asl"
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
@@ -23,7 +24,7 @@ func (m *Mock) TestState(ctx context.Context, in driver.TestStateInput) (*driver
 		Input: in.Input, StartTime: m.now(), InvokeLambda: m.lambdaInvoker(),
 	})
 	if err != nil {
-		return nil, invalidDefinition(err.Error())
+		return nil, invalidDefinition(errors.Message(err))
 	}
 
 	return &driver.TestStateResult{
@@ -45,7 +46,7 @@ func (*Mock) ValidateStateMachineDefinition(
 	}
 
 	if _, err := asl.Parse(definition); err != nil {
-		return validationFail("SCHEMA_VALIDATION_FAILED", err.Error()), nil
+		return validationFail("SCHEMA_VALIDATION_FAILED", errors.Message(err)), nil
 	}
 
 	return &driver.ValidationResult{Result: driver.ValidationResultOK}, nil

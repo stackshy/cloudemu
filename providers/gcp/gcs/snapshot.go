@@ -29,6 +29,7 @@ type bucketSnapshot struct {
 	Region                 string                                  `json:"region,omitempty"`
 	CreatedAt              string                                  `json:"createdAt,omitempty"`
 	Versioning             bool                                    `json:"versioning,omitempty"`
+	VersioningSet          bool                                    `json:"versioningSet,omitempty"`
 	Lifecycle              *driver.LifecycleConfig                 `json:"lifecycle,omitempty"`
 	LifecycleRaw           []byte                                  `json:"lifecycleRaw,omitempty"`
 	Policy                 *driver.BucketPolicy                    `json:"policy,omitempty"`
@@ -106,7 +107,8 @@ func (m *Mock) Snapshot(_ context.Context, includeAssets bool) (json.RawMessage,
 func snapshotBucket(bkt *bucketMeta, includeAssets bool) *bucketSnapshot {
 	bs := &bucketSnapshot{
 		Name: bkt.Name, Region: bkt.Region, CreatedAt: bkt.CreatedAt,
-		Versioning: bkt.versioning, Lifecycle: bkt.lifecycle, LifecycleRaw: bkt.gcsLifecycleRaw, Policy: bkt.policy,
+		Versioning: bkt.versioning, VersioningSet: bkt.versioningSet,
+		Lifecycle: bkt.lifecycle, LifecycleRaw: bkt.gcsLifecycleRaw, Policy: bkt.policy,
 		CORS: bkt.corsConfig, Encryption: bkt.encryption, Tags: bkt.tags,
 		Location: bkt.location, StorageClass: bkt.storageClass,
 		Metageneration: bkt.metageneration, Updated: bkt.updated, IAMPolicy: bkt.iamPolicy,
@@ -215,8 +217,8 @@ func restoreBucket(bs *bucketSnapshot) *bucketMeta {
 		Name: bs.Name, Region: bs.Region, CreatedAt: bs.CreatedAt,
 		objects:    memstore.New[*gcsObject](),
 		multiparts: memstore.New[*gcsMultipartUpload](),
-		versioning: bs.Versioning,
-		lifecycle:  bs.Lifecycle, gcsLifecycleRaw: bs.LifecycleRaw, policy: bs.Policy, corsConfig: bs.CORS,
+		versioning: bs.Versioning, versioningSet: bs.VersioningSet,
+		lifecycle: bs.Lifecycle, gcsLifecycleRaw: bs.LifecycleRaw, policy: bs.Policy, corsConfig: bs.CORS,
 		encryption: bs.Encryption, tags: bs.Tags,
 		location: bs.Location, storageClass: bs.StorageClass,
 		metageneration: metagen, updated: bs.Updated, iamPolicy: bs.IAMPolicy,

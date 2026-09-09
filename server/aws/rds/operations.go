@@ -480,22 +480,26 @@ func (h *Handler) createDBCluster(w http.ResponseWriter, r *http.Request) {
 	form := r.Form
 
 	cfg := rdsdriver.ClusterConfig{
-		ID:                          form.Get("DBClusterIdentifier"),
-		Engine:                      form.Get("Engine"),
-		EngineVersion:               form.Get("EngineVersion"),
-		MasterUsername:              form.Get("MasterUsername"),
-		MasterUserPassword:          form.Get("MasterUserPassword"),
-		DatabaseName:                form.Get("DatabaseName"),
-		Port:                        formInt(form.Get("Port")),
-		VPCSecurityGroups:           awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
-		SubnetGroupName:             form.Get("DBSubnetGroupName"),
-		DBClusterParameterGroupName: form.Get("DBClusterParameterGroupName"),
-		EngineMode:                  form.Get("EngineMode"),
-		StorageEncrypted:            formBool(form.Get("StorageEncrypted")),
-		KmsKeyID:                    form.Get("KmsKeyId"),
-		AllocatedStorage:            formInt(form.Get("AllocatedStorage")),
-		DeletionProtection:          formBool(form.Get("DeletionProtection")),
-		Tags:                        parseRDSTags(form),
+		ID:                               form.Get("DBClusterIdentifier"),
+		Engine:                           form.Get("Engine"),
+		EngineVersion:                    form.Get("EngineVersion"),
+		MasterUsername:                   form.Get("MasterUsername"),
+		MasterUserPassword:               form.Get("MasterUserPassword"),
+		DatabaseName:                     form.Get("DatabaseName"),
+		Port:                             formInt(form.Get("Port")),
+		VPCSecurityGroups:                awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
+		SubnetGroupName:                  form.Get("DBSubnetGroupName"),
+		DBClusterParameterGroupName:      form.Get("DBClusterParameterGroupName"),
+		BackupRetentionPeriod:            formInt(form.Get("BackupRetentionPeriod")),
+		PreferredBackupWindow:            form.Get("PreferredBackupWindow"),
+		PreferredMaintenanceWindow:       form.Get("PreferredMaintenanceWindow"),
+		EngineMode:                       form.Get("EngineMode"),
+		StorageEncrypted:                 formBool(form.Get("StorageEncrypted")),
+		KmsKeyID:                         form.Get("KmsKeyId"),
+		AllocatedStorage:                 formInt(form.Get("AllocatedStorage")),
+		DeletionProtection:               formBool(form.Get("DeletionProtection")),
+		IAMDatabaseAuthenticationEnabled: formBool(form.Get("EnableIAMDatabaseAuthentication")),
+		Tags:                             parseRDSTags(form),
 	}
 
 	cluster, err := h.db.CreateCluster(r.Context(), cfg)
@@ -551,12 +555,20 @@ func (h *Handler) modifyDBCluster(w http.ResponseWriter, r *http.Request) {
 		EngineVersion:               form.Get("EngineVersion"),
 		MasterUserPassword:          form.Get("MasterUserPassword"),
 		DBClusterParameterGroupName: form.Get("DBClusterParameterGroupName"),
+		BackupRetentionPeriod:       formInt(form.Get("BackupRetentionPeriod")),
+		PreferredBackupWindow:       form.Get("PreferredBackupWindow"),
+		PreferredMaintenanceWindow:  form.Get("PreferredMaintenanceWindow"),
 		Tags:                        parseRDSTags(form),
 	}
 
 	if v := form.Get("DeletionProtection"); v != "" {
 		b := formBool(v)
 		input.DeletionProtection = &b
+	}
+
+	if v := form.Get("EnableIAMDatabaseAuthentication"); v != "" {
+		b := formBool(v)
+		input.IAMDatabaseAuthenticationEnabled = &b
 	}
 
 	cluster, err := h.db.ModifyCluster(r.Context(), id, input)
@@ -777,6 +789,8 @@ func (h *Handler) restoreInstanceFromSnapshot(w http.ResponseWriter, r *http.Req
 		PubliclyAccessible:      formBool(form.Get("PubliclyAccessible")),
 		DeletionProtection:      formBool(form.Get("DeletionProtection")),
 		SubnetGroupName:         form.Get("DBSubnetGroupName"),
+		StorageType:             form.Get("StorageType"),
+		Iops:                    formInt(form.Get("Iops")),
 	}
 
 	inst, err := h.db.RestoreInstanceFromSnapshot(r.Context(), input)

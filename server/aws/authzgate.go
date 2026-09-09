@@ -51,6 +51,10 @@ var jsonRPCServiceByTarget = map[string]string{
 	"Kinesis_20131202.":                     "kinesis",
 	"CloudTrail_20131101.":                  "cloudtrail",
 	"AWSGlue.":                              "glue",
+	"OpenSearchServerless.":                 "aoss",
+	"AWSKendraFrontendService.":             "kendra",
+	"AmazonAthena.":                         "athena",
+	"AWSCognitoIdentityProviderService.":    "cognito-idp",
 	"StarlingDoveService.":                  "config",
 	"AWSWAF_20190729.":                      "wafv2",
 	"AmazonEC2ContainerServiceV20141113.":   "ecs",
@@ -64,6 +68,11 @@ var jsonRPCServiceByTarget = map[string]string{
 	"AmazonMemoryDB.":                       "memorydb",
 	"NetworkFirewall_20201112.":             "network-firewall",
 	"ResourceGroupsTaggingAPI_20170126.":    "tag",
+	"TransferService.":                      "transfer",
+	"Timestream_20181101.":                  "timestream",
+	"HealthLake.":                           "healthlake",
+	"AppRunner.":                            "apprunner",
+	"GlobalAccelerator_V20180706.":          "globalaccelerator",
 }
 
 // authorize is the authorization step layered on top of the SigV4 authentication

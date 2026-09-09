@@ -7,6 +7,7 @@ package driver
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"time"
 
@@ -64,10 +65,15 @@ func ValidHAMode(mode string) bool {
 
 // InstanceConfig configures a managed database instance.
 type InstanceConfig struct {
-	ID                   string
-	Engine               string // "mysql", "postgres", "aurora-mysql", "aurora-postgresql", …
-	EngineVersion        string
-	InstanceClass        string // "db.t3.micro", …
+	ID            string
+	Engine        string // "mysql", "postgres", "aurora-mysql", "aurora-postgresql", …
+	EngineVersion string
+	InstanceClass string // "db.t3.micro", …
+	// SKUTier is the Azure Flexible Server compute tier
+	// ("Burstable"/"GeneralPurpose"/"MemoryOptimized") that pairs with
+	// InstanceClass (the compute SKU name) to form the ARM sku object. It is an
+	// Azure Flexible Server concept; empty for AWS/GCP, which have no tier split.
+	SKUTier              string
 	AllocatedStorage     int    // GiB
 	StorageType          string // "gp2", "io1", …
 	MasterUsername       string
@@ -138,7 +144,18 @@ type InstanceConfig struct {
 	GCPDatabaseFlags string
 	GCPBackupConfig  string
 	GCPIPConfig      string
-	Tags             map[string]string
+	// GCPSettingsExtra carries every other Cloud SQL settings sub-field the wire
+	// layer does not model explicitly (maintenanceWindow, insightsConfig,
+	// locationPreference, connectorEnforcement, passwordValidationPolicy, …) as one
+	// opaque JSON object, so they all round-trip on Insert->Get without the wire
+	// layer modeling each. Cloud SQL-only; AWS RDS / Redshift never set it.
+	GCPSettingsExtra string
+	// GCPStorageAutoResize is the Cloud SQL settings.storageAutoResize flag, which
+	// defaults to true on a real instance. A pointer so an omitted field means
+	// "use the default" (true) rather than false; Cloud SQL-only, ignored by
+	// AWS RDS / Redshift.
+	GCPStorageAutoResize *bool
+	Tags                 map[string]string
 	// Scope records where the resource lives (Azure subscription/resource
 	// group). Zero for AWS/GCP and unscoped portable callers.
 	Scope scope.Scope
@@ -146,11 +163,15 @@ type InstanceConfig struct {
 
 // Instance describes a managed database instance.
 type Instance struct {
-	ID               string
-	ARN              string
-	Engine           string
-	EngineVersion    string
-	InstanceClass    string
+	ID            string
+	ARN           string
+	Engine        string
+	EngineVersion string
+	InstanceClass string
+	// SKUTier echoes the Azure Flexible Server compute tier
+	// ("Burstable"/"GeneralPurpose"/"MemoryOptimized") on read; it pairs with
+	// InstanceClass to reconstruct the ARM sku object. Empty for AWS/GCP.
+	SKUTier          string
 	AllocatedStorage int
 	StorageType      string
 	MasterUsername   string
@@ -215,6 +236,15 @@ type Instance struct {
 	GCPDatabaseFlags string
 	GCPBackupConfig  string
 	GCPIPConfig      string
+	// GCPSettingsExtra echoes every other Cloud SQL settings sub-field the wire
+	// layer does not model explicitly (maintenanceWindow, insightsConfig,
+	// locationPreference, connectorEnforcement, …) as one opaque JSON object so
+	// they round-trip on read. Empty for AWS RDS / Redshift.
+	GCPSettingsExtra string
+	// GCPStorageAutoResize echoes the Cloud SQL settings.storageAutoResize flag on
+	// read. It is resolved to a concrete value on create (defaulting to true),
+	// so a Get always reports it. False/unused for AWS RDS / Redshift.
+	GCPStorageAutoResize bool
 	// Scope records where the resource lives (Azure subscription/resource
 	// group), echoed from the InstanceConfig it was created with. Zero for
 	// AWS/GCP and unscoped portable callers — Scope.Matches treats a zero
@@ -227,7 +257,11 @@ type Instance struct {
 // apply to instances; DBClusterParameterGroupName applies to clusters (the
 // same input type backs ModifyInstance and ModifyCluster).
 type ModifyInstanceInput struct {
-	InstanceClass               string
+	InstanceClass string
+	// SKUTier updates the Azure Flexible Server compute tier
+	// ("Burstable"/"GeneralPurpose"/"MemoryOptimized"); empty means "no change".
+	// Other engines ignore it.
+	SKUTier                     string
 	AllocatedStorage            int
 	EngineVersion               string
 	MasterUserPassword          string
@@ -236,6 +270,12 @@ type ModifyInstanceInput struct {
 	OptionGroupName             string
 	DBClusterParameterGroupName string
 	ElasticPoolID               string
+	// MinimalTLSVersion / PublicNetworkAccess / RestrictOutboundNetworkAccess
+	// update the Azure SQL logical-server properties on a PATCH; empty means "no
+	// change". Other engines ignore them.
+	MinimalTLSVersion             string
+	PublicNetworkAccess           string
+	RestrictOutboundNetworkAccess string
 	// The fields below are AWS RDS ModifyDBInstance attributes; empty / zero /
 	// nil means "no change". NewInstanceID renames the instance (and its ARN).
 	NewInstanceID              string
@@ -245,6 +285,10 @@ type ModifyInstanceInput struct {
 	StorageType                string
 	Iops                       int
 	DeletionProtection         *bool
+	// IAMDatabaseAuthenticationEnabled toggles the AWS RDS DBCluster IAM database
+	// authentication attribute on ModifyDBCluster; nil means "no change". Cluster
+	// scope only (Aurora/Neptune/DocumentDB); instances ignore it.
+	IAMDatabaseAuthenticationEnabled *bool
 	// AutoMinorVersionUpgrade updates the AWS RDS DBInstance attribute; nil means
 	// "no change". Other engines ignore it.
 	AutoMinorVersionUpgrade *bool
@@ -260,13 +304,32 @@ type ModifyInstanceInput struct {
 	NodeType      string
 	NumberOfNodes int
 	ClusterType   string
+	// AutomatedSnapshotRetentionPeriod is the Redshift ModifyCluster retention
+	// input; nil means "no change". A pointer (not a plain int) because 0 is a
+	// valid value that disables automated snapshots, distinct from "not sent".
+	// RDS/Aurora ignore it (they use BackupRetentionPeriod). Redshift's
+	// PreferredMaintenanceWindow reuses the shared field above.
+	AutomatedSnapshotRetentionPeriod *int
 	// GCPDatabaseFlags / GCPBackupConfig / GCPIPConfig update the Cloud SQL
 	// settings sub-objects (opaque JSON); empty means "no change". Cloud SQL-only;
 	// RDS/Redshift ignore them.
 	GCPDatabaseFlags string
 	GCPBackupConfig  string
 	GCPIPConfig      string
-	Tags             map[string]string
+	// GCPSettingsExtra updates the opaque JSON object of Cloud SQL settings
+	// sub-fields the wire layer does not model explicitly (maintenanceWindow,
+	// insightsConfig, locationPreference, connectorEnforcement, …); empty means
+	// "no change". Cloud SQL-only; RDS/Redshift ignore it.
+	GCPSettingsExtra string
+	// GCPSettingsExtraMerge selects how GCPSettingsExtra is applied. On a PATCH
+	// (merge=true) the incoming sub-fields are overlaid per-key onto the stored
+	// blob so siblings the patch does not name survive; on a PUT (merge=false)
+	// GCPSettingsExtra wholesale replaces the stored blob (omitted keys drop).
+	GCPSettingsExtraMerge bool
+	// GCPStorageAutoResize updates the Cloud SQL settings.storageAutoResize flag; a
+	// nil pointer means "no change". Cloud SQL-only; RDS/Redshift ignore it.
+	GCPStorageAutoResize *bool
+	Tags                 map[string]string
 	// ApplyImmediately controls when the deferrable changes above take effect
 	// (AWS RDS ModifyDBInstance ApplyImmediately, default false). When true the
 	// target fields are updated on the instance now and PendingModifiedValues is
@@ -319,6 +382,12 @@ type ClusterConfig struct {
 	VPCSecurityGroups           []string
 	SubnetGroupName             string
 	DBClusterParameterGroupName string
+	// BackupRetentionPeriod / PreferredBackupWindow are AWS RDS DBCluster create
+	// inputs shared by Aurora and DocumentDB/Neptune. The provider fills the
+	// documented defaults (retention 1; an assigned backup window) when unset so a
+	// read round-trips like real AWS. Zero/empty for non-AWS engines.
+	BackupRetentionPeriod int
+	PreferredBackupWindow string
 	// EngineMode is the AWS Aurora engine mode ("provisioned"/"serverless");
 	// empty defaults to "provisioned". StorageEncrypted / AllocatedStorage echo
 	// the corresponding create inputs. All default to zero for non-AWS engines.
@@ -333,6 +402,11 @@ type ClusterConfig struct {
 	// echoes the AWS RDS DBCluster attribute and defaults to false. Zero for
 	// non-AWS engines.
 	DeletionProtection bool
+	// IAMDatabaseAuthenticationEnabled maps to the AWS RDS DBCluster
+	// EnableIAMDatabaseAuthentication create input (Aurora/Neptune/DocumentDB).
+	// Defaults to false; echoed on read so Terraform's
+	// iam_database_authentication_enabled does not drift.
+	IAMDatabaseAuthenticationEnabled bool
 	// Redshift-specific create inputs carried on the shared config (following the
 	// Azure HighAvailabilityMode precedent); zero for RDS/Aurora/Azure/GCP.
 	NodeType           string
@@ -340,6 +414,12 @@ type ClusterConfig struct {
 	Encrypted          bool
 	PubliclyAccessible bool
 	AvailabilityZone   string
+	// AutomatedSnapshotRetentionPeriod is the number of days Redshift retains
+	// automatic snapshots (AWS default 1; 0 disables them). PreferredMaintenanceWindow
+	// is the weekly UTC window Redshift schedules maintenance in (AWS assigns one
+	// when unset). Both are Redshift-specific; zero for RDS/Aurora/Azure/GCP.
+	AutomatedSnapshotRetentionPeriod int
+	PreferredMaintenanceWindow       string
 	// Location is the Azure region an Azure SQL logical server lives in (ARM
 	// top-level "location"). Empty for AWS/GCP.
 	Location string
@@ -347,6 +427,12 @@ type ClusterConfig struct {
 	// Scope records where an Azure SQL logical server lives (subscription/
 	// resource group). Zero for AWS/GCP and unscoped portable callers.
 	Scope scope.Scope
+	// MinimalTLSVersion / PublicNetworkAccess / RestrictOutboundNetworkAccess are
+	// Azure SQL logical-server inputs; empty means the request omitted them, so
+	// the Azure SQL provider fills the documented default. Empty for AWS/GCP.
+	MinimalTLSVersion             string
+	PublicNetworkAccess           string
+	RestrictOutboundNetworkAccess string
 }
 
 // Cluster describes an Aurora-style database cluster.
@@ -365,6 +451,13 @@ type Cluster struct {
 	VPCSecurityGroups           []string
 	SubnetGroupName             string
 	DBClusterParameterGroupName string
+	// BackupRetentionPeriod / PreferredBackupWindow echo the AWS RDS DBCluster
+	// attributes on read (Aurora and DocumentDB/Neptune). AWS assigns a retention
+	// of 1 and a backup window when the create omits them, so Terraform's matching
+	// schema values (backup_retention_period default 1; a computed backup window)
+	// do not drift. Zero/empty for non-AWS engines.
+	BackupRetentionPeriod int
+	PreferredBackupWindow string
 	// EngineMode / DbClusterResourceId / AllocatedStorage / StorageEncrypted /
 	// AvailabilityZones echo AWS Aurora DBCluster attributes on read; they
 	// default to zero for non-AWS engines.
@@ -379,6 +472,10 @@ type Cluster struct {
 	// DeletionProtection guards the cluster from deletion while set; echoes the
 	// AWS RDS DBCluster attribute and defaults to false for non-AWS engines.
 	DeletionProtection bool
+	// IAMDatabaseAuthenticationEnabled echoes the AWS RDS DBCluster
+	// IAMDatabaseAuthenticationEnabled attribute (Aurora/Neptune/DocumentDB) on
+	// read; defaults to false for non-AWS engines.
+	IAMDatabaseAuthenticationEnabled bool
 	// NodeType / NumberOfNodes / Encrypted / PubliclyAccessible /
 	// AvailabilityZone / VpcID are Redshift-specific cluster attributes carried
 	// on the shared struct (Azure HighAvailabilityMode precedent); zero for
@@ -389,6 +486,12 @@ type Cluster struct {
 	PubliclyAccessible bool
 	AvailabilityZone   string
 	VpcID              string
+	// AutomatedSnapshotRetentionPeriod / PreferredMaintenanceWindow echo the
+	// Redshift cluster attributes on read so Terraform's matching schema values
+	// (retention default 1; a computed maintenance window) do not drift. Zero for
+	// RDS/Aurora/Azure/GCP.
+	AutomatedSnapshotRetentionPeriod int
+	PreferredMaintenanceWindow       string
 	// Location is the Azure region an Azure SQL logical server lives in (ARM
 	// top-level "location"), echoed on read. Empty for AWS/GCP.
 	Location  string
@@ -402,6 +505,14 @@ type Cluster struct {
 	// Scope records where an Azure SQL logical server lives (subscription/
 	// resource group). Zero for AWS/GCP and unscoped portable callers.
 	Scope scope.Scope
+	// MinimalTLSVersion / PublicNetworkAccess / RestrictOutboundNetworkAccess
+	// echo Azure SQL logical-server properties on read (minimalTlsVersion,
+	// publicNetworkAccess, restrictOutboundNetworkAccess). Azure SQL only; empty
+	// for AWS/GCP. Azure fills documented defaults ("1.2", "Enabled", "Disabled")
+	// on a create that omits them, so a read round-trips like real Azure SQL.
+	MinimalTLSVersion             string
+	PublicNetworkAccess           string
+	RestrictOutboundNetworkAccess string
 }
 
 // DBClusterRole is an IAM role associated with an Aurora DB cluster (AWS RDS
@@ -446,6 +557,16 @@ type Snapshot struct {
 	// AWS API docs). cloudemu models only same-account/same-region copies, so
 	// this stays empty on every snapshot, including ones made by CopyDBSnapshot.
 	SourceDBSnapshotIdentifier string
+	// InstanceClass / StorageType / Iops capture the source instance's shape at
+	// snapshot time so RestoreInstanceFromSnapshot can reproduce it, matching the
+	// AWS RestoreDBInstanceFromDBSnapshot docs: DBInstanceClass "Default: The
+	// same DBInstanceClass as the original DB instance" and Iops "If this
+	// parameter isn't specified, the IOPS value is taken from the backup."
+	// Empty/zero on snapshots created before this capture existed; restore falls
+	// back to a live source-instance lookup in that case.
+	InstanceClass string
+	StorageType   string
+	Iops          int
 }
 
 // ClusterSnapshotConfig configures a cluster snapshot.
@@ -482,6 +603,14 @@ type ClusterSnapshot struct {
 	DatabaseName   string
 	CreatedAt      time.Time
 	Tags           map[string]string
+	// AllocatedStorage / EngineMode capture the source cluster's shape at
+	// snapshot time so RestoreDBClusterFromSnapshot can reproduce it instead of
+	// leaving the restored cluster with the Go zero value. Zero/empty on
+	// snapshots created before this capture existed; restore falls back to the
+	// same defaults CreateCluster applies. AllocatedStorage is RDS/Aurora-only
+	// (echoes the AWS Aurora DBCluster attribute); zero for Redshift.
+	AllocatedStorage int
+	EngineMode       string
 }
 
 // RestoreInstanceInput configures restoring an instance from a snapshot.
@@ -489,6 +618,9 @@ type RestoreInstanceInput struct {
 	NewInstanceID string
 	SnapshotID    string
 	InstanceClass string
+	// SKUTier is the Azure Flexible Server compute tier for the restored server;
+	// empty falls back to the provider default. Unused by AWS/GCP.
+	SKUTier string
 	// Port overrides the restored instance's connection port. Zero means "no
 	// override": AWS falls back to the same port as the original DB instance
 	// the snapshot was taken from, not the engine default.
@@ -506,6 +638,11 @@ type RestoreInstanceInput struct {
 	// SubnetGroupName is the AWS RDS RestoreDBInstanceFromDBSnapshot
 	// DBSubnetGroupName attribute; empty means the account/region default VPC.
 	SubnetGroupName string
+	// StorageType / Iops override the snapshot-captured values when set. Real
+	// RDS docs: Iops "If this parameter isn't specified, the IOPS value is
+	// taken from the backup."
+	StorageType string
+	Iops        int
 }
 
 // RestoreClusterInput configures restoring a cluster from a snapshot.
@@ -619,6 +756,13 @@ type DatabaseConfig struct {
 	// from: a full ARM database resource ID (".../servers/{s}/databases/{d}")
 	// or a bare database name on the same server. Ignored for a Default create.
 	SourceDatabaseID string
+	// MaxSizeBytes / BackupStorageRedundancy / ReadScale are Azure SQL database
+	// inputs (properties.maxSizeBytes, requestedBackupStorageRedundancy,
+	// readScale). Zero/empty means the request omitted them, so the Azure SQL
+	// provider fills the documented default. Other providers leave them zero.
+	MaxSizeBytes            int64
+	BackupStorageRedundancy string
+	ReadScale               string
 }
 
 // Database is a logical database hosted by a managed server (Azure MySQL /
@@ -644,6 +788,14 @@ type Database struct {
 	// ElasticPoolID echoes the elastic pool this database belongs to on read
 	// (properties.elasticPoolId); empty for a standalone database.
 	ElasticPoolID string
+	// MaxSizeBytes / BackupStorageRedundancy / ReadScale echo Azure SQL database
+	// properties on read (maxSizeBytes, requestedBackupStorageRedundancy /
+	// currentBackupStorageRedundancy, readScale). Azure SQL only; zero/empty for
+	// AWS/GCP. Azure fills documented defaults (32 GB, "Geo", "Disabled") on a
+	// create that omits them, so a read round-trips like real Azure SQL.
+	MaxSizeBytes            int64
+	BackupStorageRedundancy string
+	ReadScale               string
 }
 
 // Databases is an OPTIONAL capability for managing the logical databases inside
@@ -890,6 +1042,109 @@ func SourceDatabaseRef(id string) (server, database string, ok bool) {
 	}
 
 	return server, database, true
+}
+
+// ParseAzureSQLSKU derives the tier, hardware family and vCore/DTU capacity that
+// real Azure SQL reports for a database service-objective (SKU) name, so a create
+// that supplies only the name reads back the full sku object real Azure fills in.
+// The service-objective name is authoritative: Azure ignores a mismatched
+// tier/capacity in the request and returns the values the name implies.
+//
+//   - vCore names encode tier_[S_]family_capacity: "GP_Gen5_2" → GeneralPurpose,
+//     Gen5, 2; "GP_S_Gen5_2" (serverless) → GeneralPurpose, Gen5, 2;
+//     "BC_Gen5_4" → BusinessCritical, Gen5, 4; "HS_Gen5_2" → Hyperscale, Gen5, 2.
+//   - DTU names encode only the tier: "S0"/"S3" → Standard, "P1" → Premium,
+//     "Basic" → Basic (their fixed DTU capacity is not encoded in the name and is
+//     left to the caller).
+//
+// Returns zero values for an unrecognized name (e.g. an elastic-pool sku), so a
+// caller derives nothing and keeps whatever it already holds. Shared by the
+// provider (which stores the sku so Resource Graph discovery reports the right
+// tier) and the wire server (which echoes sku.family on read), so the two never
+// derive the sku differently.
+func ParseAzureSQLSKU(name string) (tier, family string, capacity int) {
+	if name == "" {
+		return "", "", 0
+	}
+
+	parts := strings.Split(name, "_")
+
+	switch parts[0] {
+	case "GP":
+		tier = "GeneralPurpose"
+	case "BC":
+		tier = "BusinessCritical"
+	case "HS":
+		tier = "Hyperscale"
+	}
+
+	if tier != "" {
+		family, capacity = vCoreFamilyCapacity(parts)
+		return tier, family, capacity
+	}
+
+	return dtuTier(name), "", 0
+}
+
+// vCorePartsWithFamily is the minimum "_"-split segment count of a vCore sku name
+// that carries a hardware family: tier_family_capacity (e.g. GP_Gen5_2). Fewer
+// segments (e.g. an elastic-pool "GP_Gen5") carry no family.
+const vCorePartsWithFamily = 3
+
+// vCoreFamilyCapacity extracts the hardware family and vCore count from the parts
+// of a vCore sku name split on "_". The capacity is the trailing integer segment;
+// the family is the segment before it (Gen5, Fsv2, DC, …). A name with no numeric
+// tail (e.g. an elastic-pool "GP_Gen5") yields no family/capacity. parts always
+// has at least one element (strings.Split never returns empty), so the trailing
+// index is safe; a name that is only a prefix fails the Atoi and yields nothing.
+func vCoreFamilyCapacity(parts []string) (family string, capacity int) {
+	n := len(parts)
+
+	c, err := strconv.Atoi(parts[n-1])
+	if err != nil {
+		return "", 0
+	}
+
+	capacity = c
+
+	if n >= vCorePartsWithFamily {
+		family = parts[n-2]
+	}
+
+	return family, capacity
+}
+
+// dtuTier maps a DTU service-objective name to its pricing tier. Basic, the
+// Standard series (S0–S12) and the Premium series (P1–P15) are the DTU purchasing
+// model; every other name is a non-DTU sku this helper does not classify.
+func dtuTier(name string) string {
+	const basic = "Basic" // sku name and its pricing tier share the literal
+
+	switch {
+	case name == basic:
+		return basic
+	case strings.HasPrefix(name, "S") && isAllDigits(name[1:]):
+		return "Standard"
+	case strings.HasPrefix(name, "P") && isAllDigits(name[1:]):
+		return "Premium"
+	default:
+		return ""
+	}
+}
+
+// isAllDigits reports whether s is non-empty and every byte is an ASCII digit.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+
+	return true
 }
 
 // FailoverGroupConfig describes a failover group to create (Azure SQL).

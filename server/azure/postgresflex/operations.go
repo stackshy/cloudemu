@@ -71,6 +71,7 @@ func instanceFromBody(body *armServer, rp *azurearm.ResourcePath) rdsdriver.Inst
 
 	if body.SKU != nil {
 		cfg.InstanceClass = body.SKU.Name
+		cfg.SKUTier = body.SKU.Tier
 	}
 
 	if body.Properties != nil {
@@ -81,6 +82,10 @@ func instanceFromBody(body *armServer, rp *azurearm.ResourcePath) rdsdriver.Inst
 
 		if body.Properties.Storage != nil && body.Properties.Storage.StorageSizeGB > 0 {
 			cfg.AllocatedStorage = body.Properties.Storage.StorageSizeGB
+		}
+
+		if b := body.Properties.Backup; b != nil && b.BackupRetentionDays > 0 {
+			cfg.BackupRetentionPeriod = b.BackupRetentionDays
 		}
 
 		if ha := body.Properties.HighAvailability; ha != nil {
@@ -171,6 +176,7 @@ func modifyInputFromBody(body *armServer) rdsdriver.ModifyInstanceInput {
 
 	if body.SKU != nil {
 		input.InstanceClass = body.SKU.Name
+		input.SKUTier = body.SKU.Tier
 	}
 
 	if body.Properties != nil {
@@ -178,6 +184,10 @@ func modifyInputFromBody(body *armServer) rdsdriver.ModifyInstanceInput {
 
 		if body.Properties.Storage != nil && body.Properties.Storage.StorageSizeGB > 0 {
 			input.AllocatedStorage = body.Properties.Storage.StorageSizeGB
+		}
+
+		if b := body.Properties.Backup; b != nil && b.BackupRetentionDays > 0 {
+			input.BackupRetentionPeriod = b.BackupRetentionDays
 		}
 
 		if ha := body.Properties.HighAvailability; ha != nil {
@@ -198,6 +208,7 @@ func (h *Handler) restoreServer(w http.ResponseWriter, r *http.Request, rp *azur
 
 	if body.SKU != nil {
 		input.InstanceClass = body.SKU.Name
+		input.SKUTier = body.SKU.Tier
 	}
 
 	inst, err := h.db.RestoreInstanceFromSnapshot(r.Context(), input)

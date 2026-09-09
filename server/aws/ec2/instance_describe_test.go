@@ -42,8 +42,18 @@ func TestDescribeInstanceReportsHardwareDetail(t *testing.T) {
 		t.Errorf("rootDeviceType = %q, want ebs", inst.RootDeviceType)
 	}
 
-	if aws.ToString(inst.RootDeviceName) != "/dev/xvda" {
-		t.Errorf("rootDeviceName = %q, want /dev/xvda", aws.ToString(inst.RootDeviceName))
+	// The reported root device name must equal the device the boot volume is
+	// attached at (both derive from the launch AMI's root device, defaulting to
+	// /dev/sda1 for the unknown test AMI), so terraform classifies the root
+	// volume as root_block_device rather than an ebs_block_device.
+	if aws.ToString(inst.RootDeviceName) != "/dev/sda1" {
+		t.Errorf("rootDeviceName = %q, want /dev/sda1", aws.ToString(inst.RootDeviceName))
+	}
+
+	if len(inst.BlockDeviceMappings) != 1 ||
+		aws.ToString(inst.BlockDeviceMappings[0].DeviceName) != aws.ToString(inst.RootDeviceName) {
+		t.Errorf("boot block-device deviceName must equal rootDeviceName %q, got %+v",
+			aws.ToString(inst.RootDeviceName), inst.BlockDeviceMappings)
 	}
 
 	if inst.Placement == nil || aws.ToString(inst.Placement.AvailabilityZone) == "" {

@@ -173,10 +173,12 @@ type systemTopicUpdateJSON struct {
 	Tags map[string]*string `json:"tags,omitempty"`
 }
 
-// updateSystemTopic maps SystemTopics.Update (PATCH) onto the wire-owned record:
-// it merges the supplied tags onto the existing tags, preserving any the caller
-// omitted, and returns the updated system topic (200). 404 when the system topic
-// does not exist, before any write.
+// updateSystemTopic maps SystemTopics.Update (PATCH) onto the wire-owned
+// record: a resource-level tag PATCH replaces the tag set wholesale (matching
+// real Azure and this codebase's convention elsewhere), and a caller who
+// omits tags entirely leaves the existing set untouched. Returns the updated
+// system topic (200). 404 when the system topic does not exist, before any
+// write.
 func (h *Handler) updateSystemTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body systemTopicUpdateJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -195,9 +197,7 @@ func (h *Handler) updateSystemTopic(w http.ResponseWriter, r *http.Request, rp *
 		return
 	}
 
-	if body.Tags != nil {
-		rec.tags = mergeTags(rec.tags, tagsFromPtr(body.Tags))
-	}
+	rec.tags = replaceTagsIfPresent(rec.tags, body.Tags)
 
 	out := rec.toJSON(rp)
 	h.mu.Unlock()

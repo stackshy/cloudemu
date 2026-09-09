@@ -6,6 +6,7 @@ import (
 	"errors"
 	"io"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -33,6 +34,31 @@ func createBasicFunction(t *testing.T, client *awslambda.Client, name string) {
 		Code:         &lambdatypes.FunctionCode{ZipFile: []byte("package-" + name)},
 	}); err != nil {
 		t.Fatalf("CreateFunction(%s): %v", name, err)
+	}
+}
+
+// publishDistinctVersions publishes n new versions of a function, changing its
+// code before each publish. Real Lambda does not cut a new version when nothing
+// has changed since the last one, so a test needing several distinct versions
+// must mutate the function between publishes.
+func publishDistinctVersions(t *testing.T, client *awslambda.Client, name string, n int) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	for i := range n {
+		if _, err := client.UpdateFunctionCode(ctx, &awslambda.UpdateFunctionCodeInput{
+			FunctionName: aws.String(name),
+			ZipFile:      []byte("package-" + name + "-" + strconv.Itoa(i)),
+		}); err != nil {
+			t.Fatalf("UpdateFunctionCode(%s): %v", name, err)
+		}
+
+		if _, err := client.PublishVersion(ctx, &awslambda.PublishVersionInput{
+			FunctionName: aws.String(name),
+		}); err != nil {
+			t.Fatalf("PublishVersion(%s): %v", name, err)
+		}
 	}
 }
 
@@ -632,14 +658,7 @@ func TestSDKCreateAliasRoutingConfigValidation(t *testing.T) {
 	client, _ := newSDKClient(t)
 	ctx := context.Background()
 	createBasicFunction(t, client, "routed")
-
-	for range 2 {
-		if _, err := client.PublishVersion(ctx, &awslambda.PublishVersionInput{
-			FunctionName: aws.String("routed"),
-		}); err != nil {
-			t.Fatalf("PublishVersion: %v", err)
-		}
-	}
+	publishDistinctVersions(t, client, "routed", 2)
 
 	// $LATEST in the weights is rejected with InvalidParameterValueException.
 	_, err := client.CreateAlias(ctx, &awslambda.CreateAliasInput{
@@ -770,20 +789,65 @@ func TestSDKVersionPerVersionAttributes(t *testing.T) {
 	}
 }
 
+// TestSDKPublishVersionDedupsUnchanged covers the AWS rule that PublishVersion
+// does not cut a new version when the function's code and configuration haven't
+// changed since the last version: it returns that existing version instead. Only
+// after a code/config change does a subsequent publish produce a new number.
+func TestSDKPublishVersionDedupsUnchanged(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+	createBasicFunction(t, client, "dedup")
+
+	first, err := client.PublishVersion(ctx, &awslambda.PublishVersionInput{FunctionName: aws.String("dedup")})
+	if err != nil {
+		t.Fatalf("PublishVersion(first): %v", err)
+	}
+	if aws.ToString(first.Version) != "1" {
+		t.Fatalf("first version = %q, want 1", aws.ToString(first.Version))
+	}
+
+	// Republishing an unchanged function returns the same version, not "2".
+	again, err := client.PublishVersion(ctx, &awslambda.PublishVersionInput{FunctionName: aws.String("dedup")})
+	if err != nil {
+		t.Fatalf("PublishVersion(again): %v", err)
+	}
+	if aws.ToString(again.Version) != "1" {
+		t.Fatalf("republish version = %q, want 1 (deduped)", aws.ToString(again.Version))
+	}
+
+	// A code change lets the next publish cut a distinct version.
+	if _, err := client.UpdateFunctionCode(ctx, &awslambda.UpdateFunctionCodeInput{
+		FunctionName: aws.String("dedup"), ZipFile: []byte("changed-code"),
+	}); err != nil {
+		t.Fatalf("UpdateFunctionCode: %v", err)
+	}
+
+	next, err := client.PublishVersion(ctx, &awslambda.PublishVersionInput{FunctionName: aws.String("dedup")})
+	if err != nil {
+		t.Fatalf("PublishVersion(next): %v", err)
+	}
+	if aws.ToString(next.Version) != "2" {
+		t.Fatalf("post-change version = %q, want 2", aws.ToString(next.Version))
+	}
+
+	list, err := client.ListVersionsByFunction(ctx, &awslambda.ListVersionsByFunctionInput{
+		FunctionName: aws.String("dedup"),
+	})
+	if err != nil {
+		t.Fatalf("ListVersionsByFunction: %v", err)
+	}
+	if len(list.Versions) != 3 { // $LATEST + versions 1 and 2
+		t.Fatalf("Versions = %d, want 3 ($LATEST + 1 + 2)", len(list.Versions))
+	}
+}
+
 // TestSDKAliasRevisionAndRouting covers CreateAlias/GetAlias/UpdateAlias missing
 // RevisionId and RoutingConfig.
 func TestSDKAliasRevisionAndRouting(t *testing.T) {
 	client, _ := newSDKClient(t)
 	ctx := context.Background()
 	createBasicFunction(t, client, "aliased")
-
-	for range 2 {
-		if _, err := client.PublishVersion(ctx, &awslambda.PublishVersionInput{
-			FunctionName: aws.String("aliased"),
-		}); err != nil {
-			t.Fatalf("PublishVersion: %v", err)
-		}
-	}
+	publishDistinctVersions(t, client, "aliased", 2)
 
 	created, err := client.CreateAlias(ctx, &awslambda.CreateAliasInput{
 		FunctionName:    aws.String("aliased"),

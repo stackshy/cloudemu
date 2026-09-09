@@ -57,6 +57,11 @@ func (h *Handler) putRolePolicy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !validPolicyDocument(r.Form.Get("PolicyDocument")) {
+		writeMalformedPolicy(w, "The policy failed legacy parsing")
+		return
+	}
+
 	if err := pm.PutRolePolicy(r.Context(),
 		r.Form.Get("RoleName"), r.Form.Get("PolicyName"), r.Form.Get("PolicyDocument")); err != nil {
 		writeErr(w, err)

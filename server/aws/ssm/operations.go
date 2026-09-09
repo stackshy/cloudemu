@@ -51,6 +51,13 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// A KeyId that can't be used to encrypt (disabled/deleted key, etc.) is
+		// the distinct InvalidKeyId, not a generic ValidationException or 500.
+		if errors.Is(err, ssmdriver.ErrInvalidKeyID) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidKeyId", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}
@@ -72,6 +79,14 @@ func (h *Handler) getParameter(w http.ResponseWriter, r *http.Request) {
 			wire.WriteJSONError(w, http.StatusBadRequest, "ParameterVersionNotFound", cerrors.Message(err))
 			return
 		}
+
+		// Decrypting through an unusable KMS key (disabled/deleted) is the
+		// distinct InvalidKeyId, not a 500 that leaks the KMS failure message.
+		if errors.Is(err, ssmdriver.ErrInvalidKeyID) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidKeyId", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}
@@ -87,6 +102,11 @@ func (h *Handler) getParameters(w http.ResponseWriter, r *http.Request) {
 
 	found, invalid, err := h.store.GetParameters(r.Context(), req.Names, req.WithDecryption)
 	if err != nil {
+		if errors.Is(err, ssmdriver.ErrInvalidKeyID) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidKeyId", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}
@@ -121,6 +141,11 @@ func (h *Handler) getParametersByPath(w http.ResponseWriter, r *http.Request) {
 
 		if errors.Is(err, ssmdriver.ErrInvalidFilterOption) {
 			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidFilterOption", cerrors.Message(err))
+			return
+		}
+
+		if errors.Is(err, ssmdriver.ErrInvalidKeyID) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidKeyId", cerrors.Message(err))
 			return
 		}
 
@@ -234,6 +259,11 @@ func (h *Handler) getParameterHistory(w http.ResponseWriter, r *http.Request) {
 
 	history, err := h.store.GetParameterHistory(r.Context(), req.Name, req.WithDecryption)
 	if err != nil {
+		if errors.Is(err, ssmdriver.ErrInvalidKeyID) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidKeyId", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}

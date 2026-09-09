@@ -72,11 +72,31 @@ type TableConfig struct {
 	StreamViewType string
 	StreamArn      string
 	StreamLabel    string
+	// DeletionProtectionEnabled carries the deletion-protection toggle. A
+	// describe echoes it back (default false); once on, DeleteTable is rejected.
+	// An IaC client that sets it otherwise reads back nothing and sees a
+	// perpetual diff.
+	DeletionProtectionEnabled bool
+	// TableClass is "STANDARD" (default) or "STANDARD_INFREQUENT_ACCESS". A
+	// describe echoes it back as TableClassSummary; an IaC client that sets it
+	// otherwise sees a perpetual diff.
+	TableClass string
 	// TableArn, CreatedAtUnix and TableID are populated by the provider on
 	// create. TableID is a UUID a real table carries and IaC clients read back.
 	TableArn      string
 	CreatedAtUnix float64
 	TableID       string
+}
+
+// HasGSI reports whether the table declares a Global Secondary Index named name.
+func (c *TableConfig) HasGSI(name string) bool {
+	for i := range c.GSIs {
+		if c.GSIs[i].Name == name {
+			return true
+		}
+	}
+
+	return false
 }
 
 // AttributeDef is a DynamoDB attribute definition (name + scalar type S/N/B).
@@ -316,6 +336,13 @@ type AccountAttributes struct {
 	// EnableMultipleWriteLocations mirrors the ARM property of the same name:
 	// when true every declared location accepts writes, not just priority 0.
 	EnableMultipleWriteLocations bool
+	// EnableAutomaticFailover mirrors the ARM property of the same name: when
+	// true a single-write-region account fails over automatically to the next
+	// priority region. Default false.
+	EnableAutomaticFailover bool
+	// PublicNetworkAccess mirrors the ARM property of the same name (Enabled /
+	// Disabled). Empty means the account uses Azure's Enabled default.
+	PublicNetworkAccess string
 	// ConsistencyPolicy is the account's default consistency level (and, for
 	// BoundedStaleness, its staleness bounds). Empty DefaultConsistencyLevel
 	// means the account uses Cosmos's Session default.

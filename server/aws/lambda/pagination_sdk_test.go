@@ -16,14 +16,7 @@ func TestSDKListVersionsByFunctionPagination(t *testing.T) {
 	client, _ := newSDKClient(t)
 	ctx := context.Background()
 	createBasicFunction(t, client, "vfn")
-
-	for range 2 {
-		if _, err := client.PublishVersion(ctx, &awslambda.PublishVersionInput{
-			FunctionName: aws.String("vfn"),
-		}); err != nil {
-			t.Fatalf("PublishVersion: %v", err)
-		}
-	}
+	publishDistinctVersions(t, client, "vfn", 2)
 
 	page1, err := client.ListVersionsByFunction(ctx, &awslambda.ListVersionsByFunctionInput{
 		FunctionName: aws.String("vfn"), MaxItems: aws.Int32(2),

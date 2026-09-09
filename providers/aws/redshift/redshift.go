@@ -29,15 +29,33 @@ const (
 	defaultEngine   = "redshift"
 	defaultPort     = 5439
 	singleNodeCount = 1
+	// defaultDatabaseName is the initial database Redshift creates when
+	// CreateCluster omits DBName (AWS: "a database named dev was created by
+	// default"). DescribeClusters returns it for the life of the cluster.
+	defaultDatabaseName = "dev"
+	// defaultSnapshotRetentionDays is the AutomatedSnapshotRetentionPeriod AWS
+	// assigns when CreateCluster omits it; it matches the Terraform
+	// aws_redshift_cluster schema default, so an unset value never drifts.
+	defaultSnapshotRetentionDays = 1
+	// defaultMaintenanceWindow is a deterministic weekly UTC window used when
+	// CreateCluster omits PreferredMaintenanceWindow (real Redshift assigns a
+	// random one). Terraform's preferred_maintenance_window is computed, so any
+	// stable valid window is drift-free.
+	defaultMaintenanceWindow = "sat:05:30-sat:06:00"
 	// defaultKMSKeyAlias is the account-default Redshift KMS key real AWS fills in
 	// when a cluster is created encrypted without an explicit KmsKeyId.
-	defaultKMSKeyAlias       = "alias/aws/redshift"
-	snapshotBackupSizeMB     = 100.0
-	cpuUtilizationRunning    = 25.0
-	databaseConnectionsRun   = 5.0
-	readIOPSRunning          = 10.0
-	writeIOPSRunning         = 5.0
-	networkReceiveThroughput = 1024.0
+	defaultKMSKeyAlias = "alias/aws/redshift"
+	// defaultParameterGroupName is the parameter group a cluster is associated
+	// with when CreateCluster names none. Real Redshift always attaches one (the
+	// family default), and clients rely on it: terraform's aws_redshift_cluster
+	// reads ClusterParameterGroups[0] unconditionally and panics on an empty list.
+	defaultParameterGroupName = "default.redshift-1.0"
+	snapshotBackupSizeMB      = 100.0
+	cpuUtilizationRunning     = 25.0
+	databaseConnectionsRun    = 5.0
+	readIOPSRunning           = 10.0
+	writeIOPSRunning          = 5.0
+	networkReceiveThroughput  = 1024.0
 )
 
 // errInstanceOpsUnsupported is the canonical error returned for instance-level
@@ -563,27 +581,44 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		numberOfNodes = singleNodeCount
 	}
 
+	parameterGroup := cfg.DBClusterParameterGroupName
+	if parameterGroup == "" {
+		parameterGroup = defaultParameterGroupName
+	}
+
+	databaseName := cfg.DatabaseName
+	if databaseName == "" {
+		databaseName = defaultDatabaseName
+	}
+
+	maintenanceWindow := cfg.PreferredMaintenanceWindow
+	if maintenanceWindow == "" {
+		maintenanceWindow = defaultMaintenanceWindow
+	}
+
 	cluster := rdbdriver.Cluster{
-		ID:                          cfg.ID,
-		ARN:                         clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		Engine:                      engine,
-		EngineVersion:               cfg.EngineVersion,
-		MasterUsername:              cfg.MasterUsername,
-		DatabaseName:                cfg.DatabaseName,
-		Endpoint:                    endpointFor(cfg.ID),
-		Port:                        port,
-		State:                       rdbdriver.StateAvailable,
-		VPCSecurityGroups:           append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:             cfg.SubnetGroupName,
-		DBClusterParameterGroupName: cfg.DBClusterParameterGroupName,
-		NodeType:                    cfg.NodeType,
-		NumberOfNodes:               numberOfNodes,
-		Encrypted:                   cfg.Encrypted,
-		KmsKeyID:                    resolveKMSKeyID(cfg.Encrypted, cfg.KmsKeyID),
-		PubliclyAccessible:          cfg.PubliclyAccessible,
-		AvailabilityZone:            cfg.AvailabilityZone,
-		CreatedAt:                   m.opts.Clock.Now().UTC(),
-		Tags:                        copyTags(cfg.Tags),
+		ID:                               cfg.ID,
+		ARN:                              clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		Engine:                           engine,
+		EngineVersion:                    cfg.EngineVersion,
+		MasterUsername:                   cfg.MasterUsername,
+		DatabaseName:                     databaseName,
+		Endpoint:                         endpointFor(cfg.ID),
+		Port:                             port,
+		State:                            rdbdriver.StateAvailable,
+		VPCSecurityGroups:                append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:                  cfg.SubnetGroupName,
+		DBClusterParameterGroupName:      parameterGroup,
+		NodeType:                         cfg.NodeType,
+		NumberOfNodes:                    numberOfNodes,
+		Encrypted:                        cfg.Encrypted,
+		KmsKeyID:                         resolveKMSKeyID(cfg.Encrypted, cfg.KmsKeyID),
+		PubliclyAccessible:               cfg.PubliclyAccessible,
+		AvailabilityZone:                 cfg.AvailabilityZone,
+		AutomatedSnapshotRetentionPeriod: cfg.AutomatedSnapshotRetentionPeriod,
+		PreferredMaintenanceWindow:       maintenanceWindow,
+		CreatedAt:                        m.opts.Clock.Now().UTC(),
+		Tags:                             copyTags(cfg.Tags),
 	}
 
 	m.clusters.Set(cfg.ID, cluster)
@@ -702,6 +737,16 @@ func (m *Mock) ModifyCluster(
 	}
 
 	applyResize(&cluster, &input)
+
+	if input.PreferredMaintenanceWindow != "" {
+		cluster.PreferredMaintenanceWindow = input.PreferredMaintenanceWindow
+	}
+
+	// Retention is a pointer so a modify that sets it to 0 (disable automated
+	// snapshots) is distinguished from a modify that leaves it unchanged.
+	if input.AutomatedSnapshotRetentionPeriod != nil {
+		cluster.AutomatedSnapshotRetentionPeriod = *input.AutomatedSnapshotRetentionPeriod
+	}
 
 	if input.Tags != nil {
 		cluster.Tags = copyTags(input.Tags)
@@ -1022,22 +1067,30 @@ func (m *Mock) RestoreClusterFromSnapshot(
 		numberOfNodes = singleNodeCount
 	}
 
+	databaseName := snap.DatabaseName
+	if databaseName == "" {
+		databaseName = defaultDatabaseName
+	}
+
 	cluster := rdbdriver.Cluster{
-		ID:             input.NewClusterID,
-		ARN:            clusterARN(m.opts.Region, m.opts.AccountID, input.NewClusterID),
-		Engine:         snap.Engine,
-		EngineVersion:  snap.EngineVersion,
-		MasterUsername: snap.MasterUsername,
-		DatabaseName:   snap.DatabaseName,
-		Endpoint:       endpointFor(input.NewClusterID),
-		Port:           defaultPort,
-		State:          rdbdriver.StateAvailable,
-		NodeType:       snap.NodeType,
-		NumberOfNodes:  numberOfNodes,
-		Encrypted:      snap.Encrypted,
-		KmsKeyID:       restoredKMSKeyID(snap.Encrypted, snap.KmsKeyID, input.KmsKeyID),
-		CreatedAt:      now,
-		Tags:           copyTags(input.Tags),
+		ID:                               input.NewClusterID,
+		ARN:                              clusterARN(m.opts.Region, m.opts.AccountID, input.NewClusterID),
+		Engine:                           snap.Engine,
+		EngineVersion:                    snap.EngineVersion,
+		MasterUsername:                   snap.MasterUsername,
+		DatabaseName:                     databaseName,
+		Endpoint:                         endpointFor(input.NewClusterID),
+		Port:                             defaultPort,
+		State:                            rdbdriver.StateAvailable,
+		DBClusterParameterGroupName:      defaultParameterGroupName,
+		NodeType:                         snap.NodeType,
+		NumberOfNodes:                    numberOfNodes,
+		Encrypted:                        snap.Encrypted,
+		KmsKeyID:                         restoredKMSKeyID(snap.Encrypted, snap.KmsKeyID, input.KmsKeyID),
+		AutomatedSnapshotRetentionPeriod: defaultSnapshotRetentionDays,
+		PreferredMaintenanceWindow:       defaultMaintenanceWindow,
+		CreatedAt:                        now,
+		Tags:                             copyTags(input.Tags),
 	}
 
 	m.clusters.Set(input.NewClusterID, cluster)

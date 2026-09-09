@@ -33,11 +33,32 @@ const (
 	statusDisabled       = "DISABLED"
 	billingProvisioned   = "PROVISIONED"
 	billingPayPerRequest = "PAY_PER_REQUEST"
+	tableClassStandard   = "STANDARD"
 )
 
 // minProvisionedCapacity is the lowest ReadCapacityUnits/WriteCapacityUnits AWS
 // accepts on a PROVISIONED table or index.
 const minProvisionedCapacity = 1
+
+// Default WarmThroughput units real DynamoDB reports on a table (and each GSI)
+// created without an explicit warm-throughput setting. DescribeTable always
+// carries a WarmThroughput block with a terminal Status; provider 6.x's
+// waitTableActive polls it, so omitting it makes CreateTable hang forever.
+const (
+	defaultWarmReadUnitsPerSecond  = 12000
+	defaultWarmWriteUnitsPerSecond = 4000
+)
+
+// warmThroughput builds the WarmThroughput wire block DescribeTable/CreateTable
+// report for a table or a GSI. Status is always the terminal ACTIVE so a create
+// or update waiter that gates on it completes.
+func warmThroughput() map[string]any {
+	return map[string]any{
+		"ReadUnitsPerSecond":  defaultWarmReadUnitsPerSecond,
+		"WriteUnitsPerSecond": defaultWarmWriteUnitsPerSecond,
+		"Status":              "ACTIVE",
+	}
+}
 
 // validateProvisionedThroughput enforces AWS's cross-field rule between an
 // already-defaulted BillingMode and the ProvisionedThroughput that would result
@@ -229,9 +250,16 @@ func (*Handler) Matches(r *http.Request) bool {
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
-	if h.routeTables(w, r, op) || h.routeItems(w, r, op) || h.routeBatch(w, r, op) ||
-		h.routeTags(w, r, op) || h.routeTTL(w, r, op) || h.routeBackups(w, r, op) {
-		return
+	routes := []func(http.ResponseWriter, *http.Request, string) bool{
+		h.routeTables, h.routeItems, h.routeBatch, h.routeTags, h.routeTTL,
+		h.routeBackups, h.routeGlobalTables, h.routeKinesis,
+		h.routeContributorInsights, h.routeLimits,
+	}
+
+	for _, route := range routes {
+		if route(w, r, op) {
+			return
+		}
 	}
 
 	wire.WriteJSONError(w, http.StatusBadRequest,
@@ -322,7 +350,9 @@ type createTableRequest struct {
 		StreamEnabled  bool   `json:"StreamEnabled"`
 		StreamViewType string `json:"StreamViewType"`
 	} `json:"StreamSpecification"`
-	Tags []tagJSON `json:"Tags"`
+	DeletionProtectionEnabled bool      `json:"DeletionProtectionEnabled"`
+	TableClass                string    `json:"TableClass"`
+	Tags                      []tagJSON `json:"Tags"`
 }
 
 func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
@@ -378,10 +408,12 @@ func (h *Handler) createTable(w http.ResponseWriter, r *http.Request) {
 // TableConfig (keys, attributes, secondary indexes and the stream spec).
 func buildCreateConfig(req *createTableRequest) dbdriver.TableConfig {
 	cfg := dbdriver.TableConfig{
-		Name:               req.TableName,
-		BillingMode:        req.BillingMode,
-		ReadCapacityUnits:  req.ProvisionedThroughput.ReadCapacityUnits,
-		WriteCapacityUnits: req.ProvisionedThroughput.WriteCapacityUnits,
+		Name:                      req.TableName,
+		BillingMode:               req.BillingMode,
+		ReadCapacityUnits:         req.ProvisionedThroughput.ReadCapacityUnits,
+		WriteCapacityUnits:        req.ProvisionedThroughput.WriteCapacityUnits,
+		DeletionProtectionEnabled: req.DeletionProtectionEnabled,
+		TableClass:                req.TableClass,
 	}
 
 	for _, gsi := range req.GlobalSecondaryIndexes {
@@ -581,6 +613,16 @@ func (h *Handler) describeTableShape(cfg *dbdriver.TableConfig) map[string]any {
 	return td
 }
 
+// tableClass resolves the stored table class to the value DescribeTable
+// reports, defaulting an unset class to STANDARD as real DynamoDB does.
+func tableClass(stored string) string {
+	if stored == "" {
+		return tableClassStandard
+	}
+
+	return stored
+}
+
 // tableDescription builds the DynamoDB TableDescription wire shape that both
 // CreateTable and DescribeTable return, including the fields an IaC client reads
 // back (ARN, creation time, attribute definitions, billing mode). It reports
@@ -613,6 +655,16 @@ func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
 		"ItemCount":            0,
 		"TableSizeBytes":       0,
 		"BillingModeSummary":   map[string]any{"BillingMode": billing},
+		// Real DescribeTable always reports these two. Omitting them makes the
+		// Terraform provider read the default and, when the config sets a
+		// non-default value, produce a perpetual diff that never converges.
+		"DeletionProtectionEnabled": cfg.DeletionProtectionEnabled,
+		"TableClassSummary":         map[string]any{"TableClass": tableClass(cfg.TableClass)},
+		// Real DescribeTable always reports a WarmThroughput block with a terminal
+		// Status. Provider 6.x's waitTableActive gates on it, so omitting it makes
+		// the create waiter poll DescribeTable forever even though TableStatus is
+		// ACTIVE.
+		"WarmThroughput": warmThroughput(),
 	}
 
 	if billing == billingProvisioned {
@@ -707,6 +759,10 @@ func gsiDescriptions(cfg *dbdriver.TableConfig, billing string) []map[string]any
 				"NumberOfDecreasesToday": 0,
 			}
 		}
+
+		// Each GSI carries its own terminal WarmThroughput, mirroring the table's,
+		// so an index-status waiter completes.
+		desc["WarmThroughput"] = warmThroughput()
 
 		out = append(out, desc)
 	}

@@ -152,18 +152,51 @@ func doErr(t *testing.T, method, url string, body any) int {
 	return resp.StatusCode
 }
 
+// doErrBody issues a request expecting a non-2xx status and returns the HTTP
+// code plus the decoded JSON body, so callers can assert the error envelope.
+func doErrBody(t *testing.T, method, url string, body any) (int, map[string]any) {
+	t.Helper()
+
+	b, err := json.Marshal(body)
+	require.NoError(t, err)
+
+	req, err := http.NewRequest(method, url, bytes.NewReader(b))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	raw, _ := io.ReadAll(resp.Body)
+
+	out := map[string]any{}
+	if len(bytes.TrimSpace(raw)) > 0 {
+		require.NoError(t, json.Unmarshal(raw, &out), "body=%s", raw)
+	}
+
+	return resp.StatusCode, out
+}
+
 // TestPredictNoDeployedModels: :predict on an endpoint with no deployed models
-// is a 400 FAILED_PRECONDITION, not a 200 echo.
+// is a 400 FAILED_PRECONDITION, not a 200 echo. The body must carry the
+// canonical google.rpc.Code NAME in the top-level status field — a regression
+// guard for the shared gcprest codec dropping a canonical uppercase reason.
 func TestPredictNoDeployedModels(t *testing.T) {
 	url := newServer(t)
 
 	op := do(t, http.MethodPost, url+base+"/endpoints", map[string]any{"displayName": "ep"})
 	epName := op["response"].(map[string]any)["name"].(string)
 
-	code := doErr(t, http.MethodPost, url+"/v1/"+epName+":predict", map[string]any{
+	code, body := doErrBody(t, http.MethodPost, url+"/v1/"+epName+":predict", map[string]any{
 		"instances": []any{map[string]any{"x": 1}},
 	})
 	assert.Equal(t, http.StatusBadRequest, code)
+
+	errObj, ok := body["error"].(map[string]any)
+	require.Truef(t, ok, "error object missing: %+v", body)
+	assert.Equalf(t, "FAILED_PRECONDITION", errObj["status"],
+		"top-level status must be canonical (present, not dropped): %+v", errObj)
 }
 
 // TestDeployUnknownModel: deploying a model resource that was never uploaded is
@@ -247,6 +280,52 @@ func TestDatasetCreate(t *testing.T) {
 
 	list := do(t, http.MethodGet, url+base+"/datasets", nil)
 	assert.Len(t, list["datasets"], 1)
+}
+
+// TestEndpointTerraformLifecycle mirrors the Terraform google_vertex_ai_endpoint
+// flow: create with a client-chosen numeric id (endpointId query param), read it
+// back at that id, then PATCH display_name/labels with an update mask.
+func TestEndpointTerraformLifecycle(t *testing.T) {
+	url := newServer(t)
+
+	op := do(t, http.MethodPost, url+base+"/endpoints?endpointId=1234567890",
+		map[string]any{"displayName": "ep", "network": "projects/mock-project/global/networks/vpc1"})
+	resp, _ := op["response"].(map[string]any)
+	require.NotNil(t, resp)
+	assert.Equal(t, "projects/mock-project/locations/us-central1/endpoints/1234567890", resp["name"],
+		"endpoint must be created under the client-chosen id")
+	assert.Equal(t, "projects/mock-project/global/networks/vpc1", resp["network"])
+
+	got := do(t, http.MethodGet, url+base+"/endpoints/1234567890", nil)
+	assert.Equal(t, "ep", got["displayName"])
+
+	patched := do(t, http.MethodPatch, url+base+"/endpoints/1234567890?updateMask=displayName,labels",
+		map[string]any{"displayName": "ep2", "labels": map[string]any{"env": "prod"}})
+	assert.Equal(t, "ep2", patched["displayName"])
+	assert.Equal(t, "projects/mock-project/global/networks/vpc1", patched["network"], "unmasked network preserved")
+}
+
+// TestFeaturestoreTerraformLifecycle mirrors the Terraform
+// google_vertex_ai_featurestore flow: create with labels + a fixed node count,
+// then PATCH the node count. The update must return a done Operation because
+// UpdateFeaturestore is a long-running operation Terraform polls.
+func TestFeaturestoreTerraformLifecycle(t *testing.T) {
+	url := newServer(t)
+
+	op := do(t, http.MethodPost, url+base+"/featurestores?featurestoreId=tf_fs",
+		map[string]any{"labels": map[string]any{"env": "dev"}, "onlineServingConfig": map[string]any{"fixedNodeCount": 2}})
+	resp, _ := op["response"].(map[string]any)
+	require.NotNil(t, resp)
+	labels, _ := resp["labels"].(map[string]any)
+	assert.Equal(t, "dev", labels["env"], "featurestore labels must round-trip")
+
+	patch := do(t, http.MethodPatch, url+base+"/featurestores/tf_fs?updateMask=onlineServingConfig.fixedNodeCount",
+		map[string]any{"onlineServingConfig": map[string]any{"fixedNodeCount": 5}})
+	assert.Equal(t, true, patch["done"], "featurestore update must be a done LRO")
+	pr, _ := patch["response"].(map[string]any)
+	require.NotNil(t, pr)
+	osc, _ := pr["onlineServingConfig"].(map[string]any)
+	assert.EqualValues(t, 5, osc["fixedNodeCount"])
 }
 
 func opName(t *testing.T, op map[string]any) string {

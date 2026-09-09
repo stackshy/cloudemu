@@ -56,6 +56,7 @@ const (
 	netDescTag          = "cloudemu:gcpNetDesc"
 	netRoutingModeTag   = "cloudemu:gcpNetRoutingMode"
 	netMtuTag           = "cloudemu:gcpNetMtu"
+	netFwOrderTag       = "cloudemu:gcpNetFwOrder"
 	subnetPurposeTag    = "cloudemu:gcpSubnetPurpose"
 	subnetStackTag      = "cloudemu:gcpSubnetStack"
 	subnetPGATag        = "cloudemu:gcpSubnetPGA"
@@ -74,6 +75,12 @@ const (
 
 	defaultFirewallDirection = "INGRESS"
 	defaultFirewallPriority  = 1000
+
+	// A modern (non-legacy) GCP network always reads back a routing mode and an
+	// MTU: a network created without them defaults to REGIONAL dynamic routing
+	// and a 1460-byte MTU. These are the values compute.googleapis.com returns.
+	defaultRoutingMode       = "REGIONAL"
+	defaultNetworkMTU  int32 = 1460
 )
 
 // nowRFC3339 returns the current time formatted the way GCP stamps
@@ -355,6 +362,10 @@ func networkStorage(req *networkRequest) (cidr string, tags map[string]string) {
 
 	if req.Mtu > 0 {
 		tags[netMtuTag] = strconv.Itoa(int(req.Mtu))
+	}
+
+	if req.NetworkFirewallPolicyEnforcementOrder != "" {
+		tags[netFwOrderTag] = req.NetworkFirewallPolicyEnforcementOrder
 	}
 
 	return cidr, tags
@@ -909,8 +920,13 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 		req.Direction = defaultFirewallDirection
 	}
 
-	if req.Priority == 0 {
-		req.Priority = defaultFirewallPriority
+	// Priority 0 is a valid GCP value (highest precedence), so distinguish an
+	// omitted priority (nil) from an explicit 0 — only the former defaults to
+	// 1000. Forcing 0→1000 would silently alter rule precedence and drive a
+	// perpetual terraform diff.
+	if req.Priority == nil {
+		p := defaultFirewallPriority
+		req.Priority = &p
 	}
 
 	// Firewalls map onto driver SecurityGroups; the driver requires a VPC ID.
@@ -1094,8 +1110,8 @@ func mergeFirewallScalars(spec *firewallSpec, req *firewallRequest) {
 		spec.Direction = req.Direction
 	}
 
-	if req.Priority != 0 {
-		spec.Priority = req.Priority
+	if req.Priority != nil {
+		spec.Priority = *req.Priority
 	}
 
 	if req.LogConfig != nil {
@@ -1330,18 +1346,33 @@ func toNetworkResponse(info *netdriver.VPCInfo, rp gcprest.ResourcePath, host st
 	name := tagOr(info.Tags, netNameTag, info.ID)
 
 	resp := networkResponse{
-		Kind:                  "compute#network",
-		ID:                    numericID(info.ID),
-		Name:                  name,
-		Description:           info.Tags[netDescTag],
-		AutoCreateSubnetworks: info.Tags[autoSubnetTag] == trueValue,
-		CreationTimestamp:     info.Tags[createdAtTag],
-		SelfLink:              gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", name),
+		Kind:                                  "compute#network",
+		ID:                                    numericID(info.ID),
+		Name:                                  name,
+		Description:                           info.Tags[netDescTag],
+		AutoCreateSubnetworks:                 info.Tags[autoSubnetTag] == trueValue,
+		CreationTimestamp:                     info.Tags[createdAtTag],
+		SelfLink:                              gcprest.SelfLink(host, rp.Project, gcprest.ScopeGlobal, "", "networks", name),
+		NetworkFirewallPolicyEnforcementOrder: fwPolicyOrderOr(info.Tags[netFwOrderTag]),
 	}
 
-	if rm := info.Tags[netRoutingModeTag]; rm != "" {
-		resp.RoutingConfig = &networkRoutingConfig{RoutingMode: rm}
+	// IPv4Range belongs only to a legacy network; a modern auto/custom network
+	// omits it (emitting it would wrongly read as legacy and conflict with
+	// autoCreateSubnetworks). Legacy networks predate routingConfig/mtu, so they
+	// carry neither; a modern network always reads back both, defaulting to
+	// REGIONAL routing and a 1460-byte MTU when the insert omitted them — real
+	// GCP always populates them, so omitting the default reads as a perpetual
+	// Terraform diff on routing_mode/mtu.
+	if info.Tags[legacyNetTag] == trueValue {
+		resp.IPv4Range = info.CIDRBlock
+		return resp
 	}
+
+	resp.RoutingConfig = &networkRoutingConfig{
+		RoutingMode: tagOr(info.Tags, netRoutingModeTag, defaultRoutingMode),
+	}
+
+	resp.Mtu = defaultNetworkMTU
 
 	if m := info.Tags[netMtuTag]; m != "" {
 		if v, err := strconv.ParseInt(m, 10, 32); err == nil {
@@ -1349,14 +1380,17 @@ func toNetworkResponse(info *netdriver.VPCInfo, rp gcprest.ResourcePath, host st
 		}
 	}
 
-	// IPv4Range belongs only to a legacy network; a modern auto/custom network
-	// omits it (emitting it would wrongly read as legacy and conflict with
-	// autoCreateSubnetworks).
-	if info.Tags[legacyNetTag] == trueValue {
-		resp.IPv4Range = info.CIDRBlock
+	return resp
+}
+
+// fwPolicyOrderOr returns the stored networkFirewallPolicyEnforcementOrder,
+// defaulting to GCP's AFTER_CLASSIC_FIREWALL when the network did not record one.
+func fwPolicyOrderOr(stored string) string {
+	if stored != "" {
+		return stored
 	}
 
-	return resp
+	return defaultFwPolicyOrder
 }
 
 // lastSegment returns the final path/URL segment (e.g. a network self-link or
@@ -1514,7 +1548,7 @@ func marshalFirewallSpec(req *firewallRequest) string {
 func specFromFirewallRequest(req *firewallRequest) firewallSpec {
 	return firewallSpec{
 		Network:               req.Network,
-		Priority:              req.Priority,
+		Priority:              derefInt(req.Priority),
 		Direction:             req.Direction,
 		Allowed:               req.Allowed,
 		Denied:                req.Denied,
@@ -1540,6 +1574,15 @@ func unmarshalFirewallSpec(s string) (firewallSpec, bool) {
 	}
 
 	return spec, true
+}
+
+// derefInt returns the pointed-to int, or 0 when the pointer is nil.
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+
+	return *p
 }
 
 func tagOr(m map[string]string, key, fallback string) string {

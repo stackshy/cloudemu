@@ -2,6 +2,8 @@ package monitoring_test
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -409,6 +411,218 @@ func equalStrings(a, b []string) bool {
 
 	for i := range a {
 		if a[i] != b[i] {
+			return false
+		}
+	}
+
+	return true
+}
+
+// newMonServer spins the in-process GCP server over a fresh CloudMonitoring mock.
+func newMonServer(t *testing.T) (*monitoring.Service, *httptest.Server) {
+	t.Helper()
+
+	cloudP := cloudemu.NewGCP()
+	srv := gcpserver.New(gcpserver.Drivers{Monitoring: cloudP.CloudMonitoring})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	return newClient(t, ts), ts
+}
+
+// TestAlertPolicyEnabledDefaultsToTrue guards the enabled-default divergence: a
+// create that omits enabled must read back as enabled:true (Cloud Monitoring
+// treats an unset value on write as enabled and always returns the field). The
+// bug was `enabled` being a bool with omitempty — an omitted/false value was
+// dropped, so an omitting create read back as disabled.
+func TestAlertPolicyEnabledDefaultsToTrue(t *testing.T) {
+	svc, _ := newMonServer(t)
+
+	created, err := svc.Projects.AlertPolicies.Create("projects/p1", &monitoring.AlertPolicy{
+		DisplayName: "no-enabled",
+		Combiner:    "OR",
+	}).Do()
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if !created.Enabled {
+		t.Error("create omitting enabled read back disabled; want default enabled:true")
+	}
+
+	got, err := svc.Projects.AlertPolicies.Get(created.Name).Do()
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if !got.Enabled {
+		t.Error("get of an enabled-by-default policy returned enabled:false")
+	}
+}
+
+// TestAlertPolicyEnabledFalseRoundTrips guards that an explicit enabled:false
+// survives create→read as a literal false in the wire JSON (omitempty on a bool
+// would drop it, so a disabled policy would read back with no enabled field).
+func TestAlertPolicyEnabledFalseRoundTrips(t *testing.T) {
+	svc, ts := newMonServer(t)
+
+	created, err := svc.Projects.AlertPolicies.Create("projects/p1", &monitoring.AlertPolicy{
+		DisplayName:     "disabled",
+		Combiner:        "OR",
+		Enabled:         false,
+		ForceSendFields: []string{"Enabled"},
+	}).Do()
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if created.Enabled {
+		t.Fatal("explicit enabled:false read back as true")
+	}
+
+	// Inspect the raw GET body: enabled must be present and literally false, not
+	// omitted, matching real Cloud Monitoring which always returns the field.
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v3/"+created.Name, nil)
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("raw get: %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	var raw map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	v, ok := raw["enabled"]
+	if !ok {
+		t.Fatal("enabled field omitted from response; real Cloud Monitoring always returns it")
+	}
+
+	if b, _ := v.(bool); b {
+		t.Errorf("enabled=%v want false", v)
+	}
+}
+
+// TestAlertPoliciesListDeterministicOrder guards the list-order divergence:
+// alertPolicies.list must return a stable order across calls (creation order),
+// not the random map iteration order that reads as perpetual drift to Terraform.
+func TestAlertPoliciesListDeterministicOrder(t *testing.T) {
+	svc, _ := newMonServer(t)
+
+	const n = 12
+
+	created := make([]string, 0, n)
+
+	for i := 0; i < n; i++ {
+		pol, err := svc.Projects.AlertPolicies.Create("projects/p1", &monitoring.AlertPolicy{
+			DisplayName: "p",
+			Combiner:    "OR",
+		}).Do()
+		if err != nil {
+			t.Fatalf("create #%d: %v", i, err)
+		}
+
+		created = append(created, pol.Name)
+	}
+
+	first := listPolicyNames(t, svc)
+
+	if len(first) != n {
+		t.Fatalf("want %d policies, got %d", n, len(first))
+	}
+
+	// Order must equal creation order and be identical across repeated calls.
+	for i := range created {
+		if first[i] != created[i] {
+			t.Fatalf("list[%d]=%s want creation order %s", i, first[i], created[i])
+		}
+	}
+
+	for call := 0; call < 5; call++ {
+		got := listPolicyNames(t, svc)
+		for i := range got {
+			if got[i] != first[i] {
+				t.Fatalf("list order not stable on call %d at %d: %s != %s", call, i, got[i], first[i])
+			}
+		}
+	}
+}
+
+func listPolicyNames(t *testing.T, svc *monitoring.Service) []string {
+	t.Helper()
+
+	list, err := svc.Projects.AlertPolicies.List("projects/p1").Do()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	names := make([]string, 0, len(list.AlertPolicies))
+	for _, p := range list.AlertPolicies {
+		names = append(names, p.Name)
+	}
+
+	return names
+}
+
+// TestNotificationChannelsListDeterministicOrder guards that
+// notificationChannels.list returns a stable order (sorted by resource name)
+// across calls rather than the backing store's random map order.
+func TestNotificationChannelsListDeterministicOrder(t *testing.T) {
+	svc, _ := newMonServer(t)
+
+	const n = 12
+
+	for i := 0; i < n; i++ {
+		if _, err := svc.Projects.NotificationChannels.Create("projects/p1", &monitoring.NotificationChannel{
+			Type:        "email",
+			DisplayName: "c",
+			Labels:      map[string]string{"email_address": "a@example.com"},
+		}).Do(); err != nil {
+			t.Fatalf("create #%d: %v", i, err)
+		}
+	}
+
+	first := listChannelNames(t, svc)
+
+	if len(first) != n {
+		t.Fatalf("want %d channels, got %d", n, len(first))
+	}
+
+	if !sortedAscending(first) {
+		t.Errorf("channels not sorted by name: %v", first)
+	}
+
+	for call := 0; call < 5; call++ {
+		got := listChannelNames(t, svc)
+		for i := range got {
+			if got[i] != first[i] {
+				t.Fatalf("channel list order not stable on call %d at %d: %s != %s", call, i, got[i], first[i])
+			}
+		}
+	}
+}
+
+func listChannelNames(t *testing.T, svc *monitoring.Service) []string {
+	t.Helper()
+
+	list, err := svc.Projects.NotificationChannels.List("projects/p1").Do()
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+
+	names := make([]string, 0, len(list.NotificationChannels))
+	for _, c := range list.NotificationChannels {
+		names = append(names, c.Name)
+	}
+
+	return names
+}
+
+func sortedAscending(s []string) bool {
+	for i := 1; i < len(s); i++ {
+		if s[i-1] > s[i] {
 			return false
 		}
 	}

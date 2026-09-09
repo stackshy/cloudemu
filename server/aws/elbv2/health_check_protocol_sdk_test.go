@@ -68,3 +68,48 @@ func TestSDKTCPTargetGroupDefaultsHealthCheckToTCP(t *testing.T) {
 		t.Errorf("HealthCheckProtocol = %q, want TCP", out.TargetGroups[0].HealthCheckProtocol)
 	}
 }
+
+// TestSDKLambdaTargetGroupHealthCheck proves a lambda target group reports
+// HealthCheckEnabled=false and carries no health-check protocol — real ELBv2
+// disables health checks for a lambda group by default and returns no protocol,
+// so returning one makes Terraform reject the group with "health_check.protocol
+// cannot be specified when target_type is lambda". The lambda-specific numeric
+// defaults (interval 35, timeout 30, thresholds 5/5) are also asserted.
+func TestSDKLambdaTargetGroupHealthCheck(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+
+	out, err := client.CreateTargetGroup(ctx, &elb.CreateTargetGroupInput{
+		Name:       aws.String("lambda-hc-tg"),
+		TargetType: elbtypes.TargetTypeEnumLambda,
+	})
+	if err != nil {
+		t.Fatalf("CreateTargetGroup: %v", err)
+	}
+
+	tg := out.TargetGroups[0]
+
+	if aws.ToBool(tg.HealthCheckEnabled) {
+		t.Error("HealthCheckEnabled = true, want false for a lambda target group")
+	}
+
+	if tg.HealthCheckProtocol != "" {
+		t.Errorf("HealthCheckProtocol = %q, want empty for a lambda target group", tg.HealthCheckProtocol)
+	}
+
+	if got := aws.ToInt32(tg.HealthCheckIntervalSeconds); got != 35 {
+		t.Errorf("HealthCheckIntervalSeconds = %d, want 35", got)
+	}
+
+	if got := aws.ToInt32(tg.HealthCheckTimeoutSeconds); got != 30 {
+		t.Errorf("HealthCheckTimeoutSeconds = %d, want 30", got)
+	}
+
+	if got := aws.ToInt32(tg.HealthyThresholdCount); got != 5 {
+		t.Errorf("HealthyThresholdCount = %d, want 5", got)
+	}
+
+	if got := aws.ToInt32(tg.UnhealthyThresholdCount); got != 5 {
+		t.Errorf("UnhealthyThresholdCount = %d, want 5", got)
+	}
+}

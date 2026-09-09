@@ -351,7 +351,7 @@ func (h *Handler) createRoleAssignment(
 	})
 	if err != nil {
 		if cerrors.IsAlreadyExists(err) {
-			writeARMError(w, http.StatusConflict, "RoleAssignmentExists", err.Error())
+			writeARMError(w, http.StatusConflict, "RoleAssignmentExists", cerrors.Message(err))
 			return
 		}
 
@@ -604,12 +604,12 @@ func decodeJSONBody(w http.ResponseWriter, r *http.Request, v any) bool {
 func writeCErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeARMError(w, http.StatusNotFound, "ResourceNotFound", err.Error())
+		writeARMError(w, http.StatusNotFound, "ResourceNotFound", cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):
-		writeARMError(w, http.StatusConflict, "ResourceAlreadyExists", err.Error())
+		writeARMError(w, http.StatusConflict, "ResourceAlreadyExists", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		writeARMError(w, http.StatusBadRequest, "InvalidArgument", err.Error())
+		writeARMError(w, http.StatusBadRequest, "InvalidArgument", cerrors.Message(err))
 	default:
-		writeARMError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		writeARMError(w, http.StatusInternalServerError, "InternalError", cerrors.Message(err))
 	}
 }

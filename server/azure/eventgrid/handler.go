@@ -16,7 +16,7 @@
 // Coverage:
 //
 //	PUT/GET/DELETE .../topics/{t}                           — Topics CRUD (LRO, completes inline)
-//	PATCH          .../topics/{t}                           — Topics.Update (merge tags + mutable properties)
+//	PATCH          .../topics/{t}                           — Topics.Update (replace tags + mutable properties)
 //	GET            .../topics                               — Topics.ListBySubscription / ListByResourceGroup
 //	POST           .../topics/{t}/listKeys                  — Topics.ListSharedAccessKeys
 //	POST           .../topics/{t}/regenerateKey            — Topics.RegenerateKey
@@ -55,6 +55,11 @@ type Handler struct {
 	// Azure eventgrid.Mock provides it; nil for backends that don't). It isolates
 	// system-topic subscription rules from user-facing custom topics.
 	sysDelivery systemTopicDelivery
+	// tagWriter is the optional tag-write capability of bus (the Azure
+	// eventgrid.Mock provides it; nil for backends that don't). updateTopic uses
+	// it to apply an explicit "tags:{}" wipe that UpdateEventBus's cfg.Tags
+	// nil-gate cannot distinguish from "tags omitted."
+	tagWriter eventBusTagWriter
 
 	mu           sync.RWMutex
 	systemTopics map[string]*systemTopicRecord
@@ -93,6 +98,10 @@ func New(b ebdriver.EventBus) *Handler {
 
 	if sd, ok := b.(systemTopicDelivery); ok {
 		h.sysDelivery = sd
+	}
+
+	if tw, ok := b.(eventBusTagWriter); ok {
+		h.tagWriter = tw
 	}
 
 	return h

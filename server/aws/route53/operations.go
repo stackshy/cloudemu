@@ -190,7 +190,11 @@ func (h *Handler) listHostedZones(w http.ResponseWriter, r *http.Request) {
 
 	marker := r.URL.Query().Get("marker")
 	maxItems := parseMaxItems(r.URL.Query().Get("maxitems"))
-	page, next := markerPage(zones, marker, maxItems, func(z hostedZoneXML) string { return z.Id })
+	// Paginate on the bare zone id: HostedZone.Id now carries the "/hostedzone/"
+	// prefix, but ListHostedZones' Marker/NextMarker are bare zone ids (matching
+	// real Route 53 and the marker a client echoes back), so the paginator must
+	// key on the trimmed id.
+	page, next := markerPage(zones, marker, maxItems, func(z hostedZoneXML) string { return trimZonePrefix(z.Id) })
 
 	wire.WriteXML(w, http.StatusOK, listHostedZonesResponse{
 		Xmlns:       xmlns,

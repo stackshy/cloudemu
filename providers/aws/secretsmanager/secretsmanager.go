@@ -191,29 +191,20 @@ func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value 
 		KMSKeyID:    cfg.KMSKeyID,
 	}
 
-	stored, err := m.encrypt(ctx, cfg.KMSKeyID, value)
-	if err != nil {
-		return nil, err
-	}
+	sd := &secretData{info: info, stages: map[string]string{}}
 
-	// AWS uses the ClientRequestToken as the version id (a UUID); absent one, it
-	// generates a UUID itself.
-	versionID := cfg.ClientRequestToken
-	if versionID == "" {
-		versionID = idgen.UUID()
-	}
-
-	version := driver.SecretVersion{
-		VersionID: versionID,
-		Value:     stored,
-		CreatedAt: now,
-		Current:   true,
-	}
-
-	sd := &secretData{
-		info:     info,
-		versions: []driver.SecretVersion{version},
-		stages:   map[string]string{stageCurrent: versionID},
+	// SecretString/SecretBinary are optional on CreateSecret. Real Secrets Manager
+	// creates an initial version (carrying AWSCURRENT) only when a value is
+	// supplied; a metadata-only secret has no versions until PutSecretValue adds
+	// one. This matters for the common Terraform pattern, where
+	// aws_secretsmanager_secret creates the secret with no value and a separate
+	// aws_secretsmanager_secret_version adds the first version — creating a phantom
+	// empty version here would demote that first real version's predecessor to a
+	// spurious AWSPREVIOUS.
+	if value != nil {
+		if err := m.seedInitialVersion(ctx, sd, cfg, value, now); err != nil {
+			return nil, err
+		}
 	}
 
 	m.secrets.Set(cfg.Name, sd)
@@ -221,6 +212,36 @@ func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value 
 	result := info
 
 	return &result, nil
+}
+
+// seedInitialVersion appends the CreateSecret initial version to a freshly built
+// secret and gives it the AWSCURRENT label. The version id is the caller's
+// ClientRequestToken when set (AWS reuses it as the version id), else a fresh
+// UUID.
+//
+//nolint:gocritic // hugeParam: cfg matches the CreateSecret call site.
+func (m *Mock) seedInitialVersion(
+	ctx context.Context, sd *secretData, cfg driver.SecretConfig, value []byte, now string,
+) error {
+	stored, err := m.encrypt(ctx, cfg.KMSKeyID, value)
+	if err != nil {
+		return err
+	}
+
+	versionID := cfg.ClientRequestToken
+	if versionID == "" {
+		versionID = idgen.UUID()
+	}
+
+	sd.versions = []driver.SecretVersion{{
+		VersionID: versionID,
+		Value:     stored,
+		CreatedAt: now,
+		Current:   true,
+	}}
+	sd.stages[stageCurrent] = versionID
+
+	return nil
 }
 
 // createSecretConflict handles CreateSecret when a secret already exists under

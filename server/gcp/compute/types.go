@@ -1,5 +1,44 @@
 package compute
 
+import (
+	"bytes"
+	"strconv"
+)
+
+// flexInt decodes an integer that GCP clients may send as either a quoted
+// string ("20") or a bare JSON number (20). Real GCP's compute API accepts both
+// for size fields (sizeGb, diskSizeGb): the typed google.golang.org/api client
+// marshals int64 ",string" fields as quoted strings, while the Terraform google
+// provider builds its request bodies from a map[string]interface{} and marshals
+// the raw number unquoted. A plain `int` with a `,string` struct tag rejects the
+// unquoted form ("invalid use of ,string struct tag"), so the emulator must
+// accept either encoding.
+type flexInt int
+
+// UnmarshalJSON accepts a JSON number, a quoted numeric string, or null/empty.
+func (f *flexInt) UnmarshalJSON(b []byte) error {
+	b = bytes.TrimSpace(b)
+	if len(b) == 0 || bytes.Equal(b, []byte("null")) {
+		*f = 0
+		return nil
+	}
+
+	s := string(bytes.Trim(b, `"`))
+	if s == "" {
+		*f = 0
+		return nil
+	}
+
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		return err
+	}
+
+	*f = flexInt(n)
+
+	return nil
+}
+
 // GCP REST JSON shapes for compute#instance.
 //
 // Modeled on the public schema (https://cloud.google.com/compute/docs/reference/rest/v1/instances).

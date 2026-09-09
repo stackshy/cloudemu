@@ -206,6 +206,93 @@ func TestE2E_UndefinedRouteForbidden(t *testing.T) {
 	}
 }
 
+// TestE2E_DeleteLifecycle drives the full destroy path a Terraform
+// `terraform destroy` performs against a REST API: delete the integration, the
+// method, the stage, the deployment, and finally the resource — verifying each
+// step over the wire and that a re-GET afterward 404s.
+func TestE2E_DeleteLifecycle(t *testing.T) {
+	srv := newE2E(t)
+	base := srv.URL
+
+	api := doJSON(t, http.MethodPost, base+"/restapis", `{"name":"petstore"}`)
+	apiID, _ := api["id"].(string)
+	rootID, _ := api["rootResourceId"].(string)
+
+	res := doJSON(t, http.MethodPost, base+"/restapis/"+apiID+"/resources/"+rootID, `{"pathPart":"pets"}`)
+	resID, _ := res["id"].(string)
+
+	doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET", `{"authorizationType":"NONE"}`)
+
+	ig := doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET/integration", `{"type":"MOCK"}`)
+	// PutIntegration without timeoutInMillis defaults to AWS's 29s and returns
+	// it on the wire, so a Terraform refresh sees no drift on that attribute.
+	if to, _ := ig["timeoutInMillis"].(float64); to != 29000 {
+		t.Fatalf("integration timeoutInMillis = %v, want 29000", ig["timeoutInMillis"])
+	}
+
+	dep := doJSON(t, http.MethodPost, base+"/restapis/"+apiID+"/deployments", `{"stageName":"prod"}`)
+	depID, _ := dep["id"].(string)
+
+	// GetDeployment / GetDeployments / GetStages round-trip before teardown.
+	got := doJSON(t, http.MethodGet, base+"/restapis/"+apiID+"/deployments/"+depID, "")
+	if got["id"] != depID {
+		t.Fatalf("GetDeployment mismatch: %v", got)
+	}
+
+	deps := doJSON(t, http.MethodGet, base+"/restapis/"+apiID+"/deployments", "")
+	if items, _ := deps["item"].([]any); len(items) != 1 {
+		t.Fatalf("GetDeployments = %v, want 1 item", deps)
+	}
+
+	stages := doJSON(t, http.MethodGet, base+"/restapis/"+apiID+"/stages", "")
+	if items, _ := stages["item"].([]any); len(items) != 1 {
+		t.Fatalf("GetStages = %v, want 1 item", stages)
+	}
+
+	deleteOK(t, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET/integration")
+	deleteOK(t, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET")
+	deleteOK(t, base+"/restapis/"+apiID+"/stages/prod")
+	deleteOK(t, base+"/restapis/"+apiID+"/deployments/"+depID)
+	deleteOK(t, base+"/restapis/"+apiID+"/resources/"+resID)
+
+	if status := doStatus(t, http.MethodGet, base+"/restapis/"+apiID+"/resources/"+resID); status != http.StatusNotFound {
+		t.Fatalf("GetResource after delete status = %d, want 404", status)
+	}
+}
+
+func deleteOK(t *testing.T, url string) {
+	t.Helper()
+
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodDelete, url, nil)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("DELETE %s: %v", url, err)
+	}
+
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusAccepted {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("DELETE %s -> %d, want 202: %s", url, resp.StatusCode, body)
+	}
+}
+
+func doStatus(t *testing.T, method, url string) int {
+	t.Helper()
+
+	req, _ := http.NewRequestWithContext(context.Background(), method, url, nil)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("%s %s: %v", method, url, err)
+	}
+
+	defer resp.Body.Close()
+
+	return resp.StatusCode
+}
+
 // TestE2E_ControlPlaneRoundTrip verifies the management API list/get after create.
 func TestE2E_ControlPlaneRoundTrip(t *testing.T) {
 	srv := newE2E(t)
@@ -222,5 +309,57 @@ func TestE2E_ControlPlaneRoundTrip(t *testing.T) {
 	items, _ := list["item"].([]any)
 	if len(items) == 0 {
 		t.Fatalf("GetRestApis returned no items: %v", list)
+	}
+}
+
+// TestE2E_UpdatePatchRoundTrip exercises the PATCH (Update*) verbs across the
+// control plane the way Terraform does: a patchOperations document per object,
+// then a GET to confirm the mutation round-trips.
+func TestE2E_UpdatePatchRoundTrip(t *testing.T) {
+	srv := newE2E(t)
+	base := srv.URL
+
+	api := doJSON(t, http.MethodPost, base+"/restapis", `{"name":"orig"}`)
+	apiID, _ := api["id"].(string)
+	rootID, _ := api["rootResourceId"].(string)
+
+	// UpdateRestApi: rename + toggle disableExecuteApiEndpoint + set compression.
+	upd := doJSON(t, http.MethodPatch, base+"/restapis/"+apiID,
+		`{"patchOperations":[{"op":"replace","path":"/name","value":"renamed"},`+
+			`{"op":"replace","path":"/disableExecuteApiEndpoint","value":"true"},`+
+			`{"op":"replace","path":"/minimumCompressionSize","value":"1024"}]}`)
+	if upd["name"] != "renamed" || upd["disableExecuteApiEndpoint"] != true ||
+		upd["minimumCompressionSize"].(float64) != 1024 {
+		t.Fatalf("UpdateRestApi round-trip: %v", upd)
+	}
+
+	res := doJSON(t, http.MethodPost, base+"/restapis/"+apiID+"/resources/"+rootID, `{"pathPart":"pets"}`)
+	resID, _ := res["id"].(string)
+
+	doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET", `{"authorizationType":"NONE"}`)
+	doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET/integration", `{"type":"MOCK"}`)
+
+	// UpdateMethod + UpdateIntegration.
+	m := doJSON(t, http.MethodPatch, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET",
+		`{"patchOperations":[{"op":"replace","path":"/apiKeyRequired","value":"true"}]}`)
+	if m["apiKeyRequired"] != true {
+		t.Fatalf("UpdateMethod round-trip: %v", m)
+	}
+
+	ig := doJSON(t, http.MethodPatch, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/GET/integration",
+		`{"patchOperations":[{"op":"replace","path":"/timeoutInMillis","value":"5000"}]}`)
+	if ig["timeoutInMillis"].(float64) != 5000 {
+		t.Fatalf("UpdateIntegration round-trip: %v", ig)
+	}
+
+	// UpdateStage variables + description.
+	doJSON(t, http.MethodPost, base+"/restapis/"+apiID+"/deployments", `{"stageName":"prod"}`)
+
+	st := doJSON(t, http.MethodPatch, base+"/restapis/"+apiID+"/stages/prod",
+		`{"patchOperations":[{"op":"replace","path":"/description","value":"live"},`+
+			`{"op":"add","path":"/variables/env","value":"staging"}]}`)
+	vars, _ := st["variables"].(map[string]any)
+	if st["description"] != "live" || vars["env"] != "staging" {
+		t.Fatalf("UpdateStage round-trip: %v", st)
 	}
 }

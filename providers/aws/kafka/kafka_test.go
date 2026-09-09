@@ -300,9 +300,16 @@ func TestDescribeMissingConfiguration(t *testing.T) {
 
 	_, err := m.DescribeConfiguration(context.Background(), "arn:aws:kafka:us-east-1:123456789012:configuration/nope/x")
 
+	// Real MSK reports a missing configuration ARN as a BadRequestException whose
+	// message contains "Configuration ARN does not exist" (not a 404); Terraform's
+	// delete waiter keys off exactly that.
 	var apiErr *driver.APIError
-	if !errors.As(err, &apiErr) || apiErr.Exception != driver.ExNotFound {
-		t.Fatalf("want NotFoundException, got %v", err)
+	if !errors.As(err, &apiErr) || apiErr.Exception != driver.ExBadRequest {
+		t.Fatalf("want BadRequestException, got %v", err)
+	}
+
+	if !strings.Contains(err.Error(), "Configuration ARN does not exist") {
+		t.Fatalf("want message containing %q, got %v", "Configuration ARN does not exist", err)
 	}
 }
 
@@ -397,7 +404,7 @@ func TestCreateClusterV2Validation(t *testing.T) {
 }
 
 // TestUpdateMutatesRecordsOperation asserts UpdateBrokerCount mutates the
-// cluster, records a COMPLETED operation, bumps the version, and a later
+// cluster, records an UPDATE_COMPLETE operation, bumps the version, and a later
 // Describe reflects the new count.
 func TestUpdateMutatesRecordsOperation(t *testing.T) {
 	m := newMock(t)
@@ -413,7 +420,7 @@ func TestUpdateMutatesRecordsOperation(t *testing.T) {
 		t.Fatalf("UpdateBrokerCount: %v", err)
 	}
 
-	if op.ClusterARN != c.ClusterARN || op.OperationState != "COMPLETED" || op.OperationType != "UPDATE_BROKER_COUNT" {
+	if op.ClusterARN != c.ClusterARN || op.OperationState != "UPDATE_COMPLETE" || op.OperationType != "UPDATE_BROKER_COUNT" {
 		t.Fatalf("unexpected operation: %+v", op)
 	}
 

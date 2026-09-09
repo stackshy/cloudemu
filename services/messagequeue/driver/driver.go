@@ -48,6 +48,22 @@ type QueueConfig struct {
 	// (redrivePermission=allowAll|denyAll|byQueue + sourceQueueArns). It is
 	// persisted and echoed by GetQueueAttributes.
 	RedriveAllowPolicy string
+	// Policy is the queue's access-policy JSON document, accepted at CreateQueue
+	// and echoed by GetQueueAttributes.
+	Policy string
+	// KmsMasterKeyID selects SSE-KMS for the queue (the KMS key id/alias). Setting
+	// it is mutually exclusive with SqsManagedSseEnabled.
+	KmsMasterKeyID string
+	// KmsDataKeyReusePeriodSeconds is the SSE-KMS data-key reuse window in seconds
+	// (60-86400). Zero falls back to the SQS default of 300.
+	KmsDataKeyReusePeriodSeconds int
+	// SqsManagedSseEnabled selects SSE-SQS (SQS-owned keys). Mutually exclusive
+	// with KmsMasterKeyID.
+	SqsManagedSseEnabled bool
+	// DeduplicationScope (FIFO only) is "queue" (default) or "messageGroup".
+	DeduplicationScope string
+	// FifoThroughputLimit (FIFO only) is "perQueue" (default) or "perMessageGroupId".
+	FifoThroughputLimit string
 	// VisibilityTimeoutSet reports that VisibilityTimeout was supplied explicitly,
 	// so the AWS provider can distinguish an explicit 0 (kept as 0) from an
 	// omitted value (defaulted to 30). The wire handler sets it from attribute
@@ -231,6 +247,15 @@ type QueueAttributes struct {
 	ApproximateDelayedCount       int
 	Policy                        string
 	KmsMasterKeyID                string
+	// KmsDataKeyReusePeriodSeconds is the SSE-KMS data-key reuse window (seconds);
+	// meaningful only when KmsMasterKeyID is set.
+	KmsDataKeyReusePeriodSeconds int
+	// SqsManagedSseEnabled reports whether SSE-SQS (SQS-owned keys) is enabled.
+	SqsManagedSseEnabled bool
+	// DeduplicationScope and FifoThroughputLimit are FIFO-only high-throughput
+	// attributes ("queue"/"messageGroup" and "perQueue"/"perMessageGroupId").
+	DeduplicationScope  string
+	FifoThroughputLimit string
 }
 
 // MessageMoveTask describes an SQS dead-letter-queue redrive task, as reported

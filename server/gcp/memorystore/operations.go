@@ -27,11 +27,14 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt rout
 		return
 	}
 
+	tags := instanceTags(&body, nil, nil)
+	tags[locationTag] = rt.location
+
 	info, err := h.cache.CreateCache(r.Context(), cachedriver.CacheConfig{
 		Name:     instanceID,
 		Engine:   "redis",
 		NodeType: body.Tier,
-		Tags:     instanceTags(&body, nil, nil),
+		Tags:     tags,
 		Scope:    scope.Scope{Project: rt.project},
 	})
 	if err != nil {
@@ -52,7 +55,9 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt rout
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
-// getInstance handles GET .../instances/{i} — Get.
+// getInstance handles GET .../instances/{i} — Get. The instance id is unique
+// per (project, location), so an id that exists in a different location or
+// project is reported as not found here rather than surfacing the wrong resource.
 func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, rt route) {
 	info, err := h.cache.GetCache(r.Context(), rt.name)
 	if err != nil {
@@ -60,7 +65,20 @@ func (h *Handler) getInstance(w http.ResponseWriter, r *http.Request, rt route) 
 		return
 	}
 
+	if !instanceInScope(info, rt.project, rt.location) {
+		writeInstanceNotFound(w, rt)
+		return
+	}
+
 	gcprest.WriteJSON(w, http.StatusOK, toInstanceJSON(rt.project, rt.location, rt.name, info))
+}
+
+// writeInstanceNotFound reports a location/project-scoped miss with the full
+// resource name, matching real Memorystore's NOT_FOUND for an id that isn't in
+// the addressed location.
+func writeInstanceNotFound(w http.ResponseWriter, rt route) {
+	gcprest.WriteError(w, http.StatusNotFound, "notFound",
+		"instance "+instanceResourceName(rt.project, rt.location, rt.name)+" not found")
 }
 
 // listInstances handles GET .../instances — List, scoped to the request's
@@ -78,10 +96,17 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, rt route
 
 	out := make([]instanceJSON, 0, len(infos))
 	for i := range infos {
-		// CacheInfo.Name carries the driver's own resource id; the short
-		// instance id (the map key) is recovered from its trailing segment.
+		// List is per-location: a specific location returns only that region's
+		// instances, while the "-" wildcard aggregates every region (each reported
+		// under its actual location). CacheInfo.Name carries the driver's own
+		// resource id; the short instance id (the map key) is its trailing segment.
+		loc := resolveLocation(rt.location, infos[i].Tags)
+		if rt.location != allLocations && rt.location != loc {
+			continue
+		}
+
 		id := shortInstanceID(infos[i].Name)
-		inst := toInstanceJSON(rt.project, rt.location, id, &infos[i])
+		inst := toInstanceJSON(rt.project, loc, id, &infos[i])
 
 		if matchesFilter(&inst, filter) {
 			out = append(out, inst)
@@ -190,6 +215,11 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route
 		return
 	}
 
+	if !instanceInScope(existing, rt.project, rt.location) {
+		writeInstanceNotFound(w, rt)
+		return
+	}
+
 	var body instanceJSON
 	if !gcprest.DecodeJSON(w, r, &body) {
 		return
@@ -227,6 +257,17 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route
 // deleteInstance handles DELETE .../instances/{i} — Delete. The operation
 // completes inline, so a done=true Operation with an empty response is returned.
 func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, rt route) {
+	existing, err := h.cache.GetCache(r.Context(), rt.name)
+	if err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	if !instanceInScope(existing, rt.project, rt.location) {
+		writeInstanceNotFound(w, rt)
+		return
+	}
+
 	if err := h.cache.DeleteCache(r.Context(), rt.name); err != nil {
 		gcprest.WriteCErr(w, err)
 		return

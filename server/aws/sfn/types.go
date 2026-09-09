@@ -87,15 +87,26 @@ func mapToTags(m map[string]string) []tag {
 // --- request shapes ---
 
 type createStateMachineRequest struct {
-	Name                 string `json:"name"`
-	Definition           string `json:"definition"`
-	RoleArn              string `json:"roleArn"`
-	Type                 string `json:"type"`
-	Description          string `json:"versionDescription"`
-	Publish              bool   `json:"publish"`
-	Tags                 []tag  `json:"tags"`
-	LoggingConfiguration any    `json:"loggingConfiguration"`
-	TracingConfiguration any    `json:"tracingConfiguration"`
+	Name                    string          `json:"name"`
+	Definition              string          `json:"definition"`
+	RoleArn                 string          `json:"roleArn"`
+	Type                    string          `json:"type"`
+	Description             string          `json:"versionDescription"`
+	Publish                 bool            `json:"publish"`
+	Tags                    []tag           `json:"tags"`
+	LoggingConfiguration    json.RawMessage `json:"loggingConfiguration"`
+	TracingConfiguration    json.RawMessage `json:"tracingConfiguration"`
+	EncryptionConfiguration json.RawMessage `json:"encryptionConfiguration"`
+}
+
+// rawJSON renders an optional JSON-object request field as the verbatim string
+// the driver stores, treating an absent field or an explicit null as unset.
+func rawJSON(m json.RawMessage) string {
+	if len(m) == 0 || string(m) == "null" {
+		return ""
+	}
+
+	return string(m)
 }
 
 type stateMachineArnRequest struct {
@@ -103,11 +114,14 @@ type stateMachineArnRequest struct {
 }
 
 type updateStateMachineRequest struct {
-	StateMachineArn    string `json:"stateMachineArn"`
-	Definition         string `json:"definition"`
-	RoleArn            string `json:"roleArn"`
-	Publish            bool   `json:"publish"`
-	VersionDescription string `json:"versionDescription"`
+	StateMachineArn         string          `json:"stateMachineArn"`
+	Definition              string          `json:"definition"`
+	RoleArn                 string          `json:"roleArn"`
+	Publish                 bool            `json:"publish"`
+	VersionDescription      string          `json:"versionDescription"`
+	LoggingConfiguration    json.RawMessage `json:"loggingConfiguration"`
+	TracingConfiguration    json.RawMessage `json:"tracingConfiguration"`
+	EncryptionConfiguration json.RawMessage `json:"encryptionConfiguration"`
 }
 
 type startExecutionRequest struct {
@@ -266,18 +280,19 @@ type createStateMachineResponse struct {
 }
 
 type describeStateMachineResponse struct {
-	StateMachineArn      string          `json:"stateMachineArn"`
-	Name                 string          `json:"name"`
-	Definition           string          `json:"definition"`
-	RoleArn              string          `json:"roleArn"`
-	Type                 string          `json:"type"`
-	Status               string          `json:"status"`
-	Description          string          `json:"description,omitempty"`
-	RevisionID           string          `json:"revisionId,omitempty"`
-	CreationDate         *float64        `json:"creationDate"`
-	Label                string          `json:"label,omitempty"`
-	LoggingConfiguration json.RawMessage `json:"loggingConfiguration"`
-	TracingConfiguration json.RawMessage `json:"tracingConfiguration"`
+	StateMachineArn         string          `json:"stateMachineArn"`
+	Name                    string          `json:"name"`
+	Definition              string          `json:"definition"`
+	RoleArn                 string          `json:"roleArn"`
+	Type                    string          `json:"type"`
+	Status                  string          `json:"status"`
+	Description             string          `json:"description,omitempty"`
+	RevisionID              string          `json:"revisionId,omitempty"`
+	CreationDate            *float64        `json:"creationDate"`
+	Label                   string          `json:"label,omitempty"`
+	LoggingConfiguration    json.RawMessage `json:"loggingConfiguration"`
+	TracingConfiguration    json.RawMessage `json:"tracingConfiguration"`
+	EncryptionConfiguration json.RawMessage `json:"encryptionConfiguration"`
 }
 
 // defaultLoggingConfig / defaultTracingConfig are the values real
@@ -296,6 +311,17 @@ func tracingConfigOrDefault(raw string) json.RawMessage {
 	}
 
 	return json.RawMessage(`{"enabled":false}`)
+}
+
+// encryptionConfigOrDefault mirrors real DescribeStateMachine, which returns an
+// AWS_OWNED_KEY encryption configuration for a state machine created without a
+// customer-managed key.
+func encryptionConfigOrDefault(raw string) json.RawMessage {
+	if raw != "" {
+		return json.RawMessage(raw)
+	}
+
+	return json.RawMessage(`{"type":"AWS_OWNED_KEY"}`)
 }
 
 type updateStateMachineResponse struct {

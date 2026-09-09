@@ -5,29 +5,58 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 
 | GCP service | Portable service | Operations |
 | --- | --- | --- |
+| [APIGateway](./apigateway.md) | `apigatewaygcp` | 16 |
+| [AccessContextManager](./accesscontextmanager.md) | `accesscontextmanager` | 17 |
 | [AlloyDB](./alloydb.md) | `relationaldb` | 21 |
 | [ArtifactRegistry](./artifactregistry.md) | `containerregistry` | 15 |
+| [BigQuery](./bigquery.md) | `bigquery` | 12 |
 | [Bigtable](./bigtable.md) | `bigtable` | 38 |
+| [BinaryAuthorization](./binaryauthorization.md) | `binaryauthorization` | 10 |
+| [CertificateManager](./certificatemanager.md) | `certificatemanager` | 16 |
 | [CloudDNS](./clouddns.md) | `dns` | 16 |
+| [CloudDeploy](./clouddeploy.md) | `clouddeploy` | 11 |
 | [CloudFunctions](./cloudfunctions.md) | `serverless` | 27 |
+| [CloudIDS](./cloudids.md) | `cloudids` | 6 |
 | [CloudLogging](./cloudlogging.md) | `logging` | 17 |
 | [CloudMonitoring](./cloudmonitoring.md) | `monitoring` | 12 |
 | [CloudRun](./cloudrun.md) | `cloudrun` | 18 |
 | [CloudSQL](./cloudsql.md) | — (provider-native) | 21 |
+| [CloudTasks](./cloudtasks.md) | `cloudtasks` | 11 |
 | [Cloudasset](./cloudasset.md) | — (provider-native) | 11 |
 | [Cloudbilling](./cloudbilling.md) | — (provider-native) | 14 |
+| [Composer](./composer.md) | `composer` | 6 |
+| [DataCatalog](./datacatalog.md) | `datacatalog` | 21 |
+| [DataFusion](./datafusion.md) | `datafusion` | 9 |
+| [Dataform](./dataform.md) | `dataform` | 5 |
+| [Dataplex](./dataplex.md) | `dataplex` | 16 |
+| [Dataproc](./dataproc.md) | `dataproc` | 6 |
+| [Datastream](./datastream.md) | `datastream` | 11 |
 | [Eventarc](./eventarc.md) | `eventbus` | 16 |
 | [FCM](./fcm.md) | `notification` | 9 |
+| [Filestore](./filestore.md) | — (provider-native) | 5 |
 | [Firestore](./firestore.md) | `database` | 24 |
 | [GCE](./gce.md) | `compute` | 37 |
 | [GCS](./gcs.md) | `storage` | 35 |
 | [GKE](./gke.md) | — (provider-native) | 18 |
+| [GKEBackup](./gkebackup.md) | `gkebackup` | 11 |
+| [GKEHub](./gkehub.md) | `gkehub` | 16 |
 | [IAM](./iam.md) | `iam` | 40 |
+| [KMS](./kms.md) | — (provider-native) | 17 |
 | [LB](./lb.md) | `loadbalancer` | 19 |
 | [LRO](./lro.md) | — (provider-native) | 1 |
 | [Memorystore](./memorystore.md) | `cache` | 17 |
+| [Metastore](./metastore.md) | `metastore` | 6 |
+| [NetworkConnectivity](./networkconnectivity.md) | `networkconnectivity` | 11 |
+| [PrivateCA](./privateca.md) | `privateca` | 26 |
 | [PubSub](./pubsub.md) | `messagequeue` | 14 |
+| [Resourcemanager](./resourcemanager.md) | — (provider-native) | 3 |
+| [Scheduler](./scheduler.md) | `scheduler` | 8 |
 | [SecretManager](./secretmanager.md) | `secrets` | 7 |
+| [SecureSourceManager](./securesourcemanager.md) | `securesourcemanager` | 10 |
+| [ServiceDirectory](./servicedirectory.md) | `servicedirectory` | 15 |
 | [Servicenetworking](./servicenetworking.md) | — (provider-native) | 3 |
+| [Spanner](./spanner.md) | `spanner` | 12 |
 | [VPC](./vpc.md) | `networking` | 57 |
-| [VertexAI](./vertexai.md) | `vertexai` | 125 |
+| [VPCAccess](./vpcaccess.md) | `vpcaccess` | 6 |
+| [VertexAI](./vertexai.md) | `vertexai` | 127 |
+| [Workflows](./workflows.md) | `workflows` | 6 |

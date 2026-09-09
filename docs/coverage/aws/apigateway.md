@@ -3,7 +3,7 @@
 
 AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS index](./README.md)
 
-## Operations (15)
+## Operations (29)
 
 | Operation | Description |
 | --- | --- |
@@ -11,7 +11,14 @@ AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS ind
 | `CreateResource` |  |
 | `CreateRestAPI` |  |
 | `CreateStage` |  |
+| `DeleteDeployment` | DeleteDeployment removes a deployment. It fails with a FailedPrecondition |
+| `DeleteIntegration` |  |
+| `DeleteMethod` |  |
+| `DeleteResource` | DeleteResource removes a resource and its whole descendant subtree, as |
 | `DeleteRestAPI` |  |
+| `DeleteStage` |  |
+| `GetDeployment` |  |
+| `GetDeployments` |  |
 | `GetIntegration` |  |
 | `GetMethod` |  |
 | `GetResource` |  |
@@ -19,9 +26,16 @@ AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS ind
 | `GetRestAPI` |  |
 | `GetRestAPIs` |  |
 | `GetStage` |  |
+| `GetStages` |  |
 | `InvokeRoute` | InvokeRoute resolves req.HTTPMethod+req.Path against the deployed stage's |
 | `PutIntegration` |  |
 | `PutMethod` |  |
+| `UpdateDeployment` | UpdateDeployment applies a patchOperations document to a deployment |
+| `UpdateIntegration` | UpdateIntegration applies a patchOperations document to an integration. |
+| `UpdateMethod` | UpdateMethod applies a patchOperations document to a method. |
+| `UpdateResource` | UpdateResource applies a patchOperations document to a resource (rename via |
+| `UpdateRestAPI` | UpdateRestAPI applies a patchOperations document to a REST API and returns |
+| `UpdateStage` | UpdateStage applies a patchOperations document to a stage (/description, |
 
 ## Not in scope
 

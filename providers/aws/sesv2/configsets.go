@@ -8,19 +8,27 @@ import (
 )
 
 // CreateConfigurationSet registers a configuration set.
+//
+//nolint:gocritic // in is passed by value to match the driver interface.
 func (m *Mock) CreateConfigurationSet(_ context.Context, in driver.CreateConfigurationSetInput) error {
 	if in.Name == "" {
 		return cerrors.New(cerrors.InvalidArgument, "ConfigurationSetName is required")
 	}
 
 	cs := driver.ConfigurationSet{
-		Name:           in.Name,
-		SendingEnabled: in.SendingEnabled,
-		ReputationOn:   in.ReputationOn,
-		TLSPolicy:      in.TLSPolicy,
-		SendingPoolN:   in.SendingPoolN,
-		CreatedAt:      m.now(),
-		Tags:           copyTags(in.Tags),
+		Name:                in.Name,
+		SendingEnabled:      in.SendingEnabled,
+		ReputationOn:        in.ReputationOn,
+		TLSPolicy:           in.TLSPolicy,
+		SendingPoolN:        in.SendingPoolN,
+		SuppressedReasons:   append([]string(nil), in.SuppressedReasons...),
+		CustomRedirectDom:   in.CustomRedirectDom,
+		TrackingHTTPSPolicy: in.TrackingHTTPSPolicy,
+		VdmEnabled:          in.VdmConfigured,
+		VdmEngagement:       in.VdmEngagement,
+		VdmGuardianDelivery: in.VdmGuardianDelivery,
+		CreatedAt:           m.now(),
+		Tags:                copyTags(in.Tags),
 	}
 
 	if !m.configSets.SetIfAbsent(in.Name, &configSetData{cs: cs}) {
@@ -42,6 +50,8 @@ func (m *Mock) GetConfigurationSet(_ context.Context, name string) (*driver.Conf
 
 	out := d.cs
 	out.Tags = copyTags(d.cs.Tags)
+	out.SuppressedReasons = append([]string(nil), d.cs.SuppressedReasons...)
+	out.EventDestinations = append([]driver.EventDestination(nil), d.cs.EventDestinations...)
 
 	return &out, nil
 }

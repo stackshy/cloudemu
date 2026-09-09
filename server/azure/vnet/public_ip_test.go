@@ -216,6 +216,82 @@ func TestSDKPublicIPFieldsRoundTrip(t *testing.T) {
 	}
 }
 
+// TestSDKPublicIPSKUTierAndVersionRoundTrip guards sku.tier and
+// publicIPAddressVersion — both dropped before — round-tripping on GET, so
+// azurerm's sku_tier and ip_version do not perpetually diff. An explicit
+// tier/version is echoed back verbatim; an omitted one reports the ARM defaults
+// (Regional, IPv4) rather than an empty string.
+func TestSDKPublicIPSKUTierAndVersionRoundTrip(t *testing.T) {
+	ts := newVNetServer(t)
+	ctx := context.Background()
+
+	pips, err := armnetwork.NewPublicIPAddressesClient("sub-1", fakeCred{}, clientOpts(ts))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Explicit SKU (name+tier) and IP version echo back verbatim.
+	p, err := pips.BeginCreateOrUpdate(ctx, "rg-1", "pip-sku", armnetwork.PublicIPAddress{
+		Location: to.Ptr("eastus"),
+		SKU: &armnetwork.PublicIPAddressSKU{
+			Name: to.Ptr(armnetwork.PublicIPAddressSKUNameStandard),
+			Tier: to.Ptr(armnetwork.PublicIPAddressSKUTierRegional),
+		},
+		Properties: &armnetwork.PublicIPAddressPropertiesFormat{
+			PublicIPAddressVersion:   to.Ptr(armnetwork.IPVersionIPv4),
+			PublicIPAllocationMethod: to.Ptr(armnetwork.IPAllocationMethodStatic),
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	pollDone(t, p)
+
+	got, err := pips.Get(ctx, "rg-1", "pip-sku", nil)
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if got.SKU == nil || got.SKU.Tier == nil || *got.SKU.Tier != armnetwork.PublicIPAddressSKUTierRegional {
+		t.Errorf("sku.tier=%v want Regional", got.SKU)
+	}
+
+	if got.Properties == nil || got.Properties.PublicIPAddressVersion == nil ||
+		*got.Properties.PublicIPAddressVersion != armnetwork.IPVersionIPv4 {
+		t.Errorf("publicIPAddressVersion=%v want IPv4", got.Properties)
+	}
+
+	// Omitting SKU/version/idleTimeout still reports the ARM defaults, not empty.
+	dp, err := pips.BeginCreateOrUpdate(ctx, "rg-1", "pip-defaults", armnetwork.PublicIPAddress{
+		Location: to.Ptr("eastus"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("create defaults: %v", err)
+	}
+
+	pollDone(t, dp)
+
+	def, err := pips.Get(ctx, "rg-1", "pip-defaults", nil)
+	if err != nil {
+		t.Fatalf("get defaults: %v", err)
+	}
+
+	if def.SKU == nil || def.SKU.Tier == nil || *def.SKU.Tier != armnetwork.PublicIPAddressSKUTierRegional {
+		t.Errorf("default sku.tier=%v want Regional", def.SKU)
+	}
+
+	if def.Properties == nil || def.Properties.PublicIPAddressVersion == nil ||
+		*def.Properties.PublicIPAddressVersion != armnetwork.IPVersionIPv4 {
+		t.Errorf("default publicIPAddressVersion=%v want IPv4", def.Properties)
+	}
+
+	if def.Properties == nil || def.Properties.IdleTimeoutInMinutes == nil ||
+		*def.Properties.IdleTimeoutInMinutes != 4 {
+		t.Errorf("default idleTimeoutInMinutes=%v want 4", def.Properties)
+	}
+}
+
 // TestSDKPublicIPIPConfigurationBackref guards the missing ipConfiguration
 // back-reference: once a NIC attaches a public IP, a Get on that address must
 // report the NIC's ipConfiguration id.

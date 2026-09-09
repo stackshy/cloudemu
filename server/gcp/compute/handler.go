@@ -35,11 +35,16 @@ const (
 	resourceSnapshots  = "snapshots"
 	resourceImages     = "images"
 	resourceMachineTyp = "machineTypes"
+	resourceMIGs       = "instanceGroupManagers"
 )
 
 // actionSetLabels is the lowercased setLabels verb, shared by the instance,
 // disk, image, and snapshot POST-action routers.
 const actionSetLabels = "setlabels"
+
+// actionResize is the lowercased resize verb, shared by the disk and instance-
+// group-manager POST-action routers.
+const actionResize = "resize"
 
 // Handler serves GCP Compute Engine REST requests for instances and zone
 // operations.
@@ -80,11 +85,27 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceInstances, resourceOperations, resourceDisks, resourceSnapshots, resourceImages, resourceMachineTyp:
+	case resourceInstances, resourceOperations, resourceDisks, resourceSnapshots,
+		resourceImages, resourceMachineTyp, resourceMIGs:
+		return true
+	}
+
+	// A bare zone/region path (.../zones/{z} or .../regions/{r}, no resource
+	// type) is the zones.get / regions.get endpoint — Terraform resolves the
+	// zone via zones.get before creating an instance.
+	if isScopeResource(&rp) {
 		return true
 	}
 
 	return false
+}
+
+// isScopeResource reports whether rp addresses a zone or region resource
+// itself (".../zones/{z}" / ".../regions/{r}" with no trailing resource type),
+// i.e. the zones.get / regions.get endpoint.
+func isScopeResource(rp *gcprest.ResourcePath) bool {
+	return rp.ResourceType == "" && rp.ResourceName == "" && rp.Action == "" &&
+		rp.ScopeName != "" && (rp.Scope == gcprest.ScopeZones || rp.Scope == gcprest.ScopeRegions)
 }
 
 // ServeHTTP routes the parsed path to the matching operation.
@@ -97,6 +118,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	if rp.Scope == gcprest.ScopeAggregated {
 		h.serveAggregated(w, r, rp)
+		return
+	}
+
+	if isScopeResource(&rp) {
+		serveScopeResource(w, r, rp)
 		return
 	}
 
@@ -127,6 +153,9 @@ func (h *Handler) serveAggregated(w http.ResponseWriter, r *http.Request, rp gcp
 		case resourceDisks:
 			h.aggregatedListDisks(w, r, rp)
 			return
+		case resourceMIGs:
+			h.aggregatedListMIGs(w, r, rp)
+			return
 		}
 	}
 
@@ -149,6 +178,8 @@ func (h *Handler) routeResource(w http.ResponseWriter, r *http.Request, rp gcpre
 		h.serveImagesRoute(w, r, rp)
 	case resourceMachineTyp:
 		serveMachineTypesRoute(w, r, rp)
+	case resourceMIGs:
+		h.serveInstanceGroupManagersRoute(w, r, rp)
 	default:
 		return false
 	}
@@ -251,7 +282,7 @@ func (h *Handler) serveDisksRoute(w http.ResponseWriter, r *http.Request, rp gcp
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) serveDiskAction(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
 	switch strings.ToLower(rp.Action) {
-	case "resize":
+	case actionResize:
 		h.resizeDisk(w, r, rp)
 	case actionSetLabels:
 		h.setDiskLabels(w, r, rp)
@@ -361,15 +392,21 @@ func (h *Handler) dispatchInstanceMutationVerb(w http.ResponseWriter, r *http.Re
 	}
 }
 
-// serveOperations handles GET on operations/{name}. Since the mock executes
-// synchronously, a known operation always reads back DONE. An operation name
-// that was never minted (a bogus poll, `gcloud compute operations describe
-// <bogus>`) is 404, matching real GCP, rather than a fabricated DONE — provided
-// a shared registry is wired (a nil registry keeps the legacy allow-all).
+// serveOperations handles GET on operations/{name} and the POST
+// operations/{name}/wait verb. Since the mock executes synchronously, a known
+// operation always reads back DONE. gcloud and the typed google clients confirm
+// every mutation by calling zoneOperations.wait (a POST that blocks until the
+// operation is DONE, then returns it) rather than polling GET, so without wait
+// support `gcloud compute instances stop/start` (and every other mutation)
+// reports a failure even though the state changed. An operation name that was
+// never minted (a bogus poll, `gcloud compute operations describe <bogus>`) is
+// 404, matching real GCP, rather than a fabricated DONE — provided a shared
+// registry is wired (a nil registry keeps the legacy allow-all).
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) serveOperations(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
-	if r.Method != http.MethodGet {
+	isWait := r.Method == http.MethodPost && strings.EqualFold(rp.Action, "wait")
+	if r.Method != http.MethodGet && !isWait {
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 		return
 	}

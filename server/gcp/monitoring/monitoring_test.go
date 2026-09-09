@@ -3,6 +3,7 @@ package monitoring_test
 import (
 	"bytes"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -235,5 +236,72 @@ func TestMonitoringNonThresholdCondition(t *testing.T) {
 	c0, _ := conds[0].(map[string]any)
 	if _, ok := c0["conditionAbsent"]; !ok {
 		t.Errorf("conditionAbsent dropped on round-trip: %+v", c0)
+	}
+}
+
+// TestMonitoringErrorMessagesOmitCodePrefix guards writeErr (server/gcp/monitoring)
+// against baking cloudemu's internal cerrors code name (e.g. "NotFound: ...")
+// into the wire error message an SDK caller sees. Real Cloud Monitoring never
+// prefixes its error messages with an internal error-taxonomy name.
+func TestMonitoringErrorMessagesOmitCodePrefix(t *testing.T) {
+	cloudP := cloudemu.NewGCP()
+	srv := gcpserver.New(gcpserver.Drivers{Monitoring: cloudP.CloudMonitoring})
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	const collURL = "/v3/projects/p1/alertPolicies"
+
+	t.Run("NotFound Get missing policy", func(t *testing.T) {
+		resp, err := ts.Client().Get(ts.URL + collURL + "/does-not-exist")
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("status=%d, want 404", resp.StatusCode)
+		}
+
+		assertMonitoringErrorHasNoCodePrefix(t, resp.Body)
+	})
+
+	t.Run("NotFound Delete missing policy", func(t *testing.T) {
+		delReq, _ := http.NewRequest(http.MethodDelete, ts.URL+collURL+"/does-not-exist", http.NoBody)
+
+		resp, err := ts.Client().Do(delReq)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusNotFound {
+			t.Errorf("status=%d, want 404", resp.StatusCode)
+		}
+
+		assertMonitoringErrorHasNoCodePrefix(t, resp.Body)
+	})
+}
+
+// assertMonitoringErrorHasNoCodePrefix decodes a Cloud Monitoring error
+// envelope and fails if its message contains one of cloudemu's internal
+// canonical error-code names followed by a colon — the shape err.Error()
+// produces for a *cerrors.Error, as opposed to cerrors.Message(err).
+func assertMonitoringErrorHasNoCodePrefix(t *testing.T, body io.Reader) {
+	t.Helper()
+
+	var out struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(body).Decode(&out); err != nil {
+		t.Fatalf("decode error envelope: %v", err)
+	}
+
+	for _, prefix := range []string{"NotFound:", "AlreadyExists:", "InvalidArgument:", "FailedPrecondition:", "Internal:"} {
+		if strings.Contains(out.Error.Message, prefix) {
+			t.Errorf("wire error message %q leaks internal code prefix %q", out.Error.Message, prefix)
+		}
 	}
 }

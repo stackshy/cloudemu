@@ -144,12 +144,19 @@ func (m *Mock) PutConfigurationSetSuppressionOptions(_ context.Context, configSe
 	})
 }
 
-// PutConfigurationSetTrackingOptions sets the custom redirect domain.
-func (m *Mock) PutConfigurationSetTrackingOptions(_ context.Context, configSet, customRedirectDomain string) error {
-	return m.withConfigSet(configSet, func(cs *driver.ConfigurationSet) { cs.CustomRedirectDom = customRedirectDomain })
+// PutConfigurationSetTrackingOptions sets the custom redirect domain and HTTPS policy.
+func (m *Mock) PutConfigurationSetTrackingOptions(_ context.Context, configSet, customRedirectDomain, httpsPolicy string) error {
+	return m.withConfigSet(configSet, func(cs *driver.ConfigurationSet) {
+		cs.CustomRedirectDom = customRedirectDomain
+		cs.TrackingHTTPSPolicy = httpsPolicy
+	})
 }
 
-// PutConfigurationSetVdmOptions enables VDM on the config set.
-func (m *Mock) PutConfigurationSetVdmOptions(_ context.Context, configSet string) error {
-	return m.withConfigSet(configSet, func(cs *driver.ConfigurationSet) { cs.VdmEnabled = true })
+// PutConfigurationSetVdmOptions sets VDM dashboard and guardian options on the config set.
+func (m *Mock) PutConfigurationSetVdmOptions(_ context.Context, configSet, engagementMetrics, optimizedSharedDelivery string) error {
+	return m.withConfigSet(configSet, func(cs *driver.ConfigurationSet) {
+		cs.VdmEnabled = true
+		cs.VdmEngagement = engagementMetrics
+		cs.VdmGuardianDelivery = optimizedSharedDelivery
+	})
 }

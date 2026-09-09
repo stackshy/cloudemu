@@ -70,6 +70,10 @@ const (
 // Handler serves GKE container-API REST requests against a gke.Mock backend.
 type Handler struct {
 	gke *gke.Mock
+	// migs (optional) keeps each node pool's backing compute MIG in sync so the
+	// pool's instanceGroupUrls resolve to a targetSize == node count. Nil when no
+	// compute driver is wired.
+	migs InstanceGroupManagerRegistrar
 }
 
 // New returns a GKE handler backed by m.

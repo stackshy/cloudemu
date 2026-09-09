@@ -2,6 +2,7 @@ package savingsplans_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/savingsplans"
 	sptypes "github.com/aws/aws-sdk-go-v2/service/savingsplans/types"
+	"github.com/aws/smithy-go"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -274,5 +276,51 @@ func TestTagsRoundTrip(t *testing.T) {
 
 	if after.Tags["team"] != "cost" {
 		t.Fatalf("team tag should survive untag: %v", after.Tags)
+	}
+}
+
+// TestCreateSavingsPlanUnknownOfferingIsNotFound proves CreateSavingsPlan
+// against an unknown savingsPlanOfferingId raises ResourceNotFoundException
+// (the error CreateSavingsPlan documents for this case), not a generic
+// ValidationException.
+func TestCreateSavingsPlanUnknownOfferingIsNotFound(t *testing.T) {
+	c, _ := newClient(t)
+
+	_, err := c.CreateSavingsPlan(context.Background(), &savingsplans.CreateSavingsPlanInput{
+		SavingsPlanOfferingId: aws.String("does-not-exist"),
+		Commitment:            aws.String("1.000"),
+	})
+	if err == nil {
+		t.Fatal("expected error creating a plan against an unknown offering")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ResourceNotFoundException" {
+		t.Fatalf("unknown offering error = %v, want ResourceNotFoundException", err)
+	}
+}
+
+// TestDescribeOfferingRatesFiltersByOfferingID proves
+// DescribeSavingsPlansOfferingRates honors the savingsPlanOfferingIds filter
+// instead of always returning every seeded offering's rate.
+func TestDescribeOfferingRatesFiltersByOfferingID(t *testing.T) {
+	c, _ := newClient(t)
+
+	const sageMakerOfferingID = "sp-offering-sagemaker-1yr-no"
+
+	out, err := c.DescribeSavingsPlansOfferingRates(context.Background(),
+		&savingsplans.DescribeSavingsPlansOfferingRatesInput{
+			SavingsPlanOfferingIds: []string{sageMakerOfferingID},
+		})
+	if err != nil {
+		t.Fatalf("DescribeSavingsPlansOfferingRates: %v", err)
+	}
+
+	if len(out.SearchResults) != 1 {
+		t.Fatalf("filtered rates = %d, want 1 (got %+v)", len(out.SearchResults), out.SearchResults)
+	}
+
+	if got := aws.ToString(out.SearchResults[0].SavingsPlanOffering.OfferingId); got != sageMakerOfferingID {
+		t.Fatalf("filtered rate offering id = %q, want %q", got, sageMakerOfferingID)
 	}
 }

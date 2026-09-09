@@ -322,3 +322,98 @@ func TestUpdateAppSettingsScoped(t *testing.T) {
 		t.Fatalf("wrong-rg update leaked through: %+v", unchanged.AppSettings)
 	}
 }
+
+// boolPtr is a *bool literal helper for the site_config tests.
+func boolPtr(b bool) *bool { return &b }
+
+// strPtr is a *string literal helper for the site_config PATCH tests.
+func strPtr(s string) *string { return &s }
+
+// TestSiteMetaConfigTrioRoundTrip covers the site_config trio (AlwaysOn,
+// FtpsState, MinTLSVersion): PUT stores them (including an explicit AlwaysOn
+// false), and a scoped GET reads them back unchanged.
+func TestSiteMetaConfigTrioRoundTrip(t *testing.T) {
+	m := newMetaMock()
+	ctx := context.Background()
+
+	created, err := m.UpsertSiteMeta(ctx, SiteMeta{
+		Name: "cfg1", Subscription: "sub1", ResourceGroup: "rgA", Location: "eastus",
+		AlwaysOn: boolPtr(false), FtpsState: "Disabled", MinTLSVersion: "1.2",
+	})
+	if err != nil {
+		t.Fatalf("upsert: %v", err)
+	}
+
+	if created.AlwaysOn == nil || *created.AlwaysOn {
+		t.Fatalf("AlwaysOn = %v, want explicit false", created.AlwaysOn)
+	}
+
+	got, err := m.GetSiteMeta(ctx, "sub1", "rgA", "cfg1")
+	if err != nil {
+		t.Fatalf("get: %v", err)
+	}
+
+	if got.AlwaysOn == nil || *got.AlwaysOn || got.FtpsState != "Disabled" || got.MinTLSVersion != "1.2" {
+		t.Fatalf("trio not preserved: alwaysOn=%v ftps=%q tls=%q", got.AlwaysOn, got.FtpsState, got.MinTLSVersion)
+	}
+
+	// The stored copy must not alias the returned pointer (COW safety).
+	*got.AlwaysOn = true
+
+	again, err := m.GetSiteMeta(ctx, "sub1", "rgA", "cfg1")
+	if err != nil {
+		t.Fatalf("re-get: %v", err)
+	}
+
+	if again.AlwaysOn == nil || *again.AlwaysOn {
+		t.Fatalf("mutating a returned AlwaysOn leaked into the store: %v", again.AlwaysOn)
+	}
+}
+
+// TestPatchSiteMetaConfigTrio covers PATCH partial semantics for the trio: a
+// PATCH that sets one field leaves the others untouched, and a PATCH that omits
+// the trio preserves all three.
+func TestPatchSiteMetaConfigTrio(t *testing.T) {
+	m := newMetaMock()
+	ctx := context.Background()
+
+	if _, err := m.UpsertSiteMeta(ctx, SiteMeta{
+		Name: "cfg2", Subscription: "sub1", ResourceGroup: "rgA", Location: "eastus",
+		AlwaysOn: boolPtr(false), FtpsState: "Disabled", MinTLSVersion: "1.2",
+	}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// PATCH AlwaysOn -> true only; ftps/minTls preserved.
+	patched, err := m.PatchSiteMeta(ctx, "sub1", "rgA", "cfg2", SiteMetaPatch{AlwaysOn: boolPtr(true)})
+	if err != nil {
+		t.Fatalf("patch alwaysOn: %v", err)
+	}
+
+	if patched.AlwaysOn == nil || !*patched.AlwaysOn || patched.FtpsState != "Disabled" || patched.MinTLSVersion != "1.2" {
+		t.Fatalf("partial patch clobbered siblings: alwaysOn=%v ftps=%q tls=%q",
+			patched.AlwaysOn, patched.FtpsState, patched.MinTLSVersion)
+	}
+
+	// PATCH ftps only; alwaysOn/minTls preserved.
+	patched, err = m.PatchSiteMeta(ctx, "sub1", "rgA", "cfg2", SiteMetaPatch{FtpsState: strPtr("FtpsOnly")})
+	if err != nil {
+		t.Fatalf("patch ftps: %v", err)
+	}
+
+	if patched.AlwaysOn == nil || !*patched.AlwaysOn || patched.FtpsState != "FtpsOnly" || patched.MinTLSVersion != "1.2" {
+		t.Fatalf("ftps patch clobbered siblings: alwaysOn=%v ftps=%q tls=%q",
+			patched.AlwaysOn, patched.FtpsState, patched.MinTLSVersion)
+	}
+
+	// PATCH with the trio omitted preserves everything.
+	patched, err = m.PatchSiteMeta(ctx, "sub1", "rgA", "cfg2", SiteMetaPatch{Location: strPtr("westus2")})
+	if err != nil {
+		t.Fatalf("patch location: %v", err)
+	}
+
+	if patched.AlwaysOn == nil || !*patched.AlwaysOn || patched.FtpsState != "FtpsOnly" || patched.MinTLSVersion != "1.2" {
+		t.Fatalf("trio-omitting patch dropped a field: alwaysOn=%v ftps=%q tls=%q",
+			patched.AlwaysOn, patched.FtpsState, patched.MinTLSVersion)
+	}
+}

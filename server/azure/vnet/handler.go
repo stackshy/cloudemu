@@ -78,6 +78,27 @@ const (
 	// subnet is associated with (set via the subnet's own routeTable property),
 	// mirroring armSubnetNSGTag.
 	armSubnetRouteTableTag = "cloudemu:azureSubnetRouteTable"
+	// armSubnetPENPTag / armSubnetPLSNPTag store a subnet's
+	// privateEndpointNetworkPolicies / privateLinkServiceNetworkPolicies
+	// settings. Real ARM always reports both on a subnet GET, defaulting to
+	// Disabled / Enabled respectively when a create omits them (verified against
+	// the Subnets REST reference), so a subnet stored without either tag reports
+	// the default rather than a dropped field.
+	armSubnetPENPTag  = "cloudemu:azureSubnetPENP"
+	armSubnetPLSNPTag = "cloudemu:azureSubnetPLSNP"
+	// armSubnetPrefixesTag records the full addressPrefixes list (comma-joined)
+	// a subnet was created/updated with via the plural addressPrefixes form —
+	// the form the azurerm provider always sends. The driver only stores a
+	// single CIDRBlock, so this tag preserves the multi-prefix list and the
+	// plural response form; its presence is what makes a subnet's GET echo
+	// addressPrefixes (plural) instead of addressPrefix (singular), matching
+	// real ARM's round-trip of whichever form the caller used.
+	armSubnetPrefixesTag = "cloudemu:azureSubnetPrefixes"
+	// defaultPENP / defaultPLSNP are the ARM defaults for a subnet's
+	// privateEndpointNetworkPolicies / privateLinkServiceNetworkPolicies when a
+	// create omits them.
+	defaultPENP  = "Disabled"
+	defaultPLSNP = "Enabled"
 	// armRouteTableTag / armRouteTableRGTag record a route table's ARM name and
 	// resource group on its driver anchor so it is addressable by (rg, name), the
 	// same way armNSGTag / armNSGRGTag scope network security groups.
@@ -86,6 +107,7 @@ const (
 	defaultLoc          = "eastus"
 	subResSubnets       = "subnets"
 	subResSecurityRules = "securityRules"
+	subResRoutes        = "routes"
 	subResVNetPeerings  = "virtualNetworkPeerings"
 	subResCheckIPAvail  = "CheckIPAddressAvailability"
 )
@@ -299,7 +321,7 @@ func (h *Handler) routeSubnet(w http.ResponseWriter, r *http.Request, rp azurear
 	}
 }
 
-//nolint:gocritic // rp is a request-scoped value
+//nolint:gocritic,dupl // rp is request-scoped; per-resource routers are the same method switch over a distinct type by design
 func (h *Handler) routeNSG(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
 	if rp.ResourceName == "" {
 		h.listNSGs(w, r, rp)
@@ -371,7 +393,7 @@ func (h *Handler) createVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 		// answers 400 InUseSubnetCannotBeDeleted, not the generic 409 WriteCErr
 		// would emit for FailedPrecondition.
 		if cerrors.IsFailedPrecondition(err) {
-			azurearm.WriteError(w, http.StatusBadRequest, "InUseSubnetCannotBeDeleted", err.Error())
+			azurearm.WriteError(w, http.StatusBadRequest, "InUseSubnetCannotBeDeleted", cerrors.Message(err))
 			return
 		}
 
@@ -390,6 +412,71 @@ func vnetPrefixes(req *vnetRequest) []string {
 	}
 
 	return req.Properties.AddressSpace.AddressPrefixes
+}
+
+// addressPrefixList returns a subnet request's address prefixes, accepting both
+// the singular addressPrefix and the plural addressPrefixes (the form the
+// azurerm provider always sends, for both inline and standalone subnets). The
+// plural form takes precedence when both are present, matching ARM; empty
+// entries are dropped.
+func (p *subnetRequestProps) addressPrefixList() []string {
+	if len(p.AddressPrefixes) > 0 {
+		out := make([]string, 0, len(p.AddressPrefixes))
+
+		for _, s := range p.AddressPrefixes {
+			if s != "" {
+				out = append(out, s)
+			}
+		}
+
+		return out
+	}
+
+	if p.AddressPrefix != "" {
+		return []string{p.AddressPrefix}
+	}
+
+	return nil
+}
+
+// primaryPrefix returns the first prefix in a list, or "" for an empty list —
+// the single CIDR the cross-cloud driver stores for a subnet.
+func primaryPrefix(prefixes []string) string {
+	if len(prefixes) > 0 {
+		return prefixes[0]
+	}
+
+	return ""
+}
+
+// pluralPrefixTag returns the comma-joined value for armSubnetPrefixesTag when a
+// subnet request used the plural addressPrefixes form, or "" when it used the
+// singular form (or none). An empty return clears the tag on update so a subnet
+// switched back to the singular form echoes addressPrefix again.
+func (p *subnetRequestProps) pluralPrefixTag() string {
+	list := p.addressPrefixList()
+	if len(p.AddressPrefixes) == 0 || len(list) == 0 {
+		return ""
+	}
+
+	return strings.Join(list, ",")
+}
+
+// validateSubnetCIDRs validates every candidate prefix a subnet request carries
+// (real ARM validates each), preserving the single-prefix error for a request
+// that carries none.
+func (h *Handler) validateSubnetCIDRs(ctx context.Context, vpcID, subnetName string, prefixes []string) error {
+	if len(prefixes) == 0 {
+		return h.validateSubnetCIDR(ctx, vpcID, subnetName, "")
+	}
+
+	for _, cidr := range prefixes {
+		if err := h.validateSubnetCIDR(ctx, vpcID, subnetName, cidr); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // upsertVNet reuses an existing virtual network of the same name (so a repeated
@@ -487,13 +574,15 @@ func (h *Handler) upsertWantedSubnets(
 			continue
 		}
 
-		if verr := h.validateSubnetCIDR(ctx, vpcID, subs[i].Name, subs[i].Properties.AddressPrefix); verr != nil {
+		prefixes := subs[i].Properties.addressPrefixList()
+
+		if verr := h.validateSubnetCIDRs(ctx, vpcID, subs[i].Name, prefixes); verr != nil {
 			return nil, verr
 		}
 
 		if _, err := h.net.CreateSubnet(ctx, netdriver.SubnetConfig{
 			VPCID:     vpcID,
-			CIDRBlock: subs[i].Properties.AddressPrefix,
+			CIDRBlock: primaryPrefix(prefixes),
 			Tags:      inlineSubnetTags(&subs[i]),
 		}); err != nil {
 			return nil, err
@@ -511,9 +600,11 @@ func (h *Handler) upsertWantedSubnets(
 func (h *Handler) updateInlineSubnet(
 	ctx context.Context, vpcID string, sub *subnetRequest, existing *netdriver.SubnetInfo,
 ) error {
-	cidr := sub.Properties.AddressPrefix
+	prefixes := sub.Properties.addressPrefixList()
+	cidr := primaryPrefix(prefixes)
+
 	if cidr != "" && cidr != existing.CIDRBlock {
-		if verr := h.validateSubnetCIDR(ctx, vpcID, sub.Name, cidr); verr != nil {
+		if verr := h.validateSubnetCIDRs(ctx, vpcID, sub.Name, prefixes); verr != nil {
 			return verr
 		}
 	}
@@ -522,9 +613,12 @@ func (h *Handler) updateInlineSubnet(
 	nsgID := inlineRefID(sub.Properties.NetworkSecurityGroup)
 	routeTableID := inlineRefID(sub.Properties.RouteTable)
 
-	_, err := h.updateExistingSubnet(ctx, existing, cidr, natID, nsgID, routeTableID)
+	updated, err := h.updateExistingSubnet(ctx, existing, cidr, sub.Properties.pluralPrefixTag(), natID, nsgID, routeTableID)
+	if err != nil {
+		return err
+	}
 
-	return err
+	return h.applySubnetPolicies(ctx, updated, &sub.Properties)
 }
 
 // inlineRefID returns an armIDRef's id, or "" when the reference is nil (the
@@ -542,6 +636,10 @@ func inlineRefID(ref *armIDRef) string {
 func inlineSubnetTags(sub *subnetRequest) map[string]string {
 	tags := mergeTags(nil, armSubnetTag, sub.Name)
 
+	if pt := sub.Properties.pluralPrefixTag(); pt != "" {
+		tags = mergeTags(tags, armSubnetPrefixesTag, pt)
+	}
+
 	if sub.Properties.NatGateway != nil {
 		tags = mergeTags(tags, armSubnetNATTag, sub.Properties.NatGateway.ID)
 	}
@@ -552,6 +650,14 @@ func inlineSubnetTags(sub *subnetRequest) map[string]string {
 
 	if sub.Properties.RouteTable != nil {
 		tags = mergeTags(tags, armSubnetRouteTableTag, sub.Properties.RouteTable.ID)
+	}
+
+	if sub.Properties.PrivateEndpointNetworkPolicies != "" {
+		tags = mergeTags(tags, armSubnetPENPTag, sub.Properties.PrivateEndpointNetworkPolicies)
+	}
+
+	if sub.Properties.PrivateLinkServiceNetworkPolicies != "" {
+		tags = mergeTags(tags, armSubnetPLSNPTag, sub.Properties.PrivateLinkServiceNetworkPolicies)
 	}
 
 	return tags
@@ -898,14 +1004,21 @@ func (h *Handler) createSubnet(w http.ResponseWriter, r *http.Request, rp azurea
 		return
 	}
 
-	if verr := h.validateSubnetCIDR(r.Context(), vnet.ID, rp.SubResourceName, req.Properties.AddressPrefix); verr != nil {
+	prefixes := req.Properties.addressPrefixList()
+
+	if verr := h.validateSubnetCIDRs(r.Context(), vnet.ID, rp.SubResourceName, prefixes); verr != nil {
 		writeSubnetValidationError(w, verr)
 		return
 	}
 
 	info, err := h.upsertSubnet(r.Context(), vnet.ID, rp.SubResourceName,
-		req.Properties.AddressPrefix, natGatewayID, nsgID, routeTableID)
+		primaryPrefix(prefixes), req.Properties.pluralPrefixTag(), natGatewayID, nsgID, routeTableID)
 	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if err := h.applySubnetPolicies(r.Context(), info, &req.Properties); err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
@@ -988,13 +1101,17 @@ func (*Handler) resolveSubnetRef(
 // association. Both associations live on the subnet's own natGateway /
 // networkSecurityGroup properties.
 func (h *Handler) upsertSubnet(
-	ctx context.Context, vpcID, name, cidr, natGatewayID, nsgID, routeTableID string,
+	ctx context.Context, vpcID, name, cidr, prefixTag, natGatewayID, nsgID, routeTableID string,
 ) (*netdriver.SubnetInfo, error) {
 	if existing, err := findSubnetInVNet(ctx, h.net, vpcID, name); err == nil {
-		return h.updateExistingSubnet(ctx, existing, cidr, natGatewayID, nsgID, routeTableID)
+		return h.updateExistingSubnet(ctx, existing, cidr, prefixTag, natGatewayID, nsgID, routeTableID)
 	}
 
 	tags := mergeTags(nil, armSubnetTag, name)
+	if prefixTag != "" {
+		tags = mergeTags(tags, armSubnetPrefixesTag, prefixTag)
+	}
+
 	if natGatewayID != "" {
 		tags = mergeTags(tags, armSubnetNATTag, natGatewayID)
 	}
@@ -1019,7 +1136,7 @@ func (h *Handler) upsertSubnet(
 // gateway associations from the request body (an omitted reference — empty id —
 // clears that association, matching ARM's full-replacement semantics).
 func (h *Handler) updateExistingSubnet(
-	ctx context.Context, existing *netdriver.SubnetInfo, cidr, natGatewayID, nsgID, routeTableID string,
+	ctx context.Context, existing *netdriver.SubnetInfo, cidr, prefixTag, natGatewayID, nsgID, routeTableID string,
 ) (*netdriver.SubnetInfo, error) {
 	if cidr != "" && cidr != existing.CIDRBlock {
 		if u, ok := h.net.(netdriver.SubnetCIDRUpdater); ok {
@@ -1029,6 +1146,12 @@ func (h *Handler) updateExistingSubnet(
 
 			existing.CIDRBlock = cidr
 		}
+	}
+
+	// Full-replace the plural-form prefix list: an update that used the singular
+	// form (empty prefixTag) clears the tag so the subnet echoes addressPrefix.
+	if err := h.replaceSubnetAssociation(ctx, existing, armSubnetPrefixesTag, prefixTag); err != nil {
+		return nil, err
 	}
 
 	if err := h.replaceSubnetAssociation(ctx, existing, armSubnetNSGTag, nsgID); err != nil {
@@ -1072,6 +1195,19 @@ func (h *Handler) replaceSubnetAssociation(ctx context.Context, existing *netdri
 	existing.Tags = tagsWithout(existing.Tags, tagKey)
 
 	return nil
+}
+
+// applySubnetPolicies stores a subnet's privateEndpointNetworkPolicies /
+// privateLinkServiceNetworkPolicies from a PUT body with full-replace semantics:
+// an omitted value clears the tag so the response falls back to the ARM default
+// (Disabled / Enabled), matching SubnetsClient.BeginCreateOrUpdate. existing.Tags
+// is updated in place so a response built from it reflects the change.
+func (h *Handler) applySubnetPolicies(ctx context.Context, existing *netdriver.SubnetInfo, props *subnetRequestProps) error {
+	if err := h.replaceSubnetAssociation(ctx, existing, armSubnetPENPTag, props.PrivateEndpointNetworkPolicies); err != nil {
+		return err
+	}
+
+	return h.replaceSubnetAssociation(ctx, existing, armSubnetPLSNPTag, props.PrivateLinkServiceNetworkPolicies)
 }
 
 // tagsWithout returns a copy of in with key removed.
@@ -1126,6 +1262,15 @@ func (h *Handler) getSubnet(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) listSubnets(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath) {
+	// SubnetsClient.List is scoped to a single virtual network: resolve the
+	// parent vnet (within the request's resource group) and return only its
+	// subnets, not every subnet in the subscription.
+	vnet, err := findVNetInGroup(r.Context(), h.net, rp.ResourceGroup, rp.ResourceName)
+	if err != nil {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
 	infos, err := h.net.DescribeSubnets(r.Context(), nil)
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -1135,6 +1280,10 @@ func (h *Handler) listSubnets(w http.ResponseWriter, r *http.Request, rp azurear
 	out := subnetListResponse{}
 
 	for i := range infos {
+		if infos[i].VPCID != vnet.ID {
+			continue
+		}
+
 		scope := rp
 		scope.SubResourceName = tagOr(infos[i].Tags, armSubnetTag, infos[i].ID)
 		out.Value = append(out.Value, toSubnetResponse(&infos[i], scope))
@@ -1432,9 +1581,10 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		return
 	}
 
-	sku := ""
+	sku, skuTier := "", ""
 	if req.SKU != nil {
 		sku = req.SKU.Name
+		skuTier = req.SKU.Tier
 	}
 
 	tags := mergeTags(req.Tags, armPublicIPTag, rp.ResourceName)
@@ -1449,6 +1599,8 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 
 	cfg := netdriver.ElasticIPConfig{
 		SKU:                sku,
+		SKUTier:            skuTier,
+		IPVersion:          req.Properties.PublicIPAddressVersion,
 		AllocationMethod:   req.Properties.PublicIPAllocationMethod,
 		Tags:               tags,
 		Zones:              req.Zones,
@@ -1545,7 +1697,7 @@ func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, rp azur
 		// A public IP still bound to a NIC/NAT gateway: ARM answers 400 with
 		// this specific code, not the generic 409 WriteCErr would emit.
 		if cerrors.IsFailedPrecondition(err) {
-			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted", err.Error())
+			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeDeleted", cerrors.Message(err))
 			return
 		}
 
@@ -1790,9 +1942,19 @@ func toSubnetResponse(info *netdriver.SubnetInfo, rp azurearm.ResourcePath) subn
 		Name: name,
 		Etag: etagOf(id),
 		Properties: subnetResponseProps{
-			ProvisioningState: "Succeeded",
-			AddressPrefix:     info.CIDRBlock,
+			ProvisioningState:                 "Succeeded",
+			PrivateEndpointNetworkPolicies:    tagOr(info.Tags, armSubnetPENPTag, defaultPENP),
+			PrivateLinkServiceNetworkPolicies: tagOr(info.Tags, armSubnetPLSNPTag, defaultPLSNP),
 		},
+	}
+
+	// Echo back whichever address-prefix form the caller used: the plural
+	// addressPrefixes (recorded in armSubnetPrefixesTag by a request that used
+	// it — the azurerm provider always does) or the singular addressPrefix.
+	if raw := tagOr(info.Tags, armSubnetPrefixesTag, ""); raw != "" {
+		out.Properties.AddressPrefixes = strings.Split(raw, ",")
+	} else {
+		out.Properties.AddressPrefix = info.CIDRBlock
 	}
 
 	if ngID := tagOr(info.Tags, armSubnetNATTag, ""); ngID != "" {
@@ -1973,6 +2135,7 @@ func (h *Handler) toPublicIPResponse(
 		Properties: publicIPRespProps{
 			ProvisioningState:        "Succeeded",
 			PublicIPAllocationMethod: info.AllocationMethod,
+			PublicIPAddressVersion:   orDefault(info.IPVersion, "IPv4"),
 			IPAddress:                info.PublicIP,
 			IdleTimeoutInMinutes:     info.IdleTimeoutMinutes,
 			ResourceGUID:             info.ResourceGUID,
@@ -1980,7 +2143,7 @@ func (h *Handler) toPublicIPResponse(
 	}
 
 	if info.SKU != "" {
-		out.SKU = &publicIPSKU{Name: info.SKU}
+		out.SKU = &publicIPSKU{Name: info.SKU, Tier: orDefault(info.SKUTier, "Regional")}
 	}
 
 	if info.DNSDomainNameLabel != "" {
@@ -2099,6 +2262,17 @@ func tagOr(m map[string]string, key, fallback string) string {
 	}
 
 	return fallback
+}
+
+// orDefault returns v, or fallback when v is empty — used to surface the ARM
+// defaults (IPv4, Regional) a real GET always reports for a public IP whose
+// stored record predates the field being modeled.
+func orDefault(v, fallback string) string {
+	if v == "" {
+		return fallback
+	}
+
+	return v
 }
 
 func stripInternal(in map[string]string) map[string]string {

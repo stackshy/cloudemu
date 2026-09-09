@@ -255,6 +255,25 @@ func TestErrorResponses(t *testing.T) {
 	}
 }
 
+// TestEmptyListsAreEmptyArraysNotNull pins the OCI wire contract: a List
+// response with no results is `[]`, never `null`, for every identity
+// collection.
+func TestEmptyListsAreEmptyArraysNotNull(t *testing.T) {
+	ts := newServer(t)
+
+	for _, path := range []string{
+		usersPath + "?compartmentId=" + tenancy,
+		"/20160918/groups?compartmentId=" + tenancy,
+		"/20160918/userGroupMemberships?compartmentId=" + tenancy,
+		"/20160918/policies?compartmentId=" + tenancy,
+		compartmentsPath + "?compartmentId=" + tenancy,
+	} {
+		status, _, raw := call(t, ts, http.MethodGet, path, "")
+		require.Equal(t, http.StatusOK, status, path)
+		assert.Equal(t, "[]", strings.TrimSpace(string(raw)), "expected an empty JSON array for %s, got %q", path, raw)
+	}
+}
+
 func TestListsAreScopedToOneCompartment(t *testing.T) {
 	ts := newServer(t)
 

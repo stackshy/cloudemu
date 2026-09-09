@@ -43,6 +43,7 @@ var redshiftActions = map[string]struct{}{ //nolint:gochecknoglobals // static l
 	"DeleteClusterSnapshot":          {},
 	"RestoreFromClusterSnapshot":     {},
 	"GetClusterCredentials":          {},
+	"DescribeLoggingStatus":          {},
 	"PauseCluster":                   {},
 	"ResumeCluster":                  {},
 	"CreateClusterParameterGroup":    {},
@@ -173,6 +174,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.restoreFromClusterSnapshot(w, r)
 	case "GetClusterCredentials":
 		h.getClusterCredentials(w, r)
+	case "DescribeLoggingStatus":
+		h.describeLoggingStatus(w, r)
 	case "PauseCluster":
 		h.pauseCluster(w, r)
 	case "ResumeCluster":

@@ -135,6 +135,7 @@ func TestRESTHandlersWinBeforeS3(t *testing.T) {
 		{"efs_before_s3", "/2015-02-01/file-systems", "FileSystems"},
 		{"eks_before_s3", "/clusters", "clusters"},
 		{"apigateway_before_s3", "/restapis", "item"},
+		{"apigatewayv2_before_s3", "/v2/apis", "items"},
 	}
 
 	for _, tc := range cases {

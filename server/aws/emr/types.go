@@ -7,17 +7,18 @@ import "time"
 // runJobFlowInput mirrors the members of the SDK RunJobFlowInput this handler
 // reads.
 type runJobFlowInput struct {
-	Name              *string                      `json:"Name"`
-	ReleaseLabel      *string                      `json:"ReleaseLabel"`
-	LogURI            *string                      `json:"LogUri"`
-	ServiceRole       *string                      `json:"ServiceRole"`
-	JobFlowRole       *string                      `json:"JobFlowRole"`
-	VisibleToAllUsers *bool                        `json:"VisibleToAllUsers"`
-	Instances         *jobFlowInstancesConfig      `json:"Instances"`
-	Applications      []applicationInput           `json:"Applications"`
-	Tags              []tagInput                   `json:"Tags"`
-	Steps             []stepConfig                 `json:"Steps"`
-	BootstrapActions  []bootstrapActionConfigInput `json:"BootstrapActions"`
+	Name                  *string                      `json:"Name"`
+	ReleaseLabel          *string                      `json:"ReleaseLabel"`
+	LogURI                *string                      `json:"LogUri"`
+	ServiceRole           *string                      `json:"ServiceRole"`
+	JobFlowRole           *string                      `json:"JobFlowRole"`
+	SecurityConfiguration *string                      `json:"SecurityConfiguration"`
+	VisibleToAllUsers     *bool                        `json:"VisibleToAllUsers"`
+	Instances             *jobFlowInstancesConfig      `json:"Instances"`
+	Applications          []applicationInput           `json:"Applications"`
+	Tags                  []tagInput                   `json:"Tags"`
+	Steps                 []stepConfig                 `json:"Steps"`
+	BootstrapActions      []bootstrapActionConfigInput `json:"BootstrapActions"`
 }
 
 // jobFlowInstancesConfig mirrors the read members of the SDK
@@ -292,8 +293,9 @@ type statusWire struct {
 
 // ec2AttributesWire mirrors the read members of the SDK Ec2InstanceAttributes.
 type ec2AttributesWire struct {
-	Ec2SubnetID string `json:"Ec2SubnetId,omitempty"`
-	Ec2KeyName  string `json:"Ec2KeyName,omitempty"`
+	Ec2SubnetID        string `json:"Ec2SubnetId,omitempty"`
+	Ec2KeyName         string `json:"Ec2KeyName,omitempty"`
+	IamInstanceProfile string `json:"IamInstanceProfile,omitempty"`
 }
 
 // applicationWire mirrors the SDK Application on the response path.
@@ -317,6 +319,8 @@ type clusterWire struct {
 	ReleaseLabel            string             `json:"ReleaseLabel,omitempty"`
 	LogURI                  string             `json:"LogUri,omitempty"`
 	ServiceRole             string             `json:"ServiceRole,omitempty"`
+	SecurityConfiguration   string             `json:"SecurityConfiguration,omitempty"`
+	MasterPublicDNSName     string             `json:"MasterPublicDnsName,omitempty"`
 	Status                  statusWire         `json:"Status"`
 	Ec2InstanceAttributes   *ec2AttributesWire `json:"Ec2InstanceAttributes,omitempty"`
 	InstanceCollectionType  string             `json:"InstanceCollectionType,omitempty"`
@@ -493,6 +497,8 @@ func toClusterWire(c *cluster) *clusterWire {
 		ReleaseLabel:            c.releaseLabel,
 		LogURI:                  c.logURI,
 		ServiceRole:             c.serviceRole,
+		SecurityConfiguration:   c.securityConfiguration,
+		MasterPublicDNSName:     c.masterPublicDNS,
 		Status:                  toStatusWire(c),
 		InstanceCollectionType:  "INSTANCE_GROUP",
 		AutoTerminate:           c.autoTerminate,
@@ -501,8 +507,12 @@ func toClusterWire(c *cluster) *clusterWire {
 		NormalizedInstanceHours: 0,
 	}
 
-	if c.ec2SubnetID != "" || c.ec2KeyName != "" {
-		out.Ec2InstanceAttributes = &ec2AttributesWire{Ec2SubnetID: c.ec2SubnetID, Ec2KeyName: c.ec2KeyName}
+	if c.ec2SubnetID != "" || c.ec2KeyName != "" || c.jobFlowRole != "" {
+		out.Ec2InstanceAttributes = &ec2AttributesWire{
+			Ec2SubnetID:        c.ec2SubnetID,
+			Ec2KeyName:         c.ec2KeyName,
+			IamInstanceProfile: c.jobFlowRole,
+		}
 	}
 
 	for _, a := range c.applications {

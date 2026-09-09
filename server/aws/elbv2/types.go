@@ -426,16 +426,20 @@ func toTargetGroupXML(tg *lbdriver.TargetGroupInfo) targetGroupXML {
 	}
 
 	out := targetGroupXML{
-		TargetGroupArn:             tg.ARN,
-		TargetGroupName:            tg.Name,
-		Protocol:                   tg.Protocol,
-		Port:                       tg.Port,
-		VpcID:                      tg.VPCID,
-		TargetType:                 targetType,
-		HealthCheckProtocol:        tg.HealthCheck.Protocol,
-		HealthCheckPort:            tg.HealthCheck.Port,
-		HealthCheckPath:            tg.HealthPath,
-		HealthCheckEnabled:         true,
+		TargetGroupArn:      tg.ARN,
+		TargetGroupName:     tg.Name,
+		Protocol:            tg.Protocol,
+		Port:                tg.Port,
+		VpcID:               tg.VPCID,
+		TargetType:          targetType,
+		HealthCheckProtocol: tg.HealthCheck.Protocol,
+		HealthCheckPort:     tg.HealthCheck.Port,
+		HealthCheckPath:     tg.HealthPath,
+		// A lambda target group defaults with health checks disabled; every other
+		// target type always has them enabled (real ELBv2 never lets them be
+		// turned off). The provider leaves a lambda group's HealthCheck protocol
+		// and port empty, so those are omitted for it too.
+		HealthCheckEnabled:         targetType != "lambda",
 		HealthCheckIntervalSeconds: tg.HealthCheck.IntervalSeconds,
 		HealthCheckTimeoutSeconds:  tg.HealthCheck.TimeoutSeconds,
 		HealthyThresholdCount:      tg.HealthCheck.HealthyThreshold,

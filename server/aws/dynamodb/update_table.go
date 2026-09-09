@@ -24,6 +24,21 @@ type pitrController interface {
 	GetPITR(ctx context.Context, table string) (bool, error)
 }
 
+// attributeDefinitionSyncer is the optional provider capability UpdateTable uses
+// to reconcile a table's attribute definitions after a GSI add/delete. Only the
+// AWS mock implements it, so it stays off the cross-cloud Database interface.
+type attributeDefinitionSyncer interface {
+	SyncAttributeDefinitions(ctx context.Context, table string, defs []dbdriver.AttributeDef) error
+}
+
+// tableSettingsUpdater is the optional provider capability UpdateTable needs to
+// change a table's metadata settings (table class, deletion protection).
+// Discovered by type assertion so it stays off the cross-cloud Database
+// interface (only the AWS mock implements it).
+type tableSettingsUpdater interface {
+	UpdateTableSettings(ctx context.Context, table, tableClass string, deletionProtection *bool) error
+}
+
 // updateTable handles UpdateTable: billing/throughput changes, GSI create/delete
 // updates and stream enable/disable. It returns the refreshed TableDescription,
 // matching real DynamoDB. Without it the SDK sees UnknownOperationException and
@@ -42,6 +57,8 @@ func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request) {
 			StreamEnabled  bool   `json:"StreamEnabled"`
 			StreamViewType string `json:"StreamViewType"`
 		} `json:"StreamSpecification"`
+		TableClass                string `json:"TableClass"`
+		DeletionProtectionEnabled *bool  `json:"DeletionProtectionEnabled"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -63,13 +80,10 @@ func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	for i := range req.GlobalSecondaryIndexUpdates {
-		if err := h.applyGSIUpdate(r.Context(), req.TableName,
-			req.GlobalSecondaryIndexUpdates[i].Create,
-			indexDeleteName(req.GlobalSecondaryIndexUpdates[i].Delete)); err != nil {
-			writeErr(w, err)
-			return
-		}
+	if err := h.applyIndexUpdates(
+		r.Context(), req.TableName, req.GlobalSecondaryIndexUpdates, req.AttributeDefinitions); err != nil {
+		writeErr(w, err)
+		return
 	}
 
 	if req.StreamSpecification != nil {
@@ -80,6 +94,11 @@ func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	if err := h.applyTableSettings(r.Context(), req.TableName, req.TableClass, req.DeletionProtectionEnabled); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	full, err := h.db.DescribeTable(r.Context(), req.TableName)
 	if err != nil {
 		writeErr(w, err)
@@ -87,6 +106,56 @@ func (h *Handler) updateTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	wire.WriteJSON(w, map[string]any{"TableDescription": h.describeTableShape(full)})
+}
+
+// applyIndexUpdates applies an UpdateTable's GSI create/delete entries and then
+// reconciles the table's attribute definitions to match the resulting index set,
+// as a single step so the caller has one error path to handle.
+func (h *Handler) applyIndexUpdates(
+	ctx context.Context, table string, updates []gsiUpdateJSON, defs []attrDefJSON,
+) error {
+	if err := h.applyGSIUpdates(ctx, table, updates); err != nil {
+		return err
+	}
+
+	return h.syncAttributeDefinitions(ctx, table, updates, defs)
+}
+
+// applyGSIUpdates applies every GlobalSecondaryIndexUpdates entry (each a GSI
+// create or delete) on an UpdateTable request, stopping at the first failure.
+func (h *Handler) applyGSIUpdates(ctx context.Context, table string, updates []gsiUpdateJSON) error {
+	for i := range updates {
+		if err := h.applyGSIUpdate(ctx, table, updates[i].Create, indexDeleteName(updates[i].Delete)); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// syncAttributeDefinitions reconciles the table's attribute definitions after
+// GSI create/delete updates so DescribeTable surfaces exactly the attributes the
+// table key and its surviving indexes reference — matching real DynamoDB. It is
+// a no-op when the request touches neither indexes nor attribute definitions, or
+// when the provider does not expose the capability.
+func (h *Handler) syncAttributeDefinitions(
+	ctx context.Context, table string, updates []gsiUpdateJSON, defs []attrDefJSON,
+) error {
+	if len(updates) == 0 && len(defs) == 0 {
+		return nil
+	}
+
+	syncer, ok := h.db.(attributeDefinitionSyncer)
+	if !ok {
+		return nil
+	}
+
+	converted := make([]dbdriver.AttributeDef, 0, len(defs))
+	for _, d := range defs {
+		converted = append(converted, dbdriver.AttributeDef{Name: d.AttributeName, Type: d.AttributeType})
+	}
+
+	return syncer.SyncAttributeDefinitions(ctx, table, converted)
 }
 
 func indexDeleteName(del *struct {
@@ -125,6 +194,24 @@ func (h *Handler) applyThroughput(ctx context.Context, table, billingMode string
 	}
 
 	return updater.UpdateThroughput(ctx, table, billingMode, rcu, wcu)
+}
+
+// applyTableSettings applies a table-class and/or deletion-protection change
+// when one was requested. A field the request omits (an empty class, a nil
+// protection pointer) is left untouched, so re-affirming an unrelated
+// UpdateTable field never resets it. A provider that does not expose the
+// capability is a no-op.
+func (h *Handler) applyTableSettings(ctx context.Context, table, tableClass string, deletionProtection *bool) error {
+	if tableClass == "" && deletionProtection == nil {
+		return nil
+	}
+
+	updater, ok := h.db.(tableSettingsUpdater)
+	if !ok {
+		return nil
+	}
+
+	return updater.UpdateTableSettings(ctx, table, tableClass, deletionProtection)
 }
 
 // validateThroughputChange resolves the billing mode and capacity an

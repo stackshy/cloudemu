@@ -21,6 +21,14 @@ const (
 	// databases carry no row data, so there is no historical state to rewind to.
 	createModeCopy = "Copy"
 	createModePITR = "PointInTimeRestore"
+
+	// Azure SQL database defaults synthesized when a create omits them, so a read
+	// round-trips like real Azure SQL (see
+	// https://learn.microsoft.com/en-us/rest/api/sql/databases/create-or-update).
+	defaultCollation        = "SQL_Latin1_General_CP1_CI_AS"
+	defaultMaxSizeBytes     = int64(34359738368) // 32 GB, the General Purpose default.
+	defaultBackupRedundancy = "Geo"
+	defaultReadScale        = "Disabled"
 )
 
 // isSourceCopyMode reports whether a createMode provisions a database from an
@@ -79,29 +87,24 @@ func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 		return nil, err
 	}
 
-	skuName := cfg.SKUName
-	if skuName == "" {
-		skuName = "GP_Gen5_2"
-	}
-
-	skuTier := cfg.SKUTier
-	if skuTier == "" {
-		skuTier = "GeneralPurpose"
-	}
+	withDatabaseDefaults(&cfg)
 
 	db := rdsdriver.Database{
-		Server:        cfg.Server,
-		Name:          cfg.Name,
-		Charset:       cfg.Charset,
-		Collation:     cfg.Collation,
-		ARN:           serverDatabaseResourceID(m.opts.Region, cfg.Server, cfg.Name),
-		Location:      orDefault(cfg.Location, server.Location),
-		Tags:          copyTags(cfg.Tags),
-		SKUName:       skuName,
-		SKUTier:       skuTier,
-		SKUCapacity:   cfg.SKUCapacity,
-		ZoneRedundant: cfg.ZoneRedundant,
-		ElasticPoolID: cfg.ElasticPoolID,
+		Server:                  cfg.Server,
+		Name:                    cfg.Name,
+		Charset:                 cfg.Charset,
+		Collation:               cfg.Collation,
+		ARN:                     serverDatabaseResourceID(m.opts.Region, cfg.Server, cfg.Name),
+		Location:                orDefault(cfg.Location, server.Location),
+		Tags:                    copyTags(cfg.Tags),
+		SKUName:                 cfg.SKUName,
+		SKUTier:                 cfg.SKUTier,
+		SKUCapacity:             cfg.SKUCapacity,
+		ZoneRedundant:           cfg.ZoneRedundant,
+		ElasticPoolID:           cfg.ElasticPoolID,
+		MaxSizeBytes:            cfg.MaxSizeBytes,
+		BackupStorageRedundancy: cfg.BackupStorageRedundancy,
+		ReadScale:               cfg.ReadScale,
 	}
 	m.databases.Set(key, db)
 
@@ -123,6 +126,52 @@ func (m *Mock) CreateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 	out := db
 
 	return &out, nil
+}
+
+// withDatabaseDefaults fills the Azure SQL database properties a create left
+// unset with Azure's documented defaults, so a read round-trips like real Azure
+// SQL. Mutating cfg in place keeps CreateDatabase's branch count low.
+func withDatabaseDefaults(cfg *rdsdriver.DatabaseConfig) {
+	if cfg.SKUName == "" {
+		cfg.SKUName = "GP_Gen5_2"
+	}
+
+	deriveDatabaseSKU(cfg)
+
+	if cfg.Collation == "" {
+		cfg.Collation = defaultCollation
+	}
+
+	if cfg.MaxSizeBytes == 0 {
+		cfg.MaxSizeBytes = defaultMaxSizeBytes
+	}
+
+	if cfg.BackupStorageRedundancy == "" {
+		cfg.BackupStorageRedundancy = defaultBackupRedundancy
+	}
+
+	if cfg.ReadScale == "" {
+		cfg.ReadScale = defaultReadScale
+	}
+}
+
+// deriveDatabaseSKU fills the tier and vCore capacity implied by the database's
+// service-objective (SKU) name, so a create/update that supplies only the name
+// (e.g. azurerm's sku_name) stores — and therefore reads back and reports to
+// Resource Graph — the tier real Azure derives from it. The name is
+// authoritative: "S0" is Standard, not the old hardcoded GeneralPurpose. An
+// unrecognized name (e.g. an elastic-pool sku) derives nothing and leaves the
+// caller's values intact.
+func deriveDatabaseSKU(cfg *rdsdriver.DatabaseConfig) {
+	tier, _, capacity := rdsdriver.ParseAzureSQLSKU(cfg.SKUName)
+
+	if tier != "" {
+		cfg.SKUTier = tier
+	}
+
+	if capacity != 0 {
+		cfg.SKUCapacity = capacity
+	}
 }
 
 // applyCopySource resolves the copy/restore source database named by
@@ -187,6 +236,11 @@ func (m *Mock) UpdateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 		return nil, cerrors.New(cerrors.InvalidArgument, "server and database name are required")
 	}
 
+	// A PATCH that changes the service-objective (SKU) name must re-derive the
+	// tier/capacity from the new name; otherwise a resize (e.g. S0 → P2) would
+	// keep the stale tier merged over from the stored record.
+	deriveDatabaseSKU(&cfg)
+
 	var updated rdsdriver.Database
 
 	ok := m.databases.Update(dbKey(cfg.Server, cfg.Name), func(db rdsdriver.Database) rdsdriver.Database {
@@ -199,6 +253,9 @@ func (m *Mock) UpdateDatabase(_ context.Context, cfg rdsdriver.DatabaseConfig) (
 		db.SKUCapacity = cfg.SKUCapacity
 		db.ZoneRedundant = cfg.ZoneRedundant
 		db.ElasticPoolID = cfg.ElasticPoolID
+		db.MaxSizeBytes = cfg.MaxSizeBytes
+		db.BackupStorageRedundancy = cfg.BackupStorageRedundancy
+		db.ReadScale = cfg.ReadScale
 		updated = db
 
 		return db

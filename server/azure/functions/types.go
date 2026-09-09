@@ -60,6 +60,18 @@ type siteProperties struct {
 type siteConfig struct {
 	LinuxFxVersion      string `json:"linuxFxVersion,omitempty"`
 	NetFrameworkVersion string `json:"netFrameworkVersion,omitempty"`
+	// AlwaysOn keeps the app's process warm. It is a *bool so an explicit
+	// false (required on Basic/Free/Consumption tiers, and what azurerm sends
+	// for those) round-trips distinctly from "unset" (nil, field omitted) —
+	// real Azure returns an explicit boolean here, and Terraform's
+	// azurerm_linux_web_app compares site_config.always_on against it.
+	AlwaysOn *bool `json:"alwaysOn,omitempty"`
+	// FtpsState (AllAllowed / FtpsOnly / Disabled) and MinTLSVersion
+	// (1.0 / 1.1 / 1.2 / 1.3) are core site_config knobs Terraform tracks.
+	// Real Azure returns them from GetConfiguration (config/web), so they must
+	// round-trip there and on the site resource, not just via the property echo.
+	FtpsState     string `json:"ftpsState,omitempty"`
+	MinTLSVersion string `json:"minTlsVersion,omitempty"`
 	// AppSettings has no omitempty: a plain site GET emits it as null so the
 	// server's unmodeled-property echo does not reflect the request's app
 	// settings (secret values included) back onto the response. The dedicated
@@ -96,6 +108,9 @@ type createSiteProperties struct {
 
 type createSiteConfig struct {
 	LinuxFxVersion string      `json:"linuxFxVersion"`
+	AlwaysOn       *bool       `json:"alwaysOn"`
+	FtpsState      string      `json:"ftpsState"`
+	MinTLSVersion  string      `json:"minTlsVersion"`
 	AppSettings    []nameValue `json:"appSettings"`
 }
 
@@ -120,6 +135,12 @@ type patchSiteProperties struct {
 
 type patchSiteConfig struct {
 	LinuxFxVersion *string `json:"linuxFxVersion"`
+	// AlwaysOn/FtpsState/MinTLSVersion are pointers so an omitted field (nil)
+	// preserves the stored value while an explicit one (including alwaysOn=false)
+	// replaces it — PATCH partial-update semantics.
+	AlwaysOn      *bool   `json:"alwaysOn"`
+	FtpsState     *string `json:"ftpsState"`
+	MinTLSVersion *string `json:"minTlsVersion"`
 	// AppSettings is nil when the PATCH omitted the block (settings preserved) and
 	// non-nil (possibly empty) when it supplied one (settings replaced).
 	AppSettings []nameValue `json:"appSettings"`

@@ -52,11 +52,13 @@ var notConfiguredErr = map[string]string{
 	"website":           "NoSuchWebsiteConfiguration",
 	subLifecycle:        "NoSuchLifecycleConfiguration",
 	"replication":       "ReplicationConfigurationNotFoundError",
-	"encryption":        "ServerSideEncryptionConfigurationNotFoundError",
 	"object-lock":       "ObjectLockConfigurationNotFoundError",
 	"publicAccessBlock": "NoSuchPublicAccessBlockConfiguration",
 	"ownershipControls": "OwnershipControlsNotFoundError",
 }
+
+// subEncryption is the ?encryption sub-resource key (Get/PutBucketEncryption).
+const subEncryption = "encryption"
 
 // configSubresources are the read-only bucket configuration sub-resource query
 // keys the handler answers (order irrelevant — at most one is present).
@@ -221,6 +223,16 @@ func writeRawBucketConfig(w http.ResponseWriter, sub string, body []byte) {
 // sub-resource: a "not configured" error for the persistable ones, or the
 // service default for the always-present ones (location, request payment, …).
 func writeConfigDefault(w http.ResponseWriter, sub string) {
+	// Since January 2023 every S3 bucket has default encryption: a bucket with no
+	// explicit configuration answers GetBucketEncryption with 200 and the SSE-S3
+	// (AES256) base rule, not ServerSideEncryptionConfigurationNotFoundError.
+	// Returning the old error caused the Terraform AWS provider to see perpetual
+	// drift on buckets with no customer-defined encryption.
+	if sub == subEncryption {
+		wire.WriteXML(w, http.StatusOK, defaultEncryptionConfig())
+		return
+	}
+
 	if code, ok := notConfiguredErr[sub]; ok {
 		writeError(w, http.StatusNotFound, code, "The "+sub+" configuration does not exist")
 		return
@@ -270,4 +282,39 @@ type policyStatusXML struct {
 	XMLName  xml.Name `xml:"PolicyStatus"`
 	Xmlns    string   `xml:"xmlns,attr"`
 	IsPublic bool     `xml:"IsPublic"`
+}
+
+// serverSideEncryptionConfigXML is the GetBucketEncryption response body. Only
+// the fields needed to render the SSE-S3 default are modeled; a bucket that has
+// its own configuration persisted echoes the stored document verbatim instead.
+type serverSideEncryptionConfigXML struct {
+	XMLName xml.Name                   `xml:"ServerSideEncryptionConfiguration"`
+	Xmlns   string                     `xml:"xmlns,attr"`
+	Rules   []serverSideEncryptionRule `xml:"Rule"`
+}
+
+type serverSideEncryptionRule struct {
+	ApplyDefault     applyServerSideEncryptionByDefault `xml:"ApplyServerSideEncryptionByDefault"`
+	BucketKeyEnabled bool                               `xml:"BucketKeyEnabled"`
+}
+
+type applyServerSideEncryptionByDefault struct {
+	SSEAlgorithm string `xml:"SSEAlgorithm"`
+}
+
+// sseAlgorithmAES256 is the SSE-S3 algorithm name S3 reports for its default
+// bucket encryption.
+const sseAlgorithmAES256 = "AES256"
+
+// defaultEncryptionConfig returns the SSE-S3 (AES256) base encryption rule that
+// real S3 reports for a bucket with no explicit configuration, with bucket keys
+// disabled — matching a freshly created bucket.
+func defaultEncryptionConfig() serverSideEncryptionConfigXML {
+	return serverSideEncryptionConfigXML{
+		Xmlns: xmlns,
+		Rules: []serverSideEncryptionRule{{
+			ApplyDefault:     applyServerSideEncryptionByDefault{SSEAlgorithm: sseAlgorithmAES256},
+			BucketKeyEnabled: false,
+		}},
+	}
 }

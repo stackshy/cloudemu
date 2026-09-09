@@ -157,6 +157,74 @@ func TestSDKDocDBInstanceLifecycle(t *testing.T) {
 	}
 }
 
+// TestSDKDocDBClusterTerraformFields guards the DBCluster attributes Terraform's
+// aws_docdb_cluster reads back on refresh. A missing BackupRetentionPeriod
+// (Terraform default 1) or DBClusterParameterGroup produced perpetual drift, and
+// ModifyDBCluster dropped backup_retention_period / preferred_maintenance_window.
+func TestSDKDocDBClusterTerraformFields(t *testing.T) {
+	client := newDocDBSDKClient(t)
+	ctx := context.Background()
+
+	out, err := client.CreateDBCluster(ctx, &awsdocdb.CreateDBClusterInput{
+		DBClusterIdentifier:         aws.String("tf-doc"),
+		Engine:                      aws.String("docdb"),
+		MasterUsername:              aws.String("admin"),
+		MasterUserPassword:          aws.String("supersecret"),
+		DBClusterParameterGroupName: aws.String("custom-pg"),
+	})
+	if err != nil {
+		t.Fatalf("CreateDBCluster: %v", err)
+	}
+
+	c := out.DBCluster
+	if c.BackupRetentionPeriod == nil || *c.BackupRetentionPeriod != 1 {
+		t.Fatalf("BackupRetentionPeriod = %v, want default 1", c.BackupRetentionPeriod)
+	}
+
+	if aws.ToString(c.DBClusterParameterGroup) != "custom-pg" {
+		t.Fatalf("DBClusterParameterGroup = %q, want custom-pg", aws.ToString(c.DBClusterParameterGroup))
+	}
+
+	if aws.ToString(c.ReaderEndpoint) == "" || aws.ToString(c.Endpoint) == "" {
+		t.Fatalf("Endpoint=%q ReaderEndpoint=%q, both must be set",
+			aws.ToString(c.Endpoint), aws.ToString(c.ReaderEndpoint))
+	}
+
+	if aws.ToString(c.PreferredBackupWindow) == "" || aws.ToString(c.PreferredMaintenanceWindow) == "" {
+		t.Fatal("PreferredBackupWindow/PreferredMaintenanceWindow must be populated")
+	}
+
+	mod, err := client.ModifyDBCluster(ctx, &awsdocdb.ModifyDBClusterInput{
+		DBClusterIdentifier:        aws.String("tf-doc"),
+		BackupRetentionPeriod:      aws.Int32(7),
+		PreferredMaintenanceWindow: aws.String("mon:03:00-mon:03:30"),
+	})
+	if err != nil {
+		t.Fatalf("ModifyDBCluster: %v", err)
+	}
+
+	if mod.DBCluster.BackupRetentionPeriod == nil || *mod.DBCluster.BackupRetentionPeriod != 7 {
+		t.Fatalf("post-modify BackupRetentionPeriod = %v, want 7", mod.DBCluster.BackupRetentionPeriod)
+	}
+
+	if aws.ToString(mod.DBCluster.PreferredMaintenanceWindow) != "mon:03:00-mon:03:30" {
+		t.Fatalf("post-modify PreferredMaintenanceWindow = %q, want mon:03:00-mon:03:30",
+			aws.ToString(mod.DBCluster.PreferredMaintenanceWindow))
+	}
+
+	// Confirm the modify persisted through a fresh describe (drift source).
+	desc, err := client.DescribeDBClusters(ctx, &awsdocdb.DescribeDBClustersInput{
+		DBClusterIdentifier: aws.String("tf-doc"),
+	})
+	if err != nil {
+		t.Fatalf("DescribeDBClusters: %v", err)
+	}
+
+	if desc.DBClusters[0].BackupRetentionPeriod == nil || *desc.DBClusters[0].BackupRetentionPeriod != 7 {
+		t.Fatalf("described BackupRetentionPeriod = %v, want 7", desc.DBClusters[0].BackupRetentionPeriod)
+	}
+}
+
 func TestSDKDocDBClusterSnapshotAndRestore(t *testing.T) {
 	client := newDocDBSDKClient(t)
 	ctx := context.Background()

@@ -117,15 +117,23 @@ type SiteFunction struct {
 // It is stored alongside the portable function so a Microsoft.Web/sites request
 // can reconstruct the full ARM site resource.
 type SiteMeta struct {
-	Name              string
-	Subscription      string
-	ResourceGroup     string
-	Location          string
-	Kind              string
-	ServerFarmID      string
-	HTTPSOnly         bool
-	Reserved          bool
-	LinuxFxVersion    string
+	Name           string
+	Subscription   string
+	ResourceGroup  string
+	Location       string
+	Kind           string
+	ServerFarmID   string
+	HTTPSOnly      bool
+	Reserved       bool
+	LinuxFxVersion string
+	// AlwaysOn is the site_config always_on flag. It is a *bool so an explicit
+	// false round-trips distinctly from "never set" (nil), matching real Azure
+	// and Terraform's azurerm_linux_web_app.
+	AlwaysOn *bool
+	// FtpsState and MinTLSVersion are site_config knobs real Azure returns from
+	// GetConfiguration (config/web); stored here so they survive a round-trip.
+	FtpsState         string
+	MinTLSVersion     string
 	ProvisioningState string
 	// State is the running state reported on the ARM site ("Running" on create,
 	// "Stopped" after a stop). Start/stop toggle it; a plain update leaves it.
@@ -143,6 +151,7 @@ type SiteMeta struct {
 // clone returns a deep copy safe to hand outside the store lock.
 func (s *SiteMeta) clone() *SiteMeta {
 	out := *s
+	out.AlwaysOn = cloneBoolPtr(s.AlwaysOn)
 	out.AppSettings = maps.Clone(s.AppSettings)
 	out.HostFunctionKeys = maps.Clone(s.HostFunctionKeys)
 	out.SystemKeys = maps.Clone(s.SystemKeys)
@@ -182,6 +191,9 @@ func (m *Mock) UpsertSiteMeta(_ context.Context, in SiteMeta) (*SiteMeta, error)
 		existing.HTTPSOnly = in.HTTPSOnly
 		existing.Reserved = in.Reserved
 		existing.LinuxFxVersion = in.LinuxFxVersion
+		existing.AlwaysOn = cloneBoolPtr(in.AlwaysOn)
+		existing.FtpsState = in.FtpsState
+		existing.MinTLSVersion = in.MinTLSVersion
 		existing.AppSettings = maps.Clone(in.AppSettings)
 
 		// An empty in.Kind means the request omitted kind, so the existing kind
@@ -229,6 +241,11 @@ type SiteMetaPatch struct {
 	HTTPSOnly      *bool
 	Reserved       *bool
 	LinuxFxVersion *string
+	// AlwaysOn/FtpsState/MinTLSVersion, when non-nil, replace the stored value;
+	// nil preserves it (PATCH partial-update semantics).
+	AlwaysOn      *bool
+	FtpsState     *string
+	MinTLSVersion *string
 	// Identity, when non-nil, replaces the attached identity (a Type of "None"
 	// detaches it, matching `az functionapp identity remove`); nil preserves the
 	// current identity.
@@ -241,6 +258,8 @@ type SiteMetaPatch struct {
 // GetSiteMeta, preserving every field the patch leaves nil (unlike UpsertSiteMeta,
 // which is a full replace suited to PUT). Generated keys, deployed functions and
 // the running state are untouched.
+//
+//nolint:gocritic // patch is the by-value request payload, applied under the lock.
 func (m *Mock) PatchSiteMeta(
 	_ context.Context, subscription, resourceGroup, name string, patch SiteMetaPatch,
 ) (*SiteMeta, error) {
@@ -259,6 +278,8 @@ func (m *Mock) PatchSiteMeta(
 }
 
 // applySiteMetaPatch overlays the supplied (non-nil) patch fields onto meta.
+//
+//nolint:gocritic // patch is the by-value request payload, applied under the lock.
 func applySiteMetaPatch(meta *SiteMeta, patch SiteMetaPatch) {
 	if patch.Location != nil {
 		meta.Location = *patch.Location
@@ -284,12 +305,33 @@ func applySiteMetaPatch(meta *SiteMeta, patch SiteMetaPatch) {
 		meta.LinuxFxVersion = *patch.LinuxFxVersion
 	}
 
+	applySiteConfigPatch(meta, patch)
+
 	if patch.Identity != nil {
 		meta.Identity = resolveSiteIdentity(patch.Identity, identitySeed(meta))
 	}
 
 	if patch.AppSettings != nil {
 		meta.AppSettings = maps.Clone(*patch.AppSettings)
+	}
+}
+
+// applySiteConfigPatch overlays the supplied site_config knobs (AlwaysOn,
+// FtpsState, MinTLSVersion) onto meta, each preserved when the patch leaves it
+// nil. Split out of applySiteMetaPatch to keep that function's branch count low.
+//
+//nolint:gocritic // patch mirrors applySiteMetaPatch's by-value payload.
+func applySiteConfigPatch(meta *SiteMeta, patch SiteMetaPatch) {
+	if patch.AlwaysOn != nil {
+		meta.AlwaysOn = cloneBoolPtr(patch.AlwaysOn)
+	}
+
+	if patch.FtpsState != nil {
+		meta.FtpsState = *patch.FtpsState
+	}
+
+	if patch.MinTLSVersion != nil {
+		meta.MinTLSVersion = *patch.MinTLSVersion
 	}
 }
 
@@ -550,6 +592,18 @@ func (m *Mock) lookupFunction(site, name string) (*SiteFunction, error) {
 	}
 
 	return fn, nil
+}
+
+// cloneBoolPtr returns an independent copy of a *bool so a stored SiteMeta never
+// aliases the caller's pointer (COW safety).
+func cloneBoolPtr(b *bool) *bool {
+	if b == nil {
+		return nil
+	}
+
+	v := *b
+
+	return &v
 }
 
 // generateKey returns a URL-safe base64 secret used for host and function keys.

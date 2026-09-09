@@ -46,10 +46,13 @@ type subnetRequest struct {
 }
 
 type subnetRequestProps struct {
-	AddressPrefix        string    `json:"addressPrefix,omitempty"`
-	NatGateway           *armIDRef `json:"natGateway,omitempty"`
-	NetworkSecurityGroup *armIDRef `json:"networkSecurityGroup,omitempty"`
-	RouteTable           *armIDRef `json:"routeTable,omitempty"`
+	AddressPrefix                     string    `json:"addressPrefix,omitempty"`
+	AddressPrefixes                   []string  `json:"addressPrefixes,omitempty"`
+	NatGateway                        *armIDRef `json:"natGateway,omitempty"`
+	NetworkSecurityGroup              *armIDRef `json:"networkSecurityGroup,omitempty"`
+	RouteTable                        *armIDRef `json:"routeTable,omitempty"`
+	PrivateEndpointNetworkPolicies    string    `json:"privateEndpointNetworkPolicies,omitempty"`
+	PrivateLinkServiceNetworkPolicies string    `json:"privateLinkServiceNetworkPolicies,omitempty"`
 }
 
 type subnetResponse struct {
@@ -60,11 +63,14 @@ type subnetResponse struct {
 }
 
 type subnetResponseProps struct {
-	ProvisioningState    string    `json:"provisioningState"`
-	AddressPrefix        string    `json:"addressPrefix,omitempty"`
-	NatGateway           *armIDRef `json:"natGateway,omitempty"`
-	NetworkSecurityGroup *armIDRef `json:"networkSecurityGroup,omitempty"`
-	RouteTable           *armIDRef `json:"routeTable,omitempty"`
+	ProvisioningState                 string    `json:"provisioningState"`
+	AddressPrefix                     string    `json:"addressPrefix,omitempty"`
+	AddressPrefixes                   []string  `json:"addressPrefixes,omitempty"`
+	NatGateway                        *armIDRef `json:"natGateway,omitempty"`
+	NetworkSecurityGroup              *armIDRef `json:"networkSecurityGroup,omitempty"`
+	RouteTable                        *armIDRef `json:"routeTable,omitempty"`
+	PrivateEndpointNetworkPolicies    string    `json:"privateEndpointNetworkPolicies,omitempty"`
+	PrivateLinkServiceNetworkPolicies string    `json:"privateLinkServiceNetworkPolicies,omitempty"`
 }
 
 type subnetListResponse struct {
@@ -92,8 +98,12 @@ type securityRuleProps struct {
 	Protocol                             string     `json:"protocol,omitempty"`
 	SourceAddressPrefix                  string     `json:"sourceAddressPrefix,omitempty"`
 	DestinationAddressPrefix             string     `json:"destinationAddressPrefix,omitempty"`
+	SourceAddressPrefixes                []string   `json:"sourceAddressPrefixes,omitempty"`
+	DestinationAddressPrefixes           []string   `json:"destinationAddressPrefixes,omitempty"`
 	SourcePortRange                      string     `json:"sourcePortRange,omitempty"`
 	DestinationPortRange                 string     `json:"destinationPortRange,omitempty"`
+	SourcePortRanges                     []string   `json:"sourcePortRanges,omitempty"`
+	DestinationPortRanges                []string   `json:"destinationPortRanges,omitempty"`
 	SourceApplicationSecurityGroups      []armIDRef `json:"sourceApplicationSecurityGroups,omitempty"`
 	DestinationApplicationSecurityGroups []armIDRef `json:"destinationApplicationSecurityGroups,omitempty"`
 	Access                               string     `json:"access,omitempty"`
@@ -176,10 +186,12 @@ type publicIPRequest struct {
 
 type publicIPSKU struct {
 	Name string `json:"name,omitempty"`
+	Tier string `json:"tier,omitempty"`
 }
 
 type publicIPReqProps struct {
 	PublicIPAllocationMethod string                  `json:"publicIPAllocationMethod,omitempty"`
+	PublicIPAddressVersion   string                  `json:"publicIPAddressVersion,omitempty"`
 	IdleTimeoutInMinutes     int                     `json:"idleTimeoutInMinutes,omitempty"`
 	DNSSettings              *publicIPDNSSettingsReq `json:"dnsSettings,omitempty"`
 	// PublicIPPrefix is the optional prefix a public IP is drawn from. The mock
@@ -206,6 +218,7 @@ type publicIPResponse struct {
 type publicIPRespProps struct {
 	ProvisioningState        string               `json:"provisioningState"`
 	PublicIPAllocationMethod string               `json:"publicIPAllocationMethod,omitempty"`
+	PublicIPAddressVersion   string               `json:"publicIPAddressVersion,omitempty"`
 	IPAddress                string               `json:"ipAddress,omitempty"`
 	IdleTimeoutInMinutes     int                  `json:"idleTimeoutInMinutes,omitempty"`
 	DNSSettings              *publicIPDNSSettings `json:"dnsSettings,omitempty"`
@@ -275,6 +288,9 @@ type routeTableRequest struct {
 
 type routeTableRequestProps struct {
 	Routes []route `json:"routes,omitempty"`
+	// DisableBgpRoutePropagation is a pointer so an explicit false is preserved
+	// distinctly from an omitted field (azurerm always sends it, default false).
+	DisableBgpRoutePropagation *bool `json:"disableBgpRoutePropagation,omitempty"`
 }
 
 type route struct {
@@ -301,8 +317,9 @@ type routeTableResponse struct {
 }
 
 type routeTableResponseProps struct {
-	ProvisioningState string  `json:"provisioningState"`
-	Routes            []route `json:"routes"`
+	ProvisioningState          string  `json:"provisioningState"`
+	DisableBgpRoutePropagation bool    `json:"disableBgpRoutePropagation"`
+	Routes                     []route `json:"routes"`
 	// Subnets is the read-only back-reference real ARM reports on a routeTables
 	// GET once the route table is associated with a subnet (mirrors
 	// nsgResponseProps.Subnets).
@@ -311,4 +328,8 @@ type routeTableResponseProps struct {
 
 type routeTableListResponse struct {
 	Value []routeTableResponse `json:"value"`
+}
+
+type routeListResponse struct {
+	Value []route `json:"value"`
 }

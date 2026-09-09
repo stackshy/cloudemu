@@ -226,15 +226,15 @@ func dpError(w http.ResponseWriter, status int, code, msg string) {
 func dpWriteErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		dpError(w, http.StatusNotFound, "RESOURCE_DOES_NOT_EXIST", err.Error())
+		dpError(w, http.StatusNotFound, "RESOURCE_DOES_NOT_EXIST", cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):
-		dpError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS", err.Error())
+		dpError(w, http.StatusConflict, "RESOURCE_ALREADY_EXISTS", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		dpError(w, http.StatusBadRequest, "INVALID_PARAMETER_VALUE", err.Error())
+		dpError(w, http.StatusBadRequest, "INVALID_PARAMETER_VALUE", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
-		dpError(w, http.StatusBadRequest, "INVALID_STATE", err.Error())
+		dpError(w, http.StatusBadRequest, "INVALID_STATE", cerrors.Message(err))
 	default:
-		dpError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error())
+		dpError(w, http.StatusInternalServerError, "INTERNAL_ERROR", cerrors.Message(err))
 	}
 }
 

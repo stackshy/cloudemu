@@ -5,6 +5,7 @@ package cloudasset_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/api/cloudasset/v1"
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 
 	"github.com/stackshy/cloudemu/v2"
@@ -510,5 +512,72 @@ func TestSDKCloudAsset_BatchGetAssetsHistory(t *testing.T) {
 	for _, a := range out.Assets {
 		require.NotNil(t, a.Window, "each TemporalAsset must carry a window")
 		assert.NotEmpty(t, a.Window.StartTime)
+	}
+}
+
+// TestSDKCloudAssetErrorMessagesOmitCodePrefix guards against the wire error
+// message leaking cloudemu's internal cerrors code name (e.g. "NotFound: ...",
+// "AlreadyExists: ...") into the message an SDK caller sees. Real Cloud Asset
+// never prefixes its error messages with an internal error-taxonomy name.
+func TestSDKCloudAssetErrorMessagesOmitCodePrefix(t *testing.T) {
+	ctx := context.Background()
+	cloudP := cloudemu.NewGCP()
+	const projectID = "errmsg-project"
+
+	srv := gcpserver.New(gcpserver.Drivers{
+		ResourceDiscovery: cloudP.ResourceDiscovery,
+		ProjectID:         projectID,
+	})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	client, err := cloudasset.NewService(ctx,
+		option.WithEndpoint(ts.URL),
+		option.WithoutAuthentication(),
+	)
+	require.NoError(t, err)
+
+	scope := "projects/" + projectID
+	feedID := "errmsg-feed"
+	feedName := scope + "/feeds/" + feedID
+
+	t.Run("NotFound Feeds.Get", func(t *testing.T) {
+		_, err := client.Feeds.Get(feedName).Do()
+		require.Error(t, err)
+
+		var gErr *googleapi.Error
+		require.True(t, errors.As(err, &gErr), "expected a googleapi.Error, got %T", err)
+		assertNoCodePrefix(t, gErr.Message)
+	})
+
+	t.Run("AlreadyExists Feeds.Create", func(t *testing.T) {
+		_, err := client.Feeds.Create(scope, &cloudasset.CreateFeedRequest{
+			FeedId: feedID,
+			Feed:   &cloudasset.Feed{},
+		}).Do()
+		require.NoError(t, err)
+
+		_, err = client.Feeds.Create(scope, &cloudasset.CreateFeedRequest{
+			FeedId: feedID,
+			Feed:   &cloudasset.Feed{},
+		}).Do()
+		require.Error(t, err)
+
+		var gErr *googleapi.Error
+		require.True(t, errors.As(err, &gErr), "expected a googleapi.Error, got %T", err)
+		assertNoCodePrefix(t, gErr.Message)
+	})
+}
+
+// assertNoCodePrefix fails if msg contains one of cloudemu's internal
+// canonical error-code names followed by a colon (the shape err.Error()
+// produces via *cerrors.Error, as opposed to cerrors.Message(err)).
+func assertNoCodePrefix(t *testing.T, msg string) {
+	t.Helper()
+
+	for _, prefix := range []string{"NotFound:", "AlreadyExists:", "InvalidArgument:", "FailedPrecondition:", "Internal:"} {
+		if strings.Contains(msg, prefix) {
+			t.Errorf("wire error message %q leaks internal code prefix %q", msg, prefix)
+		}
 	}
 }

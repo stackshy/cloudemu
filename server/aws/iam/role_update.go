@@ -31,6 +31,20 @@ type updateAssumeRolePolicyResponse struct {
 	Metadata responseMetadata `xml:"ResponseMetadata"`
 }
 
+// updateRoleDescriptionResponse mirrors the real IAM UpdateRoleDescription
+// response, which — unlike UpdateRole — returns the modified role. Terraform's
+// aws_iam_role resource calls this action when only the description changes.
+type updateRoleDescriptionResponse struct {
+	XMLName  xml.Name                    `xml:"UpdateRoleDescriptionResponse"`
+	Xmlns    string                      `xml:"xmlns,attr"`
+	Result   updateRoleDescriptionResult `xml:"UpdateRoleDescriptionResult"`
+	Metadata responseMetadata            `xml:"ResponseMetadata"`
+}
+
+type updateRoleDescriptionResult struct {
+	Role roleXML `xml:"Role"`
+}
+
 func (h *Handler) roleUpdates() (roleUpdater, bool) {
 	u, ok := h.iam.(roleUpdater)
 
@@ -84,6 +98,34 @@ func optionalFormInt(r *http.Request, key string) *int {
 	}
 
 	return &n
+}
+
+func (h *Handler) updateRoleDescription(w http.ResponseWriter, r *http.Request) {
+	upd, ok := h.roleUpdates()
+	if !ok {
+		writeErr(w, cerrors.New(cerrors.Unimplemented, "role updates not supported"))
+		return
+	}
+
+	roleName := r.Form.Get("RoleName")
+	description := r.Form.Get("Description")
+
+	if err := upd.UpdateRole(r.Context(), roleName, &description, nil); err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	role, err := h.iam.GetRole(r.Context(), roleName)
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, updateRoleDescriptionResponse{
+		Xmlns:    Namespace,
+		Result:   updateRoleDescriptionResult{Role: toRoleXML(role)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
 }
 
 func (h *Handler) updateAssumeRolePolicy(w http.ResponseWriter, r *http.Request) {

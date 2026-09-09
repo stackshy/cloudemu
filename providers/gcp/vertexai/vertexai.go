@@ -125,6 +125,13 @@ func (*Mock) newID() string {
 	return idgen.GenerateID("")
 }
 
+// newEtag returns a fresh opaque etag. Real Vertex resources return an etag that
+// changes on every mutation; the emulator does not enforce it as a
+// concurrency precondition but surfaces one so computed etag attributes populate.
+func (*Mock) newEtag() string {
+	return idgen.GenerateID("")
+}
+
 // doneOp records and returns an already-complete operation for the given
 // location, carrying the response resource name in its metadata.
 func (m *Mock) doneOp(location, resourceName string) *driver.Operation {

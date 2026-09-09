@@ -161,6 +161,54 @@ func TestSDKSetQueueAttributesOutOfRange(t *testing.T) {
 	}
 }
 
+// TestSDKKmsDataKeyReusePeriodRange guards fix #8: KmsDataKeyReusePeriodSeconds
+// must reject values outside [60, 86400] with InvalidAttributeValue and accept the
+// boundaries, on both CreateQueue and SetQueueAttributes.
+func TestSDKKmsDataKeyReusePeriodRange(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	cases := []struct {
+		value   string
+		wantErr bool
+	}{
+		{"59", true},
+		{"60", false},
+		{"86400", false},
+		{"86401", true},
+	}
+
+	for _, tc := range cases {
+		attrs := map[string]string{"KmsDataKeyReusePeriodSeconds": tc.value}
+
+		_, createErr := client.CreateQueue(ctx, &awssqs.CreateQueueInput{
+			QueueName:  aws.String(fmt.Sprintf("kms-create-%s", tc.value)),
+			Attributes: attrs,
+		})
+		if tc.wantErr {
+			if code := apiErrorCode(t, createErr); code != "InvalidAttributeValue" {
+				t.Fatalf("CreateQueue KmsDataKeyReusePeriodSeconds=%s: code = %q, want InvalidAttributeValue", tc.value, code)
+			}
+		} else if createErr != nil {
+			t.Fatalf("CreateQueue KmsDataKeyReusePeriodSeconds=%s: unexpected error %v", tc.value, createErr)
+		}
+
+		url := mustCreateQueue(t, client, fmt.Sprintf("kms-set-%s", tc.value))
+
+		_, setErr := client.SetQueueAttributes(ctx, &awssqs.SetQueueAttributesInput{
+			QueueUrl:   aws.String(url),
+			Attributes: attrs,
+		})
+		if tc.wantErr {
+			if code := apiErrorCode(t, setErr); code != "InvalidAttributeValue" {
+				t.Fatalf("SetQueueAttributes KmsDataKeyReusePeriodSeconds=%s: code = %q, want InvalidAttributeValue", tc.value, code)
+			}
+		} else if setErr != nil {
+			t.Fatalf("SetQueueAttributes KmsDataKeyReusePeriodSeconds=%s: unexpected error %v", tc.value, setErr)
+		}
+	}
+}
+
 // TestSDKSetQueueAttributesInRange guards the happy path: valid values still apply.
 func TestSDKSetQueueAttributesInRange(t *testing.T) {
 	client, _ := newSDKClient(t)

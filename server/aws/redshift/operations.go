@@ -22,25 +22,40 @@ const (
 
 // clusterConfigFromForm pulls the relevant Cluster fields out of a form. Used
 // by CreateCluster.
+// defaultAutomatedSnapshotRetention is the AutomatedSnapshotRetentionPeriod
+// Redshift assigns when CreateCluster omits it. It matches the provider and the
+// Terraform aws_redshift_cluster schema default so an unset value never drifts.
+const defaultAutomatedSnapshotRetention = 1
+
 func clusterConfigFromForm(form url.Values) rdbdriver.ClusterConfig {
+	// AutomatedSnapshotRetentionPeriod defaults to 1 only when the client omits
+	// it; an explicit "0" (disable automated snapshots) is preserved, so presence
+	// is checked rather than treating 0 as "unset".
+	retention := defaultAutomatedSnapshotRetention
+	if form.Has("AutomatedSnapshotRetentionPeriod") {
+		retention = formInt(form.Get("AutomatedSnapshotRetentionPeriod"))
+	}
+
 	return rdbdriver.ClusterConfig{
-		ID:                          form.Get("ClusterIdentifier"),
-		Engine:                      "redshift",
-		EngineVersion:               form.Get("ClusterVersion"),
-		MasterUsername:              form.Get("MasterUsername"),
-		MasterUserPassword:          form.Get("MasterUserPassword"),
-		DatabaseName:                form.Get("DBName"),
-		Port:                        formInt(form.Get("Port")),
-		VPCSecurityGroups:           awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
-		SubnetGroupName:             form.Get("ClusterSubnetGroupName"),
-		DBClusterParameterGroupName: form.Get("ClusterParameterGroupName"),
-		NodeType:                    form.Get("NodeType"),
-		NumberOfNodes:               formInt(form.Get("NumberOfNodes")),
-		Encrypted:                   formBool(form.Get("Encrypted")),
-		KmsKeyID:                    form.Get("KmsKeyId"),
-		PubliclyAccessible:          formBool(form.Get("PubliclyAccessible")),
-		AvailabilityZone:            form.Get("AvailabilityZone"),
-		Tags:                        parseRedshiftTags(form),
+		ID:                               form.Get("ClusterIdentifier"),
+		Engine:                           "redshift",
+		EngineVersion:                    form.Get("ClusterVersion"),
+		MasterUsername:                   form.Get("MasterUsername"),
+		MasterUserPassword:               form.Get("MasterUserPassword"),
+		DatabaseName:                     form.Get("DBName"),
+		Port:                             formInt(form.Get("Port")),
+		VPCSecurityGroups:                awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
+		SubnetGroupName:                  form.Get("ClusterSubnetGroupName"),
+		DBClusterParameterGroupName:      form.Get("ClusterParameterGroupName"),
+		NodeType:                         form.Get("NodeType"),
+		NumberOfNodes:                    formInt(form.Get("NumberOfNodes")),
+		Encrypted:                        formBool(form.Get("Encrypted")),
+		KmsKeyID:                         form.Get("KmsKeyId"),
+		PubliclyAccessible:               formBool(form.Get("PubliclyAccessible")),
+		AvailabilityZone:                 form.Get("AvailabilityZone"),
+		AutomatedSnapshotRetentionPeriod: retention,
+		PreferredMaintenanceWindow:       form.Get("PreferredMaintenanceWindow"),
+		Tags:                             parseRedshiftTags(form),
 	}
 }
 
@@ -127,12 +142,20 @@ func (h *Handler) modifyCluster(w http.ResponseWriter, r *http.Request) {
 	id := form.Get("ClusterIdentifier")
 
 	input := rdbdriver.ModifyInstanceInput{
-		EngineVersion:      form.Get("ClusterVersion"),
-		MasterUserPassword: form.Get("MasterUserPassword"),
-		NodeType:           form.Get("NodeType"),
-		NumberOfNodes:      formInt(form.Get("NumberOfNodes")),
-		ClusterType:        form.Get("ClusterType"),
-		Tags:               parseRedshiftTags(form),
+		EngineVersion:              form.Get("ClusterVersion"),
+		MasterUserPassword:         form.Get("MasterUserPassword"),
+		NodeType:                   form.Get("NodeType"),
+		NumberOfNodes:              formInt(form.Get("NumberOfNodes")),
+		ClusterType:                form.Get("ClusterType"),
+		PreferredMaintenanceWindow: form.Get("PreferredMaintenanceWindow"),
+		Tags:                       parseRedshiftTags(form),
+	}
+
+	// Retention is applied only when the client sends it; a pointer preserves an
+	// explicit 0 (disable automated snapshots) as distinct from "unchanged".
+	if form.Has("AutomatedSnapshotRetentionPeriod") {
+		retention := formInt(form.Get("AutomatedSnapshotRetentionPeriod"))
+		input.AutomatedSnapshotRetentionPeriod = &retention
 	}
 
 	cluster, err := h.db.ModifyCluster(r.Context(), id, input)
@@ -367,6 +390,27 @@ func (h *Handler) getClusterCredentials(w http.ResponseWriter, r *http.Request) 
 			DBPassword: synthesizedDBPassword,
 			Expiration: expiration.Format("2006-01-02T15:04:05.000Z"),
 		},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// describeLoggingStatus reports a cluster's audit-logging configuration.
+// Audit logging is not modeled, so an existing cluster always reports logging
+// disabled. Terraform's aws_redshift_cluster read calls this unconditionally to
+// populate its logging block, so a missing action fails the whole create.
+func (h *Handler) describeLoggingStatus(w http.ResponseWriter, r *http.Request) {
+	id := r.Form.Get("ClusterIdentifier")
+
+	// The cluster must exist; ClusterNotFound (404) otherwise, matching AWS.
+	clusters, err := h.db.DescribeClusters(r.Context(), []string{id})
+	if err != nil || len(clusters) == 0 {
+		writeErr(w, errClusterNotFound(id))
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, describeLoggingStatusResponse{
+		Xmlns:    Namespace,
+		Result:   loggingStatusResult{LoggingEnabled: false},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }

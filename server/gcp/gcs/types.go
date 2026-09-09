@@ -17,10 +17,22 @@ type bucketResource struct {
 	Lifecycle        *bucketLifecycle  `json:"lifecycle,omitempty"`
 	IamConfiguration *iamConfiguration `json:"iamConfiguration,omitempty"`
 	RetentionPolicy  *retentionPolicy  `json:"retentionPolicy,omitempty"`
+	Cors             []corsRule        `json:"cors,omitempty"`
 	Metageneration   string            `json:"metageneration,omitempty"`
 	Etag             string            `json:"etag,omitempty"`
 	TimeCreated      string            `json:"timeCreated,omitempty"`
 	Updated          string            `json:"updated,omitempty"`
+}
+
+// corsRule is one entry of the bucket cors[] array
+// (https://cloud.google.com/storage/docs/json_api/v1/buckets#cors). Field names
+// match the GCS wire format the SDK/gcloud/Terraform emit: origin, method,
+// responseHeader, maxAgeSeconds.
+type corsRule struct {
+	Origin         []string `json:"origin,omitempty"`
+	Method         []string `json:"method,omitempty"`
+	ResponseHeader []string `json:"responseHeader,omitempty"`
+	MaxAgeSeconds  int      `json:"maxAgeSeconds,omitempty"`
 }
 
 type bucketVersioning struct {
@@ -83,6 +95,15 @@ type uniformBucketLevelAccess struct {
 type bucketsListResponse struct {
 	Kind  string           `json:"kind"`
 	Items []bucketResource `json:"items"`
+}
+
+// anywhereCachesListResponse is the Buckets anywhereCaches: list response. Its
+// items are always empty because cloudemu does not model Anywhere Cache
+// instances; the empty list is what a bucket with no caches returns.
+type anywhereCachesListResponse struct {
+	Kind          string `json:"kind"`
+	Items         []any  `json:"items,omitempty"`
+	NextPageToken string `json:"nextPageToken,omitempty"`
 }
 
 type objectResource struct {

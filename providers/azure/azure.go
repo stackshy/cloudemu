@@ -12,33 +12,58 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/ai"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/appconfiguration"
+	"github.com/stackshy/cloudemu/v2/providers/azure/applicationgateway"
+	"github.com/stackshy/cloudemu/v2/providers/azure/bastion"
+	"github.com/stackshy/cloudemu/v2/providers/azure/batch"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cache"
+	"github.com/stackshy/cloudemu/v2/providers/azure/chaosstudio"
+	"github.com/stackshy/cloudemu/v2/providers/azure/communication"
 	"github.com/stackshy/cloudemu/v2/providers/azure/containerapps"
 	"github.com/stackshy/cloudemu/v2/providers/azure/containerinstances"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmosdb"
 	"github.com/stackshy/cloudemu/v2/providers/azure/cosmospostgresql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/databricks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/datafactory"
+	"github.com/stackshy/cloudemu/v2/providers/azure/devcenter"
+	"github.com/stackshy/cloudemu/v2/providers/azure/digitaltwins"
 	"github.com/stackshy/cloudemu/v2/providers/azure/dns"
+	"github.com/stackshy/cloudemu/v2/providers/azure/elasticsan"
 	"github.com/stackshy/cloudemu/v2/providers/azure/eventgrid"
+	"github.com/stackshy/cloudemu/v2/providers/azure/firewall"
+	"github.com/stackshy/cloudemu/v2/providers/azure/frontdoor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
+	"github.com/stackshy/cloudemu/v2/providers/azure/healthcareapis"
 	"github.com/stackshy/cloudemu/v2/providers/azure/iam"
+	"github.com/stackshy/cloudemu/v2/providers/azure/iothub"
 	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadbalancer"
+	"github.com/stackshy/cloudemu/v2/providers/azure/loadtesting"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedcassandra"
+	"github.com/stackshy/cloudemu/v2/providers/azure/managedgrafana"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedidentity"
+	"github.com/stackshy/cloudemu/v2/providers/azure/managedlustre"
+	"github.com/stackshy/cloudemu/v2/providers/azure/mongocluster"
 	"github.com/stackshy/cloudemu/v2/providers/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
 	"github.com/stackshy/cloudemu/v2/providers/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/v2/providers/azure/postgresflex"
+	"github.com/stackshy/cloudemu/v2/providers/azure/privatedns"
+	"github.com/stackshy/cloudemu/v2/providers/azure/purview"
+	"github.com/stackshy/cloudemu/v2/providers/azure/recoveryservices"
+	"github.com/stackshy/cloudemu/v2/providers/azure/redisenterprise"
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
+	"github.com/stackshy/cloudemu/v2/providers/azure/signalr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/sql"
 	"github.com/stackshy/cloudemu/v2/providers/azure/sqlvirtualmachine"
+	"github.com/stackshy/cloudemu/v2/providers/azure/streamanalytics"
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
 	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
+	"github.com/stackshy/cloudemu/v2/providers/azure/webpubsub"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
@@ -133,6 +158,11 @@ type Provider struct {
 	IAM              *iam.Mock
 	DNS              *dns.Mock
 	LB               *loadbalancer.Mock
+	AppGateway       *applicationgateway.Mock
+	Firewall         *firewall.Mock
+	Bastion          *bastion.Mock
+	FrontDoor        *frontdoor.Mock
+	PrivateDNS       *privatedns.Mock
 	ServiceBus       *servicebus.Mock
 	// QueueStorage backs the Azure Queue Storage data-plane handler. It reuses
 	// the messagequeue provider, but is a distinct instance from ServiceBus so
@@ -152,11 +182,31 @@ type Provider struct {
 	MySQLFlex          *mysqlflex.Mock
 	AKS                *aks.Mock
 	Databricks         *databricks.Mock
+	DataFactory        *datafactory.Mock
 	AI                 *ai.Mock
 	Search             *search.Mock
 	ManagedIdentity    *managedidentity.Mock
 	SQLVirtualMachine  *sqlvirtualmachine.Mock
 	ContainerApps      *containerapps.Mock
+	LoadTesting        *loadtesting.Mock
+	SignalR            *signalr.Mock
+	WebPubSub          *webpubsub.Mock
+	Communication      *communication.Mock
+	DigitalTwins       *digitaltwins.Mock
+	ManagedGrafana     *managedgrafana.Mock
+	DevCenter          *devcenter.Mock
+	Purview            *purview.Mock
+	ChaosStudio        *chaosstudio.Mock
+	ElasticSan         *elasticsan.Mock
+	ManagedLustre      *managedlustre.Mock
+	AppConfiguration   *appconfiguration.Mock
+	RedisEnterprise    *redisenterprise.Mock
+	MongoCluster       *mongocluster.Mock
+	Batch              *batch.Mock
+	StreamAnalytics    *streamanalytics.Mock
+	RecoveryServices   *recoveryservices.Mock
+	IoTHub             *iothub.Mock
+	HealthcareApis     *healthcareapis.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -194,6 +244,11 @@ func New(opts ...config.Option) *Provider {
 		IAM:                iam.New(o),
 		DNS:                dns.New(o),
 		LB:                 loadbalancer.New(o),
+		AppGateway:         applicationgateway.New(o),
+		Firewall:           firewall.New(o),
+		Bastion:            bastion.New(o),
+		FrontDoor:          frontdoor.New(o),
+		PrivateDNS:         privatedns.New(o),
 		ServiceBus:         servicebus.New(o),
 		QueueStorage:       servicebus.New(o),
 		TableStorage:       tablestorage.New(o),
@@ -209,15 +264,97 @@ func New(opts ...config.Option) *Provider {
 		MySQLFlex:          mysqlflex.New(o),
 		AKS:                aks.New(o),
 		Databricks:         databricks.New(o),
+		DataFactory:        datafactory.New(o),
 		AI:                 ai.New(o),
 		Search:             search.New(o),
 		ManagedIdentity:    managedidentity.New(o),
 		SQLVirtualMachine:  sqlvirtualmachine.New(o),
 		ContainerApps:      containerapps.New(o),
+		LoadTesting:        loadtesting.New(o),
+		SignalR:            signalr.New(o),
+		WebPubSub:          webpubsub.New(o),
+		Communication:      communication.New(o),
+		DigitalTwins:       digitaltwins.New(o),
+		ManagedGrafana:     managedgrafana.New(o),
+		DevCenter:          devcenter.New(o),
+		Purview:            purview.New(o),
+		ChaosStudio:        chaosstudio.New(o),
+		ElasticSan:         elasticsan.New(o),
+		ManagedLustre:      managedlustre.New(o),
+		AppConfiguration:   appconfiguration.New(o),
+		RedisEnterprise:    redisenterprise.New(o),
+		MongoCluster:       mongocluster.New(o),
+		Batch:              batch.New(o),
+		StreamAnalytics:    streamanalytics.New(o),
+		RecoveryServices:   recoveryservices.New(o),
+		IoTHub:             iothub.New(o),
+		HealthcareApis:     healthcareapis.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
 	}
+	wireCrossService(p)
+
+	p.ResourceDiscovery = resourcediscovery.New(
+		resourcediscovery.ProviderAzure, o.AccountID, o.Region,
+		&resourcediscovery.Drivers{
+			Compute:         p.VirtualMachines,
+			Networking:      p.VNet,
+			Storage:         p.BlobStorage,
+			Database:        p.CosmosDB,
+			Serverless:      p.Functions,
+			Databricks:      p.Databricks,
+			Kubernetes:      aksDiscovery{p.AKS},
+			RelationalDB:    sqlDiscovery{sql: p.SQL, mysql: p.MySQLFlex, pg: p.PostgresFlex},
+			ScaleSets:       vmssDiscovery{p.VirtualMachines},
+			AppServicePlans: appServicePlanDiscovery{p.Functions},
+			Secrets:         p.KeyVault,
+			KeyVaults:       p.KeyVault,
+			ContainerReg:    p.ACR,
+			MessageQueue:    p.ServiceBus,
+			Notification:    p.NotificationHubs,
+			DNS:             p.DNS,
+			Logging:         p.LogAnalytics,
+			Cache:           p.Cache,
+			LoadBalancer:    p.LB,
+			Monitoring:      p.Monitor,
+			IAM:             p.IAM,
+			Extra: []resourcediscovery.GenericResources{
+				azureMLDiscovery{p.AI},
+				managedIdentityDiscovery{p.ManagedIdentity},
+				sqlVirtualMachineDiscovery{p.SQLVirtualMachine},
+				containerAppsDiscovery{p.ContainerApps},
+				loadTestDiscovery{p.LoadTesting},
+				signalRDiscovery{p.SignalR},
+				webPubSubDiscovery{p.WebPubSub},
+				communicationDiscovery{p.Communication},
+				digitalTwinsDiscovery{p.DigitalTwins},
+				managedGrafanaDiscovery{p.ManagedGrafana},
+				devCenterDiscovery{p.DevCenter},
+				purviewDiscovery{p.Purview},
+				chaosStudioDiscovery{p.ChaosStudio},
+				elasticSanDiscovery{p.ElasticSan},
+				managedLustreDiscovery{p.ManagedLustre},
+				appConfigurationDiscovery{p.AppConfiguration},
+				redisEnterpriseDiscovery{p.RedisEnterprise},
+				mongoClusterDiscovery{p.MongoCluster},
+				batchDiscovery{p.Batch},
+				streamAnalyticsDiscovery{p.StreamAnalytics},
+				recoveryServicesDiscovery{p.RecoveryServices},
+				iotHubDiscovery{p.IoTHub},
+				healthcareApisDiscovery{p.HealthcareApis},
+			},
+		},
+	)
+	p.engineClosers = o.EngineClosers()
+
+	return p
+}
+
+// wireCrossService connects the inter-service dependencies (auto-metrics, log
+// sinks, native trigger delivery and event publishing) after every service has
+// been constructed.
+func wireCrossService(p *Provider) {
 	p.VirtualMachines.SetMonitoring(p.Monitor)
 	p.VirtualMachines.SetNICAttacher(p.VNet)
 	p.BlobStorage.SetMonitoring(p.Monitor)
@@ -254,43 +391,6 @@ func New(opts ...config.Option) *Provider {
 	p.AKS.SetMonitoring(p.Monitor)
 	p.AI.SetMonitoring(p.Monitor)
 	p.Search.SetMonitoring(p.Monitor)
-
-	p.ResourceDiscovery = resourcediscovery.New(
-		resourcediscovery.ProviderAzure, o.AccountID, o.Region,
-		&resourcediscovery.Drivers{
-			Compute:         p.VirtualMachines,
-			Networking:      p.VNet,
-			Storage:         p.BlobStorage,
-			Database:        p.CosmosDB,
-			Serverless:      p.Functions,
-			Databricks:      p.Databricks,
-			Kubernetes:      aksDiscovery{p.AKS},
-			RelationalDB:    sqlDiscovery{sql: p.SQL, mysql: p.MySQLFlex, pg: p.PostgresFlex},
-			ScaleSets:       vmssDiscovery{p.VirtualMachines},
-			AppServicePlans: appServicePlanDiscovery{p.Functions},
-			Secrets:         p.KeyVault,
-			KeyVaults:       p.KeyVault,
-			ContainerReg:    p.ACR,
-			MessageQueue:    p.ServiceBus,
-			Notification:    p.NotificationHubs,
-			DNS:             p.DNS,
-			Logging:         p.LogAnalytics,
-			Cache:           p.Cache,
-			LoadBalancer:    p.LB,
-			Monitoring:      p.Monitor,
-			IAM:             p.IAM,
-			Extra: []resourcediscovery.GenericResources{
-				azureMLDiscovery{p.AI},
-				managedIdentityDiscovery{p.ManagedIdentity},
-				sqlVirtualMachineDiscovery{p.SQLVirtualMachine},
-				containerAppsDiscovery{p.ContainerApps},
-			},
-		},
-	)
-
-	p.engineClosers = o.EngineClosers()
-
-	return p
 }
 
 // Close tears down any real engines wired into the provider via

@@ -2,6 +2,7 @@ package sesv2_test
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -54,6 +55,14 @@ func TestCreateDomainIdentityGetsDkimTokens(t *testing.T) {
 
 	if len(id.DkimTokens) != 3 {
 		t.Fatalf("domain identity should have 3 DKIM tokens, got %d", len(id.DkimTokens))
+	}
+
+	// DKIM tokens are domain-independent selectors and never embed the domain
+	// (real SES tokens are used to build "<token>._domainkey.<domain>" CNAMEs).
+	for _, tok := range id.DkimTokens {
+		if strings.Contains(tok, "example.com") || strings.Contains(tok, ".") {
+			t.Fatalf("DKIM token should be a bare selector, got %q", tok)
+		}
 	}
 }
 

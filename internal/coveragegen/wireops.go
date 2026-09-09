@@ -43,9 +43,11 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"RequestServiceQuotaIncrease",
 	},
 	"aws/emr": {
-		"AddInstanceGroups", "AddJobFlowSteps", "CancelSteps", "DescribeCluster",
-		"DescribeStep", "ListBootstrapActions", "ListClusters", "ListInstanceGroups",
-		"ListInstances", "ListSteps", "ModifyInstanceGroups", "RunJobFlow",
+		"AddInstanceGroups", "AddJobFlowSteps", "AddTags", "CancelSteps",
+		"CreateSecurityConfiguration", "DeleteSecurityConfiguration", "DescribeCluster",
+		"DescribeSecurityConfiguration", "DescribeStep", "ListBootstrapActions",
+		"ListClusters", "ListInstanceGroups", "ListInstances", "ListSecurityConfigurations",
+		"ListSteps", "ModifyInstanceGroups", "RemoveTags", "RunJobFlow",
 		"TerminateJobFlows",
 	},
 	"aws/savingsplans": {
@@ -56,6 +58,9 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	},
 
 	// Azure — ARM handlers, routed on HTTP method + resource path shape.
+	"azure/aad": {
+		"GetMetadataEndpoints", "GetToken",
+	},
 	"azure/disks": {
 		"CreateOrUpdate", "Delete", "Get", "GrantAccess", "List", "ListByResourceGroup", "RevokeAccess",
 	},
@@ -100,6 +105,9 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"azure/locks": {
 		"CreateOrUpdate", "Delete", "Get", "List",
 	},
+	"azure/appinsights": {
+		"CreateOrUpdate", "Delete", "Get", "List", "ListByResourceGroup", "UpdateTags",
+	},
 	"azure/eventhub": {
 		"CheckNameAvailability", "CreateOrUpdate", "CreateOrUpdateAuthorizationRule",
 		"Delete", "DeleteAuthorizationRule", "Get", "GetAuthorizationRule",
@@ -125,11 +133,25 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"BatchGetAssetsHistory", "CreateFeed", "DeleteFeed", "ExportAssets", "GetFeed",
 		"GetOperation", "ListAssets", "ListFeeds", "SearchAllIamPolicies", "SearchAllResources", "UpdateFeed",
 	},
+	"gcp/filestore": {
+		"CreateInstance", "DeleteInstance", "GetInstance", "ListInstances", "UpdateInstance",
+	},
 	"gcp/lro": {
 		"GetOperation",
 	},
 	"gcp/servicenetworking": {
 		"CreateConnection", "DeleteConnection", "ListConnections",
+	},
+	"gcp/resourcemanager": {
+		"GetIamPolicy", "SetIamPolicy", "TestIamPermissions",
+	},
+	"gcp/kms": {
+		"CreateCryptoKey", "CreateCryptoKeyVersion", "CreateKeyRing",
+		"DestroyCryptoKeyVersion", "GetCryptoKey", "GetCryptoKeyVersion",
+		"GetIamPolicy", "GetKeyRing", "ListCryptoKeyVersions", "ListCryptoKeys",
+		"ListKeyRings", "RestoreCryptoKeyVersion", "SetIamPolicy",
+		"TestIamPermissions", "UpdateCryptoKey", "UpdateCryptoKeyPrimaryVersion",
+		"UpdateCryptoKeyVersion",
 	},
 	"gcp/cloudbilling": {
 		"CreateBillingAccount", "CreateBudget", "DeleteBudget", "GetBillingAccount",

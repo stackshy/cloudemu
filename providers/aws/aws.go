@@ -11,14 +11,26 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/providers/aws/acm"
+	"github.com/stackshy/cloudemu/v2/providers/aws/aoss"
 	"github.com/stackshy/cloudemu/v2/providers/aws/apigateway"
+	"github.com/stackshy/cloudemu/v2/providers/aws/apigatewayv2"
+	"github.com/stackshy/cloudemu/v2/providers/aws/appflow"
+	"github.com/stackshy/cloudemu/v2/providers/aws/apprunner"
+	"github.com/stackshy/cloudemu/v2/providers/aws/appsync"
+	"github.com/stackshy/cloudemu/v2/providers/aws/aps"
+	"github.com/stackshy/cloudemu/v2/providers/aws/athena"
+	"github.com/stackshy/cloudemu/v2/providers/aws/backup"
+	"github.com/stackshy/cloudemu/v2/providers/aws/batch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/providers/aws/bedrockagentruntime"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudformation"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cloudfront"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatchlogs"
+	"github.com/stackshy/cloudemu/v2/providers/aws/codeartifact"
+	"github.com/stackshy/cloudemu/v2/providers/aws/cognito"
 	"github.com/stackshy/cloudemu/v2/providers/aws/configservice"
 	"github.com/stackshy/cloudemu/v2/providers/aws/dynamodb"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ec2"
@@ -30,16 +42,26 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
 	"github.com/stackshy/cloudemu/v2/providers/aws/elbv2"
 	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridge"
+	"github.com/stackshy/cloudemu/v2/providers/aws/eventbridgescheduler"
+	"github.com/stackshy/cloudemu/v2/providers/aws/fis"
+	"github.com/stackshy/cloudemu/v2/providers/aws/globalaccelerator"
 	"github.com/stackshy/cloudemu/v2/providers/aws/glue"
+	"github.com/stackshy/cloudemu/v2/providers/aws/grafana"
 	"github.com/stackshy/cloudemu/v2/providers/aws/guardduty"
+	"github.com/stackshy/cloudemu/v2/providers/aws/healthlake"
 	"github.com/stackshy/cloudemu/v2/providers/aws/iam"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kafka"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kendra"
 	"github.com/stackshy/cloudemu/v2/providers/aws/keyspaces"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kinesis"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kinesisvideo"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kmscrypto"
 	"github.com/stackshy/cloudemu/v2/providers/aws/lambda"
+	"github.com/stackshy/cloudemu/v2/providers/aws/location"
 	"github.com/stackshy/cloudemu/v2/providers/aws/memorydb"
+	"github.com/stackshy/cloudemu/v2/providers/aws/mq"
+	"github.com/stackshy/cloudemu/v2/providers/aws/mwaa"
 	"github.com/stackshy/cloudemu/v2/providers/aws/networkfirewall"
 	"github.com/stackshy/cloudemu/v2/providers/aws/opensearch"
 	"github.com/stackshy/cloudemu/v2/providers/aws/rds"
@@ -54,6 +76,8 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws/sns"
 	"github.com/stackshy/cloudemu/v2/providers/aws/sqs"
 	"github.com/stackshy/cloudemu/v2/providers/aws/ssm"
+	"github.com/stackshy/cloudemu/v2/providers/aws/timestreamwrite"
+	"github.com/stackshy/cloudemu/v2/providers/aws/transfer"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpc"
 	"github.com/stackshy/cloudemu/v2/providers/aws/vpclattice"
 	"github.com/stackshy/cloudemu/v2/providers/aws/wafv2"
@@ -168,9 +192,24 @@ type Provider struct {
 	SSM                 *ssm.Mock
 	ECS                 *ecs.Mock
 	EFS                 *efs.Mock
+	Batch               *batch.Mock
 	Kinesis             *kinesis.Mock
+	KinesisVideo        *kinesisvideo.Mock
+	Location            *location.Mock
 	SESV2               *sesv2.Mock
 	OpenSearch          *opensearch.Mock
+	AppSync             *appsync.Mock
+	AppFlow             *appflow.Mock
+	MWAA                *mwaa.Mock
+	MQ                  *mq.Mock
+	CodeArtifact        *codeartifact.Mock
+	FIS                 *fis.Mock
+	Backup              *backup.Mock
+	Grafana             *grafana.Mock
+	Scheduler           *eventbridgescheduler.Mock
+	AOSS                *aoss.Mock
+	APS                 *aps.Mock
+	Kendra              *kendra.Mock
 	Kafka               *kafka.Mock
 	VPCLattice          *vpclattice.Mock
 	WAFv2               *wafv2.Mock
@@ -178,10 +217,19 @@ type Provider struct {
 	SFN                 *sfn.Mock
 	CloudTrail          *cloudtrail.Mock
 	Glue                *glue.Mock
+	Athena              *athena.Mock
+	TimestreamWrite     *timestreamwrite.Mock
+	HealthLake          *healthlake.Mock
+	AppRunner           *apprunner.Mock
+	GlobalAccelerator   *globalaccelerator.Mock
+	Transfer            *transfer.Mock
+	Cognito             *cognito.Mock
 	Config              *configservice.Mock
 	GuardDuty           *guardduty.Mock
 	APIGateway          *apigateway.Mock
+	APIGatewayV2        *apigatewayv2.Mock
 	CloudFormation      *cloudformation.Mock
+	CloudFront          *cloudfront.Mock
 	ResourceDiscovery   *resourcediscovery.Engine
 	AccountID           string
 	Region              string
@@ -233,9 +281,24 @@ func New(opts ...config.Option) *Provider {
 		SSM:                 ssm.New(o),
 		ECS:                 ecs.New(o),
 		EFS:                 efs.New(o),
+		Batch:               batch.New(o),
 		Kinesis:             kinesis.New(o),
+		KinesisVideo:        kinesisvideo.New(o),
+		Location:            location.New(o),
 		SESV2:               sesv2.New(o),
 		OpenSearch:          opensearch.New(o),
+		AppSync:             appsync.New(o),
+		AppFlow:             appflow.New(o),
+		MWAA:                mwaa.New(o),
+		MQ:                  mq.New(o),
+		CodeArtifact:        codeartifact.New(o),
+		FIS:                 fis.New(o),
+		Backup:              backup.New(o),
+		Grafana:             grafana.New(o),
+		Scheduler:           eventbridgescheduler.New(o),
+		AOSS:                aoss.New(o),
+		APS:                 aps.New(o),
+		Kendra:              kendra.New(o),
 		Kafka:               kafka.New(o),
 		VPCLattice:          vpclattice.New(o),
 		WAFv2:               wafv2.New(o),
@@ -243,9 +306,18 @@ func New(opts ...config.Option) *Provider {
 		SFN:                 sfn.New(o),
 		CloudTrail:          cloudtrail.New(o),
 		Glue:                glue.New(o),
+		Athena:              athena.New(o),
+		TimestreamWrite:     timestreamwrite.New(o),
+		HealthLake:          healthlake.New(o),
+		AppRunner:           apprunner.New(o),
+		GlobalAccelerator:   globalaccelerator.New(o),
+		Transfer:            transfer.New(o),
+		Cognito:             cognito.New(o),
 		Config:              configservice.New(o),
 		GuardDuty:           guardduty.New(o),
 		APIGateway:          apigateway.New(o),
+		APIGatewayV2:        apigatewayv2.New(o),
+		CloudFront:          cloudfront.New(o),
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 		EnforceAuth:         o.EnforceAuth,

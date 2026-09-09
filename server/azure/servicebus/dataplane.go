@@ -703,7 +703,7 @@ func writeMessage(w http.ResponseWriter, msg *mqdriver.Message, status int) {
 func writeLockError(w http.ResponseWriter, err error) {
 	if cerrors.IsNotFound(err) {
 		// A lock that no longer exists maps to Gone in the Service Bus REST plane.
-		azurearm.WriteError(w, http.StatusGone, "MessageLockLost", err.Error())
+		azurearm.WriteError(w, http.StatusGone, "MessageLockLost", cerrors.Message(err))
 		return
 	}
 

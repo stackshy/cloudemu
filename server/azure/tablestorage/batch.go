@@ -41,7 +41,7 @@ func (h *Handler) batch(w http.ResponseWriter, r *http.Request) {
 
 	ops, table, err := parseBatch(w, r)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidInput", cerrors.Message(err))
 		return
 	}
 
@@ -309,7 +309,7 @@ func writeBatchFailure(w http.ResponseWriter, err error) {
 	status, code := mapErr(err)
 
 	cs := buildChangeset(func(cw *multipart.Writer) {
-		writeOpPart(cw, opErrorResponse(idx, status, code, err.Error()))
+		writeOpPart(cw, opErrorResponse(idx, status, code, cerrors.Message(err)))
 	})
 
 	writeBatchEnvelope(w, cs)

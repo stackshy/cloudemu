@@ -287,6 +287,50 @@ func TestSDKDescribeDomainConfigEnvelope(t *testing.T) {
 	}
 }
 
+// TestSDKMinimalDomainAlwaysReturnsOptionBlocks guards a real-user divergence:
+// the terraform aws_opensearch_domain read path flattens CognitoOptions and
+// EBSOptions without a nil check, so a domain created without them must still
+// echo the defaults real AWS always returns. Before the fix, DescribeDomain
+// omitted these blocks and the provider panicked with a nil dereference.
+func TestSDKMinimalDomainAlwaysReturnsOptionBlocks(t *testing.T) {
+	ctx := context.Background()
+	c := newOSClient(t)
+
+	create, err := c.CreateDomain(ctx, &awsos.CreateDomainInput{DomainName: aws.String("minimal-dom")})
+	if err != nil {
+		t.Fatalf("CreateDomain: %v", err)
+	}
+
+	assertAlwaysPresent := func(t *testing.T, ds *ostypes.DomainStatus, where string) {
+		t.Helper()
+
+		if ds.CognitoOptions == nil {
+			t.Fatalf("%s: CognitoOptions must always be present (real AWS returns {Enabled:false})", where)
+		}
+
+		if aws.ToBool(ds.CognitoOptions.Enabled) {
+			t.Fatalf("%s: CognitoOptions.Enabled should default to false, got true", where)
+		}
+
+		if ds.EBSOptions == nil {
+			t.Fatalf("%s: EBSOptions must always be present", where)
+		}
+
+		if ds.EncryptionAtRestOptions == nil || ds.NodeToNodeEncryptionOptions == nil {
+			t.Fatalf("%s: encryption option blocks must always be present", where)
+		}
+	}
+
+	assertAlwaysPresent(t, create.DomainStatus, "CreateDomain")
+
+	desc, err := c.DescribeDomain(ctx, &awsos.DescribeDomainInput{DomainName: aws.String("minimal-dom")})
+	if err != nil {
+		t.Fatalf("DescribeDomain: %v", err)
+	}
+
+	assertAlwaysPresent(t, desc.DomainStatus, "DescribeDomain")
+}
+
 func TestSDKVPCDomainEndpoints(t *testing.T) {
 	ctx := context.Background()
 	c := newOSClient(t)

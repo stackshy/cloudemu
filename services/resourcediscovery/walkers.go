@@ -55,6 +55,62 @@ const (
 	// ServiceContainerApps buckets Azure Container Apps resources — managed
 	// environments and the container apps that run in them (Microsoft.App).
 	ServiceContainerApps = "containerapps"
+	// ServiceLoadTesting buckets Azure Load Testing resources
+	// (Microsoft.LoadTestService/loadTests).
+	ServiceLoadTesting = "loadtesting"
+	// ServiceSignalR buckets Azure SignalR Service resources
+	// (Microsoft.SignalRService/signalR).
+	ServiceSignalR = "signalr"
+	// ServiceWebPubSub buckets Azure Web PubSub Service resources
+	// (Microsoft.SignalRService/webPubSub).
+	ServiceWebPubSub = "webpubsub"
+	// ServiceCommunication buckets Azure Communication Services resources
+	// (Microsoft.Communication/communicationServices).
+	ServiceCommunication = "communication"
+	// ServiceDigitalTwins buckets Azure Digital Twins resources
+	// (Microsoft.DigitalTwins/digitalTwinsInstances).
+	ServiceDigitalTwins = "digitaltwins"
+	// ServiceManagedGrafana buckets Azure Managed Grafana resources
+	// (Microsoft.Dashboard/grafana).
+	ServiceManagedGrafana = "managedgrafana"
+	// ServiceDevCenter buckets Azure Dev Center resources
+	// (Microsoft.DevCenter/devcenters).
+	ServiceDevCenter = "devcenter"
+	// ServicePurview buckets Microsoft Purview resources
+	// (Microsoft.Purview/accounts).
+	ServicePurview = "purview"
+	// ServiceChaosStudio buckets Azure Chaos Studio resources
+	// (Microsoft.Chaos/experiments).
+	ServiceChaosStudio = "chaosstudio"
+	// ServiceElasticSan buckets Azure Elastic SAN resources
+	// (Microsoft.ElasticSan/elasticSans).
+	ServiceElasticSan = "elasticsan"
+	// ServiceManagedLustre buckets Azure Managed Lustre resources
+	// (Microsoft.StorageCache/amlFilesystems).
+	ServiceManagedLustre = "managedlustre"
+	// ServiceAppConfiguration buckets Azure App Configuration resources
+	// (Microsoft.AppConfiguration/configurationStores).
+	ServiceAppConfiguration = "appconfiguration"
+	// ServiceRedisEnterprise buckets Azure Redis Enterprise resources
+	// (Microsoft.Cache/redisEnterprise).
+	ServiceRedisEnterprise = "redisenterprise"
+	// ServiceHealthcareApis buckets Azure Health Data Services resources
+	// (Microsoft.HealthcareApis/workspaces).
+	ServiceHealthcareApis = "healthcareapis"
+	// ServiceMongoCluster buckets Azure Cosmos DB for MongoDB (vCore) resources
+	// (Microsoft.DocumentDB/mongoClusters).
+	ServiceMongoCluster = "mongocluster"
+	// ServiceBatch buckets Azure Batch resources (Microsoft.Batch/batchAccounts).
+	ServiceBatch = "batch"
+	// ServiceStreamAnalytics buckets Azure Stream Analytics resources
+	// (Microsoft.StreamAnalytics/streamingjobs).
+	ServiceStreamAnalytics = "streamanalytics"
+	// ServiceRecoveryServices buckets Azure Recovery Services resources
+	// (Microsoft.RecoveryServices/vaults).
+	ServiceRecoveryServices = "recoveryservices"
+	// ServiceIoTHub buckets Azure IoT Hub resources
+	// (Microsoft.Devices/IotHubs).
+	ServiceIoTHub = "iothub"
 )
 
 // Resource type constants emitted by the walkers.
@@ -126,6 +182,89 @@ const (
 	TypeManagedEnvironment = "ManagedEnvironment"
 	TypeContainerApp       = "ContainerApp"
 )
+
+// TypeLoadTest is the portable type for an Azure Load Testing resource
+// (Microsoft.LoadTestService/loadTests). Azure-only, so it lives in its own line.
+const TypeLoadTest = "LoadTest"
+
+// TypeSignalR is the portable type for an Azure SignalR Service resource
+// (Microsoft.SignalRService/signalR). Azure-only, so it lives in its own line.
+const TypeSignalR = "SignalR"
+
+// TypeWebPubSub is the portable type for an Azure Web PubSub Service resource
+// (Microsoft.SignalRService/webPubSub). Azure-only, so it lives in its own line.
+const TypeWebPubSub = "WebPubSub"
+
+// TypeCommunicationService is the portable type for an Azure Communication
+// Services resource (Microsoft.Communication/communicationServices). Azure-only,
+// so it lives in its own line.
+const TypeCommunicationService = "CommunicationService"
+
+// TypeDigitalTwinsInstance is the portable type for an Azure Digital Twins
+// instance (Microsoft.DigitalTwins/digitalTwinsInstances). Azure-only, so it
+// lives in its own line.
+const TypeDigitalTwinsInstance = "DigitalTwinsInstance"
+
+// TypeGrafana is the portable type for an Azure Managed Grafana resource
+// (Microsoft.Dashboard/grafana). Azure-only, so it lives in its own line.
+const TypeGrafana = "Grafana"
+
+// TypeDevCenter is the portable type for an Azure Dev Center resource
+// (Microsoft.DevCenter/devcenters). Azure-only, so it lives in its own line.
+const TypeDevCenter = "DevCenter"
+
+// TypePurviewAccount is the portable type for a Microsoft Purview resource
+// (Microsoft.Purview/accounts). Azure-only, so it lives in its own line.
+const TypePurviewAccount = "Account"
+
+// TypeChaosExperiment is the portable type for an Azure Chaos Studio resource
+// (Microsoft.Chaos/experiments). Azure-only, so it lives in its own line.
+const TypeChaosExperiment = "Experiment"
+
+// TypeElasticSan is the portable type for an Azure Elastic SAN resource
+// (Microsoft.ElasticSan/elasticSans). Azure-only, so it lives in its own line.
+const TypeElasticSan = "ElasticSan"
+
+// TypeAmlFilesystem is the portable type for an Azure Managed Lustre resource
+// (Microsoft.StorageCache/amlFilesystems). Azure-only, so it lives in its own
+// line.
+const TypeAmlFilesystem = "AmlFilesystem"
+
+// TypeConfigurationStore is the portable type for an Azure App Configuration
+// resource (Microsoft.AppConfiguration/configurationStores). Azure-only, so it
+// lives in its own line.
+const TypeConfigurationStore = "ConfigurationStore"
+
+// TypeRedisEnterprise is the portable type for an Azure Redis Enterprise cluster
+// (Microsoft.Cache/redisEnterprise). Azure-only, so it lives in its own line.
+const TypeRedisEnterprise = "RedisEnterprise"
+
+// TypeHealthcareWorkspace is the portable type for an Azure Health Data Services
+// workspace (Microsoft.HealthcareApis/workspaces). Azure-only, so it lives in its
+// own line.
+const TypeHealthcareWorkspace = "Workspace"
+
+// TypeMongoCluster is the portable type for an Azure Cosmos DB for MongoDB (vCore)
+// cluster (Microsoft.DocumentDB/mongoClusters). Azure-only, so it lives in its own
+// line.
+const TypeMongoCluster = "MongoCluster"
+
+// TypeBatchAccount is the portable type for an Azure Batch account
+// (Microsoft.Batch/batchAccounts). Azure-only, so it lives in its own line.
+const TypeBatchAccount = "BatchAccount"
+
+// TypeStreamingJob is the portable type for an Azure Stream Analytics job
+// (Microsoft.StreamAnalytics/streamingjobs). Azure-only, so it lives in its own
+// line.
+const TypeStreamingJob = "StreamingJob"
+
+// TypeRecoveryVault is the portable type for an Azure Recovery Services vault
+// (Microsoft.RecoveryServices/vaults). Azure-only, so it lives in its own line.
+const TypeRecoveryVault = "Vault"
+
+// TypeIoTHub is the portable type for an Azure IoT Hub
+// (Microsoft.Devices/IotHubs). Azure-only, so it lives in its own line.
+const TypeIoTHub = "IotHub"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs

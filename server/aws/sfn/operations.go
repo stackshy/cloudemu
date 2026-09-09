@@ -13,6 +13,9 @@ func (h *Handler) createStateMachine(w http.ResponseWriter, r *http.Request) {
 		arn, versionArn, created, err := h.sfn.CreateStateMachine(ctx, sfndriver.CreateStateMachineInput{
 			Name: req.Name, Definition: req.Definition, RoleArn: req.RoleArn, Type: req.Type,
 			Description: req.Description, Publish: req.Publish, Tags: tagsToMap(req.Tags),
+			LoggingConfigJSON: rawJSON(req.LoggingConfiguration),
+			TracingConfigJSON: rawJSON(req.TracingConfiguration),
+			EncryptionCfgJSON: rawJSON(req.EncryptionConfiguration),
 		})
 		if err != nil {
 			return nil, err
@@ -35,8 +38,9 @@ func (h *Handler) describeStateMachine(w http.ResponseWriter, r *http.Request) {
 			StateMachineArn: sm.ARN, Name: sm.Name, Definition: sm.Definition, RoleArn: sm.RoleArn,
 			Type: sm.Type, Status: sm.Status, Description: sm.Description, RevisionID: sm.RevisionID,
 			CreationDate: epoch(sm.CreationDate), Label: sm.Label,
-			LoggingConfiguration: loggingConfigOrDefault(sm.LoggingConfigJSON),
-			TracingConfiguration: tracingConfigOrDefault(sm.TracingConfigJSON),
+			LoggingConfiguration:    loggingConfigOrDefault(sm.LoggingConfigJSON),
+			TracingConfiguration:    tracingConfigOrDefault(sm.TracingConfigJSON),
+			EncryptionConfiguration: encryptionConfigOrDefault(sm.EncryptionCfgJSON),
 		}, nil
 	})
 }
@@ -46,6 +50,9 @@ func (h *Handler) updateStateMachine(w http.ResponseWriter, r *http.Request) {
 		res, err := h.sfn.UpdateStateMachine(ctx, sfndriver.UpdateStateMachineInput{
 			ARN: req.StateMachineArn, Definition: req.Definition, RoleArn: req.RoleArn,
 			Publish: req.Publish, VersionDesc: req.VersionDescription,
+			LoggingConfigJSON: rawJSON(req.LoggingConfiguration),
+			TracingConfigJSON: rawJSON(req.TracingConfiguration),
+			EncryptionCfgJSON: rawJSON(req.EncryptionConfiguration),
 		})
 		if err != nil {
 			return nil, err

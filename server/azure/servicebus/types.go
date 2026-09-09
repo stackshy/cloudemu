@@ -55,6 +55,7 @@ type queueProperties struct {
 	AutoDeleteOnIdle                    string        `json:"autoDeleteOnIdle,omitempty"`
 	DuplicateDetectionHistoryTimeWindow string        `json:"duplicateDetectionHistoryTimeWindow,omitempty"`
 	ForwardTo                           string        `json:"forwardTo,omitempty"`
+	ForwardDeadLetteredTo               string        `json:"forwardDeadLetteredMessagesTo,omitempty"`
 	RequiresDuplicateDetection          bool          `json:"requiresDuplicateDetection"`
 	RequiresSession                     bool          `json:"requiresSession"`
 	DeadLetteringOnExpiration           bool          `json:"deadLetteringOnMessageExpiration"`
@@ -116,9 +117,11 @@ type subscriptionProperties struct {
 	MaxDeliveryCount           int32         `json:"maxDeliveryCount,omitempty"`
 	LockDuration               string        `json:"lockDuration,omitempty"`
 	DefaultMessageTimeToLive   string        `json:"defaultMessageTimeToLive,omitempty"`
+	AutoDeleteOnIdle           string        `json:"autoDeleteOnIdle,omitempty"`
 	RequiresSession            bool          `json:"requiresSession"`
 	DeadLetteringOnExpiration  bool          `json:"deadLetteringOnMessageExpiration"`
-	DeadLetteringOnFilterError bool          `json:"deadLetteringOnFilterEvaluationExceptions"`
+	DeadLetteringOnFilterError *bool         `json:"deadLetteringOnFilterEvaluationExceptions,omitempty"`
+	EnableBatchedOperations    *bool         `json:"enableBatchedOperations,omitempty"`
 	ForwardTo                  string        `json:"forwardTo,omitempty"`
 	ForwardDeadLetteredTo      string        `json:"forwardDeadLetteredMessagesTo,omitempty"`
 	CreatedAt                  *time.Time    `json:"createdAt,omitempty"`

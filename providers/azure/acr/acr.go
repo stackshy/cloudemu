@@ -187,8 +187,9 @@ func (m *Mock) GetRepository(_ context.Context, name string) (*driver.Repository
 }
 
 // ListRepositories lists all ACR repositories whose listEnabled attribute is
-// not locked. A read-locked or write-locked repository still appears here;
-// only listEnabled hides a repository from the catalog.
+// not locked, sorted by name for a stable, deterministic list order across
+// calls. A read-locked or write-locked repository still appears here; only
+// listEnabled hides a repository from the catalog.
 func (m *Mock) ListRepositories(_ context.Context) ([]driver.Repository, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -205,6 +206,8 @@ func (m *Mock) ListRepositories(_ context.Context) ([]driver.Repository, error) 
 		repo.ImageCount = rd.images.Len()
 		repos = append(repos, repo)
 	}
+
+	sort.Slice(repos, func(i, j int) bool { return repos[i].Name < repos[j].Name })
 
 	return repos, nil
 }
@@ -260,6 +263,7 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 		SizeBytes:  manifest.SizeBytes,
 		PushedAt:   now,
 		MediaType:  mediaType,
+		Manifest:   manifest.Manifest,
 	}
 
 	img := &imageData{detail: detail, layers: manifest.Layers, attrs: attrs}
@@ -302,8 +306,9 @@ func (m *Mock) GetImage(_ context.Context, repository, reference string) (*drive
 }
 
 // ListImages lists all images in an ACR repository whose listEnabled
-// attribute is not locked. A read-locked or write-locked manifest still
-// appears here; only listEnabled hides a manifest from the listing.
+// attribute is not locked, sorted by digest for a stable, deterministic list
+// order across calls. A read-locked or write-locked manifest still appears
+// here; only listEnabled hides a manifest from the listing.
 func (m *Mock) ListImages(_ context.Context, repository string) ([]driver.ImageDetail, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -323,6 +328,8 @@ func (m *Mock) ListImages(_ context.Context, repository string) ([]driver.ImageD
 
 		images = append(images, img.detail)
 	}
+
+	sort.Slice(images, func(i, j int) bool { return images[i].Digest < images[j].Digest })
 
 	return images, nil
 }

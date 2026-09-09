@@ -23,6 +23,23 @@ const (
 	availabilityRegional = "REGIONAL"
 	availabilityZonal    = "ZONAL"
 
+	// pricingPlanPerUse is settings.pricingPlan. PER_USE is the only value valid
+	// for a second-gen instance (which is all the emulator mints — backendType
+	// SECOND_GEN), and it is what real Cloud SQL always returns; emitting it keeps
+	// Terraform, whose disk_ pricing_plan default is also PER_USE, from a perpetual
+	// diff.
+	pricingPlanPerUse = "PER_USE"
+
+	// instanceTypeCloudSQL / instanceTypeReadReplica are the settings-less
+	// top-level instanceType enum: a standalone primary vs a read replica. Real
+	// Cloud SQL always reports one; Terraform reads instance_type as computed.
+	instanceTypeCloudSQL    = "CLOUD_SQL_INSTANCE"
+	instanceTypeReadReplica = "READ_REPLICA_INSTANCE"
+
+	// gceZoneSuffix is appended to the region to synthesize a plausible compute
+	// zone for gceZone (e.g. us-central1 -> us-central1-a).
+	gceZoneSuffix = "-a"
+
 	// serverCaCertPEM is the placeholder PEM returned as the instance's
 	// serverCaCert. It is a well-formed shape for SDK round-trips, not a real CA.
 	serverCaCertPEM = "-----BEGIN CERTIFICATE-----\nMOCK\n-----END CERTIFICATE-----"
@@ -58,6 +75,8 @@ type sqlInstance struct {
 	DatabaseVersion    string       `json:"databaseVersion,omitempty"`
 	State              string       `json:"state,omitempty"`
 	BackendType        string       `json:"backendType,omitempty"`
+	InstanceType       string       `json:"instanceType,omitempty"`
+	GceZone            string       `json:"gceZone,omitempty"`
 	ConnectionName     string       `json:"connectionName,omitempty"`
 	SelfLink           string       `json:"selfLink,omitempty"`
 	RootPassword       string       `json:"rootPassword,omitempty"`
@@ -75,7 +94,13 @@ type sqlSettings struct {
 	DataDiskSizeGb   int               `json:"dataDiskSizeGb,string,omitempty"`
 	DataDiskType     string            `json:"dataDiskType,omitempty"`
 	AvailabilityType string            `json:"availabilityType,omitempty"`
+	PricingPlan      string            `json:"pricingPlan,omitempty"`
 	UserLabels       map[string]string `json:"userLabels,omitempty"`
+	// StorageAutoResize is settings.storageAutoResize (Terraform disk_autoresize),
+	// which real Cloud SQL defaults to true. A pointer so an absent field on a
+	// Patch means "no change" rather than clobbering to false; always populated on
+	// a Get so Terraform doesn't see a perpetual false->true diff.
+	StorageAutoResize *bool `json:"storageAutoResize,omitempty"`
 	// DeletionProtectionEnabled guards the instance from deletion while true. A
 	// pointer so an absent field on a Patch means "no change" (merge) rather than
 	// clobbering the current value to false; it is always populated on a Get.
@@ -86,6 +111,88 @@ type sqlSettings struct {
 	DatabaseFlags       json.RawMessage `json:"databaseFlags,omitempty"`
 	BackupConfiguration json.RawMessage `json:"backupConfiguration,omitempty"`
 	IPConfiguration     json.RawMessage `json:"ipConfiguration,omitempty"`
+	// extra holds every other settings sub-field the wire type does not model
+	// explicitly (maintenanceWindow, insightsConfig, locationPreference,
+	// connectorEnforcement, passwordValidationPolicy, …). It is populated by
+	// UnmarshalJSON from an inbound request and re-inlined by MarshalJSON on a Get
+	// so those fields round-trip instead of being silently dropped — a perpetual
+	// Terraform drift source. It carries no json tag: the (Un)marshalers handle it.
+	extra map[string]json.RawMessage
+}
+
+// isModeledSettingsKey reports whether a settings JSON key is one this wire type
+// models with a typed field (and therefore must NOT be captured into extra).
+// settingsVersion and kind are stripped too: they are server-managed, so echoing
+// a client-supplied value would be wrong.
+func isModeledSettingsKey(k string) bool {
+	switch k {
+	case "tier", "activationPolicy", "dataDiskSizeGb", "dataDiskType",
+		"availabilityType", "pricingPlan", "userLabels", "storageAutoResize",
+		"deletionProtectionEnabled", "databaseFlags", "backupConfiguration",
+		"ipConfiguration", "settingsVersion", "kind":
+		return true
+	default:
+		return false
+	}
+}
+
+// MarshalJSON emits the typed settings fields and re-inlines every unmodeled
+// sub-field captured in extra, so fields like maintenanceWindow round-trip on a
+// Get. Typed fields win over an extra of the same name.
+func (s *sqlSettings) MarshalJSON() ([]byte, error) {
+	type alias sqlSettings // new type, no methods — avoids recursion
+
+	b, err := json.Marshal(alias(*s))
+	if err != nil {
+		return nil, err
+	}
+
+	if len(s.extra) == 0 {
+		return b, nil
+	}
+
+	var merged map[string]json.RawMessage
+	if err := json.Unmarshal(b, &merged); err != nil {
+		return nil, err
+	}
+
+	for k, v := range s.extra {
+		if _, ok := merged[k]; !ok {
+			merged[k] = v
+		}
+	}
+
+	return json.Marshal(merged)
+}
+
+// UnmarshalJSON decodes the typed settings fields and captures every other
+// (unmodeled) sub-field into extra so it can round-trip on a later Get.
+func (s *sqlSettings) UnmarshalJSON(b []byte) error {
+	type alias sqlSettings
+
+	var a alias
+	if err := json.Unmarshal(b, &a); err != nil {
+		return err
+	}
+
+	*s = sqlSettings(a)
+
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+
+	for k := range raw {
+		if isModeledSettingsKey(k) {
+			delete(raw, k)
+		}
+	}
+
+	if len(raw) > 0 {
+		s.extra = raw
+	}
+
+	return nil
 }
 
 type ipMapping struct {
@@ -141,6 +248,12 @@ type operation struct {
 	SelfLink      string `json:"selfLink,omitempty"`
 }
 
+// operationsList is the Cloud SQL Admin operations.list response envelope.
+type operationsList struct {
+	Kind  string      `json:"kind,omitempty"`
+	Items []operation `json:"items,omitempty"`
+}
+
 // doneOperationWithTarget builds a DONE operation that carries the full record
 // a real Cloud SQL operation exposes: the affected resource (targetId /
 // targetLink), the acting user, insert/start/end timestamps, and its own
@@ -175,6 +288,11 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 		DatabaseVersion: inst.Engine,
 		State:           sqlState(inst.State),
 		BackendType:     "SECOND_GEN",
+		InstanceType:    instanceTypeFor(inst),
+		// gceZone is the compute zone the primary runs in; real Cloud SQL always
+		// reports one. The emulator has no zone concept, so it derives a stable
+		// zone from the region (a computed, read-only attribute in Terraform).
+		GceZone: gceZoneFor(inst.AvailabilityZone),
 		// connectionName is keyed on the REQUEST project (from the URL), matching
 		// real Cloud SQL's {project}:{region}:{instance} — not the server's
 		// configured project, which the stored inst.ConnectionName carries.
@@ -195,14 +313,37 @@ func toSQLInstance(inst *rdsdriver.Instance, project string) sqlInstance {
 			UserLabels:                inst.Tags,
 			ActivationPolicy:          activationFromState(inst.State),
 			AvailabilityType:          availabilityType(inst.MultiAZ),
+			PricingPlan:               pricingPlanPerUse,
+			StorageAutoResize:         boolPtr(inst.GCPStorageAutoResize),
 			DeletionProtectionEnabled: boolPtr(inst.DeletionProtection),
 			DatabaseFlags:             rawJSONOrNil(inst.GCPDatabaseFlags),
 			BackupConfiguration:       rawJSONOrNil(inst.GCPBackupConfig),
 			IPConfiguration:           rawJSONOrNil(inst.GCPIPConfig),
+			extra:                     settingsExtraMap(inst.GCPSettingsExtra),
 		},
 		ServerCaCert: serverCaCertFor(inst),
 		CreateTime:   inst.CreatedAt.UTC().Format(rfc3339Milli),
 	}
+}
+
+// instanceTypeFor reports the top-level instanceType: READ_REPLICA_INSTANCE when
+// the instance replicates from a primary, CLOUD_SQL_INSTANCE otherwise.
+func instanceTypeFor(inst *rdsdriver.Instance) string {
+	if inst.ReadReplicaSource != "" {
+		return instanceTypeReadReplica
+	}
+
+	return instanceTypeCloudSQL
+}
+
+// gceZoneFor synthesizes a compute zone from a region. An empty region yields an
+// empty zone so the field is omitted rather than reporting a bare suffix.
+func gceZoneFor(region string) string {
+	if region == "" {
+		return ""
+	}
+
+	return region + gceZoneSuffix
 }
 
 // availabilityType maps the portable MultiAZ flag to the Cloud SQL
@@ -230,6 +371,38 @@ func rawJSONOrNil(s string) json.RawMessage {
 	}
 
 	return json.RawMessage(s)
+}
+
+// settingsExtraMap decodes the stored extra-settings JSON object back into the
+// map sqlSettings.MarshalJSON re-inlines. A malformed or empty value yields nil
+// so no extra fields are emitted.
+func settingsExtraMap(s string) map[string]json.RawMessage {
+	if s == "" {
+		return nil
+	}
+
+	var m map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(s), &m); err != nil || len(m) == 0 {
+		return nil
+	}
+
+	return m
+}
+
+// settingsExtraJSON serializes a settings' captured extra sub-fields back to a
+// JSON object string for storage on the driver. It returns "" when there are
+// none, matching the "no change / omit" convention of the other GCP* blobs.
+func settingsExtraJSON(s *sqlSettings) string {
+	if s == nil || len(s.extra) == 0 {
+		return ""
+	}
+
+	b, err := json.Marshal(s.extra)
+	if err != nil {
+		return ""
+	}
+
+	return string(b)
 }
 
 // serverCaCertFor builds the synthetic server CA certificate Cloud SQL reports
@@ -328,18 +501,23 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	// cerrors.Message strips the internal code-name prefix (e.g. "NotFound: ")
+	// that Error() prepends — real Cloud SQL never leaks its error taxonomy into
+	// the wire message, only the human-readable text.
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		writeError(w, http.StatusNotFound, "NOT_FOUND", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ALREADY_EXISTS", err.Error())
+		writeError(w, http.StatusConflict, "ALREADY_EXISTS", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", msg)
 	case cerrors.IsFailedPrecondition(err):
 		// Google's canonical error mapping puts FAILED_PRECONDITION at HTTP 400
 		// (e.g. Cloud SQL's deletion-protection guard), not 409.
-		writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", err.Error())
+		writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL", msg)
 	}
 }

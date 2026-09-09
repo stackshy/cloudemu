@@ -218,6 +218,118 @@ func TestListTaskDefinitionsNumericRevisionOrder(t *testing.T) {
 	assert.Equal(t, 1, desc[11].Revision)
 }
 
+// TestListTaskDefinitionsDefaultsToActive verifies ECS's documented default:
+// with no status filter only ACTIVE revisions are listed, hiding deregistered
+// (INACTIVE) ones unless the caller explicitly asks for INACTIVE.
+func TestListTaskDefinitionsDefaultsToActive(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	in := driver.RegisterTaskDefinitionInput{
+		Family:               "web",
+		ContainerDefinitions: []driver.ContainerDefinition{{Name: "c", Image: "img"}},
+	}
+
+	_, err := m.RegisterTaskDefinition(ctx, in)
+	require.NoError(t, err)
+	_, err = m.RegisterTaskDefinition(ctx, in)
+	require.NoError(t, err)
+
+	_, err = m.DeregisterTaskDefinition(ctx, "web:1")
+	require.NoError(t, err)
+
+	// Empty status defaults to ACTIVE: only the live revision 2 is listed.
+	def, err := m.ListTaskDefinitions(ctx, "", "", "")
+	require.NoError(t, err)
+	require.Len(t, def, 1)
+	assert.Equal(t, 2, def[0].Revision)
+	assert.Equal(t, statusActive, def[0].Status)
+
+	// Explicit ACTIVE matches the default.
+	active, err := m.ListTaskDefinitions(ctx, "", statusActive, "")
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	assert.Equal(t, 2, active[0].Revision)
+
+	// INACTIVE surfaces the deregistered revision.
+	inactive, err := m.ListTaskDefinitions(ctx, "", statusInactive, "")
+	require.NoError(t, err)
+	require.Len(t, inactive, 1)
+	assert.Equal(t, 1, inactive[0].Revision)
+	assert.Equal(t, statusInactive, inactive[0].Status)
+}
+
+// TestCreateServiceDeploymentConfigDefaults verifies the rolling-update defaults
+// ECS reports on a service when the caller omits (or only partially supplies) a
+// deploymentConfiguration: 200/100 for REPLICA, 100/0 for DAEMON, a disabled
+// circuit breaker, and supplied fields preserved.
+func TestCreateServiceDeploymentConfigDefaults(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, driver.CreateClusterInput{Name: "prod"})
+	require.NoError(t, err)
+	registerFargate(t, m, "256", "512")
+
+	netCfg := &driver.NetworkConfiguration{AwsVpcConfiguration: &driver.AwsVpcConfiguration{Subnets: []string{"subnet-1"}}}
+
+	// REPLICA (default) with no deploymentConfiguration -> 200 / 100 + breaker.
+	replica, err := m.CreateService(ctx, driver.CreateServiceInput{
+		ServiceName:          "r",
+		Cluster:              "prod",
+		TaskDefinition:       "fg:1",
+		DesiredCount:         1,
+		LaunchType:           launchFargate,
+		NetworkConfiguration: netCfg,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, replica.DeploymentConfiguration)
+	require.NotNil(t, replica.DeploymentConfiguration.MaximumPercent)
+	require.NotNil(t, replica.DeploymentConfiguration.MinimumHealthyPercent)
+	assert.Equal(t, replicaMaxPercent, *replica.DeploymentConfiguration.MaximumPercent)
+	assert.Equal(t, replicaMinHealthyPercent, *replica.DeploymentConfiguration.MinimumHealthyPercent)
+	require.NotNil(t, replica.DeploymentConfiguration.DeploymentCircuitBreaker)
+	assert.False(t, replica.DeploymentConfiguration.DeploymentCircuitBreaker.Enable)
+	assert.False(t, replica.DeploymentConfiguration.DeploymentCircuitBreaker.Rollback)
+
+	// The default survives a describe round-trip.
+	found, _, err := m.DescribeServices(ctx, "prod", []string{"r"})
+	require.NoError(t, err)
+	require.Len(t, found, 1)
+	require.NotNil(t, found[0].DeploymentConfiguration.MaximumPercent)
+	assert.Equal(t, replicaMaxPercent, *found[0].DeploymentConfiguration.MaximumPercent)
+
+	// DAEMON defaults to 100 / 0.
+	daemon, err := m.CreateService(ctx, driver.CreateServiceInput{
+		ServiceName:          "d",
+		Cluster:              "prod",
+		TaskDefinition:       "fg:1",
+		LaunchType:           launchFargate,
+		SchedulingStrategy:   schedDaemon,
+		NetworkConfiguration: netCfg,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, daemon.DeploymentConfiguration.MaximumPercent)
+	assert.Equal(t, daemonMaxPercent, *daemon.DeploymentConfiguration.MaximumPercent)
+	assert.Equal(t, daemonMinHealthyPercent, *daemon.DeploymentConfiguration.MinimumHealthyPercent)
+
+	// A caller-supplied field is preserved; the omitted field is filled.
+	custom := 150
+	partial, err := m.CreateService(ctx, driver.CreateServiceInput{
+		ServiceName:             "p",
+		Cluster:                 "prod",
+		TaskDefinition:          "fg:1",
+		DesiredCount:            1,
+		LaunchType:              launchFargate,
+		NetworkConfiguration:    netCfg,
+		DeploymentConfiguration: &driver.DeploymentConfiguration{MaximumPercent: &custom},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, custom, *partial.DeploymentConfiguration.MaximumPercent)
+	require.NotNil(t, partial.DeploymentConfiguration.MinimumHealthyPercent)
+	assert.Equal(t, replicaMinHealthyPercent, *partial.DeploymentConfiguration.MinimumHealthyPercent)
+}
+
 func TestRegisterTaskDefinitionRequiresFamily(t *testing.T) {
 	m := newTestMock()
 

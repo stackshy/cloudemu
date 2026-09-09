@@ -150,7 +150,11 @@ func New(opts *config.Options) *Mock {
 // describeResources is a generic helper for Describe* methods that list or filter by IDs.
 func describeResources[T any, R any](store *memstore.Store[T], ids []string, toInfo func(T) R) []R {
 	if len(ids) == 0 {
-		all := store.All()
+		// SortedValues (not All) so list ordering is deterministic across
+		// identical calls: Go map iteration is random, and real ARM list
+		// endpoints return a stable order. This mirrors ListNetworkInterfaces,
+		// which already iterates SortedValues for the same reason.
+		all := store.SortedValues()
 		result := make([]R, 0, len(all))
 
 		for _, item := range all {
@@ -270,6 +274,13 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 	if !m.subnets.Delete(id) {
 		return cerrors.Newf(cerrors.NotFound, "subnet %q not found", id)
+	}
+
+	// A route-table association belongs to the subnet and must not outlive it.
+	for assocID, a := range m.rtAssocs.All() {
+		if a.SubnetID == id {
+			m.rtAssocs.Delete(assocID)
+		}
 	}
 
 	return nil

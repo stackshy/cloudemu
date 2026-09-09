@@ -105,7 +105,7 @@ func (m *Mock) UpdateClusterConfiguration(
 	_ context.Context, arn, currentVersion string, body json.RawMessage,
 ) (*driver.ClusterOperation, error) {
 	return m.mutateCluster(arn, currentVersion, opTypeUpdateClusterConfig, func(c *driver.Cluster) {
-		setRawOption(c, "configurationInfo", body)
+		setRawOption(c, "configurationInfo", rawField(body, "configurationInfo", body))
 	})
 }
 

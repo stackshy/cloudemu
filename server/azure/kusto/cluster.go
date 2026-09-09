@@ -64,6 +64,7 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, kp kusto
 	c.Zones = slices.Clone(req.Zones)
 	c.SKU = normalizeSKU(req.SKU)
 	c.Properties = req.Properties
+	applyClusterDefaults(&c.Properties)
 	c.UpdatedAt = now
 	h.clusters.Set(clusterKey(kp.cluster), c)
 
@@ -214,6 +215,42 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request, kp kustoP
 	azurearm.WriteJSON(w, http.StatusOK, paginate(r, resources))
 }
 
+// applyClusterDefaults fills the cluster property fields real Azure always
+// reports on GET but that a create request may omit, so the emulated cluster
+// echoes the same computed shape a real one does. Only unset fields are filled:
+// a value the caller supplied (including an explicit false) is preserved.
+func applyClusterDefaults(p *clusterProperties) {
+	if p.EngineType == "" {
+		p.EngineType = defaultEngineType
+	}
+
+	if p.PublicNetworkAccess == "" {
+		p.PublicNetworkAccess = publicNetworkAccessEnabled
+	}
+
+	if p.EnableAutoStop == nil {
+		p.EnableAutoStop = boolPtr(true)
+	}
+
+	if p.EnableStreamingIngest == nil {
+		p.EnableStreamingIngest = boolPtr(false)
+	}
+
+	if p.EnableDiskEncryption == nil {
+		p.EnableDiskEncryption = boolPtr(false)
+	}
+
+	if p.EnableDoubleEncryption == nil {
+		p.EnableDoubleEncryption = boolPtr(false)
+	}
+
+	if p.EnablePurge == nil {
+		p.EnablePurge = boolPtr(false)
+	}
+}
+
+func boolPtr(b bool) *bool { return &b }
+
 func normalizeSKU(in *kustoSKU) kustoSKU {
 	if in == nil || in.Name == "" {
 		return kustoSKU{Name: "Standard_D11_v2", Tier: "Standard"}
@@ -273,7 +310,7 @@ func toClusterResource(c *clusterState) clusterResource {
 	props.DataIngestionURI = "https://" + ingestPrefix + c.Name + "." + c.Location + kustoHost
 
 	return clusterResource{
-		ID:       azurearm.BuildResourceID(c.Subscription, c.ResourceGroup, providerName, segClusters, c.Name),
+		ID:       azurearm.BuildResourceID(c.Subscription, c.ResourceGroup, providerName, idSegClusters, c.Name),
 		Name:     c.Name,
 		Type:     clusterResourceType,
 		Location: c.Location,

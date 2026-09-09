@@ -22,8 +22,10 @@ func (h *Handler) serveSQLPool(w http.ResponseWriter, r *http.Request, rp *azure
 
 func (h *Handler) sqlPoolCRUD(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	switch r.Method {
-	case http.MethodPut, http.MethodPatch:
+	case http.MethodPut:
 		h.putSQLPool(w, r, rp)
+	case http.MethodPatch:
+		h.patchSQLPool(w, r, rp)
 	case http.MethodGet:
 		h.getSQLPool(w, rp)
 	case http.MethodDelete:
@@ -33,7 +35,10 @@ func (h *Handler) sqlPoolCRUD(w http.ResponseWriter, r *http.Request, rp *azurea
 	}
 }
 
-// putSQLPool serves the SQL-pool create/update LRO with a synchronous body.
+// putSQLPool serves the SQL-pool create/replace LRO (Sql-Pools/Create, PUT) with
+// a synchronous body. It is a full CreateOrUpdate: a missing pool is created and
+// an existing one is replaced wholesale. Partial updates arrive via PATCH
+// (patchSQLPool).
 func (h *Handler) putSQLPool(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var req sqlPoolRequest
 	if !azurearm.DecodeJSON(w, r, &req) {
@@ -70,6 +75,79 @@ func (h *Handler) putSQLPool(w http.ResponseWriter, r *http.Request, rp *azurear
 	// The armsynapse SQLPoolsClient.BeginCreate poller accepts a synchronous 200
 	// (or 202), not 201 — a 201 fails its initial-response status check.
 	azurearm.WriteJSON(w, http.StatusOK, resource)
+}
+
+// patchSQLPool serves the SQL-pool update LRO (Sql-Pools/Update, SqlPoolPatchInfo).
+// Unlike create, PATCH is a partial update: it never creates a missing pool (real
+// Azure answers 404) and preserves every field the request omits, applying only
+// the fields it carries. This mirrors the workspace patch semantics.
+func (h *Handler) patchSQLPool(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	var req sqlPoolRequest
+	if !azurearm.DecodeJSON(w, r, &req) {
+		return
+	}
+
+	h.mu.Lock()
+
+	ws, ok := h.getWorkspace(rp)
+	if !ok {
+		h.mu.Unlock()
+		writeParentNotFound(w, rp.ResourceName)
+
+		return
+	}
+
+	pool, ok := ws.SQLPools[strings.ToLower(rp.SubResourceName)]
+	if !ok {
+		h.mu.Unlock()
+		writeSQLPoolNotFound(w, rp.SubResourceName)
+
+		return
+	}
+
+	mergeSQLPool(pool, &req)
+
+	resource := toSQLPoolResponse(ws, pool)
+	h.mu.Unlock()
+
+	azurearm.WriteJSON(w, http.StatusOK, resource)
+}
+
+// mergeSQLPool applies the non-omitted fields of a patch onto a stored SQL pool,
+// leaving unspecified fields untouched (ARM partial-update semantics).
+func mergeSQLPool(pool *sqlPoolState, req *sqlPoolRequest) {
+	if req.Location != "" {
+		pool.Location = req.Location
+	}
+
+	if req.Tags != nil {
+		pool.Tags = maps.Clone(req.Tags)
+	}
+
+	if req.SKU != nil {
+		pool.SKU = req.SKU
+	}
+
+	mergeSQLPoolProps(&pool.Props, &req.Properties)
+}
+
+// mergeSQLPoolProps overlays the non-empty properties of a patch onto stored props.
+func mergeSQLPoolProps(dst, src *sqlPoolReqProps) {
+	if src.Collation != "" {
+		dst.Collation = src.Collation
+	}
+
+	if src.MaxSizeBytes != nil {
+		dst.MaxSizeBytes = src.MaxSizeBytes
+	}
+
+	if src.CreateMode != "" {
+		dst.CreateMode = src.CreateMode
+	}
+
+	if src.StorageAccountType != "" {
+		dst.StorageAccountType = src.StorageAccountType
+	}
 }
 
 func (h *Handler) getSQLPool(w http.ResponseWriter, rp *azurearm.ResourcePath) {

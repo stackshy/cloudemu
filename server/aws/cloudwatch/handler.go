@@ -35,27 +35,30 @@ const (
 
 // Operation names shared by the rpc-v2-cbor and query dispatch switches.
 const (
-	opPutMetricData       = "PutMetricData"
-	opGetMetricStatistics = "GetMetricStatistics"
-	opListMetrics         = "ListMetrics"
-	opPutMetricAlarm      = "PutMetricAlarm"
-	opDescribeAlarms      = "DescribeAlarms"
-	opDeleteAlarms        = "DeleteAlarms"
-	opSetAlarmState       = "SetAlarmState"
-	opPutCompositeAlarm   = "PutCompositeAlarm"
-	opPutDashboard        = "PutDashboard"
-	opGetDashboard        = "GetDashboard"
-	opListDashboards      = "ListDashboards"
-	opDeleteDashboards    = "DeleteDashboards"
-	opPutMetricStream     = "PutMetricStream"
-	opGetMetricStream     = "GetMetricStream"
-	opListMetricStreams   = "ListMetricStreams"
-	opDeleteMetricStream  = "DeleteMetricStream"
-	opStartMetricStreams  = "StartMetricStreams"
-	opStopMetricStreams   = "StopMetricStreams"
-	opTagResource         = "TagResource"
-	opUntagResource       = "UntagResource"
-	opListTagsForResource = "ListTagsForResource"
+	opPutMetricData        = "PutMetricData"
+	opGetMetricStatistics  = "GetMetricStatistics"
+	opListMetrics          = "ListMetrics"
+	opPutMetricAlarm       = "PutMetricAlarm"
+	opDescribeAlarms       = "DescribeAlarms"
+	opDescribeAlarmHistory = "DescribeAlarmHistory"
+	opDeleteAlarms         = "DeleteAlarms"
+	opSetAlarmState        = "SetAlarmState"
+	opPutCompositeAlarm    = "PutCompositeAlarm"
+	opPutDashboard         = "PutDashboard"
+	opGetDashboard         = "GetDashboard"
+	opListDashboards       = "ListDashboards"
+	opDeleteDashboards     = "DeleteDashboards"
+	opPutMetricStream      = "PutMetricStream"
+	opGetMetricStream      = "GetMetricStream"
+	opListMetricStreams    = "ListMetricStreams"
+	opDeleteMetricStream   = "DeleteMetricStream"
+	opStartMetricStreams   = "StartMetricStreams"
+	opStopMetricStreams    = "StopMetricStreams"
+	opTagResource          = "TagResource"
+	opUntagResource        = "UntagResource"
+	opListTagsForResource  = "ListTagsForResource"
+	opEnableAlarmActions   = "EnableAlarmActions"
+	opDisableAlarmActions  = "DisableAlarmActions"
 )
 
 // Handler serves CloudWatch rpc-v2-cbor requests against a monitoring driver.
@@ -135,7 +138,7 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, op string, bo
 		h.describeAlarms(w, r, body)
 	case "DescribeAlarmsForMetric":
 		h.describeAlarmsForMetric(w, r, body)
-	case "DescribeAlarmHistory":
+	case opDescribeAlarmHistory:
 		h.describeAlarmHistory(w, r, body)
 	case opDeleteAlarms:
 		h.deleteAlarms(w, r, body)
@@ -163,9 +166,9 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, op string, bo
 		h.startMetricStreams(w, r, body)
 	case opStopMetricStreams:
 		h.stopMetricStreams(w, r, body)
-	case "EnableAlarmActions":
+	case opEnableAlarmActions:
 		h.setAlarmActionsEnabled(w, r, body, true)
-	case "DisableAlarmActions":
+	case opDisableAlarmActions:
 		h.setAlarmActionsEnabled(w, r, body, false)
 	case opTagResource:
 		h.tagResource(w, r, body)

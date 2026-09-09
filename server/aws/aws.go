@@ -15,14 +15,26 @@ import (
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
 	"github.com/stackshy/cloudemu/v2/server"
 	acmsrv "github.com/stackshy/cloudemu/v2/server/aws/acm"
+	aosssrv "github.com/stackshy/cloudemu/v2/server/aws/aoss"
 	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/aws/apigateway"
+	apigatewayv2srv "github.com/stackshy/cloudemu/v2/server/aws/apigatewayv2"
+	appflowsrv "github.com/stackshy/cloudemu/v2/server/aws/appflow"
+	apprunnersrv "github.com/stackshy/cloudemu/v2/server/aws/apprunner"
+	appsyncsrv "github.com/stackshy/cloudemu/v2/server/aws/appsync"
+	apssrv "github.com/stackshy/cloudemu/v2/server/aws/aps"
+	athenasrv "github.com/stackshy/cloudemu/v2/server/aws/athena"
+	backupsrv "github.com/stackshy/cloudemu/v2/server/aws/backup"
+	batchsrv "github.com/stackshy/cloudemu/v2/server/aws/batch"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrock"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagent"
 	"github.com/stackshy/cloudemu/v2/server/aws/bedrockagentruntime"
 	cloudformationsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudformation"
+	cloudfrontsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudfront"
 	cloudtrailsrv "github.com/stackshy/cloudemu/v2/server/aws/cloudtrail"
 	"github.com/stackshy/cloudemu/v2/server/aws/cloudwatch"
 	cloudwatchlogssrv "github.com/stackshy/cloudemu/v2/server/aws/cloudwatchlogs"
+	codeartifactsrv "github.com/stackshy/cloudemu/v2/server/aws/codeartifact"
+	cognitosrv "github.com/stackshy/cloudemu/v2/server/aws/cognito"
 	configservicesrv "github.com/stackshy/cloudemu/v2/server/aws/configservice"
 	costexplorersrv "github.com/stackshy/cloudemu/v2/server/aws/costexplorer"
 	"github.com/stackshy/cloudemu/v2/server/aws/dynamodb"
@@ -35,15 +47,25 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/elbv2"
 	emrsrv "github.com/stackshy/cloudemu/v2/server/aws/emr"
 	"github.com/stackshy/cloudemu/v2/server/aws/eventbridge"
+	schedulersrv "github.com/stackshy/cloudemu/v2/server/aws/eventbridgescheduler"
+	fissrv "github.com/stackshy/cloudemu/v2/server/aws/fis"
+	globalacceleratorsrv "github.com/stackshy/cloudemu/v2/server/aws/globalaccelerator"
 	gluesrv "github.com/stackshy/cloudemu/v2/server/aws/glue"
+	grafanasrv "github.com/stackshy/cloudemu/v2/server/aws/grafana"
 	guarddutysrv "github.com/stackshy/cloudemu/v2/server/aws/guardduty"
+	healthlakesrv "github.com/stackshy/cloudemu/v2/server/aws/healthlake"
 	"github.com/stackshy/cloudemu/v2/server/aws/iam"
 	kafkasrv "github.com/stackshy/cloudemu/v2/server/aws/kafka"
+	kendrasrv "github.com/stackshy/cloudemu/v2/server/aws/kendra"
 	keyspacessrv "github.com/stackshy/cloudemu/v2/server/aws/keyspaces"
 	kinesissrv "github.com/stackshy/cloudemu/v2/server/aws/kinesis"
+	kinesisvideosrv "github.com/stackshy/cloudemu/v2/server/aws/kinesisvideo"
 	kmssrv "github.com/stackshy/cloudemu/v2/server/aws/kms"
 	"github.com/stackshy/cloudemu/v2/server/aws/lambda"
+	locationsrv "github.com/stackshy/cloudemu/v2/server/aws/location"
 	memorydbsrv "github.com/stackshy/cloudemu/v2/server/aws/memorydb"
+	mqsrv "github.com/stackshy/cloudemu/v2/server/aws/mq"
+	mwaasrv "github.com/stackshy/cloudemu/v2/server/aws/mwaa"
 	networkfirewallsrv "github.com/stackshy/cloudemu/v2/server/aws/networkfirewall"
 	opensearchsrv "github.com/stackshy/cloudemu/v2/server/aws/opensearch"
 	"github.com/stackshy/cloudemu/v2/server/aws/rds"
@@ -63,16 +85,30 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/aws/sqs"
 	ssmsrv "github.com/stackshy/cloudemu/v2/server/aws/ssm"
 	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
+	timestreamwritesrv "github.com/stackshy/cloudemu/v2/server/aws/timestreamwrite"
+	transfersrv "github.com/stackshy/cloudemu/v2/server/aws/transfer"
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
+	aossdriver "github.com/stackshy/cloudemu/v2/services/aoss/driver"
 	apigatewaydriver "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
+	apigatewayv2driver "github.com/stackshy/cloudemu/v2/services/apigatewayv2/driver"
+	appflowdriver "github.com/stackshy/cloudemu/v2/services/appflow/driver"
+	apprunnerdriver "github.com/stackshy/cloudemu/v2/services/apprunner/driver"
+	appsyncdriver "github.com/stackshy/cloudemu/v2/services/appsync/driver"
+	apsdriver "github.com/stackshy/cloudemu/v2/services/aps/driver"
+	athenadriver "github.com/stackshy/cloudemu/v2/services/athena/driver"
+	backupdriver "github.com/stackshy/cloudemu/v2/services/backup/driver"
+	batchdriver "github.com/stackshy/cloudemu/v2/services/batch/driver"
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 	bedrockagentdriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 	bedrockagentruntimedriver "github.com/stackshy/cloudemu/v2/services/bedrockagentruntime/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	cfnsvc "github.com/stackshy/cloudemu/v2/services/cloudformation"
+	cloudfrontdriver "github.com/stackshy/cloudemu/v2/services/cloudfront/driver"
 	cloudtraildriver "github.com/stackshy/cloudemu/v2/services/cloudtrail/driver"
+	codeartifactdriver "github.com/stackshy/cloudemu/v2/services/codeartifact/driver"
+	cognitodriver "github.com/stackshy/cloudemu/v2/services/cognito/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	configservicedriver "github.com/stackshy/cloudemu/v2/services/configservice/driver"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -81,20 +117,30 @@ import (
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ecsdriver "github.com/stackshy/cloudemu/v2/services/ecs/driver"
 	efsdriver "github.com/stackshy/cloudemu/v2/services/efs/driver"
+	schedulerdriver "github.com/stackshy/cloudemu/v2/services/eventbridgescheduler/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	fisdriver "github.com/stackshy/cloudemu/v2/services/fis/driver"
+	globalacceleratordriver "github.com/stackshy/cloudemu/v2/services/globalaccelerator/driver"
 	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
+	grafanadriver "github.com/stackshy/cloudemu/v2/services/grafana/driver"
 	guarddutydriver "github.com/stackshy/cloudemu/v2/services/guardduty/driver"
+	healthlakedriver "github.com/stackshy/cloudemu/v2/services/healthlake/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	kafkadriver "github.com/stackshy/cloudemu/v2/services/kafka/driver"
+	kendradriver "github.com/stackshy/cloudemu/v2/services/kendra/driver"
 	ksdriver "github.com/stackshy/cloudemu/v2/services/keyspaces/driver"
 	kinesisdriver "github.com/stackshy/cloudemu/v2/services/kinesis/driver"
+	kinesisvideodriver "github.com/stackshy/cloudemu/v2/services/kinesisvideo/driver"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
+	locationdriver "github.com/stackshy/cloudemu/v2/services/location/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
 	mdbdriver "github.com/stackshy/cloudemu/v2/services/memorydb/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	amazonmqdriver "github.com/stackshy/cloudemu/v2/services/mq/driver"
+	mwaadriver "github.com/stackshy/cloudemu/v2/services/mwaa/driver"
 	nfdriver "github.com/stackshy/cloudemu/v2/services/networkfirewall/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
@@ -109,6 +155,8 @@ import (
 	sesv2driver "github.com/stackshy/cloudemu/v2/services/sesv2/driver"
 	sfndriver "github.com/stackshy/cloudemu/v2/services/sfn/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
+	timestreamwritedriver "github.com/stackshy/cloudemu/v2/services/timestreamwrite/driver"
+	transferdriver "github.com/stackshy/cloudemu/v2/services/transfer/driver"
 	vpclatticedriver "github.com/stackshy/cloudemu/v2/services/vpclattice/driver"
 	wafv2driver "github.com/stackshy/cloudemu/v2/services/wafv2/driver"
 )
@@ -149,6 +197,10 @@ type Drivers struct {
 	// /2015-02-01/ version prefix) against the efs driver.
 	EFS efsdriver.EFS
 
+	// Batch serves the AWS Batch REST-JSON control plane (verb + operation-path
+	// routing under the /v1/ prefix) against the batch driver.
+	Batch batchdriver.Batch
+
 	// SESV2 serves the AWS SES v2 REST-JSON API (path + method routing under the
 	// /v2/email/ version prefix) against the sesv2 driver.
 	SESV2 sesv2driver.SESV2
@@ -157,6 +209,62 @@ type Drivers struct {
 	// method routing under the /2021-01-01/ version prefix) against the
 	// opensearch driver.
 	OpenSearch opensearchdriver.OpenSearch
+
+	// AppSync serves the AWS AppSync control-plane REST-JSON API (verb + path
+	// routing under the /v1/ prefix) against the appsync driver.
+	AppSync appsyncdriver.AppSync
+
+	// AppFlow serves the AWS AppFlow control-plane REST-JSON API (verb + fixed
+	// per-operation root paths, e.g. POST /create-flow) against the appflow
+	// driver.
+	AppFlow appflowdriver.AppFlow
+
+	// MWAA serves the Amazon MWAA control-plane REST-JSON API (verb + path
+	// routing, e.g. PUT /environments/{Name}) against the mwaa driver.
+	MWAA mwaadriver.MWAA
+
+	// MQ serves the Amazon MQ control-plane REST-JSON API (verb + path routing
+	// under the /v1/ prefix, e.g. POST /v1/brokers) against the mq driver.
+	MQ amazonmqdriver.MQ
+
+	// CodeArtifact serves the AWS CodeArtifact control-plane REST-JSON API (verb +
+	// path routing under the /v1/ prefix with query-string parameters, e.g.
+	// POST /v1/domain?domain=, POST /v1/repository?domain=&repository=) against
+	// the codeartifact driver.
+	CodeArtifact codeartifactdriver.CodeArtifact
+
+	// Backup serves the AWS Backup control-plane REST-JSON API (verb + path
+	// routing at the root, e.g. PUT /backup-vaults/{name}, POST /backup/plans,
+	// GET /backup/plans/{id}/versions) against the backup driver.
+	Backup backupdriver.Backup
+
+	// FIS serves the AWS Fault Injection Simulator control-plane REST-JSON API
+	// (verb + path routing at the root, e.g. POST /experimentTemplates,
+	// GET /experimentTemplates/{id}, POST /experiments, DELETE /experiments/{id})
+	// against the fis driver.
+	FIS fisdriver.FIS
+
+	// Grafana serves the Amazon Managed Grafana control-plane REST-JSON API
+	// (verb + path routing, e.g. POST /workspaces) against the grafana driver.
+	Grafana grafanadriver.Grafana
+
+	// Scheduler serves the Amazon EventBridge Scheduler control-plane REST-JSON
+	// API (verb + path routing, e.g. POST /schedules/{Name}, GET /schedule-groups)
+	// against the scheduler driver.
+	Scheduler schedulerdriver.Scheduler
+	// AOSS serves the Amazon OpenSearch Serverless JSON 1.0 protocol (X-Amz-Target
+	// prefix "OpenSearchServerless.") against the aoss driver. Distinct from
+	// OpenSearch (provisioned domains), which uses restJson1.
+	AOSS aossdriver.AOSS
+	// APS serves the Amazon Managed Service for Prometheus control-plane
+	// REST-JSON API (verb + path routing, e.g. POST /workspaces) against the aps
+	// driver.
+	APS apsdriver.APS
+
+	// Kendra serves the Amazon Kendra JSON 1.1 protocol (X-Amz-Target prefix
+	// "AWSKendraFrontendService.") against the kendra driver: indexes and the
+	// data source connectors that belong to them.
+	Kendra kendradriver.Kendra
 
 	// Kafka serves the Amazon MSK REST-JSON API (path + method routing under
 	// the /v1/, /api/v2/, and /replication/v1/ version prefixes) against the
@@ -176,15 +284,55 @@ type Drivers struct {
 
 	// Kinesis serves the Kinesis Data Streams JSON 1.1 protocol against the kinesis driver.
 	Kinesis kinesisdriver.Kinesis
+
+	// KinesisVideo serves the Amazon Kinesis Video Streams control-plane REST-JSON
+	// API (POST to per-operation action paths, e.g. POST /createStream) against
+	// the kinesisvideo driver. Distinct from Kinesis (Data Streams).
+	KinesisVideo kinesisvideodriver.KinesisVideo
+	// Location serves the Amazon Location Service control-plane REST-JSON API
+	// (verb + versioned path, e.g. POST /maps/v0/maps) against the location
+	// driver: maps, place indexes, route calculators, geofence collections and
+	// trackers plus their tags.
+	Location locationdriver.Location
 	// CloudFormation serves the CloudFormation query protocol (CreateStack,
 	// DescribeStacks, …) against the stack orchestrator.
 	CloudFormation cfnsvc.API
+	// CloudFront serves the CloudFront REST/XML protocol (2020-05-31) against the
+	// cloudfront driver. It must register before the S3 catch-all.
+	CloudFront cloudfrontdriver.CloudFront
 	// CloudTrail serves the CloudTrail JSON 1.1 protocol (X-Amz-Target prefix
 	// "CloudTrail_20131101.") against the cloudtrail driver.
 	CloudTrail cloudtraildriver.CloudTrail
 	// Glue serves the AWS Glue JSON 1.1 protocol (X-Amz-Target prefix
 	// "AWSGlue.") against the glue driver.
 	Glue gluedriver.Glue
+	// Athena serves the AWS Athena JSON 1.1 protocol (X-Amz-Target prefix
+	// "AmazonAthena.") against the athena driver.
+	Athena athenadriver.Athena
+	// TimestreamWrite serves the Amazon Timestream Write JSON 1.0 protocol
+	// (X-Amz-Target prefix "Timestream_20181101.") against the timestreamwrite
+	// driver: databases and the tables that belong to them.
+	TimestreamWrite timestreamwritedriver.Timestream
+	// HealthLake serves the AWS HealthLake JSON 1.0 protocol (X-Amz-Target prefix
+	// "HealthLake.") against the healthlake driver: FHIR data stores and their
+	// resource tags.
+	HealthLake healthlakedriver.HealthLake
+	// GlobalAccelerator serves the AWS Global Accelerator JSON 1.1 protocol
+	// (X-Amz-Target prefix "GlobalAccelerator_V20180706.") against the
+	// globalaccelerator driver: accelerators, listeners, endpoint groups,
+	// attributes and tags.
+	GlobalAccelerator globalacceleratordriver.GlobalAccelerator
+	// AppRunner serves the AWS App Runner JSON 1.0 protocol (X-Amz-Target prefix
+	// "AppRunner.") against the apprunner driver: services and their operation
+	// history, plus auto scaling configurations, connections, VPC connectors and
+	// observability configurations.
+	AppRunner apprunnerdriver.AppRunner
+	// Transfer serves the AWS Transfer Family JSON 1.1 protocol (X-Amz-Target
+	// prefix "TransferService.") against the transfer driver.
+	Transfer transferdriver.Transfer
+	// Cognito serves the AWS Cognito user-pools JSON 1.1 protocol (X-Amz-Target
+	// prefix "AWSCognitoIdentityProviderService.") against the cognito driver.
+	Cognito cognitodriver.Cognito
 	// Config serves the AWS Config JSON 1.1 protocol (X-Amz-Target prefix
 	// "StarlingDoveService.") against the configservice driver.
 	Config configservicedriver.Config
@@ -194,6 +342,11 @@ type Drivers struct {
 	// a request to a deployed API by method+path to its Lambda proxy integration.
 	// It must register before the S3 catch-all.
 	APIGateway apigatewaydriver.APIGateway
+	// APIGatewayV2 serves the Amazon API Gateway v2 (HTTP/WebSocket APIs)
+	// REST/JSON control plane rooted at /v2/apis (Api/Route/Integration/Stage).
+	// Disjoint from API Gateway REST v1 (/restapis); must register before the S3
+	// catch-all.
+	APIGatewayV2 apigatewayv2driver.APIGatewayV2
 	// GuardDuty serves the Amazon GuardDuty REST-JSON API (path + method routing,
 	// no version prefix) against the guardduty driver. It must register before
 	// the S3 catch-all (see the GuardDuty handler's Matches doc).
@@ -323,20 +476,44 @@ func DriversFrom(p *awsprovider.Provider) Drivers {
 		VPCLattice:          p.VPCLattice,
 		WAFv2:               p.WAFv2,
 		EFS:                 p.EFS,
+		Batch:               p.Batch,
 		SESV2:               p.SESV2,
 		OpenSearch:          p.OpenSearch,
+		AppSync:             p.AppSync,
+		AppFlow:             p.AppFlow,
+		MWAA:                p.MWAA,
+		MQ:                  p.MQ,
+		CodeArtifact:        p.CodeArtifact,
+		Backup:              p.Backup,
+		FIS:                 p.FIS,
+		Grafana:             p.Grafana,
+		Scheduler:           p.Scheduler,
+		AOSS:                p.AOSS,
+		APS:                 p.APS,
+		Kendra:              p.Kendra,
 		Kafka:               p.Kafka,
 		Route53Resolver:     p.Route53Resolver,
 		SecretsManager:      p.SecretsManager,
 		KMS:                 p.KMS,
 		ACM:                 p.ACM,
 		Kinesis:             p.Kinesis,
+		KinesisVideo:        p.KinesisVideo,
+		Location:            p.Location,
 		CloudTrail:          p.CloudTrail,
 		Glue:                p.Glue,
+		Athena:              p.Athena,
+		TimestreamWrite:     p.TimestreamWrite,
+		HealthLake:          p.HealthLake,
+		AppRunner:           p.AppRunner,
+		GlobalAccelerator:   p.GlobalAccelerator,
+		Transfer:            p.Transfer,
+		Cognito:             p.Cognito,
 		Config:              p.Config,
 		GuardDuty:           p.GuardDuty,
 		APIGateway:          p.APIGateway,
+		APIGatewayV2:        p.APIGatewayV2,
 		CloudFormation:      p.CloudFormation,
+		CloudFront:          p.CloudFront,
 		SSM:                 p.SSM,
 		CloudWatchLogs:      p.CloudWatchLogs,
 		Route53:             p.Route53,
@@ -482,6 +659,64 @@ func New(d Drivers) *server.Server {
 		srv.Register(gluesrv.New(d.Glue))
 	}
 
+	// AOSS (OpenSearch Serverless) matches the X-Amz-Target prefix
+	// "OpenSearchServerless." — disjoint from the other JSON-RPC services, so
+	// registration order is unconstrained.
+	if d.AOSS != nil {
+		srv.Register(aosssrv.New(d.AOSS))
+	}
+
+	// Kendra matches the X-Amz-Target prefix "AWSKendraFrontendService." —
+	// disjoint from the other JSON 1.1 services, so registration order is
+	// unconstrained.
+	if d.Kendra != nil {
+		srv.Register(kendrasrv.New(d.Kendra))
+	}
+
+	// Athena matches the X-Amz-Target prefix "AmazonAthena." — disjoint from the
+	// other JSON 1.1 services, so registration order is unconstrained.
+	if d.Athena != nil {
+		srv.Register(athenasrv.New(d.Athena))
+	}
+
+	// TimestreamWrite matches the X-Amz-Target prefix "Timestream_20181101." —
+	// disjoint from the other JSON-RPC services, so registration order is
+	// unconstrained.
+	if d.TimestreamWrite != nil {
+		srv.Register(timestreamwritesrv.New(d.TimestreamWrite))
+	}
+
+	// HealthLake matches the X-Amz-Target prefix "HealthLake." — disjoint from
+	// the other JSON-RPC services, so registration order is unconstrained.
+	if d.HealthLake != nil {
+		srv.Register(healthlakesrv.New(d.HealthLake))
+	}
+
+	// GlobalAccelerator matches the X-Amz-Target prefix
+	// "GlobalAccelerator_V20180706." — disjoint from the other JSON-RPC targets.
+	if d.GlobalAccelerator != nil {
+		srv.Register(globalacceleratorsrv.New(d.GlobalAccelerator))
+	}
+
+	// AppRunner matches the X-Amz-Target prefix "AppRunner." — disjoint from the
+	// other JSON-RPC services, so registration order is unconstrained.
+	if d.AppRunner != nil {
+		srv.Register(apprunnersrv.New(d.AppRunner))
+	}
+
+	// Transfer matches the X-Amz-Target prefix "TransferService." — disjoint from
+	// the other JSON 1.1 services, so registration order is unconstrained.
+	if d.Transfer != nil {
+		srv.Register(transfersrv.New(d.Transfer))
+	}
+
+	// Cognito matches the X-Amz-Target prefix
+	// "AWSCognitoIdentityProviderService." — disjoint from the other JSON 1.1
+	// services, so registration order is unconstrained.
+	if d.Cognito != nil {
+		srv.Register(cognitosrv.New(d.Cognito))
+	}
+
 	// AWS Config matches the X-Amz-Target prefix "StarlingDoveService." —
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.Config != nil {
@@ -511,6 +746,29 @@ func New(d Drivers) *server.Server {
 	// in-memory cluster/step store (no backing driver).
 	if d.EMR {
 		srv.Register(emrsrv.New(d.AccountID, d.Region, d.Clock))
+	}
+
+	// Kinesis Video Streams is a REST-JSON service dispatched on POST to
+	// per-operation action paths (e.g. POST /createStream, /describeStream,
+	// /createSignalingChannel). Its stream and channel paths are unique, but its
+	// resource-level tagging paths (/TagResource, /UntagResource,
+	// /ListTagsForResource) are also claimed by Savings Plans, so its Matches
+	// scopes those three to a Kinesis Video (:kinesisvideo:) ARN in the request
+	// body; it must therefore register before Savings Plans (a non-Kinesis-Video
+	// ARN falls through to it) and before S3's permissive REST fallback.
+	if d.KinesisVideo != nil {
+		srv.Register(kinesisvideosrv.New(d.KinesisVideo))
+	}
+
+	// Location is a REST-JSON service dispatched on verb + versioned path (e.g.
+	// POST /maps/v0/maps, GET /maps/v0/maps/{MapName}, POST
+	// /geofencing/v0/collections). Its versioned roots (/maps/v0/, /places/v0/,
+	// /routes/v0/, /geofencing/v0/, /tracking/v0/) are unique to Location, but its
+	// resource-level tagging path (/tags/{ResourceArn}) is shared, so its Matches
+	// scopes that path to a Location (:geo:) ARN; it must register before S3's
+	// permissive REST fallback.
+	if d.Location != nil {
+		srv.Register(locationsrv.New(d.Location))
 	}
 
 	// Savings Plans is a REST-JSON service dispatched on POST /{OperationName}
@@ -544,6 +802,15 @@ func New(d Drivers) *server.Server {
 		srv.Register(efssrv.New(d.EFS))
 	}
 
+	// Batch uses REST-JSON verb + operation-path routing under the /v1/ prefix;
+	// its Matches predicate gates on that prefix plus a known Batch operation
+	// segment, so it must run before the S3 catch-all. The /v1/tags/{arn} path is
+	// shared with MSK, so Batch's Matches claims it only for batch ARNs (see
+	// batch.Handler.Matches) and a kafka ARN falls through to the Kafka handler.
+	if d.Batch != nil {
+		srv.Register(batchsrv.New(d.Batch))
+	}
+
 	// SES v2 uses REST-JSON path routing under the /v2/email/ version prefix; its
 	// Matches predicate gates on that prefix, so it must run before the S3
 	// catch-all (no real bucket path begins with /v2/email/).
@@ -556,6 +823,116 @@ func New(d Drivers) *server.Server {
 	// the S3 catch-all (no real bucket path begins with /2021-01-01/).
 	if d.OpenSearch != nil {
 		srv.Register(opensearchsrv.New(d.OpenSearch))
+	}
+
+	// AppSync uses REST-JSON verb+path routing under the /v1/ prefix. Its
+	// Matches claims /v1/apis paths and /v1/tags paths carrying an AppSync ARN,
+	// so it must run before the S3 catch-all and before the MSK handler (which
+	// also uses /v1/ and claims /v1/tags for any ARN) so AppSync tag ops are not
+	// shadowed. It is disjoint from Batch (distinct operation-name roots).
+	if d.AppSync != nil {
+		srv.Register(appsyncsrv.New(d.AppSync))
+	}
+
+	// AppFlow uses REST-JSON verb + fixed per-operation root paths (e.g.
+	// POST /create-flow) and /tags paths carrying an AppFlow ARN, so its Matches
+	// claims only those exact paths and must run before the S3 catch-all.
+	if d.AppFlow != nil {
+		srv.Register(appflowsrv.New(d.AppFlow))
+	}
+
+	// MWAA uses REST-JSON verb + path routing at the root (e.g.
+	// PUT /environments/{Name}, GET /environments, POST /tags/{arn}). Its
+	// Matches claims the /environments tree, the /clitoken and /webtoken token
+	// paths, and /tags paths carrying an MWAA (:airflow:) ARN, so it must run
+	// before the S3 catch-all and is disjoint from the other /tags claimants
+	// (AppFlow, AppSync, Batch, Kafka), which scope their claims to their own
+	// ARN markers.
+	if d.MWAA != nil {
+		srv.Register(mwaasrv.New(d.MWAA))
+	}
+
+	// MQ (Amazon MQ) uses REST-JSON verb + path routing under the /v1/ prefix
+	// (e.g. POST /v1/brokers, GET /v1/brokers/{brokerId}, POST /v1/configurations).
+	// Its Matches claims the /v1/brokers and /v1/configurations trees and /v1/tags
+	// paths carrying an MQ (:mq:) ARN, so it must run before the S3 catch-all and
+	// is disjoint from the other /v1/tags claimants (Batch, AppSync, Kafka), which
+	// scope their claims to their own ARN markers. The /v1/brokers and
+	// /v1/configurations roots are distinct from Batch's operation-name roots,
+	// AppSync's /v1/apis and Kafka's /v1/clusters, so it shadows none of them.
+	if d.MQ != nil {
+		srv.Register(mqsrv.New(d.MQ))
+	}
+
+	// CodeArtifact uses REST-JSON verb + path routing under the /v1/ prefix with
+	// the resource identity in the QUERY STRING (e.g. POST /v1/domain?domain=,
+	// GET /v1/repository?domain=&repository=, POST /v1/repositories). Its Matches
+	// claims the /v1/domain(s) and /v1/repository(ies) trees — distinct from the
+	// other /v1/ claimants (MQ's /v1/brokers, AppSync's /v1/apis, Kafka's
+	// /v1/clusters) — and the shared /v1/tag, /v1/tags and /v1/untag roots only
+	// when their ?resourceArn= names a CodeArtifact (:codeartifact:) ARN, so it
+	// must run before the S3 catch-all and shadows none of them. CodeArtifact's
+	// /v1/tags carries no path segment (it takes ?resourceArn=), unlike the
+	// /v1/tags/{arn} path style of MQ, Batch, AppSync and Kafka.
+	if d.CodeArtifact != nil {
+		srv.Register(codeartifactsrv.New(d.CodeArtifact))
+	}
+
+	// Backup (AWS Backup) uses REST-JSON verb + path routing at the root (e.g.
+	// PUT /backup-vaults/{name}, POST /backup/plans, GET /backup/plans/{id}). Its
+	// Matches claims the /backup-vaults and /backup/plans trees (distinctive to
+	// AWS Backup) and the shared /tags and /untag paths only when the ARN names a
+	// Backup (:backup:) resource, so it must run before the S3 catch-all and is
+	// disjoint from the other /tags claimants (FIS, Grafana, Scheduler, APS, ...),
+	// which scope their claims to their own ARN markers.
+	if d.Backup != nil {
+		srv.Register(backupsrv.New(d.Backup))
+	}
+
+	// FIS (Fault Injection Simulator) uses REST-JSON verb + path routing at the
+	// root (e.g. POST /experimentTemplates, GET /experimentTemplates/{id},
+	// POST /experiments, DELETE /experiments/{id}, POST /tags/{arn}). Its Matches
+	// claims the /experimentTemplates and /experiments trees — distinct from the
+	// other root claimants (Grafana's /workspaces) — and the shared /tags paths
+	// only when the ARN names a FIS (:fis:) resource, so it must run before the S3
+	// catch-all and is disjoint from the other /tags claimants, which scope their
+	// claims to their own ARN markers.
+	if d.FIS != nil {
+		srv.Register(fissrv.New(d.FIS))
+	}
+
+	// Grafana (Amazon Managed Grafana) uses REST-JSON verb + path routing at the
+	// root (e.g. POST /workspaces, GET /workspaces/{id},
+	// PUT /workspaces/{id}/configuration, POST /tags/{arn}). Its Matches claims
+	// the /workspaces tree and /tags paths carrying a Grafana (:grafana:) ARN, so
+	// it must run before the S3 catch-all and is disjoint from the other /tags
+	// claimants (AppFlow, AppSync, Batch, Kafka, MWAA), which scope their claims
+	// to their own ARN markers.
+	if d.Grafana != nil {
+		srv.Register(grafanasrv.New(d.Grafana))
+	}
+
+	// Scheduler (Amazon EventBridge Scheduler) uses REST-JSON verb + path routing
+	// at the root (e.g. POST /schedules/{Name}, GET /schedules/{Name}?groupName=,
+	// GET /schedule-groups, POST /tags/{arn}). Its Matches claims the /schedules
+	// and /schedule-groups trees (unique among the registered handlers) and /tags
+	// paths carrying a Scheduler (:scheduler:) ARN, so it must run before the S3
+	// catch-all and is disjoint from the other /tags claimants (AppFlow, MWAA,
+	// AppSync, Batch, Kafka, Grafana, APS), which scope their claims to their own
+	// ARN markers.
+	if d.Scheduler != nil {
+		srv.Register(schedulersrv.New(d.Scheduler))
+	}
+
+	// APS (Amazon Managed Service for Prometheus) uses REST-JSON verb + path
+	// routing at the root (e.g. POST /workspaces, GET /workspaces/{id}, PUT
+	// /workspaces/{id}/rulegroupsnamespaces/{name}). Its Matches claims the
+	// /workspaces tree and /tags paths carrying an APS (:aps:) ARN, so it must
+	// run before the S3 catch-all and is disjoint from the other /tags claimants
+	// (AppFlow, MWAA, AppSync, Batch, Kafka), which scope their claims to their
+	// own ARN markers.
+	if d.APS != nil {
+		srv.Register(apssrv.New(d.APS))
 	}
 
 	// MSK (Kafka) uses REST-JSON path routing under the /v1/, /api/v2/, and
@@ -726,6 +1103,15 @@ func New(d Drivers) *server.Server {
 		srv.Register(apigatewaysrv.New(d.APIGateway))
 	}
 
+	// API Gateway v2 (HTTP/WebSocket APIs): the restJson1 control plane roots at
+	// /v2/apis (Api/Route/Integration/Stage). Its /v2/apis prefix is disjoint
+	// from API Gateway REST v1's /restapis, so it never shadows v1; it must
+	// register before S3's permissive REST fallback, which would otherwise claim
+	// /v2/apis as a bucket path.
+	if d.APIGatewayV2 != nil {
+		srv.Register(apigatewayv2srv.New(d.APIGatewayV2))
+	}
+
 	// before S3 because S3 is the permissive REST fallback that would
 	// otherwise claim the same path. EKS's Matches predicate is rooted
 	// at /clusters specifically so it doesn't shadow other REST URLs.
@@ -783,6 +1169,14 @@ func New(d Drivers) *server.Server {
 	// claim those paths.
 	if d.Route53 != nil {
 		srv.Register(route53.New(d.Route53))
+	}
+
+	// CloudFront is a REST/XML service rooted at /2020-05-31/distribution and
+	// /2020-05-31/tagging — its own path space, disjoint from every other AWS
+	// handler. It must register before S3 because S3 is the permissive REST
+	// fallback that would otherwise claim those paths.
+	if d.CloudFront != nil {
+		srv.Register(cloudfrontsrv.New(d.CloudFront))
 	}
 
 	if d.S3 != nil {

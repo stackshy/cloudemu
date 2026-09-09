@@ -80,6 +80,8 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 		return
 	}
 
+	applySubscriptionDefaults(&body)
+
 	filter, err := parseFilter(body.Filter)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "invalid filter: "+cerrors.Message(err))
@@ -104,6 +106,27 @@ func (h *Handler) createSubscription(w http.ResponseWriter, r *http.Request, pro
 	writeJSON(w, http.StatusOK, cfg)
 }
 
+// defaultExpirationPolicyJSON is the expirationPolicy Pub/Sub assigns a
+// subscription created without one: a 31-day ttl.
+const defaultExpirationPolicyJSON = `{"ttl":"` + defaultExpirationTTL + `"}`
+
+// applySubscriptionDefaults fills in the server-assigned fields real Pub/Sub
+// returns for a subscription created with only its required fields, so a create
+// that omits them round-trips the same values on Get/List (the top Terraform
+// drift source). An explicitly-provided expirationPolicy — including an empty
+// one ({} = never expire) — is left untouched.
+func applySubscriptionDefaults(s *subscription) {
+	if s.MessageRetentionDuration == "" {
+		s.MessageRetentionDuration = defaultMessageRetentionDuration
+	}
+
+	if len(s.ExpirationPolicy) == 0 {
+		s.ExpirationPolicy = []byte(defaultExpirationPolicyJSON)
+	}
+
+	s.State = subscriptionStateActive
+}
+
 // patchSubscription applies subscriptions.patch: it merges only the fields named
 // by updateMask into the stored config. filter/topic/name are immutable.
 func (h *Handler) patchSubscription(w http.ResponseWriter, r *http.Request, name string) {
@@ -112,7 +135,7 @@ func (h *Handler) patchSubscription(w http.ResponseWriter, r *http.Request, name
 		return
 	}
 
-	masks := parseMask(req.UpdateMask)
+	masks := maskFromRequest(r, req.UpdateMask)
 	if len(masks) == 0 {
 		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "updateMask must be specified and non-empty")
 		return
@@ -185,6 +208,9 @@ func subMaskSetters() map[string]func(dst, src *subscription) {
 		"retryPolicy":              func(d, s *subscription) { d.RetryPolicy = s.RetryPolicy },
 		"deadLetterPolicy":         func(d, s *subscription) { d.DeadLetterPolicy = s.DeadLetterPolicy },
 		"pushConfig":               func(d, s *subscription) { d.PushConfig = s.PushConfig },
+		"bigqueryConfig":           func(d, s *subscription) { d.BigqueryConfig = s.BigqueryConfig },
+		"cloudStorageConfig":       func(d, s *subscription) { d.CloudStorageConfig = s.CloudStorageConfig },
+		"bigtableConfig":           func(d, s *subscription) { d.BigtableConfig = s.BigtableConfig },
 		"labels":                   func(d, s *subscription) { d.Labels = s.Labels },
 		"messageRetentionDuration": func(d, s *subscription) { d.MessageRetentionDuration = s.MessageRetentionDuration },
 		"expirationPolicy":         func(d, s *subscription) { d.ExpirationPolicy = s.ExpirationPolicy },

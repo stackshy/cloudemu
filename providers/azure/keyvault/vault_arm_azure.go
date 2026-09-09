@@ -2,6 +2,7 @@ package keyvault
 
 import (
 	"context"
+	"sort"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -29,9 +30,54 @@ func (m *Mock) CreateOrUpdateVault(_ context.Context, cfg driver.KVVaultConfig) 
 		info.Properties.VaultURI = "https://" + cfg.Name + ".vault.azure.net/"
 	}
 
+	applyVaultPropertyDefaults(&info.Properties)
+
 	m.armVaults.Set(cfg.Name, info)
 
 	return cloneVaultInfo(info), nil
+}
+
+// defaultSoftDeleteRetentionDays is the ARM default for softDeleteRetentionInDays
+// when a create body omits it (Microsoft.KeyVault docs: default 90).
+const defaultSoftDeleteRetentionDays = 90
+
+// applyVaultPropertyDefaults materializes the server-side defaults that real
+// Azure Key Vault stamps onto a vault whose create body omits them, so a
+// round-trip GET (and Terraform's azurerm_key_vault refresh) sees them rather
+// than drifting on the absent fields. Per the Microsoft.KeyVault/vaults REST
+// contract (VaultProperties): softDeleteRetentionInDays defaults to 90, and
+// enableRbacAuthorization / enabledForDeployment / enabledForDiskEncryption /
+// enabledForTemplateDeployment each default to false when null/unspecified.
+//
+// enableSoftDelete is special: Microsoft mandates soft-delete on every new
+// vault and, once on, it can never be turned off ("When creating a new key
+// vault, soft-delete is on by default. Once soft-delete is enabled on a key
+// vault, it can't be disabled." — Key Vault soft-delete overview; VaultProperties:
+// "Once set to true, it cannot be reverted to false."). So it is forced true
+// unconditionally here — an explicit false on create is overridden, and a
+// PATCH/PUT can never revert a true vault to false (both paths funnel through
+// CreateOrUpdateVault → this helper).
+func applyVaultPropertyDefaults(p *driver.KVVaultProperties) {
+	enabled := true
+	p.EnableSoftDelete = &enabled
+
+	if p.SoftDeleteRetentionInDays == 0 {
+		p.SoftDeleteRetentionInDays = defaultSoftDeleteRetentionDays
+	}
+
+	defaultBoolFalse(&p.EnableRbacAuthorization)
+	defaultBoolFalse(&p.EnabledForDeployment)
+	defaultBoolFalse(&p.EnabledForDiskEncryption)
+	defaultBoolFalse(&p.EnabledForTemplateDeployment)
+}
+
+// defaultBoolFalse stamps a false default onto an omitted (nil) *bool property,
+// leaving an explicit true or false as the caller set it.
+func defaultBoolFalse(pp **bool) {
+	if *pp == nil {
+		v := false
+		*pp = &v
+	}
 }
 
 // GetVault returns the vault by name. Scope enforcement is left to the caller
@@ -58,6 +104,13 @@ func (m *Mock) ListVaults(_ context.Context, filter scope.Scope) ([]driver.KVVau
 
 		out = append(out, *cloneVaultInfo(info))
 	}
+
+	// Vaults are stored in a map, whose iteration order is randomized. Real ARM
+	// list responses (Vaults.ListByResourceGroup / ListBySubscription, and the
+	// azurerm_key_vaults data source that walks them) return a stable order, so
+	// sort by the globally unique vault name to keep GETs deterministic and free
+	// of Terraform plan churn.
+	sort.SliceStable(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 
 	return out, nil
 }

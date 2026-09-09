@@ -397,10 +397,10 @@ func (h *Handler) enqueue(w http.ResponseWriter, r *http.Request, queue string) 
 	now := time.Now().UTC()
 	resp := messagesList{Messages: []messageXML{{
 		MessageID:       out.MessageID,
-		InsertionTime:   now.Format(time.RFC1123),
-		ExpirationTime:  displayExpiry(out.ExpiresAt).UTC().Format(time.RFC1123),
+		InsertionTime:   now.Format(http.TimeFormat),
+		ExpirationTime:  displayExpiry(out.ExpiresAt).UTC().Format(http.TimeFormat),
 		PopReceipt:      out.PopReceipt,
-		TimeNextVisible: now.Add(time.Duration(visTimeout) * time.Second).Format(time.RFC1123),
+		TimeNextVisible: now.Add(time.Duration(visTimeout) * time.Second).Format(http.TimeFormat),
 	}}}
 
 	writeXML(w, http.StatusCreated, resp)
@@ -436,15 +436,15 @@ func (h *Handler) dequeue(w http.ResponseWriter, r *http.Request, queue string) 
 		effectiveVis = defaultVisibilityTimeoutSeconds
 	}
 
-	timeNextVisible := now.Add(time.Duration(effectiveVis) * time.Second).Format(time.RFC1123)
+	timeNextVisible := now.Add(time.Duration(effectiveVis) * time.Second).Format(http.TimeFormat)
 	out := messagesList{}
 
 	for i := range msgs {
 		m := &msgs[i]
 		out.Messages = append(out.Messages, messageXML{
 			MessageID:       m.MessageID,
-			InsertionTime:   m.InsertedAt.UTC().Format(time.RFC1123),
-			ExpirationTime:  displayExpiry(m.ExpiresAt).UTC().Format(time.RFC1123),
+			InsertionTime:   m.InsertedAt.UTC().Format(http.TimeFormat),
+			ExpirationTime:  displayExpiry(m.ExpiresAt).UTC().Format(http.TimeFormat),
 			PopReceipt:      m.ReceiptHandle,
 			TimeNextVisible: timeNextVisible,
 			DequeueCount:    int64(m.ReceiveCount),
@@ -500,8 +500,8 @@ func (h *Handler) peek(w http.ResponseWriter, r *http.Request, queue string) {
 	for _, m := range msgs {
 		out.Messages = append(out.Messages, peekMessageXML{
 			MessageID:      m.MessageID,
-			InsertionTime:  m.InsertedAt.UTC().Format(time.RFC1123),
-			ExpirationTime: displayExpiry(m.ExpiresAt).UTC().Format(time.RFC1123),
+			InsertionTime:  m.InsertedAt.UTC().Format(http.TimeFormat),
+			ExpirationTime: displayExpiry(m.ExpiresAt).UTC().Format(http.TimeFormat),
 			DequeueCount:   int64(m.ReceiveCount),
 			MessageText:    m.Body,
 		})
@@ -555,7 +555,7 @@ func (h *Handler) deleteMessage(w http.ResponseWriter, r *http.Request, queue st
 		// The queue was already resolved, so a NotFound here means the message or
 		// its pop receipt did not match — Azure returns 404 MessageNotFound.
 		if cerrors.IsNotFound(err) {
-			writeError(w, http.StatusNotFound, "MessageNotFound", err.Error())
+			writeError(w, http.StatusNotFound, "MessageNotFound", cerrors.Message(err))
 			return
 		}
 
@@ -607,7 +607,7 @@ func (h *Handler) updateMessage(w http.ResponseWriter, r *http.Request, queue, m
 		// The queue was already resolved, so a NotFound here means the message
 		// or its pop receipt did not match.
 		if cerrors.IsNotFound(err) {
-			writeError(w, http.StatusNotFound, "MessageNotFound", err.Error())
+			writeError(w, http.StatusNotFound, "MessageNotFound", cerrors.Message(err))
 			return
 		}
 
@@ -617,7 +617,7 @@ func (h *Handler) updateMessage(w http.ResponseWriter, r *http.Request, queue, m
 	}
 
 	w.Header().Set("x-ms-popreceipt", res.PopReceipt)
-	w.Header().Set("x-ms-time-next-visible", res.TimeNextVisible.UTC().Format(time.RFC1123))
+	w.Header().Set("x-ms-time-next-visible", res.TimeNextVisible.UTC().Format(http.TimeFormat))
 	w.WriteHeader(http.StatusNoContent)
 }
 
@@ -809,12 +809,12 @@ func writeQueryParameterRangeError(w http.ResponseWriter, name, value string, mi
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "QueueNotFound", err.Error())
+		writeError(w, http.StatusNotFound, "QueueNotFound", cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "QueueAlreadyExists", err.Error())
+		writeError(w, http.StatusConflict, "QueueAlreadyExists", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidInput", cerrors.Message(err))
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalError", cerrors.Message(err))
 	}
 }

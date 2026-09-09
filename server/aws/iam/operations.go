@@ -19,15 +19,24 @@ const codeMalformedPolicy = "MalformedPolicyDocument"
 
 // validPolicyDocument reports whether doc is acceptable as an IAM policy or
 // trust-policy document. An empty document is left to the driver's required-field
-// checks; a non-empty one must parse as a JSON object.
+// checks; a non-empty one must parse as a JSON object and carry the "Statement"
+// element. The IAM policy grammar defines a policy as
+// { <version_block?>, <id_block?>, <statement_block> } — only the statement
+// block is non-optional, so real IAM rejects a document without it (and any
+// non-JSON body) with MalformedPolicyDocument.
 func validPolicyDocument(doc string) bool {
 	if doc == "" {
 		return true
 	}
 
 	var obj map[string]any
+	if json.Unmarshal([]byte(doc), &obj) != nil {
+		return false
+	}
 
-	return json.Unmarshal([]byte(doc), &obj) == nil
+	stmt, ok := obj["Statement"]
+
+	return ok && stmt != nil
 }
 
 // writeMalformedPolicy emits the IAM MalformedPolicyDocument error (HTTP 400).
@@ -477,6 +486,11 @@ func (h *Handler) attachmentCount(ctx context.Context, policyARN string) int {
 }
 
 func (h *Handler) createPolicyVersion(w http.ResponseWriter, r *http.Request) {
+	if !validPolicyDocument(r.Form.Get("PolicyDocument")) {
+		writeMalformedPolicy(w, "Syntax errors in policy")
+		return
+	}
+
 	cfg := iamdriver.PolicyVersionConfig{
 		PolicyARN:      r.Form.Get("PolicyArn"),
 		PolicyDocument: r.Form.Get("PolicyDocument"),

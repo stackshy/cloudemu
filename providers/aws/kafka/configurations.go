@@ -35,11 +35,17 @@ func snapshotConfig(c driver.Configuration) driver.Configuration {
 	return out
 }
 
-// getConfig resolves a configuration by ARN, NotFoundException when absent.
+// getConfig resolves a configuration by ARN. A missing configuration is a
+// BadRequestException whose message contains "Configuration ARN does not exist"
+// — that is what real MSK returns for an unknown/deleted configuration ARN
+// (DescribeConfiguration does NOT surface a 404 NotFoundException here), and
+// clients rely on it: Terraform's aws_msk_configuration delete waiter treats a
+// configuration as gone only when it sees that exact BadRequestException, so a
+// 404 would hang/fail the destroy.
 func (m *Mock) getConfig(arn string) (*configData, error) {
 	cd, ok := m.configs.Get(arn)
 	if !ok {
-		return nil, notFound("configuration not found: %s", arn)
+		return nil, badRequest("Configuration ARN does not exist: %s", arn)
 	}
 
 	return cd, nil

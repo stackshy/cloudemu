@@ -255,6 +255,21 @@ func buildSubProps(in *subscriptionProperties, created, updated time.Time) subsc
 		out.MaxDeliveryCount = defaultMaxDeliveryCount
 	}
 
+	if out.AutoDeleteOnIdle == "" {
+		out.AutoDeleteOnIdle = maxTimeToLive
+	}
+
+	if out.EnableBatchedOperations == nil {
+		out.EnableBatchedOperations = defaultBatchedOps()
+	}
+
+	// deadLetteringOnFilterEvaluationExceptions defaults to true in real Service
+	// Bus; a pointer keeps an explicit "false" from being overwritten.
+	if out.DeadLetteringOnFilterError == nil {
+		on := true
+		out.DeadLetteringOnFilterError = &on
+	}
+
 	out.CountDetails = &countDetails{}
 	out.CreatedAt = &created
 	out.UpdatedAt = &updated

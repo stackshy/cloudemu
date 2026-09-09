@@ -238,10 +238,12 @@ type domainUpdateJSON struct {
 	} `json:"properties,omitempty"`
 }
 
-// updateDomain maps Domains.Update (PATCH) onto the wire-owned record: it merges
-// the supplied tags onto the existing tags and applies the mutable
-// publicNetworkAccess, preserving anything the caller omitted, and returns the
-// updated domain (200). 404 when the domain does not exist, before any write.
+// updateDomain maps Domains.Update (PATCH) onto the wire-owned record: a
+// resource-level tag PATCH replaces the tag set wholesale (matching real
+// Azure and this codebase's convention elsewhere), a caller who omits tags
+// entirely leaves the existing set untouched, and the mutable
+// publicNetworkAccess is applied. Returns the updated domain (200). 404 when
+// the domain does not exist, before any write.
 func (h *Handler) updateDomain(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body domainUpdateJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -260,9 +262,7 @@ func (h *Handler) updateDomain(w http.ResponseWriter, r *http.Request, rp *azure
 		return
 	}
 
-	if body.Tags != nil {
-		rec.tags = mergeTags(rec.tags, tagsFromPtr(body.Tags))
-	}
+	rec.tags = replaceTagsIfPresent(rec.tags, body.Tags)
 
 	if body.Properties != nil && body.Properties.PublicNetworkAccess != "" {
 		rec.publicNetworkAccess = body.Properties.PublicNetworkAccess

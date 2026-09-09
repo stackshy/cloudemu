@@ -338,6 +338,10 @@ func displayName(pkg string) string {
 		return "STS"
 	case "lro":
 		return "LRO"
+	case "kms":
+		return "KMS"
+	case "filestore":
+		return "Filestore"
 	case "costexplorer":
 		return "CostExplorer"
 	case "servicequotas":

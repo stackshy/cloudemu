@@ -467,3 +467,47 @@ func TestSDKOneZoneAvailabilityZoneId(t *testing.T) {
 			aws.ToString(desc.FileSystems[0].AvailabilityZoneId))
 	}
 }
+
+// TestSDKDeleteWithReplicationGuarded verifies that a file system with an
+// active replication configuration is rejected with a FileSystemInUse-typed
+// error (real EFS: "You can't delete a file system that is part of an EFS
+// Replication configuration"), and that deletion succeeds once the replication
+// configuration is removed.
+func TestSDKDeleteWithReplicationGuarded(t *testing.T) {
+	ctx := context.Background()
+	c := newEFSClient(t)
+
+	fs, err := c.CreateFileSystem(ctx, &awsefs.CreateFileSystemInput{CreationToken: aws.String("repl-guarded")})
+	if err != nil {
+		t.Fatalf("CreateFileSystem: %v", err)
+	}
+
+	fsID := aws.ToString(fs.FileSystemId)
+
+	if _, err := c.CreateReplicationConfiguration(ctx, &awsefs.CreateReplicationConfigurationInput{
+		SourceFileSystemId: aws.String(fsID),
+		Destinations:       []efstypes.DestinationToCreate{{Region: aws.String("us-west-2")}},
+	}); err != nil {
+		t.Fatalf("CreateReplicationConfiguration: %v", err)
+	}
+
+	_, err = c.DeleteFileSystem(ctx, &awsefs.DeleteFileSystemInput{FileSystemId: aws.String(fsID)})
+	if err == nil {
+		t.Fatal("DeleteFileSystem with active replication: want error, got nil")
+	}
+
+	var inUse *efstypes.FileSystemInUse
+	if !errors.As(err, &inUse) {
+		t.Fatalf("want FileSystemInUse, got %T: %v", err, err)
+	}
+
+	if _, err := c.DeleteReplicationConfiguration(ctx, &awsefs.DeleteReplicationConfigurationInput{
+		SourceFileSystemId: aws.String(fsID),
+	}); err != nil {
+		t.Fatalf("DeleteReplicationConfiguration: %v", err)
+	}
+
+	if _, err := c.DeleteFileSystem(ctx, &awsefs.DeleteFileSystemInput{FileSystemId: aws.String(fsID)}); err != nil {
+		t.Fatalf("DeleteFileSystem after replication removed: %v", err)
+	}
+}

@@ -155,6 +155,47 @@ func TestPutGetMethodAndIntegration(t *testing.T) {
 	if ig.URI != lambdaURI {
 		t.Fatalf("unexpected integration uri: %s", ig.URI)
 	}
+
+	// PutIntegration omitted timeoutInMillis, so it defaults to the AWS 29s
+	// value and round-trips through GetIntegration (no Terraform drift).
+	const defaultTimeout = 29000
+	if ig.TimeoutInMillis != defaultTimeout {
+		t.Fatalf("default timeout = %d, want %d", ig.TimeoutInMillis, defaultTimeout)
+	}
+}
+
+// TestPutIntegrationCustomTimeout proves an explicit timeoutInMillis is stored
+// verbatim rather than being overridden by the default.
+func TestPutIntegrationCustomTimeout(t *testing.T) {
+	m := newMock(t)
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "t"})
+	res, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "x")
+
+	if _, err := m.PutMethod(ctx(), api.ID, res.ID, "GET", driver.PutMethodInput{}); err != nil {
+		t.Fatalf("PutMethod: %v", err)
+	}
+
+	const custom = 5000
+
+	ig, err := m.PutIntegration(ctx(), api.ID, res.ID, "GET", driver.PutIntegrationInput{
+		Type: driver.IntegrationMock, TimeoutInMillis: custom,
+	})
+	if err != nil {
+		t.Fatalf("PutIntegration: %v", err)
+	}
+
+	if ig.TimeoutInMillis != custom {
+		t.Fatalf("PutIntegration timeout = %d, want %d", ig.TimeoutInMillis, custom)
+	}
+
+	got, err := m.GetIntegration(ctx(), api.ID, res.ID, "GET")
+	if err != nil {
+		t.Fatalf("GetIntegration: %v", err)
+	}
+
+	if got.TimeoutInMillis != custom {
+		t.Fatalf("GetIntegration timeout = %d, want %d", got.TimeoutInMillis, custom)
+	}
 }
 
 func TestCreateDeploymentAutoCreatesStage(t *testing.T) {
@@ -366,4 +407,378 @@ func TestCreateResourceRejectsSecondVariableSibling(t *testing.T) {
 	if _, err = m.CreateResource(ctx(), api.ID, api.RootResourceID, "pets"); err != nil {
 		t.Fatalf("CreateResource(pets) alongside {id}: %v", err)
 	}
+}
+
+// TestDeleteMethodAndIntegration proves DeleteIntegration clears just the
+// integration (the method survives), and a subsequent DeleteMethod removes the
+// method entirely — the lifecycle a Terraform destroy of
+// aws_api_gateway_integration then aws_api_gateway_method drives.
+func TestDeleteMethodAndIntegration(t *testing.T) {
+	m := newMock(t)
+	apiID, _, resID := deployProxyAPI(t, m, "hello", "GET", lambdaURI)
+
+	if err := m.DeleteIntegration(ctx(), apiID, resID, "GET"); err != nil {
+		t.Fatalf("DeleteIntegration: %v", err)
+	}
+
+	if _, err := m.GetIntegration(ctx(), apiID, resID, "GET"); !errors.IsNotFound(err) {
+		t.Fatalf("GetIntegration after delete: %v, want NotFound", err)
+	}
+
+	if _, err := m.GetMethod(ctx(), apiID, resID, "GET"); err != nil {
+		t.Fatalf("GetMethod should still exist after DeleteIntegration: %v", err)
+	}
+
+	if err := m.DeleteMethod(ctx(), apiID, resID, "GET"); err != nil {
+		t.Fatalf("DeleteMethod: %v", err)
+	}
+
+	if _, err := m.GetMethod(ctx(), apiID, resID, "GET"); !errors.IsNotFound(err) {
+		t.Fatalf("GetMethod after delete: %v, want NotFound", err)
+	}
+}
+
+// TestDeleteIntegrationMissingIsNotFound proves deleting a nonexistent
+// integration is a NotFound (real API Gateway returns NotFoundException).
+func TestDeleteIntegrationMissingIsNotFound(t *testing.T) {
+	m := newMock(t)
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "x"})
+	res, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "pets")
+
+	if _, err := m.PutMethod(ctx(), api.ID, res.ID, "GET", driver.PutMethodInput{}); err != nil {
+		t.Fatalf("PutMethod: %v", err)
+	}
+
+	if err := m.DeleteIntegration(ctx(), api.ID, res.ID, "GET"); !errors.IsNotFound(err) {
+		t.Fatalf("DeleteIntegration with no integration: %v, want NotFound", err)
+	}
+}
+
+// TestDeleteResourceCascadesToChildren proves deleting a resource removes its
+// whole descendant subtree, matching real API Gateway.
+func TestDeleteResourceCascadesToChildren(t *testing.T) {
+	m := newMock(t)
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "x"})
+
+	parent, err := m.CreateResource(ctx(), api.ID, api.RootResourceID, "orders")
+	if err != nil {
+		t.Fatalf("CreateResource(orders): %v", err)
+	}
+
+	child, err := m.CreateResource(ctx(), api.ID, parent.ID, "{id}")
+	if err != nil {
+		t.Fatalf("CreateResource({id}): %v", err)
+	}
+
+	if err := m.DeleteResource(ctx(), api.ID, parent.ID); err != nil {
+		t.Fatalf("DeleteResource: %v", err)
+	}
+
+	if _, err := m.GetResource(ctx(), api.ID, parent.ID); !errors.IsNotFound(err) {
+		t.Fatalf("GetResource(parent) after delete: %v, want NotFound", err)
+	}
+
+	if _, err := m.GetResource(ctx(), api.ID, child.ID); !errors.IsNotFound(err) {
+		t.Fatalf("GetResource(child) after parent delete: %v, want NotFound", err)
+	}
+}
+
+// TestDeleteResourceRejectsRoot proves the API's root resource cannot be
+// deleted, matching real API Gateway's "Cannot remove the root resource"
+// BadRequestException.
+func TestDeleteResourceRejectsRoot(t *testing.T) {
+	m := newMock(t)
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "x"})
+
+	if err := m.DeleteResource(ctx(), api.ID, api.RootResourceID); !errors.IsInvalidArgument(err) {
+		t.Fatalf("DeleteResource(root): %v, want InvalidArgument", err)
+	}
+}
+
+// TestDeploymentAndStageLifecycle exercises GetDeployment(s), GetStages,
+// DeleteStage and DeleteDeployment end to end, including the guard that a
+// deployment referenced by a stage cannot be deleted.
+func TestDeploymentAndStageLifecycle(t *testing.T) {
+	m := newMock(t)
+	apiID, _, _ := deployProxyAPI(t, m, "hello", "GET", lambdaURI)
+
+	deps, err := m.GetDeployments(ctx(), apiID)
+	if err != nil || len(deps) != 1 {
+		t.Fatalf("GetDeployments = %+v, %v; want 1 deployment", deps, err)
+	}
+
+	dep, err := m.GetDeployment(ctx(), apiID, deps[0].ID)
+	if err != nil {
+		t.Fatalf("GetDeployment: %v", err)
+	}
+
+	stages, err := m.GetStages(ctx(), apiID)
+	if err != nil || len(stages) != 1 || stages[0].StageName != "prod" {
+		t.Fatalf("GetStages = %+v, %v; want [prod]", stages, err)
+	}
+
+	if err := m.DeleteDeployment(ctx(), apiID, dep.ID); !errors.IsFailedPrecondition(err) {
+		t.Fatalf("DeleteDeployment while stage active: %v, want FailedPrecondition", err)
+	}
+
+	if err := m.DeleteStage(ctx(), apiID, "prod"); err != nil {
+		t.Fatalf("DeleteStage: %v", err)
+	}
+
+	if _, err := m.GetStage(ctx(), apiID, "prod"); !errors.IsNotFound(err) {
+		t.Fatalf("GetStage after delete: %v, want NotFound", err)
+	}
+
+	if err := m.DeleteDeployment(ctx(), apiID, dep.ID); err != nil {
+		t.Fatalf("DeleteDeployment after stage removed: %v", err)
+	}
+
+	if _, err := m.GetDeployment(ctx(), apiID, dep.ID); !errors.IsNotFound(err) {
+		t.Fatalf("GetDeployment after delete: %v, want NotFound", err)
+	}
+}
+
+func TestCreateRestAPIStoresExtendedFields(t *testing.T) {
+	m := newMock(t)
+	size := 4096
+
+	api, err := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{
+		Name: "x", DisableExecuteAPIEndpoint: true, MinimumCompressionSize: &size, Policy: `{"p":1}`,
+	})
+	if err != nil {
+		t.Fatalf("CreateRestAPI: %v", err)
+	}
+
+	got, err := m.GetRestAPI(ctx(), api.ID)
+	if err != nil {
+		t.Fatalf("GetRestAPI: %v", err)
+	}
+
+	if !got.DisableExecuteAPIEndpoint || got.MinimumCompressionSize == nil ||
+		*got.MinimumCompressionSize != size || got.Policy != `{"p":1}` {
+		t.Fatalf("extended fields not round-tripped: %+v", got)
+	}
+}
+
+func TestUpdateRestAPIPatches(t *testing.T) {
+	m := newMock(t)
+
+	api, err := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "orig"})
+	if err != nil {
+		t.Fatalf("CreateRestAPI: %v", err)
+	}
+
+	got, err := m.UpdateRestAPI(ctx(), api.ID, []driver.PatchOperation{
+		{Op: "replace", Path: "/name", Value: "renamed"},
+		{Op: "replace", Path: "/description", Value: "desc"},
+		{Op: "replace", Path: "/disableExecuteApiEndpoint", Value: "true"},
+		{Op: "replace", Path: "/minimumCompressionSize", Value: "1024"},
+		{Op: "replace", Path: "/apiKeySource", Value: "AUTHORIZER"},
+		{Op: "replace", Path: "/endpointConfiguration/types/0", Value: "REGIONAL"},
+		{Op: "add", Path: "/binaryMediaTypes/image~1png", Value: "image/png"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateRestAPI: %v", err)
+	}
+
+	if got.Name != "renamed" || got.Description != "desc" || !got.DisableExecuteAPIEndpoint ||
+		got.MinimumCompressionSize == nil || *got.MinimumCompressionSize != 1024 ||
+		got.APIKeySource != "AUTHORIZER" || got.EndpointConfigurationTypes[0] != "REGIONAL" {
+		t.Fatalf("UpdateRestAPI patch not applied: %+v", got)
+	}
+
+	if len(got.BinaryMediaTypes) != 1 || got.BinaryMediaTypes[0] != "image/png" {
+		t.Fatalf("binaryMediaTypes add not applied: %v", got.BinaryMediaTypes)
+	}
+
+	// Removing the compression-size sentinel disables it (nil).
+	got, err = m.UpdateRestAPI(ctx(), api.ID, []driver.PatchOperation{
+		{Op: "remove", Path: "/minimumCompressionSize"},
+		{Op: "remove", Path: "/binaryMediaTypes/image~1png"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateRestAPI remove: %v", err)
+	}
+
+	if got.MinimumCompressionSize != nil || len(got.BinaryMediaTypes) != 0 {
+		t.Fatalf("remove ops not applied: %+v", got)
+	}
+}
+
+func TestUpdateResourceRenameRecomputesSubtree(t *testing.T) {
+	m := newMock(t)
+
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "x"})
+	foo, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "foo")
+	bar, _ := m.CreateResource(ctx(), api.ID, foo.ID, "bar")
+
+	if _, err := m.UpdateResource(ctx(), api.ID, foo.ID, []driver.PatchOperation{
+		{Op: "replace", Path: "/pathPart", Value: "renamed"},
+	}); err != nil {
+		t.Fatalf("UpdateResource: %v", err)
+	}
+
+	child, err := m.GetResource(ctx(), api.ID, bar.ID)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+
+	if child.Path != "/renamed/bar" {
+		t.Fatalf("subtree path not recomputed: %s, want /renamed/bar", child.Path)
+	}
+}
+
+func TestUpdateResourceParentIdCycleRejected(t *testing.T) {
+	m := newMock(t)
+
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "x"})
+	foo, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "foo")
+	bar, _ := m.CreateResource(ctx(), api.ID, foo.ID, "bar")
+
+	// Moving a resource under itself must be rejected, not loop forever.
+	if _, err := m.UpdateResource(ctx(), api.ID, foo.ID, []driver.PatchOperation{
+		{Op: "replace", Path: "/parentId", Value: foo.ID},
+	}); err == nil {
+		t.Fatal("self-parent move should be rejected")
+	}
+
+	// Moving a resource into its own subtree (foo -> under bar) must be rejected.
+	if _, err := m.UpdateResource(ctx(), api.ID, foo.ID, []driver.PatchOperation{
+		{Op: "replace", Path: "/parentId", Value: bar.ID},
+	}); err == nil {
+		t.Fatal("move into own subtree should be rejected")
+	}
+
+	// The tree is unchanged after the rejected moves: foo still under root.
+	got, err := m.GetResource(ctx(), api.ID, foo.ID)
+	if err != nil {
+		t.Fatalf("GetResource: %v", err)
+	}
+
+	if got.ParentID != api.RootResourceID {
+		t.Fatalf("foo parent mutated by a rejected move: %s", got.ParentID)
+	}
+}
+
+func TestUpdateMethodAndIntegrationPatches(t *testing.T) {
+	m := newMock(t)
+	apiID, _, resID := deployProxyAPI(t, m, "hello", "GET", lambdaURI)
+
+	mth, err := m.UpdateMethod(ctx(), apiID, resID, "GET", []driver.PatchOperation{
+		{Op: "replace", Path: "/authorizationType", Value: "AWS_IAM"},
+		{Op: "replace", Path: "/apiKeyRequired", Value: "true"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateMethod: %v", err)
+	}
+
+	if mth.AuthorizationType != "AWS_IAM" || !mth.APIKeyRequired {
+		t.Fatalf("UpdateMethod not applied: %+v", mth)
+	}
+
+	ig, err := m.UpdateIntegration(ctx(), apiID, resID, "GET", []driver.PatchOperation{
+		{Op: "replace", Path: "/uri", Value: "newuri"},
+		{Op: "replace", Path: "/timeoutInMillis", Value: "5000"},
+		{Op: "replace", Path: "/passthroughBehavior", Value: "NEVER"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateIntegration: %v", err)
+	}
+
+	if ig.URI != "newuri" || ig.TimeoutInMillis != 5000 || ig.PassthroughBehavior != "NEVER" {
+		t.Fatalf("UpdateIntegration not applied: %+v", ig)
+	}
+}
+
+func TestUpdateStagePatches(t *testing.T) {
+	m := newMock(t)
+	apiID, _, _ := deployProxyAPI(t, m, "hello", "GET", lambdaURI)
+
+	st, err := m.UpdateStage(ctx(), apiID, "prod", []driver.PatchOperation{
+		{Op: "replace", Path: "/description", Value: "updated"},
+		{Op: "add", Path: "/variables/env", Value: "staging"},
+		{Op: "replace", Path: "/variables/tier", Value: "gold"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateStage: %v", err)
+	}
+
+	if st.Description != "updated" || st.Variables["env"] != "staging" || st.Variables["tier"] != "gold" {
+		t.Fatalf("UpdateStage not applied: %+v", st)
+	}
+
+	st, err = m.UpdateStage(ctx(), apiID, "prod", []driver.PatchOperation{
+		{Op: "remove", Path: "/variables/env"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateStage remove: %v", err)
+	}
+
+	if _, ok := st.Variables["env"]; ok {
+		t.Fatalf("variable not removed: %+v", st.Variables)
+	}
+}
+
+func TestUpdateStageInvalidDeploymentIsNotFound(t *testing.T) {
+	m := newMock(t)
+	apiID, _, _ := deployProxyAPI(t, m, "hello", "GET", lambdaURI)
+
+	_, err := m.UpdateStage(ctx(), apiID, "prod", []driver.PatchOperation{
+		{Op: "replace", Path: "/deploymentId", Value: "nope"},
+	})
+	if !errors.IsNotFound(err) {
+		t.Fatalf("UpdateStage bad deploymentId: %v, want NotFound", err)
+	}
+}
+
+func TestUpdateDeploymentDescription(t *testing.T) {
+	m := newMock(t)
+	apiID, _, _ := deployProxyAPI(t, m, "hello", "GET", lambdaURI)
+
+	deps, _ := m.GetDeployments(ctx(), apiID)
+
+	got, err := m.UpdateDeployment(ctx(), apiID, deps[0].ID, []driver.PatchOperation{
+		{Op: "replace", Path: "/description", Value: "v2"},
+	})
+	if err != nil {
+		t.Fatalf("UpdateDeployment: %v", err)
+	}
+
+	if got.Description != "v2" {
+		t.Fatalf("UpdateDeployment not applied: %+v", got)
+	}
+}
+
+func TestGetResourcesDeterministicOrder(t *testing.T) {
+	m := newMock(t)
+
+	api, _ := m.CreateRestAPI(ctx(), &driver.CreateRestAPIInput{Name: "x"})
+	foo, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "foo")
+	if _, err := m.CreateResource(ctx(), api.ID, foo.ID, "bar"); err != nil {
+		t.Fatalf("CreateResource: %v", err)
+	}
+
+	want := []string{"/", "/foo", "/foo/bar"}
+
+	for i := 0; i < 5; i++ {
+		res, err := m.GetResources(ctx(), api.ID)
+		if err != nil {
+			t.Fatalf("GetResources: %v", err)
+		}
+
+		for j, r := range res {
+			if r.Path != want[j] {
+				t.Fatalf("iteration %d: order = %v, want %v", i, paths(res), want)
+			}
+		}
+	}
+}
+
+func paths(res []driver.Resource) []string {
+	out := make([]string, len(res))
+	for i, r := range res {
+		out[i] = r.Path
+	}
+
+	return out
 }

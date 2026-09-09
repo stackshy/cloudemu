@@ -42,7 +42,7 @@ func endpointJSON(e *driver.Endpoint) map[string]any {
 		traffic[k] = v
 	}
 
-	return map[string]any{
+	out := map[string]any{
 		"name":           e.Name,
 		"displayName":    e.DisplayName,
 		"description":    e.Description,
@@ -51,7 +51,13 @@ func endpointJSON(e *driver.Endpoint) map[string]any {
 		"labels":         e.Labels,
 		"createTime":     e.CreateTime,
 		"updateTime":     e.UpdateTime,
+		"etag":           e.Etag,
 	}
+	if e.Network != "" {
+		out["network"] = e.Network
+	}
+
+	return out
 }
 
 //nolint:dupl // REST shim; the decode/dispatch shape recurs across collections.
@@ -78,6 +84,8 @@ func (h *Handler) serveEndpoints(w http.ResponseWriter, r *http.Request, p *vPat
 	switch r.Method {
 	case http.MethodGet:
 		h.getEndpoint(w, r, p.name)
+	case http.MethodPatch:
+		h.patchEndpoint(w, r, p.name)
 	case http.MethodDelete:
 		h.deleteEndpoint(w, r, p.name)
 	default:
@@ -104,12 +112,12 @@ func (h *Handler) endpointAction(w http.ResponseWriter, r *http.Request, p *vPat
 	}
 }
 
-//nolint:dupl // REST shim; the decode/dispatch shape recurs across collections.
 func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request, location string) {
 	var req struct {
 		DisplayName string            `json:"displayName"`
 		Description string            `json:"description"`
 		Labels      map[string]string `json:"labels"`
+		Network     string            `json:"network"`
 	}
 
 	if !decode(w, r, &req) {
@@ -117,7 +125,8 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request, locatio
 	}
 
 	op, ep, err := h.svc.CreateEndpoint(r.Context(), driver.EndpointConfig{
-		Location: location, DisplayName: req.DisplayName, Description: req.Description, Labels: req.Labels,
+		Location: location, EndpointID: r.URL.Query().Get("endpointId"),
+		DisplayName: req.DisplayName, Description: req.Description, Labels: req.Labels, Network: req.Network,
 	})
 	if err != nil {
 		writeCErr(w, err)
@@ -126,6 +135,47 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request, locatio
 	}
 
 	writeResourceOp(w, op, endpointJSON(ep), "Endpoint")
+}
+
+func (h *Handler) patchEndpoint(w http.ResponseWriter, r *http.Request, name string) {
+	var req struct {
+		DisplayName string            `json:"displayName"`
+		Description string            `json:"description"`
+		Labels      map[string]string `json:"labels"`
+		Network     string            `json:"network"`
+	}
+
+	if !decode(w, r, &req) {
+		return
+	}
+
+	mask := r.URL.Query().Get("updateMask")
+
+	var upd driver.EndpointUpdate
+	if maskWants(mask, "displayName") {
+		upd.DisplayName = &req.DisplayName
+	}
+
+	if maskWants(mask, "description") {
+		upd.Description = &req.Description
+	}
+
+	if maskWants(mask, "network") {
+		upd.Network = &req.Network
+	}
+
+	if maskWants(mask, "labels") {
+		upd.Labels, upd.SetLabels = req.Labels, true
+	}
+
+	ep, err := h.svc.PatchEndpoint(r.Context(), name, upd)
+	if err != nil {
+		writeCErr(w, err)
+
+		return
+	}
+
+	writeJSON(w, endpointJSON(ep))
 }
 
 func (h *Handler) getEndpoint(w http.ResponseWriter, r *http.Request, name string) {
@@ -247,7 +297,7 @@ func (h *Handler) predict(w http.ResponseWriter, r *http.Request, endpoint strin
 		// has no deployed models; the shared codec maps FailedPrecondition to 409,
 		// so surface the 400 here to match the wire contract.
 		if cerrors.IsFailedPrecondition(err) {
-			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", err.Error())
+			writeError(w, http.StatusBadRequest, "FAILED_PRECONDITION", cerrors.Message(err))
 
 			return
 		}

@@ -292,16 +292,17 @@ func (m *Mock) retainPrimaryCluster(rg *cachedriver.ReplicationGroup) {
 	}
 
 	info := cachedriver.CacheInfo{
-		Name:            rg.ID,
-		NodeType:        rg.NodeType,
-		Engine:          rg.Engine,
-		EngineVersion:   rg.EngineVersion,
-		Status:          statusAvailable,
-		Endpoint:        net.JoinHostPort(rg.PrimaryAddress, strconv.Itoa(rg.PrimaryPort)),
-		ARN:             m.cacheARN(arnRegion(rg.ARN, m.opts.Region), rg.ID),
-		CreatedAt:       m.opts.Clock.Now().UTC().Format(time.RFC3339),
-		NumCacheNodes:   1,
-		SubnetGroupName: rg.SubnetGroupName,
+		Name:                    rg.ID,
+		NodeType:                rg.NodeType,
+		Engine:                  rg.Engine,
+		EngineVersion:           rg.EngineVersion,
+		Status:                  statusAvailable,
+		Endpoint:                net.JoinHostPort(rg.PrimaryAddress, strconv.Itoa(rg.PrimaryPort)),
+		ARN:                     m.cacheARN(arnRegion(rg.ARN, m.opts.Region), rg.ID),
+		CreatedAt:               m.opts.Clock.Now().UTC().Format(time.RFC3339),
+		NumCacheNodes:           1,
+		SubnetGroupName:         rg.SubnetGroupName,
+		AutoMinorVersionUpgrade: true,
 	}
 
 	m.caches.Set(rg.ID, &cacheData{info: info, items: memstore.New[cacheItem]()})

@@ -24,6 +24,20 @@ func (h *Handler) serveQueue(w http.ResponseWriter, r *http.Request, sp sbPath) 
 		return
 	}
 
+	// Anything beyond "queues/{name}" — e.g. a queue-scoped authorizationRules
+	// sub-resource, which real Service Bus exposes but this handler does not
+	// model — must be rejected explicitly. Falling through to the queue's own
+	// CRUD handlers below would otherwise treat the nested path as an
+	// operation on the queue itself: a PUT would silently reset the queue's
+	// properties to the sub-resource's request body, a GET would echo the
+	// queue's ARM resource instead of 404ing, and a DELETE would remove the
+	// whole queue. Topics/subscriptions/rules already dispatch on exact
+	// segment length for the same reason; queues must match.
+	if len(sp.segs) > namePairLen {
+		notImplemented(w)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createQueue(w, r, sp, name)

@@ -1,6 +1,7 @@
 package eventhub
 
 import (
+	"fmt"
 	"net/http"
 	"strconv"
 	"time"
@@ -64,6 +65,13 @@ func (h *Handler) createEventHub(w http.ResponseWriter, r *http.Request, ep ehPa
 	if !ok {
 		h.mu.Unlock()
 		writeNSNotFound(w, ep.namespace)
+
+		return
+	}
+
+	if msg := eventHubPropsError(&req.Properties, ns.SKU.Tier); msg != "" {
+		h.mu.Unlock()
+		azurearm.WriteError(w, http.StatusBadRequest, "BadRequest", msg)
 
 		return
 	}
@@ -166,6 +174,65 @@ func (h *Handler) withEventHub(w http.ResponseWriter, ep ehPath, name string, fn
 	}
 
 	fn(rec)
+}
+
+// eventHubPropsError validates client-supplied event-hub properties against the
+// namespace tier's limits, returning a non-empty ARM error message when a
+// provided value is out of range. Omitted (nil) values are left to
+// buildEventHubProps to default. Higher tiers (Premium/Dedicated) use a
+// retentionDescription and larger partition ceilings, so only the lower bounds
+// are enforced for them.
+func eventHubPropsError(props *eventHubProperties, tier string) string {
+	if pc := props.PartitionCount; pc != nil {
+		if *pc < minPartitionCount {
+			return fmt.Sprintf("partitionCount must be at least %d", minPartitionCount)
+		}
+
+		if boundedTier(tier) && *pc > maxPartitionCount {
+			return fmt.Sprintf("partitionCount %d exceeds the maximum of %d for the %s tier",
+				*pc, maxPartitionCount, tierLabel(tier))
+		}
+	}
+
+	if rd := props.MessageRetentionInDays; rd != nil {
+		if *rd < minRetentionDays {
+			return fmt.Sprintf("messageRetentionInDays must be at least %d", minRetentionDays)
+		}
+
+		if maxDays, ok := maxRetentionForTier(tier); ok && *rd > maxDays {
+			return fmt.Sprintf("messageRetentionInDays %d exceeds the maximum of %d for the %s tier",
+				*rd, maxDays, tierLabel(tier))
+		}
+	}
+
+	return ""
+}
+
+// boundedTier reports whether tier caps partitionCount at maxPartitionCount. The
+// Basic and Standard tiers do; higher tiers allow more partitions.
+func boundedTier(tier string) bool {
+	return eq(tier, "Basic") || eq(tier, "Standard") || tier == ""
+}
+
+// maxRetentionForTier returns the messageRetentionInDays ceiling for a tier. ok
+// is false for tiers whose retention is not bounded here (Premium/Dedicated).
+func maxRetentionForTier(tier string) (int64, bool) {
+	switch {
+	case eq(tier, "Basic"):
+		return maxRetentionBasic, true
+	case eq(tier, "Standard") || tier == "":
+		return maxRetentionStandard, true
+	default:
+		return 0, false
+	}
+}
+
+func tierLabel(tier string) string {
+	if tier == "" {
+		return "Standard"
+	}
+
+	return tier
 }
 
 // buildEventHubProps synthesizes the server-computed fields and defaults a real

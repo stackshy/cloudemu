@@ -2,6 +2,7 @@ package apigateway
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -57,6 +58,8 @@ func (m *Mock) CreateResource(_ context.Context, restAPIID, parentID, pathPart s
 }
 
 // GetResources lists every resource of a REST API.
+//
+//nolint:dupl // mirrors the sibling GetStages list-and-sort by design
 func (m *Mock) GetResources(_ context.Context, restAPIID string) ([]driver.Resource, error) {
 	ad, err := m.getAPI(restAPIID)
 	if err != nil {
@@ -71,7 +74,61 @@ func (m *Mock) GetResources(_ context.Context, restAPIID string) ([]driver.Resou
 		out = append(out, copyResource(r))
 	}
 
+	// Deterministic order (root "/" first, then tree order) — the backing map
+	// iterates randomly, which would make GetResources non-deterministic.
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+
 	return out, nil
+}
+
+// DeleteResource removes a resource and its whole descendant subtree, as real
+// API Gateway does. The API's root resource cannot be deleted.
+func (m *Mock) DeleteResource(_ context.Context, restAPIID, resourceID string) error {
+	ad, err := m.getAPI(restAPIID)
+	if err != nil {
+		return err
+	}
+
+	ad.mu.Lock()
+	defer ad.mu.Unlock()
+
+	if _, ok := ad.resources[resourceID]; !ok {
+		return cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+	}
+
+	if resourceID == ad.api.RootResourceID {
+		return cerrors.New(cerrors.InvalidArgument, "Cannot remove the root resource of the RestApi")
+	}
+
+	for _, id := range descendants(ad.resources, resourceID) {
+		delete(ad.resources, id)
+	}
+
+	return nil
+}
+
+// descendants returns resourceID plus every resource beneath it in the tree
+// (its children, grandchildren, ...), so DeleteResource can remove the whole
+// subtree in one pass.
+func descendants(resources map[string]*driver.Resource, resourceID string) []string {
+	out := []string{resourceID}
+	seen := map[string]bool{resourceID: true}
+
+	for i := 0; i < len(out); i++ {
+		parent := out[i]
+
+		for id, r := range resources {
+			// seen guards against a malformed cyclic tree so the walk always
+			// terminates, even though callers reject cycles up front.
+			if r.ParentID == parent && !seen[id] {
+				seen[id] = true
+
+				out = append(out, id)
+			}
+		}
+	}
+
+	return out
 }
 
 // GetResource returns a single resource by id.

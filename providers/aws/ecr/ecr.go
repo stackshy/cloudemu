@@ -19,10 +19,16 @@ import (
 )
 
 const (
-	defaultMediaType   = "application/vnd.docker.distribution.manifest.v2+json"
-	mutableTag         = "MUTABLE"
-	immutableTag       = "IMMUTABLE"
-	scanStatusComplete = "COMPLETE"
+	defaultMediaType       = "application/vnd.docker.distribution.manifest.v2+json"
+	mutableTag             = "MUTABLE"
+	immutableTag           = "IMMUTABLE"
+	immutableWithExclusion = "IMMUTABLE_WITH_EXCLUSION"
+	mutableWithExclusion   = "MUTABLE_WITH_EXCLUSION"
+	scanStatusComplete     = "COMPLETE"
+
+	encryptionAES256  = "AES256"
+	encryptionKMS     = "KMS"
+	encryptionKMSDSSE = "KMS_DSSE"
 )
 
 // Compile-time check that Mock implements driver.ContainerRegistry.
@@ -49,6 +55,17 @@ type Mock struct {
 	repos      *memstore.Store[*repoData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+
+	// Registry-level (not per-repository) state. These back the AWS ECR
+	// registry-scoped operations (replication, pull-through cache, registry
+	// scanning configuration, registry policy, account settings), all guarded by
+	// mu. They are plain fields rather than memstore.Store because the surface is
+	// small and singular per registry.
+	registryPolicy  string
+	replication     *driver.ReplicationConfiguration
+	pullThrough     map[string]*driver.PullThroughCacheRule
+	registryScan    *driver.RegistryScanningConfiguration
+	accountSettings map[string]string
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -70,8 +87,10 @@ func (m *Mock) emitMetric(metricName string, value float64, dims map[string]stri
 // New creates a new ECR mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		repos: memstore.New[*repoData](),
-		opts:  opts,
+		repos:           memstore.New[*repoData](),
+		opts:            opts,
+		pullThrough:     make(map[string]*driver.PullThroughCacheRule),
+		accountSettings: make(map[string]string),
 	}
 }
 
@@ -93,10 +112,21 @@ func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig
 		mutability = mutableTag
 	}
 
+	if !validTagMutability(mutability) {
+		return nil, errors.Newf(errors.InvalidArgument,
+			"invalid imageTagMutability %q; expected one of MUTABLE, IMMUTABLE, "+
+				"IMMUTABLE_WITH_EXCLUSION, MUTABLE_WITH_EXCLUSION", mutability)
+	}
+
 	tags := copyTags(cfg.Tags)
 	region := regionctx.RegionOr(ctx, m.opts.Region)
 	uri := fmt.Sprintf("%s.dkr.ecr.%s.amazonaws.com/%s", m.opts.AccountID, region, cfg.Name)
 	arn := fmt.Sprintf("arn:aws:ecr:%s:%s:repository/%s", region, m.opts.AccountID, cfg.Name)
+
+	encType, kmsKey, err := resolveEncryption(cfg.Encryption, region, m.opts.AccountID, cfg.Name)
+	if err != nil {
+		return nil, err
+	}
 
 	info := driver.Repository{
 		Name:               cfg.Name,
@@ -108,6 +138,8 @@ func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig
 		RegistryID:         m.opts.AccountID,
 		ImageTagMutability: mutability,
 		ScanOnPush:         cfg.ImageScanOnPush,
+		EncryptionType:     encType,
+		KmsKey:             kmsKey,
 	}
 
 	rd := &repoData{
@@ -125,6 +157,70 @@ func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig
 	return &result, nil
 }
 
+// resolveEncryption validates and resolves a repository's encryption
+// configuration, matching AWS ECR defaults: an omitted encryptionType defaults
+// to AES256, and a KMS repository created without an explicit key is backed by
+// the account's default AWS-managed ECR key, whose ARN ECR then reports. Real
+// ECR always surfaces an encryptionConfiguration on every repository, so a
+// non-empty encryptionType is always returned.
+func resolveEncryption(enc *driver.EncryptionConfig, region, accountID, repo string) (encType, kmsKey string, err error) {
+	var (
+		reqType string
+		reqKey  string
+	)
+
+	if enc != nil {
+		reqType = enc.Type
+		reqKey = enc.KmsKey
+	}
+
+	switch reqType {
+	case "", encryptionAES256:
+		if reqKey != "" {
+			return "", "", errors.New(errors.InvalidArgument,
+				"kmsKey should not be specified with AES256 encryption")
+		}
+
+		return encryptionAES256, "", nil
+	case encryptionKMS, encryptionKMSDSSE:
+		if reqKey != "" {
+			return reqType, reqKey, nil
+		}
+
+		return reqType, defaultKMSKeyARN(region, accountID, repo), nil
+	default:
+		return "", "", errors.Newf(errors.InvalidArgument,
+			"invalid encryptionType %q; expected AES256, KMS, or KMS_DSSE", reqType)
+	}
+}
+
+// defaultKMSKeyARN synthesizes a stable ARN for the AWS-managed ECR key that
+// backs a KMS repository created without an explicit key. It is derived from the
+// repository name so every DescribeRepositories read reports the same value
+// (matching real ECR, which returns the resolved CMK ARN).
+func defaultKMSKeyARN(region, accountID, repo string) string {
+	sum := sha256.Sum256([]byte(region + accountID + repo))
+	id := fmt.Sprintf("%x-%x-%x-%x-%x", sum[0:4], sum[4:6], sum[6:8], sum[8:10], sum[10:16])
+
+	return fmt.Sprintf("arn:aws:kms:%s:%s:key/%s", region, accountID, id)
+}
+
+// validTagMutability reports whether v is one of ECR's four imageTagMutability
+// enum values. All four are accepted and round-tripped verbatim. The
+// _WITH_EXCLUSION variants pair with imageTagMutabilityExclusionFilters, an
+// exclusion-filter sub-surface the emulator does not model; a repository set to
+// one behaves like its base setting for push-time tag checks (checkTagMutability
+// treats anything other than IMMUTABLE as mutable). Anything outside the enum is
+// rejected with InvalidParameterException, matching real ECR.
+func validTagMutability(v string) bool {
+	switch v {
+	case mutableTag, immutableTag, immutableWithExclusion, mutableWithExclusion:
+		return true
+	default:
+		return false
+	}
+}
+
 // PutImageTagMutability updates a repository's image tag mutability setting.
 // This is AWS-specific (not part of the portable ContainerRegistry driver), so
 // the ECR wire handler reaches it via type assertion. The new value takes effect
@@ -132,9 +228,10 @@ func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig
 func (m *Mock) PutImageTagMutability(
 	_ context.Context, repository, mutability string,
 ) (*driver.Repository, error) {
-	if mutability != mutableTag && mutability != immutableTag {
+	if !validTagMutability(mutability) {
 		return nil, errors.Newf(errors.InvalidArgument,
-			"invalid imageTagMutability %q; expected MUTABLE or IMMUTABLE", mutability)
+			"invalid imageTagMutability %q; expected one of MUTABLE, IMMUTABLE, "+
+				"IMMUTABLE_WITH_EXCLUSION, MUTABLE_WITH_EXCLUSION", mutability)
 	}
 
 	m.mu.Lock()

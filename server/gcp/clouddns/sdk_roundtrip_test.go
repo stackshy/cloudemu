@@ -3,6 +3,7 @@ package clouddns_test
 import (
 	"context"
 	"errors"
+	"math"
 	"net/http/httptest"
 	"strconv"
 	"testing"
@@ -233,6 +234,42 @@ func TestSDKCloudDNSUpdateRecord(t *testing.T) {
 	user := userRrsets(rrsets.Rrsets)
 	if len(user) != 1 || user[0].Ttl != 600 || user[0].Rrdatas[0] != "192.0.2.2" {
 		t.Fatalf("after update rrsets=%+v want single 600/192.0.2.2", user)
+	}
+}
+
+// TestSDKCloudDNSZoneIDFitsInt64 guards against the managed-zone id overflowing
+// a signed int64. Real Cloud DNS ids fit in int64, and Terraform's google
+// provider reads managed_zone_id as an int (its flatten runs
+// strconv.ParseInt(id, 10, 64)); a fold that produced a full-range uint64
+// broke the managed-zone read with "expected type 'int', got unconvertible
+// type 'string'". The id must stay a non-zero value within [1, math.MaxInt64].
+func TestSDKCloudDNSZoneIDFitsInt64(t *testing.T) {
+	svc := newDNSService(t)
+	ctx := context.Background()
+
+	// Several distinct zones so a range of folded ids is exercised, not one.
+	for _, name := range []string{"id-zone-a", "id-zone-b", "id-zone-c", "id-zone-d"} {
+		zone, err := svc.ManagedZones.Create(testProject, &dns.ManagedZone{
+			Name:    name,
+			DnsName: name + ".example.com.",
+		}).Context(ctx).Do()
+		if err != nil {
+			t.Fatalf("ManagedZones.Create(%s): %v", name, err)
+		}
+
+		if zone.Id == 0 {
+			t.Fatalf("zone %s: id is 0, want a non-zero managed-zone id", name)
+		}
+
+		if zone.Id > math.MaxInt64 {
+			t.Fatalf("zone %s: id %d exceeds math.MaxInt64 (%d) — Terraform reads it as int64 and would fail",
+				name, zone.Id, int64(math.MaxInt64))
+		}
+
+		// Mirror the provider's parse to prove the wire string round-trips to int64.
+		if _, perr := strconv.ParseInt(strconv.FormatUint(zone.Id, 10), 10, 64); perr != nil {
+			t.Fatalf("zone %s: id %d does not parse as int64: %v", name, zone.Id, perr)
+		}
 	}
 }
 

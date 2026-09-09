@@ -24,7 +24,7 @@ func noEnv(string) string { return "" }
 //nolint:gochecknoglobals // test fixture: the pinned common-flag name set
 var commonFlagNames = []string{
 	"account-id", "admin", "advertise-host", "aws-port", "azure-port", "azure-subscription",
-	"endpoints-file", "enforce-auth", "gcp-port", "host", "init-dir", "k8s-nodes", "k8s-port",
+	"endpoints-file", "enforce-auth", "gcp-grpc-port", "gcp-port", "host", "init-dir", "k8s-nodes", "k8s-port",
 	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-port",
 	"persist", "persist-interval", "persist-metadata-only", "persist-strategy", "project-id",
 	"providers", "quiet", "region", "shutdown-timeout", "state-file", "tls-cert", "tls-host",
@@ -91,9 +91,9 @@ func TestRegisterCommonDefaults(t *testing.T) {
 // defaults (contrib relies on an injectable getenv for its tests).
 func TestRegisterCommonEnvFallback(t *testing.T) {
 	env := map[string]string{
-		"CLOUDEMU_PERSIST_STRATEGY":       "on-request",
-		"CLOUDEMU_PERSIST_INTERVAL":       "2s",
-		"CLOUDEMU_K8S_PROGRESSION":        "true",
+		"CLOUDEMU_PERSIST_STRATEGY":         "on-request",
+		"CLOUDEMU_PERSIST_INTERVAL":         "2s",
+		"CLOUDEMU_K8S_PROGRESSION":          "true",
 		"CLOUDEMU_K8S_PROGRESSION_INTERVAL": "5s",
 	}
 	getenv := func(k string) string { return env[k] }

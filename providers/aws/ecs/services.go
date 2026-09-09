@@ -25,6 +25,17 @@ const (
 
 	deployControllerECS = "ECS"
 
+	// Rolling-update deployment defaults ECS applies when the caller omits a
+	// deploymentConfiguration on a service using the ECS (rolling update)
+	// deployment controller. A REPLICA service defaults to 200/100, a DAEMON
+	// service to 100/0 (the CLI/SDK/API default). Real ECS always echoes these
+	// on Create/DescribeServices, so a caller reading maximumPercent /
+	// minimumHealthyPercent back never sees a missing field.
+	replicaMaxPercent        = 200
+	replicaMinHealthyPercent = 100
+	daemonMaxPercent         = 100
+	daemonMinHealthyPercent  = 0
+
 	// azRebalancingDisabled is the default availabilityZoneRebalancing value a
 	// service is created with when the caller doesn't specify one, matching
 	// real ECS.
@@ -161,7 +172,7 @@ func serviceFromInput(
 		// Clone reference-typed fields so the stored record never aliases the
 		// caller's input slices/pointers (a caller mutating what it passed must
 		// not corrupt the store).
-		DeploymentConfiguration:  cloneDeploymentConfig(in.DeploymentConfiguration),
+		DeploymentConfiguration:  defaultDeploymentConfig(sched, controller, in.DeploymentConfiguration),
 		NetworkConfiguration:     cloneNetworkConfig(in.NetworkConfiguration),
 		CapacityProviderStrategy: append([]driver.CapacityProviderStrategyItem(nil), in.CapacityProviderStrategy...),
 		LoadBalancers:            append([]driver.LoadBalancer(nil), in.LoadBalancers...),
@@ -169,6 +180,48 @@ func serviceFromInput(
 		Tags:                     copyTags(in.Tags),
 	}
 }
+
+// defaultDeploymentConfig returns the deployment configuration ECS reports for a
+// service, filling the rolling-update defaults AWS applies when the caller omits
+// them: maximumPercent/minimumHealthyPercent of 200/100 for a REPLICA service
+// and 100/0 for a DAEMON service, plus a disabled circuit breaker. These
+// defaults apply only to the ECS (rolling update) deployment controller;
+// CODE_DEPLOY / EXTERNAL controllers carry no rolling-update defaults, so their
+// configuration is echoed back unchanged.
+func defaultDeploymentConfig(
+	sched, controller string, in *driver.DeploymentConfiguration,
+) *driver.DeploymentConfiguration {
+	out := cloneDeploymentConfig(in)
+	if controller != deployControllerECS {
+		return out
+	}
+
+	if out == nil {
+		out = &driver.DeploymentConfiguration{}
+	}
+
+	maxPct, minPct := replicaMaxPercent, replicaMinHealthyPercent
+	if sched == schedDaemon {
+		maxPct, minPct = daemonMaxPercent, daemonMinHealthyPercent
+	}
+
+	if out.MaximumPercent == nil {
+		out.MaximumPercent = ptrInt(maxPct)
+	}
+
+	if out.MinimumHealthyPercent == nil {
+		out.MinimumHealthyPercent = ptrInt(minPct)
+	}
+
+	if out.DeploymentCircuitBreaker == nil {
+		out.DeploymentCircuitBreaker = &driver.DeploymentCircuitBreaker{}
+	}
+
+	return out
+}
+
+// ptrInt returns a pointer to v.
+func ptrInt(v int) *int { return &v }
 
 // reserveServiceName claims the service name in the store before convergence.
 // An ACTIVE service blocks the name; a lingering INACTIVE (deleted) tombstone is

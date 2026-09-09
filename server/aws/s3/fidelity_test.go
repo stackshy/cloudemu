@@ -19,6 +19,53 @@ import (
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
+// TestDefaultContentType verifies an object uploaded with no Content-Type header
+// is stored and returned as "binary/octet-stream" — the default real S3 assigns
+// (not "application/octet-stream"). aws-cli and other clients send no
+// Content-Type on PutObject, so the server default is what a real user reads
+// back on GetObject/HeadObject.
+func TestDefaultContentType(t *testing.T) {
+	cloud := cloudemu.NewAWS()
+	srv := awsserver.New(awsserver.Drivers{S3: cloud.S3})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	if req, err := http.NewRequest(http.MethodPut, ts.URL+"/ct-bucket", nil); err == nil {
+		if _, err = http.DefaultClient.Do(req); err != nil {
+			t.Fatalf("CreateBucket: %v", err)
+		}
+	} else {
+		t.Fatalf("new create-bucket request: %v", err)
+	}
+
+	// PutObject with the Content-Type header explicitly removed so the server's
+	// default applies (Go's http.Client would otherwise not add one anyway).
+	putReq, err := http.NewRequest(http.MethodPut, ts.URL+"/ct-bucket/obj", strings.NewReader("payload"))
+	if err != nil {
+		t.Fatalf("new put request: %v", err)
+	}
+	putReq.Header.Del("Content-Type")
+
+	putResp, err := http.DefaultClient.Do(putReq)
+	if err != nil {
+		t.Fatalf("PutObject: %v", err)
+	}
+	_ = putResp.Body.Close()
+	if putResp.StatusCode != http.StatusOK {
+		t.Fatalf("PutObject status = %d, want 200", putResp.StatusCode)
+	}
+
+	headResp, err := http.DefaultClient.Head(ts.URL + "/ct-bucket/obj")
+	if err != nil {
+		t.Fatalf("HeadObject: %v", err)
+	}
+	_ = headResp.Body.Close()
+
+	if got := headResp.Header.Get("Content-Type"); got != "binary/octet-stream" {
+		t.Fatalf("default Content-Type = %q, want %q", got, "binary/octet-stream")
+	}
+}
+
 // TestSDKListParts covers #266: ListParts now reports the parts buffered so
 // far (ordered by part number) instead of an empty list, so resumable-upload
 // tooling can reconstruct its state.

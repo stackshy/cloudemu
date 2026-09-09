@@ -28,6 +28,10 @@ const (
 	maxEventHistory  = 1000
 	defaultRuleState = "ENABLED"
 	activeBusState   = "ACTIVE"
+
+	ruleStateEnabled               = "ENABLED"
+	ruleStateDisabled              = "DISABLED"
+	ruleStateEnabledWithCloudTrail = "ENABLED_WITH_ALL_CLOUDTRAIL_MANAGEMENT_EVENTS"
 )
 
 // Compile-time check that Mock implements driver.EventBus.
@@ -247,8 +251,8 @@ func (m *Mock) ListEventBuses(_ context.Context, filter scope.Scope) ([]driver.E
 
 // PutRule creates or updates a rule on an event bus.
 func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule, error) {
-	if cfg.Name == "" {
-		return nil, errors.New(errors.InvalidArgument, "rule name is required")
+	if err := validateRuleInput(cfg); err != nil {
+		return nil, err
 	}
 
 	busName := cfg.EventBus
@@ -398,7 +402,7 @@ func (m *Mock) EnableRule(_ context.Context, eventBus, ruleName string) error {
 
 // DisableRule disables a rule on an event bus.
 func (m *Mock) DisableRule(_ context.Context, eventBus, ruleName string) error {
-	return m.setRuleState(eventBus, ruleName, "DISABLED")
+	return m.setRuleState(eventBus, ruleName, ruleStateDisabled)
 }
 
 func (m *Mock) setRuleState(eventBus, ruleName, state string) error {
@@ -924,7 +928,7 @@ func (m *Mock) MatchedRules(event *driver.Event) []driver.Rule {
 	var matched []driver.Rule
 
 	for _, rd := range bd.rules.All() {
-		if rd.rule.State != defaultRuleState {
+		if !ruleStateActive(rd.rule.State) {
 			continue
 		}
 

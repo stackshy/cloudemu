@@ -59,7 +59,7 @@ func (h *Handler) doGetCostAndUsage(ctx context.Context, in *getCostAndUsageInpu
 // Groups (and an empty Total, matching real Cost Explorer), ungrouped requests
 // carry only the aggregate Total.
 func buildResult(iv dateInterval, gran string, metrics []string, byService map[string]float64, grouped bool) resultByTime {
-	res := resultByTime{TimePeriod: iv, Estimated: true, Total: map[string]metricValue{}}
+	res := resultByTime{TimePeriod: iv, Estimated: true, Total: map[string]metricValue{}, Groups: []group{}}
 
 	if grouped {
 		res.Groups = groupsByService(gran, metrics, byService)
@@ -104,7 +104,10 @@ func (h *Handler) doGetCostForecast(ctx context.Context, in *getCostForecastInpu
 		return nil, cerrors.New(cerrors.InvalidArgument, "TimePeriod is required")
 	}
 
-	gran := forecastGranularity(in.Granularity)
+	gran, err := forecastGranularity(in.Granularity)
+	if err != nil {
+		return nil, err
+	}
 
 	ivs, err := buckets(*in.TimePeriod, gran)
 	if err != nil {
@@ -315,14 +318,20 @@ func granularityOrDefault(g string) string {
 	}
 }
 
-// forecastGranularity restricts to the DAILY/MONTHLY granularities forecasts
-// support, defaulting to MONTHLY.
-func forecastGranularity(g string) string {
-	if strings.EqualFold(g, granularityDaily) {
-		return granularityDaily
+// forecastGranularity restricts to the DAILY/MONTHLY granularities
+// GetCostForecast supports (unlike GetCostAndUsage, it does not accept
+// HOURLY), rejecting anything else with a ValidationException — matching AWS,
+// which errors rather than silently substituting a different granularity.
+func forecastGranularity(g string) (string, error) {
+	switch {
+	case strings.EqualFold(g, granularityDaily):
+		return granularityDaily, nil
+	case strings.EqualFold(g, granularityMonthly):
+		return granularityMonthly, nil
+	default:
+		return "", cerrors.Newf(cerrors.InvalidArgument,
+			"Granularity %q is not supported for a forecast; use DAILY or MONTHLY", g)
 	}
-
-	return granularityMonthly
 }
 
 // wantsServiceGroup reports whether the request asks to group by the SERVICE

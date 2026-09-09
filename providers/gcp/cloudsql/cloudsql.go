@@ -10,6 +10,7 @@ package cloudsql
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"sync"
@@ -283,6 +284,13 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		region = m.opts.Region
 	}
 
+	// storageAutoResize defaults to true on a real Cloud SQL instance; an omitted
+	// (nil) request field resolves to that default so a Get always reports it.
+	autoResize := true
+	if cfg.GCPStorageAutoResize != nil {
+		autoResize = *cfg.GCPStorageAutoResize
+	}
+
 	return rdsdriver.Instance{
 		ID:               cfg.ID,
 		ARN:              idgen.GCPID(m.opts.ProjectID, "instances", cfg.ID),
@@ -297,21 +305,23 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		// carries the reachable host reported as the PRIMARY ipAddress. Without a
 		// real engine this is a synthetic IP; dbengine.Provision overrides it with
 		// the real host:port when one is wired in.
-		ConnectionName:     instanceConnectionName(m.opts.ProjectID, region, cfg.ID),
-		Endpoint:           syntheticPrivateIP,
-		Port:               port,
-		State:              rdsdriver.StateAvailable,
-		MultiAZ:            cfg.MultiAZ,
-		DeletionProtection: cfg.DeletionProtection,
-		PubliclyAccessible: cfg.PubliclyAccessible,
-		VPCSecurityGroups:  append([]string(nil), cfg.VPCSecurityGroups...),
-		SubnetGroupName:    cfg.SubnetGroupName,
-		AvailabilityZone:   region,
-		CreatedAt:          m.opts.Clock.Now().UTC(),
-		Tags:               copyTags(cfg.Tags),
-		GCPDatabaseFlags:   cfg.GCPDatabaseFlags,
-		GCPBackupConfig:    cfg.GCPBackupConfig,
-		GCPIPConfig:        cfg.GCPIPConfig,
+		ConnectionName:       instanceConnectionName(m.opts.ProjectID, region, cfg.ID),
+		Endpoint:             syntheticPrivateIP,
+		Port:                 port,
+		State:                rdsdriver.StateAvailable,
+		MultiAZ:              cfg.MultiAZ,
+		DeletionProtection:   cfg.DeletionProtection,
+		PubliclyAccessible:   cfg.PubliclyAccessible,
+		VPCSecurityGroups:    append([]string(nil), cfg.VPCSecurityGroups...),
+		SubnetGroupName:      cfg.SubnetGroupName,
+		AvailabilityZone:     region,
+		CreatedAt:            m.opts.Clock.Now().UTC(),
+		Tags:                 copyTags(cfg.Tags),
+		GCPDatabaseFlags:     cfg.GCPDatabaseFlags,
+		GCPBackupConfig:      cfg.GCPBackupConfig,
+		GCPIPConfig:          cfg.GCPIPConfig,
+		GCPSettingsExtra:     cfg.GCPSettingsExtra,
+		GCPStorageAutoResize: autoResize,
 	}
 }
 
@@ -479,6 +489,51 @@ func applyGCPSettings(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceI
 	if input.GCPIPConfig != "" {
 		inst.GCPIPConfig = input.GCPIPConfig
 	}
+
+	if input.GCPSettingsExtra != "" {
+		if input.GCPSettingsExtraMerge {
+			inst.GCPSettingsExtra = mergeSettingsExtra(inst.GCPSettingsExtra, input.GCPSettingsExtra)
+		} else {
+			inst.GCPSettingsExtra = input.GCPSettingsExtra
+		}
+	}
+
+	if input.GCPStorageAutoResize != nil {
+		inst.GCPStorageAutoResize = *input.GCPStorageAutoResize
+	}
+}
+
+// mergeSettingsExtra overlays the incoming Cloud SQL settings extra-blob onto the
+// stored one so a PATCH naming one unmodeled sub-field leaves the siblings it
+// omits intact (incoming keys win per-key). Both blobs are already stripped of
+// modeled and server-managed keys by the wire layer, so no such key is
+// reintroduced. The result is serialized with sorted keys (json.Marshal of a
+// map) for determinism; a missing stored blob or a malformed blob falls back to
+// the incoming value.
+func mergeSettingsExtra(stored, incoming string) string {
+	if stored == "" {
+		return incoming
+	}
+
+	var base, patch map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(stored), &base); err != nil {
+		return incoming
+	}
+
+	if err := json.Unmarshal([]byte(incoming), &patch); err != nil {
+		return incoming
+	}
+
+	for k, v := range patch {
+		base[k] = v
+	}
+
+	out, err := json.Marshal(base)
+	if err != nil {
+		return incoming
+	}
+
+	return string(out)
 }
 
 // DeleteInstance removes an instance, unlinks it from any replica relationship,
@@ -766,12 +821,14 @@ func (m *Mock) DescribeSnapshots(
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	all := m.snapshots.All()
+	// SortedValues, not All: map iteration order is random, and BackupRuns.list
+	// must return a deterministic order like every other Cloud SQL list verb.
+	all := m.snapshots.SortedValues()
 	idSet := stringSet(ids)
 
 	out := make([]rdsdriver.Snapshot, 0, len(all))
 
-	//nolint:gocritic // map values are sized for accuracy; copy is unavoidable when materializing the result slice.
+	//nolint:gocritic // materializing the result slice requires copying each value; pointers/indexing would leak store internals.
 	for _, snap := range all {
 		if instanceID != "" && snap.InstanceID != instanceID {
 			continue
@@ -839,21 +896,22 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 	password := m.rootPasswords[snap.InstanceID]
 
 	inst := rdsdriver.Instance{
-		ID:               input.NewInstanceID,
-		ARN:              idgen.GCPID(m.opts.ProjectID, "instances", input.NewInstanceID),
-		Engine:           snap.Engine,
-		EngineVersion:    snap.EngineVersion,
-		InstanceClass:    tier,
-		AllocatedStorage: snap.AllocatedStorage,
-		StorageType:      defaultStorageType,
-		MasterUsername:   username,
-		ConnectionName:   instanceConnectionName(m.opts.ProjectID, m.opts.Region, input.NewInstanceID),
-		Endpoint:         syntheticPrivateIP,
-		Port:             defaultPortFor(snap.Engine),
-		State:            rdsdriver.StateAvailable,
-		AvailabilityZone: m.opts.Region,
-		CreatedAt:        m.opts.Clock.Now().UTC(),
-		Tags:             copyTags(input.Tags),
+		ID:                   input.NewInstanceID,
+		ARN:                  idgen.GCPID(m.opts.ProjectID, "instances", input.NewInstanceID),
+		Engine:               snap.Engine,
+		EngineVersion:        snap.EngineVersion,
+		InstanceClass:        tier,
+		AllocatedStorage:     snap.AllocatedStorage,
+		StorageType:          defaultStorageType,
+		MasterUsername:       username,
+		ConnectionName:       instanceConnectionName(m.opts.ProjectID, m.opts.Region, input.NewInstanceID),
+		Endpoint:             syntheticPrivateIP,
+		Port:                 defaultPortFor(snap.Engine),
+		State:                rdsdriver.StateAvailable,
+		AvailabilityZone:     m.opts.Region,
+		CreatedAt:            m.opts.Clock.Now().UTC(),
+		Tags:                 copyTags(input.Tags),
+		GCPStorageAutoResize: true,
 	}
 
 	// Provision the restored instance's OWN database (keyed by the new id, so it

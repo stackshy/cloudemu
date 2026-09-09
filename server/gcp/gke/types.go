@@ -38,6 +38,29 @@ type gkeCluster struct {
 	CurrentMasterVer  string            `json:"currentMasterVersion,omitempty"`
 	CurrentNodeVer    string            `json:"currentNodeVersion,omitempty"`
 	CreateTime        string            `json:"createTime,omitempty"`
+	// LegacyAbac and NetworkConfig are ALWAYS emitted (non-omitempty pointers)
+	// because real GKE always returns them, and the official Terraform google
+	// provider dereferences cluster.LegacyAbac.Enabled and cluster.NetworkConfig.
+	// Network/Subnetwork unconditionally on read — a nil either one panics the
+	// provider on the very first google_container_cluster apply.
+	LegacyAbac    *gkeLegacyAbac    `json:"legacyAbac"`
+	NetworkConfig *gkeNetworkConfig `json:"networkConfig"`
+}
+
+// gkeLegacyAbac mirrors container/v1.LegacyAbac. Real GKE returns this object on
+// every cluster (an empty {} when disabled); the provider reads .Enabled off it
+// without a nil check.
+type gkeLegacyAbac struct {
+	Enabled bool `json:"enabled,omitempty"`
+}
+
+// gkeNetworkConfig mirrors the subset of container/v1.NetworkConfig the Terraform
+// provider reads unconditionally. Real GKE always returns a networkConfig with
+// the resolved network/subnetwork; the provider sources the `network`/`subnetwork`
+// attributes from here (not the deprecated top-level fields).
+type gkeNetworkConfig struct {
+	Network    string `json:"network,omitempty"`
+	Subnetwork string `json:"subnetwork,omitempty"`
 }
 
 type gkeMasterAuth struct {
@@ -58,12 +81,21 @@ type gkeNodePool struct {
 	Management       *gkeNodeManagement `json:"management,omitempty"`
 	Status           string             `json:"status,omitempty"`
 	SelfLink         string             `json:"selfLink,omitempty"`
+	// InstanceGroupUrls point at each backing zonal MIG. The Terraform google
+	// provider derives node_count from the targetSize of the MIGs these resolve
+	// to, so emitting them (with a matching MIG) is what stops node_count drift.
+	InstanceGroupUrls []string `json:"instanceGroupUrls,omitempty"`
 }
 
 type gkeNodeConfig struct {
-	MachineType string   `json:"machineType,omitempty"`
-	DiskSizeGb  int64    `json:"diskSizeGb,omitempty"`
-	OauthScopes []string `json:"oauthScopes,omitempty"`
+	MachineType    string            `json:"machineType,omitempty"`
+	DiskSizeGb     int64             `json:"diskSizeGb,omitempty"`
+	OauthScopes    []string          `json:"oauthScopes,omitempty"`
+	Labels         map[string]string `json:"labels,omitempty"`
+	ImageType      string            `json:"imageType,omitempty"`
+	Tags           []string          `json:"tags,omitempty"`
+	Metadata       map[string]string `json:"metadata,omitempty"`
+	ServiceAccount string            `json:"serviceAccount,omitempty"`
 }
 
 type gkeAutoscaling struct {
@@ -204,7 +236,9 @@ func int64Ptr(v int64) *int64 { return &v }
 // endpoint argument is what the Mock reported via Endpoint(location, name) —
 // either the in-memory K8s data-plane URL when a data plane is wired, or the
 // cluster's synthesized control-plane IP.
-func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.NodePool) gkeCluster {
+func toClusterResource(
+	c *gke.Cluster, project, endpoint string, pools []gke.NodePool, igmURLsFor func(np *gke.NodePool) []string,
+) gkeCluster {
 	var currentNodes int64
 	for i := range pools {
 		currentNodes += pools[i].NodeCount
@@ -219,6 +253,7 @@ func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.Nod
 		Network:           c.Network,
 		Subnetwork:        c.Subnetwork,
 		InitialNodeCount:  int64Ptr(c.InitialNodeCount),
+		NodeConfig:        clusterNodeConfig(c),
 		CurrentNodeCount:  currentNodes,
 		LoggingService:    c.LoggingService,
 		MonitoringService: c.MonitoringService,
@@ -240,13 +275,39 @@ func toClusterResource(c *gke.Cluster, project, endpoint string, pools []gke.Nod
 		CurrentNodeVer:   versionOr(c.NodeVersion),
 		SelfLink:         selfLinkBase + "projects/" + project + "/locations/" + c.Location + "/clusters/" + c.Name,
 		CreateTime:       c.CreatedAt.Format("2006-01-02T15:04:05.000Z"),
+		LegacyAbac:       &gkeLegacyAbac{Enabled: c.LegacyAbacEnabled},
+		NetworkConfig:    &gkeNetworkConfig{Network: c.Network, Subnetwork: c.Subnetwork},
 	}
 
 	for i := range pools {
-		out.NodePools = append(out.NodePools, toNodePoolResource(&pools[i], project))
+		out.NodePools = append(out.NodePools, toNodePoolResource(&pools[i], project, igmURLsFor(&pools[i])))
 	}
 
 	return out
+}
+
+// clusterNodeConfig maps the cluster's frozen default-pool node config to the
+// wire shape. Real GKE always returns cluster.nodeConfig; the Terraform google
+// provider force-replaces a cluster whose read is missing it. A cluster with no
+// stored config (e.g. restored from a pre-field snapshot) emits no nodeConfig.
+func clusterNodeConfig(c *gke.Cluster) *gkeNodeConfig {
+	nc := c.NodeConfig
+	if nc.MachineType == "" && nc.DiskSizeGB == 0 && len(nc.OauthScopes) == 0 &&
+		nc.ImageType == "" && nc.ServiceAccount == "" && len(nc.Labels) == 0 &&
+		len(nc.Tags) == 0 && len(nc.Metadata) == 0 {
+		return nil
+	}
+
+	return &gkeNodeConfig{
+		MachineType:    nc.MachineType,
+		DiskSizeGb:     nc.DiskSizeGB,
+		OauthScopes:    nc.OauthScopes,
+		Labels:         nc.Labels,
+		ImageType:      nc.ImageType,
+		Tags:           nc.Tags,
+		Metadata:       nc.Metadata,
+		ServiceAccount: nc.ServiceAccount,
+	}
 }
 
 // versionOr returns the cluster's applied version, falling back to the stub
@@ -259,15 +320,21 @@ func versionOr(v string) string {
 	return v
 }
 
-func toNodePoolResource(np *gke.NodePool, project string) gkeNodePool {
+func toNodePoolResource(np *gke.NodePool, project string, igmUrls []string) gkeNodePool {
 	out := gkeNodePool{
-		Name:             np.Name,
-		Version:          np.Version,
-		InitialNodeCount: int64Ptr(np.NodeCount),
+		InstanceGroupUrls: igmUrls,
+		Name:              np.Name,
+		Version:           np.Version,
+		InitialNodeCount:  int64Ptr(np.NodeCount),
 		Config: &gkeNodeConfig{
-			MachineType: np.MachineType,
-			DiskSizeGb:  np.DiskSizeGB,
-			OauthScopes: np.OauthScopes,
+			MachineType:    np.MachineType,
+			DiskSizeGb:     np.DiskSizeGB,
+			OauthScopes:    np.OauthScopes,
+			Labels:         np.Labels,
+			ImageType:      np.ImageType,
+			Tags:           np.Tags,
+			Metadata:       np.Metadata,
+			ServiceAccount: np.ServiceAccount,
 		},
 		Management: &gkeNodeManagement{
 			AutoUpgrade: np.AutoUpgrade,
@@ -300,10 +367,13 @@ func toOperationResource(op *gke.Operation, project string) gkeOperation {
 		Status:        op.Status,
 		Location:      op.Location,
 		Zone:          op.Location,
-		TargetLink:    selfLinkBase + op.TargetLink,
-		StartTime:     op.StartTime.Format("2006-01-02T15:04:05.000Z"),
-		EndTime:       op.EndTime.Format("2006-01-02T15:04:05.000Z"),
-		SelfLink:      selfLinkBase + "projects/" + project + "/locations/" + op.Location + "/operations/" + op.Name,
+		// op.TargetLink is stored project-relative ("locations/.../clusters/...")
+		// so the full link carries the project from the request URL, not the
+		// emulator's configured default project.
+		TargetLink: selfLinkBase + "projects/" + project + "/" + op.TargetLink,
+		StartTime:  op.StartTime.Format("2006-01-02T15:04:05.000Z"),
+		EndTime:    op.EndTime.Format("2006-01-02T15:04:05.000Z"),
+		SelfLink:   selfLinkBase + "projects/" + project + "/locations/" + op.Location + "/operations/" + op.Name,
 	}
 }
 

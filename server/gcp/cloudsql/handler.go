@@ -31,6 +31,8 @@ package cloudsql
 
 import (
 	"net/http"
+	"sort"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -42,6 +44,27 @@ const (
 	pathFlags       = "/v1/flags"
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 1 << 20
+
+	// pathPrefixBeta / pathFlagsBeta are the sql/v1beta4 REST paths. The Go
+	// sqladmin/v1 client hits /v1/projects/..., but gcloud and the Terraform
+	// google provider (via the embedded sqladmin client) hit
+	// /sql/v1beta4/projects/... — real Cloud SQL serves both surfaces, so the
+	// handler must accept either prefix or every gcloud/Terraform request gets a
+	// 501 and google_sql_database_instance can never be created.
+	pathPrefixBeta = "/sql/v1beta4/projects/"
+	pathFlagsBeta  = "/sql/v1beta4/flags"
+
+	// pathPrefixBare is the version-less /projects/ prefix. When a single
+	// sql_custom_endpoint (http://host:port/) is pointed at the emulator, the
+	// Terraform google provider's handwritten instance/user client prepends
+	// sql/v1beta4/ (→ pathPrefixBeta) while its generated google_sql_database /
+	// google_sql_user resources append projects/... straight onto the endpoint
+	// (→ this bare prefix). Accepting it lets one endpoint drive the full
+	// instance + database + user lifecycle. It is narrowed to the Cloud SQL
+	// resource segments (instances/operations/tiers), and cloudsql registers
+	// ahead of the greedy /v1/projects/ Firestore handler, so it never steals
+	// another service's traffic.
+	pathPrefixBare = "/projects/"
 
 	resourceInstances  = "instances"
 	resourceOperations = "operations"
@@ -67,12 +90,20 @@ func isSubResource(seg string) bool {
 type Handler struct {
 	db rdsdriver.RelationalDB
 
-	// mu guards ops. Mutating endpoints complete inline (status=DONE) and record
-	// the resulting Operation here so a later Operations.Get returns the real
-	// CREATE/UPDATE/DELETE record — pointing at the affected resource — rather
-	// than a synthetic stand-in.
+	// mu guards ops and opSeq. Mutating endpoints complete inline (status=DONE)
+	// and record the resulting Operation here so a later Operations.Get returns
+	// the real CREATE/UPDATE/DELETE record — pointing at the affected resource —
+	// rather than a synthetic stand-in.
 	mu  sync.RWMutex
 	ops map[string]operation
+	// opSeq makes every recorded operation name unique. Several call sites build
+	// their base name from a fixed action tag or an instance/resource id (e.g.
+	// "patch-{instance}", or the globally-shared "insert-db"/"clone"/"promote"),
+	// so two calls of the same kind — even against different instances — would
+	// otherwise collide on the same map key and silently overwrite each other's
+	// Operation record. Real Cloud SQL always hands back a distinct operation
+	// name per call.
+	opSeq int64
 }
 
 // New returns a Cloud SQL handler backed by db.
@@ -84,14 +115,16 @@ func New(db rdsdriver.RelationalDB) *Handler {
 }
 
 // buildOp builds the DONE operation for a finished mutation and records it
-// keyed by name, so a later Operations.Get serves the same record. It returns
+// under a unique name, so a later Operations.Get serves this exact record
+// instead of whatever the next same-kind call overwrote it with. It returns
 // the operation for callers that embed it in a larger response (e.g.
 // sslCerts.insert).
 func (h *Handler) buildOp(project, name, opType, resourceType, target string) operation {
-	op := doneOperationWithTarget(project, name, opType, resourceType, target)
-
 	h.mu.Lock()
-	h.ops[name] = op
+	h.opSeq++
+	uniqueName := name + "-" + strconv.FormatInt(h.opSeq, 10)
+	op := doneOperationWithTarget(project, uniqueName, opType, resourceType, target)
+	h.ops[uniqueName] = op
 	h.mu.Unlock()
 
 	return op
@@ -102,20 +135,42 @@ func (h *Handler) completeOp(w http.ResponseWriter, project, name, opType, resou
 	writeJSON(w, http.StatusOK, h.buildOp(project, name, opType, resourceType, target))
 }
 
-// Matches accepts /v1/projects/{p}/{instances|operations|tiers}/... paths plus
-// the project-less /v1/flags catalog. Other resource types under /v1/projects/
-// (locations, topics, subscriptions, databases) belong to Cloud Functions,
-// Pub/Sub, or Firestore respectively and must fall through.
+// isFlagsPath reports whether urlPath is the project-less flags catalog on
+// either the v1 or v1beta4 surface.
+func isFlagsPath(urlPath string) bool {
+	return urlPath == pathFlags || urlPath == pathFlagsBeta
+}
+
+// trimProjectsPrefix strips the /v1/projects/ or /sql/v1beta4/projects/ prefix,
+// returning the "{project}/{resource}/..." remainder. ok is false when urlPath
+// carries neither prefix.
+func trimProjectsPrefix(urlPath string) (string, bool) {
+	for _, pfx := range [...]string{pathPrefix, pathPrefixBeta, pathPrefixBare} {
+		if rest, ok := strings.CutPrefix(urlPath, pfx); ok {
+			return rest, true
+		}
+	}
+
+	return "", false
+}
+
+// Matches accepts /v1/projects/{p}/{instances|operations|tiers}/... and the
+// equivalent /sql/v1beta4/projects/... paths (used by gcloud and the Terraform
+// google provider), plus the project-less flags catalog on either surface.
+// Other resource types under /v1/projects/ (locations, topics, subscriptions,
+// databases) belong to Cloud Functions, Pub/Sub, or Firestore respectively and
+// must fall through.
 func (*Handler) Matches(r *http.Request) bool {
-	if r.URL.Path == pathFlags {
+	if isFlagsPath(r.URL.Path) {
 		return true
 	}
 
-	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
+	rest, ok := trimProjectsPrefix(r.URL.Path)
+	if !ok {
 		return false
 	}
 
-	parts := strings.Split(strings.TrimPrefix(r.URL.Path, pathPrefix), "/")
+	parts := strings.Split(rest, "/")
 
 	const idxResource = 1
 
@@ -157,7 +212,10 @@ func parsePath(urlPath string) (sqlPath, bool) {
 		idxSubName     = 4
 	)
 
-	rest := strings.TrimPrefix(urlPath, pathPrefix)
+	rest, ok := trimProjectsPrefix(urlPath)
+	if !ok {
+		return sqlPath{}, false
+	}
 
 	parts := strings.Split(rest, "/")
 	if len(parts) < minParts {
@@ -189,8 +247,8 @@ func parsePath(urlPath string) (sqlPath, bool) {
 
 // ServeHTTP routes the parsed path to the matching operation.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// /v1/flags is project-less, so it bypasses the project path parser.
-	if r.URL.Path == pathFlags {
+	// The flags catalog is project-less, so it bypasses the project path parser.
+	if isFlagsPath(r.URL.Path) {
 		serveFlags(w, r)
 		return
 	}
@@ -329,7 +387,7 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *sqlP
 	}
 
 	if p.name == "" {
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", "operation name required")
+		h.listOperations(w, r, p)
 		return
 	}
 
@@ -345,6 +403,69 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *sqlP
 	}
 
 	writeJSON(w, http.StatusOK, op)
+}
+
+// listOperations serves GET /v1/projects/{p}/operations — the operations.list
+// verb. Real Cloud SQL scopes the collection to the project and, when an
+// "instance" query parameter is given, to that instance's operations only,
+// returned in reverse-chronological order.
+func (h *Handler) listOperations(w http.ResponseWriter, r *http.Request, p *sqlPath) {
+	instance := r.URL.Query().Get("instance")
+
+	h.mu.RLock()
+	ops := make([]operation, 0, len(h.ops))
+
+	//nolint:gocritic // map values are sized for accuracy; copy is unavoidable when materializing the result slice.
+	for _, op := range h.ops {
+		ops = append(ops, op)
+	}
+
+	h.mu.RUnlock()
+
+	out := make([]operation, 0, len(ops))
+
+	for i := range ops {
+		op := &ops[i]
+
+		if op.TargetProject != p.project {
+			continue
+		}
+
+		if instance != "" && operationInstance(op) != instance {
+			continue
+		}
+
+		out = append(out, *op)
+	}
+
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].InsertTime != out[j].InsertTime {
+			return out[i].InsertTime > out[j].InsertTime
+		}
+
+		return out[i].Name > out[j].Name
+	})
+
+	writeJSON(w, http.StatusOK, operationsList{Kind: "sql#operationsList", Items: out})
+}
+
+// operationInstance extracts the instance name an operation's targetLink
+// refers to — e.g. ".../instances/foo" or ".../instances/foo/backupRuns/123"
+// both yield "foo" — or "" when the operation doesn't target an
+// instance-scoped resource.
+func operationInstance(op *operation) string {
+	prefix := selfLinkBase + op.TargetProject + "/instances/"
+
+	if !strings.HasPrefix(op.TargetLink, prefix) {
+		return ""
+	}
+
+	rest := strings.TrimPrefix(op.TargetLink, prefix)
+	if i := strings.IndexByte(rest, '/'); i >= 0 {
+		return rest[:i]
+	}
+
+	return rest
 }
 
 func writeMethodNotAllowed(w http.ResponseWriter) {

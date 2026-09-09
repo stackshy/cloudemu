@@ -196,17 +196,35 @@ func TestSDKDestroyedVersionLifecycleIs400(t *testing.T) {
 	if !errors.As(err, &gerr) || gerr.Code != 400 {
 		t.Fatalf("Destroy(destroyed): got %v, want 400 FAILED_PRECONDITION", err)
 	}
+	assertNoCodePrefix(t, gerr.Message)
 
 	// Disable a destroyed version → 400 FAILED_PRECONDITION.
 	_, err = svc.Projects.Secrets.Versions.Disable(v1.Name, &sm.DisableSecretVersionRequest{}).Context(ctx).Do()
 	if !errors.As(err, &gerr) || gerr.Code != 400 {
 		t.Fatalf("Disable(destroyed): got %v, want 400 FAILED_PRECONDITION", err)
 	}
+	assertNoCodePrefix(t, gerr.Message)
 
 	// Enable a destroyed version → 400 FAILED_PRECONDITION.
 	_, err = svc.Projects.Secrets.Versions.Enable(v1.Name, &sm.EnableSecretVersionRequest{}).Context(ctx).Do()
 	if !errors.As(err, &gerr) || gerr.Code != 400 {
 		t.Fatalf("Enable(destroyed): got %v, want 400 FAILED_PRECONDITION", err)
+	}
+	assertNoCodePrefix(t, gerr.Message)
+}
+
+// assertNoCodePrefix fails if msg contains one of cloudemu's internal
+// canonical error-code names followed by a colon — the shape err.Error()
+// produces for a *cerrors.Error, as opposed to cerrors.Message(err). Real
+// Secret Manager never prefixes its error messages with an internal
+// error-taxonomy name.
+func assertNoCodePrefix(t *testing.T, msg string) {
+	t.Helper()
+
+	for _, prefix := range []string{"NotFound:", "AlreadyExists:", "InvalidArgument:", "FailedPrecondition:", "Internal:"} {
+		if strings.Contains(msg, prefix) {
+			t.Errorf("wire error message %q leaks internal code prefix %q", msg, prefix)
+		}
 	}
 }
 

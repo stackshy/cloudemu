@@ -43,6 +43,10 @@ const (
 	defaultNodegroupInstanceType = "t3.medium"
 	defaultNodegroupAmiType      = "AL2_x86_64"
 	defaultNodegroupDiskSize     = 20
+	// EKS defaults a managed nodegroup's rolling-update concurrency to
+	// maxUnavailable=1 when the caller omits updateConfig, so DescribeNodegroup
+	// always reports one and Terraform's update_config block does not drift.
+	defaultNodegroupMaxUnavailable = 1
 
 	// Cluster networking and access-config defaults real EKS applies when the
 	// caller omits them. authenticationMode defaults to CONFIG_MAP on the
@@ -447,6 +451,58 @@ func validateScaling(s eksdriver.NodegroupScalingConfig) error {
 	}
 
 	return nil
+}
+
+// validateUpdateConfig rejects a nodegroup updateConfig that sets both
+// maxUnavailable and maxUnavailablePercentage, matching real EKS
+// (InvalidParameterException): the two knobs are mutually exclusive. Negative
+// values are also rejected. An all-zero config (updateConfig omitted) is valid
+// and left to the create-time default.
+func validateUpdateConfig(u eksdriver.NodegroupUpdateConfig) error {
+	if u.MaxUnavailable < 0 || u.MaxUnavailablePercentage < 0 {
+		return cerrors.New(cerrors.InvalidArgument,
+			"updateConfig maxUnavailable and maxUnavailablePercentage must not be negative")
+	}
+
+	if u.MaxUnavailable > 0 && u.MaxUnavailablePercentage > 0 {
+		return cerrors.New(cerrors.InvalidArgument,
+			"updateConfig may set only one of maxUnavailable or maxUnavailablePercentage")
+	}
+
+	return nil
+}
+
+// resolveUpdateConfig applies the EKS default (maxUnavailable=1) when the caller
+// supplies no updateConfig, so a created nodegroup always reports one.
+func resolveUpdateConfig(u eksdriver.NodegroupUpdateConfig) eksdriver.NodegroupUpdateConfig {
+	if u.MaxUnavailable == 0 && u.MaxUnavailablePercentage == 0 {
+		return eksdriver.NodegroupUpdateConfig{MaxUnavailable: defaultNodegroupMaxUnavailable}
+	}
+
+	return u
+}
+
+// nodegroupDefaults resolves the managed-nodegroup fields real EKS fills in when
+// the caller omits them: instance types (t3.medium), AMI type (AL2_x86_64), and
+// disk size (20 GiB). Extracted from CreateNodegroup to keep that path within
+// the cyclomatic-complexity budget.
+func nodegroupDefaults(cfg *eksdriver.NodegroupConfig) (instanceTypes []string, amiType string, diskSize int) {
+	instanceTypes = copyStrings(cfg.InstanceTypes)
+	if len(instanceTypes) == 0 {
+		instanceTypes = []string{defaultNodegroupInstanceType}
+	}
+
+	amiType = cfg.AmiType
+	if amiType == "" {
+		amiType = defaultNodegroupAmiType
+	}
+
+	diskSize = cfg.DiskSize
+	if diskSize == 0 {
+		diskSize = defaultNodegroupDiskSize
+	}
+
+	return instanceTypes, amiType, diskSize
 }
 
 func (m *Mock) emitClusterMetrics(name string) {
@@ -860,22 +916,13 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 		return nil, err
 	}
 
+	if err := validateUpdateConfig(cfg.UpdateConfig); err != nil {
+		return nil, err
+	}
+
 	now := m.opts.Clock.Now().UTC()
 
-	instanceTypes := copyStrings(cfg.InstanceTypes)
-	if len(instanceTypes) == 0 {
-		instanceTypes = []string{defaultNodegroupInstanceType}
-	}
-
-	amiType := cfg.AmiType
-	if amiType == "" {
-		amiType = defaultNodegroupAmiType
-	}
-
-	diskSize := cfg.DiskSize
-	if diskSize == 0 {
-		diskSize = defaultNodegroupDiskSize
-	}
+	instanceTypes, amiType, diskSize := nodegroupDefaults(&cfg)
 
 	ng := eksdriver.Nodegroup{
 		ClusterName:    cfg.ClusterName,
@@ -890,6 +937,7 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 		Version:        cfg.Version,
 		ReleaseVersion: cfg.ReleaseVersion,
 		ScalingConfig:  cfg.ScalingConfig,
+		UpdateConfig:   resolveUpdateConfig(cfg.UpdateConfig),
 		Status:         eksdriver.NodegroupStatusActive,
 		Labels:         copyTags(cfg.Labels),
 		Taints:         copyTaints(cfg.Taints),
@@ -983,6 +1031,14 @@ func (m *Mock) UpdateNodegroupConfig(
 		}
 
 		ng.ScalingConfig = *upd.Scaling
+	}
+
+	if upd.UpdateConfig != nil {
+		if err := validateUpdateConfig(*upd.UpdateConfig); err != nil {
+			return nil, err
+		}
+
+		ng.UpdateConfig = *upd.UpdateConfig
 	}
 
 	ng.Labels = mergeLabels(ng.Labels, upd.AddOrUpdateLabels, upd.RemoveLabels)

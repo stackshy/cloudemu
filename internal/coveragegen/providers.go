@@ -369,10 +369,21 @@ func implementedService(mockDir string, byName map[string]*Service) *Service {
 		return nil
 	}
 
+	provDir := filepath.Dir(mockDir)
+
 	var best *Service
 
 	for _, svc := range byName {
 		if len(svc.Operations) == 0 || !covers(methods, svc.Operations) {
+			continue
+		}
+
+		// A portable service with its own dedicated, name-matched provider mock
+		// (providers/<prov>/<svc>) is implemented only by that mock. A different
+		// mock that merely name-covers the same driver surface — e.g. the GKE
+		// cluster mock (CreateCluster/GetCluster/…) covering the Dataproc cluster
+		// interface — must not be misattributed to it.
+		if dedicated := filepath.Join(provDir, svc.Name); dedicated != mockDir && isDir(dedicated) {
 			continue
 		}
 

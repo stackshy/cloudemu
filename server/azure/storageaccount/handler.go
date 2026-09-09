@@ -26,9 +26,11 @@ package storageaccount
 import (
 	"context"
 	"net/http"
+	"sort"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
@@ -44,6 +46,29 @@ const (
 
 	minAccountNameLen = 3
 	maxAccountNameLen = 24
+
+	// Real-Azure defaults reported for a new account that omits these toggles:
+	// minimum TLS 1.2, public network access enabled, HTTPS-only on, blob public
+	// access off, shared-key access on. Modeled here (rather than left to the
+	// echo-properties overlay) so an explicitly-false value survives round-trip
+	// and a create that omits them still reads back real defaults.
+	// The REST reference's property text calls TLS 1.0 the "default
+	// interpretation", but its own GetProperties sample response reports
+	// "TLS1_2", and the azurerm provider always sends min_tls_version=TLS1_2
+	// explicitly — so TLS1_2 matches the documented example, causes no Terraform
+	// drift, and reflects modern Azure hardening.
+	defaultMinTLSVersion       = "TLS1_2"
+	defaultPublicNetworkAccess = "Enabled"
+	defaultHTTPSTrafficOnly    = true
+	defaultBlobPublicAccess    = false
+	defaultSharedKeyAccess     = true
+
+	// identityNone is the managed-identity type that clears the identity block;
+	// emulatorTenantID is the single Azure AD directory every emulated resource
+	// reports (shared with the ACR/AKS/VM handlers).
+	identityNone     = "None"
+	systemAssigned   = "SystemAssigned"
+	emulatorTenantID = "11111111-1111-1111-1111-111111111111"
 )
 
 // attrBackend is the optional storage-account attribute capability. The Azure
@@ -390,8 +415,17 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 
 	if body.Properties != nil {
 		attrs.AccessTier = body.Properties.AccessTier
+		attrs.MinimumTLSVersion = body.Properties.MinimumTLSVersion
+		attrs.PublicNetworkAccess = body.Properties.PublicNetworkAccess
+		attrs.EnableHTTPSTrafficOnly = body.Properties.SupportsHTTPSTrafficOnly
+		attrs.AllowBlobPublicAccess = body.Properties.AllowBlobPublicAccess
+		attrs.AllowSharedKeyAccess = body.Properties.AllowSharedKeyAccess
 		encryption = fromARMEncryptionReq(body.Properties.Encryption)
 	}
+
+	// Full-replace like the rest of create-or-update: an omitted identity block
+	// clears any previously attached managed identity.
+	applyIdentity(&attrs, body.Identity, rp.ResourceGroup, name)
 
 	if h.attrs != nil {
 		h.attrs.SetBucketAttributes(name, attrs)
@@ -444,7 +478,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp *azurearm.Re
 		if _, err := h.attrs.UpdateBucketAttributes(r.Context(), rp.ResourceName, func(
 			cur storagedriver.AccountAttributes,
 		) storagedriver.AccountAttributes {
-			applyAccountUpdate(&cur, &body)
+			applyAccountUpdate(&cur, &body, rp.ResourceGroup, rp.ResourceName)
 
 			return cur
 		}); err != nil {
@@ -467,8 +501,9 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp *azurearm.Re
 }
 
 // applyAccountUpdate merges the fields present on a PATCH body onto cur in
-// place, leaving every field the request omitted untouched.
-func applyAccountUpdate(cur *storagedriver.AccountAttributes, body *armAccountUpdate) {
+// place, leaving every field the request omitted untouched. rg/name seed the
+// synthesized principal id when a PATCH turns on a system-assigned identity.
+func applyAccountUpdate(cur *storagedriver.AccountAttributes, body *armAccountUpdate, rg, name string) {
 	if body.Kind != "" {
 		cur.Kind = body.Kind
 	}
@@ -481,9 +516,137 @@ func applyAccountUpdate(cur *storagedriver.AccountAttributes, body *armAccountUp
 		cur.Tags = body.Tags
 	}
 
-	if body.Properties != nil && body.Properties.AccessTier != "" {
+	// A PATCH that carries an identity block replaces the identity outright
+	// (the SDK sends the full desired type + user-assigned set); one that omits
+	// it leaves the attached identity untouched.
+	if body.Identity != nil {
+		applyIdentity(cur, body.Identity, rg, name)
+	}
+
+	if body.Properties == nil {
+		return
+	}
+
+	if body.Properties.AccessTier != "" {
 		cur.AccessTier = body.Properties.AccessTier
 	}
+
+	if body.Properties.MinimumTLSVersion != "" {
+		cur.MinimumTLSVersion = body.Properties.MinimumTLSVersion
+	}
+
+	if body.Properties.PublicNetworkAccess != "" {
+		cur.PublicNetworkAccess = body.Properties.PublicNetworkAccess
+	}
+
+	applySecurityToggles(cur, body.Properties)
+}
+
+// applySecurityToggles PATCH-merges the *bool security toggles on presence: a
+// non-nil pointer overwrites the stored value (including an explicit false), a
+// nil one leaves it untouched.
+func applySecurityToggles(cur *storagedriver.AccountAttributes, props *armAccountPropsReq) {
+	if props.SupportsHTTPSTrafficOnly != nil {
+		cur.EnableHTTPSTrafficOnly = props.SupportsHTTPSTrafficOnly
+	}
+
+	if props.AllowBlobPublicAccess != nil {
+		cur.AllowBlobPublicAccess = props.AllowBlobPublicAccess
+	}
+
+	if props.AllowSharedKeyAccess != nil {
+		cur.AllowSharedKeyAccess = props.AllowSharedKeyAccess
+	}
+}
+
+// applyIdentity stores the managed-identity block on attrs, synthesizing the
+// system-assigned principal/tenant ids the way real Azure returns them. A type
+// of "" or "None" clears the block; a system-assigned type keeps an already
+// synthesized principal id stable across updates. rg/name seed the deterministic
+// principal id so it is stable per account.
+func applyIdentity(attrs *storagedriver.AccountAttributes, id *armIdentity, rg, name string) {
+	if id == nil {
+		return
+	}
+
+	if id.Type == "" || strings.EqualFold(id.Type, identityNone) {
+		attrs.IdentityType = ""
+		attrs.UserAssignedIdentities = nil
+		attrs.IdentityPrincipalID = ""
+		attrs.IdentityTenantID = ""
+
+		return
+	}
+
+	attrs.IdentityType = id.Type
+	attrs.UserAssignedIdentities = identityKeys(id.UserAssignedIdentities)
+
+	if identityHasSystemAssigned(id.Type) {
+		if attrs.IdentityPrincipalID == "" {
+			attrs.IdentityPrincipalID = idgen.SyntheticGUID("principal/storageAccount/" + rg + "/" + name)
+		}
+
+		attrs.IdentityTenantID = emulatorTenantID
+
+		return
+	}
+
+	attrs.IdentityPrincipalID = ""
+	attrs.IdentityTenantID = ""
+}
+
+// identityHasSystemAssigned reports whether an identity type string includes the
+// system-assigned identity (covers "SystemAssigned" and the combined
+// "SystemAssigned,UserAssigned").
+func identityHasSystemAssigned(t string) bool {
+	return strings.Contains(t, systemAssigned)
+}
+
+// identityKeys returns the user-assigned identity resource IDs (the request map
+// keys) in deterministic order so synthesized pairs are stable.
+func identityKeys(m map[string]*armUserAssignedIdentity) []string {
+	if len(m) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	return keys
+}
+
+// armIdentityFor renders the account's managed-identity response block, or nil
+// when no identity is attached. Each user-assigned identity is echoed with a
+// synthesized principal/client pair keyed by its resource ID, matching real
+// Azure.
+func armIdentityFor(attrs *storagedriver.AccountAttributes) *armIdentity {
+	if attrs.IdentityType == "" || strings.EqualFold(attrs.IdentityType, identityNone) {
+		return nil
+	}
+
+	out := &armIdentity{
+		Type:        attrs.IdentityType,
+		PrincipalID: attrs.IdentityPrincipalID,
+		TenantID:    attrs.IdentityTenantID,
+	}
+
+	if len(attrs.UserAssignedIdentities) == 0 {
+		return out
+	}
+
+	out.UserAssignedIdentities = make(map[string]*armUserAssignedIdentity, len(attrs.UserAssignedIdentities))
+	for _, uaID := range attrs.UserAssignedIdentities {
+		out.UserAssignedIdentities[uaID] = &armUserAssignedIdentity{
+			PrincipalID: idgen.SyntheticGUID("uai-principal/" + uaID),
+			ClientID:    idgen.SyntheticGUID("uai-client/" + uaID),
+		}
+	}
+
+	return out
 }
 
 func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -586,13 +749,18 @@ func (h *Handler) toARMAccount(ctx context.Context, rp *azurearm.ResourcePath) a
 	}
 
 	props := &armAccountProps{
-		AccessTier:        attrs.AccessTier,
-		ProvisioningState: "Succeeded",
-		PrimaryLocation:   location,
-		StatusOfPrimary:   "available",
-		CreationTime:      h.accountCreatedAt(ctx, rp.ResourceName),
-		PrimaryEndpoints:  accountEndpoints(rp.ResourceName),
-		Encryption:        armEncryptionFor(encryption),
+		AccessTier:               attrs.AccessTier,
+		ProvisioningState:        "Succeeded",
+		PrimaryLocation:          location,
+		StatusOfPrimary:          "available",
+		CreationTime:             h.accountCreatedAt(ctx, rp.ResourceName),
+		PrimaryEndpoints:         accountEndpoints(rp.ResourceName),
+		Encryption:               armEncryptionFor(encryption),
+		MinimumTLSVersion:        strOr(attrs.MinimumTLSVersion, defaultMinTLSVersion),
+		PublicNetworkAccess:      strOr(attrs.PublicNetworkAccess, defaultPublicNetworkAccess),
+		SupportsHTTPSTrafficOnly: boolOr(attrs.EnableHTTPSTrafficOnly, defaultHTTPSTrafficOnly),
+		AllowBlobPublicAccess:    boolOr(attrs.AllowBlobPublicAccess, defaultBlobPublicAccess),
+		AllowSharedKeyAccess:     boolOr(attrs.AllowSharedKeyAccess, defaultSharedKeyAccess),
 	}
 
 	// GRS/RA-GRS/GZRS/RA-GZRS replicate to a documented paired region;
@@ -616,6 +784,7 @@ func (h *Handler) toARMAccount(ctx context.Context, rp *azurearm.ResourcePath) a
 		Location:   location,
 		Kind:       attrs.Kind,
 		Tags:       attrs.Tags,
+		Identity:   armIdentityFor(&attrs),
 		SKU:        &armSKU{Name: attrs.SKU, Tier: skuTier(attrs.SKU)},
 		Properties: props,
 	}
@@ -764,6 +933,26 @@ func (h *Handler) accountCreatedAt(ctx context.Context, name string) string {
 	}
 
 	return fallback
+}
+
+// strOr returns v when non-empty, else the real-Azure default def.
+func strOr(v, def string) string {
+	if v == "" {
+		return def
+	}
+
+	return v
+}
+
+// boolOr dereferences p when set, else returns the real-Azure default def —
+// letting an explicitly-stored false survive while an unset toggle reads back
+// its documented default.
+func boolOr(p *bool, def bool) bool {
+	if p == nil {
+		return def
+	}
+
+	return *p
 }
 
 // skuTier derives the read-only SKU tier from the SKU name (Standard_LRS ->

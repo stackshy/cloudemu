@@ -89,32 +89,34 @@ type step struct {
 // cluster is a JobFlow: the unit RunJobFlow creates and TerminateJobFlows tears
 // down.
 type cluster struct {
-	id                   string
-	name                 string
-	arn                  string
-	releaseLabel         string
-	logURI               string
-	serviceRole          string
-	jobFlowRole          string
-	ec2SubnetID          string
-	ec2KeyName           string
-	masterInstanceType   string
-	instanceCount        int32
-	keepAlive            bool
-	terminationProtected bool
-	visibleToAll         bool
-	autoTerminate        bool
-	state                string
-	stateChangeCode      string
-	stateChangeMessage   string
-	creation             time.Time
-	ready                time.Time
-	end                  *time.Time
-	applications         []application
-	tags                 []tag
-	steps                []*step
-	instanceGroups       []*instanceGroup
-	bootstrapActions     []bootstrapAction
+	id                    string
+	name                  string
+	arn                   string
+	releaseLabel          string
+	logURI                string
+	serviceRole           string
+	jobFlowRole           string
+	securityConfiguration string
+	masterPublicDNS       string
+	ec2SubnetID           string
+	ec2KeyName            string
+	masterInstanceType    string
+	instanceCount         int32
+	keepAlive             bool
+	terminationProtected  bool
+	visibleToAll          bool
+	autoTerminate         bool
+	state                 string
+	stateChangeCode       string
+	stateChangeMessage    string
+	creation              time.Time
+	ready                 time.Time
+	end                   *time.Time
+	applications          []application
+	tags                  []tag
+	steps                 []*step
+	instanceGroups        []*instanceGroup
+	bootstrapActions      []bootstrapAction
 }
 
 // store is the in-memory backing state for the EMR wire handler. EMR clusters
@@ -127,8 +129,10 @@ type store struct {
 	accountID string
 	region    string
 	clusters  map[string]*cluster
-	order     []string                  // cluster ids in creation order (ListClusters returns newest first)
-	groups    map[string]*instanceGroup // instance-group id -> group, for ModifyInstanceGroups lookup
+	order     []string                   // cluster ids in creation order (ListClusters returns newest first)
+	groups    map[string]*instanceGroup  // instance-group id -> group, for ModifyInstanceGroups lookup
+	secConfig map[string]*securityConfig // security-configuration name -> config
+	secOrder  []string                   // security-configuration names in creation order
 	nextID    int64
 }
 
@@ -144,6 +148,7 @@ func newStore(accountID, region string, clock config.Clock) *store {
 		region:    region,
 		clusters:  map[string]*cluster{},
 		groups:    map[string]*instanceGroup{},
+		secConfig: map[string]*securityConfig{},
 	}
 }
 
@@ -170,23 +175,25 @@ func (s *store) runJobFlow(in *runJobFlowInput) *cluster {
 	id := s.newID("j-")
 
 	c := &cluster{
-		id:                 id,
-		name:               deref(in.Name),
-		arn:                idgen.AWSARN("elasticmapreduce", s.region, s.accountID, "cluster/"+id),
-		releaseLabel:       deref(in.ReleaseLabel),
-		logURI:             deref(in.LogURI),
-		serviceRole:        deref(in.ServiceRole),
-		jobFlowRole:        deref(in.JobFlowRole),
-		state:              stateWaiting,
-		stateChangeMessage: "Cluster ready to run steps.",
-		creation:           now,
-		ready:              now,
-		visibleToAll:       derefBool(in.VisibleToAllUsers, true),
+		id:                    id,
+		name:                  deref(in.Name),
+		arn:                   idgen.AWSARN("elasticmapreduce", s.region, s.accountID, "cluster/"+id),
+		releaseLabel:          deref(in.ReleaseLabel),
+		logURI:                deref(in.LogURI),
+		serviceRole:           deref(in.ServiceRole),
+		jobFlowRole:           deref(in.JobFlowRole),
+		securityConfiguration: deref(in.SecurityConfiguration),
+		state:                 stateWaiting,
+		stateChangeMessage:    "Cluster ready to run steps.",
+		creation:              now,
+		ready:                 now,
+		visibleToAll:          derefBool(in.VisibleToAllUsers, true),
 	}
 
 	applyInstances(c, in.Instances)
 	c.autoTerminate = !c.keepAlive
 	s.buildInstanceGroups(c, in.Instances, now)
+	c.masterPublicDNS = masterPublicDNS(c)
 	recordBootstrap(c, in.BootstrapActions)
 
 	for _, a := range in.Applications {

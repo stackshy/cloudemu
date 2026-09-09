@@ -105,7 +105,7 @@ func (m *Mock) CreateACL(_ context.Context, name string, userNames []string, tag
 	users := dedupeStrings(userNames)
 
 	acl := mdbdriver.ACL{
-		Name: name, ARN: m.arn("acl", name), Status: mdbdriver.StatusAvailable,
+		Name: name, ARN: m.arn("acl", name), Status: mdbdriver.StatusActive,
 		MinimumEngineVersion: "6.2", UserNames: users, Tags: copyTags(tags),
 	}
 	m.acls.Set(name, acl)
@@ -197,6 +197,9 @@ func (m *Mock) DeleteACL(_ context.Context, name string) (*mdbdriver.ACL, error)
 
 	m.acls.Delete(name)
 
+	// The delete response reports the transient deleting status, mirroring
+	// DeleteCluster and real MemoryDB (the row itself is already removed).
+	acl.Status = mdbdriver.StatusDeleting
 	out := cloneACL(&acl)
 
 	return &out, nil
@@ -234,7 +237,7 @@ func (m *Mock) CreateUser(_ context.Context, cfg mdbdriver.CreateUserConfig) (*m
 	}
 
 	user := mdbdriver.User{
-		Name: cfg.Name, ARN: m.arn("user", cfg.Name), Status: mdbdriver.StatusAvailable,
+		Name: cfg.Name, ARN: m.arn("user", cfg.Name), Status: mdbdriver.StatusActive,
 		AccessString: cfg.AccessString, MinimumEngineVersion: "6.2",
 		Authentication: mdbdriver.Authentication{Type: authType(cfg.AuthenticationType), PasswordCount: len(cfg.Passwords)},
 		Tags:           copyTags(cfg.Tags),
@@ -297,6 +300,9 @@ func (m *Mock) DeleteUser(_ context.Context, name string) (*mdbdriver.User, erro
 
 	m.users.Delete(name)
 
+	// The delete response reports the transient deleting status, mirroring
+	// DeleteCluster and real MemoryDB (the row itself is already removed).
+	u.Status = mdbdriver.StatusDeleting
 	out := cloneUser(&u)
 
 	return &out, nil

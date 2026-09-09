@@ -31,9 +31,14 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *gkePa
 
 	if nc := body.Cluster.NodeConfig; nc != nil {
 		in.NodeConfig = &gke.NodeConfigSpec{
-			MachineType: nc.MachineType,
-			DiskSizeGB:  nc.DiskSizeGb,
-			OauthScopes: nc.OauthScopes,
+			MachineType:    nc.MachineType,
+			DiskSizeGB:     nc.DiskSizeGb,
+			OauthScopes:    nc.OauthScopes,
+			ImageType:      nc.ImageType,
+			Tags:           nc.Tags,
+			Metadata:       nc.Metadata,
+			ServiceAccount: nc.ServiceAccount,
+			Labels:         nc.Labels,
 		}
 	}
 
@@ -46,6 +51,11 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *gkePa
 		writeErr(w, err)
 		return
 	}
+
+	// Register a backing MIG for every node pool the cluster materialized (the
+	// default pool plus any caller-specified pools), so their node counts read
+	// back through compute instanceGroupManagers.
+	h.reconcileClusterMIGs(r.Context(), p.location, body.Cluster.Name)
 
 	writeJSON(w, http.StatusOK, toOperationResource(op, p.project))
 }
@@ -61,6 +71,11 @@ func nodePoolSpecFromWire(np *gkeNodePool) gke.NodePoolSpec {
 		spec.MachineType = np.Config.MachineType
 		spec.DiskSizeGB = np.Config.DiskSizeGb
 		spec.OauthScopes = np.Config.OauthScopes
+		spec.ImageType = np.Config.ImageType
+		spec.Tags = np.Config.Tags
+		spec.Metadata = np.Config.Metadata
+		spec.ServiceAccount = np.Config.ServiceAccount
+		spec.Labels = np.Config.Labels
 	}
 
 	if np.Autoscaling != nil {
@@ -88,7 +103,8 @@ func (h *Handler) getCluster(w http.ResponseWriter, r *http.Request, p *gkePath)
 
 	pools, _ := h.gke.ListNodePools(r.Context(), p.location, p.name)
 
-	writeJSON(w, http.StatusOK, toClusterResource(c, p.project, h.gke.Endpoint(p.location, p.name), pools))
+	igmFor := h.igmURLsFunc(reqHost(r), p.project)
+	writeJSON(w, http.StatusOK, toClusterResource(c, p.project, h.gke.Endpoint(p.location, p.name), pools, igmFor))
 }
 
 func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request, p *gkePath) {
@@ -99,11 +115,12 @@ func (h *Handler) listClusters(w http.ResponseWriter, r *http.Request, p *gkePat
 	}
 
 	out := listClustersResp{Clusters: make([]gkeCluster, 0, len(clusters))}
+	igmFor := h.igmURLsFunc(reqHost(r), p.project)
 
 	for i := range clusters {
 		pools, _ := h.gke.ListNodePools(r.Context(), clusters[i].Location, clusters[i].Name)
 		endpoint := h.gke.Endpoint(clusters[i].Location, clusters[i].Name)
-		out.Clusters = append(out.Clusters, toClusterResource(&clusters[i], p.project, endpoint, pools))
+		out.Clusters = append(out.Clusters, toClusterResource(&clusters[i], p.project, endpoint, pools, igmFor))
 	}
 
 	writeJSON(w, http.StatusOK, out)
@@ -136,6 +153,10 @@ func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request, p *gkePa
 }
 
 func (h *Handler) deleteCluster(w http.ResponseWriter, r *http.Request, p *gkePath) {
+	// Remove the pools' backing MIGs before the cluster (and its pools) are torn
+	// down, while the pools are still enumerable.
+	h.removeClusterMIGs(r.Context(), p.location, p.name)
+
 	op, err := h.gke.DeleteCluster(r.Context(), p.location, p.name)
 	if err != nil {
 		writeErr(w, err)
@@ -333,11 +354,13 @@ func (h *Handler) createNodePool(w http.ResponseWriter, r *http.Request, p *gkeP
 
 	spec := nodePoolSpecFromWire(body.NodePool)
 
-	_, op, err := h.gke.CreateNodePool(r.Context(), p.location, p.name, &spec)
+	np, op, err := h.gke.CreateNodePool(r.Context(), p.location, p.name, &spec)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
+
+	h.syncNodePoolMIG(np)
 
 	writeJSON(w, http.StatusOK, toOperationResource(op, p.project))
 }
@@ -349,7 +372,8 @@ func (h *Handler) getNodePool(w http.ResponseWriter, r *http.Request, p *gkePath
 		return
 	}
 
-	writeJSON(w, http.StatusOK, toNodePoolResource(np, p.project))
+	igmFor := h.igmURLsFunc(reqHost(r), p.project)
+	writeJSON(w, http.StatusOK, toNodePoolResource(np, p.project, igmFor(np)))
 }
 
 func (h *Handler) listNodePools(w http.ResponseWriter, r *http.Request, p *gkePath) {
@@ -359,9 +383,11 @@ func (h *Handler) listNodePools(w http.ResponseWriter, r *http.Request, p *gkePa
 		return
 	}
 
+	igmFor := h.igmURLsFunc(reqHost(r), p.project)
 	out := listNodePoolsResp{NodePools: make([]gkeNodePool, 0, len(pools))}
+
 	for i := range pools {
-		out.NodePools = append(out.NodePools, toNodePoolResource(&pools[i], p.project))
+		out.NodePools = append(out.NodePools, toNodePoolResource(&pools[i], p.project, igmFor(&pools[i])))
 	}
 
 	writeJSON(w, http.StatusOK, out)
@@ -394,6 +420,8 @@ func (h *Handler) deleteNodePool(w http.ResponseWriter, r *http.Request, p *gkeP
 		writeErr(w, err)
 		return
 	}
+
+	h.removeNodePoolMIG(p.location, p.name, p.subName)
 
 	writeJSON(w, http.StatusOK, toOperationResource(op, p.project))
 }
@@ -428,6 +456,10 @@ func (h *Handler) setNodePoolSize(w http.ResponseWriter, r *http.Request, p *gke
 	if err != nil {
 		writeErr(w, err)
 		return
+	}
+
+	if np, gerr := h.gke.GetNodePool(r.Context(), p.location, p.name, p.subName); gerr == nil {
+		h.syncNodePoolMIG(np)
 	}
 
 	writeJSON(w, http.StatusOK, toOperationResource(op, p.project))

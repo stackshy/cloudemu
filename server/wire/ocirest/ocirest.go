@@ -64,7 +64,7 @@ func WriteError(w http.ResponseWriter, r *http.Request, status int, code, messag
 // WriteDriverError maps a driver error onto OCI's status and error code.
 func WriteDriverError(w http.ResponseWriter, r *http.Request, err error) {
 	status, code := statusFor(cerrors.GetCode(err))
-	WriteError(w, r, status, code, err.Error())
+	WriteError(w, r, status, code, cerrors.Message(err))
 }
 
 // statusFor maps a canonical error code onto OCI's HTTP status and error code.

@@ -308,6 +308,11 @@ type ElasticIPConfig struct {
 	Zones              []string
 	IdleTimeoutMinutes int
 	DNSDomainNameLabel string
+	// SKUTier is the Azure public-IP SKU tier (Regional/Global), echoed as
+	// sku.tier. IPVersion is the address family (IPv4/IPv6), echoed as
+	// properties.publicIPAddressVersion. Empty for AWS and GCP.
+	SKUTier   string
+	IPVersion string
 }
 
 // ElasticIP represents an elastic IP address.
@@ -334,6 +339,11 @@ type ElasticIP struct {
 	IdleTimeoutMinutes int
 	DNSDomainNameLabel string
 	DNSFQDN            string
+	// SKUTier (Regional/Global) and IPVersion (IPv4/IPv6) round-trip the
+	// Azure-only public-IP fields set in ElasticIPConfig; the provider defaults
+	// them to Regional/IPv4. Empty for AWS and GCP.
+	SKUTier   string
+	IPVersion string
 	// ResourceGUID is the Azure-only persisted identifier ARM reports as
 	// properties.resourceGuid on a publicIPAddresses resource — stable for the
 	// address's lifetime, regenerated only on release + re-allocation. Empty

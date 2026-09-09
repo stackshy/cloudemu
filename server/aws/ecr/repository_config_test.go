@@ -177,6 +177,81 @@ func TestSDKECRPutImageScanningConfiguration(t *testing.T) {
 	}
 }
 
+// TestSDKECRCreateRepositoryEncryptionConfiguration exercises the
+// encryptionConfiguration round-trip Terraform's aws_ecr_repository depends on:
+// real ECR reports an encryptionConfiguration on every repository (default
+// AES256), and re-reads it on every refresh. Omitting it made an explicit
+// encryption_configuration block drift and force replacement on every apply.
+func TestSDKECRCreateRepositoryEncryptionConfiguration(t *testing.T) {
+	client := newECRClient(t)
+	ctx := context.Background()
+
+	// Default: no encryptionConfiguration in the request → AES256, no kmsKey.
+	def, err := client.CreateRepository(ctx, &awsecr.CreateRepositoryInput{
+		RepositoryName: aws.String("enc-default"),
+	})
+	if err != nil {
+		t.Fatalf("CreateRepository(default): %v", err)
+	}
+
+	assertEnc(t, "create default", def.Repository.EncryptionConfiguration, ecrtypes.EncryptionTypeAes256, "")
+
+	// KMS without an explicit key → KMS with a synthesized (non-empty) key ARN.
+	kms, err := client.CreateRepository(ctx, &awsecr.CreateRepositoryInput{
+		RepositoryName: aws.String("enc-kms"),
+		EncryptionConfiguration: &ecrtypes.EncryptionConfiguration{
+			EncryptionType: ecrtypes.EncryptionTypeKms,
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateRepository(KMS): %v", err)
+	}
+
+	kmsKey := aws.ToString(kms.Repository.EncryptionConfiguration.KmsKey)
+	if kms.Repository.EncryptionConfiguration.EncryptionType != ecrtypes.EncryptionTypeKms || kmsKey == "" {
+		t.Fatalf("CreateRepository(KMS) enc = %+v, want KMS with non-empty kmsKey",
+			kms.Repository.EncryptionConfiguration)
+	}
+
+	// The values must survive DescribeRepositories unchanged (the refresh path).
+	desc, err := client.DescribeRepositories(ctx, &awsecr.DescribeRepositoriesInput{
+		RepositoryNames: []string{"enc-default", "enc-kms"},
+	})
+	if err != nil {
+		t.Fatalf("DescribeRepositories: %v", err)
+	}
+
+	for i := range desc.Repositories {
+		switch aws.ToString(desc.Repositories[i].RepositoryName) {
+		case "enc-default":
+			assertEnc(t, "describe default", desc.Repositories[i].EncryptionConfiguration,
+				ecrtypes.EncryptionTypeAes256, "")
+		case "enc-kms":
+			assertEnc(t, "describe kms", desc.Repositories[i].EncryptionConfiguration,
+				ecrtypes.EncryptionTypeKms, kmsKey)
+		}
+	}
+}
+
+// assertEnc fails unless enc reports the wanted type and key.
+func assertEnc(t *testing.T, where string, enc *ecrtypes.EncryptionConfiguration,
+	wantType ecrtypes.EncryptionType, wantKey string,
+) {
+	t.Helper()
+
+	if enc == nil {
+		t.Fatalf("%s: encryptionConfiguration is nil, want %s", where, wantType)
+	}
+
+	if enc.EncryptionType != wantType {
+		t.Fatalf("%s: encryptionType = %q, want %q", where, enc.EncryptionType, wantType)
+	}
+
+	if aws.ToString(enc.KmsKey) != wantKey {
+		t.Fatalf("%s: kmsKey = %q, want %q", where, aws.ToString(enc.KmsKey), wantKey)
+	}
+}
+
 // TestSDKECRPutImageTagMutabilityMissingRepo asserts the operation surfaces
 // RepositoryNotFoundException for an unknown repository.
 func TestSDKECRPutImageTagMutabilityMissingRepo(t *testing.T) {

@@ -19,7 +19,7 @@ func TestMissingArrayElementsRecursesPerElement(t *testing.T) {
 		map[string]any{"lun": float64(1), "caching": "None"},
 	}
 
-	got := missingArrayElements(req, resp)
+	got := missingArrayElements(req, resp, "")
 
 	want := []any{
 		map[string]any{"writeAcceleratorEnabled": true},
@@ -37,7 +37,7 @@ func TestMissingArrayElementsNoUnmodeled(t *testing.T) {
 	req := []any{map[string]any{"lun": float64(0), "caching": "ReadOnly"}}
 	resp := []any{map[string]any{"lun": float64(0), "caching": "ReadOnly"}}
 
-	if got := missingArrayElements(req, resp); got != nil {
+	if got := missingArrayElements(req, resp, ""); got != nil {
 		t.Fatalf("missingArrayElements = %#v, want nil", got)
 	}
 }
@@ -58,7 +58,7 @@ func TestMissingArrayElementsLengthMismatch(t *testing.T) {
 		map[string]any{"lun": float64(0)},
 	}
 
-	got := missingArrayElements(reqLong, respShort)
+	got := missingArrayElements(reqLong, respShort, "")
 	if len(got) != 1 {
 		t.Fatalf("request longer than response: got len %d, want 1 (no phantom elements)", len(got))
 	}
@@ -75,7 +75,7 @@ func TestMissingArrayElementsLengthMismatch(t *testing.T) {
 		map[string]any{"lun": float64(1)},
 	}
 
-	got = missingArrayElements(reqShort, respLong)
+	got = missingArrayElements(reqShort, respLong, "")
 	if len(got) != 1 || !reflect.DeepEqual(got[0], map[string]any{"extra": "keep0"}) {
 		t.Fatalf("request shorter than response: got = %#v, want [{extra:keep0}]", got)
 	}
@@ -86,15 +86,15 @@ func TestMissingArrayElementsLengthMismatch(t *testing.T) {
 // the handler (the wholly-unmodeled scalar array is captured verbatim by the
 // caller's !present branch, not here), and empty inputs yield nil.
 func TestMissingArrayElementsScalarsAndNil(t *testing.T) {
-	if got := missingArrayElements([]any{"a", "b"}, []any{"a", "b"}); got != nil {
+	if got := missingArrayElements([]any{"a", "b"}, []any{"a", "b"}, ""); got != nil {
 		t.Fatalf("scalar arrays: got %#v, want nil", got)
 	}
 
-	if got := missingArrayElements(nil, nil); got != nil {
+	if got := missingArrayElements(nil, nil, ""); got != nil {
 		t.Fatalf("nil arrays: got %#v, want nil", got)
 	}
 
-	if got := missingArrayElements([]any{}, []any{map[string]any{"x": 1}}); got != nil {
+	if got := missingArrayElements([]any{}, []any{map[string]any{"x": 1}}, ""); got != nil {
 		t.Fatalf("empty request: got %#v, want nil", got)
 	}
 }
@@ -187,7 +187,7 @@ func TestMissingPropertiesArrayEndToEnd(t *testing.T) {
 		},
 	}
 
-	unmodeled := missingProperties(req, resp)
+	unmodeled := missingProperties(req, resp, "")
 
 	merged := mergeProperties(resp, unmodeled)
 

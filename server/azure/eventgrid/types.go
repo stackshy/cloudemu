@@ -20,6 +20,14 @@ const (
 	actionListKeys              = "listKeys"
 	subscriptionResourceType    = "Microsoft.EventGrid/topics/eventSubscriptions"
 	subscriptionProvisionedGood = "Succeeded"
+	// defaultEventDeliverySchema and the retryPolicy defaults are the read-only
+	// values Event Grid reports for an event subscription created without them.
+	// A subscription created without a retry policy still reports 30 delivery
+	// attempts / 1440-minute event TTL on GET, and one created without an
+	// explicit delivery schema still reports EventGridSchema.
+	defaultEventDeliverySchema = "EventGridSchema"
+	defaultMaxDeliveryAttempts = 30
+	defaultEventTTLMinutes     = 1440
 )
 
 // topicProperties carries the read-only fields the SDK expects on a topic. The

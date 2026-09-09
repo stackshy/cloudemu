@@ -169,6 +169,14 @@ func (m *Mock) EnableKeyRotation(_ context.Context, keyID string, rotationPeriod
 			return driver.ErrUnsupportedOperation
 		}
 
+		// A rotatable (symmetric, AWS_KMS-origin) key still must be in a usable
+		// state: a disabled key reports DisabledException and a pending-deletion
+		// key reports KMSInvalidStateException, matching real KMS's key-state
+		// table. Real KMS silently no-ops none of these — it rejects them.
+		if err := requireUsable(kd); err != nil {
+			return err
+		}
+
 		kd.rotationEnabled = true
 		kd.rotationPeriodDays = days
 
@@ -179,6 +187,14 @@ func (m *Mock) EnableKeyRotation(_ context.Context, keyID string, rotationPeriod
 // DisableKeyRotation turns off automatic rotation.
 func (m *Mock) DisableKeyRotation(_ context.Context, keyID string) error {
 	return m.mutateKey(keyID, func(kd *keyData) error {
+		if kd.meta.KeySpec != driver.SpecSymmetricDefault || kd.meta.Origin == driver.OriginExternal {
+			return driver.ErrUnsupportedOperation
+		}
+
+		if err := requireUsable(kd); err != nil {
+			return err
+		}
+
 		kd.rotationEnabled = false
 
 		return nil
@@ -232,6 +248,10 @@ func (m *Mock) RotateKeyOnDemand(_ context.Context, keyID string) error {
 	return m.mutateKey(keyID, func(kd *keyData) error {
 		if kd.meta.KeySpec != driver.SpecSymmetricDefault || kd.meta.Origin == driver.OriginExternal {
 			return driver.ErrUnsupportedOperation
+		}
+
+		if err := requireUsable(kd); err != nil {
+			return err
 		}
 
 		mat, err := generateMaterial(kd.meta.KeySpec)

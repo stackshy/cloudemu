@@ -2,6 +2,7 @@ package costexplorer_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
 	"strconv"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	ce "github.com/aws/aws-sdk-go-v2/service/costexplorer"
 	cetypes "github.com/aws/aws-sdk-go-v2/service/costexplorer/types"
+	"github.com/aws/smithy-go"
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
@@ -148,6 +150,53 @@ func TestSDKGetCostForecast(t *testing.T) {
 
 	if len(out.ForecastResultsByTime) != 3 {
 		t.Fatalf("ForecastResultsByTime = %d, want 3 months", len(out.ForecastResultsByTime))
+	}
+}
+
+// TestSDKGetCostForecastRejectsHourly proves GetCostForecast rejects the
+// HOURLY granularity with a ValidationException: unlike GetCostAndUsage, AWS
+// only supports DAILY and MONTHLY forecasts.
+func TestSDKGetCostForecastRejectsHourly(t *testing.T) {
+	ctx := context.Background()
+	c := newCostExplorerClient(t)
+
+	_, err := c.GetCostForecast(ctx, &ce.GetCostForecastInput{
+		Granularity: cetypes.GranularityHourly,
+		Metric:      cetypes.MetricUnblendedCost,
+		TimePeriod:  &cetypes.DateInterval{Start: aws.String("2024-01-01"), End: aws.String("2024-01-02")},
+	})
+	if err == nil {
+		t.Fatal("expected error for HOURLY forecast granularity")
+	}
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ValidationException" {
+		t.Fatalf("HOURLY forecast error = %v, want ValidationException", err)
+	}
+}
+
+// TestSDKGetCostAndUsageUngroupedGroupsIsEmpty proves an ungrouped
+// GetCostAndUsage result carries an empty Groups list (matching real Cost
+// Explorer), not a nil/absent one.
+func TestSDKGetCostAndUsageUngroupedGroupsIsEmpty(t *testing.T) {
+	ctx := context.Background()
+	c := newCostExplorerClient(t)
+
+	out, err := c.GetCostAndUsage(ctx, &ce.GetCostAndUsageInput{
+		Granularity: cetypes.GranularityMonthly,
+		Metrics:     []string{"UnblendedCost"},
+		TimePeriod:  &cetypes.DateInterval{Start: aws.String("2024-01-01"), End: aws.String("2024-02-01")},
+	})
+	if err != nil {
+		t.Fatalf("GetCostAndUsage: %v", err)
+	}
+
+	if len(out.ResultsByTime) != 1 {
+		t.Fatalf("ResultsByTime = %d, want 1", len(out.ResultsByTime))
+	}
+
+	if out.ResultsByTime[0].Groups == nil {
+		t.Fatal("ungrouped ResultByTime.Groups is nil, want an empty (non-nil) slice")
 	}
 }
 

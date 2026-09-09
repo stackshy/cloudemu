@@ -100,6 +100,158 @@ func TestSDKSQSRedriveAllowPolicyOnCreate(t *testing.T) {
 	}
 }
 
+// TestSDKSQSEncryptionAttributesRoundTrip confirms the server-side-encryption
+// attributes (SqsManagedSseEnabled for SSE-SQS, and KmsMasterKeyId /
+// KmsDataKeyReusePeriodSeconds for SSE-KMS) persist through CreateQueue and are
+// echoed by GetQueueAttributes(All), matching real SQS. terraform-provider-aws
+// reads these on every refresh, so a dropped attribute is perpetual drift.
+func TestSDKSQSEncryptionAttributesRoundTrip(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	// SSE-SQS queue.
+	sse, err := client.CreateQueue(ctx, &awssqs.CreateQueueInput{
+		QueueName: aws.String("sse-sqs-q"),
+		Attributes: map[string]string{
+			string(sqstypes.QueueAttributeNameSqsManagedSseEnabled): "true",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateQueue (SSE-SQS): %v", err)
+	}
+
+	got, err := client.GetQueueAttributes(ctx, &awssqs.GetQueueAttributesInput{
+		QueueUrl:       sse.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll},
+	})
+	if err != nil {
+		t.Fatalf("GetQueueAttributes (SSE-SQS): %v", err)
+	}
+
+	if v := got.Attributes["SqsManagedSseEnabled"]; v != "true" {
+		t.Fatalf("SqsManagedSseEnabled = %q, want true", v)
+	}
+
+	// SSE-KMS queue: KmsMasterKeyId set, so SqsManagedSseEnabled must read false
+	// and KmsDataKeyReusePeriodSeconds must round-trip.
+	kms, err := client.CreateQueue(ctx, &awssqs.CreateQueueInput{
+		QueueName: aws.String("sse-kms-q"),
+		Attributes: map[string]string{
+			string(sqstypes.QueueAttributeNameKmsMasterKeyId):               "alias/aws/sqs",
+			string(sqstypes.QueueAttributeNameKmsDataKeyReusePeriodSeconds): "600",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateQueue (SSE-KMS): %v", err)
+	}
+
+	got, err = client.GetQueueAttributes(ctx, &awssqs.GetQueueAttributesInput{
+		QueueUrl:       kms.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll},
+	})
+	if err != nil {
+		t.Fatalf("GetQueueAttributes (SSE-KMS): %v", err)
+	}
+
+	if v := got.Attributes["KmsMasterKeyId"]; v != "alias/aws/sqs" {
+		t.Fatalf("KmsMasterKeyId = %q, want alias/aws/sqs", v)
+	}
+
+	if v := got.Attributes["KmsDataKeyReusePeriodSeconds"]; v != "600" {
+		t.Fatalf("KmsDataKeyReusePeriodSeconds = %q, want 600", v)
+	}
+
+	if v := got.Attributes["SqsManagedSseEnabled"]; v != "false" {
+		t.Fatalf("SqsManagedSseEnabled = %q, want false (mutually exclusive with SSE-KMS)", v)
+	}
+}
+
+// TestSDKSQSFifoThroughputAttributesRoundTrip confirms the FIFO high-throughput
+// attributes DeduplicationScope and FifoThroughputLimit persist through
+// CreateQueue and are echoed only for FIFO queues, with the SQS defaults
+// (queue / perQueue) applied when unset. Matches real SQS.
+func TestSDKSQSFifoThroughputAttributesRoundTrip(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	ht, err := client.CreateQueue(ctx, &awssqs.CreateQueueInput{
+		QueueName: aws.String("ht-q.fifo"),
+		Attributes: map[string]string{
+			string(sqstypes.QueueAttributeNameFifoQueue):           "true",
+			string(sqstypes.QueueAttributeNameDeduplicationScope):  "messageGroup",
+			string(sqstypes.QueueAttributeNameFifoThroughputLimit): "perMessageGroupId",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateQueue (HT FIFO): %v", err)
+	}
+
+	got, err := client.GetQueueAttributes(ctx, &awssqs.GetQueueAttributesInput{
+		QueueUrl:       ht.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll},
+	})
+	if err != nil {
+		t.Fatalf("GetQueueAttributes (HT FIFO): %v", err)
+	}
+
+	if v := got.Attributes["DeduplicationScope"]; v != "messageGroup" {
+		t.Fatalf("DeduplicationScope = %q, want messageGroup", v)
+	}
+
+	if v := got.Attributes["FifoThroughputLimit"]; v != "perMessageGroupId" {
+		t.Fatalf("FifoThroughputLimit = %q, want perMessageGroupId", v)
+	}
+
+	// A default FIFO queue reports the SQS defaults.
+	def, err := client.CreateQueue(ctx, &awssqs.CreateQueueInput{
+		QueueName: aws.String("def-q.fifo"),
+		Attributes: map[string]string{
+			string(sqstypes.QueueAttributeNameFifoQueue): "true",
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateQueue (default FIFO): %v", err)
+	}
+
+	got, err = client.GetQueueAttributes(ctx, &awssqs.GetQueueAttributesInput{
+		QueueUrl:       def.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll},
+	})
+	if err != nil {
+		t.Fatalf("GetQueueAttributes (default FIFO): %v", err)
+	}
+
+	if v := got.Attributes["DeduplicationScope"]; v != "queue" {
+		t.Fatalf("default DeduplicationScope = %q, want queue", v)
+	}
+
+	if v := got.Attributes["FifoThroughputLimit"]; v != "perQueue" {
+		t.Fatalf("default FifoThroughputLimit = %q, want perQueue", v)
+	}
+
+	// A standard queue must not report the FIFO-only attributes.
+	std, err := client.CreateQueue(ctx, &awssqs.CreateQueueInput{QueueName: aws.String("std-noht-q")})
+	if err != nil {
+		t.Fatalf("CreateQueue (standard): %v", err)
+	}
+
+	got, err = client.GetQueueAttributes(ctx, &awssqs.GetQueueAttributesInput{
+		QueueUrl:       std.QueueUrl,
+		AttributeNames: []sqstypes.QueueAttributeName{sqstypes.QueueAttributeNameAll},
+	})
+	if err != nil {
+		t.Fatalf("GetQueueAttributes (standard): %v", err)
+	}
+
+	if _, ok := got.Attributes["DeduplicationScope"]; ok {
+		t.Fatal("standard queue must not report DeduplicationScope")
+	}
+
+	if _, ok := got.Attributes["FifoThroughputLimit"]; ok {
+		t.Fatal("standard queue must not report FifoThroughputLimit")
+	}
+}
+
 // TestSDKSQSAWSTraceHeaderSystemAttribute confirms SendMessage accepts the
 // AWSTraceHeader message system attribute, returns MD5OfMessageSystemAttributes,
 // and ReceiveMessage returns AWSTraceHeader in the message Attributes map when

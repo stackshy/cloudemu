@@ -118,17 +118,15 @@ func clusterToWire(c *driver.Cluster) map[string]json.RawMessage {
 		"creationTime":        timeRFC3339(c.CreationTime),
 	}
 
-	if c.KafkaVersion != "" {
-		base["currentBrokerSoftwareInfo"] = map[string]any{"kafkaVersion": c.KafkaVersion}
+	if bsi := currentBrokerSoftwareInfo(c); len(bsi) > 0 {
+		base["currentBrokerSoftwareInfo"] = bsi
 	}
 
 	if c.StorageMode != "" {
 		base["storageMode"] = c.StorageMode
 	}
 
-	if c.EnhancedMonitoring != "" {
-		base["enhancedMonitoring"] = c.EnhancedMonitoring
-	}
+	base["enhancedMonitoring"] = enhancedMonitoringOrDefault(c)
 
 	if c.Tags != nil {
 		base["tags"] = c.Tags
@@ -209,6 +207,58 @@ func defaultEncryptionInfo() map[string]any {
 	}
 }
 
+// enhancedMonitoringOrDefault returns the cluster's EnhancedMonitoring level,
+// falling back to MSK's DEFAULT. Real DescribeCluster always surfaces this enum
+// (never omits it), so a cluster created without one still reports "DEFAULT".
+func enhancedMonitoringOrDefault(c *driver.Cluster) string {
+	if c.EnhancedMonitoring != "" {
+		return c.EnhancedMonitoring
+	}
+
+	return "DEFAULT"
+}
+
+// currentBrokerSoftwareInfo renders the ClusterInfo.CurrentBrokerSoftwareInfo
+// block: the running Kafka version plus, when an MSK configuration is applied to
+// the cluster, its configurationArn/configurationRevision. Terraform's
+// aws_msk_cluster reads its configuration_info block from these fields, so
+// surfacing them here is what keeps a configured cluster drift-free.
+func currentBrokerSoftwareInfo(c *driver.Cluster) map[string]any {
+	info := map[string]any{}
+
+	if c.KafkaVersion != "" {
+		info["kafkaVersion"] = c.KafkaVersion
+	}
+
+	if arn, rev, ok := appliedConfiguration(c.RawOptions); ok {
+		info["configurationArn"] = arn
+		info["configurationRevision"] = rev
+	}
+
+	return info
+}
+
+// appliedConfiguration extracts the arn/revision of the MSK configuration applied
+// to a cluster from its stored configurationInfo raw block (set at create or by
+// UpdateClusterConfiguration), reporting whether one is present.
+func appliedConfiguration(raw map[string]json.RawMessage) (arn string, revision int64, ok bool) {
+	blk, present := raw["configurationInfo"]
+	if !present || len(blk) == 0 {
+		return "", 0, false
+	}
+
+	var ci struct {
+		Arn      string `json:"arn"`
+		Revision int64  `json:"revision"`
+	}
+
+	if err := json.Unmarshal(blk, &ci); err != nil || ci.Arn == "" {
+		return "", 0, false
+	}
+
+	return ci.Arn, ci.Revision, true
+}
+
 // clusterToWireV2 renders a driver cluster as the v2 clusterInfo (types.Cluster)
 // wire shape: a provisioned or serverless block nested under the common
 // top-level fields. A v1-created cluster renders here too (same store).
@@ -241,17 +291,15 @@ func provisionedBlock(c *driver.Cluster) map[string]any {
 		"numberOfBrokerNodes": c.NumberOfBrokerNodes,
 	}
 
-	if c.KafkaVersion != "" {
-		block["currentBrokerSoftwareInfo"] = map[string]any{"kafkaVersion": c.KafkaVersion}
+	if bsi := currentBrokerSoftwareInfo(c); len(bsi) > 0 {
+		block["currentBrokerSoftwareInfo"] = bsi
 	}
 
 	if c.StorageMode != "" {
 		block["storageMode"] = c.StorageMode
 	}
 
-	if c.EnhancedMonitoring != "" {
-		block["enhancedMonitoring"] = c.EnhancedMonitoring
-	}
+	block["enhancedMonitoring"] = enhancedMonitoringOrDefault(c)
 
 	if c.BrokerNodeGroupInfo != nil {
 		block["brokerNodeGroupInfo"] = bngToWire(c.BrokerNodeGroupInfo)

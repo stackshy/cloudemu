@@ -762,6 +762,14 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 		}
 	}
 
+	// EC2 drops a subnet's route-table associations with the subnet; a stale
+	// one would make DeleteRouteTable refuse a table that is really free.
+	for assocID, a := range m.rtAssocs.All() {
+		if a.SubnetID == id && !a.Main {
+			m.rtAssocs.Delete(assocID)
+		}
+	}
+
 	return nil
 }
 

@@ -521,6 +521,80 @@ func TestSDKDescribeStateMachineConfigs(t *testing.T) {
 	}
 }
 
+// TestSDKLoggingTracingRoundTrip guards that a loggingConfiguration and
+// tracingConfiguration supplied to CreateStateMachine (and later mutated by
+// UpdateStateMachine) survive DescribeStateMachine verbatim. A wire layer that
+// drops these on the way in makes DescribeStateMachine report the OFF/disabled
+// defaults, which shows up as permanent Terraform drift on every plan.
+func TestSDKLoggingTracingRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newSFNClient(t)
+
+	logDest := "arn:aws:logs:us-east-1:123456789012:log-group:/aws/sfn/rt:*"
+	out, err := c.CreateStateMachine(ctx, &awssfn.CreateStateMachineInput{
+		Name:       aws.String("logtrace"),
+		Definition: aws.String(definition),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/svc"),
+		LoggingConfiguration: &sfntypes.LoggingConfiguration{
+			Level:                sfntypes.LogLevelAll,
+			IncludeExecutionData: true,
+			Destinations: []sfntypes.LogDestination{{
+				CloudWatchLogsLogGroup: &sfntypes.CloudWatchLogsLogGroup{LogGroupArn: aws.String(logDest)},
+			}},
+		},
+		TracingConfiguration: &sfntypes.TracingConfiguration{Enabled: true},
+	})
+	if err != nil {
+		t.Fatalf("CreateStateMachine: %v", err)
+	}
+
+	arn := aws.ToString(out.StateMachineArn)
+
+	desc, err := c.DescribeStateMachine(ctx, &awssfn.DescribeStateMachineInput{StateMachineArn: aws.String(arn)})
+	if err != nil {
+		t.Fatalf("DescribeStateMachine: %v", err)
+	}
+
+	if desc.LoggingConfiguration.Level != sfntypes.LogLevelAll {
+		t.Fatalf("logging level = %s, want ALL", desc.LoggingConfiguration.Level)
+	}
+
+	if !desc.LoggingConfiguration.IncludeExecutionData {
+		t.Fatal("includeExecutionData = false, want true")
+	}
+
+	if len(desc.LoggingConfiguration.Destinations) != 1 ||
+		aws.ToString(desc.LoggingConfiguration.Destinations[0].CloudWatchLogsLogGroup.LogGroupArn) != logDest {
+		t.Fatalf("logging destinations not round-tripped: %+v", desc.LoggingConfiguration.Destinations)
+	}
+
+	if desc.TracingConfiguration == nil || !desc.TracingConfiguration.Enabled {
+		t.Fatal("tracing enabled = false, want true")
+	}
+
+	// UpdateStateMachine carries new logging/tracing config too.
+	if _, err = c.UpdateStateMachine(ctx, &awssfn.UpdateStateMachineInput{
+		StateMachineArn:      aws.String(arn),
+		LoggingConfiguration: &sfntypes.LoggingConfiguration{Level: sfntypes.LogLevelError, IncludeExecutionData: false},
+		TracingConfiguration: &sfntypes.TracingConfiguration{Enabled: false},
+	}); err != nil {
+		t.Fatalf("UpdateStateMachine: %v", err)
+	}
+
+	desc2, err := c.DescribeStateMachine(ctx, &awssfn.DescribeStateMachineInput{StateMachineArn: aws.String(arn)})
+	if err != nil {
+		t.Fatalf("DescribeStateMachine after update: %v", err)
+	}
+
+	if desc2.LoggingConfiguration.Level != sfntypes.LogLevelError {
+		t.Fatalf("post-update logging level = %s, want ERROR", desc2.LoggingConfiguration.Level)
+	}
+
+	if desc2.TracingConfiguration.Enabled {
+		t.Fatal("post-update tracing enabled = true, want false")
+	}
+}
+
 func TestSDKListStateMachinesPaginates(t *testing.T) {
 	ctx := context.Background()
 	c := newSFNClient(t)

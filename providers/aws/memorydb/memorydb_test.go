@@ -329,12 +329,21 @@ func TestACLUserLinkage(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	if _, err := m.CreateUser(ctx, mdbdriver.CreateUserConfig{Name: "u1", AccessString: "on ~* +@all"}); err != nil {
-		t.Fatalf("CreateUser: %v", err)
+	user, err := m.CreateUser(ctx, mdbdriver.CreateUserConfig{Name: "u1", AccessString: "on ~* +@all"})
+	requireNoError(t, err)
+
+	// A user's terminal status is "active", not "available" (MemoryDB reserves
+	// "available" for clusters/snapshots); the Terraform user waiter requires it.
+	if user.Status != mdbdriver.StatusActive {
+		t.Fatalf("user status = %q, want %q", user.Status, mdbdriver.StatusActive)
 	}
 
 	acl, err := m.CreateACL(ctx, "acl1", []string{"u1"}, nil)
 	requireNoError(t, err)
+
+	if acl.Status != mdbdriver.StatusActive {
+		t.Fatalf("ACL status = %q, want %q", acl.Status, mdbdriver.StatusActive)
+	}
 
 	if len(acl.UserNames) != 1 {
 		t.Fatalf("ACL users: %+v", acl.UserNames)
@@ -364,8 +373,19 @@ func TestACLUserLinkage(t *testing.T) {
 		t.Fatalf("UpdateACL: %v", err)
 	}
 
-	if _, err := m.DeleteUser(ctx, "u1"); err != nil {
+	deleted, err := m.DeleteUser(ctx, "u1")
+	if err != nil {
 		t.Errorf("delete user after ACL removal: %v", err)
+	} else if deleted.Status != mdbdriver.StatusDeleting {
+		t.Errorf("delete-user status = %q, want %q", deleted.Status, mdbdriver.StatusDeleting)
+	}
+
+	// The default open-access ACL a real account ships with is reported "active".
+	acls, err := m.DescribeACLs(ctx, []string{"open-access"})
+	requireNoError(t, err)
+
+	if len(acls) != 1 || acls[0].Status != mdbdriver.StatusActive {
+		t.Fatalf("open-access ACL = %+v, want status %q", acls, mdbdriver.StatusActive)
 	}
 }
 

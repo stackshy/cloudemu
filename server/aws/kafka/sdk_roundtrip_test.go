@@ -149,6 +149,129 @@ func TestSDKDescribeClusterEncryptionDefault(t *testing.T) {
 	}
 }
 
+// TestSDKDescribeClusterEnhancedMonitoringDefault proves DescribeCluster always
+// returns EnhancedMonitoring (real MSK reports the DEFAULT level when the field
+// was not set), and a caller-set level round-trips unchanged. Without the
+// default a Terraform aws_msk_cluster reading enhanced_monitoring drifts.
+func TestSDKDescribeClusterEnhancedMonitoringDefault(t *testing.T) {
+	ctx := context.Background()
+	c := newKafkaClient(t)
+
+	// Cluster created without EnhancedMonitoring → describe reports DEFAULT.
+	unset, err := c.CreateCluster(ctx, &awskafka.CreateClusterInput{
+		ClusterName:         aws.String("mon-default"),
+		KafkaVersion:        aws.String("3.6.0"),
+		NumberOfBrokerNodes: aws.Int32(3),
+		BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+			ClientSubnets: []string{"subnet-1", "subnet-2", "subnet-3"},
+			InstanceType:  aws.String("kafka.m5.large"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCluster(unset): %v", err)
+	}
+
+	descUnset, err := c.DescribeCluster(ctx, &awskafka.DescribeClusterInput{ClusterArn: unset.ClusterArn})
+	if err != nil {
+		t.Fatalf("DescribeCluster(unset): %v", err)
+	}
+	if descUnset.ClusterInfo.EnhancedMonitoring != kafkatypes.EnhancedMonitoringDefault {
+		t.Fatalf("EnhancedMonitoring = %q, want DEFAULT", descUnset.ClusterInfo.EnhancedMonitoring)
+	}
+
+	// A caller-set level is preserved, not clobbered by the default.
+	set, err := c.CreateCluster(ctx, &awskafka.CreateClusterInput{
+		ClusterName:         aws.String("mon-perbroker"),
+		KafkaVersion:        aws.String("3.6.0"),
+		NumberOfBrokerNodes: aws.Int32(3),
+		EnhancedMonitoring:  kafkatypes.EnhancedMonitoringPerBroker,
+		BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+			ClientSubnets: []string{"subnet-1", "subnet-2", "subnet-3"},
+			InstanceType:  aws.String("kafka.m5.large"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCluster(set): %v", err)
+	}
+
+	descSet, err := c.DescribeCluster(ctx, &awskafka.DescribeClusterInput{ClusterArn: set.ClusterArn})
+	if err != nil {
+		t.Fatalf("DescribeCluster(set): %v", err)
+	}
+	if descSet.ClusterInfo.EnhancedMonitoring != kafkatypes.EnhancedMonitoringPerBroker {
+		t.Fatalf("EnhancedMonitoring = %q, want PER_BROKER", descSet.ClusterInfo.EnhancedMonitoring)
+	}
+}
+
+// TestSDKClusterConfigurationInfoRoundTrip proves a cluster's applied
+// configuration surfaces on DescribeCluster under
+// CurrentBrokerSoftwareInfo.{ConfigurationArn,ConfigurationRevision} — where the
+// Terraform provider reads configuration_info — and that a cluster created
+// without a configuration reports no ConfigurationArn (so it does not drift).
+func TestSDKClusterConfigurationInfoRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	c := newKafkaClient(t)
+
+	cfg, err := c.CreateConfiguration(ctx, &awskafka.CreateConfigurationInput{
+		Name:             aws.String("cluster-cfg"),
+		KafkaVersions:    []string{"3.6.0"},
+		ServerProperties: []byte("auto.create.topics.enable=true"),
+	})
+	if err != nil {
+		t.Fatalf("CreateConfiguration: %v", err)
+	}
+
+	withCfg, err := c.CreateCluster(ctx, &awskafka.CreateClusterInput{
+		ClusterName:         aws.String("cfg-cluster"),
+		KafkaVersion:        aws.String("3.6.0"),
+		NumberOfBrokerNodes: aws.Int32(3),
+		ConfigurationInfo:   &kafkatypes.ConfigurationInfo{Arn: cfg.Arn, Revision: aws.Int64(1)},
+		BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+			ClientSubnets: []string{"subnet-1", "subnet-2", "subnet-3"},
+			InstanceType:  aws.String("kafka.m5.large"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCluster(with cfg): %v", err)
+	}
+
+	desc, err := c.DescribeCluster(ctx, &awskafka.DescribeClusterInput{ClusterArn: withCfg.ClusterArn})
+	if err != nil {
+		t.Fatalf("DescribeCluster(with cfg): %v", err)
+	}
+
+	bsi := desc.ClusterInfo.CurrentBrokerSoftwareInfo
+	if bsi == nil {
+		t.Fatalf("CurrentBrokerSoftwareInfo nil, want the applied config")
+	}
+	if aws.ToString(bsi.ConfigurationArn) != aws.ToString(cfg.Arn) || aws.ToInt64(bsi.ConfigurationRevision) != 1 {
+		t.Fatalf("config info = arn %q rev %d, want %q rev 1",
+			aws.ToString(bsi.ConfigurationArn), aws.ToInt64(bsi.ConfigurationRevision), aws.ToString(cfg.Arn))
+	}
+
+	// A cluster created without a configuration must not report a bogus ARN.
+	noCfg, err := c.CreateCluster(ctx, &awskafka.CreateClusterInput{
+		ClusterName:         aws.String("nocfg-cluster"),
+		KafkaVersion:        aws.String("3.6.0"),
+		NumberOfBrokerNodes: aws.Int32(3),
+		BrokerNodeGroupInfo: &kafkatypes.BrokerNodeGroupInfo{
+			ClientSubnets: []string{"subnet-1", "subnet-2", "subnet-3"},
+			InstanceType:  aws.String("kafka.m5.large"),
+		},
+	})
+	if err != nil {
+		t.Fatalf("CreateCluster(no cfg): %v", err)
+	}
+
+	descNo, err := c.DescribeCluster(ctx, &awskafka.DescribeClusterInput{ClusterArn: noCfg.ClusterArn})
+	if err != nil {
+		t.Fatalf("DescribeCluster(no cfg): %v", err)
+	}
+	if bsi := descNo.ClusterInfo.CurrentBrokerSoftwareInfo; bsi != nil && aws.ToString(bsi.ConfigurationArn) != "" {
+		t.Fatalf("no-config cluster reports ConfigurationArn %q, want empty", aws.ToString(bsi.ConfigurationArn))
+	}
+}
+
 func TestSDKConfigurationLifecycle(t *testing.T) {
 	ctx := context.Background()
 	c := newKafkaClient(t)

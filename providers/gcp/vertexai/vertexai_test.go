@@ -305,3 +305,97 @@ func TestChildListingPrefixDelimiter(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, f10, 2)
 }
+
+// TestEndpointHonorsClientID guards that a client-supplied endpoint id (the
+// endpointId query param) becomes the resource name, so Terraform can read the
+// endpoint back at the id it chose instead of a server-assigned one.
+func TestEndpointHonorsClientID(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, ep, err := m.CreateEndpoint(ctx, driver.EndpointConfig{
+		Location: "us-central1", EndpointID: "1234567890", DisplayName: "ep",
+		Network: "projects/proj/global/networks/vpc1",
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "projects/proj/locations/us-central1/endpoints/1234567890", ep.Name)
+	assert.Equal(t, "projects/proj/global/networks/vpc1", ep.Network)
+	assert.NotEmpty(t, ep.Etag)
+
+	got, err := m.GetEndpoint(ctx, ep.Name)
+	require.NoError(t, err)
+	assert.Equal(t, "ep", got.DisplayName)
+}
+
+// TestPatchEndpointMaskSemantics guards that PATCH updates only masked fields
+// and never mutates a prior snapshot in place.
+func TestPatchEndpointMaskSemantics(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, ep, err := m.CreateEndpoint(ctx, driver.EndpointConfig{
+		Location: "us-central1", EndpointID: "42", DisplayName: "orig",
+		Description: "d0", Labels: map[string]string{"env": "dev"},
+	})
+	require.NoError(t, err)
+
+	snap, err := m.GetEndpoint(ctx, ep.Name)
+	require.NoError(t, err)
+
+	newName := "renamed"
+	updated, err := m.PatchEndpoint(ctx, ep.Name, driver.EndpointUpdate{
+		DisplayName: &newName,
+		Labels:      map[string]string{"env": "prod"},
+		SetLabels:   true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "renamed", updated.DisplayName)
+	assert.Equal(t, "prod", updated.Labels["env"])
+	assert.Equal(t, "d0", updated.Description, "unmasked description must be preserved")
+
+	assert.Equal(t, "orig", snap.DisplayName, "prior snapshot must be unaffected by PatchEndpoint")
+}
+
+// TestFeaturestoreLabelsAndPatch guards that a featurestore round-trips its
+// labels and that PatchFeaturestore returns a done Operation (real Vertex models
+// UpdateFeaturestore as an LRO) while touching only masked fields.
+func TestFeaturestoreLabelsAndPatch(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, fs, err := m.CreateFeaturestore(ctx, driver.FeaturestoreConfig{
+		Location: "us-central1", FeaturestoreID: "fs1", OnlineNodeCount: 2,
+		Labels: map[string]string{"env": "dev"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "dev", fs.Labels["env"])
+	assert.NotEmpty(t, fs.Etag)
+
+	count := 5
+	op, updated, err := m.PatchFeaturestore(ctx, fs.Name, driver.FeaturestoreUpdate{OnlineNodeCount: &count})
+	require.NoError(t, err)
+	require.NotNil(t, op)
+	assert.True(t, op.Done)
+	assert.Equal(t, 5, updated.OnlineNodeCount)
+	assert.Equal(t, "dev", updated.Labels["env"], "unmasked labels must be preserved")
+}
+
+// TestPatchDatasetLabels guards that a labels-only mask updates labels without
+// clearing the display name.
+func TestPatchDatasetLabels(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, ds, err := m.CreateDataset(ctx, driver.DatasetConfig{
+		Location: "us-central1", DisplayName: "keep", MetadataSchemaURI: "gs://x.yaml",
+	})
+	require.NoError(t, err)
+
+	updated, err := m.PatchDataset(ctx, ds.Name, driver.DatasetUpdate{
+		Labels:    map[string]string{"team": "ml"},
+		SetLabels: true,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ml", updated.Labels["team"])
+	assert.Equal(t, "keep", updated.DisplayName, "display name must be preserved when only labels are masked")
+}

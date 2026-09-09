@@ -24,9 +24,13 @@ const (
 // Family is C (Basic/Standard) or P (Premium), and Capacity is the size unit —
 // all recorded on the driver so the SDK round-trips the exact SKU it sent.
 type skuJSON struct {
-	Name     string `json:"name,omitempty"`
-	Family   string `json:"family,omitempty"`
-	Capacity int    `json:"capacity,omitempty"`
+	Name   string `json:"name,omitempty"`
+	Family string `json:"family,omitempty"`
+	// Capacity has no omitempty: real Azure always returns the SKU capacity, and
+	// capacity 0 is the valid Basic/Standard C0 tier (the cheapest, and the
+	// default in many azurerm_redis_cache configs). Omitting a 0 would make a C0
+	// cache read back without a capacity, which azurerm reads as a drift source.
+	Capacity int `json:"capacity"`
 }
 
 // redisProperties mirrors the subset of armredis Properties the cache driver
@@ -179,24 +183,24 @@ func toRedisJSON(rp *azurearm.ResourcePath, info *cachedriver.CacheInfo) redisJS
 	}
 }
 
-// skuFromInfo builds the ARM SKU from the recorded driver fields. Family
-// defaults to "C" (Basic/Standard) and capacity to 1 only when the driver has
-// no recorded value — e.g. a cache created through the portable API, which
-// carries a node type but no SKU family/capacity.
+// skuFromInfo builds the ARM SKU from the recorded driver fields. A wire
+// create/update records the SKU family the request supplied, so when a family
+// is present the recorded capacity is authoritative and round-trips verbatim —
+// including capacity 0, the Basic/Standard C0 tier. Only a cache created
+// through the portable API records no SKU family; that case falls back to a
+// plausible C1 SKU so its Get still returns a well-formed sku.
 func skuFromInfo(info *cachedriver.CacheInfo) *skuJSON {
-	family := info.SKUFamily
-	if family == "" {
-		family = "C"
-	}
-
-	capacity := info.SKUCapacity
-	if capacity == 0 {
-		capacity = 1
+	if info.SKUFamily != "" {
+		return &skuJSON{
+			Name:     skuNameFromNodeType(info.NodeType),
+			Family:   info.SKUFamily,
+			Capacity: info.SKUCapacity,
+		}
 	}
 
 	return &skuJSON{
 		Name:     skuNameFromNodeType(info.NodeType),
-		Family:   family,
-		Capacity: capacity,
+		Family:   "C",
+		Capacity: 1,
 	}
 }

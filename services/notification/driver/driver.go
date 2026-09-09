@@ -184,6 +184,10 @@ type PublishInput struct {
 // PublishOutput is the result of publishing a message.
 type PublishOutput struct {
 	MessageID string
+	// SequenceNumber is the large, monotonically increasing number SNS assigns
+	// to each message published to a FIFO topic. It is empty for standard topics
+	// (and for providers that don't model FIFO ordering).
+	SequenceNumber string
 }
 
 // Notification is the interface that notification provider implementations must satisfy.

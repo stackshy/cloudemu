@@ -2,6 +2,7 @@ package azurearm_test
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -127,6 +128,91 @@ func TestWriteCErrMapping(t *testing.T) {
 				t.Errorf("body=%q does not contain %q", rec.Body.String(), c.code)
 			}
 		})
+	}
+}
+
+// TestWriteCErrMessageHasNoInternalPrefix guards against the internal
+// code-taxonomy prefix (e.g. "NotFound: ") leaking into the ARM error
+// envelope's message field. Real Azure never prefixes messages with the
+// cloudemu error taxonomy; only the `code` field should carry that
+// information.
+func TestWriteCErrMessageHasNoInternalPrefix(t *testing.T) {
+	cases := []struct {
+		name      string
+		err       error
+		wantCode  string
+		wantMsg   string
+		wantHTTP  int
+		badPrefix string
+	}{
+		{"NotFound", cerrors.New(cerrors.NotFound, "vm 'foo' not found"), "ResourceNotFound", "vm 'foo' not found", http.StatusNotFound, "NotFound:"},
+		{"AlreadyExists", cerrors.New(cerrors.AlreadyExists, "storage account 'bar' already exists"), "Conflict", "storage account 'bar' already exists", http.StatusConflict, "AlreadyExists:"},
+		{"InvalidArgument", cerrors.New(cerrors.InvalidArgument, "invalid sku"), "InvalidParameter", "invalid sku", http.StatusBadRequest, "InvalidArgument:"},
+		{"FailedPrecondition", cerrors.New(cerrors.FailedPrecondition, "resource in use"), "PreconditionFailed", "resource in use", http.StatusConflict, "FailedPrecondition:"},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			rec := httptest.NewRecorder()
+			azurearm.WriteCErr(rec, c.err)
+
+			if rec.Code != c.wantHTTP {
+				t.Errorf("status=%d want %d", rec.Code, c.wantHTTP)
+			}
+
+			var body struct {
+				Error struct {
+					Code    string `json:"code"`
+					Message string `json:"message"`
+				} `json:"error"`
+			}
+
+			if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+
+			if body.Error.Code != c.wantCode {
+				t.Errorf("code=%q want %q", body.Error.Code, c.wantCode)
+			}
+
+			if body.Error.Message != c.wantMsg {
+				t.Errorf("message=%q want %q", body.Error.Message, c.wantMsg)
+			}
+
+			if strings.Contains(body.Error.Message, c.badPrefix) {
+				t.Errorf("message=%q leaks internal error-code prefix %q", body.Error.Message, c.badPrefix)
+			}
+		})
+	}
+}
+
+// TestWriteParentNotFoundMessageHasNoInternalPrefix guards WriteParentNotFound
+// the same way.
+func TestWriteParentNotFoundMessageHasNoInternalPrefix(t *testing.T) {
+	rec := httptest.NewRecorder()
+	azurearm.WriteParentNotFound(rec, cerrors.New(cerrors.NotFound, "resource group 'rg1' not found"))
+
+	var body struct {
+		Error struct {
+			Code    string `json:"code"`
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	if body.Error.Code != "ParentResourceNotFound" {
+		t.Errorf("code=%q want ParentResourceNotFound", body.Error.Code)
+	}
+
+	if body.Error.Message != "resource group 'rg1' not found" {
+		t.Errorf("message=%q want clean message", body.Error.Message)
+	}
+
+	if strings.Contains(body.Error.Message, "NotFound:") {
+		t.Errorf("message=%q leaks internal error-code prefix", body.Error.Message)
 	}
 }
 

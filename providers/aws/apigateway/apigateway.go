@@ -10,6 +10,7 @@ package apigateway
 import (
 	"context"
 	"crypto/rand"
+	"sort"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -28,6 +29,11 @@ const idLen = 10
 
 // idAlphabet is the character set REST API ids draw from.
 const idAlphabet = "abcdefghijklmnopqrstuvwxyz0123456789"
+
+// defaultIntegrationTimeoutMillis is the integration timeout API Gateway applies
+// when PutIntegration omits timeoutInMillis (29 seconds), returned verbatim by
+// GetIntegration so clients (e.g. Terraform) see no drift.
+const defaultIntegrationTimeoutMillis = 29000
 
 // LambdaInvoker is the cross-service seam API Gateway uses to invoke a Lambda
 // function synchronously for an AWS_PROXY/AWS integration. It is deliberately
@@ -115,6 +121,9 @@ func (m *Mock) CreateRestAPI(_ context.Context, in *driver.CreateRestAPIInput) (
 		Tags:                       copyStrMap(in.Tags),
 		BinaryMediaTypes:           append([]string(nil), in.BinaryMediaTypes...),
 		EndpointConfigurationTypes: endpointTypes(in.EndpointConfigurationTypes),
+		DisableExecuteAPIEndpoint:  in.DisableExecuteAPIEndpoint,
+		MinimumCompressionSize:     copyIntPtr(in.MinimumCompressionSize),
+		Policy:                     in.Policy,
 	}
 
 	m.apis.Set(apiID, &apiData{
@@ -139,6 +148,16 @@ func (m *Mock) GetRestAPIs(_ context.Context) ([]driver.RestAPI, error) {
 		out = append(out, copyAPI(&ad.api))
 		ad.mu.RUnlock()
 	}
+
+	// Deterministic order: oldest first, ties broken by id (the backing map
+	// iterates randomly).
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].CreatedDate != out[j].CreatedDate {
+			return out[i].CreatedDate < out[j].CreatedDate
+		}
+
+		return out[i].ID < out[j].ID
+	})
 
 	return out, nil
 }
@@ -176,6 +195,15 @@ func orDefault(v, def string) string {
 	return v
 }
 
+// orDefaultInt returns v when non-zero, else def.
+func orDefaultInt(v, def int) int {
+	if v == 0 {
+		return def
+	}
+
+	return v
+}
+
 // endpointTypes defaults the endpoint configuration to EDGE when unset, as the
 // real CreateRestApi does.
 func endpointTypes(in []string) []string {
@@ -205,6 +233,18 @@ func copyAPI(a *driver.RestAPI) driver.RestAPI {
 	out.Tags = copyStrMap(a.Tags)
 	out.BinaryMediaTypes = append([]string(nil), a.BinaryMediaTypes...)
 	out.EndpointConfigurationTypes = append([]string(nil), a.EndpointConfigurationTypes...)
+	out.MinimumCompressionSize = copyIntPtr(a.MinimumCompressionSize)
 
 	return out
+}
+
+// copyIntPtr returns an independent copy of an *int (nil stays nil).
+func copyIntPtr(p *int) *int {
+	if p == nil {
+		return nil
+	}
+
+	v := *p
+
+	return &v
 }

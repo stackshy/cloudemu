@@ -40,7 +40,15 @@ func paginateNames(
 		return nil, "", false
 	}
 
-	return page.Items, page.NextPageToken, true
+	// Real EKS list operations serialize an empty result as [] (a JSON array),
+	// never null. The shared paginator returns a nil slice for an empty page, so
+	// normalize it here to keep the wire shape faithful for strict consumers.
+	items = page.Items
+	if items == nil {
+		items = []string{}
+	}
+
+	return items, page.NextPageToken, true
 }
 
 // safeInt32 narrows an int to int32, clamping at math.MaxInt32 / math.MinInt32.
@@ -236,6 +244,10 @@ func (h *Handler) createNodegroup(w http.ResponseWriter, r *http.Request, cluste
 		cfg.ScalingConfig = scalingFromJSON(body.ScalingConfig)
 	}
 
+	if body.UpdateConfig != nil {
+		cfg.UpdateConfig = updateConfigFromJSON(body.UpdateConfig)
+	}
+
 	ng, err := h.eks.CreateNodegroup(r.Context(), cfg)
 	if err != nil {
 		writeErr(w, err)
@@ -295,6 +307,11 @@ func (h *Handler) updateNodegroupConfig(w http.ResponseWriter, r *http.Request, 
 		merged := cur.ScalingConfig
 		mergeScaling(&merged, body.ScalingConfig)
 		update.Scaling = &merged
+	}
+
+	if body.UpdateConfig != nil {
+		uc := updateConfigFromJSON(body.UpdateConfig)
+		update.UpdateConfig = &uc
 	}
 
 	if body.Labels != nil {
@@ -600,6 +617,43 @@ func taintsToJSON(in []eksdriver.Taint) []taintJSON {
 	return out
 }
 
+// updateConfigFromJSON converts the wire updateConfig to the driver shape. A
+// nil field is treated as unset (0); the two knobs are mutually exclusive on
+// the wire, and the provider validates that.
+func updateConfigFromJSON(u *nodegroupUpdateConfigJSON) eksdriver.NodegroupUpdateConfig {
+	out := eksdriver.NodegroupUpdateConfig{}
+
+	if u.MaxUnavailable != nil {
+		out.MaxUnavailable = int(*u.MaxUnavailable)
+	}
+
+	if u.MaxUnavailablePercentage != nil {
+		out.MaxUnavailablePercentage = int(*u.MaxUnavailablePercentage)
+	}
+
+	return out
+}
+
+// updateConfigToJSON renders the driver updateConfig to the wire response shape,
+// surfacing exactly one of maxUnavailable / maxUnavailablePercentage (the count
+// takes precedence, matching how real EKS reports a nodegroup created with the
+// maxUnavailable=1 default). Returns nil when neither is set so the field is
+// omitted.
+func updateConfigToJSON(u eksdriver.NodegroupUpdateConfig) *nodegroupUpdateConfigJSON {
+	switch {
+	case u.MaxUnavailable > 0:
+		v := safeInt32(u.MaxUnavailable)
+
+		return &nodegroupUpdateConfigJSON{MaxUnavailable: &v}
+	case u.MaxUnavailablePercentage > 0:
+		v := safeInt32(u.MaxUnavailablePercentage)
+
+		return &nodegroupUpdateConfigJSON{MaxUnavailablePercentage: &v}
+	default:
+		return nil
+	}
+}
+
 func scalingFromJSON(s *nodegroupScalingConfigJSON) eksdriver.NodegroupScalingConfig {
 	out := eksdriver.NodegroupScalingConfig{}
 
@@ -717,6 +771,7 @@ func toNodegroupJSON(n *eksdriver.Nodegroup) nodegroupJSON {
 			MaxSize:     &maxSize,
 			DesiredSize: &desired,
 		},
+		UpdateConfig:  updateConfigToJSON(n.UpdateConfig),
 		InstanceTypes: n.InstanceTypes,
 		Subnets:       n.Subnets,
 		AmiType:       n.AmiType,

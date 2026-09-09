@@ -1,5 +1,82 @@
 [
   {
+    "service": "aad",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "GetMetadataEndpoints"
+      },
+      {
+        "name": "GetToken"
+      }
+    ],
+    "providers": {
+      "azure": "Aad"
+    }
+  },
+  {
+    "service": "accesscontextmanager",
+    "interface": "AccessContextManager",
+    "operations": [
+      {
+        "name": "CreateAccessLevel"
+      },
+      {
+        "name": "CreatePolicy"
+      },
+      {
+        "name": "CreateServicePerimeter"
+      },
+      {
+        "name": "DeleteAccessLevel"
+      },
+      {
+        "name": "DeletePolicy"
+      },
+      {
+        "name": "DeleteServicePerimeter"
+      },
+      {
+        "name": "GetAccessLevel"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for the"
+      },
+      {
+        "name": "GetPolicy"
+      },
+      {
+        "name": "GetServicePerimeter"
+      },
+      {
+        "name": "HasOperation",
+        "doc": "HasOperation reports whether name was minted by this backend, so the wire"
+      },
+      {
+        "name": "ListAccessLevels"
+      },
+      {
+        "name": "ListPolicies"
+      },
+      {
+        "name": "ListServicePerimeters"
+      },
+      {
+        "name": "PatchAccessLevel"
+      },
+      {
+        "name": "PatchPolicy"
+      },
+      {
+        "name": "PatchServicePerimeter"
+      }
+    ],
+    "providers": {
+      "gcp": "AccessContextManager"
+    }
+  },
+  {
     "service": "acm",
     "interface": "ACM",
     "operations": [
@@ -123,6 +200,69 @@
     }
   },
   {
+    "service": "aoss",
+    "interface": "AOSS",
+    "operations": [
+      {
+        "name": "BatchGetCollection"
+      },
+      {
+        "name": "CreateAccessPolicy"
+      },
+      {
+        "name": "CreateCollection"
+      },
+      {
+        "name": "CreateSecurityPolicy"
+      },
+      {
+        "name": "DeleteAccessPolicy"
+      },
+      {
+        "name": "DeleteCollection"
+      },
+      {
+        "name": "DeleteSecurityPolicy"
+      },
+      {
+        "name": "GetAccessPolicy"
+      },
+      {
+        "name": "GetSecurityPolicy"
+      },
+      {
+        "name": "ListAccessPolicies"
+      },
+      {
+        "name": "ListCollections"
+      },
+      {
+        "name": "ListSecurityPolicies"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAccessPolicy"
+      },
+      {
+        "name": "UpdateCollection"
+      },
+      {
+        "name": "UpdateSecurityPolicy"
+      }
+    ],
+    "providers": {
+      "aws": "AOSS"
+    }
+  },
+  {
     "service": "apigateway",
     "interface": "APIGateway",
     "operations": [
@@ -139,7 +279,30 @@
         "name": "CreateStage"
       },
       {
+        "name": "DeleteDeployment",
+        "doc": "DeleteDeployment removes a deployment. It fails with a FailedPrecondition"
+      },
+      {
+        "name": "DeleteIntegration"
+      },
+      {
+        "name": "DeleteMethod"
+      },
+      {
+        "name": "DeleteResource",
+        "doc": "DeleteResource removes a resource and its whole descendant subtree, as"
+      },
+      {
         "name": "DeleteRestAPI"
+      },
+      {
+        "name": "DeleteStage"
+      },
+      {
+        "name": "GetDeployment"
+      },
+      {
+        "name": "GetDeployments"
       },
       {
         "name": "GetIntegration"
@@ -163,6 +326,9 @@
         "name": "GetStage"
       },
       {
+        "name": "GetStages"
+      },
+      {
         "name": "InvokeRoute",
         "doc": "InvokeRoute resolves req.HTTPMethod+req.Path against the deployed stage's"
       },
@@ -171,10 +337,612 @@
       },
       {
         "name": "PutMethod"
+      },
+      {
+        "name": "UpdateDeployment",
+        "doc": "UpdateDeployment applies a patchOperations document to a deployment"
+      },
+      {
+        "name": "UpdateIntegration",
+        "doc": "UpdateIntegration applies a patchOperations document to an integration."
+      },
+      {
+        "name": "UpdateMethod",
+        "doc": "UpdateMethod applies a patchOperations document to a method."
+      },
+      {
+        "name": "UpdateResource",
+        "doc": "UpdateResource applies a patchOperations document to a resource (rename via"
+      },
+      {
+        "name": "UpdateRestAPI",
+        "doc": "UpdateRestAPI applies a patchOperations document to a REST API and returns"
+      },
+      {
+        "name": "UpdateStage",
+        "doc": "UpdateStage applies a patchOperations document to a stage (/description,"
       }
     ],
     "providers": {
       "aws": "APIGateway"
+    }
+  },
+  {
+    "service": "apigatewaygcp",
+    "interface": "APIGateway",
+    "operations": [
+      {
+        "name": "CreateAPI"
+      },
+      {
+        "name": "CreateAPIConfig"
+      },
+      {
+        "name": "CreateGateway"
+      },
+      {
+        "name": "DeleteAPI"
+      },
+      {
+        "name": "DeleteAPIConfig"
+      },
+      {
+        "name": "DeleteGateway"
+      },
+      {
+        "name": "GetAPI"
+      },
+      {
+        "name": "GetAPIConfig"
+      },
+      {
+        "name": "GetGateway"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for the"
+      },
+      {
+        "name": "ListAPIConfigs"
+      },
+      {
+        "name": "ListAPIs"
+      },
+      {
+        "name": "ListGateways"
+      },
+      {
+        "name": "PatchAPI"
+      },
+      {
+        "name": "PatchAPIConfig"
+      },
+      {
+        "name": "PatchGateway"
+      }
+    ],
+    "providers": {
+      "gcp": "APIGateway"
+    }
+  },
+  {
+    "service": "apigatewayv2",
+    "interface": "APIGatewayV2",
+    "operations": [
+      {
+        "name": "CreateAPI"
+      },
+      {
+        "name": "CreateIntegration"
+      },
+      {
+        "name": "CreateRoute"
+      },
+      {
+        "name": "CreateStage"
+      },
+      {
+        "name": "DeleteAPI"
+      },
+      {
+        "name": "DeleteIntegration"
+      },
+      {
+        "name": "DeleteRoute"
+      },
+      {
+        "name": "DeleteStage"
+      },
+      {
+        "name": "GetAPI"
+      },
+      {
+        "name": "GetAPIs"
+      },
+      {
+        "name": "GetIntegration"
+      },
+      {
+        "name": "GetIntegrations"
+      },
+      {
+        "name": "GetRoute"
+      },
+      {
+        "name": "GetRoutes"
+      },
+      {
+        "name": "GetStage"
+      },
+      {
+        "name": "GetStages"
+      },
+      {
+        "name": "UpdateAPI"
+      },
+      {
+        "name": "UpdateIntegration"
+      },
+      {
+        "name": "UpdateRoute"
+      },
+      {
+        "name": "UpdateStage"
+      }
+    ],
+    "providers": {
+      "aws": "APIGatewayV2"
+    }
+  },
+  {
+    "service": "appconfiguration",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "ConnectionString"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverConfigurationStores"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "AppConfiguration"
+    }
+  },
+  {
+    "service": "appflow",
+    "interface": "AppFlow",
+    "operations": [
+      {
+        "name": "CreateConnectorProfile"
+      },
+      {
+        "name": "CreateFlow"
+      },
+      {
+        "name": "DeleteConnectorProfile"
+      },
+      {
+        "name": "DeleteFlow"
+      },
+      {
+        "name": "DescribeConnectorProfiles"
+      },
+      {
+        "name": "DescribeFlow"
+      },
+      {
+        "name": "ListFlows"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "StartFlow"
+      },
+      {
+        "name": "StopFlow"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateConnectorProfile"
+      },
+      {
+        "name": "UpdateFlow"
+      }
+    ],
+    "providers": {
+      "aws": "AppFlow"
+    }
+  },
+  {
+    "service": "appinsights",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "List"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "UpdateTags"
+      }
+    ],
+    "providers": {
+      "azure": "Appinsights"
+    }
+  },
+  {
+    "service": "applicationgateway",
+    "interface": "AzureApplicationGateways",
+    "operations": [
+      {
+        "name": "CreateOrUpdateAzureApplicationGateway",
+        "doc": "CreateOrUpdateAzureApplicationGateway stores gw as a full replace and"
+      },
+      {
+        "name": "DeleteAzureApplicationGateway",
+        "doc": "DeleteAzureApplicationGateway removes the gateway, returning NotFound if it"
+      },
+      {
+        "name": "GetAzureApplicationGateway",
+        "doc": "GetAzureApplicationGateway returns the gateway identified by"
+      },
+      {
+        "name": "ListAzureApplicationGateways",
+        "doc": "ListAzureApplicationGateways returns the gateways in rg, or all when rg is"
+      }
+    ],
+    "providers": {
+      "azure": "AppGateway"
+    }
+  },
+  {
+    "service": "apprunner",
+    "interface": "AppRunner",
+    "operations": [
+      {
+        "name": "CreateAutoScalingConfiguration"
+      },
+      {
+        "name": "CreateConnection"
+      },
+      {
+        "name": "CreateObservabilityConfiguration"
+      },
+      {
+        "name": "CreateService"
+      },
+      {
+        "name": "CreateVpcConnector"
+      },
+      {
+        "name": "DeleteAutoScalingConfiguration"
+      },
+      {
+        "name": "DeleteConnection"
+      },
+      {
+        "name": "DeleteObservabilityConfiguration"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "DeleteVpcConnector"
+      },
+      {
+        "name": "DescribeAutoScalingConfiguration"
+      },
+      {
+        "name": "DescribeObservabilityConfiguration"
+      },
+      {
+        "name": "DescribeService"
+      },
+      {
+        "name": "DescribeVpcConnector"
+      },
+      {
+        "name": "ListAutoScalingConfigurationRevisions"
+      },
+      {
+        "name": "ListAutoScalingConfigurations"
+      },
+      {
+        "name": "ListConnections"
+      },
+      {
+        "name": "ListObservabilityConfigurationRevisions"
+      },
+      {
+        "name": "ListObservabilityConfigurations"
+      },
+      {
+        "name": "ListOperations"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListVpcConnectors"
+      },
+      {
+        "name": "PauseService"
+      },
+      {
+        "name": "ResumeService"
+      },
+      {
+        "name": "StartDeployment"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateService"
+      }
+    ],
+    "providers": {
+      "aws": "AppRunner"
+    }
+  },
+  {
+    "service": "appsync",
+    "interface": "AppSync",
+    "operations": [
+      {
+        "name": "CreateAPIKey"
+      },
+      {
+        "name": "CreateDataSource"
+      },
+      {
+        "name": "CreateGraphqlAPI"
+      },
+      {
+        "name": "DeleteAPIKey"
+      },
+      {
+        "name": "DeleteDataSource"
+      },
+      {
+        "name": "DeleteGraphqlAPI"
+      },
+      {
+        "name": "GetDataSource"
+      },
+      {
+        "name": "GetGraphqlAPI"
+      },
+      {
+        "name": "ListAPIKeys"
+      },
+      {
+        "name": "ListDataSources"
+      },
+      {
+        "name": "ListGraphqlAPIs"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAPIKey"
+      },
+      {
+        "name": "UpdateDataSource"
+      },
+      {
+        "name": "UpdateGraphqlAPI"
+      }
+    ],
+    "providers": {
+      "aws": "AppSync"
+    }
+  },
+  {
+    "service": "aps",
+    "interface": "APS",
+    "operations": [
+      {
+        "name": "CreateAlertManagerDefinition"
+      },
+      {
+        "name": "CreateLoggingConfiguration"
+      },
+      {
+        "name": "CreateRuleGroupsNamespace"
+      },
+      {
+        "name": "CreateWorkspace"
+      },
+      {
+        "name": "DeleteAlertManagerDefinition"
+      },
+      {
+        "name": "DeleteLoggingConfiguration"
+      },
+      {
+        "name": "DeleteRuleGroupsNamespace"
+      },
+      {
+        "name": "DeleteWorkspace"
+      },
+      {
+        "name": "DescribeAlertManagerDefinition"
+      },
+      {
+        "name": "DescribeLoggingConfiguration"
+      },
+      {
+        "name": "DescribeRuleGroupsNamespace"
+      },
+      {
+        "name": "DescribeWorkspace"
+      },
+      {
+        "name": "ListRuleGroupsNamespaces"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListWorkspaces"
+      },
+      {
+        "name": "PutAlertManagerDefinition"
+      },
+      {
+        "name": "PutRuleGroupsNamespace"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateLoggingConfiguration"
+      },
+      {
+        "name": "UpdateWorkspaceAlias"
+      }
+    ],
+    "providers": {
+      "aws": "APS"
+    }
+  },
+  {
+    "service": "athena",
+    "interface": "Athena",
+    "operations": [
+      {
+        "name": "CreateNamedQuery",
+        "doc": "CreateNamedQuery saves a query and returns its generated id. The"
+      },
+      {
+        "name": "CreateWorkGroup",
+        "doc": "CreateWorkGroup creates a workgroup, materializing the effective engine"
+      },
+      {
+        "name": "DeleteNamedQuery"
+      },
+      {
+        "name": "DeleteWorkGroup",
+        "doc": "DeleteWorkGroup removes a workgroup. recursive deletes its named queries"
+      },
+      {
+        "name": "GetDataCatalog"
+      },
+      {
+        "name": "GetDatabase",
+        "doc": "GetDatabase returns a database in a data catalog, or an error tagged"
+      },
+      {
+        "name": "GetNamedQuery"
+      },
+      {
+        "name": "GetQueryExecution"
+      },
+      {
+        "name": "GetQueryResults",
+        "doc": "GetQueryResults returns the result rows for a SUCCEEDED execution. DDL and"
+      },
+      {
+        "name": "GetWorkGroup",
+        "doc": "GetWorkGroup returns a deep copy of a workgroup, or an error tagged"
+      },
+      {
+        "name": "ListDataCatalogs"
+      },
+      {
+        "name": "ListDatabases"
+      },
+      {
+        "name": "ListNamedQueries",
+        "doc": "ListNamedQueries returns the ids of saved queries in the given workgroup"
+      },
+      {
+        "name": "ListQueryExecutions",
+        "doc": "ListQueryExecutions returns execution ids in the given workgroup"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListWorkGroups",
+        "doc": "ListWorkGroups returns workgroup summaries in a deterministic order."
+      },
+      {
+        "name": "StartQueryExecution",
+        "doc": "StartQueryExecution runs a query and returns its id. Re-issuing with the"
+      },
+      {
+        "name": "StopQueryExecution",
+        "doc": "StopQueryExecution is a no-op on an already-terminal execution; it errors"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateWorkGroup",
+        "doc": "UpdateWorkGroup applies a delta: the top-level Description/State plus the"
+      }
+    ],
+    "providers": {
+      "aws": "Athena"
     }
   },
   {
@@ -795,6 +1563,47 @@
     }
   },
   {
+    "service": "azurefirewall",
+    "interface": "AzureFirewalls",
+    "operations": [
+      {
+        "name": "CreateOrUpdateAzureFirewall",
+        "doc": "CreateOrUpdateAzureFirewall stores fw as a full replace and reports whether"
+      },
+      {
+        "name": "CreateOrUpdateFirewallPolicy",
+        "doc": "CreateOrUpdateFirewallPolicy stores pol as a full replace and reports"
+      },
+      {
+        "name": "DeleteAzureFirewall",
+        "doc": "DeleteAzureFirewall removes the firewall, returning NotFound if it does not"
+      },
+      {
+        "name": "DeleteFirewallPolicy",
+        "doc": "DeleteFirewallPolicy removes the policy, returning NotFound if it does not"
+      },
+      {
+        "name": "GetAzureFirewall",
+        "doc": "GetAzureFirewall returns the firewall identified by (resourceGroup, name),"
+      },
+      {
+        "name": "GetFirewallPolicy",
+        "doc": "GetFirewallPolicy returns the policy identified by (resourceGroup, name),"
+      },
+      {
+        "name": "ListAzureFirewalls",
+        "doc": "ListAzureFirewalls returns the firewalls in rg, or all when rg is empty"
+      },
+      {
+        "name": "ListFirewallPolicies",
+        "doc": "ListFirewallPolicies returns the policies in rg, or all when rg is empty"
+      }
+    ],
+    "providers": {
+      "azure": "Firewall"
+    }
+  },
+  {
     "service": "azuresearch",
     "interface": "AzureSearch",
     "operations": [
@@ -1152,6 +1961,237 @@
     }
   },
   {
+    "service": "backup",
+    "interface": "Backup",
+    "operations": [
+      {
+        "name": "CreateBackupPlan",
+        "doc": "Plans."
+      },
+      {
+        "name": "CreateBackupSelection",
+        "doc": "Selections."
+      },
+      {
+        "name": "CreateBackupVault",
+        "doc": "Vaults."
+      },
+      {
+        "name": "DeleteBackupPlan"
+      },
+      {
+        "name": "DeleteBackupSelection"
+      },
+      {
+        "name": "DeleteBackupVault"
+      },
+      {
+        "name": "DeleteBackupVaultAccessPolicy"
+      },
+      {
+        "name": "DeleteBackupVaultLockConfiguration"
+      },
+      {
+        "name": "DeleteBackupVaultNotifications"
+      },
+      {
+        "name": "DescribeBackupVault"
+      },
+      {
+        "name": "GetBackupPlan"
+      },
+      {
+        "name": "GetBackupSelection"
+      },
+      {
+        "name": "GetBackupVaultAccessPolicy"
+      },
+      {
+        "name": "GetBackupVaultNotifications"
+      },
+      {
+        "name": "ListBackupPlanVersions"
+      },
+      {
+        "name": "ListBackupPlans"
+      },
+      {
+        "name": "ListBackupSelections"
+      },
+      {
+        "name": "ListBackupVaults"
+      },
+      {
+        "name": "ListTags"
+      },
+      {
+        "name": "PutBackupVaultAccessPolicy",
+        "doc": "Vault access policy."
+      },
+      {
+        "name": "PutBackupVaultLockConfiguration",
+        "doc": "Vault Lock."
+      },
+      {
+        "name": "PutBackupVaultNotifications",
+        "doc": "Vault notifications."
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tagging."
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateBackupPlan"
+      }
+    ],
+    "providers": {
+      "aws": "Backup"
+    }
+  },
+  {
+    "service": "bastion",
+    "interface": "BastionHosts",
+    "operations": [
+      {
+        "name": "CreateOrUpdateBastionHost",
+        "doc": "CreateOrUpdateBastionHost stores host as a full replace and reports whether"
+      },
+      {
+        "name": "DeleteBastionHost",
+        "doc": "DeleteBastionHost removes the host, returning NotFound if it does not exist."
+      },
+      {
+        "name": "GetBastionHost",
+        "doc": "GetBastionHost returns the host identified by (resourceGroup, name), or"
+      },
+      {
+        "name": "ListBastionHosts",
+        "doc": "ListBastionHosts returns the hosts in rg, or all when rg is empty"
+      }
+    ],
+    "providers": {
+      "azure": "Bastion"
+    }
+  },
+  {
+    "service": "batch",
+    "interface": "Batch",
+    "operations": [
+      {
+        "name": "CreateComputeEnvironment",
+        "doc": "Compute environments."
+      },
+      {
+        "name": "CreateJobQueue",
+        "doc": "Job queues."
+      },
+      {
+        "name": "DeleteComputeEnvironment"
+      },
+      {
+        "name": "DeleteJobQueue"
+      },
+      {
+        "name": "DeregisterJobDefinition"
+      },
+      {
+        "name": "DescribeComputeEnvironments"
+      },
+      {
+        "name": "DescribeJobDefinitions"
+      },
+      {
+        "name": "DescribeJobQueues"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "RegisterJobDefinition",
+        "doc": "Job definitions."
+      },
+      {
+        "name": "TagResource",
+        "doc": "Tags (by ARN), shared across all three resource kinds."
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateComputeEnvironment"
+      },
+      {
+        "name": "UpdateJobQueue"
+      }
+    ],
+    "providers": {
+      "aws": "Batch"
+    }
+  },
+  {
+    "service": "batch-azure",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "AccountExists"
+      },
+      {
+        "name": "CreateOrUpdateAccount"
+      },
+      {
+        "name": "CreateOrUpdatePool"
+      },
+      {
+        "name": "DeleteAccount"
+      },
+      {
+        "name": "DeletePool"
+      },
+      {
+        "name": "DiscoverAccounts"
+      },
+      {
+        "name": "GetAccount"
+      },
+      {
+        "name": "GetPool"
+      },
+      {
+        "name": "ListAccountsByResourceGroup"
+      },
+      {
+        "name": "ListAccountsBySubscription"
+      },
+      {
+        "name": "ListKeys"
+      },
+      {
+        "name": "ListPoolsByAccount"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "RegenerateKey"
+      },
+      {
+        "name": "Resize"
+      },
+      {
+        "name": "StopResize"
+      }
+    ],
+    "providers": {
+      "azure": "Batch"
+    }
+  },
+  {
     "service": "bedrock",
     "interface": "Bedrock",
     "operations": [
@@ -1470,6 +2510,63 @@
     }
   },
   {
+    "service": "bigquery",
+    "interface": "BigQuery",
+    "operations": [
+      {
+        "name": "DeleteDataset",
+        "doc": "DeleteDataset removes the dataset. When deleteContents is false and the"
+      },
+      {
+        "name": "DeleteTable",
+        "doc": "DeleteTable removes the table, or NotFound."
+      },
+      {
+        "name": "GetDataset",
+        "doc": "GetDataset returns the dataset, or NotFound."
+      },
+      {
+        "name": "GetTable",
+        "doc": "GetTable returns the table, or NotFound."
+      },
+      {
+        "name": "InsertDataset",
+        "doc": "InsertDataset creates a dataset under project. It returns AlreadyExists"
+      },
+      {
+        "name": "InsertTable",
+        "doc": "InsertTable creates a table under project/datasetID. It returns"
+      },
+      {
+        "name": "ListDatasets",
+        "doc": "ListDatasets returns every dataset in project, ordered by datasetId."
+      },
+      {
+        "name": "ListTables",
+        "doc": "ListTables returns every table in the dataset, ordered by tableId."
+      },
+      {
+        "name": "PatchDataset",
+        "doc": "PatchDataset merges the supplied fields of patch into the dataset (the"
+      },
+      {
+        "name": "PatchTable",
+        "doc": "PatchTable merges the supplied fields of patch into the table (labels are"
+      },
+      {
+        "name": "UpdateDataset",
+        "doc": "UpdateDataset replaces the dataset's mutable fields with the supplied"
+      },
+      {
+        "name": "UpdateTable",
+        "doc": "UpdateTable replaces the table's mutable fields with the supplied patch."
+      }
+    ],
+    "providers": {
+      "gcp": "BigQuery"
+    }
+  },
+  {
     "service": "bigtable",
     "interface": "Admin",
     "operations": [
@@ -1590,6 +2687,55 @@
     ],
     "providers": {
       "gcp": "Bigtable"
+    }
+  },
+  {
+    "service": "binaryauthorization",
+    "interface": "BinaryAuthorization",
+    "operations": [
+      {
+        "name": "CreateAttestor",
+        "doc": "CreateAttestor stores a new attestor under projects/{project}/attestors/"
+      },
+      {
+        "name": "DeleteAttestor",
+        "doc": "DeleteAttestor removes an attestor by its full resource name."
+      },
+      {
+        "name": "GetAttestor",
+        "doc": "GetAttestor returns an attestor by its full resource name."
+      },
+      {
+        "name": "GetIamPolicy",
+        "doc": "GetIamPolicy returns the attestor's stored IAM policy (an empty, versioned"
+      },
+      {
+        "name": "GetPolicy",
+        "doc": "GetPolicy returns the project's policy. A project that has never set a"
+      },
+      {
+        "name": "ListAttestors",
+        "doc": "ListAttestors returns every attestor under the given project, in"
+      },
+      {
+        "name": "SetIamPolicy",
+        "doc": "SetIamPolicy stores the attestor's IAM policy and returns it with a"
+      },
+      {
+        "name": "TestIamPermissions",
+        "doc": "TestIamPermissions echoes back the requested permissions (CloudEmu does not"
+      },
+      {
+        "name": "UpdateAttestor",
+        "doc": "UpdateAttestor fully replaces the mutable fields of an existing attestor"
+      },
+      {
+        "name": "UpdatePolicy",
+        "doc": "UpdatePolicy fully replaces the project's policy and returns it. The policy"
+      }
+    ],
+    "providers": {
+      "gcp": "BinaryAuthorization"
     }
   },
   {
@@ -1727,6 +2873,97 @@
     }
   },
   {
+    "service": "certificatemanager",
+    "interface": "CertificateManager",
+    "operations": [
+      {
+        "name": "CreateCertificate"
+      },
+      {
+        "name": "CreateCertificateMap"
+      },
+      {
+        "name": "CreateDNSAuthorization"
+      },
+      {
+        "name": "DeleteCertificate"
+      },
+      {
+        "name": "DeleteCertificateMap"
+      },
+      {
+        "name": "DeleteDNSAuthorization"
+      },
+      {
+        "name": "GetCertificate"
+      },
+      {
+        "name": "GetCertificateMap"
+      },
+      {
+        "name": "GetDNSAuthorization"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListCertificateMaps"
+      },
+      {
+        "name": "ListCertificates"
+      },
+      {
+        "name": "ListDNSAuthorizations"
+      },
+      {
+        "name": "PatchCertificate"
+      },
+      {
+        "name": "PatchCertificateMap"
+      },
+      {
+        "name": "PatchDNSAuthorization"
+      }
+    ],
+    "providers": {
+      "gcp": "CertificateManager"
+    }
+  },
+  {
+    "service": "chaosstudio",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverExperiments"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "ChaosStudio"
+    }
+  },
+  {
     "service": "cloudasset",
     "interface": "provider-native",
     "operations": [
@@ -1820,6 +3057,49 @@
     }
   },
   {
+    "service": "clouddeploy",
+    "interface": "CloudDeploy",
+    "operations": [
+      {
+        "name": "CreatePipeline"
+      },
+      {
+        "name": "CreateTarget"
+      },
+      {
+        "name": "DeletePipeline"
+      },
+      {
+        "name": "DeleteTarget"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetPipeline"
+      },
+      {
+        "name": "GetTarget"
+      },
+      {
+        "name": "ListPipelines"
+      },
+      {
+        "name": "ListTargets"
+      },
+      {
+        "name": "PatchPipeline"
+      },
+      {
+        "name": "PatchTarget"
+      }
+    ],
+    "providers": {
+      "gcp": "CloudDeploy"
+    }
+  },
+  {
     "service": "cloudformation",
     "interface": "provider-native",
     "operations": [
@@ -1853,6 +3133,79 @@
     ],
     "providers": {
       "aws": "CloudFormation"
+    }
+  },
+  {
+    "service": "cloudfront",
+    "interface": "CloudFront",
+    "operations": [
+      {
+        "name": "CreateDistribution",
+        "doc": "Distributions."
+      },
+      {
+        "name": "CreateInvalidation",
+        "doc": "Invalidations (synchronous — every invalidation is Completed immediately)."
+      },
+      {
+        "name": "DeleteDistribution"
+      },
+      {
+        "name": "GetDistribution"
+      },
+      {
+        "name": "GetInvalidation"
+      },
+      {
+        "name": "ListDistributions"
+      },
+      {
+        "name": "ListInvalidations"
+      },
+      {
+        "name": "ListTagsForResource",
+        "doc": "Tags (ARN-keyed)."
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateDistribution"
+      }
+    ],
+    "providers": {
+      "aws": "CloudFront"
+    }
+  },
+  {
+    "service": "cloudids",
+    "interface": "CloudIDs",
+    "operations": [
+      {
+        "name": "CreateEndpoint"
+      },
+      {
+        "name": "DeleteEndpoint"
+      },
+      {
+        "name": "GetEndpoint"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListEndpoints"
+      },
+      {
+        "name": "PatchEndpoint"
+      }
+    ],
+    "providers": {
+      "gcp": "CloudIDS"
     }
   },
   {
@@ -2010,6 +3363,59 @@
     ],
     "providers": {
       "gcp": "CloudSQL"
+    }
+  },
+  {
+    "service": "cloudtasks",
+    "interface": "Queues",
+    "operations": [
+      {
+        "name": "CreateQueue",
+        "doc": "CreateQueue stores a queue. cfg.Name is the full resource name; the queue"
+      },
+      {
+        "name": "DeleteQueue",
+        "doc": "DeleteQueue removes a queue by its full resource name."
+      },
+      {
+        "name": "GetIamPolicy",
+        "doc": "GetIamPolicy returns the queue's stored IAM policy (an empty, versioned"
+      },
+      {
+        "name": "GetQueue",
+        "doc": "GetQueue returns a queue by its full resource name."
+      },
+      {
+        "name": "ListQueues",
+        "doc": "ListQueues returns every queue under the given parent"
+      },
+      {
+        "name": "PatchQueue",
+        "doc": "PatchQueue applies a field-mask update to an existing queue and returns it."
+      },
+      {
+        "name": "PauseQueue",
+        "doc": "PauseQueue transitions a queue to PAUSED and returns it."
+      },
+      {
+        "name": "PurgeQueue",
+        "doc": "PurgeQueue purges a queue's tasks. Tasks are out of scope, so this records"
+      },
+      {
+        "name": "ResumeQueue",
+        "doc": "ResumeQueue transitions a queue to RUNNING and returns it."
+      },
+      {
+        "name": "SetIamPolicy",
+        "doc": "SetIamPolicy stores the queue's IAM policy and returns it with a refreshed"
+      },
+      {
+        "name": "TestIamPermissions",
+        "doc": "TestIamPermissions echoes back the requested permissions (CloudEmu does not"
+      }
+    ],
+    "providers": {
+      "gcp": "CloudTasks"
     }
   },
   {
@@ -2223,6 +3629,206 @@
     ],
     "providers": {
       "aws": "CloudTrail"
+    }
+  },
+  {
+    "service": "codeartifact",
+    "interface": "CodeArtifact",
+    "operations": [
+      {
+        "name": "AssociateExternalConnection"
+      },
+      {
+        "name": "CreateDomain"
+      },
+      {
+        "name": "CreateRepository"
+      },
+      {
+        "name": "DeleteDomain"
+      },
+      {
+        "name": "DeleteRepository"
+      },
+      {
+        "name": "DescribeDomain"
+      },
+      {
+        "name": "DescribeRepository"
+      },
+      {
+        "name": "DisassociateExternalConnection"
+      },
+      {
+        "name": "ListDomains"
+      },
+      {
+        "name": "ListRepositories"
+      },
+      {
+        "name": "ListRepositoriesInDomain"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateRepository"
+      }
+    ],
+    "providers": {
+      "aws": "CodeArtifact"
+    }
+  },
+  {
+    "service": "cognito",
+    "interface": "Cognito",
+    "operations": [
+      {
+        "name": "CreateUserPool",
+        "doc": "CreateUserPool creates a user pool, generating its id and ARN, seeding the"
+      },
+      {
+        "name": "CreateUserPoolClient",
+        "doc": "CreateUserPoolClient creates an app client, generating its 26-character id"
+      },
+      {
+        "name": "CreateUserPoolDomain"
+      },
+      {
+        "name": "DeleteUserPool",
+        "doc": "DeleteUserPool removes a user pool and its clients, domains, and tags."
+      },
+      {
+        "name": "DeleteUserPoolClient"
+      },
+      {
+        "name": "DeleteUserPoolDomain"
+      },
+      {
+        "name": "DescribeUserPool",
+        "doc": "DescribeUserPool returns a deep copy of a user pool, or a"
+      },
+      {
+        "name": "DescribeUserPoolClient"
+      },
+      {
+        "name": "DescribeUserPoolDomain",
+        "doc": "DescribeUserPoolDomain returns a domain's description. An unknown domain"
+      },
+      {
+        "name": "GetUserPoolMfaConfig",
+        "doc": "GetUserPoolMfaConfig returns a pool's MFA configuration. The Terraform AWS"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListUserPoolClients",
+        "doc": "ListUserPoolClients returns client descriptions in a user pool in a"
+      },
+      {
+        "name": "ListUserPools",
+        "doc": "ListUserPools returns pool descriptions in a deterministic order."
+      },
+      {
+        "name": "SetUserPoolMfaConfig",
+        "doc": "SetUserPoolMfaConfig replaces a pool's MFA configuration and returns the"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateUserPool",
+        "doc": "UpdateUserPool applies the mutable pool settings. A nil field is left"
+      },
+      {
+        "name": "UpdateUserPoolClient",
+        "doc": "UpdateUserPoolClient replaces the client's settings and returns the result."
+      }
+    ],
+    "providers": {
+      "aws": "Cognito"
+    }
+  },
+  {
+    "service": "communication",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverCommunication"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PrimaryConnectionString"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "SecondaryConnectionString"
+      }
+    ],
+    "providers": {
+      "azure": "Communication"
+    }
+  },
+  {
+    "service": "composer",
+    "interface": "Composer",
+    "operations": [
+      {
+        "name": "CreateEnvironment",
+        "doc": "CreateEnvironment provisions a new RUNNING environment (returns a completed"
+      },
+      {
+        "name": "DeleteEnvironment",
+        "doc": "DeleteEnvironment removes an environment (returns a completed LRO)."
+      },
+      {
+        "name": "GetEnvironment",
+        "doc": "GetEnvironment returns an environment by project/location/id."
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name."
+      },
+      {
+        "name": "ListEnvironments",
+        "doc": "ListEnvironments returns every environment in a project+location."
+      },
+      {
+        "name": "UpdateEnvironment",
+        "doc": "UpdateEnvironment applies a masked update from desired and returns a"
+      }
+    ],
+    "providers": {
+      "gcp": "Composer"
     }
   },
   {
@@ -3494,6 +5100,68 @@
         ]
       },
       {
+        "name": "ContributorInsighter",
+        "doc": "ContributorInsighter is an OPTIONAL capability, discovered by type assertion",
+        "operations": [
+          {
+            "name": "DescribeContributorInsights",
+            "doc": "DescribeContributorInsights returns the Contributor Insights status of the"
+          },
+          {
+            "name": "ListContributorInsights",
+            "doc": "ListContributorInsights returns a summary for every table/index that has a"
+          },
+          {
+            "name": "UpdateContributorInsights",
+            "doc": "UpdateContributorInsights enables or disables Contributor Insights for the"
+          }
+        ]
+      },
+      {
+        "name": "GlobalTabler",
+        "doc": "GlobalTabler is an OPTIONAL capability, discovered by type assertion (like",
+        "operations": [
+          {
+            "name": "CreateGlobalTable",
+            "doc": "CreateGlobalTable creates a global table named after an existing table with"
+          },
+          {
+            "name": "DescribeGlobalTable",
+            "doc": "DescribeGlobalTable returns the global table identified by name."
+          },
+          {
+            "name": "ListGlobalTables",
+            "doc": "ListGlobalTables returns every global table ordered by name, optionally"
+          },
+          {
+            "name": "UpdateGlobalTable",
+            "doc": "UpdateGlobalTable adds and/or removes replica regions, returning the"
+          }
+        ]
+      },
+      {
+        "name": "KinesisStreamer",
+        "doc": "KinesisStreamer is an OPTIONAL capability, discovered by type assertion (like",
+        "operations": [
+          {
+            "name": "DescribeKinesisStreamingDestination",
+            "doc": "DescribeKinesisStreamingDestination returns every destination attached to"
+          },
+          {
+            "name": "DisableKinesisStreamingDestination",
+            "doc": "DisableKinesisStreamingDestination marks the table's streamArn destination"
+          },
+          {
+            "name": "EnableKinesisStreamingDestination",
+            "doc": "EnableKinesisStreamingDestination attaches streamArn to the table (or"
+          },
+          {
+            "name": "UpdateKinesisStreamingDestination",
+            "doc": "UpdateKinesisStreamingDestination changes the precision of the table's"
+          }
+        ]
+      },
+      {
         "name": "TableAttributes",
         "doc": "TableAttributes is an OPTIONAL capability, discovered by type assertion (like",
         "operations": [
@@ -3806,6 +5474,375 @@
     ],
     "providers": {
       "azure": "Databricks"
+    }
+  },
+  {
+    "service": "datacatalog",
+    "interface": "DataCatalog",
+    "operations": [
+      {
+        "name": "CreateEntry"
+      },
+      {
+        "name": "CreateEntryGroup"
+      },
+      {
+        "name": "CreateTag"
+      },
+      {
+        "name": "CreateTagTemplate"
+      },
+      {
+        "name": "CreateTagTemplateField"
+      },
+      {
+        "name": "DeleteEntry"
+      },
+      {
+        "name": "DeleteEntryGroup"
+      },
+      {
+        "name": "DeleteTag"
+      },
+      {
+        "name": "DeleteTagTemplate"
+      },
+      {
+        "name": "DeleteTagTemplateField"
+      },
+      {
+        "name": "GetEntry"
+      },
+      {
+        "name": "GetEntryGroup"
+      },
+      {
+        "name": "GetTagTemplate"
+      },
+      {
+        "name": "ListEntries"
+      },
+      {
+        "name": "ListEntryGroups"
+      },
+      {
+        "name": "ListTags"
+      },
+      {
+        "name": "PatchEntry"
+      },
+      {
+        "name": "PatchEntryGroup"
+      },
+      {
+        "name": "PatchTag"
+      },
+      {
+        "name": "PatchTagTemplate"
+      },
+      {
+        "name": "PatchTagTemplateField"
+      }
+    ],
+    "providers": {
+      "gcp": "DataCatalog"
+    }
+  },
+  {
+    "service": "datafactory",
+    "interface": "Factories",
+    "operations": [
+      {
+        "name": "CreateOrUpdateFactory",
+        "doc": "CreateOrUpdateFactory stores the factory as a full replace and reports"
+      },
+      {
+        "name": "DeleteFactory",
+        "doc": "DeleteFactory removes the factory, returning NotFound if it does not exist."
+      },
+      {
+        "name": "GetFactory",
+        "doc": "GetFactory returns the factory identified by (resourceGroup, name), or"
+      },
+      {
+        "name": "ListFactories",
+        "doc": "ListFactories returns every factory in the subscription, ordered by ID."
+      },
+      {
+        "name": "ListFactoriesByResourceGroup",
+        "doc": "ListFactoriesByResourceGroup returns the factories in resourceGroup, ordered"
+      },
+      {
+        "name": "UpdateFactory",
+        "doc": "UpdateFactory applies a PATCH (Factories_Update): it REPLACES tags and"
+      }
+    ],
+    "providers": {
+      "azure": "DataFactory"
+    }
+  },
+  {
+    "service": "dataform",
+    "interface": "Dataform",
+    "operations": [
+      {
+        "name": "CreateRepository"
+      },
+      {
+        "name": "DeleteRepository"
+      },
+      {
+        "name": "GetRepository"
+      },
+      {
+        "name": "ListRepositories"
+      },
+      {
+        "name": "PatchRepository"
+      }
+    ],
+    "providers": {
+      "gcp": "Dataform"
+    }
+  },
+  {
+    "service": "datafusion",
+    "interface": "DataFusion",
+    "operations": [
+      {
+        "name": "CreateInstance"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "GetInstance"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListInstances"
+      },
+      {
+        "name": "Owns",
+        "doc": "Owns reports whether this store holds the named instance, so the wire"
+      },
+      {
+        "name": "OwnsAnyIn",
+        "doc": "OwnsAnyIn reports whether this store holds any instance in the scope, so a"
+      },
+      {
+        "name": "PatchInstance"
+      },
+      {
+        "name": "RestartInstance",
+        "doc": "RestartInstance runs an ACTIVE instance through RESTARTING back to ACTIVE."
+      }
+    ],
+    "providers": {
+      "gcp": "DataFusion"
+    }
+  },
+  {
+    "service": "dataplex",
+    "interface": "Dataplex",
+    "operations": [
+      {
+        "name": "CreateAsset"
+      },
+      {
+        "name": "CreateLake"
+      },
+      {
+        "name": "CreateZone"
+      },
+      {
+        "name": "DeleteAsset"
+      },
+      {
+        "name": "DeleteLake"
+      },
+      {
+        "name": "DeleteZone"
+      },
+      {
+        "name": "GetAsset"
+      },
+      {
+        "name": "GetLake"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetZone"
+      },
+      {
+        "name": "ListAssets"
+      },
+      {
+        "name": "ListLakes"
+      },
+      {
+        "name": "ListZones"
+      },
+      {
+        "name": "PatchAsset"
+      },
+      {
+        "name": "PatchLake"
+      },
+      {
+        "name": "PatchZone"
+      }
+    ],
+    "providers": {
+      "gcp": "Dataplex"
+    }
+  },
+  {
+    "service": "dataproc",
+    "interface": "Dataproc",
+    "operations": [
+      {
+        "name": "CreateCluster",
+        "doc": "CreateCluster provisions a new RUNNING cluster (returns a completed LRO)."
+      },
+      {
+        "name": "DeleteCluster",
+        "doc": "DeleteCluster removes a cluster (returns a completed LRO)."
+      },
+      {
+        "name": "GetCluster",
+        "doc": "GetCluster returns a cluster by project/region/name."
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name."
+      },
+      {
+        "name": "ListClusters",
+        "doc": "ListClusters returns every cluster in a project+region."
+      },
+      {
+        "name": "UpdateCluster",
+        "doc": "UpdateCluster applies a masked update to a cluster (returns a completed LRO)."
+      }
+    ],
+    "providers": {
+      "gcp": "Dataproc"
+    }
+  },
+  {
+    "service": "datastream",
+    "interface": "Datastream",
+    "operations": [
+      {
+        "name": "CreateConnectionProfile"
+      },
+      {
+        "name": "CreateStream"
+      },
+      {
+        "name": "DeleteConnectionProfile"
+      },
+      {
+        "name": "DeleteStream"
+      },
+      {
+        "name": "GetConnectionProfile"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetStream"
+      },
+      {
+        "name": "ListConnectionProfiles"
+      },
+      {
+        "name": "ListStreams"
+      },
+      {
+        "name": "PatchConnectionProfile"
+      },
+      {
+        "name": "PatchStream"
+      }
+    ],
+    "providers": {
+      "gcp": "Datastream"
+    }
+  },
+  {
+    "service": "devcenter",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverDevCenters"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "DevCenter"
+    }
+  },
+  {
+    "service": "digitaltwins",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverInstances"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "DigitalTwins"
     }
   },
   {
@@ -4280,6 +6317,39 @@
     }
   },
   {
+    "service": "elasticsan",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverElasticSans"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "ElasticSan"
+    }
+  },
+  {
     "service": "emr",
     "interface": "provider-native",
     "operations": [
@@ -4290,10 +6360,22 @@
         "name": "AddJobFlowSteps"
       },
       {
+        "name": "AddTags"
+      },
+      {
         "name": "CancelSteps"
       },
       {
+        "name": "CreateSecurityConfiguration"
+      },
+      {
+        "name": "DeleteSecurityConfiguration"
+      },
+      {
         "name": "DescribeCluster"
+      },
+      {
+        "name": "DescribeSecurityConfiguration"
       },
       {
         "name": "DescribeStep"
@@ -4311,10 +6393,16 @@
         "name": "ListInstances"
       },
       {
+        "name": "ListSecurityConfigurations"
+      },
+      {
         "name": "ListSteps"
       },
       {
         "name": "ModifyInstanceGroups"
+      },
+      {
+        "name": "RemoveTags"
       },
       {
         "name": "RunJobFlow"
@@ -4325,6 +6413,51 @@
     ],
     "providers": {
       "aws": "EMR"
+    }
+  },
+  {
+    "service": "eventbridgescheduler",
+    "interface": "Scheduler",
+    "operations": [
+      {
+        "name": "CreateSchedule"
+      },
+      {
+        "name": "CreateScheduleGroup"
+      },
+      {
+        "name": "DeleteSchedule"
+      },
+      {
+        "name": "DeleteScheduleGroup"
+      },
+      {
+        "name": "GetSchedule"
+      },
+      {
+        "name": "GetScheduleGroup"
+      },
+      {
+        "name": "ListScheduleGroups"
+      },
+      {
+        "name": "ListSchedules"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateSchedule"
+      }
+    ],
+    "providers": {
+      "aws": "Scheduler"
     }
   },
   {
@@ -4444,6 +6577,132 @@
     }
   },
   {
+    "service": "filestore",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateInstance"
+      },
+      {
+        "name": "DeleteInstance"
+      },
+      {
+        "name": "GetInstance"
+      },
+      {
+        "name": "ListInstances"
+      },
+      {
+        "name": "UpdateInstance"
+      }
+    ],
+    "providers": {
+      "gcp": "Filestore"
+    }
+  },
+  {
+    "service": "fis",
+    "interface": "FIS",
+    "operations": [
+      {
+        "name": "CreateExperimentTemplate"
+      },
+      {
+        "name": "DeleteExperimentTemplate"
+      },
+      {
+        "name": "GetExperiment"
+      },
+      {
+        "name": "GetExperimentTemplate"
+      },
+      {
+        "name": "ListExperimentTemplates"
+      },
+      {
+        "name": "ListExperiments"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "StartExperiment"
+      },
+      {
+        "name": "StopExperiment"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateExperimentTemplate"
+      }
+    ],
+    "providers": {
+      "aws": "FIS"
+    }
+  },
+  {
+    "service": "frontdoor",
+    "interface": "AzureFrontDoorProfiles",
+    "operations": [
+      {
+        "name": "CreateOrUpdateEndpoint",
+        "doc": "CreateOrUpdateEndpoint stores e under (rg, profile, name) as a full replace,"
+      },
+      {
+        "name": "CreateOrUpdateOriginGroup",
+        "doc": "CreateOrUpdateOriginGroup stores g under (rg, profile, name) as a full"
+      },
+      {
+        "name": "CreateOrUpdateProfile",
+        "doc": "CreateOrUpdateProfile stores p as a full replace and reports whether it did"
+      },
+      {
+        "name": "DeleteEndpoint",
+        "doc": "DeleteEndpoint removes the endpoint, returning NotFound if it does not exist."
+      },
+      {
+        "name": "DeleteOriginGroup",
+        "doc": "DeleteOriginGroup removes the origin group, returning NotFound if it does not"
+      },
+      {
+        "name": "DeleteProfile",
+        "doc": "DeleteProfile removes the profile and cascades to every endpoint and origin"
+      },
+      {
+        "name": "GetEndpoint",
+        "doc": "GetEndpoint returns the endpoint identified by (rg, profile, name), or NotFound."
+      },
+      {
+        "name": "GetOriginGroup",
+        "doc": "GetOriginGroup returns the origin group identified by (rg, profile, name), or"
+      },
+      {
+        "name": "GetProfile",
+        "doc": "GetProfile returns the profile identified by (resourceGroup, name), or NotFound."
+      },
+      {
+        "name": "ListEndpoints",
+        "doc": "ListEndpoints returns the endpoints under (rg, profile), ordered by key."
+      },
+      {
+        "name": "ListOriginGroups",
+        "doc": "ListOriginGroups returns the origin groups under (rg, profile), ordered by key."
+      },
+      {
+        "name": "ListProfiles",
+        "doc": "ListProfiles returns the profiles in rg, or all when rg is empty"
+      }
+    ],
+    "providers": {
+      "azure": "FrontDoor"
+    }
+  },
+  {
     "service": "gke",
     "interface": "provider-native",
     "operations": [
@@ -4504,6 +6763,176 @@
     ],
     "providers": {
       "gcp": "GKE"
+    }
+  },
+  {
+    "service": "gkebackup",
+    "interface": "GKEBackup",
+    "operations": [
+      {
+        "name": "CreateBackupPlan"
+      },
+      {
+        "name": "CreateRestorePlan"
+      },
+      {
+        "name": "DeleteBackupPlan"
+      },
+      {
+        "name": "DeleteRestorePlan"
+      },
+      {
+        "name": "GetBackupPlan"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetRestorePlan"
+      },
+      {
+        "name": "ListBackupPlans"
+      },
+      {
+        "name": "ListRestorePlans"
+      },
+      {
+        "name": "PatchBackupPlan"
+      },
+      {
+        "name": "PatchRestorePlan"
+      }
+    ],
+    "providers": {
+      "gcp": "GKEBackup"
+    }
+  },
+  {
+    "service": "gkehub",
+    "interface": "GKEHub",
+    "operations": [
+      {
+        "name": "CreateFeature"
+      },
+      {
+        "name": "CreateFleet"
+      },
+      {
+        "name": "CreateMembership"
+      },
+      {
+        "name": "DeleteFeature"
+      },
+      {
+        "name": "DeleteFleet"
+      },
+      {
+        "name": "DeleteMembership"
+      },
+      {
+        "name": "GetFeature"
+      },
+      {
+        "name": "GetFleet"
+      },
+      {
+        "name": "GetMembership"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListFeatures"
+      },
+      {
+        "name": "ListFleets"
+      },
+      {
+        "name": "ListMemberships"
+      },
+      {
+        "name": "PatchFeature"
+      },
+      {
+        "name": "PatchFleet"
+      },
+      {
+        "name": "PatchMembership"
+      }
+    ],
+    "providers": {
+      "gcp": "GKEHub"
+    }
+  },
+  {
+    "service": "globalaccelerator",
+    "interface": "GlobalAccelerator",
+    "operations": [
+      {
+        "name": "CreateAccelerator"
+      },
+      {
+        "name": "CreateEndpointGroup"
+      },
+      {
+        "name": "CreateListener"
+      },
+      {
+        "name": "DeleteAccelerator"
+      },
+      {
+        "name": "DeleteEndpointGroup"
+      },
+      {
+        "name": "DeleteListener"
+      },
+      {
+        "name": "DescribeAccelerator"
+      },
+      {
+        "name": "DescribeAcceleratorAttributes"
+      },
+      {
+        "name": "DescribeEndpointGroup"
+      },
+      {
+        "name": "DescribeListener"
+      },
+      {
+        "name": "ListAccelerators"
+      },
+      {
+        "name": "ListEndpointGroups"
+      },
+      {
+        "name": "ListListeners"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAccelerator"
+      },
+      {
+        "name": "UpdateAcceleratorAttributes"
+      },
+      {
+        "name": "UpdateEndpointGroup"
+      },
+      {
+        "name": "UpdateListener"
+      }
+    ],
+    "providers": {
+      "aws": "GlobalAccelerator"
     }
   },
   {
@@ -5422,6 +7851,51 @@
     }
   },
   {
+    "service": "grafana",
+    "interface": "Grafana",
+    "operations": [
+      {
+        "name": "CreateWorkspace"
+      },
+      {
+        "name": "DeleteWorkspace"
+      },
+      {
+        "name": "DescribeWorkspace"
+      },
+      {
+        "name": "DescribeWorkspaceAuthentication"
+      },
+      {
+        "name": "DescribeWorkspaceConfiguration"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListWorkspaces"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateWorkspace"
+      },
+      {
+        "name": "UpdateWorkspaceAuthentication"
+      },
+      {
+        "name": "UpdateWorkspaceConfiguration"
+      }
+    ],
+    "providers": {
+      "aws": "Grafana"
+    }
+  },
+  {
     "service": "guardduty",
     "interface": "GuardDuty",
     "operations": [
@@ -5706,6 +8180,93 @@
     }
   },
   {
+    "service": "healthcareapis",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdateDicom"
+      },
+      {
+        "name": "CreateOrUpdateFhir"
+      },
+      {
+        "name": "CreateOrUpdateWorkspace"
+      },
+      {
+        "name": "DeleteDicom"
+      },
+      {
+        "name": "DeleteFhir"
+      },
+      {
+        "name": "DeleteWorkspace"
+      },
+      {
+        "name": "DiscoverWorkspaces"
+      },
+      {
+        "name": "GetDicom"
+      },
+      {
+        "name": "GetFhir"
+      },
+      {
+        "name": "GetWorkspace"
+      },
+      {
+        "name": "ListDicomByWorkspace"
+      },
+      {
+        "name": "ListFhirByWorkspace"
+      },
+      {
+        "name": "ListWorkspacesByResourceGroup"
+      },
+      {
+        "name": "ListWorkspacesBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "HealthcareApis"
+    }
+  },
+  {
+    "service": "healthlake",
+    "interface": "HealthLake",
+    "operations": [
+      {
+        "name": "CreateFHIRDatastore"
+      },
+      {
+        "name": "DeleteFHIRDatastore"
+      },
+      {
+        "name": "DescribeFHIRDatastore"
+      },
+      {
+        "name": "ListFHIRDatastores"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      }
+    ],
+    "providers": {
+      "aws": "HealthLake"
+    }
+  },
+  {
     "service": "iam",
     "interface": "IAM",
     "operations": [
@@ -5888,6 +8449,60 @@
     ],
     "providers": {
       "azure": "Images"
+    }
+  },
+  {
+    "service": "iothub",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "ARMType"
+      },
+      {
+        "name": "CreateOrUpdateConsumerGroup"
+      },
+      {
+        "name": "CreateOrUpdateHub"
+      },
+      {
+        "name": "DeleteConsumerGroup"
+      },
+      {
+        "name": "DeleteHub"
+      },
+      {
+        "name": "DiscoverHubs"
+      },
+      {
+        "name": "GetConsumerGroup"
+      },
+      {
+        "name": "GetHub"
+      },
+      {
+        "name": "GetKeysForKeyName"
+      },
+      {
+        "name": "ListConsumerGroups"
+      },
+      {
+        "name": "ListHubsByResourceGroup"
+      },
+      {
+        "name": "ListHubsBySubscription"
+      },
+      {
+        "name": "ListKeys"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "IoTHub"
     }
   },
   {
@@ -6086,6 +8701,54 @@
     ],
     "providers": {
       "aws": "Kafka"
+    }
+  },
+  {
+    "service": "kendra",
+    "interface": "Kendra",
+    "operations": [
+      {
+        "name": "CreateDataSource"
+      },
+      {
+        "name": "CreateIndex"
+      },
+      {
+        "name": "DeleteDataSource"
+      },
+      {
+        "name": "DeleteIndex"
+      },
+      {
+        "name": "DescribeDataSource"
+      },
+      {
+        "name": "DescribeIndex"
+      },
+      {
+        "name": "ListDataSources"
+      },
+      {
+        "name": "ListIndices"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateDataSource"
+      },
+      {
+        "name": "UpdateIndex"
+      }
+    ],
+    "providers": {
+      "aws": "Kendra"
     }
   },
   {
@@ -6293,6 +8956,66 @@
     ],
     "providers": {
       "aws": "Kinesis"
+    }
+  },
+  {
+    "service": "kinesisvideo",
+    "interface": "KinesisVideo",
+    "operations": [
+      {
+        "name": "CreateSignalingChannel"
+      },
+      {
+        "name": "CreateStream"
+      },
+      {
+        "name": "DeleteSignalingChannel"
+      },
+      {
+        "name": "DeleteStream"
+      },
+      {
+        "name": "DescribeSignalingChannel"
+      },
+      {
+        "name": "DescribeStream"
+      },
+      {
+        "name": "ListSignalingChannels"
+      },
+      {
+        "name": "ListStreams"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTagsForStream"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "TagStream"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UntagStream"
+      },
+      {
+        "name": "UpdateDataRetention"
+      },
+      {
+        "name": "UpdateSignalingChannel"
+      },
+      {
+        "name": "UpdateStream"
+      }
+    ],
+    "providers": {
+      "aws": "KinesisVideo"
     }
   },
   {
@@ -6562,6 +9285,66 @@
     ],
     "providers": {
       "aws": "KMS"
+    }
+  },
+  {
+    "service": "kms-gcp",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "CreateCryptoKey"
+      },
+      {
+        "name": "CreateCryptoKeyVersion"
+      },
+      {
+        "name": "CreateKeyRing"
+      },
+      {
+        "name": "DestroyCryptoKeyVersion"
+      },
+      {
+        "name": "GetCryptoKey"
+      },
+      {
+        "name": "GetCryptoKeyVersion"
+      },
+      {
+        "name": "GetIamPolicy"
+      },
+      {
+        "name": "GetKeyRing"
+      },
+      {
+        "name": "ListCryptoKeyVersions"
+      },
+      {
+        "name": "ListCryptoKeys"
+      },
+      {
+        "name": "ListKeyRings"
+      },
+      {
+        "name": "RestoreCryptoKeyVersion"
+      },
+      {
+        "name": "SetIamPolicy"
+      },
+      {
+        "name": "TestIamPermissions"
+      },
+      {
+        "name": "UpdateCryptoKey"
+      },
+      {
+        "name": "UpdateCryptoKeyPrimaryVersion"
+      },
+      {
+        "name": "UpdateCryptoKeyVersion"
+      }
+    ],
+    "providers": {
+      "gcp": "KMS"
     }
   },
   {
@@ -6840,6 +9623,132 @@
     }
   },
   {
+    "service": "loadtesting",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverLoadTests"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "LoadTesting"
+    }
+  },
+  {
+    "service": "location",
+    "interface": "Location",
+    "operations": [
+      {
+        "name": "CreateGeofenceCollection"
+      },
+      {
+        "name": "CreateMap"
+      },
+      {
+        "name": "CreatePlaceIndex"
+      },
+      {
+        "name": "CreateRouteCalculator"
+      },
+      {
+        "name": "CreateTracker"
+      },
+      {
+        "name": "DeleteGeofenceCollection"
+      },
+      {
+        "name": "DeleteMap"
+      },
+      {
+        "name": "DeletePlaceIndex"
+      },
+      {
+        "name": "DeleteRouteCalculator"
+      },
+      {
+        "name": "DeleteTracker"
+      },
+      {
+        "name": "DescribeGeofenceCollection"
+      },
+      {
+        "name": "DescribeMap"
+      },
+      {
+        "name": "DescribePlaceIndex"
+      },
+      {
+        "name": "DescribeRouteCalculator"
+      },
+      {
+        "name": "DescribeTracker"
+      },
+      {
+        "name": "ListGeofenceCollections"
+      },
+      {
+        "name": "ListMaps"
+      },
+      {
+        "name": "ListPlaceIndexes"
+      },
+      {
+        "name": "ListRouteCalculators"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListTrackers"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateGeofenceCollection"
+      },
+      {
+        "name": "UpdateMap"
+      },
+      {
+        "name": "UpdatePlaceIndex"
+      },
+      {
+        "name": "UpdateRouteCalculator"
+      },
+      {
+        "name": "UpdateTracker"
+      }
+    ],
+    "providers": {
+      "aws": "Location"
+    }
+  },
+  {
     "service": "locks",
     "interface": "provider-native",
     "operations": [
@@ -7043,6 +9952,39 @@
     }
   },
   {
+    "service": "managedgrafana",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverGrafana"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "ManagedGrafana"
+    }
+  },
+  {
     "service": "managedidentity",
     "interface": "provider-native",
     "operations": [
@@ -7073,6 +10015,51 @@
     ],
     "providers": {
       "azure": "ManagedIdentity"
+    }
+  },
+  {
+    "service": "managedlustre",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "Archive"
+      },
+      {
+        "name": "CancelArchive"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverAmlFilesystems"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "LustreVersion"
+      },
+      {
+        "name": "MountCommand"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "ManagedLustre"
     }
   },
   {
@@ -7354,6 +10341,70 @@
     }
   },
   {
+    "service": "metastore",
+    "interface": "Metastore",
+    "operations": [
+      {
+        "name": "CreateService"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetService"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "PatchService"
+      }
+    ],
+    "providers": {
+      "gcp": "Metastore"
+    }
+  },
+  {
+    "service": "mongocluster",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdateCluster"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DiscoverClusters"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "ListClustersByResourceGroup"
+      },
+      {
+        "name": "ListClustersBySubscription"
+      },
+      {
+        "name": "ListConnectionStrings"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "MongoCluster"
+    }
+  },
+  {
     "service": "monitoring",
     "interface": "Monitoring",
     "operations": [
@@ -7415,6 +10466,154 @@
       "azure": "Monitor",
       "gcp": "CloudMonitoring",
       "oci": "Monitoring"
+    }
+  },
+  {
+    "service": "mq",
+    "interface": "MQ",
+    "operations": [
+      {
+        "name": "CreateBroker"
+      },
+      {
+        "name": "CreateConfiguration"
+      },
+      {
+        "name": "CreateTags"
+      },
+      {
+        "name": "CreateUser"
+      },
+      {
+        "name": "DeleteBroker"
+      },
+      {
+        "name": "DeleteTags"
+      },
+      {
+        "name": "DeleteUser"
+      },
+      {
+        "name": "DescribeBroker"
+      },
+      {
+        "name": "DescribeConfiguration"
+      },
+      {
+        "name": "DescribeConfigurationRevision"
+      },
+      {
+        "name": "DescribeUser"
+      },
+      {
+        "name": "ListBrokers"
+      },
+      {
+        "name": "ListConfigurations"
+      },
+      {
+        "name": "ListTags"
+      },
+      {
+        "name": "ListUsers"
+      },
+      {
+        "name": "RebootBroker"
+      },
+      {
+        "name": "UpdateBroker"
+      },
+      {
+        "name": "UpdateConfiguration"
+      },
+      {
+        "name": "UpdateUser"
+      }
+    ],
+    "providers": {
+      "aws": "MQ"
+    }
+  },
+  {
+    "service": "mwaa",
+    "interface": "MWAA",
+    "operations": [
+      {
+        "name": "CreateCliToken"
+      },
+      {
+        "name": "CreateEnvironment"
+      },
+      {
+        "name": "CreateWebLoginToken"
+      },
+      {
+        "name": "DeleteEnvironment"
+      },
+      {
+        "name": "GetEnvironment"
+      },
+      {
+        "name": "ListEnvironments"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateEnvironment"
+      }
+    ],
+    "providers": {
+      "aws": "MWAA"
+    }
+  },
+  {
+    "service": "networkconnectivity",
+    "interface": "NetworkConnectivity",
+    "operations": [
+      {
+        "name": "CreateHub"
+      },
+      {
+        "name": "CreateSpoke"
+      },
+      {
+        "name": "DeleteHub"
+      },
+      {
+        "name": "DeleteSpoke"
+      },
+      {
+        "name": "GetHub"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetSpoke"
+      },
+      {
+        "name": "ListHubs"
+      },
+      {
+        "name": "ListSpokes"
+      },
+      {
+        "name": "PatchHub"
+      },
+      {
+        "name": "PatchSpoke"
+      }
+    ],
+    "providers": {
+      "gcp": "NetworkConnectivity"
     }
   },
   {
@@ -7788,6 +10987,10 @@
             "doc": "DeleteAzureNSGRule removes a single custom security rule by name, leaving"
           },
           {
+            "name": "DeleteAzureRoute",
+            "doc": "DeleteAzureRoute removes a single route by name from the route table with"
+          },
+          {
             "name": "DeleteAzureRouteTableMetadata",
             "doc": "DeleteAzureRouteTableMetadata drops the stored metadata for id (called when"
           },
@@ -7841,6 +11044,10 @@
           {
             "name": "UpsertAzureNSGRule",
             "doc": "UpsertAzureNSGRule creates or replaces a single custom security rule by"
+          },
+          {
+            "name": "UpsertAzureRoute",
+            "doc": "UpsertAzureRoute creates or replaces a single route by name in the route"
           },
           {
             "name": "UpsertAzureVNetPeering",
@@ -9165,6 +12372,155 @@
     }
   },
   {
+    "service": "privateca",
+    "interface": "PrivateCA",
+    "operations": [
+      {
+        "name": "ActivateCertificateAuthority"
+      },
+      {
+        "name": "CreateCaPool"
+      },
+      {
+        "name": "CreateCertificate"
+      },
+      {
+        "name": "CreateCertificateAuthority"
+      },
+      {
+        "name": "CreateCertificateTemplate"
+      },
+      {
+        "name": "DeleteCaPool"
+      },
+      {
+        "name": "DeleteCertificateAuthority"
+      },
+      {
+        "name": "DeleteCertificateTemplate"
+      },
+      {
+        "name": "DisableCertificateAuthority"
+      },
+      {
+        "name": "EnableCertificateAuthority"
+      },
+      {
+        "name": "FetchCertificateAuthorityCSR"
+      },
+      {
+        "name": "GetCaPool"
+      },
+      {
+        "name": "GetCertificate"
+      },
+      {
+        "name": "GetCertificateAuthority"
+      },
+      {
+        "name": "GetCertificateTemplate"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListCaPools"
+      },
+      {
+        "name": "ListCertificateAuthorities"
+      },
+      {
+        "name": "ListCertificateTemplates"
+      },
+      {
+        "name": "ListCertificates"
+      },
+      {
+        "name": "PatchCaPool"
+      },
+      {
+        "name": "PatchCertificate"
+      },
+      {
+        "name": "PatchCertificateAuthority"
+      },
+      {
+        "name": "PatchCertificateTemplate"
+      },
+      {
+        "name": "RevokeCertificate"
+      },
+      {
+        "name": "UndeleteCertificateAuthority"
+      }
+    ],
+    "providers": {
+      "gcp": "PrivateCA"
+    }
+  },
+  {
+    "service": "privatedns",
+    "interface": "PrivateDNS",
+    "operations": [
+      {
+        "name": "CreateOrUpdatePrivateZone",
+        "doc": "CreateOrUpdatePrivateZone stores zone as a full replace and reports whether"
+      },
+      {
+        "name": "CreateOrUpdateRecordSet",
+        "doc": "CreateOrUpdateRecordSet stores rs as a full replace under an existing zone,"
+      },
+      {
+        "name": "CreateOrUpdateVirtualNetworkLink",
+        "doc": "CreateOrUpdateVirtualNetworkLink stores link as a full replace under an"
+      },
+      {
+        "name": "DeletePrivateZone",
+        "doc": "DeletePrivateZone removes the zone and cascades to its links and records,"
+      },
+      {
+        "name": "DeleteRecordSet",
+        "doc": "DeleteRecordSet removes the record set, or returns NotFound."
+      },
+      {
+        "name": "DeleteVirtualNetworkLink",
+        "doc": "DeleteVirtualNetworkLink removes the link, or returns NotFound."
+      },
+      {
+        "name": "GetPrivateZone",
+        "doc": "GetPrivateZone returns the zone with its computed counts, or NotFound."
+      },
+      {
+        "name": "GetRecordSet",
+        "doc": "GetRecordSet returns the record set, or NotFound."
+      },
+      {
+        "name": "GetVirtualNetworkLink",
+        "doc": "GetVirtualNetworkLink returns the link, or NotFound."
+      },
+      {
+        "name": "ListPrivateZones",
+        "doc": "ListPrivateZones returns the zones in rg (all when rg is empty), ordered by"
+      },
+      {
+        "name": "ListRecordSets",
+        "doc": "ListRecordSets returns every record set under a zone, ordered by key."
+      },
+      {
+        "name": "ListRecordSetsByType",
+        "doc": "ListRecordSetsByType returns the zone's record sets of one type, ordered by"
+      },
+      {
+        "name": "ListVirtualNetworkLinks",
+        "doc": "ListVirtualNetworkLinks returns the links under a zone, ordered by key."
+      }
+    ],
+    "providers": {
+      "azure": "PrivateDNS"
+    }
+  },
+  {
     "service": "providers",
     "interface": "provider-native",
     "operations": [
@@ -9183,6 +12539,42 @@
     ],
     "providers": {
       "azure": "Providers"
+    }
+  },
+  {
+    "service": "purview",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverAccounts"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "ListKeys"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "Purview"
     }
   },
   {
@@ -9286,6 +12678,114 @@
     ],
     "providers": {
       "aws": "RDS"
+    }
+  },
+  {
+    "service": "recoveryservices",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "ARMType"
+      },
+      {
+        "name": "CreateOrUpdatePolicy"
+      },
+      {
+        "name": "CreateOrUpdateVault"
+      },
+      {
+        "name": "DeletePolicy"
+      },
+      {
+        "name": "DeleteVault"
+      },
+      {
+        "name": "DiscoverVaults"
+      },
+      {
+        "name": "GetPolicy"
+      },
+      {
+        "name": "GetStorageConfig"
+      },
+      {
+        "name": "GetVault"
+      },
+      {
+        "name": "GetVaultConfig"
+      },
+      {
+        "name": "ListPolicies"
+      },
+      {
+        "name": "ListVaultsByResourceGroup"
+      },
+      {
+        "name": "ListVaultsBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "UpdateStorageConfig"
+      },
+      {
+        "name": "UpdateVault"
+      },
+      {
+        "name": "UpdateVaultConfig"
+      }
+    ],
+    "providers": {
+      "azure": "RecoveryServices"
+    }
+  },
+  {
+    "service": "redisenterprise",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdateCluster"
+      },
+      {
+        "name": "CreateOrUpdateDatabase"
+      },
+      {
+        "name": "DeleteCluster"
+      },
+      {
+        "name": "DeleteDatabase"
+      },
+      {
+        "name": "DiscoverClusters"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetDatabase"
+      },
+      {
+        "name": "ListClustersByResourceGroup"
+      },
+      {
+        "name": "ListClustersBySubscription"
+      },
+      {
+        "name": "ListDatabasesByCluster"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      }
+    ],
+    "providers": {
+      "azure": "RedisEnterprise"
     }
   },
   {
@@ -10060,6 +13560,24 @@
     ],
     "providers": {
       "aws": "Resourcegroupstaggingapi"
+    }
+  },
+  {
+    "service": "resourcemanager",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "GetIamPolicy"
+      },
+      {
+        "name": "SetIamPolicy"
+      },
+      {
+        "name": "TestIamPermissions"
+      }
+    ],
+    "providers": {
+      "gcp": "Resourcemanager"
     }
   },
   {
@@ -11351,6 +14869,47 @@
     }
   },
   {
+    "service": "scheduler",
+    "interface": "Scheduler",
+    "operations": [
+      {
+        "name": "CreateJob",
+        "doc": "CreateJob stores a job. cfg.Name is the full resource name; the job is"
+      },
+      {
+        "name": "DeleteJob",
+        "doc": "DeleteJob removes a job by its full resource name."
+      },
+      {
+        "name": "GetJob",
+        "doc": "GetJob returns a job by its full resource name."
+      },
+      {
+        "name": "ListJobs",
+        "doc": "ListJobs returns every job under the given parent"
+      },
+      {
+        "name": "PatchJob",
+        "doc": "PatchJob applies a field-mask update to an existing job and returns it."
+      },
+      {
+        "name": "PauseJob",
+        "doc": "PauseJob transitions a job to PAUSED and returns it."
+      },
+      {
+        "name": "ResumeJob",
+        "doc": "ResumeJob transitions a job to ENABLED and returns it."
+      },
+      {
+        "name": "RunJob",
+        "doc": "RunJob force-runs a job now. Dispatch is out of scope, so this records the"
+      }
+    ],
+    "providers": {
+      "gcp": "Scheduler"
+    }
+  },
+  {
     "service": "secrets",
     "interface": "Secrets",
     "operations": [
@@ -11582,6 +15141,55 @@
     }
   },
   {
+    "service": "securesourcemanager",
+    "interface": "SecureSourceManager",
+    "operations": [
+      {
+        "name": "CreateInstance",
+        "doc": "CreateInstance provisions a new instance and returns its completed LRO."
+      },
+      {
+        "name": "CreateRepository",
+        "doc": "CreateRepository provisions a new repository and returns its completed LRO."
+      },
+      {
+        "name": "DeleteInstance",
+        "doc": "DeleteInstance removes an instance and returns its completed LRO."
+      },
+      {
+        "name": "DeleteRepository",
+        "doc": "DeleteRepository removes a repository and returns its completed LRO."
+      },
+      {
+        "name": "GetInstance",
+        "doc": "GetInstance returns an instance by identity."
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetRepository",
+        "doc": "GetRepository returns a repository by identity."
+      },
+      {
+        "name": "ListInstances",
+        "doc": "ListInstances returns every instance in a project+location."
+      },
+      {
+        "name": "ListRepositories",
+        "doc": "ListRepositories returns every repository in a project+location."
+      },
+      {
+        "name": "PatchRepository",
+        "doc": "PatchRepository applies a masked update to a repository (the one real"
+      }
+    ],
+    "providers": {
+      "gcp": "SecureSourceManager"
+    }
+  },
+  {
     "service": "serverless",
     "interface": "Serverless",
     "operations": [
@@ -11676,6 +15284,60 @@
       "aws": "Lambda",
       "azure": "Functions",
       "gcp": "CloudFunctions"
+    }
+  },
+  {
+    "service": "servicedirectory",
+    "interface": "ServiceDirectory",
+    "operations": [
+      {
+        "name": "CreateEndpoint"
+      },
+      {
+        "name": "CreateNamespace"
+      },
+      {
+        "name": "CreateService"
+      },
+      {
+        "name": "DeleteEndpoint"
+      },
+      {
+        "name": "DeleteNamespace"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "GetEndpoint"
+      },
+      {
+        "name": "GetNamespace"
+      },
+      {
+        "name": "GetService"
+      },
+      {
+        "name": "ListEndpoints"
+      },
+      {
+        "name": "ListNamespaces"
+      },
+      {
+        "name": "ListServices"
+      },
+      {
+        "name": "PatchEndpoint"
+      },
+      {
+        "name": "PatchNamespace"
+      },
+      {
+        "name": "PatchService"
+      }
+    ],
+    "providers": {
+      "gcp": "ServiceDirectory"
     }
   },
   {
@@ -12222,6 +15884,45 @@
     }
   },
   {
+    "service": "signalr",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverSignalR"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PrimaryConnectionString"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "SecondaryConnectionString"
+      }
+    ],
+    "providers": {
+      "azure": "SignalR"
+    }
+  },
+  {
     "service": "snapshots",
     "interface": "provider-native",
     "operations": [
@@ -12243,6 +15944,63 @@
     ],
     "providers": {
       "azure": "Snapshots"
+    }
+  },
+  {
+    "service": "spanner",
+    "interface": "Spanner",
+    "operations": [
+      {
+        "name": "CreateDatabase",
+        "doc": "CreateDatabase provisions a database under an instance (returns a completed LRO)."
+      },
+      {
+        "name": "CreateInstance",
+        "doc": "CreateInstance provisions a new instance (returns a completed LRO)."
+      },
+      {
+        "name": "DeleteInstance",
+        "doc": "DeleteInstance removes an instance and its databases (synchronous)."
+      },
+      {
+        "name": "DropDatabase",
+        "doc": "DropDatabase deletes a database (synchronous)."
+      },
+      {
+        "name": "GetDatabase",
+        "doc": "GetDatabase returns a database by full resource name."
+      },
+      {
+        "name": "GetDatabaseDdl",
+        "doc": "GetDatabaseDdl returns a database's accumulated DDL statements."
+      },
+      {
+        "name": "GetInstance",
+        "doc": "GetInstance returns an instance by full resource name."
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name."
+      },
+      {
+        "name": "ListDatabases",
+        "doc": "ListDatabases returns every database under an instance (parent)."
+      },
+      {
+        "name": "ListInstances",
+        "doc": "ListInstances returns every instance in a project."
+      },
+      {
+        "name": "UpdateDatabaseDdl",
+        "doc": "UpdateDatabaseDdl appends DDL statements to a database (returns a completed LRO)."
+      },
+      {
+        "name": "UpdateInstance",
+        "doc": "UpdateInstance applies a masked update to an instance (returns a completed LRO)."
+      }
+    ],
+    "providers": {
+      "gcp": "Spanner"
     }
   },
   {
@@ -13231,6 +16989,72 @@
     }
   },
   {
+    "service": "streamanalytics",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "ARMType"
+      },
+      {
+        "name": "CreateOrUpdateChild"
+      },
+      {
+        "name": "CreateOrUpdateJob"
+      },
+      {
+        "name": "DeleteChild"
+      },
+      {
+        "name": "DeleteJob"
+      },
+      {
+        "name": "DiscoverJobs"
+      },
+      {
+        "name": "GetChild"
+      },
+      {
+        "name": "GetJob"
+      },
+      {
+        "name": "JobChildren"
+      },
+      {
+        "name": "JobExists"
+      },
+      {
+        "name": "ListChildren"
+      },
+      {
+        "name": "ListJobsByResourceGroup"
+      },
+      {
+        "name": "ListJobsBySubscription"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "ScaleJob"
+      },
+      {
+        "name": "StartJob"
+      },
+      {
+        "name": "StopJob"
+      },
+      {
+        "name": "TestChild"
+      }
+    ],
+    "providers": {
+      "azure": "StreamAnalytics"
+    }
+  },
+  {
     "service": "sts",
     "interface": "provider-native",
     "operations": [
@@ -13391,6 +17215,128 @@
     ],
     "providers": {
       "azure": "Tenants"
+    }
+  },
+  {
+    "service": "timestreamwrite",
+    "interface": "Timestream",
+    "operations": [
+      {
+        "name": "CreateDatabase"
+      },
+      {
+        "name": "CreateTable"
+      },
+      {
+        "name": "DeleteDatabase"
+      },
+      {
+        "name": "DeleteTable"
+      },
+      {
+        "name": "DescribeDatabase"
+      },
+      {
+        "name": "DescribeTable"
+      },
+      {
+        "name": "ListDatabases"
+      },
+      {
+        "name": "ListTables"
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateDatabase"
+      },
+      {
+        "name": "UpdateTable"
+      }
+    ],
+    "providers": {
+      "aws": "TimestreamWrite"
+    }
+  },
+  {
+    "service": "transfer",
+    "interface": "Transfer",
+    "operations": [
+      {
+        "name": "CreateServer",
+        "doc": "CreateServer creates a server, materializing the real Transfer defaults"
+      },
+      {
+        "name": "CreateUser",
+        "doc": "CreateUser creates a user on a server and increments the server's"
+      },
+      {
+        "name": "DeleteSSHPublicKey",
+        "doc": "DeleteSSHPublicKey removes a key from a user by its SSHPublicKeyID."
+      },
+      {
+        "name": "DeleteServer",
+        "doc": "DeleteServer removes a server and every user hosted on it."
+      },
+      {
+        "name": "DeleteUser",
+        "doc": "DeleteUser removes a user and decrements the server's UserCount."
+      },
+      {
+        "name": "DescribeServer",
+        "doc": "DescribeServer returns a deep copy of a server, or a"
+      },
+      {
+        "name": "DescribeUser",
+        "doc": "DescribeUser returns a deep copy of a user (including its imported SSH"
+      },
+      {
+        "name": "ImportSSHPublicKey",
+        "doc": "ImportSSHPublicKey appends a key to a user and returns its generated"
+      },
+      {
+        "name": "ListServers",
+        "doc": "ListServers returns server summaries in a deterministic (ServerID) order."
+      },
+      {
+        "name": "ListTagsForResource"
+      },
+      {
+        "name": "ListUsers",
+        "doc": "ListUsers returns user summaries for a server in a deterministic"
+      },
+      {
+        "name": "StartServer",
+        "doc": "StartServer transitions a server to State ONLINE."
+      },
+      {
+        "name": "StopServer",
+        "doc": "StopServer transitions a server to State OFFLINE."
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateServer",
+        "doc": "UpdateServer applies the mutable-field delta to a server. A nil field is"
+      },
+      {
+        "name": "UpdateUser",
+        "doc": "UpdateUser applies the mutable-field delta to a user."
+      }
+    ],
+    "providers": {
+      "aws": "Transfer"
     }
   },
   {
@@ -13731,6 +17677,12 @@
         "name": "PatchDataset"
       },
       {
+        "name": "PatchEndpoint"
+      },
+      {
+        "name": "PatchFeaturestore"
+      },
+      {
         "name": "PatchModel"
       },
       {
@@ -13776,6 +17728,34 @@
     ],
     "providers": {
       "gcp": "VertexAI"
+    }
+  },
+  {
+    "service": "vpcaccess",
+    "interface": "VPCAccess",
+    "operations": [
+      {
+        "name": "CreateConnector"
+      },
+      {
+        "name": "DeleteConnector"
+      },
+      {
+        "name": "GetConnector"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListConnectors"
+      },
+      {
+        "name": "PatchConnector"
+      }
+    ],
+    "providers": {
+      "gcp": "VPCAccess"
     }
   },
   {
@@ -14429,6 +18409,73 @@
     ],
     "providers": {
       "aws": "WAFv2"
+    }
+  },
+  {
+    "service": "webpubsub",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "DiscoverWebPubSub"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "PrimaryConnectionString"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "SecondaryConnectionString"
+      }
+    ],
+    "providers": {
+      "azure": "WebPubSub"
+    }
+  },
+  {
+    "service": "workflows",
+    "interface": "Workflows",
+    "operations": [
+      {
+        "name": "CreateWorkflow"
+      },
+      {
+        "name": "DeleteWorkflow"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "GetWorkflow"
+      },
+      {
+        "name": "ListWorkflows"
+      },
+      {
+        "name": "PatchWorkflow"
+      }
+    ],
+    "providers": {
+      "gcp": "Workflows"
     }
   },
   {

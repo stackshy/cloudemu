@@ -132,9 +132,22 @@ func createSink(w http.ResponseWriter, r *http.Request, gcp logdriver.GCPLogging
 		return
 	}
 
-	s, err := gcp.CreateSink(r.Context(), project, body.toDriver(body.Name))
+	sink := body.toDriver(body.Name)
+
+	// writerIdentity is output-only: its value is chosen by query params, never
+	// the request body — a unique per-parent service agent
+	// (uniqueWriterIdentity=true) or an explicit one (customWriterIdentity). When
+	// neither is set this is "" and the provider fills the shared, non-unique
+	// account.
+	sink.WriterIdentity = sinkWriterIdentity(project, r)
+
+	s, err := gcp.CreateSink(r.Context(), project, sink)
 	writeSink(w, s, err)
 }
+
+// defaultSinkUpdateMask is the field set an updateMask-less sink PATCH touches,
+// matching real Cloud Logging's documented backwards-compatible default.
+const defaultSinkUpdateMask = "destination,filter,includeChildren"
 
 func updateSink(w http.ResponseWriter, r *http.Request, gcp logdriver.GCPLogging, project, sinkID string) {
 	var body logSinkJSON
@@ -142,8 +155,53 @@ func updateSink(w http.ResponseWriter, r *http.Request, gcp logdriver.GCPLogging
 		return
 	}
 
-	s, err := gcp.UpdateSink(r.Context(), project, body.toDriver(sinkID))
+	mask := r.URL.Query().Get("updateMask")
+	if mask == "" {
+		mask = defaultSinkUpdateMask
+	}
+
+	update := &logdriver.SinkUpdate{
+		Destination:        body.Destination,
+		SetDestination:     maskHas(mask, "destination"),
+		Filter:             body.Filter,
+		SetFilter:          maskHas(mask, "filter"),
+		Description:        body.Description,
+		SetDescription:     maskHas(mask, "description"),
+		Disabled:           body.Disabled,
+		SetDisabled:        maskHas(mask, "disabled"),
+		IncludeChildren:    body.IncludeChildren,
+		SetIncludeChildren: maskHas(mask, "includeChildren") || maskHas(mask, "include_children"),
+		WriterIdentity:     sinkWriterIdentity(project, r),
+	}
+
+	s, err := gcp.UpdateSink(r.Context(), project, sinkID, update)
 	writeSink(w, s, err)
+}
+
+// sinkWriterIdentity resolves the writerIdentity a create/patch requests via
+// query params. customWriterIdentity wins; uniqueWriterIdentity=true yields a
+// per-parent Cloud Logging service agent; otherwise "" (the provider fills the
+// shared non-unique account and a patch leaves the stored identity unchanged).
+func sinkWriterIdentity(project string, r *http.Request) string {
+	if custom := r.URL.Query().Get("customWriterIdentity"); custom != "" {
+		return custom
+	}
+
+	if r.URL.Query().Get("uniqueWriterIdentity") == "true" {
+		return uniqueWriterIdentityFor(project)
+	}
+
+	return ""
+}
+
+// uniqueWriterIdentityFor returns the deterministic per-parent Logging service
+// agent used when a sink requests a unique writer identity. Real Cloud Logging
+// keys this on the project number; the emulator has no project number, so it
+// derives a stable, realistically-shaped agent from the project id. It differs
+// from the shared non-unique account, which is what SDK/Terraform callers check
+// to infer unique_writer_identity.
+func uniqueWriterIdentityFor(project string) string {
+	return "serviceAccount:service-" + project + "@gcp-sa-logging.iam.gserviceaccount.com"
 }
 
 func listSinks(w http.ResponseWriter, r *http.Request, gcp logdriver.GCPLogging, project string) {

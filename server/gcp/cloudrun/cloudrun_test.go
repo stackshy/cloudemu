@@ -82,6 +82,17 @@ func postJSON(t *testing.T, url string, body any) map[string]any {
 	return decode(t, resp)
 }
 
+func encodeBody(t *testing.T, body any) *bytes.Buffer {
+	t.Helper()
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(body); err != nil {
+		t.Fatalf("encode: %v", err)
+	}
+
+	return &buf
+}
+
 func getJSON(t *testing.T, url string) (map[string]any, int) {
 	t.Helper()
 

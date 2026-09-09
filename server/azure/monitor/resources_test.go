@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -121,6 +122,42 @@ func TestMetricAlertPersistence(t *testing.T) {
 
 	if tags, _ := got["tags"].(map[string]any); tags["team"] != "sre" {
 		t.Errorf("tags dropped: %+v", got["tags"])
+	}
+}
+
+// TestMetricAlertAutoMitigateDefaultsTrue covers the missing-default finding: a
+// metricAlert created without autoMitigate must read back autoMitigate=true, the
+// documented Azure default (Metric Alerts - Create Or Update returns
+// "autoMitigate": true when the request omits it), not an absent field. An
+// explicit false must be preserved.
+func TestMetricAlertAutoMitigateDefaultsTrue(t *testing.T) {
+	ts, _ := newMonitorServer(t)
+
+	base := `{"location":"global","properties":{"severity":3,"enabled":true,
+		"scopes":["/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Compute/virtualMachines/vm1"],
+		"windowSize":"PT5M","criteria":{"allOf":[{"metricName":"Percentage CPU","operator":"GreaterThan",
+		"threshold":80,"timeAggregation":"Average"}]}%s}}`
+
+	// Omitted autoMitigate -> defaults to true on both the PUT response and a
+	// subsequent GET.
+	omitURL := "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Insights/metricAlerts/am-default" + apiVer
+
+	_, put := doJSON(t, ts, http.MethodPut, omitURL, fmt.Sprintf(base, ""))
+	if props, _ := put["properties"].(map[string]any); props["autoMitigate"] != true {
+		t.Fatalf("PUT autoMitigate = %v, want true (default not applied)", put["properties"])
+	}
+
+	_, got := doJSON(t, ts, http.MethodGet, omitURL, "")
+	if props, _ := got["properties"].(map[string]any); props["autoMitigate"] != true {
+		t.Fatalf("GET autoMitigate = %v, want true (default not persisted)", got["properties"])
+	}
+
+	// Explicit autoMitigate:false is preserved, not overwritten by the default.
+	falseURL := "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Insights/metricAlerts/am-false" + apiVer
+
+	_, putFalse := doJSON(t, ts, http.MethodPut, falseURL, fmt.Sprintf(base, `,"autoMitigate":false`))
+	if props, _ := putFalse["properties"].(map[string]any); props["autoMitigate"] != false {
+		t.Fatalf("explicit autoMitigate:false = %v, want false (default clobbered it)", putFalse["properties"])
 	}
 }
 

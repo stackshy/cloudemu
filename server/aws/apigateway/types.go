@@ -4,13 +4,41 @@ import "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 
 // createRestAPIRequest is the CreateRestApi request body (restJson1).
 type createRestAPIRequest struct {
-	Name                  string                 `json:"name"`
-	Description           string                 `json:"description"`
-	Version               string                 `json:"version"`
-	APIKeySource          string                 `json:"apiKeySource"`
-	BinaryMediaTypes      []string               `json:"binaryMediaTypes"`
-	Tags                  map[string]string      `json:"tags"`
-	EndpointConfiguration *endpointConfiguration `json:"endpointConfiguration"`
+	Name                      string                 `json:"name"`
+	Description               string                 `json:"description"`
+	Version                   string                 `json:"version"`
+	APIKeySource              string                 `json:"apiKeySource"`
+	BinaryMediaTypes          []string               `json:"binaryMediaTypes"`
+	Tags                      map[string]string      `json:"tags"`
+	EndpointConfiguration     *endpointConfiguration `json:"endpointConfiguration"`
+	DisableExecuteAPIEndpoint bool                   `json:"disableExecuteApiEndpoint"`
+	MinimumCompressionSize    *int                   `json:"minimumCompressionSize"`
+	Policy                    string                 `json:"policy"`
+}
+
+// patchRequest is the shared update request body: an AWS patchOperations
+// (JSON Patch) document sent to any Update* operation.
+type patchRequest struct {
+	PatchOperations []patchOperation `json:"patchOperations"`
+}
+
+// patchOperation is one JSON Patch op. Value is decoded as a raw string because
+// API Gateway always encodes patch values as strings, even for bool/int fields.
+type patchOperation struct {
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	Value string `json:"value"`
+	From  string `json:"from"`
+}
+
+// toPatchOps converts decoded wire patch ops to the driver's type.
+func toPatchOps(in []patchOperation) []driver.PatchOperation {
+	out := make([]driver.PatchOperation, 0, len(in))
+	for _, op := range in {
+		out = append(out, driver.PatchOperation{Op: op.Op, Path: op.Path, Value: op.Value, From: op.From})
+	}
+
+	return out
 }
 
 type endpointConfiguration struct {
@@ -34,6 +62,7 @@ type putIntegrationRequest struct {
 	IntegrationHTTPMethod string `json:"integrationHttpMethod"`
 	URI                   string `json:"uri"`
 	PassthroughBehavior   string `json:"passthroughBehavior"`
+	TimeoutInMillis       int    `json:"timeoutInMillis"`
 }
 
 // createDeploymentRequest is the CreateDeployment request body.
@@ -52,16 +81,19 @@ type createStageRequest struct {
 
 // restAPIResponse is the RestApi wire object.
 type restAPIResponse struct {
-	ID                    string                 `json:"id"`
-	Name                  string                 `json:"name"`
-	Description           string                 `json:"description,omitempty"`
-	Version               string                 `json:"version,omitempty"`
-	CreatedDate           int64                  `json:"createdDate"`
-	RootResourceID        string                 `json:"rootResourceId"`
-	APIKeySource          string                 `json:"apiKeySource,omitempty"`
-	Tags                  map[string]string      `json:"tags,omitempty"`
-	BinaryMediaTypes      []string               `json:"binaryMediaTypes,omitempty"`
-	EndpointConfiguration *endpointConfiguration `json:"endpointConfiguration,omitempty"`
+	ID                        string                 `json:"id"`
+	Name                      string                 `json:"name"`
+	Description               string                 `json:"description,omitempty"`
+	Version                   string                 `json:"version,omitempty"`
+	CreatedDate               int64                  `json:"createdDate"`
+	RootResourceID            string                 `json:"rootResourceId"`
+	APIKeySource              string                 `json:"apiKeySource,omitempty"`
+	Tags                      map[string]string      `json:"tags,omitempty"`
+	BinaryMediaTypes          []string               `json:"binaryMediaTypes,omitempty"`
+	EndpointConfiguration     *endpointConfiguration `json:"endpointConfiguration,omitempty"`
+	DisableExecuteAPIEndpoint bool                   `json:"disableExecuteApiEndpoint"`
+	MinimumCompressionSize    *int                   `json:"minimumCompressionSize,omitempty"`
+	Policy                    string                 `json:"policy,omitempty"`
 }
 
 // listRestAPIsResponse is the GetRestApis wire object.
@@ -97,6 +129,7 @@ type integrationResponse struct {
 	HTTPMethod          string `json:"httpMethod,omitempty"`
 	URI                 string `json:"uri,omitempty"`
 	PassthroughBehavior string `json:"passthroughBehavior,omitempty"`
+	TimeoutInMillis     int    `json:"timeoutInMillis,omitempty"`
 }
 
 // deploymentResponse is the Deployment wire object.
@@ -104,6 +137,11 @@ type deploymentResponse struct {
 	ID          string `json:"id"`
 	Description string `json:"description,omitempty"`
 	CreatedDate int64  `json:"createdDate"`
+}
+
+// listDeploymentsResponse is the GetDeployments wire object.
+type listDeploymentsResponse struct {
+	Item []deploymentResponse `json:"item"`
 }
 
 // stageResponse is the Stage wire object.
@@ -115,11 +153,18 @@ type stageResponse struct {
 	Variables    map[string]string `json:"variables,omitempty"`
 }
 
+// listStagesResponse is the GetStages wire object.
+type listStagesResponse struct {
+	Item []stageResponse `json:"item"`
+}
+
 func toRestAPIResponse(a *driver.RestAPI) restAPIResponse {
 	resp := restAPIResponse{
 		ID: a.ID, Name: a.Name, Description: a.Description, Version: a.Version,
 		CreatedDate: a.CreatedDate, RootResourceID: a.RootResourceID,
 		APIKeySource: a.APIKeySource, Tags: a.Tags, BinaryMediaTypes: a.BinaryMediaTypes,
+		DisableExecuteAPIEndpoint: a.DisableExecuteAPIEndpoint,
+		MinimumCompressionSize:    a.MinimumCompressionSize, Policy: a.Policy,
 	}
 	if len(a.EndpointConfigurationTypes) > 0 {
 		resp.EndpointConfiguration = &endpointConfiguration{Types: a.EndpointConfigurationTypes}
@@ -159,7 +204,12 @@ func toIntegrationResponse(ig *driver.Integration) integrationResponse {
 	return integrationResponse{
 		Type: ig.Type, HTTPMethod: ig.IntegrationHTTPMethod,
 		URI: ig.URI, PassthroughBehavior: ig.PassthroughBehavior,
+		TimeoutInMillis: ig.TimeoutInMillis,
 	}
+}
+
+func toDeploymentResponse(d *driver.Deployment) deploymentResponse {
+	return deploymentResponse{ID: d.ID, Description: d.Description, CreatedDate: d.CreatedDate}
 }
 
 func toStageResponse(s *driver.Stage) stageResponse {

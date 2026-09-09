@@ -6,14 +6,26 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | AWS service | Portable service | Operations |
 | --- | --- | --- |
 | [ACM](./acm.md) | `acm` | 17 |
-| [APIGateway](./apigateway.md) | `apigateway` | 15 |
+| [AOSS](./aoss.md) | `aoss` | 18 |
+| [APIGateway](./apigateway.md) | `apigateway` | 29 |
+| [APIGatewayV2](./apigatewayv2.md) | `apigatewayv2` | 20 |
+| [APS](./aps.md) | `aps` | 21 |
+| [AppFlow](./appflow.md) | `appflow` | 14 |
+| [AppRunner](./apprunner.md) | `apprunner` | 29 |
+| [AppSync](./appsync.md) | `appsync` | 17 |
+| [Athena](./athena.md) | `athena` | 21 |
+| [Backup](./backup.md) | `backup` | 25 |
+| [Batch](./batch.md) | `batch` | 14 |
 | [Bedrock](./bedrock.md) | `bedrock` | 65 |
 | [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 29 |
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |
 | [CloudFormation](./cloudformation.md) | — (provider-native) | 9 |
+| [CloudFront](./cloudfront.md) | `cloudfront` | 11 |
 | [CloudTrail](./cloudtrail.md) | `cloudtrail` | 60 |
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |
 | [CloudWatchLogs](./cloudwatchlogs.md) | `logging` | 17 |
+| [CodeArtifact](./codeartifact.md) | `codeartifact` | 15 |
+| [Cognito](./cognito.md) | `cognito` | 18 |
 | [Config](./config.md) | `configservice` | 102 |
 | [CostExplorer](./costexplorer.md) | — (provider-native) | 4 |
 | [DynamoDB](./dynamodb.md) | `database` | 24 |
@@ -23,17 +35,26 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [EFS](./efs.md) | `efs` | 27 |
 | [EKS](./eks.md) | — (provider-native) | 29 |
 | [ELB](./elb.md) | `loadbalancer` | 19 |
-| [EMR](./emr.md) | — (provider-native) | 13 |
+| [EMR](./emr.md) | — (provider-native) | 19 |
 | [ElastiCache](./elasticache.md) | `cache` | 17 |
 | [EventBridge](./eventbridge.md) | `eventbus` | 16 |
+| [FIS](./fis.md) | `fis` | 12 |
+| [GlobalAccelerator](./globalaccelerator.md) | `globalaccelerator` | 20 |
 | [Glue](./glue.md) | `glue` | 299 |
+| [Grafana](./grafana.md) | `grafana` | 12 |
 | [GuardDuty](./guardduty.md) | `guardduty` | 87 |
+| [HealthLake](./healthlake.md) | `healthlake` | 7 |
 | [IAM](./iam.md) | `iam` | 40 |
 | [KMS](./kms.md) | `kms` | 46 |
 | [Kafka](./kafka.md) | `kafka` | 59 |
+| [Kendra](./kendra.md) | `kendra` | 13 |
 | [Keyspaces](./keyspaces.md) | `keyspaces` | 18 |
 | [Kinesis](./kinesis.md) | `kinesis` | 39 |
+| [KinesisVideo](./kinesisvideo.md) | `kinesisvideo` | 17 |
 | [Lambda](./lambda.md) | `serverless` | 27 |
+| [Location](./location.md) | `location` | 28 |
+| [MQ](./mq.md) | `mq` | 19 |
+| [MWAA](./mwaa.md) | `mwaa` | 10 |
 | [MemoryDB](./memorydb.md) | `memorydb` | 33 |
 | [NetworkFirewall](./networkfirewall.md) | `networkfirewall` | 23 |
 | [OpenSearch](./opensearch.md) | `opensearch` | 96 |
@@ -52,8 +73,11 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [STS](./sts.md) | — (provider-native) | 8 |
 | [SageMaker](./sagemaker.md) | `sagemaker` | 121 |
 | [SavingsPlans](./savingsplans.md) | — (provider-native) | 9 |
+| [Scheduler](./scheduler.md) | `eventbridgescheduler` | 12 |
 | [SecretsManager](./secretsmanager.md) | `secrets` | 7 |
 | [ServiceQuotas](./servicequotas.md) | — (provider-native) | 6 |
+| [TimestreamWrite](./timestreamwrite.md) | `timestreamwrite` | 13 |
+| [Transfer](./transfer.md) | `transfer` | 17 |
 | [VPC](./vpc.md) | `networking` | 57 |
 | [VPCLattice](./vpclattice.md) | `vpclattice` | 73 |
 | [WAFv2](./wafv2.md) | `wafv2` | 39 |

@@ -260,18 +260,18 @@ func (h *KeysHandler) routeDeleted(w http.ResponseWriter, r *http.Request, tail 
 func writeKeyErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeErr(w, http.StatusNotFound, "KeyNotFound", err.Error())
+		writeErr(w, http.StatusNotFound, "KeyNotFound", cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err) && strings.Contains(err.Error(), "deleted but recoverable"):
-		writeErrInner(w, http.StatusConflict, "Conflict", err.Error(), "ObjectIsDeletedButRecoverable")
+		writeErrInner(w, http.StatusConflict, "Conflict", cerrors.Message(err), "ObjectIsDeletedButRecoverable")
 	case cerrors.IsAlreadyExists(err):
-		writeErr(w, http.StatusConflict, "Conflict", err.Error())
+		writeErr(w, http.StatusConflict, "Conflict", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		writeErr(w, http.StatusBadRequest, "BadParameter", err.Error())
+		writeErr(w, http.StatusBadRequest, "BadParameter", cerrors.Message(err))
 	case cerrors.IsPermissionDenied(err):
-		writeErr(w, http.StatusForbidden, "Forbidden", err.Error())
+		writeErr(w, http.StatusForbidden, "Forbidden", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
-		writeErr(w, http.StatusForbidden, "Forbidden", err.Error())
+		writeErr(w, http.StatusForbidden, "Forbidden", cerrors.Message(err))
 	default:
-		writeErr(w, http.StatusInternalServerError, "InternalServerError", err.Error())
+		writeErr(w, http.StatusInternalServerError, "InternalServerError", cerrors.Message(err))
 	}
 }

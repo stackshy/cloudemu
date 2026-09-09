@@ -41,6 +41,11 @@ func TestClusterLifecycle(t *testing.T) {
 	assertEqual(t, "Succeeded", cluster.ProvisioningState)
 	assertEqual(t, "Running", cluster.PowerState)
 	assertNotEmpty(t, cluster.FQDN)
+	// Real AKS FQDN shape: <dnsPrefix>-<8hexhash>.hcp.<region>.azmk8s.io.
+	if !strings.HasPrefix(cluster.FQDN, "k8s-prod-dns-") ||
+		!strings.HasSuffix(cluster.FQDN, ".hcp.eastus.azmk8s.io") {
+		t.Fatalf("unexpected FQDN shape: %q", cluster.FQDN)
+	}
 	assertEqual(t, 1, len(cluster.AgentPoolNames))
 
 	got, err := m.GetCluster(ctx, "rg-1", "k8s-prod")
@@ -461,4 +466,58 @@ func assertNotEmpty(t *testing.T, s string) {
 
 func int32Ptr(v int32) *int32 {
 	return &v
+}
+
+// TestClusterFQDNFormat verifies the FQDN carries the real AKS
+// "<dnsPrefix>-<8hexhash>.hcp.<region>.azmk8s.io" host segment and that the hash
+// is a stable 8-hex string that does not change across an in-place update.
+func TestClusterFQDNFormat(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	c, err := m.CreateOrUpdateCluster(ctx, ClusterInput{
+		Subscription:  "sub-1",
+		ResourceGroup: "rg-1",
+		Name:          "k8s-1",
+		Location:      "westus2",
+		DNSPrefix:     "myprefix",
+	})
+	requireNoError(t, err)
+
+	const wantSuffix = ".hcp.westus2.azmk8s.io"
+	if !strings.HasSuffix(c.FQDN, wantSuffix) {
+		t.Fatalf("FQDN suffix: got %q, want ...%s", c.FQDN, wantSuffix)
+	}
+
+	host := strings.TrimSuffix(c.FQDN, wantSuffix)
+
+	prefixAndHash := strings.TrimPrefix(host, "myprefix-")
+	if prefixAndHash == host {
+		t.Fatalf("FQDN missing dnsPrefix-hash segment: %q", c.FQDN)
+	}
+
+	if len(prefixAndHash) != 8 {
+		t.Fatalf("FQDN hash segment length: got %d (%q), want 8", len(prefixAndHash), prefixAndHash)
+	}
+
+	for _, r := range prefixAndHash {
+		if !strings.ContainsRune("0123456789abcdef", r) {
+			t.Fatalf("FQDN hash segment not lowercase hex: %q", prefixAndHash)
+		}
+	}
+
+	// An in-place update (e.g. a tag change) must not renumber the FQDN.
+	updated, err := m.CreateOrUpdateCluster(ctx, ClusterInput{
+		Subscription:  "sub-1",
+		ResourceGroup: "rg-1",
+		Name:          "k8s-1",
+		Location:      "westus2",
+		DNSPrefix:     "myprefix",
+		Tags:          map[string]string{"env": "prod"},
+	})
+	requireNoError(t, err)
+
+	if updated.FQDN != c.FQDN {
+		t.Fatalf("FQDN changed across update: %q -> %q", c.FQDN, updated.FQDN)
+	}
 }

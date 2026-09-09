@@ -80,6 +80,52 @@ func TestSDKDescribeSecretVersionStages(t *testing.T) {
 	}
 }
 
+// TestSDKMetadataOnlyCreateThenVersion guards the common Terraform pattern:
+// aws_secretsmanager_secret creates the secret with no value, then
+// aws_secretsmanager_secret_version adds the first version. Real Secrets Manager
+// creates no initial version when SecretString/SecretBinary are absent, so the
+// first PutSecretValue must be the sole AWSCURRENT with no phantom AWSPREVIOUS.
+func TestSDKMetadataOnlyCreateThenVersion(t *testing.T) {
+	client := newSecretsClient(t)
+	ctx := context.Background()
+
+	created, err := client.CreateSecret(ctx, &awssm.CreateSecretInput{Name: aws.String("meta")})
+	if err != nil {
+		t.Fatalf("CreateSecret: %v", err)
+	}
+
+	if aws.ToString(created.VersionId) != "" {
+		t.Fatalf("CreateSecret with no value returned VersionId %q, want empty", aws.ToString(created.VersionId))
+	}
+
+	// Reading before any version exists is ResourceNotFoundException.
+	_, err = client.GetSecretValue(ctx, &awssm.GetSecretValueInput{SecretId: aws.String("meta")})
+	var notFound *smtypes.ResourceNotFoundException
+	if !errors.As(err, &notFound) {
+		t.Fatalf("GetSecretValue before first version = %v, want ResourceNotFoundException", err)
+	}
+
+	put, err := client.PutSecretValue(ctx, &awssm.PutSecretValueInput{
+		SecretId: aws.String("meta"), SecretString: aws.String("v1"),
+	})
+	if err != nil {
+		t.Fatalf("PutSecretValue: %v", err)
+	}
+
+	desc, err := client.DescribeSecret(ctx, &awssm.DescribeSecretInput{SecretId: aws.String("meta")})
+	if err != nil {
+		t.Fatalf("DescribeSecret: %v", err)
+	}
+
+	if len(desc.VersionIdsToStages) != 1 {
+		t.Fatalf("VersionIdsToStages = %+v, want exactly 1 entry (no phantom AWSPREVIOUS)", desc.VersionIdsToStages)
+	}
+
+	if got := desc.VersionIdsToStages[aws.ToString(put.VersionId)]; len(got) != 1 || got[0] != "AWSCURRENT" {
+		t.Fatalf("first version stages = %v, want [AWSCURRENT]", got)
+	}
+}
+
 // TestSDKGetSecretValueByStage guards VersionStage=AWSPREVIOUS returning the
 // superseded value rather than the current one.
 func TestSDKGetSecretValueByStage(t *testing.T) {

@@ -4109,6 +4109,19 @@ func TestFunctionVersions(t *testing.T) {
 				t.Errorf("expected version 1, got %s", v1.Version)
 			}
 
+			// Change the function so the next publish is a genuinely new
+			// version (real AWS Lambda doesn't publish a version when code and
+			// configuration are unchanged since the last one).
+			if _, err := p.d.UpdateFunction(ctx, "version-func", serverlessdriver.FunctionConfig{
+				Name:    "version-func",
+				Runtime: "go1.x",
+				Handler: "main",
+				Memory:  256,
+				Timeout: 60,
+			}); err != nil {
+				t.Fatalf("UpdateFunction: %v", err)
+			}
+
 			// Publish another
 			v2, err := p.d.PublishVersion(ctx, "version-func", "second version")
 			if err != nil {

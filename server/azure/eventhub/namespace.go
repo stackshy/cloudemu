@@ -107,11 +107,41 @@ func (h *Handler) updateNamespace(w http.ResponseWriter, r *http.Request, ep ehP
 		ns.SKU = normalizeSKU(req.SKU)
 	}
 
+	mergeNamespaceProperties(&ns.Properties, &req.Properties)
+
 	ns.UpdatedAt = time.Now().UTC()
 	resource := toNamespaceResource(ns)
 	h.mu.Unlock()
 
 	azurearm.WriteJSON(w, http.StatusOK, resource)
+}
+
+// mergeNamespaceProperties applies the client-settable properties present in src
+// onto dst, leaving unset (nil) fields unchanged. This matches the ARM
+// Namespaces - Update (PATCH) partial-update semantics: only the properties the
+// caller includes in the request body are modified (the computed fields —
+// provisioningState, status, serviceBusEndpoint, metricId, timestamps — are
+// re-derived on every read by toNamespaceResource, so they are not merged here).
+func mergeNamespaceProperties(dst, src *namespaceProperties) {
+	if src.IsAutoInflateEnabled != nil {
+		dst.IsAutoInflateEnabled = src.IsAutoInflateEnabled
+	}
+
+	if src.MaximumThroughputUnits != nil {
+		dst.MaximumThroughputUnits = src.MaximumThroughputUnits
+	}
+
+	if src.KafkaEnabled != nil {
+		dst.KafkaEnabled = src.KafkaEnabled
+	}
+
+	if src.ZoneRedundant != nil {
+		dst.ZoneRedundant = src.ZoneRedundant
+	}
+
+	if src.DisableLocalAuth != nil {
+		dst.DisableLocalAuth = src.DisableLocalAuth
+	}
 }
 
 func (h *Handler) getNamespace(w http.ResponseWriter, ep ehPath) {
@@ -205,7 +235,7 @@ func (h *Handler) checkNameAvailability(w http.ResponseWriter, r *http.Request) 
 
 func normalizeSKU(in *ehSKU) ehSKU {
 	if in == nil || in.Name == "" {
-		return ehSKU{Name: "Standard", Tier: "Standard"}
+		return ehSKU{Name: "Standard", Tier: "Standard", Capacity: defaultCapacity()}
 	}
 
 	out := *in
@@ -213,7 +243,19 @@ func normalizeSKU(in *ehSKU) ehSKU {
 		out.Tier = out.Name
 	}
 
+	// Real Azure always reports a capacity (defaulting to 1 throughput unit); an
+	// omitted capacity in the response causes read-back drift for SDK/CLI/Terraform.
+	if out.Capacity == nil {
+		out.Capacity = defaultCapacity()
+	}
+
 	return out
+}
+
+func defaultCapacity() *int32 {
+	c := int32(defaultSKUCapacity)
+
+	return &c
 }
 
 func toNamespaceResource(ns *namespaceState) namespaceResource {

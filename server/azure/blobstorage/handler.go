@@ -1450,14 +1450,14 @@ func writeErr(w http.ResponseWriter, err error) {
 
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "BlobNotFound", err.Error())
+		writeError(w, http.StatusNotFound, "BlobNotFound", cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ContainerAlreadyExists", err.Error())
+		writeError(w, http.StatusConflict, "ContainerAlreadyExists", cerrors.Message(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidInput", err.Error())
+		writeError(w, http.StatusBadRequest, "InvalidInput", cerrors.Message(err))
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusConflict, "Conflict", err.Error())
+		writeError(w, http.StatusConflict, "Conflict", cerrors.Message(err))
 	default:
-		writeError(w, http.StatusInternalServerError, "InternalError", err.Error())
+		writeError(w, http.StatusInternalServerError, "InternalError", cerrors.Message(err))
 	}
 }

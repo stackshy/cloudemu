@@ -299,15 +299,19 @@ func trimZonePrefix(id string) string {
 }
 
 // toHostedZoneXML converts a driver zone into its Route 53 element. The zone id
-// is returned bare (not "/hostedzone/{id}"): the SDK binds the id straight into
-// the request URL path with no prefix stripping, so echoing the bare driver id
-// keeps Get/Delete round-trips addressing the same resource.
+// is returned in real Route 53's "/hostedzone/{id}" form (matching
+// GetHostedZone/CreateHostedZone/ListHostedZones on the wire, and the
+// already-prefixed ChangeInfo.Id): a raw SDK/CLI caller reading HostedZone.Id
+// must see the same value AWS returns. Round-trips still work because the SDK's
+// Route53:SanitizeURL serialize middleware (and botocore's equivalent) strips the
+// "/hostedzone/" prefix from the id before binding it into the request path, and
+// trimZonePrefix strips it server-side for any client that does not.
 //
 // CallerReference is the caller-supplied idempotency token, persisted on create
 // and returned verbatim here so Get/List round-trip faithfully.
 func toHostedZoneXML(info *dnsdriver.ZoneInfo) hostedZoneXML {
 	return hostedZoneXML{
-		Id:              info.ID,
+		Id:              "/hostedzone/" + info.ID,
 		Name:            info.Name,
 		CallerReference: info.CallerReference,
 		Config: &hostedZoneConfigXML{

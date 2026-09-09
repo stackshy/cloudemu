@@ -336,6 +336,37 @@ func TestSDKGetListDeleteUpdatePaths(t *testing.T) {
 	}
 }
 
+func TestSDKAutoscalingClusterReportsServeNodes(t *testing.T) {
+	svc := newSDKClient(t)
+	inst := createAppInstance(t, svc)
+
+	op, err := svc.Projects.Instances.Clusters.Create(inst, &bt.Cluster{
+		Location: "projects/" + project + "/locations/us-east1-b",
+		ClusterConfig: &bt.ClusterConfig{ClusterAutoscalingConfig: &bt.ClusterAutoscalingConfig{
+			AutoscalingLimits:  &bt.AutoscalingLimits{MinServeNodes: 2, MaxServeNodes: 10},
+			AutoscalingTargets: &bt.AutoscalingTargets{CpuUtilizationPercent: 60},
+		}},
+	}).ClusterId("auto").Do()
+	if err != nil || !op.Done {
+		t.Fatalf("Clusters.Create autoscaling: %v", err)
+	}
+
+	// Real Bigtable returns serveNodes as the current node count (starting at
+	// the minimum) alongside the autoscaling config — never 0.
+	got, err := svc.Projects.Instances.Clusters.Get(inst + "/clusters/auto").Do()
+	if err != nil {
+		t.Fatalf("Clusters.Get: %v", err)
+	}
+
+	if got.ServeNodes != 2 {
+		t.Fatalf("autoscaling serveNodes: got %d, want 2", got.ServeNodes)
+	}
+
+	if got.ClusterConfig == nil || got.ClusterConfig.ClusterAutoscalingConfig == nil {
+		t.Fatalf("autoscaling config missing in response: %+v", got)
+	}
+}
+
 func TestSDKNotFound(t *testing.T) {
 	svc := newSDKClient(t)
 

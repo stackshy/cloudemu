@@ -267,10 +267,10 @@ func unquoteName(name string) string {
 func writeMgmtError(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
-		writeDataError(w, http.StatusNotFound, "EntityNotFound", err.Error())
+		writeDataError(w, http.StatusNotFound, "EntityNotFound", cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):
-		writeDataError(w, http.StatusConflict, "EntityAlreadyExists", err.Error())
+		writeDataError(w, http.StatusConflict, "EntityAlreadyExists", cerrors.Message(err))
 	default:
-		writeDataError(w, http.StatusBadRequest, "BadRequest", err.Error())
+		writeDataError(w, http.StatusBadRequest, "BadRequest", cerrors.Message(err))
 	}
 }

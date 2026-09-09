@@ -115,6 +115,19 @@ func TestSDKMySQLFlexLifecycle(t *testing.T) {
 		t.Fatalf("expected SKU Standard_D2ds_v4, got %v", got.Server.SKU)
 	}
 
+	// The SKU tier must round-trip: terraform-provider-azurerm reconstructs
+	// sku_name from name+tier and drops it entirely when tier is missing,
+	// producing perpetual plan drift. Both halves must come back.
+	if got.Server.SKU.Tier == nil || *got.Server.SKU.Tier != armmysqlflexibleservers.SKUTierGeneralPurpose {
+		t.Fatalf("expected sku tier GeneralPurpose, got %v", got.Server.SKU.Tier)
+	}
+
+	// Real Azure always returns properties.backup with a default retention of 7.
+	if got.Server.Properties.Backup == nil || got.Server.Properties.Backup.BackupRetentionDays == nil ||
+		*got.Server.Properties.Backup.BackupRetentionDays != 7 {
+		t.Fatalf("expected default backupRetentionDays 7, got %+v", got.Server.Properties.Backup)
+	}
+
 	// PATCH (resize SKU + storage).
 	patchPoller, err := servers.BeginUpdate(ctx, "rg-1", "srv1", armmysqlflexibleservers.ServerForUpdate{
 		SKU: &armmysqlflexibleservers.SKU{Name: to.Ptr("Standard_D4ds_v4")},
@@ -141,6 +154,12 @@ func TestSDKMySQLFlexLifecycle(t *testing.T) {
 		t.Fatalf("expected sku Standard_D4ds_v4 after patch")
 	}
 
+	// PATCH carried no tier, so the stored GeneralPurpose tier must be preserved
+	// (empty means "no change") rather than blanked, which would drift.
+	if got.Server.SKU.Tier == nil || *got.Server.SKU.Tier != armmysqlflexibleservers.SKUTierGeneralPurpose {
+		t.Fatalf("expected sku tier GeneralPurpose preserved after patch, got %v", got.Server.SKU.Tier)
+	}
+
 	// List under the resource group.
 	pager := servers.NewListByResourceGroupPager("rg-1", nil)
 
@@ -164,6 +183,77 @@ func TestSDKMySQLFlexLifecycle(t *testing.T) {
 
 	if _, err := servers.Get(ctx, "rg-1", "srv1", nil); err == nil {
 		t.Fatal("expected NotFound after Delete")
+	}
+}
+
+// TestSDKMySQLFlexSkuTierDefaultAndBackup covers the default path: a create that
+// sends only a Burstable-class sku name (no tier) and no backup block must read
+// back tier Burstable and the default retention of 7, and a non-default
+// retention must survive create->get so a terraform plan reports no drift on
+// sku_name / backup_retention_days.
+func TestSDKMySQLFlexSkuTierDefaultAndBackup(t *testing.T) {
+	servers := newSDKClient(t)
+	ctx := context.Background()
+
+	// No SKU at all: defaults to Standard_B1ms / Burstable, backup 7.
+	poller, err := servers.BeginCreate(ctx, "rg-1", "def1", armmysqlflexibleservers.Server{
+		Location: to.Ptr("eastus"),
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("PollUntilDone: %v", err)
+	}
+
+	got, err := servers.Get(ctx, "rg-1", "def1", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.Server.SKU == nil || got.Server.SKU.Tier == nil ||
+		*got.Server.SKU.Tier != armmysqlflexibleservers.SKUTierBurstable {
+		t.Fatalf("expected default tier Burstable, got %+v", got.Server.SKU)
+	}
+
+	if got.Server.Properties.Backup == nil || got.Server.Properties.Backup.BackupRetentionDays == nil ||
+		*got.Server.Properties.Backup.BackupRetentionDays != 7 {
+		t.Fatalf("expected default backupRetentionDays 7, got %+v", got.Server.Properties.Backup)
+	}
+
+	// The synthetic FQDN must be the real <name>.mysql.database.azure.com shape.
+	if got.Server.Properties.FullyQualifiedDomainName == nil ||
+		*got.Server.Properties.FullyQualifiedDomainName != "def1.mysql.database.azure.com" {
+		t.Fatalf("expected fqdn def1.mysql.database.azure.com, got %v",
+			got.Server.Properties.FullyQualifiedDomainName)
+	}
+
+	// A configured non-default retention must round-trip unchanged.
+	poller2, err := servers.BeginCreate(ctx, "rg-1", "bk1", armmysqlflexibleservers.Server{
+		Location: to.Ptr("eastus"),
+		Properties: &armmysqlflexibleservers.ServerProperties{
+			Backup: &armmysqlflexibleservers.Backup{
+				BackupRetentionDays: to.Ptr(int32(21)),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate(bk1): %v", err)
+	}
+
+	if _, err := poller2.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("PollUntilDone(bk1): %v", err)
+	}
+
+	gotBk, err := servers.Get(ctx, "rg-1", "bk1", nil)
+	if err != nil {
+		t.Fatalf("Get(bk1): %v", err)
+	}
+
+	if gotBk.Server.Properties.Backup == nil || gotBk.Server.Properties.Backup.BackupRetentionDays == nil ||
+		*gotBk.Server.Properties.Backup.BackupRetentionDays != 21 {
+		t.Fatalf("expected backupRetentionDays 21, got %+v", gotBk.Server.Properties.Backup)
 	}
 }
 

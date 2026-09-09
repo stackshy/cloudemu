@@ -85,6 +85,11 @@ type Mock struct {
 	settingsMu sync.RWMutex
 	settings   driver.AccountSettings
 
+	// consumerMu guards lastConsumerUnix, the strictly increasing Unix-seconds
+	// value handed to each consumer registration so every consumer ARN is unique.
+	consumerMu       sync.Mutex
+	lastConsumerUnix int64
+
 	// esmInvoker, when wired via SetLambdaInvoker, receives a Kinesis-shaped
 	// event batch on every PutRecord(s) so a mapped Lambda actually runs.
 	esmInvoker EventSourceInvoker
@@ -131,13 +136,41 @@ func (m *Mock) streamARN(ctx context.Context, name string) string {
 	return idgen.AWSARN("kinesis", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "stream/"+name)
 }
 
-func (m *Mock) consumerARN(ctx context.Context, streamName, consumerName string) string {
+// consumerARN builds an enhanced-fan-out consumer ARN. Real Kinesis appends the
+// consumer's creation timestamp (Unix seconds) to the ARN — the documented
+// Consumer.ConsumerARN pattern ends in ":[0-9]+" — so that recreating a consumer
+// with the same name yields a distinct ARN.
+func (m *Mock) consumerARN(ctx context.Context, streamName, consumerName string, createdAt time.Time) string {
 	return idgen.AWSARN("kinesis", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID,
-		"stream/"+streamName+"/consumer/"+consumerName)
+		fmt.Sprintf("stream/%s/consumer/%s:%d", streamName, consumerName, createdAt.Unix()))
 }
 
 func (m *Mock) now() time.Time {
 	return m.opts.Clock.Now().UTC()
+}
+
+// nextConsumerCreation returns the creation time for a new consumer as a strictly
+// increasing whole-second value. Real Kinesis embeds the creation timestamp
+// (Unix seconds) in the consumer ARN and guarantees a delete+re-register yields a
+// distinct ARN; it avoids collisions only because registration passes through a
+// CREATING state over wall-clock time. cloudemu registers instantly, so two
+// same-second cycles for one name would otherwise mint identical ARNs. Advancing
+// the suffix to at least one second past the previously issued value preserves the
+// realistic ~10-digit seconds format while guaranteeing a unique, strictly greater
+// ARN per registration. The returned time is used for both the ARN suffix and
+// ConsumerCreationTimestamp so the two always agree.
+func (m *Mock) nextConsumerCreation() time.Time {
+	m.consumerMu.Lock()
+	defer m.consumerMu.Unlock()
+
+	unix := m.now().Unix()
+	if unix <= m.lastConsumerUnix {
+		unix = m.lastConsumerUnix + 1
+	}
+
+	m.lastConsumerUnix = unix
+
+	return time.Unix(unix, 0).UTC()
 }
 
 // resolve finds a stream by name or ARN (name takes precedence when both set).

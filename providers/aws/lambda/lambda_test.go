@@ -3,6 +3,7 @@ package lambda
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -28,6 +29,15 @@ func defaultFuncConfig() driver.FunctionConfig {
 		Timeout: 30,
 		Tags:    map[string]string{"env": "test"},
 	}
+}
+
+// bumpAndPublish changes the function's code so the following PublishVersion cuts
+// a fresh version. Real Lambda doesn't publish a new version when nothing has
+// changed since the last one, so a test that needs a second distinct version must
+// mutate the function between publishes.
+func bumpAndPublish(ctx context.Context, m *Mock, name, desc string) {
+	_, _ = m.UpdateFunction(ctx, name, driver.FunctionConfig{Code: []byte(desc + "-code")})
+	_, _ = m.PublishVersion(ctx, name, desc)
 }
 
 func TestCreateFunction(t *testing.T) {
@@ -241,7 +251,16 @@ func TestPublishVersion(t *testing.T) {
 		assertNotEmpty(t, ver.CreatedAt)
 	})
 
-	t.Run("publish second version", func(t *testing.T) {
+	t.Run("republish without change returns existing version", func(t *testing.T) {
+		// AWS doesn't cut a new version when nothing changed since the last one.
+		ver, err := m.PublishVersion(ctx, "my-func", "second release")
+		requireNoError(t, err)
+		assertEqual(t, "1", ver.Version)
+	})
+
+	t.Run("publish second version after a change", func(t *testing.T) {
+		_, err := m.UpdateFunction(ctx, "my-func", driver.FunctionConfig{Code: []byte("v2-code")})
+		requireNoError(t, err)
 		ver, err := m.PublishVersion(ctx, "my-func", "second release")
 		requireNoError(t, err)
 		assertEqual(t, "2", ver.Version)
@@ -365,7 +384,7 @@ func TestUpdateAlias(t *testing.T) {
 	ctx := context.Background()
 	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
 	_, _ = m.PublishVersion(ctx, "my-func", "v1")
-	_, _ = m.PublishVersion(ctx, "my-func", "v2")
+	bumpAndPublish(ctx, m, "my-func", "v2")
 	_, _ = m.CreateAlias(ctx, driver.AliasConfig{
 		FunctionName: "my-func", Name: "prod", FunctionVersion: "1",
 	})
@@ -456,7 +475,7 @@ func TestAliasWeightedRouting(t *testing.T) {
 	ctx := context.Background()
 	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
 	_, _ = m.PublishVersion(ctx, "my-func", "v1")
-	_, _ = m.PublishVersion(ctx, "my-func", "v2")
+	bumpAndPublish(ctx, m, "my-func", "v2")
 
 	alias, err := m.CreateAlias(ctx, driver.AliasConfig{
 		FunctionName:    "my-func",
@@ -526,7 +545,7 @@ func TestAliasWeightedRoutingRejectsOutOfBoundsWeights(t *testing.T) {
 	ctx := context.Background()
 	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
 	_, _ = m.PublishVersion(ctx, "my-func", "v1")
-	_, _ = m.PublishVersion(ctx, "my-func", "v2")
+	bumpAndPublish(ctx, m, "my-func", "v2")
 
 	// A weight above 1.0 is rejected.
 	_, err := m.CreateAlias(ctx, driver.AliasConfig{
@@ -576,7 +595,7 @@ func TestAliasWeightedRoutingSplitsInvocations(t *testing.T) {
 	ctx := context.Background()
 	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
 	_, _ = m.PublishVersion(ctx, "my-func", "v1") // version "1"
-	_, _ = m.PublishVersion(ctx, "my-func", "v2") // version "2"
+	bumpAndPublish(ctx, m, "my-func", "v2")       // version "2"
 
 	_, err := m.CreateAlias(ctx, driver.AliasConfig{
 		FunctionName:    "my-func",
@@ -620,7 +639,7 @@ func TestAliasWeightedRoutingIsDeterministicPerPayload(t *testing.T) {
 	ctx := context.Background()
 	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
 	_, _ = m.PublishVersion(ctx, "my-func", "v1")
-	_, _ = m.PublishVersion(ctx, "my-func", "v2")
+	bumpAndPublish(ctx, m, "my-func", "v2")
 
 	_, err := m.CreateAlias(ctx, driver.AliasConfig{
 		FunctionName:    "my-func",
@@ -996,20 +1015,24 @@ func TestPublishVersionConcurrent(t *testing.T) {
 
 	var wg sync.WaitGroup
 
+	// Each goroutine changes the code before publishing so it has a chance to cut a
+	// distinct version (AWS dedups an unchanged publish). Interleaving makes the
+	// exact count nondeterministic; the invariant under -race is that no two
+	// published versions ever share a version number.
 	for i := 0; i < 10; i++ {
 		wg.Add(1)
 
-		go func() {
+		go func(n int) {
 			defer wg.Done()
+			_, _ = m.UpdateFunction(ctx, "my-func", driver.FunctionConfig{Code: []byte(strconv.Itoa(n) + "-code")})
 			_, _ = m.PublishVersion(ctx, "my-func", "concurrent")
-		}()
+		}(i)
 	}
 
 	wg.Wait()
 
 	versions, err := m.ListVersions(ctx, "my-func")
 	requireNoError(t, err)
-	assertEqual(t, 11, len(versions)) // $LATEST + 10 published
 
 	seen := make(map[string]bool)
 	for _, v := range versions {
@@ -1023,7 +1046,7 @@ func TestAliasRoutingConfigDeepCopy(t *testing.T) {
 	ctx := context.Background()
 	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
 	_, _ = m.PublishVersion(ctx, "my-func", "v1")
-	_, _ = m.PublishVersion(ctx, "my-func", "v2")
+	bumpAndPublish(ctx, m, "my-func", "v2")
 
 	rc := &driver.AliasRoutingConfig{
 		AdditionalVersionWeights: map[string]float64{"2": 0.5},
@@ -1055,7 +1078,7 @@ func TestConcurrentAliasRaceFree(t *testing.T) {
 	ctx := context.Background()
 	_, _ = m.CreateFunction(ctx, defaultFuncConfig())
 	_, _ = m.PublishVersion(ctx, "my-func", "v1")
-	_, _ = m.PublishVersion(ctx, "my-func", "v2")
+	bumpAndPublish(ctx, m, "my-func", "v2")
 
 	_, err := m.CreateAlias(ctx, driver.AliasConfig{
 		FunctionName:    "my-func",

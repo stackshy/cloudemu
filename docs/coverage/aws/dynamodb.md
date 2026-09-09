@@ -49,6 +49,38 @@ Backuper is an OPTIONAL capability, discovered by type assertion (like the
 | `RestoreTableFromBackup` | RestoreTableFromBackup creates targetTable from the backup's schema and |
 | `RestoreTableToPointInTime` | RestoreTableToPointInTime creates targetTable from sourceTable. The |
 
+### ContributorInsighter
+
+ContributorInsighter is an OPTIONAL capability, discovered by type assertion
+
+| Operation | Description |
+| --- | --- |
+| `DescribeContributorInsights` | DescribeContributorInsights returns the Contributor Insights status of the |
+| `ListContributorInsights` | ListContributorInsights returns a summary for every table/index that has a |
+| `UpdateContributorInsights` | UpdateContributorInsights enables or disables Contributor Insights for the |
+
+### GlobalTabler
+
+GlobalTabler is an OPTIONAL capability, discovered by type assertion (like
+
+| Operation | Description |
+| --- | --- |
+| `CreateGlobalTable` | CreateGlobalTable creates a global table named after an existing table with |
+| `DescribeGlobalTable` | DescribeGlobalTable returns the global table identified by name. |
+| `ListGlobalTables` | ListGlobalTables returns every global table ordered by name, optionally |
+| `UpdateGlobalTable` | UpdateGlobalTable adds and/or removes replica regions, returning the |
+
+### KinesisStreamer
+
+KinesisStreamer is an OPTIONAL capability, discovered by type assertion (like
+
+| Operation | Description |
+| --- | --- |
+| `DescribeKinesisStreamingDestination` | DescribeKinesisStreamingDestination returns every destination attached to |
+| `DisableKinesisStreamingDestination` | DisableKinesisStreamingDestination marks the table's streamArn destination |
+| `EnableKinesisStreamingDestination` | EnableKinesisStreamingDestination attaches streamArn to the table (or |
+| `UpdateKinesisStreamingDestination` | UpdateKinesisStreamingDestination changes the precision of the table's |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

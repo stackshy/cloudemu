@@ -75,6 +75,11 @@ type tableData struct {
 	seqCounter    atomic.Int64
 	tags          map[string]string
 	pitrEnabled   bool
+	// kinesisDests holds the table's Kinesis Data Streams destinations, keyed
+	// by StreamArn (see kinesis.go). ci holds its Contributor Insights records,
+	// keyed by index name ("" for the table itself; see contributorinsights.go).
+	kinesisDests map[string]driver.KinesisDestination
+	ci           map[string]ciRecord
 }
 
 // DynamoDB table/GSI lifecycle states and their settle durations. A real table
@@ -126,6 +131,16 @@ type Mock struct {
 	// replays them into a new table regardless of later mutations. Guarded by
 	// m.mu; see backup.go.
 	backups map[string]*backupData
+	// globalTables holds version-2017 global tables keyed by name, each with its
+	// replication group (see globaltable.go). Guarded by m.mu.
+	globalTables map[string]*driver.GlobalTableInfo
+}
+
+// ciRecord is one table/index Contributor Insights record: its current status
+// and the Unix-seconds time of the last status change (0 when never changed).
+type ciRecord struct {
+	status         string
+	lastUpdateUnix float64
 }
 
 // StreamEventInvoker delivers a DynamoDB Streams event batch to whatever Lambda
@@ -174,6 +189,7 @@ func New(opts *config.Options) *Mock {
 		opts:          opts,
 		txIdempotency: make(map[string]txIdempotencyRecord),
 		backups:       make(map[string]*backupData),
+		globalTables:  make(map[string]*driver.GlobalTableInfo),
 		tableSettle:   settle.NewSet(),
 		gsiSettle:     settle.NewSet(),
 	}
@@ -546,6 +562,14 @@ func (m *Mock) DeleteTable(_ context.Context, name string) error {
 	td, exists := m.tables[name]
 	if !exists {
 		return cerrors.Newf(cerrors.NotFound, "table %s not found", name)
+	}
+
+	// Real DynamoDB refuses to delete a table with deletion protection on; a
+	// client must disable it first. Without this a protected table deletes
+	// silently, diverging from AWS.
+	if td.config.DeletionProtectionEnabled {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"Table '%s' can't be deleted while DeletionProtectionEnabled is set to True", name)
 	}
 
 	m.tableSettle.Clear(name)
@@ -1319,6 +1343,32 @@ func (m *Mock) UpdateThroughput(_ context.Context, table, billingMode string, rc
 	return nil
 }
 
+// UpdateTableSettings changes a table's metadata settings (table class and/or
+// deletion protection) as part of UpdateTable. An empty tableClass or nil
+// deletionProtection leaves that field untouched. AWS-specific capability,
+// discovered by the wire handler via type assertion.
+func (m *Mock) UpdateTableSettings(_ context.Context, table, tableClass string, deletionProtection *bool) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	if tableClass != "" {
+		td.config.TableClass = tableClass
+	}
+
+	if deletionProtection != nil {
+		td.config.DeletionProtectionEnabled = *deletionProtection
+	}
+
+	m.tableSettle.Begin(table, statusUpdating, m.opts.Clock.Now(), m.opts.SettleDuration(settleTableUpdate))
+
+	return nil
+}
+
 // SetPITR toggles point-in-time recovery for a table (UpdateContinuousBackups).
 // AWS-specific capability, discovered by type assertion.
 func (m *Mock) SetPITR(_ context.Context, table string, enabled bool) error {
@@ -1709,6 +1759,86 @@ func (m *Mock) DeleteIndex(_ context.Context, table, indexName string) error {
 	}
 
 	return cerrors.Newf(cerrors.NotFound, "index %s not found", indexName)
+}
+
+// SyncAttributeDefinitions reconciles a table's attribute definitions after an
+// UpdateTable that adds or removes secondary indexes. It merges the request's
+// AttributeDefinitions (which carry the type of any newly indexed attribute)
+// and then prunes the set to exactly those the table key or a surviving index
+// still references. Real DynamoDB keeps AttributeDefinitions equal to the
+// attributes used by the table plus its indexes: adding a GSI grows the set,
+// deleting one shrinks it. Without this an added GSI's key attribute never
+// appears in DescribeTable and an IaC client sees a perpetual diff.
+func (m *Mock) SyncAttributeDefinitions(_ context.Context, table string, defs []driver.AttributeDef) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	td, exists := m.tables[table]
+	if !exists {
+		return cerrors.Newf(cerrors.NotFound, "table %s not found", table)
+	}
+
+	types := make(map[string]string, len(td.config.Attributes)+len(defs))
+	for _, a := range td.config.Attributes {
+		types[a.Name] = a.Type
+	}
+
+	for _, a := range defs {
+		types[a.Name] = a.Type
+	}
+
+	referenced := referencedAttributes(&td.config)
+	merged := make([]driver.AttributeDef, 0, len(referenced))
+
+	appendAttr := func(name string) {
+		if _, want := referenced[name]; !want {
+			return
+		}
+
+		merged = append(merged, driver.AttributeDef{Name: name, Type: types[name]})
+		delete(referenced, name)
+	}
+
+	for _, a := range td.config.Attributes {
+		appendAttr(a.Name)
+	}
+
+	for _, a := range defs {
+		appendAttr(a.Name)
+	}
+
+	td.config.Attributes = merged
+
+	return nil
+}
+
+// referencedAttributes returns the set of attribute names the table key schema
+// and every current secondary index key schema reference — the attributes a
+// real table's AttributeDefinitions must contain, no more and no less.
+func referencedAttributes(cfg *driver.TableConfig) map[string]struct{} {
+	ref := make(map[string]struct{})
+
+	for _, name := range []string{cfg.PartitionKey, cfg.SortKey} {
+		if name != "" {
+			ref[name] = struct{}{}
+		}
+	}
+
+	for _, g := range cfg.GSIs {
+		for _, name := range []string{g.PartitionKey, g.SortKey} {
+			if name != "" {
+				ref[name] = struct{}{}
+			}
+		}
+	}
+
+	for _, l := range cfg.LSIs {
+		if l.SortKey != "" {
+			ref[l.SortKey] = struct{}{}
+		}
+	}
+
+	return ref
 }
 
 // DescribeIndex returns information about a Global Secondary Index.

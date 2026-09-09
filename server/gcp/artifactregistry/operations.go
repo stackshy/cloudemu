@@ -13,10 +13,21 @@ import (
 )
 
 func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *route) {
-	repoID := r.URL.Query().Get("repositoryId")
+	repoID := repositoryIDParam(r)
 
 	var body repositoryJSON
 	if !gcprest.DecodeJSON(w, r, &body) {
+		return
+	}
+
+	// format is required and immutable: real Artifact Registry rejects a create
+	// whose format is missing, FORMAT_UNSPECIFIED, or an unknown enum with
+	// INVALID_ARGUMENT. Defaulting a missing format to DOCKER (as this handler
+	// once did) masked that client error.
+	if !isKnownFormat(string(body.Format)) {
+		gcprest.WriteError(w, http.StatusBadRequest, "required",
+			"format is required and must be a valid enum (e.g. DOCKER, MAVEN, NPM, PYTHON, GO, GENERIC)")
+
 		return
 	}
 
@@ -31,6 +42,19 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *r
 
 	gcprest.WriteJSON(w, http.StatusOK, h.doneOperation(rt, repoID,
 		typedResponse(repositoryTypeURL, toRepositoryJSON(rt.project, rt.location, repo, 0))))
+}
+
+// repositoryIDParam reads the create-repository id from the request query. The
+// google.golang.org/api client sends it as the JSON/camelCase name
+// (repositoryId); the Terraform google provider and gcloud send the proto
+// snake_case name (repository_id). Real Artifact Registry accepts either, so the
+// handler honors both, preferring camelCase when present.
+func repositoryIDParam(r *http.Request) string {
+	if id := r.URL.Query().Get("repositoryId"); id != "" {
+		return id
+	}
+
+	return r.URL.Query().Get("repository_id")
 }
 
 // reservedTagsFrom folds the GCP-only Repository fields (format, description,
@@ -470,7 +494,12 @@ func pageSize(r *http.Request) int {
 // the same done operation (with its typed response) in the full server.
 func (h *Handler) doneOperation(rt *route, id string, response any) operationJSON {
 	name := "projects/" + rt.project + "/locations/" + rt.location + "/operations/op-" + id
-	h.ops.Register(name, response)
+
+	// A standalone package server (New without SetOperationRegistry) has no shared
+	// poller and answers its own /operations/ polls, so only register when wired.
+	if h.ops != nil {
+		h.ops.Register(name, response)
+	}
 
 	return operationJSON{
 		Name:     name,

@@ -154,7 +154,7 @@ func (h *Handler) createNIC(w http.ResponseWriter, r *http.Request, rp azurearm.
 	ipConfigs, err := h.buildIPConfigs(r.Context(), rp.ResourceGroup, rp.ResourceName, req.Properties.IPConfigurations)
 	if err != nil {
 		if cerrors.IsFailedPrecondition(err) {
-			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeAssignedToMultipleIpConfigs", err.Error())
+			azurearm.WriteError(w, http.StatusBadRequest, "PublicIPAddressCannotBeAssignedToMultipleIpConfigs", cerrors.Message(err))
 			return
 		}
 
@@ -218,7 +218,7 @@ func (*Handler) deleteNIC(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 		// A NIC attached to a VM: ARM answers 400 with this specific code, which
 		// armnetwork clients switch on — not the generic 409 WriteCErr would emit.
 		if cerrors.IsFailedPrecondition(err) {
-			azurearm.WriteError(w, http.StatusBadRequest, "InUseNetworkInterfaceCannotBeDeleted", err.Error())
+			azurearm.WriteError(w, http.StatusBadRequest, "InUseNetworkInterfaceCannotBeDeleted", cerrors.Message(err))
 			return
 		}
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
 )
 
@@ -175,7 +176,7 @@ func (*RegistrationHandler) upsertRegistration(
 
 	stored, err := az.CreateRegistration(r.Context(), c.key, reg)
 	if err != nil {
-		writeRegError(w, http.StatusBadRequest, err.Error())
+		writeRegError(w, http.StatusBadRequest, cerrors.Message(err))
 		return
 	}
 
@@ -192,7 +193,7 @@ func (*RegistrationHandler) getRegistration(
 ) {
 	reg, err := az.GetRegistration(r.Context(), c.key, c.regID)
 	if err != nil {
-		writeRegError(w, http.StatusNotFound, err.Error())
+		writeRegError(w, http.StatusNotFound, cerrors.Message(err))
 		return
 	}
 
@@ -203,7 +204,7 @@ func (*RegistrationHandler) deleteRegistration(
 	w http.ResponseWriter, r *http.Request, az notifdriver.AzureNotificationHubs, c regContext,
 ) {
 	if err := az.DeleteRegistration(r.Context(), c.key, c.regID); err != nil {
-		writeRegError(w, http.StatusNotFound, err.Error())
+		writeRegError(w, http.StatusNotFound, cerrors.Message(err))
 		return
 	}
 
@@ -215,7 +216,7 @@ func (*RegistrationHandler) listRegistrations(
 ) {
 	regs, err := az.ListRegistrations(r.Context(), c.key)
 	if err != nil {
-		writeRegError(w, http.StatusInternalServerError, err.Error())
+		writeRegError(w, http.StatusInternalServerError, cerrors.Message(err))
 		return
 	}
 

@@ -707,6 +707,27 @@ func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 	return &result, nil
 }
 
+// SetEventBusTags replaces a topic's tag set outright, including to empty.
+// It exists because EventBusConfig.Tags cannot carry the distinction the
+// wire layer needs for Topics.Update's resource-level tag PATCH: a nil map
+// there means both "no tags" and "caller supplied {}", so UpdateEventBus's
+// cfg.Tags != nil gate would silently no-op an explicit wipe to empty. This
+// is an Azure-specific capability (server/azure/eventgrid type-asserts for
+// it), not part of the shared driver.EventBus contract used by AWS/GCP.
+func (m *Mock) SetEventBusTags(_ context.Context, name string, tags map[string]string) (*driver.EventBusInfo, error) {
+	bd, ok := m.buses.Get(name)
+	if !ok {
+		return nil, errors.Newf(errors.NotFound, "topic %q not found", name)
+	}
+
+	bd.info.Tags = maps.Clone(tags)
+	m.buses.Set(name, bd)
+
+	result := bd.info
+
+	return &result, nil
+}
+
 // MatchedRules returns the subscriptions on the event's own topic that match
 // it (exported for testing). Scoped to event.EventBus so a rule on one topic
 // never counts as matched for an event published to a different topic.

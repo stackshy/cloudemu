@@ -115,6 +115,23 @@ func TestSDKPostgresFlexServerLifecycle(t *testing.T) {
 		t.Fatalf("expected state Ready, got %v", got.Server.Properties.State)
 	}
 
+	// The SKU tier must round-trip: terraform-provider-azurerm reconstructs
+	// sku_name from name+tier and drops it entirely when tier is missing,
+	// producing perpetual plan drift. Both halves must come back.
+	if got.Server.SKU == nil || got.Server.SKU.Name == nil || *got.Server.SKU.Name != "Standard_B1ms" {
+		t.Fatalf("expected sku name Standard_B1ms, got %+v", got.Server.SKU)
+	}
+
+	if got.Server.SKU.Tier == nil || *got.Server.SKU.Tier != armpostgresqlflexibleservers.SKUTierBurstable {
+		t.Fatalf("expected sku tier Burstable, got %v", got.Server.SKU.Tier)
+	}
+
+	// Real Azure always returns properties.backup with a default retention of 7.
+	if got.Server.Properties.Backup == nil || got.Server.Properties.Backup.BackupRetentionDays == nil ||
+		*got.Server.Properties.Backup.BackupRetentionDays != 7 {
+		t.Fatalf("expected default backupRetentionDays 7, got %+v", got.Server.Properties.Backup)
+	}
+
 	// List under the resource group.
 	pager := servers.NewListByResourceGroupPager("rg-1", nil)
 
@@ -236,6 +253,49 @@ func TestSDKPostgresFlexUpdateAndLifecycle(t *testing.T) {
 	if got.Server.Properties == nil || got.Server.Properties.State == nil ||
 		*got.Server.Properties.State != armpostgresqlflexibleservers.ServerStateReady {
 		t.Fatalf("expected state Ready after restart, got %v", got.Server.Properties.State)
+	}
+}
+
+// TestSDKPostgresFlexSkuAndBackupRoundTrip covers a GeneralPurpose SKU and a
+// non-default backup retention: both must survive create->get unchanged so a
+// terraform plan reports no drift on sku_name / backup_retention_days.
+func TestSDKPostgresFlexSkuAndBackupRoundTrip(t *testing.T) {
+	servers := newSDKClient(t)
+	ctx := context.Background()
+
+	poller, err := servers.BeginCreate(ctx, "rg-1", "gp1", armpostgresqlflexibleservers.Server{
+		Location: to.Ptr("eastus"),
+		SKU: &armpostgresqlflexibleservers.SKU{
+			Name: to.Ptr("Standard_D2s_v3"),
+			Tier: to.Ptr(armpostgresqlflexibleservers.SKUTierGeneralPurpose),
+		},
+		Properties: &armpostgresqlflexibleservers.ServerProperties{
+			Backup: &armpostgresqlflexibleservers.Backup{
+				BackupRetentionDays: to.Ptr(int32(21)),
+			},
+		},
+	}, nil)
+	if err != nil {
+		t.Fatalf("BeginCreate: %v", err)
+	}
+
+	if _, err := poller.PollUntilDone(ctx, nil); err != nil {
+		t.Fatalf("PollUntilDone: %v", err)
+	}
+
+	got, err := servers.Get(ctx, "rg-1", "gp1", nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if got.Server.SKU == nil || got.Server.SKU.Tier == nil ||
+		*got.Server.SKU.Tier != armpostgresqlflexibleservers.SKUTierGeneralPurpose {
+		t.Fatalf("expected tier GeneralPurpose, got %+v", got.Server.SKU)
+	}
+
+	if got.Server.Properties.Backup == nil || got.Server.Properties.Backup.BackupRetentionDays == nil ||
+		*got.Server.Properties.Backup.BackupRetentionDays != 21 {
+		t.Fatalf("expected backupRetentionDays 21, got %+v", got.Server.Properties.Backup)
 	}
 }
 

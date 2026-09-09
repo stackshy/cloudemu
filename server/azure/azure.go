@@ -12,11 +12,19 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server"
+	"github.com/stackshy/cloudemu/v2/server/azure/aad"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
 	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
+	appconfigsrv "github.com/stackshy/cloudemu/v2/server/azure/appconfiguration"
+	appinsightssrv "github.com/stackshy/cloudemu/v2/server/azure/appinsights"
+	appgatewaysrv "github.com/stackshy/cloudemu/v2/server/azure/applicationgateway"
+	bastionsrv "github.com/stackshy/cloudemu/v2/server/azure/bastion"
+	batchsrv "github.com/stackshy/cloudemu/v2/server/azure/batch"
 	"github.com/stackshy/cloudemu/v2/server/azure/blobstorage"
 	cachesrv "github.com/stackshy/cloudemu/v2/server/azure/cache"
+	chaosstudiosrv "github.com/stackshy/cloudemu/v2/server/azure/chaosstudio"
+	communicationsrv "github.com/stackshy/cloudemu/v2/server/azure/communication"
 	containerappssrv "github.com/stackshy/cloudemu/v2/server/azure/containerapps"
 	containerinstancessrv "github.com/stackshy/cloudemu/v2/server/azure/containerinstances"
 	"github.com/stackshy/cloudemu/v2/server/azure/cosmosaccount"
@@ -38,35 +46,53 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/ucstorage"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/unitycatalog"
 	"github.com/stackshy/cloudemu/v2/server/azure/databricks/wsfs"
+	datafactorysrv "github.com/stackshy/cloudemu/v2/server/azure/datafactory"
+	devcentersrv "github.com/stackshy/cloudemu/v2/server/azure/devcenter"
+	digitaltwinssrv "github.com/stackshy/cloudemu/v2/server/azure/digitaltwins"
 	"github.com/stackshy/cloudemu/v2/server/azure/disks"
 	dnssrv "github.com/stackshy/cloudemu/v2/server/azure/dns"
+	elasticsansrv "github.com/stackshy/cloudemu/v2/server/azure/elasticsan"
 	eventgridsrv "github.com/stackshy/cloudemu/v2/server/azure/eventgrid"
 	eventhubsrv "github.com/stackshy/cloudemu/v2/server/azure/eventhub"
+	azurefirewallsrv "github.com/stackshy/cloudemu/v2/server/azure/firewall"
+	frontdoorsrv "github.com/stackshy/cloudemu/v2/server/azure/frontdoor"
 	"github.com/stackshy/cloudemu/v2/server/azure/functions"
+	healthcareapissrv "github.com/stackshy/cloudemu/v2/server/azure/healthcareapis"
 	"github.com/stackshy/cloudemu/v2/server/azure/iam"
 	"github.com/stackshy/cloudemu/v2/server/azure/images"
+	iothubsrv "github.com/stackshy/cloudemu/v2/server/azure/iothub"
 	keyvaultsrv "github.com/stackshy/cloudemu/v2/server/azure/keyvault"
 	kustosrv "github.com/stackshy/cloudemu/v2/server/azure/kusto"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/azure/loadbalancer"
+	loadtestingsrv "github.com/stackshy/cloudemu/v2/server/azure/loadtesting"
 	"github.com/stackshy/cloudemu/v2/server/azure/locks"
 	loganalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/loganalytics"
 	"github.com/stackshy/cloudemu/v2/server/azure/managedcassandra"
+	managedgrafanasrv "github.com/stackshy/cloudemu/v2/server/azure/managedgrafana"
 	managedidentitysrv "github.com/stackshy/cloudemu/v2/server/azure/managedidentity"
+	managedlustresrv "github.com/stackshy/cloudemu/v2/server/azure/managedlustre"
+	mongoclustersrv "github.com/stackshy/cloudemu/v2/server/azure/mongocluster"
 	"github.com/stackshy/cloudemu/v2/server/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/server/azure/mysqlflex"
 	notificationhubssrv "github.com/stackshy/cloudemu/v2/server/azure/notificationhubs"
 	"github.com/stackshy/cloudemu/v2/server/azure/postgresflex"
+	privatednssrv "github.com/stackshy/cloudemu/v2/server/azure/privatedns"
 	providerssrv "github.com/stackshy/cloudemu/v2/server/azure/providers"
+	purviewsrv "github.com/stackshy/cloudemu/v2/server/azure/purview"
 	"github.com/stackshy/cloudemu/v2/server/azure/queue"
+	recoveryservicessrv "github.com/stackshy/cloudemu/v2/server/azure/recoveryservices"
+	redisenterprisesrv "github.com/stackshy/cloudemu/v2/server/azure/redisenterprise"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegraph"
 	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	azuresearchserver "github.com/stackshy/cloudemu/v2/server/azure/search"
 	"github.com/stackshy/cloudemu/v2/server/azure/servicebus"
+	signalrsrv "github.com/stackshy/cloudemu/v2/server/azure/signalr"
 	"github.com/stackshy/cloudemu/v2/server/azure/snapshots"
 	"github.com/stackshy/cloudemu/v2/server/azure/sql"
 	sqlvirtualmachinesrv "github.com/stackshy/cloudemu/v2/server/azure/sqlvirtualmachine"
 	"github.com/stackshy/cloudemu/v2/server/azure/sshpublickeys"
 	storageaccountsrv "github.com/stackshy/cloudemu/v2/server/azure/storageaccount"
+	streamanalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/streamanalytics"
 	"github.com/stackshy/cloudemu/v2/server/azure/subscriptions"
 	synapsesrv "github.com/stackshy/cloudemu/v2/server/azure/synapse"
 	tablesrv "github.com/stackshy/cloudemu/v2/server/azure/tablestorage"
@@ -74,8 +100,12 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/tenants"
 	"github.com/stackshy/cloudemu/v2/server/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/server/azure/vnet"
+	webpubsubsrv "github.com/stackshy/cloudemu/v2/server/azure/webpubsub"
+	agdriver "github.com/stackshy/cloudemu/v2/services/applicationgateway/driver"
 	azureaidriver "github.com/stackshy/cloudemu/v2/services/azureai/driver"
+	fwdriver "github.com/stackshy/cloudemu/v2/services/azurefirewall/driver"
 	azuresearchdriver "github.com/stackshy/cloudemu/v2/services/azuresearch/driver"
+	bastiondriver "github.com/stackshy/cloudemu/v2/services/bastion/driver"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	acidriver "github.com/stackshy/cloudemu/v2/services/containerinstances/driver"
@@ -83,8 +113,10 @@ import (
 	cpgdriver "github.com/stackshy/cloudemu/v2/services/cosmospostgresql/driver"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	dbxdriver "github.com/stackshy/cloudemu/v2/services/databricks/driver"
+	dfdriver "github.com/stackshy/cloudemu/v2/services/datafactory/driver"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	ebdriver "github.com/stackshy/cloudemu/v2/services/eventbus/driver"
+	fddriver "github.com/stackshy/cloudemu/v2/services/frontdoor/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
@@ -94,6 +126,7 @@ import (
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 	notifdriver "github.com/stackshy/cloudemu/v2/services/notification/driver"
+	pddriver "github.com/stackshy/cloudemu/v2/services/privatedns/driver"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
@@ -139,6 +172,53 @@ type Drivers struct {
 	AKS              aksserver.Backend
 	// ManagedIdentity serves Microsoft.ManagedIdentity/userAssignedIdentities.
 	ManagedIdentity managedidentitysrv.Store
+	// LoadTesting serves Microsoft.LoadTestService/loadTests.
+	LoadTesting loadtestingsrv.Store
+	// SignalR serves Microsoft.SignalRService/signalR.
+	SignalR signalrsrv.Store
+	// WebPubSub serves Microsoft.SignalRService/webPubSub.
+	WebPubSub webpubsubsrv.Store
+	// Communication serves Microsoft.Communication/communicationServices.
+	Communication communicationsrv.Store
+	// DigitalTwins serves Microsoft.DigitalTwins/digitalTwinsInstances.
+	DigitalTwins digitaltwinssrv.Store
+	// ManagedGrafana serves Microsoft.Dashboard/grafana.
+	ManagedGrafana managedgrafanasrv.Store
+	// DevCenter serves Microsoft.DevCenter/devcenters.
+	DevCenter devcentersrv.Store
+	// Purview serves Microsoft.Purview/accounts.
+	Purview purviewsrv.Store
+	// ChaosStudio serves Microsoft.Chaos/experiments.
+	ChaosStudio chaosstudiosrv.Store
+	// ElasticSan serves Microsoft.ElasticSan/elasticSans.
+	ElasticSan elasticsansrv.Store
+	// ManagedLustre serves Microsoft.StorageCache/amlFilesystems.
+	ManagedLustre managedlustresrv.Store
+	// AppConfiguration serves Microsoft.AppConfiguration/configurationStores.
+	AppConfiguration appconfigsrv.Store
+	// RedisEnterprise serves Microsoft.Cache/redisEnterprise plus its nested
+	// databases child resource.
+	RedisEnterprise redisenterprisesrv.Store
+	// HealthcareApis serves Microsoft.HealthcareApis/workspaces plus its nested
+	// fhirservices and dicomservices child resources.
+	HealthcareApis healthcareapissrv.Store
+	// MongoCluster serves Microsoft.DocumentDB/mongoClusters — Cosmos DB for
+	// MongoDB (vCore) — plus its listConnectionStrings action.
+	MongoCluster mongoclustersrv.Store
+	// Batch serves Microsoft.Batch/batchAccounts plus its nested pools child
+	// resource and the account-key / pool-resize actions.
+	Batch batchsrv.Store
+	// StreamAnalytics serves Microsoft.StreamAnalytics/streamingjobs plus its
+	// nested transformation/inputs/outputs/functions child resources and the
+	// job start/stop/scale actions.
+	StreamAnalytics streamanalyticssrv.Store
+	// RecoveryServices serves Microsoft.RecoveryServices/vaults plus its nested
+	// backupPolicies collection and the backupconfig / backupstorageconfig
+	// singletons.
+	RecoveryServices recoveryservicessrv.Store
+	// IoTHub serves Microsoft.Devices/IotHubs plus its listkeys /
+	// getKeysForKeyName actions and the nested event-hub consumer groups.
+	IoTHub iothubsrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -159,6 +239,25 @@ type Drivers struct {
 	// LB serves the Azure Load Balancer (Microsoft.Network/loadBalancers) ARM
 	// API against the loadbalancer driver.
 	LB lbdriver.LoadBalancer
+	// AppGateway serves the Azure Application Gateway
+	// (Microsoft.Network/applicationGateways) ARM API against the
+	// applicationgateway driver.
+	AppGateway agdriver.AzureApplicationGateways
+	// Firewall serves the Azure Firewall (Microsoft.Network/azureFirewalls) and
+	// Firewall Policy (Microsoft.Network/firewallPolicies) ARM APIs against the
+	// azurefirewall driver.
+	Firewall fwdriver.AzureFirewalls
+	// Bastion serves the Azure Bastion (Microsoft.Network/bastionHosts) ARM API
+	// against the bastion driver.
+	Bastion bastiondriver.BastionHosts
+	// FrontDoor serves the Azure Front Door Standard/Premium
+	// (Microsoft.Cdn/profiles + afdEndpoints + originGroups) ARM API against the
+	// frontdoor driver.
+	FrontDoor fddriver.AzureFrontDoorProfiles
+	// PrivateDNS serves the Azure Private DNS
+	// (Microsoft.Network/privateDnsZones) ARM API — private zones,
+	// virtualNetworkLinks and record sets — against the privatedns driver.
+	PrivateDNS pddriver.PrivateDNS
 	// EventGrid serves the Azure Event Grid (Microsoft.EventGrid/topics) ARM API
 	// against the eventbus driver, mapping topics to event buses.
 	EventGrid ebdriver.EventBus
@@ -175,11 +274,14 @@ type Drivers struct {
 	NotificationHubs    notifdriver.Notification
 	Databricks          dbxdriver.Databricks
 	DatabricksDataPlane dbxdriver.DataPlane
-	CognitiveServices   azureaidriver.CognitiveServices
-	MachineLearning     azureaidriver.MachineLearning
-	AzureAIDataPlane    azureaidriver.DataPlane
-	SearchControl       azuresearchdriver.SearchControl
-	SearchDataPlane     azuresearchdriver.SearchDataPlane
+	// DataFactory serves the Microsoft.DataFactory/factories ARM API against the
+	// datafactory driver.
+	DataFactory       dfdriver.Factories
+	CognitiveServices azureaidriver.CognitiveServices
+	MachineLearning   azureaidriver.MachineLearning
+	AzureAIDataPlane  azureaidriver.DataPlane
+	SearchControl     azuresearchdriver.SearchControl
+	SearchDataPlane   azuresearchdriver.SearchDataPlane
 	// K8sAPI is the shared in-memory Kubernetes data-plane API server. It is
 	// shared with awsserver.Drivers.K8sAPI and gcpserver.Drivers.K8sAPI so a
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
@@ -258,6 +360,16 @@ func New(d Drivers) http.Handler {
 	// handlers, so it does not shadow them.
 	srv.Register(providerssrv.New())
 
+	// AAD bootstrap endpoints so an unmodified Terraform azurerm provider (and
+	// other SDKs resolving a custom cloud via ARM_METADATA_HOSTNAME) can discover
+	// the ARM + login endpoints and obtain a bearer token before any ARM call.
+	// Both live outside /subscriptions/ — an exact /metadata/endpoints match and a
+	// /{tenant}/oauth2/...token suffix match, disjoint from every ARM and blob
+	// data-plane path — so they are registered here, ahead of the permissive blob
+	// fallback, and shadow nothing.
+	srv.Register(aad.NewMetadata())
+	srv.Register(aad.NewToken(tenantID))
+
 	// Management locks (Microsoft.Authorization/locks) attach at any scope,
 	// including a nested .../providers/{ns}/{type}/{name}/providers/Microsoft.
 	// Authorization/locks/{lock} on an individual resource. A resource-scope lock
@@ -279,11 +391,16 @@ func New(d Drivers) http.Handler {
 	// each of these handlers implements ResourceGroupPurger to tear its own
 	// resources down. Other resource types are not cascaded yet.
 	var (
-		vnetHandler    *vnet.Handler
-		vmHandler      *virtualmachines.Handler
-		storageHandler *storageaccountsrv.Handler
-		lbHandler      *lbsrv.Handler
-		rgPurgers      []resourcegroups.ResourceGroupPurger
+		vnetHandler      *vnet.Handler
+		vmHandler        *virtualmachines.Handler
+		storageHandler   *storageaccountsrv.Handler
+		lbHandler        *lbsrv.Handler
+		appGwHandler     *appgatewaysrv.Handler
+		firewallHandler  *azurefirewallsrv.Handler
+		bastionHandler   *bastionsrv.Handler
+		frontDoorHandler *frontdoorsrv.Handler
+		privateDNS       *privatednssrv.Handler
+		rgPurgers        []resourcegroups.ResourceGroupPurger
 	)
 
 	// Virtual machines are purged before the networking resources they consume
@@ -313,6 +430,44 @@ func New(d Drivers) http.Handler {
 		rgPurgers = append(rgPurgers, lbHandler)
 	}
 
+	// Application Gateway is a resource-group-scoped Microsoft.Network resource,
+	// so its handler joins the purge cascade. Registered further below.
+	if d.AppGateway != nil {
+		appGwHandler = appgatewaysrv.New(d.AppGateway)
+		rgPurgers = append(rgPurgers, appGwHandler)
+	}
+
+	// Azure Firewall + Firewall Policy are resource-group-scoped
+	// Microsoft.Network resources, so their handler joins the purge cascade.
+	// Registered further below.
+	if d.Firewall != nil {
+		firewallHandler = azurefirewallsrv.New(d.Firewall)
+		rgPurgers = append(rgPurgers, firewallHandler)
+	}
+
+	// Azure Bastion is a resource-group-scoped Microsoft.Network resource, so its
+	// handler joins the purge cascade. Registered further below.
+	if d.Bastion != nil {
+		bastionHandler = bastionsrv.New(d.Bastion)
+		rgPurgers = append(rgPurgers, bastionHandler)
+	}
+
+	// Azure Front Door (Microsoft.Cdn/profiles) is a resource-group-scoped
+	// resource whose delete cascades its afdEndpoints and originGroups, so its
+	// handler joins the purge cascade. Registered further below.
+	if d.FrontDoor != nil {
+		frontDoorHandler = frontdoorsrv.New(d.FrontDoor)
+		rgPurgers = append(rgPurgers, frontDoorHandler)
+	}
+
+	// Private DNS zones (and their vnet links and records) are resource-group-
+	// scoped Microsoft.Network resources, so their handler joins the purge
+	// cascade. Registered further below.
+	if d.PrivateDNS != nil {
+		privateDNS = privatednssrv.New(d.PrivateDNS)
+		rgPurgers = append(rgPurgers, privateDNS)
+	}
+
 	if d.BlobStorage != nil {
 		storageHandler = storageaccountsrv.New(d.BlobStorage)
 		rgPurgers = append(rgPurgers, storageHandler)
@@ -324,6 +479,165 @@ func New(d Drivers) http.Handler {
 	if d.ManagedIdentity != nil {
 		managedIdentityHandler = managedidentitysrv.New(d.ManagedIdentity)
 		rgPurgers = append(rgPurgers, managedIdentityHandler)
+	}
+
+	// Load tests: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var loadTestingHandler *loadtestingsrv.Handler
+	if d.LoadTesting != nil {
+		loadTestingHandler = loadtestingsrv.New(d.LoadTesting)
+		rgPurgers = append(rgPurgers, loadTestingHandler)
+	}
+
+	// SignalR: a resource-group-scoped resource, so its handler joins the purge
+	// cascade. Registered further below.
+	var signalRHandler *signalrsrv.Handler
+	if d.SignalR != nil {
+		signalRHandler = signalrsrv.New(d.SignalR)
+		rgPurgers = append(rgPurgers, signalRHandler)
+	}
+
+	// Web PubSub: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var webPubSubHandler *webpubsubsrv.Handler
+	if d.WebPubSub != nil {
+		webPubSubHandler = webpubsubsrv.New(d.WebPubSub)
+		rgPurgers = append(rgPurgers, webPubSubHandler)
+	}
+
+	// Communication Services: a resource-group-scoped resource, so its handler
+	// joins the purge cascade. Registered further below.
+	var communicationHandler *communicationsrv.Handler
+	if d.Communication != nil {
+		communicationHandler = communicationsrv.New(d.Communication)
+		rgPurgers = append(rgPurgers, communicationHandler)
+	}
+
+	// Digital Twins: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var digitalTwinsHandler *digitaltwinssrv.Handler
+	if d.DigitalTwins != nil {
+		digitalTwinsHandler = digitaltwinssrv.New(d.DigitalTwins)
+		rgPurgers = append(rgPurgers, digitalTwinsHandler)
+	}
+
+	// Managed Grafana: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var managedGrafanaHandler *managedgrafanasrv.Handler
+	if d.ManagedGrafana != nil {
+		managedGrafanaHandler = managedgrafanasrv.New(d.ManagedGrafana)
+		rgPurgers = append(rgPurgers, managedGrafanaHandler)
+	}
+
+	// Dev Center: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var devCenterHandler *devcentersrv.Handler
+	if d.DevCenter != nil {
+		devCenterHandler = devcentersrv.New(d.DevCenter)
+		rgPurgers = append(rgPurgers, devCenterHandler)
+	}
+
+	// Purview: a resource-group-scoped resource, so its handler joins the purge
+	// cascade. Registered further below.
+	var purviewHandler *purviewsrv.Handler
+	if d.Purview != nil {
+		purviewHandler = purviewsrv.New(d.Purview)
+		rgPurgers = append(rgPurgers, purviewHandler)
+	}
+
+	// Chaos Studio: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var chaosStudioHandler *chaosstudiosrv.Handler
+	if d.ChaosStudio != nil {
+		chaosStudioHandler = chaosstudiosrv.New(d.ChaosStudio)
+		rgPurgers = append(rgPurgers, chaosStudioHandler)
+	}
+
+	// Elastic SAN: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var elasticSanHandler *elasticsansrv.Handler
+	if d.ElasticSan != nil {
+		elasticSanHandler = elasticsansrv.New(d.ElasticSan)
+		rgPurgers = append(rgPurgers, elasticSanHandler)
+	}
+
+	// Managed Lustre: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Registered further below.
+	var managedLustreHandler *managedlustresrv.Handler
+	if d.ManagedLustre != nil {
+		managedLustreHandler = managedlustresrv.New(d.ManagedLustre)
+		rgPurgers = append(rgPurgers, managedLustreHandler)
+	}
+
+	// App Configuration: a resource-group-scoped resource, so its handler joins
+	// the purge cascade. Registered further below.
+	var appConfigHandler *appconfigsrv.Handler
+	if d.AppConfiguration != nil {
+		appConfigHandler = appconfigsrv.New(d.AppConfiguration)
+		rgPurgers = append(rgPurgers, appConfigHandler)
+	}
+
+	// Redis Enterprise: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Deleting the group tears down every cluster and its databases.
+	// Registered further below.
+	var redisEnterpriseHandler *redisenterprisesrv.Handler
+	if d.RedisEnterprise != nil {
+		redisEnterpriseHandler = redisenterprisesrv.New(d.RedisEnterprise)
+		rgPurgers = append(rgPurgers, redisEnterpriseHandler)
+	}
+
+	// Health Data Services: a resource-group-scoped resource, so its handler joins
+	// the purge cascade. Deleting the group tears down every workspace and its
+	// FHIR/DICOM services. Registered further below.
+	var healthcareApisHandler *healthcareapissrv.Handler
+	if d.HealthcareApis != nil {
+		healthcareApisHandler = healthcareapissrv.New(d.HealthcareApis)
+		rgPurgers = append(rgPurgers, healthcareApisHandler)
+	}
+
+	// Mongo clusters: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Deleting the group tears down every mongo cluster.
+	// Registered further below.
+	var mongoClusterHandler *mongoclustersrv.Handler
+	if d.MongoCluster != nil {
+		mongoClusterHandler = mongoclustersrv.New(d.MongoCluster)
+		rgPurgers = append(rgPurgers, mongoClusterHandler)
+	}
+
+	// Batch: a resource-group-scoped resource, so its handler joins the purge
+	// cascade. Deleting the group tears down every account and its pools.
+	// Registered further below.
+	var batchHandler *batchsrv.Handler
+	if d.Batch != nil {
+		batchHandler = batchsrv.New(d.Batch)
+		rgPurgers = append(rgPurgers, batchHandler)
+	}
+
+	// Stream Analytics: a resource-group-scoped resource, so its handler joins
+	// the purge cascade. Deleting the group tears down every job and its
+	// transformation/inputs/outputs/functions. Registered further below.
+	var streamAnalyticsHandler *streamanalyticssrv.Handler
+	if d.StreamAnalytics != nil {
+		streamAnalyticsHandler = streamanalyticssrv.New(d.StreamAnalytics)
+		rgPurgers = append(rgPurgers, streamAnalyticsHandler)
+	}
+
+	// Recovery Services: a resource-group-scoped resource, so its handler joins
+	// the purge cascade. Deleting the group tears down every vault and its backup
+	// policies / configs. Registered further below.
+	var recoveryServicesHandler *recoveryservicessrv.Handler
+	if d.RecoveryServices != nil {
+		recoveryServicesHandler = recoveryservicessrv.New(d.RecoveryServices)
+		rgPurgers = append(rgPurgers, recoveryServicesHandler)
+	}
+
+	// IoT Hub: a resource-group-scoped resource, so its handler joins the purge
+	// cascade. Deleting the group tears down every hub and its consumer groups.
+	// Registered further below.
+	var iotHubHandler *iothubsrv.Handler
+	if d.IoTHub != nil {
+		iotHubHandler = iothubsrv.New(d.IoTHub)
+		rgPurgers = append(rgPurgers, iotHubHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -347,6 +661,20 @@ func New(d Drivers) http.Handler {
 	// driverless) Synapse handler joins the purge cascade. Registered further below.
 	synapseHandler := synapsesrv.New()
 	rgPurgers = append(rgPurgers, synapseHandler)
+
+	// Application Insights components (Microsoft.Insights/components) are
+	// resource-group-scoped, so the (always-on, driverless) handler joins the
+	// purge cascade. Registered further below.
+	appInsightsHandler := appinsightssrv.New()
+	rgPurgers = append(rgPurgers, appInsightsHandler)
+
+	// Data Factory (Microsoft.DataFactory/factories) is a resource-group-scoped
+	// resource, so its handler joins the purge cascade. Registered further below.
+	var dataFactoryHandler *datafactorysrv.Handler
+	if d.DataFactory != nil {
+		dataFactoryHandler = datafactorysrv.New(d.DataFactory)
+		rgPurgers = append(rgPurgers, dataFactoryHandler)
+	}
 
 	// Resource groups have no driver of their own: they are containers, and the
 	// emulator tracks membership by the ids resources already carry. The
@@ -455,6 +783,46 @@ func New(d Drivers) http.Handler {
 		srv.Register(lbHandler)
 	}
 
+	// Application Gateway shares the Microsoft.Network ARM provider with the
+	// network / DNS / load-balancer handlers above but claims a disjoint resource
+	// type (applicationGateways), so registration order relative to them is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if appGwHandler != nil {
+		srv.Register(appGwHandler)
+	}
+
+	// Azure Firewall shares the Microsoft.Network ARM provider with the network /
+	// DNS / load-balancer / app-gateway handlers above but claims two disjoint
+	// resource types (azureFirewalls, firewallPolicies), so registration order
+	// relative to them is unconstrained. Registered before the BlobStorage
+	// fallback.
+	if firewallHandler != nil {
+		srv.Register(firewallHandler)
+	}
+
+	// Azure Bastion shares the Microsoft.Network ARM provider with the network /
+	// DNS / load-balancer / app-gateway / firewall handlers above but claims a
+	// disjoint resource type (bastionHosts), so registration order relative to
+	// them is unconstrained. Registered before the BlobStorage fallback.
+	if bastionHandler != nil {
+		srv.Register(bastionHandler)
+	}
+
+	// Azure Front Door claims the new Microsoft.Cdn ARM provider namespace,
+	// disjoint from every existing handler, so registration order is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if frontDoorHandler != nil {
+		srv.Register(frontDoorHandler)
+	}
+
+	// Private DNS claims Microsoft.Network/privateDnsZones — disjoint from the
+	// public DNS handler's dnsZones even case-insensitively, and from every other
+	// Microsoft.Network handler — so registration order relative to them is
+	// unconstrained. Registered before the BlobStorage fallback.
+	if privateDNS != nil {
+		srv.Register(privateDNS)
+	}
+
 	// Event Grid claims Microsoft.EventGrid/topics — a distinct ARM provider
 	// name from every other Azure handler, so registration order is
 	// unconstrained. Registered before the BlobStorage fallback.
@@ -534,6 +902,14 @@ func New(d Drivers) http.Handler {
 	// registered. Created above and joined to the resource-group purge cascade.
 	srv.Register(synapseHandler)
 
+	// Application Insights components share the microsoft.insights ARM provider
+	// with the Azure Monitor handler above but claim the disjoint "components"
+	// resource type, so registration order relative to it is unconstrained.
+	// Driverless and always registered; must precede the BlobStorage fallback so
+	// a components request is not swallowed as a blob call. Created above and
+	// joined to the resource-group purge cascade.
+	srv.Register(appInsightsHandler)
+
 	// Microsoft.Sql provider — distinct ARM provider name from compute and
 	// network so registration order is unconstrained.
 	if d.SQL != nil {
@@ -566,6 +942,14 @@ func New(d Drivers) http.Handler {
 	}
 
 	registerDatabricksDataPlane(srv, &d)
+
+	// Data Factory matches on Microsoft.DataFactory/factories — a distinct ARM
+	// provider namespace, so registration order is unconstrained. Must precede the
+	// BlobStorage fallback so a factory request is not swallowed as a blob call.
+	// Created above and joined to the resource-group purge cascade.
+	if dataFactoryHandler != nil {
+		srv.Register(dataFactoryHandler)
+	}
 
 	// Cognitive Services matches on Microsoft.CognitiveServices/accounts — a
 	// distinct ARM provider name, so registration order is unconstrained.
@@ -627,6 +1011,101 @@ func New(d Drivers) http.Handler {
 	// fallback.
 	if managedIdentityHandler != nil {
 		srv.Register(managedIdentityHandler)
+	}
+
+	if loadTestingHandler != nil {
+		srv.Register(loadTestingHandler)
+	}
+
+	if signalRHandler != nil {
+		srv.Register(signalRHandler)
+	}
+
+	if webPubSubHandler != nil {
+		srv.Register(webPubSubHandler)
+	}
+
+	if communicationHandler != nil {
+		srv.Register(communicationHandler)
+	}
+
+	if digitalTwinsHandler != nil {
+		srv.Register(digitalTwinsHandler)
+	}
+
+	if managedGrafanaHandler != nil {
+		srv.Register(managedGrafanaHandler)
+	}
+
+	if devCenterHandler != nil {
+		srv.Register(devCenterHandler)
+	}
+
+	if purviewHandler != nil {
+		srv.Register(purviewHandler)
+	}
+
+	if chaosStudioHandler != nil {
+		srv.Register(chaosStudioHandler)
+	}
+
+	if elasticSanHandler != nil {
+		srv.Register(elasticSanHandler)
+	}
+
+	if managedLustreHandler != nil {
+		srv.Register(managedLustreHandler)
+	}
+
+	if appConfigHandler != nil {
+		srv.Register(appConfigHandler)
+	}
+
+	// Redis Enterprise claims Microsoft.Cache/redisEnterprise — a distinct resource
+	// type from the standard Azure Cache for Redis (Microsoft.Cache/redis), so
+	// registration order relative to it is unconstrained.
+	if redisEnterpriseHandler != nil {
+		srv.Register(redisEnterpriseHandler)
+	}
+
+	// Health Data Services claims Microsoft.HealthcareApis/workspaces — a distinct
+	// provider namespace, so registration order relative to other services is
+	// unconstrained.
+	if healthcareApisHandler != nil {
+		srv.Register(healthcareApisHandler)
+	}
+
+	// Mongo clusters claim Microsoft.DocumentDB/mongoClusters — a distinct resource
+	// type from the Cosmos DB core (Microsoft.DocumentDB/databaseAccounts), so
+	// registration order relative to it is unconstrained.
+	if mongoClusterHandler != nil {
+		srv.Register(mongoClusterHandler)
+	}
+
+	// Batch claims Microsoft.Batch/batchAccounts — a distinct ARM provider name
+	// from every other Azure handler, so registration order is unconstrained.
+	if batchHandler != nil {
+		srv.Register(batchHandler)
+	}
+
+	// Stream Analytics claims Microsoft.StreamAnalytics/streamingjobs — a distinct
+	// ARM provider name from every other Azure handler, so registration order is
+	// unconstrained.
+	if streamAnalyticsHandler != nil {
+		srv.Register(streamAnalyticsHandler)
+	}
+
+	// Recovery Services claims Microsoft.RecoveryServices/vaults — a distinct ARM
+	// provider name from every other Azure handler, so registration order is
+	// unconstrained.
+	if recoveryServicesHandler != nil {
+		srv.Register(recoveryServicesHandler)
+	}
+
+	// IoT Hub claims Microsoft.Devices/IotHubs — a distinct ARM provider name from
+	// every other Azure handler, so registration order is unconstrained.
+	if iotHubHandler != nil {
+		srv.Register(iotHubHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —

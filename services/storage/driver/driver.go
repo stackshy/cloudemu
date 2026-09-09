@@ -53,6 +53,36 @@ type AccountAttributes struct {
 	// Tags are the ARM resource tags submitted on create-or-update, round-tripped
 	// back on GET / list.
 	Tags map[string]string
+	// MinimumTLSVersion is the account's minimum permitted TLS version
+	// (minimumTlsVersion — e.g. TLS1_0/TLS1_1/TLS1_2). Empty means unset; the
+	// handler renders the real-Azure default (TLS1_2) instead.
+	MinimumTLSVersion string
+	// PublicNetworkAccess gates public endpoint reachability (publicNetworkAccess
+	// — Enabled/Disabled/SecuredByPerimeter). Empty means unset; the handler
+	// renders the real-Azure default (Enabled).
+	PublicNetworkAccess string
+	// EnableHTTPSTrafficOnly, AllowBlobPublicAccess and AllowSharedKeyAccess are
+	// the account's security toggles (supportsHttpsTrafficOnly,
+	// allowBlobPublicAccess, allowSharedKeyAccess). They are pointers so an ARM
+	// PATCH can distinguish "field omitted" (leave as-is) from "explicitly set to
+	// false" — a distinction the value form would lose. Nil means unset; the
+	// handler renders the real-Azure default (true / false / true respectively).
+	EnableHTTPSTrafficOnly *bool
+	AllowBlobPublicAccess  *bool
+	AllowSharedKeyAccess   *bool
+	// IdentityType is the ARM managed-identity type attached to the account
+	// (None/SystemAssigned/UserAssigned/"SystemAssigned,UserAssigned"). Empty
+	// means the create/update carried no identity block, so the handler emits
+	// no identity object at all. IdentityPrincipalID/IdentityTenantID are the
+	// ids synthesized for a system-assigned identity (empty otherwise), and
+	// UserAssignedIdentities holds the attached user-assigned identity resource
+	// IDs. Modeled here (not left to the echo overlay) because the identity
+	// block is a top-level ARM sibling of properties — the overlay only echoes
+	// unmodeled keys under properties, so a bare identity would be dropped.
+	IdentityType           string
+	IdentityPrincipalID    string
+	IdentityTenantID       string
+	UserAssignedIdentities []string
 }
 
 // AccountEncryption is the storage-account encryption configuration requested
@@ -1118,6 +1148,14 @@ type GCSBucketMeta struct {
 	StorageClass   string
 	Metageneration int64
 	Updated        string
+	// Versioning is the bucket's current versioning-enabled state, and
+	// VersioningSet reports whether versioning has ever been explicitly
+	// configured. Real GCS omits the versioning field on a bucket that has never
+	// had it set but returns {enabled:false} once it has been disabled, so the
+	// wire layer needs the two apart to avoid a perpetual Terraform diff on a
+	// `versioning { enabled = false }` block.
+	Versioning    bool
+	VersioningSet bool
 }
 
 // GCSExtensions is an OPTIONAL GCS-specific capability, discovered by type

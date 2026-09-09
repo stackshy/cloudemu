@@ -96,10 +96,14 @@ type bucketMeta struct {
 	lifecycle  *driver.LifecycleConfig
 	multiparts *memstore.Store[*gcsMultipartUpload]
 	versioning bool
-	policy     *driver.BucketPolicy
-	corsConfig *driver.CORSConfig
-	encryption *driver.EncryptionConfig
-	tags       map[string]string
+	// versioningSet records whether versioning has ever been explicitly
+	// configured, so the GCS wire layer can return {enabled:false} for a bucket
+	// that was disabled versus omitting the field for one never configured.
+	versioningSet bool
+	policy        *driver.BucketPolicy
+	corsConfig    *driver.CORSConfig
+	encryption    *driver.EncryptionConfig
+	tags          map[string]string
 
 	// mu guards the GCS-specific mutable fields below (location/storageClass,
 	// metageneration/updated, iamPolicy, lifecycle, and the archived version
@@ -1177,6 +1181,7 @@ func (m *Mock) SetBucketVersioning(_ context.Context, bucket string, enabled boo
 	}
 
 	bkt.versioning = enabled
+	bkt.versioningSet = true
 
 	return nil
 }
@@ -1626,7 +1631,9 @@ func (m *Mock) SetBucketAttrsGCS(_ context.Context, bucket, location, storageCla
 	defer bkt.mu.Unlock()
 
 	if location != "" {
-		bkt.location = location
+		// Real GCS normalizes and returns bucket locations in upper case
+		// (e.g. "US-CENTRAL1", "EU"), regardless of the case supplied at create.
+		bkt.location = strings.ToUpper(location)
 	}
 
 	if storageClass != "" {
@@ -1651,6 +1658,8 @@ func (m *Mock) BucketAttrsGCS(_ context.Context, bucket string) (driver.GCSBucke
 		StorageClass:   bkt.storageClass,
 		Metageneration: bkt.metageneration,
 		Updated:        bkt.updated,
+		Versioning:     bkt.versioning,
+		VersioningSet:  bkt.versioningSet,
 	}, nil
 }
 

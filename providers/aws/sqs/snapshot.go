@@ -39,6 +39,10 @@ type queueSnapshot struct {
 	RedriveAllowPolicy string                   `json:"redriveAllowPolicy,omitempty"`
 	Policy             string                   `json:"policy,omitempty"`
 	KMSMasterKeyID     string                   `json:"kmsMasterKeyId,omitempty"`
+	KMSDataKeyReuse    int                      `json:"kmsDataKeyReuse,omitempty"`
+	SqsManagedSSE      bool                     `json:"sqsManagedSse,omitempty"`
+	DeduplicationScope string                   `json:"deduplicationScope,omitempty"`
+	FifoThroughputLim  string                   `json:"fifoThroughputLimit,omitempty"`
 	CreatedAt          time.Time                `json:"createdAt"`
 	LastModifiedAt     time.Time                `json:"lastModifiedAt"`
 	DeduplicationIndex map[string]time.Time     `json:"deduplicationIndex,omitempty"`
@@ -123,7 +127,9 @@ func snapshotQueue(qd *queueData) *queueSnapshot {
 		MaxMessageSize: qd.maxMessageSize, MessageRetention: qd.messageRetention,
 		ReceiveWaitTime: qd.receiveWaitTime, ContentBasedDedup: qd.contentBasedDedup,
 		RedrivePolicy: qd.redrivePolicy, RedriveAllowPolicy: qd.redriveAllowPolicy,
-		Policy: qd.policy, KMSMasterKeyID: qd.kmsMasterKeyID, CreatedAt: qd.createdAt,
+		Policy: qd.policy, KMSMasterKeyID: qd.kmsMasterKeyID, KMSDataKeyReuse: qd.kmsDataKeyReuse,
+		SqsManagedSSE: qd.sqsManagedSSE, DeduplicationScope: qd.deduplicationScope,
+		FifoThroughputLim: qd.fifoThroughputLim, CreatedAt: qd.createdAt,
 		LastModifiedAt: qd.lastModifiedAt, DeduplicationIndex: qd.deduplicationIndex,
 		DLQConfig: qd.dlqConfig, SeqCounter: qd.seqCounter.Load(),
 	}
@@ -180,7 +186,9 @@ func restoreQueue(qs *queueSnapshot) *queueData {
 		maxMessageSize: qs.MaxMessageSize, messageRetention: qs.MessageRetention,
 		receiveWaitTime: qs.ReceiveWaitTime, contentBasedDedup: qs.ContentBasedDedup,
 		redrivePolicy: qs.RedrivePolicy, redriveAllowPolicy: qs.RedriveAllowPolicy,
-		policy: qs.Policy, kmsMasterKeyID: qs.KMSMasterKeyID, createdAt: qs.CreatedAt,
+		policy: qs.Policy, kmsMasterKeyID: qs.KMSMasterKeyID, kmsDataKeyReuse: qs.KMSDataKeyReuse,
+		sqsManagedSSE: qs.SqsManagedSSE, deduplicationScope: qs.DeduplicationScope,
+		fifoThroughputLim: qs.FifoThroughputLim, createdAt: qs.CreatedAt,
 		lastModifiedAt: qs.LastModifiedAt, deduplicationIndex: qs.DeduplicationIndex,
 		dlqConfig: qs.DLQConfig,
 	}

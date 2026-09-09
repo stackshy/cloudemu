@@ -290,6 +290,64 @@ func TestModifyReplicationGroup(t *testing.T) {
 	}
 }
 
+// TestReplicaCountScaling covers the Increase/DecreaseReplicaCount path the
+// Terraform AWS provider uses to change a replication group's num_cache_clusters
+// (it does NOT call ModifyReplicationGroup for node-count changes). NewReplicaCount
+// is replicas-per-node-group, so the resulting member count is the primary plus
+// that many replicas.
+func TestReplicaCountScaling(t *testing.T) {
+	ctx := context.Background()
+	c := newReplicationGroupClient(t)
+
+	if _, err := c.CreateReplicationGroup(ctx, &awselasticache.CreateReplicationGroupInput{
+		ReplicationGroupId:          aws.String("rc-rg"),
+		ReplicationGroupDescription: aws.String("scale replicas"),
+		CacheNodeType:               aws.String("cache.t3.micro"),
+		Engine:                      aws.String("redis"),
+		NumCacheClusters:            aws.Int32(2),
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	// Increase to 2 replicas -> 3 members (primary + 2).
+	inc, err := c.IncreaseReplicaCount(ctx, &awselasticache.IncreaseReplicaCountInput{
+		ReplicationGroupId: aws.String("rc-rg"),
+		ApplyImmediately:   aws.Bool(true),
+		NewReplicaCount:    aws.Int32(2),
+	})
+	if err != nil {
+		t.Fatalf("IncreaseReplicaCount: %v", err)
+	}
+
+	if got := len(inc.ReplicationGroup.MemberClusters); got != 3 {
+		t.Fatalf("after increase MemberClusters = %d, want 3", got)
+	}
+
+	// Decrease to 1 replica -> 2 members (primary + 1).
+	dec, err := c.DecreaseReplicaCount(ctx, &awselasticache.DecreaseReplicaCountInput{
+		ReplicationGroupId: aws.String("rc-rg"),
+		ApplyImmediately:   aws.Bool(true),
+		NewReplicaCount:    aws.Int32(1),
+	})
+	if err != nil {
+		t.Fatalf("DecreaseReplicaCount: %v", err)
+	}
+
+	if got := len(dec.ReplicationGroup.MemberClusters); got != 2 {
+		t.Fatalf("after decrease MemberClusters = %d, want 2", got)
+	}
+
+	// A count change on an unknown group must surface ReplicationGroupNotFoundFault.
+	var missing *cachetypes.ReplicationGroupNotFoundFault
+	if _, err := c.IncreaseReplicaCount(ctx, &awselasticache.IncreaseReplicaCountInput{
+		ReplicationGroupId: aws.String("nope"),
+		ApplyImmediately:   aws.Bool(true),
+		NewReplicaCount:    aws.Int32(1),
+	}); !errors.As(err, &missing) {
+		t.Errorf("increase on missing group must surface ReplicationGroupNotFoundFault, got %T: %v", err, err)
+	}
+}
+
 // Same reasoning as RDS: the SDK matches on the error CODE, not the message.
 // A caller checking for ReplicationGroupAlreadyExistsFault would not have
 // matched a generic CacheClusterAlreadyExists.

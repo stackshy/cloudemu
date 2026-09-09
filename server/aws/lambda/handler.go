@@ -139,6 +139,7 @@ const (
 // (the /tmp size) to 512 MB.
 const (
 	archX8664                 = "x86_64"
+	archArm64                 = "arm64"
 	defaultEphemeralStorageMB = 512
 )
 
@@ -193,6 +194,17 @@ type functionTagger interface {
 type awsConfigManager interface {
 	SetFunctionAWSConfig(ctx context.Context, name string, cfg sdrv.AWSFunctionConfig, create bool) error
 	GetFunctionAWSConfig(ctx context.Context, name string) (sdrv.AWSFunctionConfig, error)
+}
+
+// versionDeleter is the AWS-specific version-scoped delete surface backing a
+// DeleteFunction that carries a Qualifier. Deleting a single published version
+// (leaving $LATEST and other versions/aliases intact) is a Lambda concept with no
+// Azure Functions / GCP Cloud Functions equivalent, so it is kept off the portable
+// Serverless driver and type-asserted the same way as policyManager /
+// functionTagger. An unqualified DeleteFunction still removes the whole function
+// via the driver's DeleteFunction.
+type versionDeleter interface {
+	DeleteVersion(ctx context.Context, name, qualifier string) error
 }
 
 // ObjectStore is the slice of the in-process S3 backend the handler needs to
@@ -276,7 +288,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parts := strings.Split(rest, "/")
-	name := parts[0]
+
+	name, ok := h.resolveFunctionRef(w, r, parts[0])
+	if !ok {
+		return
+	}
 
 	const (
 		partsResource    = 1 // /functions/{name}
@@ -440,6 +456,64 @@ func splitFunctionNameQualifier(raw string) (name, qualifier string) {
 	return rest, ""
 }
 
+// qualifierMismatchMessage is the ValidationException real Lambda returns when the
+// qualifier embedded in the FunctionName (e.g. "my-fn:PROD") disagrees with the
+// explicit ?Qualifier= query parameter.
+const qualifierMismatchMessage = "The derived qualifier from the function name does not match the specified qualifier."
+
+// resolveFunctionRef normalizes a FunctionName path segment — which real Lambda
+// accepts as a bare name, "name:qualifier", an unqualified function ARN, or a
+// qualified function ARN (".../function:name:qualifier") — into a bare function
+// name, reconciling any qualifier embedded in the reference with an explicit
+// ?Qualifier= query parameter. When both are present and differ it writes a
+// ValidationException and returns ok=false; when they agree, or only one is
+// present, it rewrites the request's Qualifier query parameter to the reconciled
+// value so every downstream handler reads the effective qualifier uniformly.
+// Applying it at the single control-plane dispatch point makes all
+// FunctionName-taking operations (Get/UpdateFunctionConfiguration, GetFunction,
+// Invoke, UpdateFunctionCode, DeleteFunction, PublishVersion, alias and policy
+// ops) accept every FunctionName form.
+func (*Handler) resolveFunctionRef(w http.ResponseWriter, r *http.Request, raw string) (string, bool) {
+	name, embedded := splitFunctionNameQualifier(raw)
+
+	qualifier, ok := reconcileQualifier(embedded, r.URL.Query().Get("Qualifier"))
+	if !ok {
+		writeError(w, http.StatusBadRequest, "ValidationException", qualifierMismatchMessage)
+		return "", false
+	}
+
+	setQualifier(r, qualifier)
+
+	return name, true
+}
+
+// reconcileQualifier merges a qualifier embedded in a FunctionName with an
+// explicit ?Qualifier= query parameter: either alone (or both equal) is accepted;
+// two different non-empty qualifiers are a conflict (ok=false).
+func reconcileQualifier(embedded, query string) (string, bool) {
+	switch {
+	case embedded == "":
+		return query, true
+	case query == "" || query == embedded:
+		return embedded, true
+	default:
+		return "", false
+	}
+}
+
+// setQualifier rewrites the request URL's Qualifier query parameter to the
+// reconciled value so downstream handlers read it via r.URL.Query().Get.
+func setQualifier(r *http.Request, qualifier string) {
+	q := r.URL.Query()
+	if qualifier == "" {
+		q.Del("Qualifier")
+	} else {
+		q.Set("Qualifier", qualifier)
+	}
+
+	r.URL.RawQuery = q.Encode()
+}
+
 // servePolicy handles POST (AddPermission) and GET (GetPolicy) on
 // .../{name}/policy.
 func (h *Handler) servePolicy(w http.ResponseWriter, r *http.Request, name string) {
@@ -573,6 +647,11 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
+	if err := validateEphemeralStorage(req.EphemeralStorage); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	cfg := sdrv.FunctionConfig{
 		Name:        name,
 		Runtime:     req.Runtime,
@@ -596,6 +675,7 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 		VPCConfig:        toDriverVPCConfig(req.VpcConfig),
 		DeadLetterConfig: toDriverDeadLetter(req.DeadLetterConfig),
 		TracingConfig:    toDriverTracing(req.TracingConfig),
+		EphemeralStorage: toDriverEphemeral(req.EphemeralStorage),
 		Layers:           h.resolveLayers(req.Layers),
 	}, false)
 
@@ -635,6 +715,11 @@ func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 
+	if err := validateArchitectures(req.Architectures); err != nil {
+		writeErr(w, err)
+		return
+	}
+
 	code, err := h.resolveCode(r.Context(), &functionCode{
 		ZipFile: req.ZipFile, S3Bucket: req.S3Bucket, S3Key: req.S3Key,
 	})
@@ -661,7 +746,7 @@ func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string)
 		return
 	}
 
-	awsCfg := h.awsFnConfig(r.Context(), name)
+	awsCfg := h.codeAWSConfig(r.Context(), name, req.Architectures)
 
 	if req.Publish {
 		h.writePublished(r.Context(), w, http.StatusOK, name, info, awsCfg)
@@ -669,6 +754,25 @@ func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string)
 	}
 
 	writeJSON(w, http.StatusOK, toConfiguration(info, awsCfg))
+}
+
+// codeAWSConfig returns the function's stored AWS-only config, first persisting
+// any Architectures change carried on the UpdateFunctionCode request — that is
+// the API that carries the instruction set (the code must match the target
+// architecture), so without this GetFunction keeps reporting the create-time
+// architecture and Terraform re-plans it forever. It falls back to the current
+// stored config for a non-AWS backend (applyAWSConfig returns nil there).
+func (h *Handler) codeAWSConfig(ctx context.Context, name string, arch []string) *sdrv.AWSFunctionConfig {
+	awsCfg := h.awsFnConfig(ctx, name)
+	if len(arch) == 0 {
+		return awsCfg
+	}
+
+	if applied := h.applyAWSConfig(ctx, name, sdrv.AWSFunctionConfig{Architectures: arch}, false); applied != nil {
+		return applied
+	}
+
+	return awsCfg
 }
 
 // serveVersions handles POST (PublishVersion) and GET (ListVersionsByFunction)
@@ -969,7 +1073,26 @@ func validateCreateRequest(req *createFunctionRequest) error {
 		}
 	}
 
+	if err := validateArchitectures(req.Architectures); err != nil {
+		return err
+	}
+
 	return validateEphemeralStorage(req.EphemeralStorage)
+}
+
+// validateArchitectures rejects an Architectures value outside the AWS enum
+// (x86_64, arm64), matching real Lambda, which fails such a request with
+// InvalidParameterValueException rather than silently accepting it.
+func validateArchitectures(arch []string) error {
+	for _, a := range arch {
+		if a != archX8664 && a != archArm64 {
+			return cerrors.Newf(cerrors.InvalidArgument,
+				"value '%s' at 'architectures' failed to satisfy constraint: "+
+					"Member must satisfy enum value set: [%s, %s]", a, archX8664, archArm64)
+		}
+	}
+
+	return nil
 }
 
 // validateEphemeralStorage rejects a /tmp size outside the AWS 512–10240 MB range.
@@ -1200,6 +1323,31 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, name string) {
+	// A Qualifier (from ?Qualifier= or a "name:qualifier" FunctionName, already
+	// reconciled onto the query by resolveFunctionRef) scopes DeleteFunction to a
+	// single published version — real Lambda deletes only that version and leaves
+	// $LATEST and the other versions/aliases intact. Without a qualifier the whole
+	// function (all versions and aliases) is deleted.
+	if qualifier := r.URL.Query().Get("Qualifier"); qualifier != "" {
+		vd, ok := h.fn.(versionDeleter)
+		if !ok {
+			writeError(w, http.StatusBadRequest, "InvalidParameterValueException",
+				"version-scoped delete is not supported by this provider")
+
+			return
+		}
+
+		if err := vd.DeleteVersion(r.Context(), name, qualifier); err != nil {
+			writeErr(w, err)
+
+			return
+		}
+
+		w.WriteHeader(http.StatusNoContent)
+
+		return
+	}
+
 	if err := h.fn.DeleteFunction(r.Context(), name); err != nil {
 		writeErr(w, err)
 		return

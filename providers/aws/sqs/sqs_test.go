@@ -682,3 +682,77 @@ func assertGreaterThan(t *testing.T, actual, threshold int) {
 		t.Errorf("expected > %d, got %d", threshold, actual)
 	}
 }
+
+// TestQueueEncryptionAndFifoThroughputAttributes verifies the SSE and FIFO
+// high-throughput attributes round-trip through CreateQueue and
+// SetQueueAttributesRaw, with SQS defaults applied and the SSE-KMS/SSE-SQS
+// mutual exclusivity enforced.
+func TestQueueEncryptionAndFifoThroughputAttributes(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	// SSE-SQS + Policy at create.
+	sse, err := m.CreateQueue(ctx, driver.QueueConfig{
+		Name:                 "sse",
+		SqsManagedSseEnabled: true,
+		Policy:               `{"Version":"2012-10-17"}`,
+	})
+	requireNoError(t, err)
+
+	attrs, err := m.GetQueueAttributes(ctx, sse.URL)
+	requireNoError(t, err)
+	assertEqual(t, true, attrs.SqsManagedSseEnabled)
+	assertEqual(t, `{"Version":"2012-10-17"}`, attrs.Policy)
+
+	// SSE-KMS at create disables SSE-SQS and defaults the reuse period to 300.
+	kms, err := m.CreateQueue(ctx, driver.QueueConfig{
+		Name:                 "kms",
+		KmsMasterKeyID:       "alias/aws/sqs",
+		SqsManagedSseEnabled: true, // must be overridden by the KMS key
+	})
+	requireNoError(t, err)
+
+	attrs, err = m.GetQueueAttributes(ctx, kms.URL)
+	requireNoError(t, err)
+	assertEqual(t, "alias/aws/sqs", attrs.KmsMasterKeyID)
+	assertEqual(t, 300, attrs.KmsDataKeyReusePeriodSeconds)
+	assertEqual(t, false, attrs.SqsManagedSseEnabled)
+
+	// FIFO defaults.
+	fifo, err := m.CreateQueue(ctx, driver.QueueConfig{Name: "q.fifo", FIFO: true})
+	requireNoError(t, err)
+
+	attrs, err = m.GetQueueAttributes(ctx, fifo.URL)
+	requireNoError(t, err)
+	assertEqual(t, "queue", attrs.DeduplicationScope)
+	assertEqual(t, "perQueue", attrs.FifoThroughputLimit)
+
+	// SetQueueAttributesRaw round-trip: enabling SSE-SQS on the KMS queue clears
+	// the KMS key; set FIFO high-throughput on the FIFO queue.
+	requireNoError(t, m.SetQueueAttributesRaw(ctx, kms.URL, map[string]string{
+		"SqsManagedSseEnabled": "true",
+	}))
+
+	attrs, err = m.GetQueueAttributes(ctx, kms.URL)
+	requireNoError(t, err)
+	assertEqual(t, true, attrs.SqsManagedSseEnabled)
+	assertEqual(t, "", attrs.KmsMasterKeyID)
+
+	requireNoError(t, m.SetQueueAttributesRaw(ctx, fifo.URL, map[string]string{
+		"DeduplicationScope":  "messageGroup",
+		"FifoThroughputLimit": "perMessageGroupId",
+	}))
+
+	attrs, err = m.GetQueueAttributes(ctx, fifo.URL)
+	requireNoError(t, err)
+	assertEqual(t, "messageGroup", attrs.DeduplicationScope)
+	assertEqual(t, "perMessageGroupId", attrs.FifoThroughputLimit)
+
+	// Standard queue reports neither FIFO high-throughput attribute.
+	std := createStdQueue(m, "plain")
+
+	attrs, err = m.GetQueueAttributes(ctx, std.URL)
+	requireNoError(t, err)
+	assertEqual(t, "", attrs.DeduplicationScope)
+	assertEqual(t, "", attrs.FifoThroughputLimit)
+}

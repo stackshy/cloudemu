@@ -31,6 +31,8 @@ const (
 	defaultStorageGB      = 20
 	defaultStorageType    = "Premium_LRS"
 	defaultSKU            = "Standard_B1ms"
+	defaultSKUTier        = "Burstable" // pairs with defaultSKU (a B-series compute)
+	defaultBackupDays     = 7           // Azure Flexible Server default backup retention
 	defaultEngine         = "MySQL"
 	resourceGroupTag      = "cloud-mock"
 	providerNamespace     = "Microsoft.DBforMySQL"
@@ -219,9 +221,19 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		storageType = defaultStorageType
 	}
 
-	tier := cfg.InstanceClass
-	if tier == "" {
-		tier = defaultSKU
+	sku := cfg.InstanceClass
+	if sku == "" {
+		sku = defaultSKU
+	}
+
+	skuTier := cfg.SKUTier
+	if skuTier == "" {
+		skuTier = defaultSKUTier
+	}
+
+	backupDays := cfg.BackupRetentionPeriod
+	if backupDays == 0 {
+		backupDays = defaultBackupDays
 	}
 
 	region := cfg.Location
@@ -234,7 +246,9 @@ func (m *Mock) newInstance(cfg rdsdriver.InstanceConfig) rdsdriver.Instance {
 		ARN:                     m.armResourceID(cfg.ID),
 		Engine:                  cfg.Engine,
 		EngineVersion:           cfg.EngineVersion,
-		InstanceClass:           tier,
+		InstanceClass:           sku,
+		SKUTier:                 skuTier,
+		BackupRetentionPeriod:   backupDays,
 		AllocatedStorage:        storage,
 		StorageType:             storageType,
 		MasterUsername:          cfg.MasterUsername,
@@ -336,37 +350,7 @@ func (m *Mock) ModifyInstance(
 		return nil, err
 	}
 
-	if input.InstanceClass != "" {
-		inst.InstanceClass = input.InstanceClass
-	}
-
-	if input.AllocatedStorage > 0 {
-		inst.AllocatedStorage = input.AllocatedStorage
-	}
-
-	if input.EngineVersion != "" {
-		inst.EngineVersion = input.EngineVersion
-	}
-
-	if input.MultiAZ != nil {
-		inst.MultiAZ = *input.MultiAZ
-	}
-
-	if input.HighAvailabilityMode != "" {
-		inst.HighAvailabilityMode = input.HighAvailabilityMode
-		inst.MultiAZ = rdsdriver.HAEnabled(input.HighAvailabilityMode)
-		// Disabling HA tears down the standby, so its zone no longer applies;
-		// enabling it records the requested standby zone.
-		if inst.MultiAZ {
-			inst.StandbyAvailabilityZone = input.StandbyAvailabilityZone
-		} else {
-			inst.StandbyAvailabilityZone = ""
-		}
-	}
-
-	if input.Tags != nil {
-		inst.Tags = copyTags(input.Tags)
-	}
+	applyModify(&inst, &input)
 
 	m.instances.Set(id, inst)
 
@@ -379,6 +363,59 @@ func (m *Mock) ModifyInstance(
 	out.State = m.settleState(id, out.State)
 
 	return &out, nil
+}
+
+// applyModify overlays the non-empty fields of input onto inst; a zero-valued
+// field means "no change". Split out of ModifyInstance so each side stays under
+// the cyclomatic-complexity budget.
+func applyModify(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
+	if input.InstanceClass != "" {
+		inst.InstanceClass = input.InstanceClass
+	}
+
+	if input.SKUTier != "" {
+		inst.SKUTier = input.SKUTier
+	}
+
+	if input.AllocatedStorage > 0 {
+		inst.AllocatedStorage = input.AllocatedStorage
+	}
+
+	if input.BackupRetentionPeriod > 0 {
+		inst.BackupRetentionPeriod = input.BackupRetentionPeriod
+	}
+
+	if input.EngineVersion != "" {
+		inst.EngineVersion = input.EngineVersion
+	}
+
+	if input.MultiAZ != nil {
+		inst.MultiAZ = *input.MultiAZ
+	}
+
+	applyModifyHA(inst, input)
+
+	if input.Tags != nil {
+		inst.Tags = copyTags(input.Tags)
+	}
+}
+
+// applyModifyHA applies a high-availability mode change: an empty mode is left
+// untouched, disabling HA clears the standby zone, and enabling it records the
+// requested one.
+func applyModifyHA(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput) {
+	if input.HighAvailabilityMode == "" {
+		return
+	}
+
+	inst.HighAvailabilityMode = input.HighAvailabilityMode
+	inst.MultiAZ = rdsdriver.HAEnabled(input.HighAvailabilityMode)
+
+	if inst.MultiAZ {
+		inst.StandbyAvailabilityZone = input.StandbyAvailabilityZone
+	} else {
+		inst.StandbyAvailabilityZone = ""
+	}
 }
 
 // DeleteInstance removes a server.
@@ -633,6 +670,8 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 }
 
 // RestoreInstanceFromSnapshot creates a new server from a portable backup.
+//
+//nolint:gocritic // input matches the driver interface signature.
 func (m *Mock) RestoreInstanceFromSnapshot(
 	_ context.Context, input rdsdriver.RestoreInstanceInput,
 ) (*rdsdriver.Instance, error) {
@@ -653,27 +692,34 @@ func (m *Mock) RestoreInstanceFromSnapshot(
 			"MySQL Flexible Server %q already exists", input.NewInstanceID)
 	}
 
-	tier := input.InstanceClass
-	if tier == "" {
-		tier = defaultSKU
+	sku := input.InstanceClass
+	if sku == "" {
+		sku = defaultSKU
+	}
+
+	skuTier := input.SKUTier
+	if skuTier == "" {
+		skuTier = defaultSKUTier
 	}
 
 	now := m.opts.Clock.Now().UTC()
 
 	inst := rdsdriver.Instance{
-		ID:               input.NewInstanceID,
-		ARN:              m.armResourceID(input.NewInstanceID),
-		Engine:           snap.Engine,
-		EngineVersion:    snap.EngineVersion,
-		InstanceClass:    tier,
-		AllocatedStorage: snap.AllocatedStorage,
-		StorageType:      defaultStorageType,
-		Endpoint:         input.NewInstanceID + endpointSuffix,
-		Port:             defaultPort,
-		State:            rdsdriver.StateAvailable,
-		Location:         m.opts.Region,
-		CreatedAt:        now,
-		Tags:             copyTags(input.Tags),
+		ID:                    input.NewInstanceID,
+		ARN:                   m.armResourceID(input.NewInstanceID),
+		Engine:                snap.Engine,
+		EngineVersion:         snap.EngineVersion,
+		InstanceClass:         sku,
+		SKUTier:               skuTier,
+		BackupRetentionPeriod: defaultBackupDays,
+		AllocatedStorage:      snap.AllocatedStorage,
+		StorageType:           defaultStorageType,
+		Endpoint:              input.NewInstanceID + endpointSuffix,
+		Port:                  defaultPort,
+		State:                 rdsdriver.StateAvailable,
+		Location:              m.opts.Region,
+		CreatedAt:             now,
+		Tags:                  copyTags(input.Tags),
 	}
 
 	m.instances.Set(input.NewInstanceID, inst)

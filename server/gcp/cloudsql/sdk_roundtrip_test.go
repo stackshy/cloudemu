@@ -2,9 +2,12 @@ package cloudsql_test
 
 import (
 	"context"
+	"errors"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"google.golang.org/api/googleapi"
 	"google.golang.org/api/option"
 	sqladmin "google.golang.org/api/sqladmin/v1"
 
@@ -243,3 +246,60 @@ func strconvAtoi64(s string) (int64, error) {
 type parseErr struct{ s string }
 
 func (e *parseErr) Error() string { return "not a number: " + e.s }
+
+// TestSDKCloudSQLErrorMessagesOmitCodePrefix guards writeErr
+// (server/gcp/cloudsql) against baking cloudemu's internal cerrors code name
+// (e.g. "NotFound: ...", "AlreadyExists: ...") into the wire error message an
+// SDK caller sees. Real Cloud SQL never prefixes its error messages with an
+// internal error-taxonomy name.
+func TestSDKCloudSQLErrorMessagesOmitCodePrefix(t *testing.T) {
+	svc, project := newSDKClient(t)
+	ctx := context.Background()
+
+	t.Run("NotFound Instances.Get", func(t *testing.T) {
+		_, err := svc.Instances.Get(project, "no-such-instance").Context(ctx).Do()
+
+		var gErr *googleapi.Error
+		if !errors.As(err, &gErr) {
+			t.Fatalf("expected a googleapi.Error, got %T: %v", err, err)
+		}
+		assertNoCodePrefix(t, gErr.Message)
+	})
+
+	t.Run("AlreadyExists Instances.Insert duplicate", func(t *testing.T) {
+		dupInstance := &sqladmin.DatabaseInstance{
+			Name:            "errmsg-dupe",
+			DatabaseVersion: "POSTGRES_15",
+			Region:          "us-central1",
+			Settings: &sqladmin.Settings{
+				Tier:           "db-custom-2-8192",
+				DataDiskSizeGb: 50,
+			},
+		}
+
+		if _, err := svc.Instances.Insert(project, dupInstance).Context(ctx).Do(); err != nil {
+			t.Fatalf("first Insert: %v", err)
+		}
+
+		_, err := svc.Instances.Insert(project, dupInstance).Context(ctx).Do()
+
+		var gErr *googleapi.Error
+		if !errors.As(err, &gErr) {
+			t.Fatalf("expected a googleapi.Error, got %T: %v", err, err)
+		}
+		assertNoCodePrefix(t, gErr.Message)
+	})
+}
+
+// assertNoCodePrefix fails if msg contains one of cloudemu's internal
+// canonical error-code names followed by a colon — the shape err.Error()
+// produces for a *cerrors.Error, as opposed to cerrors.Message(err).
+func assertNoCodePrefix(t *testing.T, msg string) {
+	t.Helper()
+
+	for _, prefix := range []string{"NotFound:", "AlreadyExists:", "InvalidArgument:", "FailedPrecondition:", "Internal:"} {
+		if strings.Contains(msg, prefix) {
+			t.Errorf("wire error message %q leaks internal code prefix %q", msg, prefix)
+		}
+	}
+}

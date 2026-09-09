@@ -69,64 +69,74 @@ func TestWriteJSONNilBodyWritesNothing(t *testing.T) {
 
 func TestWriteDriverError(t *testing.T) {
 	tests := []struct {
-		name         string
-		err          error
-		expectStatus int
-		expectCode   string
+		name          string
+		err           error
+		expectStatus  int
+		expectCode    string
+		expectMessage string
 	}{
 		{
-			name:         "not found",
-			err:          cerrors.New(cerrors.NotFound, "no such bucket"),
-			expectStatus: http.StatusNotFound,
-			expectCode:   "NotAuthorizedOrNotFound",
+			name:          "not found",
+			err:           cerrors.New(cerrors.NotFound, "no such bucket"),
+			expectStatus:  http.StatusNotFound,
+			expectCode:    "NotAuthorizedOrNotFound",
+			expectMessage: "no such bucket",
 		},
 		{
-			name:         "permission denied is indistinguishable from not found",
-			err:          cerrors.New(cerrors.PermissionDenied, "denied"),
-			expectStatus: http.StatusNotFound,
-			expectCode:   "NotAuthorizedOrNotFound",
+			name:          "permission denied is indistinguishable from not found",
+			err:           cerrors.New(cerrors.PermissionDenied, "denied"),
+			expectStatus:  http.StatusNotFound,
+			expectCode:    "NotAuthorizedOrNotFound",
+			expectMessage: "denied",
 		},
 		{
-			name:         "already exists",
-			err:          cerrors.New(cerrors.AlreadyExists, "bucket exists"),
-			expectStatus: http.StatusConflict,
-			expectCode:   "Conflict",
+			name:          "already exists",
+			err:           cerrors.New(cerrors.AlreadyExists, "bucket exists"),
+			expectStatus:  http.StatusConflict,
+			expectCode:    "Conflict",
+			expectMessage: "bucket exists",
 		},
 		{
-			name:         "invalid argument",
-			err:          cerrors.New(cerrors.InvalidArgument, "bad name"),
-			expectStatus: http.StatusBadRequest,
-			expectCode:   "InvalidParameter",
+			name:          "invalid argument",
+			err:           cerrors.New(cerrors.InvalidArgument, "bad name"),
+			expectStatus:  http.StatusBadRequest,
+			expectCode:    "InvalidParameter",
+			expectMessage: "bad name",
 		},
 		{
-			name:         "failed precondition",
-			err:          cerrors.New(cerrors.FailedPrecondition, "not terminated"),
-			expectStatus: http.StatusConflict,
-			expectCode:   "IncorrectState",
+			name:          "failed precondition",
+			err:           cerrors.New(cerrors.FailedPrecondition, "not terminated"),
+			expectStatus:  http.StatusConflict,
+			expectCode:    "IncorrectState",
+			expectMessage: "not terminated",
 		},
 		{
-			name:         "throttled",
-			err:          cerrors.New(cerrors.Throttled, "slow down"),
-			expectStatus: http.StatusTooManyRequests,
-			expectCode:   "TooManyRequests",
+			name:          "throttled",
+			err:           cerrors.New(cerrors.Throttled, "slow down"),
+			expectStatus:  http.StatusTooManyRequests,
+			expectCode:    "TooManyRequests",
+			expectMessage: "slow down",
 		},
 		{
-			name:         "unimplemented",
-			err:          cerrors.New(cerrors.Unimplemented, "not yet"),
-			expectStatus: http.StatusNotImplemented,
-			expectCode:   "NotImplemented",
+			name:          "unimplemented",
+			err:           cerrors.New(cerrors.Unimplemented, "not yet"),
+			expectStatus:  http.StatusNotImplemented,
+			expectCode:    "NotImplemented",
+			expectMessage: "not yet",
 		},
 		{
-			name:         "unavailable",
-			err:          cerrors.New(cerrors.Unavailable, "down"),
-			expectStatus: http.StatusServiceUnavailable,
-			expectCode:   "ServiceUnavailable",
+			name:          "unavailable",
+			err:           cerrors.New(cerrors.Unavailable, "down"),
+			expectStatus:  http.StatusServiceUnavailable,
+			expectCode:    "ServiceUnavailable",
+			expectMessage: "down",
 		},
 		{
-			name:         "non-cloudemu error falls back to internal",
-			err:          assert.AnError,
-			expectStatus: http.StatusInternalServerError,
-			expectCode:   "InternalServerError",
+			name:          "non-cloudemu error falls back to internal",
+			err:           assert.AnError,
+			expectStatus:  http.StatusInternalServerError,
+			expectCode:    "InternalServerError",
+			expectMessage: assert.AnError.Error(),
 		},
 	}
 
@@ -142,7 +152,10 @@ func TestWriteDriverError(t *testing.T) {
 			var body ocirest.ErrorBody
 			require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 			assert.Equal(t, tc.expectCode, body.Code)
-			assert.NotEmpty(t, body.Message)
+			// The message must be the bare driver message, never prefixed with
+			// the internal code taxonomy (e.g. "NotFound: ...") that
+			// cerrors.Error.Error() bakes in — real OCI never leaks that.
+			assert.Equal(t, tc.expectMessage, body.Message)
 		})
 	}
 }

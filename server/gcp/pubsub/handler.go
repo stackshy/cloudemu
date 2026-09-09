@@ -231,7 +231,7 @@ func (h *Handler) patchTopic(w http.ResponseWriter, r *http.Request, project, na
 		return
 	}
 
-	masks := parseMask(req.UpdateMask)
+	masks := maskFromRequest(r, req.UpdateMask)
 	if len(masks) == 0 {
 		writeError(w, http.StatusBadRequest, reasonInvalidArgument, "updateMask must be specified and non-empty")
 		return
@@ -245,23 +245,29 @@ func (h *Handler) patchTopic(w http.ResponseWriter, r *http.Request, project, na
 		ts.labelsSet = true
 	}
 
-	for _, m := range masks {
-		switch m {
-		case "labels":
-			ts.labels = copyLabels(req.Topic.Labels)
-		case "messageRetentionDuration":
-			ts.msgRetentionDuration = req.Topic.MessageRetentionDuration
-		case "schemaSettings":
-			ts.schemaSettings = req.Topic.SchemaSettings
-		case "kmsKeyName":
-			ts.kmsKeyName = req.Topic.KmsKeyName
-		case "messageStoragePolicy":
-			ts.messageStoragePolicy = req.Topic.MessageStoragePolicy
-		}
-	}
+	applyTopicMask(ts, &req.Topic, masks)
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, h.topicView(project, name, q.Tags))
+}
+
+// applyTopicMask merges the fields named by masks from src into the stored topic
+// state. Unmodeled mask paths are ignored (mirrors real topics.patch tolerance).
+func applyTopicMask(ts *topicState, src *topic, masks []string) {
+	for _, m := range masks {
+		switch m {
+		case "labels":
+			ts.labels = copyLabels(src.Labels)
+		case "messageRetentionDuration":
+			ts.msgRetentionDuration = src.MessageRetentionDuration
+		case "schemaSettings":
+			ts.schemaSettings = src.SchemaSettings
+		case "kmsKeyName":
+			ts.kmsKeyName = src.KmsKeyName
+		case "messageStoragePolicy":
+			ts.messageStoragePolicy = src.MessageStoragePolicy
+		}
+	}
 }
 
 func (h *Handler) deleteTopic(w http.ResponseWriter, r *http.Request, name string) {
@@ -440,6 +446,18 @@ func (h *Handler) topicView(project, name string, fallbackTags map[string]string
 	t.SatisfiesPzs = ts.satisfiesPzs
 
 	return t
+}
+
+// maskFromRequest resolves the patch field mask, preferring the JSON body
+// updateMask (Go SDK path) and falling back to the ?updateMask= query parameter
+// that terraform and gcloud send. GCP field masks are comma-separated.
+func maskFromRequest(r *http.Request, bodyMask string) []string {
+	mask := bodyMask
+	if mask == "" {
+		mask = r.URL.Query().Get("updateMask")
+	}
+
+	return parseMask(mask)
 }
 
 // parseMask splits a comma-separated updateMask into trimmed, non-empty paths.

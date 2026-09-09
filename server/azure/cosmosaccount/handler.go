@@ -41,6 +41,14 @@ const (
 	providerName    = "Microsoft.DocumentDB"
 	resourceType    = "databaseAccounts"
 	defaultLocation = "eastus"
+
+	// Real Azure always returns a consistencyPolicy with these staleness bounds,
+	// regardless of the level: for every non-BoundedStaleness account they are
+	// the meaningless-but-present defaults (5 seconds / 100 operations), and a
+	// BoundedStaleness account overrides them. A client that reads the account
+	// back (armcosmos, azurerm) sees them populated on every account.
+	defaultMaxIntervalSeconds int32 = 5
+	defaultMaxStalenessPrefix int64 = 100
 )
 
 // attrBackend is the optional Cosmos-account attribute capability. The Azure
@@ -220,6 +228,8 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		attrs.Capabilities = capabilityNames(body.Properties.Capabilities)
 		attrs.Locations = toAccountLocations(body.Properties.Locations)
 		attrs.EnableMultipleWriteLocations = body.Properties.EnableMultipleWriteLocations
+		attrs.EnableAutomaticFailover = body.Properties.EnableAutomaticFailover
+		attrs.PublicNetworkAccess = body.Properties.PublicNetworkAccess
 
 		if cp := body.Properties.ConsistencyPolicy; cp != nil {
 			attrs.ConsistencyPolicy = dbdriver.ConsistencyPolicy{
@@ -250,7 +260,8 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp *azurearm.Resou
 // BeginUpdate), a non-destructive partial update: only the fields present in
 // the request body change — tags (full replace, matching how every other PATCH
 // handler in this codebase treats tags), consistencyPolicy, locations,
-// capabilities, and enableMultipleWriteLocations — everything else, including
+// capabilities, enableMultipleWriteLocations, enableAutomaticFailover and
+// publicNetworkAccess — everything else, including
 // kind (which real Azure's DatabaseAccountUpdateParameters has no field for;
 // it is immutable after creation), is preserved. The mutation runs through
 // attrBackend's atomic UpdateTableAttributes rather than a read-then-write
@@ -316,6 +327,14 @@ func applyAccountUpdate(cur *dbdriver.AccountAttributes, body *armAccountUpdate)
 
 	if p.EnableMultipleWriteLocations != nil {
 		cur.EnableMultipleWriteLocations = *p.EnableMultipleWriteLocations
+	}
+
+	if p.EnableAutomaticFailover != nil {
+		cur.EnableAutomaticFailover = *p.EnableAutomaticFailover
+	}
+
+	if p.PublicNetworkAccess != nil {
+		cur.PublicNetworkAccess = *p.PublicNetworkAccess
 	}
 
 	if p.ConsistencyPolicy != nil {
@@ -433,37 +452,52 @@ func renderAccount(subscription, base, name string, attrs dbdriver.AccountAttrib
 		Kind:     kindOrDefault(attrs.Kind),
 		Tags:     attrs.Tags,
 		Properties: &armAccountProps{
-			DatabaseAccountOfferType: offerOrDefault(attrs.OfferType),
-			EnableFreeTier:           attrs.EnableFreeTier,
-			Capabilities:             toCapabilities(attrs.Capabilities),
-			ProvisioningState:        "Succeeded",
-			DocumentEndpoint:         documentEndpoint(base, name),
-			Locations:                all,
-			ReadLocations:            all,
-			WriteLocations:           writeLocs,
-			FailoverPolicies:         toFailoverPolicies(name, locations),
-			ConsistencyPolicy:        renderConsistencyPolicy(attrs.ConsistencyPolicy),
+			DatabaseAccountOfferType:     offerOrDefault(attrs.OfferType),
+			EnableFreeTier:               attrs.EnableFreeTier,
+			EnableAutomaticFailover:      attrs.EnableAutomaticFailover,
+			EnableMultipleWriteLocations: attrs.EnableMultipleWriteLocations,
+			PublicNetworkAccess:          publicNetworkAccessOrDefault(attrs.PublicNetworkAccess),
+			Capabilities:                 toCapabilities(attrs.Capabilities),
+			ProvisioningState:            "Succeeded",
+			DocumentEndpoint:             documentEndpoint(base, name),
+			Locations:                    all,
+			ReadLocations:                all,
+			WriteLocations:               writeLocs,
+			FailoverPolicies:             toFailoverPolicies(name, locations),
+			ConsistencyPolicy:            renderConsistencyPolicy(attrs.ConsistencyPolicy),
 		},
 	}
 }
 
 // renderConsistencyPolicy echoes the stored consistency policy, defaulting to
 // Cosmos's Session level when none was submitted (matching real Azure, which
-// always returns a consistencyPolicy). The staleness bounds are surfaced only
-// for BoundedStaleness, where they are meaningful.
+// always returns a consistencyPolicy). Real Azure also always returns the
+// staleness bounds — meaningful only for BoundedStaleness, but present on every
+// account as the 5s/100-op defaults — so they are surfaced unconditionally, each
+// falling back to its Azure default when the account carries none. Emitting them
+// for every level is what makes an armcosmos GET read back the same bounds real
+// Azure returns instead of a zero value.
 func renderConsistencyPolicy(cp dbdriver.ConsistencyPolicy) *armConsistencyPolicy {
 	level := cp.DefaultConsistencyLevel
 	if level == "" {
 		level = "Session"
 	}
 
-	out := &armConsistencyPolicy{DefaultConsistencyLevel: level}
-	if strings.EqualFold(level, "BoundedStaleness") {
-		out.MaxIntervalInSeconds = cp.MaxIntervalInSeconds
-		out.MaxStalenessPrefix = cp.MaxStalenessPrefix
+	interval := cp.MaxIntervalInSeconds
+	if interval == 0 {
+		interval = defaultMaxIntervalSeconds
 	}
 
-	return out
+	staleness := cp.MaxStalenessPrefix
+	if staleness == 0 {
+		staleness = defaultMaxStalenessPrefix
+	}
+
+	return &armConsistencyPolicy{
+		DefaultConsistencyLevel: level,
+		MaxIntervalInSeconds:    interval,
+		MaxStalenessPrefix:      staleness,
+	}
 }
 
 // toAccountLocations converts the ARM create-request locations into the
@@ -624,6 +658,17 @@ func offerOrDefault(offer string) string {
 	}
 
 	return offer
+}
+
+// publicNetworkAccessOrDefault echoes the stored publicNetworkAccess, defaulting
+// to Azure's "Enabled" when the account never set one (real Azure always returns
+// a value, and Terraform's public_network_access_enabled defaults to true).
+func publicNetworkAccessOrDefault(access string) string {
+	if access == "" {
+		return "Enabled"
+	}
+
+	return access
 }
 
 // accountRegion returns the first declared location's name, if any.

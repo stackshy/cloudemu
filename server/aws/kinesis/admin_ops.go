@@ -120,12 +120,24 @@ func (h *Handler) setMonitoring(ctx context.Context, req *monitoringRequest, ena
 }
 
 func monitoringResponse(name, arn string, before, after []string) map[string]any {
+	// Kinesis models both metric fields as a ShardLevelMetricsList, always
+	// serialized as an array (empty when no metrics), never null.
 	return map[string]any{
 		"StreamName":               name,
-		"CurrentShardLevelMetrics": before,
-		"DesiredShardLevelMetrics": after,
+		"CurrentShardLevelMetrics": nonNilMetrics(before),
+		"DesiredShardLevelMetrics": nonNilMetrics(after),
 		"StreamARN":                arn,
 	}
+}
+
+// nonNilMetrics coerces a nil metric slice to an empty slice so the wire emits
+// a JSON array ([]) rather than null.
+func nonNilMetrics(m []string) []string {
+	if m == nil {
+		return []string{}
+	}
+
+	return m
 }
 
 // --- Tags ---

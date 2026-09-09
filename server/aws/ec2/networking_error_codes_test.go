@@ -179,6 +179,33 @@ func TestSubnetOutOfVPCRangeCode(t *testing.T) {
 	if got := apiCode(t, err); got != "InvalidSubnet.Range" {
 		t.Errorf("code = %q, want InvalidSubnet.Range", got)
 	}
+
+	// The internal "InvalidSubnet.Range:" routing marker must never leak into the
+	// user-facing message — real EC2 messages carry no code prefix.
+	assertNoLeakedPrefix(t, apiMessage(t, err))
+}
+
+// TestSubnetConflictCleanMessage pins that an overlapping-CIDR CreateSubnet
+// answers InvalidSubnet.Conflict without leaking the internal code prefix into
+// the message.
+func TestSubnetConflictCleanMessage(t *testing.T) {
+	ctx := context.Background()
+	c := newRoutingEdgeEC2(t)
+	vpcID, _ := mkVPCSubnet(t, c) // creates a 10.0.1.0/24 subnet in a 10.0.0.0/16 VPC
+
+	_, err := c.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId:     aws.String(vpcID),
+		CidrBlock: aws.String("10.0.1.0/24"),
+	})
+	if err == nil {
+		t.Fatal("CreateSubnet(overlapping CIDR) succeeded, want an error")
+	}
+
+	if got := apiCode(t, err); got != "InvalidSubnet.Conflict" {
+		t.Errorf("code = %q, want InvalidSubnet.Conflict", got)
+	}
+
+	assertNoLeakedPrefix(t, apiMessage(t, err))
 }
 
 // TestReleaseBogusAllocationCode pins that releasing an unknown allocation id

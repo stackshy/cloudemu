@@ -114,8 +114,8 @@ func (m *Mock) CreateJob(_ context.Context, cfg driver.JobConfig) (*driver.Job, 
 		Containers:           cloneContainers(cfg.Containers),
 		Labels:               cloneMap(cfg.Labels),
 		Annotations:          cloneMap(cfg.Annotations),
-		Conditions:           []driver.Condition{{Type: condReady, State: stateSucceeded, Reason: "Ready"}},
-		TerminalCondition:    &driver.Condition{Type: condReady, State: stateSucceeded, Reason: "Ready"},
+		Conditions:           []driver.Condition{{Type: condReady, State: stateSucceeded}},
+		TerminalCondition:    &driver.Condition{Type: condReady, State: stateSucceeded},
 		Etag:                 newEtag(now, 1),
 	}
 

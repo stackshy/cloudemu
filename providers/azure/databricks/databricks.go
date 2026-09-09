@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"hash/fnv"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -204,6 +205,8 @@ func (m *Mock) ListWorkspacesByResourceGroup(_ context.Context, resourceGroup st
 		}
 	}
 
+	sortWorkspaces(out)
+
 	return out, nil
 }
 
@@ -216,7 +219,16 @@ func (m *Mock) ListWorkspaces(_ context.Context) ([]driver.Workspace, error) {
 		out = append(out, *cloneWorkspace(ws))
 	}
 
+	sortWorkspaces(out)
+
 	return out, nil
+}
+
+// sortWorkspaces orders workspaces by ARM resource ID so list responses are
+// deterministic (map iteration order is random; real ARM list ordering is
+// stable). Mirrors the sorted access-connector/peering listings.
+func sortWorkspaces(in []driver.Workspace) {
+	sort.SliceStable(in, func(i, j int) bool { return in[i].ID < in[j].ID })
 }
 
 func skuOrDefault(name string) string {

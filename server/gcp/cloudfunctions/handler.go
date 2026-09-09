@@ -72,13 +72,19 @@ const (
 	// gen1 defaults populated onto a v1 function's output-only metadata.
 	defaultIngress        = "ALLOW_ALL"
 	defaultDockerRegistry = "ARTIFACT_REGISTRY"
+	// gen1DefaultMemoryMb / gen1DefaultTimeoutSeconds are the values real gen1
+	// Cloud Functions assigns when create omits availableMemoryMb / timeout, so a
+	// client's Get reflects them (256MB, 60s) rather than a missing field.
+	gen1DefaultMemoryMb       = 256
+	gen1DefaultTimeoutSeconds = 60
 	// gen2ServiceAccountSuffix / gen1ServiceAccountSuffix are the default runtime
 	// service accounts real GCP assigns (compute default SA for gen2, App Engine
 	// default SA for gen1).
-	gen2DefaultMemory  = "256M"
-	gen2DefaultCPU     = "0.1666"
-	gen2DefaultTimeout = 60
-	buildIDBytes       = 8
+	gen2DefaultMemory      = "256M"
+	gen2DefaultCPU         = "0.1666"
+	gen2DefaultTimeout     = 60
+	gen2DefaultConcurrency = 1
+	buildIDBytes           = 8
 )
 
 // ObjectStore is the slice of the in-process GCS backend the handler needs to
@@ -499,6 +505,8 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p functionPath)
 		Timeout:     parseTimeoutSeconds(body.Timeout),
 	}
 
+	applyGen1CreateDefaults(&cfg)
+
 	// A source deploy carries the code out-of-band. gen1 functions run under the
 	// functions-framework request/response contract with a bare entrypoint, which
 	// real Cloud Functions requires — reject a code deploy that omits it.
@@ -530,6 +538,20 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p functionPath)
 		Done:     true,
 		Response: resourceAsResponse(resource, "CloudFunction"),
 	})
+}
+
+// applyGen1CreateDefaults fills availableMemoryMb and timeout with the values
+// real gen1 Cloud Functions assigns (256MB, 60s) when the create omits them, so a
+// client's Get reads the same values it would from cloudfunctions.googleapis.com
+// rather than a missing field that surfaces as drift on a Terraform refresh.
+func applyGen1CreateDefaults(cfg *sdrv.FunctionConfig) {
+	if cfg.Memory == 0 {
+		cfg.Memory = gen1DefaultMemoryMb
+	}
+
+	if cfg.Timeout == 0 {
+		cfg.Timeout = gen1DefaultTimeoutSeconds
+	}
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, p functionPath) {
@@ -883,14 +905,16 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 }
 
 func writeErr(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+
 	switch {
 	case cerrors.IsNotFound(err):
-		writeError(w, http.StatusNotFound, "NOT_FOUND", err.Error())
+		writeError(w, http.StatusNotFound, "NOT_FOUND", msg)
 	case cerrors.IsAlreadyExists(err):
-		writeError(w, http.StatusConflict, "ALREADY_EXISTS", err.Error())
+		writeError(w, http.StatusConflict, "ALREADY_EXISTS", msg)
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error())
+		writeError(w, http.StatusBadRequest, "INVALID_ARGUMENT", msg)
 	default:
-		writeError(w, http.StatusInternalServerError, "INTERNAL", err.Error())
+		writeError(w, http.StatusInternalServerError, "INTERNAL", msg)
 	}
 }
