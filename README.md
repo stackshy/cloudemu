@@ -127,17 +127,16 @@ client.PutObject(ctx, &s3.PutObjectInput{ /* … */ }) // hits the in-memory bac
 
 ## What you get
 
-**~52 AWS · 47 Azure · 26 GCP services** (Azure roughly doubled in the recent wave), plus a real in-memory **Kubernetes data plane**. The always-current, generated list is [docs/coverage](docs/coverage/README.md); the highlights:
+**76 AWS · 75 Azure · 55 GCP services** — 173 service interfaces, 3,700+ operations — plus a real in-memory **Kubernetes data plane**. The always-current, generated list is [docs/coverage](docs/coverage/README.md); the highlights:
 
-- **Storage · Compute · Databases** — S3/Blob/GCS, EC2/VMs/GCE (incl. Azure VM Scale Sets), DynamoDB & Cosmos & Firestore, RDS/Aurora, Cloud SQL, AlloyDB
-- **Serverless & Containers** — Lambda/Functions, ECS, Azure Container Apps, and EKS/AKS/GKE with a full Kubernetes API
+- **Storage · Compute · Databases** — S3/Blob/GCS, EC2/VMs/GCE, DynamoDB/Cosmos/Firestore, RDS/Aurora, Cloud SQL, Spanner, Bigtable
+- **Serverless & Containers** — Lambda/Functions, App Runner, Cloud Run, ECS, Container Apps, and EKS/AKS/GKE with a full Kubernetes API
 - **Messaging & Events** — SQS/SNS/EventBridge, Service Bus/Event Grid/Event Hubs, Pub/Sub/Eventarc
-- **Networking · DNS · Load Balancing** — VPC, subnets, security groups, route tables, Azure Private Link & VPN gateways, Route 53/Cloud DNS, ELB
-- **Secrets · IAM · Monitoring · Logging** — Secrets Manager/Key Vault, managed identities, CloudWatch/Azure Monitor, structured logs
-- **Analytics & Big Data** — AWS EMR, Azure Synapse, Azure Data Explorer (Kusto)
-- **Billing / FinOps** — Cost Explorer / Cost Management / Cloud Billing, plus Savings Plans and Service Quotas
-- **AI/ML** — Bedrock, SageMaker, Vertex AI
-- **Governance** — Azure management locks, tags-at-scope, and provider registration
+- **Networking · DNS · Load Balancing** — VPC, security groups, route tables, Global Accelerator, Azure Firewall, Route 53/Cloud DNS, ELB
+- **Data & Analytics** — Athena, Glue, EMR, Kinesis, Synapse, Kusto, BigQuery, Dataproc
+- **Secrets · IAM · KMS · Monitoring · Logging** — Secrets Manager/Key Vault, KMS, managed identities, CloudWatch/Azure Monitor, structured logs
+- **AI/ML** — Bedrock, SageMaker, Vertex AI, Azure OpenAI
+- **Governance & FinOps** — Backup, Config, Chaos Studio, management locks, Cost Explorer / Cost Management / Cloud Billing
 
 The **Kubernetes data plane** does real CRUD, server-side apply, and watch streaming — so `client-go` informers work — and converges controllers synchronously (a Deployment materializes Pods to Running on write). It runs a real scheduler (node & inter-pod affinity, topology spread, scoring), an opt-in multi-node cluster (`--k8s-nodes N`, taints/tolerations, dynamic node add/remove), and `exec`/`attach` over WebSocket. See [docs/services.md](docs/services.md).
 
