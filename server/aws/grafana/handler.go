@@ -18,8 +18,14 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/sigv4"
 	"github.com/stackshy/cloudemu/v2/services/grafana/driver"
 )
+
+// sigV4ServiceAPS is the SigV4 credential-scope service the Amazon Managed
+// Prometheus (amp) SDK signs under. Grafana and APS both root workspace CRUD at
+// /workspaces, so Grafana yields that tree when the request is signed for APS.
+const sigV4ServiceAPS = "aps"
 
 // Path roots at the service root.
 const (
@@ -63,6 +69,13 @@ func (*Handler) Matches(r *http.Request) bool {
 
 	switch segs[0] {
 	case rootWorkspaces:
+		// The /workspaces tree is shared with APS. When the request is SigV4-signed
+		// for the amp (aps) service it belongs to APS, so Grafana yields; an
+		// unsigned or grafana-signed request stays with Grafana (registered first).
+		if sigv4.Service(r) == sigV4ServiceAPS {
+			return false
+		}
+
 		return matchesWorkspaces(r.Method, segs[1:])
 	case rootTags:
 		return len(segs) >= 2 && strings.Contains(strings.Join(segs[1:], "/"), arnMarker)

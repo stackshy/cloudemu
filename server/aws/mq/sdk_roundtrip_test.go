@@ -77,6 +77,29 @@ func describe(t *testing.T, c *awsmq.Client, id string) *awsmq.DescribeBrokerOut
 	return out
 }
 
+func TestSDKDescribeSharedResources(t *testing.T) {
+	c := newClient(t)
+	created := createBroker(t, c, "shared-broker")
+
+	out, err := c.DescribeSharedResources(context.Background(), &awsmq.DescribeSharedResourcesInput{
+		BrokerId: created.BrokerId,
+	})
+	if err != nil {
+		t.Fatalf("DescribeSharedResources: %v", err)
+	}
+
+	if len(out.SharedResources) != 0 {
+		t.Fatalf("SharedResources = %v, want empty", out.SharedResources)
+	}
+
+	// An unknown broker id still surfaces the not-found error, not a 404 path miss.
+	if _, err := c.DescribeSharedResources(context.Background(), &awsmq.DescribeSharedResourcesInput{
+		BrokerId: aws.String("b-does-not-exist"),
+	}); err == nil {
+		t.Fatalf("DescribeSharedResources(unknown) = nil error, want not-found")
+	}
+}
+
 func TestSDKBrokerLifecycle(t *testing.T) {
 	c := newClient(t)
 

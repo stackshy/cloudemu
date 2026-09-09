@@ -68,8 +68,8 @@ func TestCreateWorkGroupMaterializesDefaults(t *testing.T) {
 		t.Fatalf("explicit-false enforce not preserved: %v", cfg.EnforceWorkGroupConfiguration)
 	}
 
-	if cfg.PublishCloudWatchMetricsEnabled == nil || *cfg.PublishCloudWatchMetricsEnabled {
-		t.Fatalf("publish default should be false: %v", cfg.PublishCloudWatchMetricsEnabled)
+	if cfg.PublishCloudWatchMetricsEnabled == nil || !*cfg.PublishCloudWatchMetricsEnabled {
+		t.Fatalf("publish default should be true: %v", cfg.PublishCloudWatchMetricsEnabled)
 	}
 
 	if cfg.RequesterPaysEnabled == nil || *cfg.RequesterPaysEnabled {
@@ -83,6 +83,25 @@ func TestCreateWorkGroupMaterializesDefaults(t *testing.T) {
 
 	if wg.CreationTime.IsZero() {
 		t.Fatalf("creation time not stamped")
+	}
+}
+
+func TestCreateWorkGroupExplicitPublishFalsePreserved(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	requireNoError(t, m.CreateWorkGroup(ctx, driver.WorkGroup{
+		Name: "wg",
+		Configuration: driver.WorkGroupConfiguration{
+			PublishCloudWatchMetricsEnabled: ptr(false),
+		},
+	}), "CreateWorkGroup")
+
+	wg, err := m.GetWorkGroup(ctx, "wg")
+	requireNoError(t, err, "GetWorkGroup")
+
+	if wg.Configuration.PublishCloudWatchMetricsEnabled == nil || *wg.Configuration.PublishCloudWatchMetricsEnabled {
+		t.Fatalf("explicit publish=false not preserved: %v", wg.Configuration.PublishCloudWatchMetricsEnabled)
 	}
 }
 

@@ -92,6 +92,20 @@ func Region(r *http.Request) string {
 	return in.region
 }
 
+// Service returns the AWS service name from the request's SigV4 credential
+// scope (the ".../<service>/aws4_request" segment), or "" when the request
+// carries no parseable SigV4 material. Two handlers that share a path shape
+// (e.g. APS and Grafana both rooting workspace CRUD at POST /workspaces)
+// disambiguate on it, since each real SDK signs under its own service name.
+func Service(r *http.Request) string {
+	in, err := parseInputs(r)
+	if err != nil {
+		return ""
+	}
+
+	return in.service
+}
+
 // Verify checks the request's SigV4 signature against the secret resolved for
 // its access key id. On success it returns the resolved principal; on failure a
 // typed AuthError. body is the buffered request body (the gate reads and

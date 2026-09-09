@@ -3,6 +3,7 @@ package kms_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 	"time"
@@ -159,6 +160,83 @@ func TestKMSCryptoKeyAutoPrimaryVersionAndRoundTrip(t *testing.T) {
 
 	if got.Labels["env"] != "prod" || got.NextRotationTime == "" || got.Primary == nil {
 		t.Fatalf("round-trip lost fields: %+v", got)
+	}
+}
+
+func TestKMSCryptoKeyDefaultsSymmetricVersionTemplate(t *testing.T) {
+	svc, _ := newKMSService(t)
+	mustKeyRing(t, svc)
+
+	// A symmetric ENCRYPT_DECRYPT key created without a versionTemplate must not
+	// be rejected: real Cloud KMS (and the google_kms_crypto_key resource) default
+	// the algorithm to GOOGLE_SYMMETRIC_ENCRYPTION and protectionLevel to SOFTWARE.
+	ck, err := svc.Projects.Locations.KeyRings.CryptoKeys.
+		Create(testKeyRingName, &cloudkms.CryptoKey{
+			Purpose: "ENCRYPT_DECRYPT",
+		}).CryptoKeyId("default-sym").Do()
+	if err != nil {
+		t.Fatalf("CryptoKeys.Create without versionTemplate: %v", err)
+	}
+
+	if ck.VersionTemplate == nil ||
+		ck.VersionTemplate.Algorithm != "GOOGLE_SYMMETRIC_ENCRYPTION" ||
+		ck.VersionTemplate.ProtectionLevel != "SOFTWARE" {
+		t.Fatalf("defaulted versionTemplate = %+v", ck.VersionTemplate)
+	}
+
+	// The auto-created primary version uses the defaulted algorithm.
+	if ck.Primary == nil || ck.Primary.Algorithm != "GOOGLE_SYMMETRIC_ENCRYPTION" {
+		t.Fatalf("primary version = %+v", ck.Primary)
+	}
+
+	// A non-symmetric purpose still requires an explicit algorithm.
+	_, err = svc.Projects.Locations.KeyRings.CryptoKeys.
+		Create(testKeyRingName, &cloudkms.CryptoKey{
+			Purpose: "ASYMMETRIC_SIGN",
+		}).CryptoKeyId("needs-algo").Do()
+	if err == nil {
+		t.Fatal("ASYMMETRIC_SIGN without versionTemplate = nil error, want required-algorithm")
+	}
+}
+
+func TestKMSListVersionsToleratesDoubledV1Prefix(t *testing.T) {
+	// terraform-provider-google's crypto-key delete lists versions at a doubled
+	// ".../v1/v1/..." path when the KMS endpoint is overridden. Model that raw
+	// request and assert the handler resolves it (200) rather than 501/404, so a
+	// real `terraform destroy` of a crypto key completes.
+	base := time.Date(2026, 9, 6, 12, 0, 0, 0, time.UTC)
+	srv := gcpserver.New(gcpserver.Drivers{Clock: config.NewFakeClock(base)})
+
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+
+	svc, err := cloudkms.NewService(context.Background(),
+		option.WithEndpoint(ts.URL), option.WithoutAuthentication())
+	if err != nil {
+		t.Fatalf("cloudkms.NewService: %v", err)
+	}
+
+	if _, err := svc.Projects.Locations.KeyRings.
+		Create(testLocationParent, &cloudkms.KeyRing{}).KeyRingId(testKeyRingID).Do(); err != nil {
+		t.Fatalf("KeyRings.Create: %v", err)
+	}
+
+	if _, err := svc.Projects.Locations.KeyRings.CryptoKeys.
+		Create(testKeyRingName, &cloudkms.CryptoKey{Purpose: "ENCRYPT_DECRYPT"}).
+		CryptoKeyId("dk").Do(); err != nil {
+		t.Fatalf("CryptoKeys.Create: %v", err)
+	}
+
+	doubled := ts.URL + "/v1/v1/" + testKeyRingName + "/cryptoKeys/dk/cryptoKeyVersions"
+
+	resp, err := http.Get(doubled) //nolint:noctx // test request
+	if err != nil {
+		t.Fatalf("GET doubled path: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("doubled-prefix list status = %d, want 200", resp.StatusCode)
 	}
 }
 
@@ -368,9 +446,11 @@ func TestKMSCryptoKeyValidation(t *testing.T) {
 		}).CryptoKeyId("no-purpose").Do()
 	assertAPICode(t, err, 400)
 
-	// Missing versionTemplate.algorithm -> 400.
+	// A non-symmetric purpose without versionTemplate.algorithm -> 400. (A
+	// symmetric ENCRYPT_DECRYPT key defaults the algorithm instead; see
+	// TestKMSCryptoKeyDefaultsSymmetricVersionTemplate.)
 	_, err = svc.Projects.Locations.KeyRings.CryptoKeys.
-		Create(testKeyRingName, &cloudkms.CryptoKey{Purpose: "ENCRYPT_DECRYPT"}).
+		Create(testKeyRingName, &cloudkms.CryptoKey{Purpose: "ASYMMETRIC_SIGN"}).
 		CryptoKeyId("no-algo").Do()
 	assertAPICode(t, err, 400)
 

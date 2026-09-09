@@ -25,6 +25,7 @@ func TestMatches(t *testing.T) {
 		{http.MethodDelete, "/v1/brokers/b-123", true},                                          // DeleteBroker
 		{http.MethodPost, "/v1/brokers/b-123/reboot", true},                                     // RebootBroker
 		{http.MethodGet, "/v1/brokers/b-123/users", true},                                       // ListUsers
+		{http.MethodGet, "/v1/brokers/b-123/shared-resources", true},                            // DescribeSharedResources
 		{http.MethodPost, "/v1/brokers/b-123/users/admin", true},                                // CreateUser
 		{http.MethodPost, "/v1/configurations", true},                                           // CreateConfiguration
 		{http.MethodGet, "/v1/configurations", true},                                            // ListConfigurations
