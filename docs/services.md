@@ -1,6 +1,6 @@
 # Provider Resource Reference
 
-This document lists every service and operation available in CloudEmu across all three cloud providers.
+This document is a curated deep reference for the core service categories across all three cloud providers. For the always-current, exhaustive list of every service and operation — 173 service interfaces spanning 3,700+ operations (76 AWS · 75 Azure · 55 GCP) — see the generated [capability coverage](coverage/README.md), which is produced from the driver interfaces and cannot drift.
 
 > Every operation here is served from an in-memory backend by default. Selected data-plane services (relational database, cache, functions, compute, containers, object storage) can additionally be backed by opt-in [real engines](features.md#11-real-data-plane-engines-opt-in) for real SQL/Redis/function execution.
 
