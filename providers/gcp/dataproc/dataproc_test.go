@@ -308,6 +308,21 @@ func TestGetOperationUnknownIsDone(t *testing.T) {
 	}
 }
 
+func TestInstanceNamesBoundsAbsurdCount(t *testing.T) {
+	// A pathological instance count must be clamped, not drive an unbounded
+	// allocation. A normal count is returned in full.
+	const maxInstanceGroupSize = 10000
+
+	got := instanceNames("clus", "w", maxInstanceGroupSize+5)
+	if len(got) != maxInstanceGroupSize {
+		t.Fatalf("clamped names len = %d, want %d", len(got), maxInstanceGroupSize)
+	}
+
+	if n := instanceNames("clus", "w", 3); len(n) != 3 {
+		t.Fatalf("normal names len = %d, want 3", len(n))
+	}
+}
+
 func mustCreate(t *testing.T, m *Mock, name, region string) {
 	t.Helper()
 

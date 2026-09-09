@@ -128,6 +128,27 @@ func TestServiceInvokeEchoesBody(t *testing.T) {
 	}
 }
 
+func TestServiceInvokeSetsNosniffAndContentType(t *testing.T) {
+	f := newInvokeFixture(t)
+	uri := f.createService(t, "sniff")
+
+	resp := f.invoke(t, uri, http.MethodPost, "/anything", strings.NewReader("<script>x</script>"), 0)
+	defer resp.Body.Close()
+
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("X-Content-Type-Options = %q, want nosniff", got)
+	}
+
+	if resp.Header.Get("Content-Type") == "" {
+		t.Fatalf("Content-Type is empty, want a concrete type")
+	}
+
+	got, _ := io.ReadAll(resp.Body)
+	if string(got) != "<script>x</script>" {
+		t.Fatalf("body = %q, want verbatim echo", got)
+	}
+}
+
 func TestServiceInvokeNoBodyReturnsGreeting(t *testing.T) {
 	f := newInvokeFixture(t)
 	uri := f.createService(t, "greet")

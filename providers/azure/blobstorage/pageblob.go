@@ -17,6 +17,10 @@ const (
 	// created at a size that is a multiple of it and every Put Page / Clear Page
 	// range must be aligned to it.
 	pageSize = 512
+	// maxPageBlobBytes is Azure's documented page-blob ceiling (8 TiB). A caller
+	// controls the requested size via x-ms-blob-content-length, so bound it before
+	// allocating the backing buffer — a valid page blob stays far under this.
+	maxPageBlobBytes int64 = 8 << 40
 )
 
 // Compile-time check that Mock satisfies the optional AzurePageBlob capability
@@ -42,6 +46,15 @@ func (m *Mock) CreatePageBlob(
 		return nil, &driver.BlobOpError{
 			Status: http.StatusBadRequest, Code: "InvalidHeaderValue",
 			Message: "x-ms-blob-content-length must be a non-negative multiple of 512",
+		}
+	}
+
+	// Reject an oversized request before allocating the zeroed buffer, so a caller
+	// cannot drive an unbounded allocation with a huge content-length header.
+	if size > maxPageBlobBytes {
+		return nil, &driver.BlobOpError{
+			Status: http.StatusBadRequest, Code: "InvalidHeaderValue",
+			Message: "x-ms-blob-content-length exceeds the maximum page-blob size",
 		}
 	}
 

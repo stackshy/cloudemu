@@ -111,6 +111,12 @@ func TestRecordThenReplay(t *testing.T) {
 		t.Fatalf("replay GET must return recorded headers, got %q", resp.Header.Get("X-Echo"))
 	}
 
+	// The replayed body is served with sniffing disabled so it cannot be
+	// reinterpreted as active HTML by a browser.
+	if got := resp.Header.Get("X-Content-Type-Options"); got != "nosniff" {
+		t.Fatalf("replay X-Content-Type-Options = %q, want nosniff", got)
+	}
+
 	if body := readBody(t, doRequest(t, replayed, http.MethodPost, "/things?x=1", "payload")); body != "live:POST:/things:payload" {
 		t.Fatalf("replay POST body = %q", body)
 	}
