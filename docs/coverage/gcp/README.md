@@ -6,6 +6,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | GCP service | Portable service | Operations |
 | --- | --- | --- |
 | [APIGateway](./apigateway.md) | `apigatewaygcp` | 16 |
+| [AccessContextManager](./accesscontextmanager.md) | `accesscontextmanager` | 17 |
 | [AlloyDB](./alloydb.md) | `relationaldb` | 21 |
 | [ArtifactRegistry](./artifactregistry.md) | `containerregistry` | 15 |
 | [BigQuery](./bigquery.md) | `bigquery` | 12 |

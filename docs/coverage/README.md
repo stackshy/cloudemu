@@ -11,6 +11,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | Service | AWS | Azure | GCP | OCI | Operations |
 | --- | --- | --- | --- | --- | --- |
 | `aad` | — | [Aad](./azure/aad.md) | — | — | 2 |
+| `accesscontextmanager` | — | — | [AccessContextManager](./gcp/accesscontextmanager.md) | — | 17 |
 | `acm` | [ACM](./aws/acm.md) | — | — | — | 17 |
 | `aks` | — | [AKS](./azure/aks.md) | — | — | 18 |
 | `aoss` | [AOSS](./aws/aoss.md) | — | — | — | 18 |

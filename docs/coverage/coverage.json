@@ -15,6 +15,68 @@
     }
   },
   {
+    "service": "accesscontextmanager",
+    "interface": "AccessContextManager",
+    "operations": [
+      {
+        "name": "CreateAccessLevel"
+      },
+      {
+        "name": "CreatePolicy"
+      },
+      {
+        "name": "CreateServicePerimeter"
+      },
+      {
+        "name": "DeleteAccessLevel"
+      },
+      {
+        "name": "DeletePolicy"
+      },
+      {
+        "name": "DeleteServicePerimeter"
+      },
+      {
+        "name": "GetAccessLevel"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for the"
+      },
+      {
+        "name": "GetPolicy"
+      },
+      {
+        "name": "GetServicePerimeter"
+      },
+      {
+        "name": "HasOperation",
+        "doc": "HasOperation reports whether name was minted by this backend, so the wire"
+      },
+      {
+        "name": "ListAccessLevels"
+      },
+      {
+        "name": "ListPolicies"
+      },
+      {
+        "name": "ListServicePerimeters"
+      },
+      {
+        "name": "PatchAccessLevel"
+      },
+      {
+        "name": "PatchPolicy"
+      },
+      {
+        "name": "PatchServicePerimeter"
+      }
+    ],
+    "providers": {
+      "gcp": "AccessContextManager"
+    }
+  },
+  {
     "service": "acm",
     "interface": "ACM",
     "operations": [
