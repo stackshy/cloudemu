@@ -40,6 +40,26 @@ const (
 // accepts on a PROVISIONED table or index.
 const minProvisionedCapacity = 1
 
+// Default WarmThroughput units real DynamoDB reports on a table (and each GSI)
+// created without an explicit warm-throughput setting. DescribeTable always
+// carries a WarmThroughput block with a terminal Status; provider 6.x's
+// waitTableActive polls it, so omitting it makes CreateTable hang forever.
+const (
+	defaultWarmReadUnitsPerSecond  = 12000
+	defaultWarmWriteUnitsPerSecond = 4000
+)
+
+// warmThroughput builds the WarmThroughput wire block DescribeTable/CreateTable
+// report for a table or a GSI. Status is always the terminal ACTIVE so a create
+// or update waiter that gates on it completes.
+func warmThroughput() map[string]any {
+	return map[string]any{
+		"ReadUnitsPerSecond":  defaultWarmReadUnitsPerSecond,
+		"WriteUnitsPerSecond": defaultWarmWriteUnitsPerSecond,
+		"Status":              "ACTIVE",
+	}
+}
+
 // validateProvisionedThroughput enforces AWS's cross-field rule between an
 // already-defaulted BillingMode and the ProvisionedThroughput that would result
 // from applying a request: PROVISIONED requires both RCU and WCU to be at
@@ -640,6 +660,11 @@ func tableDescription(cfg *dbdriver.TableConfig) map[string]any {
 		// non-default value, produce a perpetual diff that never converges.
 		"DeletionProtectionEnabled": cfg.DeletionProtectionEnabled,
 		"TableClassSummary":         map[string]any{"TableClass": tableClass(cfg.TableClass)},
+		// Real DescribeTable always reports a WarmThroughput block with a terminal
+		// Status. Provider 6.x's waitTableActive gates on it, so omitting it makes
+		// the create waiter poll DescribeTable forever even though TableStatus is
+		// ACTIVE.
+		"WarmThroughput": warmThroughput(),
 	}
 
 	if billing == billingProvisioned {
@@ -734,6 +759,10 @@ func gsiDescriptions(cfg *dbdriver.TableConfig, billing string) []map[string]any
 				"NumberOfDecreasesToday": 0,
 			}
 		}
+
+		// Each GSI carries its own terminal WarmThroughput, mirroring the table's,
+		// so an index-status waiter completes.
+		desc["WarmThroughput"] = warmThroughput()
 
 		out = append(out, desc)
 	}

@@ -47,15 +47,18 @@ func (m *Mock) CreateWorkGroup(_ context.Context, wg driver.WorkGroup) error {
 
 // materializeConfig fills the real Athena defaults into a workgroup
 // configuration so GetWorkGroup echoes concrete values: enforce=true,
-// publish=false, requester=false, and a computed EffectiveEngineVersion. An
-// explicitly-set false is preserved (the fields are pointers).
+// publish=true, requester=false, and a computed EffectiveEngineVersion. An
+// explicitly-set value is preserved (the fields are pointers).
 func materializeConfig(cfg *driver.WorkGroupConfiguration) error {
 	if cfg.EnforceWorkGroupConfiguration == nil {
 		cfg.EnforceWorkGroupConfiguration = boolPtr(true)
 	}
 
+	// Real Athena defaults PublishCloudWatchMetricsEnabled to true (matching the
+	// aws_athena_workgroup provider default); reporting false produces a
+	// perpetual false->true drift. An explicit false is preserved above.
 	if cfg.PublishCloudWatchMetricsEnabled == nil {
-		cfg.PublishCloudWatchMetricsEnabled = boolPtr(false)
+		cfg.PublishCloudWatchMetricsEnabled = boolPtr(true)
 	}
 
 	if cfg.RequesterPaysEnabled == nil {

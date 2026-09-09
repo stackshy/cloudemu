@@ -20,8 +20,14 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/sigv4"
 	"github.com/stackshy/cloudemu/v2/services/aps/driver"
 )
+
+// sigV4ServiceGrafana is the SigV4 credential-scope service the Amazon Managed
+// Grafana SDK signs under. APS and Grafana both root workspace CRUD at
+// /workspaces, so APS yields that tree when the request is signed for Grafana.
+const sigV4ServiceGrafana = "grafana"
 
 // Path roots at the service root.
 const (
@@ -62,6 +68,13 @@ func (*Handler) Matches(r *http.Request) bool {
 
 	switch segs[0] {
 	case rootWorkspaces:
+		// The /workspaces tree is shared with Grafana. A request SigV4-signed for
+		// the grafana service belongs to Grafana, so APS yields; an unsigned or
+		// aps-signed request is claimed here.
+		if sigv4.Service(r) == sigV4ServiceGrafana {
+			return false
+		}
+
 		return matchesWorkspace(segs[1:])
 	case rootTags:
 		return len(segs) >= 2 && strings.Contains(strings.Join(segs[1:], "/"), arnMarker)

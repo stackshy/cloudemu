@@ -12,6 +12,9 @@ const (
 	algorithmUnspecified       = "CRYPTO_KEY_VERSION_ALGORITHM_UNSPECIFIED"
 	protectionLevelUnspecified = "PROTECTION_LEVEL_UNSPECIFIED"
 	trueValue                  = "true"
+	// algorithmSymmetric is the default versionTemplate.algorithm real Cloud KMS
+	// assigns a symmetric ENCRYPT_DECRYPT key when the caller omits it.
+	algorithmSymmetric = "GOOGLE_SYMMETRIC_ENCRYPTION"
 )
 
 // writeKMSErr maps a canonical error to Cloud KMS's HTTP response. An illegal
@@ -123,7 +126,7 @@ func buildCryptoKeyConfig(w http.ResponseWriter, id string, req *createCryptoKey
 		return cryptoKeyConfig{}, false
 	}
 
-	algo, prot, ok := normalizeVersionTemplate(w, req.VersionTemplate)
+	algo, prot, ok := normalizeVersionTemplate(w, req.VersionTemplate, purpose)
 	if !ok {
 		return cryptoKeyConfig{}, false
 	}
@@ -157,31 +160,66 @@ func buildCryptoKeyConfig(w http.ResponseWriter, id string, req *createCryptoKey
 	}, true
 }
 
-// normalizeVersionTemplate validates the required versionTemplate.algorithm and
-// resolves protectionLevel (defaulting to SOFTWARE).
-func normalizeVersionTemplate(w http.ResponseWriter, vt *versionTemplateJSON) (algo, prot string, ok bool) {
-	if vt == nil {
-		invalidArg(w, "versionTemplate.algorithm is required")
+// normalizeVersionTemplate resolves versionTemplate.algorithm and
+// protectionLevel for a create. A symmetric ENCRYPT_DECRYPT key defaults the
+// algorithm to GOOGLE_SYMMETRIC_ENCRYPTION (and protectionLevel to SOFTWARE)
+// when the caller omits versionTemplate or its algorithm, matching real Cloud
+// KMS; every other purpose requires an explicit, valid algorithm. An explicit
+// algorithm or protectionLevel is always honored.
+func normalizeVersionTemplate(w http.ResponseWriter, vt *versionTemplateJSON, purpose string) (algo, prot string, ok bool) {
+	prot, ok = resolveProtectionLevel(w, vt)
+	if !ok {
 		return "", "", false
 	}
 
-	algo, algoOK, present := vt.Algorithm.normalize(algorithmNames)
-	if !present || !algoOK || algo == algorithmUnspecified {
+	var (
+		algoOK, present bool
+	)
+
+	if vt != nil {
+		algo, algoOK, present = vt.Algorithm.normalize(algorithmNames)
+	}
+
+	if !present || algo == algorithmUnspecified {
+		// Symmetric ENCRYPT_DECRYPT keys default the algorithm; every other purpose
+		// still requires the caller to name one.
+		if purpose == purposeEncryptDecrypt {
+			return algorithmSymmetric, prot, true
+		}
+
 		invalidArg(w, "versionTemplate.algorithm is required and must be a valid algorithm")
+
 		return "", "", false
+	}
+
+	if !algoOK {
+		invalidArg(w, "versionTemplate.algorithm is required and must be a valid algorithm")
+
+		return "", "", false
+	}
+
+	return algo, prot, true
+}
+
+// resolveProtectionLevel validates an optional versionTemplate.protectionLevel,
+// defaulting an absent or unspecified value to SOFTWARE.
+func resolveProtectionLevel(w http.ResponseWriter, vt *versionTemplateJSON) (string, bool) {
+	if vt == nil {
+		return defaultProtectionLevel, true
 	}
 
 	prot, protOK, protPresent := vt.ProtectionLevel.normalize(protectionLevelNames)
 	if protPresent && !protOK {
 		invalidArg(w, "invalid versionTemplate.protectionLevel")
-		return "", "", false
+
+		return "", false
 	}
 
 	if !protPresent || prot == protectionLevelUnspecified {
 		prot = defaultProtectionLevel
 	}
 
-	return algo, prot, true
+	return prot, true
 }
 
 func (h *Handler) getCryptoKey(w http.ResponseWriter, rt *route) {

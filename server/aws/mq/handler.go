@@ -33,6 +33,7 @@ const (
 	subReboot          = "reboot"
 	subUsers           = "users"
 	subRevisions       = "revisions"
+	subSharedResources = "shared-resources"
 )
 
 // arnMarker scopes the shared /v1/tags root to MQ ARNs.
@@ -148,6 +149,8 @@ func (h *Handler) serveBrokerSubresource(w http.ResponseWriter, r *http.Request,
 		h.rebootBroker(w, r, brokerID)
 	case subUsers:
 		h.serveUserCollection(w, r, brokerID)
+	case subSharedResources:
+		h.describeSharedResources(w, r, brokerID)
 	default:
 		notFoundPath(w, r.URL.Path)
 	}

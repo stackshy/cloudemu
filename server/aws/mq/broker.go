@@ -112,3 +112,23 @@ func (h *Handler) rebootBroker(w http.ResponseWriter, r *http.Request, brokerID 
 
 	writeJSON(w, map[string]any{})
 }
+
+// describeSharedResources handles GET /v1/brokers/{brokerId}/shared-resources.
+// The aws_mq_broker provider reads it after create; cloudemu models no
+// cross-account resource sharing, so the broker (once confirmed to exist)
+// reports an empty sharedResources list, matching a broker with no shares.
+func (h *Handler) describeSharedResources(w http.ResponseWriter, r *http.Request, brokerID string) {
+	if r.Method != http.MethodGet {
+		methodNotAllowed(w)
+
+		return
+	}
+
+	if _, err := h.mq.DescribeBroker(r.Context(), brokerID); err != nil {
+		writeErr(w, err)
+
+		return
+	}
+
+	writeJSON(w, map[string]any{"sharedResources": []any{}})
+}

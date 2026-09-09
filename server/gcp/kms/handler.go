@@ -103,6 +103,12 @@ const (
 // parseRoute decomposes a Cloud KMS v1 path. The trailing segment may carry a
 // ":verb" suffix.
 func parseRoute(urlPath string) (*route, bool) {
+	// terraform-provider-google's crypto-key delete lists the key's versions via
+	// a URL that doubles the version prefix (".../v1/v1/projects/...") when the
+	// KMS endpoint is overridden, so a real `terraform destroy` of a crypto key
+	// would 404 here. Collapse the redundant leading segment before matching.
+	urlPath = strings.Replace(urlPath, "/v1/v1/", "/v1/", 1)
+
 	if !strings.HasPrefix(urlPath, pathPrefix) {
 		return nil, false
 	}
