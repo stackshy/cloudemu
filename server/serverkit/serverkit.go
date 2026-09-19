@@ -38,10 +38,12 @@ import (
 	"github.com/stackshy/cloudemu/v2/features/topology"
 	"github.com/stackshy/cloudemu/v2/features/vcr"
 	"github.com/stackshy/cloudemu/v2/persist"
+	awsprovider "github.com/stackshy/cloudemu/v2/providers/aws"
 	eksprov "github.com/stackshy/cloudemu/v2/providers/aws/eks"
 	"github.com/stackshy/cloudemu/v2/seed"
 	"github.com/stackshy/cloudemu/v2/server/admin"
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
+	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 	gcpserver "github.com/stackshy/cloudemu/v2/server/gcp"
 	cgrpc "github.com/stackshy/cloudemu/v2/server/grpc"
@@ -190,10 +192,15 @@ type App struct {
 	// also guards the current-state fields below and the live provider set.
 	rebuildMu   sync.Mutex
 	targets     map[string]seed.Target
-	snapTargets map[string]persist.Services
+	snapTargets map[string]persist.Services // NON-AWS providers; AWS is expanded per region from awsMux
 	netEngine   *topology.Engine
-	discovery   map[string]*resourcediscovery.Engine
-	providers   []closer // current live providers, Close()d when swapped out
+	discovery   map[string]*resourcediscovery.Engine // NON-AWS providers; AWS cost fans out over awsMux regions
+	// awsMux is the current AWS region-dispatch mux (rebuilt on reset). AWS state
+	// is per region, so snapshot/restore/seed/cost/reset enumerate live regions
+	// through it rather than through the single-value maps above. Nil when AWS is
+	// not selected.
+	awsMux    *awsserver.RegionMux
+	providers []closer // current live providers, Close()d when swapped out
 	// gcpBigtable is the current GCP bigtable Admin store (rebuilt on reset). The
 	// gRPC BigtableAdmin servers resolve it per-RPC through currentBigtableAdmin so
 	// they always target the live store, exactly as the REST handler reads the
@@ -317,7 +324,7 @@ func (a *App) newFlusher() *flusher {
 		// a.k8s from before a reset with fresh targets after it (a dangling-UID
 		// hazard). exportSnapshot then captures providers before k8s.
 		a.rebuildMu.Lock()
-		targets := a.snapTargets
+		targets := a.snapTargetsLocked()
 		k8s := a.k8s
 		a.rebuildMu.Unlock()
 
@@ -408,9 +415,11 @@ func baseOptsFor(cfg *Config) []config.Option {
 func (a *App) applyBootState() error {
 	if a.cfg.Persist {
 		// New() runs this single-threaded before Serve binds listeners, so reading
-		// a.snapTargets / a.k8s (both set by the Rebuild() in New) without rebuildMu
-		// is safe here.
-		if err := restoreState(context.Background(), a.cfg.StateFile, a.snapTargets, a.k8s); err != nil {
+		// the live targets / k8s (both set by the Rebuild() in New) is safe here;
+		// the helpers still take rebuildMu, which is uncontended at this point.
+		if err := restoreState(
+			context.Background(), a.cfg.StateFile, a.snapTargetsLocked(), a.awsRegionEnsure(), a.k8s,
+		); err != nil {
 			return fmt.Errorf("restore persisted state: %w", err)
 		}
 	}
@@ -493,13 +502,19 @@ func (a *App) swapFresh() []closer {
 		freshEngine    *topology.Engine
 		freshProviders []closer
 		freshBigtable  btdriver.Admin
+		freshAWSMux    *awsserver.RegionMux
 	)
 
 	for _, p := range a.sel {
 		b := a.buildProvider(p, k8s)
 		fresh[p] = b.handler
 		freshTargets[p] = b.target
-		freshSnapTargets[p] = b.snap
+
+		// AWS state is per region, captured under "aws"/"aws@<region>" keys from
+		// the mux at snapshot time — never as a single "aws" entry here.
+		if b.snap != nil {
+			freshSnapTargets[p] = b.snap
+		}
 
 		if b.discovery != nil {
 			freshDiscovery[p] = b.discovery
@@ -511,6 +526,13 @@ func (a *App) swapFresh() []closer {
 
 		if b.provider != nil {
 			freshProviders = append(freshProviders, b.provider)
+		}
+
+		if b.mux != nil {
+			freshAWSMux = b.mux
+			// The mux is the AWS closer: closing it cascades to every live region
+			// provider, so a reset frees all regions' engines, not just the default.
+			freshProviders = append(freshProviders, b.mux)
 		}
 
 		if b.bigtable != nil {
@@ -539,6 +561,7 @@ func (a *App) swapFresh() []closer {
 	a.netEngine = freshEngine
 	a.discovery = freshDiscovery
 	a.gcpBigtable = freshBigtable
+	a.awsMux = freshAWSMux
 
 	outgoing := a.providers
 	a.providers = freshProviders
@@ -553,10 +576,11 @@ type builtProvider struct {
 	handler   http.Handler
 	target    seed.Target
 	snap      persist.Services
-	discovery *resourcediscovery.Engine // nil for oci
-	engine    *topology.Engine          // non-nil only for aws (network topology)
-	provider  closer                    // nil for oci (no Close/engine teardown)
+	discovery *resourcediscovery.Engine // nil for oci and aws (aws cost fans out over the mux)
+	engine    *topology.Engine          // non-nil only for aws (network topology, default region)
+	provider  closer                    // nil for oci (no Close/engine teardown) and aws (the mux is the closer)
 	bigtable  btdriver.Admin            // non-nil only for gcp (gRPC BigtableAdmin store)
+	mux       *awsserver.RegionMux      // non-nil only for aws (per-region dispatch + enumeration)
 }
 
 // buildProvider constructs one provider and its hooks. It shares the single new
@@ -564,21 +588,14 @@ type builtProvider struct {
 func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 	switch p {
 	case providerAWS:
-		cloud := cloudemu.NewAWS(a.baseOpts...)
-		d := awsserver.DriversFrom(cloud)
-		d.K8sAPI = k8s
-		// Drivers.K8sAPI is only the server's PATH ROUTING for /k8s/{uid}/...;
-		// the control-plane mock keeps its own reference and needs it
-		// separately, or EKS still advertises the sentinel.
-		cloud.EKS.SetK8sAPI(k8s)
+		mux := a.buildAWSMux(k8s)
+		base := mux.GetOrCreate("") // the default-region provider seeds seed/topology targets
 
 		return builtProvider{
-			handler:   a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(awsserver.New(d), providerAWS, a.cfg.LogRequests)), providerAWS)),
-			target:    seed.Target{Storage: cloud.S3, Database: cloud.DynamoDB, Secrets: cloud.SecretsManager, Compute: cloud.EC2},
-			snap:      cloud.SnapshotServices(),
-			discovery: cloud.ResourceDiscovery,
-			engine:    topology.New(cloud.EC2, cloud.VPC, cloud.Route53),
-			provider:  cloud,
+			handler: a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(mux, providerAWS, a.cfg.LogRequests)), providerAWS)),
+			target:  seed.Target{Storage: base.S3, Database: base.DynamoDB, Secrets: base.SecretsManager, Compute: base.EC2},
+			engine:  topology.New(base.EC2, base.VPC, base.Route53),
+			mux:     mux,
 		}
 	case providerGCP:
 		cloud := cloudemu.NewGCP(a.baseOpts...)
@@ -632,6 +649,153 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 	}
 
 	return builtProvider{}
+}
+
+// buildAWSMux constructs the AWS region-dispatch mux: a base (default-region)
+// provider owning the shared global services, plus a factory that builds a fresh
+// regional provider — sharing those globals — for any other region on first
+// touch. Every region's wire server is wired to the SAME shared Kubernetes data
+// plane, STS session store, and cross-region cost/Resource-Explorer aggregator,
+// so global state and account-wide inventory are consistent across regions.
+func (a *App) buildAWSMux(k8s *kubernetes.APIServer) *awsserver.RegionMux {
+	base := cloudemu.NewAWS(a.baseOpts...)
+	globals := base.Globals()
+
+	// One STS session store across every region: an ASIA credential minted in one
+	// region verifies in another (real STS tokens are global).
+	sharedSTS := stssrv.NewSessionStore(awsAuthClock(base.Clock))
+
+	var mux *awsserver.RegionMux
+
+	// The aggregator fans cost / Resource-Explorer queries out over every live
+	// region's engine, resolved at call time so newly-created regions are
+	// included. Before the mux is assigned it falls back to the base engine.
+	aggregator := awsserver.NewAggregatingInventory(func() []*resourcediscovery.Engine {
+		if mux == nil {
+			return []*resourcediscovery.Engine{base.ResourceDiscovery}
+		}
+
+		return mux.LiveEngines()
+	})
+
+	buildServer := func(prov *awsprovider.Provider) http.Handler {
+		d := awsserver.DriversFrom(prov)
+		d.K8sAPI = k8s
+		d.STSSessions = sharedSTS
+		d.CostExplorer = aggregator
+		d.ResourceExplorerLister = aggregator
+
+		return awsserver.New(d)
+	}
+
+	newRegional := func(region string) awsserver.RegionEntry {
+		opts := make([]config.Option, len(a.baseOpts), len(a.baseOpts)+1)
+		copy(opts, a.baseOpts)
+		opts = append(opts, config.WithRegion(region))
+		prov := awsprovider.NewRegional(globals, opts...)
+		// The control-plane EKS mock needs the data-plane reference separately from
+		// the server's path routing, or it advertises the sentinel endpoint.
+		prov.EKS.SetK8sAPI(k8s)
+
+		return awsserver.RegionEntry{Server: buildServer(prov), Provider: prov}
+	}
+
+	base.EKS.SetK8sAPI(k8s)
+	mux = awsserver.NewRegionMux(base.Region, awsserver.RegionEntry{Server: buildServer(base), Provider: base}, newRegional)
+
+	return mux
+}
+
+// awsAuthClock returns the clock the STS session store uses, defaulting to the
+// real clock when the provider carries none (mirrors server/aws.New).
+func awsAuthClock(c config.Clock) config.Clock {
+	if c == nil {
+		return config.RealClock{}
+	}
+
+	return c
+}
+
+// snapTargetsLocked returns the persist targets for every provider, expanding
+// AWS into its per-region keys: "aws" for the shared global services (captured
+// once) and "aws@<region>" for each live region's regional services. The caller
+// holds rebuildMu.
+func (a *App) snapTargetsLocked() map[string]persist.Services {
+	out := make(map[string]persist.Services, len(a.snapTargets)+len(a.sel))
+	for k, v := range a.snapTargets {
+		out[k] = v
+	}
+
+	if a.awsMux == nil {
+		return out
+	}
+
+	live := a.awsMux.LiveProviders()
+	for region, prov := range live {
+		out["aws@"+region] = prov.RegionalSnapshotServices()
+		// The global services are the same instances in every region, so capture
+		// them once under "aws" from whichever region we visit first.
+		if _, done := out[providerAWS]; !done {
+			out[providerAWS] = prov.GlobalSnapshotServices()
+		}
+	}
+
+	return out
+}
+
+// awsRegionEnsure returns a factory that materializes the regional target for a
+// snapshot "aws@<region>" key with no live provider yet, so a restore can bring
+// back a region that was not touched since the last reset. Nil when AWS is not
+// selected.
+func (a *App) awsRegionEnsure() func(string) (persist.Services, bool) {
+	if a.awsMux == nil {
+		return nil
+	}
+
+	mux := a.awsMux
+
+	return func(key string) (persist.Services, bool) {
+		region, ok := strings.CutPrefix(key, "aws@")
+		if !ok {
+			return nil, false
+		}
+
+		return mux.GetOrCreate(region).RegionalSnapshotServices(), true
+	}
+}
+
+// restoreSnapshot loads snap into the freshly-rebuilt providers, creating any AWS
+// region present in the snapshot but not yet live, then restores the shared
+// Kubernetes data plane. The caller has already Rebuild()'d to empty.
+func (a *App) restoreSnapshot(ctx context.Context, snap *persist.Snapshot) error {
+	a.rebuildMu.Lock()
+	targets := a.snapTargetsLocked()
+	ensure := a.awsRegionEnsure()
+	k8s := a.k8s
+	a.rebuildMu.Unlock()
+
+	if err := persist.RestoreAllWithFactory(ctx, snap, targets, ensure); err != nil {
+		return err
+	}
+
+	return restoreKubernetes(ctx, snap, k8s)
+}
+
+// costEnginesLocked returns the discovery engines the cost endpoint prices,
+// keyed by provider. AWS expands to every live region's engine so the estimate
+// aggregates all regions; other providers contribute their single engine. The
+// caller holds rebuildMu.
+func (a *App) costEnginesLocked() map[string][]*resourcediscovery.Engine {
+	out := make(map[string][]*resourcediscovery.Engine, len(a.discovery)+1)
+	for prov, eng := range a.discovery {
+		out[prov] = []*resourcediscovery.Engine{eng}
+	}
+
+	if a.awsMux != nil {
+		out[providerAWS] = a.awsMux.LiveEngines()
+	}
+
+	return out
 }
 
 // closeProviders closes each provider best-effort, cascading engine teardown. It
@@ -688,7 +852,7 @@ func (a *App) snapshot() ([]byte, error) {
 	// providers-before-Kubernetes ordering, shared with the flusher path so the
 	// two never drift.
 	a.rebuildMu.Lock()
-	cur := a.snapTargets
+	cur := a.snapTargetsLocked()
 	k8s := a.k8s
 	a.rebuildMu.Unlock()
 
@@ -717,19 +881,11 @@ func (a *App) restore(body []byte) error {
 
 	a.Rebuild() // wipe to empty before loading
 
-	// Capture the (post-Rebuild) provider targets AND the fresh Kubernetes data
-	// plane in one rebuildMu section, so the k8s-restore step below targets the
-	// SAME APIServer instance the providers were just wired to.
-	a.rebuildMu.Lock()
-	cur := a.snapTargets
-	k8s := a.k8s
-	a.rebuildMu.Unlock()
-
-	if err := persist.RestoreAll(context.Background(), &snap, cur); err != nil {
-		return err
-	}
-
-	if err := restoreKubernetes(context.Background(), &snap, k8s); err != nil {
+	// restoreSnapshot captures the post-Rebuild targets under rebuildMu, creates
+	// any AWS region present in the snapshot but not yet live, restores every
+	// provider, and then the shared Kubernetes data plane against the SAME
+	// APIServer instance the fresh providers were wired to.
+	if err := a.restoreSnapshot(context.Background(), &snap); err != nil {
 		return err
 	}
 
@@ -764,7 +920,7 @@ func (a *App) extraHandler() http.Handler {
 			}
 		case "cost":
 			a.rebuildMu.Lock()
-			ds := a.discovery
+			ds := a.costEnginesLocked()
 			a.rebuildMu.Unlock()
 
 			serveCost(w, r, ds)

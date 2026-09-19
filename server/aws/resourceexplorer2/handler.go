@@ -17,6 +17,7 @@
 package resourceexplorer2
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"sync"
@@ -70,9 +71,18 @@ const (
 	portableServiceRedshift     = "redshift"
 )
 
+// ResourceLister is the query surface the handler needs from its inventory. A
+// single-region *resourcediscovery.Engine satisfies it, and so does a
+// cross-region aggregator that fans List out over every live region's engine —
+// letting the multi-region mux serve an account-wide (aggregator-index)
+// Resource Explorer without this handler knowing how many regions exist.
+type ResourceLister interface {
+	List(ctx context.Context, q resourcediscovery.Query) ([]resourcediscovery.Resource, error)
+}
+
 // Handler serves Resource Explorer 2 REST-JSON requests.
 type Handler struct {
-	engine *resourcediscovery.Engine
+	engine ResourceLister
 
 	accountID string
 	region    string
@@ -99,8 +109,9 @@ type index struct {
 	CreatedAt time.Time
 }
 
-// New returns a Resource Explorer 2 handler.
-func New(engine *resourcediscovery.Engine, accountID, region string) *Handler {
+// New returns a Resource Explorer 2 handler. engine is the inventory it queries:
+// a per-region *resourcediscovery.Engine, or a cross-region aggregator.
+func New(engine ResourceLister, accountID, region string) *Handler {
 	h := &Handler{
 		engine:      engine,
 		accountID:   accountID,

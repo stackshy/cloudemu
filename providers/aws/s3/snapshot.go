@@ -214,6 +214,10 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 	for name, bs := range snap.Buckets {
 		m.buckets.Set(name, restoreBucket(bs))
+		// Re-claim the name in the shared cross-region namespace so a post-restore
+		// CreateBucket still sees restored names as taken. A nil reservation (the
+		// single-region library path) makes this a no-op.
+		m.bucketNames.reserve(name)
 	}
 
 	return nil

@@ -18,36 +18,40 @@ type costLine struct {
 
 // serveCost answers GET /_cloudemu/cost with an estimated monthly cost of the
 // current inventory (always-on resources only; usage-based services excluded).
-func serveCost(w http.ResponseWriter, r *http.Request, engines map[string]*resourcediscovery.Engine) {
+// Each provider maps to one or more discovery engines — AWS contributes one per
+// live region so the estimate aggregates every region under the "aws" label.
+func serveCost(w http.ResponseWriter, r *http.Request, engines map[string][]*resourcediscovery.Engine) {
 	var (
 		lines     []costLine
 		total     float64
 		byService = map[string]float64{}
 	)
 
-	for prov, eng := range engines {
-		if eng == nil {
-			continue
-		}
-
-		res, err := eng.ListAll(r.Context())
-		if err != nil {
-			writeNetErr(w, http.StatusInternalServerError, err.Error())
-
-			return
-		}
-
-		for i := range res {
-			rr := &res[i]
-
-			est := pricing.Monthly(rr.Provider, rr.Service, rr.Type, rr.SKU, rr.Region, rr.Properties)
-			if est <= 0 || !pricing.ComputeInstanceBillable(rr.Service, rr.Type, rr.State) {
+	for prov, engs := range engines {
+		for _, eng := range engs {
+			if eng == nil {
 				continue
 			}
 
-			lines = append(lines, costLine{Provider: prov, Service: rr.Service, Type: rr.Type, ID: rr.ID, MonthlyUSD: est})
-			total += est
-			byService[prov+"/"+rr.Service] += est
+			res, err := eng.ListAll(r.Context())
+			if err != nil {
+				writeNetErr(w, http.StatusInternalServerError, err.Error())
+
+				return
+			}
+
+			for i := range res {
+				rr := &res[i]
+
+				est := pricing.Monthly(rr.Provider, rr.Service, rr.Type, rr.SKU, rr.Region, rr.Properties)
+				if est <= 0 || !pricing.ComputeInstanceBillable(rr.Service, rr.Type, rr.State) {
+					continue
+				}
+
+				lines = append(lines, costLine{Provider: prov, Service: rr.Service, Type: rr.Type, ID: rr.ID, MonthlyUSD: est})
+				total += est
+				byService[prov+"/"+rr.Service] += est
+			}
 		}
 	}
 

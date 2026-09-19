@@ -17,7 +17,8 @@ import (
 // data plane is disabled), in which case any persisted Kubernetes state is left
 // alone.
 func restoreState(
-	ctx context.Context, path string, targets map[string]persist.Services, k8s *kubernetes.APIServer,
+	ctx context.Context, path string, targets map[string]persist.Services,
+	ensure func(providerKey string) (persist.Services, bool), k8s *kubernetes.APIServer,
 ) error {
 	snap, err := persist.ReadFile(path)
 	if err != nil {
@@ -33,7 +34,10 @@ func restoreState(
 		return nil
 	}
 
-	if err := persist.RestoreAll(ctx, &snap, targets); err != nil {
+	// ensure materializes an AWS region ("aws@<region>") captured in the snapshot
+	// but not live yet, so a stop→start brings back every region, not just the
+	// default one.
+	if err := persist.RestoreAllWithFactory(ctx, &snap, targets, ensure); err != nil {
 		return err
 	}
 
