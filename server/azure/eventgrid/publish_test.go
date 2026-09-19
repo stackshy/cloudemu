@@ -28,6 +28,8 @@ func TestDataPlanePublish(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, testSub, testRG)
+
 	// Create the topic over ARM first.
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",

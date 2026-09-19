@@ -680,7 +680,8 @@ func New(d Drivers) http.Handler {
 	// emulator tracks membership by the ids resources already carry. The
 	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
 	// the purgers cascade a group delete into its resources.
-	srv.Register(resourcegroups.New(d.ResourceDiscovery, rgPurgers...))
+	rgHandler := resourcegroups.New(d.ResourceDiscovery, rgPurgers...)
+	srv.Register(rgHandler)
 
 	// Tags resource provider (Microsoft.Resources/tags/default). Self-contained
 	// (no driver): it owns the per-scope tag sets an armresources TagsClient
@@ -996,8 +997,13 @@ func New(d Drivers) http.Handler {
 	if d.ResourceDiscovery != nil {
 		srv.Register(resourcegraph.New(d.ResourceDiscovery, d.SubscriptionID))
 		// Generic Microsoft.Resources listing (az resource list) at subscription
-		// and resource-group scope, backed by the same discovery engine.
-		srv.Register(resourcegraph.NewResources(d.ResourceDiscovery, d.SubscriptionID))
+		// and resource-group scope, backed by the same discovery engine. Gate the
+		// RG-scoped variant on group existence so a nonexistent group returns the
+		// real 404 ResourceGroupNotFound (the central RG gate cannot see this path
+		// — it has no /providers/ segment).
+		resourcesHandler := resourcegraph.NewResources(d.ResourceDiscovery, d.SubscriptionID)
+		resourcesHandler.SetResourceGroupChecker(rgHandler.Exists)
+		srv.Register(resourcesHandler)
 		// Cost Management query matches any scope ending in
 		// /providers/Microsoft.CostManagement/query — a distinct ARM provider
 		// name from every other handler, so registration order is unconstrained.
@@ -1240,7 +1246,7 @@ func New(d Drivers) http.Handler {
 		authGate = newAuthGate(config.RealClock{})
 	}
 
-	srv.SetPreDispatch(composePreDispatch(authGate, newLockGate(locksHandler)))
+	srv.SetPreDispatch(composePreDispatch(authGate, newResourceGroupGate(rgHandler), newLockGate(locksHandler)))
 
 	// When the monitoring backend can record Activity Log events, observe every
 	// served ARM request and log a management event so the Activity Log API

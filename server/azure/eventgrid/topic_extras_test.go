@@ -25,6 +25,8 @@ func newEGFactory(t *testing.T) (*armeventgrid.ClientFactory, *httptest.Server) 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, testSub, testRG)
+
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
 		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{

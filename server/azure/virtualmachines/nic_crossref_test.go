@@ -107,6 +107,8 @@ func TestSDKCreateVMSetsNICBackReference(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	ctx := context.Background()
 
 	nicClient, err := armnetwork.NewInterfacesClient("sub-1", fakeCred{}, sdkClientOptions(ts))

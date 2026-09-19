@@ -24,6 +24,8 @@ func newClockServer(t *testing.T) (*httptest.Server, *config.FakeClock) {
 	srv := httptest.NewServer(azureserver.New(azureserver.Drivers{ServiceBus: cloud.ServiceBus}))
 	t.Cleanup(srv.Close)
 
+	ensureRG(t, srv, subID, rgName)
+
 	return srv, clk
 }
 

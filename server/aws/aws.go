@@ -447,6 +447,18 @@ type Drivers struct {
 	// expiry when EnforceAuth is on. Nil uses the real clock; tests inject a
 	// FakeClock for determinism. Ignored when EnforceAuth is off.
 	Clock config.Clock
+	// STSSessions is a shared STS temporary-credential session store. In a
+	// multi-region deployment the region mux constructs ONE store and injects it
+	// into every region's Drivers, so an ASIA credential minted via AssumeRole in
+	// one region verifies in another — real STS tokens are global. Leave nil (the
+	// default, e.g. NewFromProvider) and New creates a per-server store when
+	// EnforceAuth is on, exactly as before.
+	STSSessions *stssrv.SessionStore
+	// ResourceExplorerLister overrides the inventory the Resource Explorer 2
+	// handler queries. The region mux sets it to a cross-region aggregator so
+	// Search fans out over every live region (the aggregator-index behavior);
+	// leave nil to use the per-region ResourceDiscovery engine (the default).
+	ResourceExplorerLister resourceexplorer2.ResourceLister
 }
 
 // DriversFrom builds a Drivers bundle wiring every service handler to the
@@ -1042,8 +1054,11 @@ func New(d Drivers) *server.Server {
 		authClock = config.RealClock{}
 	}
 
-	var stsSessions *stssrv.SessionStore
-	if d.EnforceAuth {
+	// Prefer the injected shared session store (multi-region: one store across all
+	// regions so ASIA credentials are global). Fall back to a per-server store
+	// when auth is on and none was injected — the single-server library path.
+	stsSessions := d.STSSessions
+	if stsSessions == nil && d.EnforceAuth {
 		stsSessions = stssrv.NewSessionStore(authClock)
 	}
 
@@ -1160,7 +1175,14 @@ func New(d Drivers) *server.Server {
 	// Resource Explorer 2 uses REST-JSON with fixed top-level paths
 	// (/CreateView, /Search, etc.). Must register before S3's catch-all.
 	if d.ResourceDiscovery != nil {
-		srv.Register(resourceexplorer2.New(d.ResourceDiscovery, d.AccountID, d.Region))
+		// Prefer the cross-region aggregator when the mux injected one (so Search
+		// spans every live region); otherwise query the per-region engine.
+		var rxLister resourceexplorer2.ResourceLister = d.ResourceDiscovery
+		if d.ResourceExplorerLister != nil {
+			rxLister = d.ResourceExplorerLister
+		}
+
+		srv.Register(resourceexplorer2.New(rxLister, d.AccountID, d.Region))
 	}
 
 	// Route 53 is a REST/XML service rooted at /2013-04-01/hostedzone — its own

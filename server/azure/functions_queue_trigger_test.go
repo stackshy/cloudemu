@@ -55,8 +55,17 @@ func armPut(t *testing.T, ts *httptest.Server, path, body string) {
 	}
 }
 
+// ensureRG creates a resource group so a test can PUT resources into it. Real
+// Azure requires the group to exist first (the server enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+	armPut(t, ts, "/subscriptions/"+sub+"/resourcegroups/"+rg+"?api-version=2021-04-01", `{"location":"eastus"}`)
+}
+
 func TestQueueStorageTriggerInvokesFunction(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-qt", "rg-qt")
 	ctx := context.Background()
 
 	const (
@@ -111,6 +120,7 @@ func TestQueueStorageTriggerInvokesFunction(t *testing.T) {
 // function is bound to invokes nothing (the enqueue still succeeds).
 func TestQueueStorageTriggerUnboundQueueDoesNotFire(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-qt", "rg-qt")
 	ctx := context.Background()
 
 	const app = "qt-app2"

@@ -34,6 +34,7 @@ func TestSDKVMSSDelete(t *testing.T) {
 	}
 
 	ctx := context.Background()
+	putResourceGroup(ctx, t, ts, "sub-1", "rg-1")
 	createVMSS(ctx, t, client, "rg-1", "del-vmss")
 
 	deletePoller, err := client.BeginDelete(ctx, "rg-1", "del-vmss", nil)

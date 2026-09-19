@@ -31,6 +31,10 @@ func (h *Handler) createRouteTable(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	info, err := h.net.CreateRouteTable(r.Context(), netdriver.RouteTableConfig{
 		VPCID: req.VCNID,
 		Tags:  withInternal(req.FreeformTags, tagDisplayName, req.DisplayName),

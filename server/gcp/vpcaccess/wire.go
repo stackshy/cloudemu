@@ -75,7 +75,19 @@ func decodeBody(w http.ResponseWriter, r *http.Request) (fields map[string]json.
 // the verbatim body fields with the computed `name` output field. The real
 // Connector resource carries no createTime/updateTime, so none are injected.
 func toResourceJSON(r *vpcdriver.Resource) (json.RawMessage, error) {
-	m := make(map[string]json.RawMessage, len(r.Fields)+minComputedFields)
+	// r.Fields is populated from the request body. Guard the raw field count
+	// against a cap that leaves headroom for the injected computed fields — there
+	// is no runtime arithmetic on the request-derived value, so nothing for an
+	// overflow check to flag, and the guard bounds the allocation. The map still
+	// grows to hold every entry; this only sizes the initial hint.
+	const maxResourceFields = 10000
+
+	capHint := len(r.Fields)
+	if capHint > maxResourceFields-minComputedFields {
+		capHint = maxResourceFields - minComputedFields
+	}
+
+	m := make(map[string]json.RawMessage, capHint)
 	for k, v := range r.Fields {
 		m[k] = v
 	}

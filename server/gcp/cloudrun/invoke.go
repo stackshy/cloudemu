@@ -145,6 +145,15 @@ func writeInvokeResponse(w http.ResponseWriter, resp *driver.InvokeResponse) {
 		}
 	}
 
+	// The body is an invoked container's response echoed verbatim. Serve it with a
+	// concrete content type (falling back to a non-active default) and disable MIME
+	// sniffing so a browser cannot reinterpret the bytes as active HTML.
+	if w.Header().Get("Content-Type") == "" {
+		w.Header().Set("Content-Type", "application/octet-stream")
+	}
+
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+
 	status := resp.StatusCode
 	if status == 0 {
 		status = http.StatusOK

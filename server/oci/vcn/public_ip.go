@@ -46,22 +46,12 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lifetime := req.Lifetime
-	if lifetime == "" {
-		lifetime = vcnprovider.LifetimeReserved
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
 	}
 
-	privateIPID := ""
-	if req.PrivateIPID != nil {
-		privateIPID = *req.PrivateIPID
-	}
-
-	// An ephemeral address exists only as an attachment, so OCI refuses to
-	// create one that names no private IP.
-	if lifetime == vcnprovider.LifetimeEphemeral && privateIPID == "" {
-		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
-			"privateIpId is required for an ephemeral public IP")
-
+	lifetime, privateIPID, ok := resolvePublicIPLifetime(w, r, &req)
+	if !ok {
 		return
 	}
 
@@ -92,6 +82,33 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ocirest.WriteJSON(w, r, http.StatusOK, h.toPublicIPResponse(info))
+}
+
+// resolvePublicIPLifetime applies the reserved default and enforces that an
+// ephemeral address names a private IP, as OCI does. It returns the resolved
+// lifetime and private-IP OCID, or false after writing the error.
+func resolvePublicIPLifetime(
+	w http.ResponseWriter, r *http.Request, req *publicIPRequest,
+) (lifetime, privateIPID string, ok bool) {
+	lifetime = req.Lifetime
+	if lifetime == "" {
+		lifetime = vcnprovider.LifetimeReserved
+	}
+
+	if req.PrivateIPID != nil {
+		privateIPID = *req.PrivateIPID
+	}
+
+	// An ephemeral address exists only as an attachment, so OCI refuses to
+	// create one that names no private IP.
+	if lifetime == vcnprovider.LifetimeEphemeral && privateIPID == "" {
+		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
+			"privateIpId is required for an ephemeral public IP")
+
+		return "", "", false
+	}
+
+	return lifetime, privateIPID, true
 }
 
 func (h *Handler) listPublicIPs(w http.ResponseWriter, r *http.Request) {

@@ -30,8 +30,11 @@ func createTopic(t *testing.T, client *armeventgrid.TopicsClient, rg, name strin
 // TestSDKScopedListing asserts #259 item 1 through the real SDK: topics
 // created in one resource group must not appear in another group's list.
 func TestSDKScopedListing(t *testing.T) {
-	client := newTopicsClient(t)
+	client, ts := newTopicsClient(t)
 	ctx := context.Background()
+
+	ensureRG(t, ts, testSub, "rg-team-a")
+	ensureRG(t, ts, testSub, "rg-team-b")
 
 	createTopic(t, client, "rg-team-a", "topic-a1", nil)
 	createTopic(t, client, "rg-team-a", "topic-a2", nil)
@@ -66,7 +69,7 @@ func TestSDKScopedListing(t *testing.T) {
 // CreateOrUpdate on an existing topic must apply the request's tags, not
 // echo the stale resource.
 func TestSDKUpsertAppliesUpdates(t *testing.T) {
-	client := newTopicsClient(t)
+	client, _ := newTopicsClient(t)
 	ctx := context.Background()
 
 	createTopic(t, client, testRG, "topic-upsert", map[string]*string{"env": to.Ptr("dev")})
@@ -90,7 +93,9 @@ func TestSDKUpsertAppliesUpdates(t *testing.T) {
 // SDK: the returned ARM id carries the request's subscription and resource
 // group, not a hardcoded default.
 func TestSDKResourceIDMatchesRequestScope(t *testing.T) {
-	client := newTopicsClient(t)
+	client, ts := newTopicsClient(t)
+
+	ensureRG(t, ts, testSub, "rg-id-check")
 
 	tp := createTopic(t, client, "rg-id-check", "topic-id", nil)
 	if tp.ID == nil {

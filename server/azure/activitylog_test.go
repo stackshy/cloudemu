@@ -36,6 +36,7 @@ func TestActivityLogRecordsMutatingARMOp(t *testing.T) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, "sub-al", "rg-al")
 
 	ctx := context.Background()
 	opts := &arm.ClientOptions{

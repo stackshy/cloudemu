@@ -65,6 +65,8 @@ func TestZipDeployDrivesEngineAndHandlerSetting(t *testing.T) {
 	srv := httptest.NewServer(azureserver.New(azureserver.Drivers{Functions: cloud.Functions}))
 	t.Cleanup(srv.Close)
 
+	ensureRG(t, http.DefaultClient, srv.URL, subID, rgName)
+
 	// 1. ARM site create carries no code — the engine is not deployed yet.
 	doReq(t, srv.URL, http.MethodPut, sitesURL("app1")+apiVer,
 		strings.NewReader(siteBodyWithHandler), http.StatusOK)

@@ -18,6 +18,8 @@ func TestSDKAppSettingsHostKeysRestart(t *testing.T) {
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Functions: cloudP.Functions}))
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts.Client(), ts.URL, subID, rgName)
+
 	client := newWebAppsClient(t, ts)
 	ctx := context.Background()
 
@@ -71,6 +73,8 @@ func TestSDKListFunctions(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Functions: cloudP.Functions}))
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts.Client(), ts.URL, subID, rgName)
 
 	client := newWebAppsClient(t, ts)
 	ctx := context.Background()

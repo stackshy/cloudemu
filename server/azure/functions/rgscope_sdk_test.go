@@ -28,6 +28,8 @@ func TestSDKSiteGetDeleteScopedByResourceGroup(t *testing.T) {
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Functions: cloudP.Functions}))
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts.Client(), ts.URL, subID, rgName)
+
 	client := newWebAppsClient(t, ts)
 	ctx := context.Background()
 
@@ -88,6 +90,8 @@ func TestSDKAppServicePlanDeleteAndListWebApps(t *testing.T) {
 	srv := azureserver.New(azureserver.Drivers{Functions: cloudP.Functions})
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts.Client(), ts.URL, subID, rgName)
 
 	plansClient := newPlansClient(t, ts)
 	webAppsClient := newWebAppsClient(t, ts)
@@ -188,6 +192,8 @@ func TestSDKAppServicePlanDeleteRejectedWhileSiteAssigned(t *testing.T) {
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Functions: cloudP.Functions}))
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts.Client(), ts.URL, subID, rgName)
+
 	plansClient := newPlansClient(t, ts)
 	webAppsClient := newWebAppsClient(t, ts)
 	ctx := context.Background()
@@ -263,6 +269,8 @@ func TestSDKUpdateApplicationSettings(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Functions: cloudP.Functions}))
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts.Client(), ts.URL, subID, rgName)
 
 	client := newWebAppsClient(t, ts)
 	ctx := context.Background()

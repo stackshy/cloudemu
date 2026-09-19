@@ -23,6 +23,7 @@ func echoTestServer(t *testing.T) (*httptest.Server, *http.Client) {
 	srv := azureserver.NewFromProvider(cloudemu.NewAzure())
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, "sub1", "rg1")
 
 	return ts, ts.Client()
 }
@@ -184,6 +185,7 @@ func TestEchoSurvivesBodyReturningLifecycleAction(t *testing.T) {
 	srv := azureserver.New(azureserver.Drivers{MySQLFlex: cloudP.MySQLFlex})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, "sub1", "rg1")
 	c := ts.Client()
 
 	base := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.DBforMySQL/flexibleServers/db1"
@@ -223,6 +225,7 @@ func TestEchoPartialPatchKeepsPreservedProps(t *testing.T) {
 	srv := azureserver.New(azureserver.Drivers{MySQLFlex: cloudP.MySQLFlex})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, "sub1", "rg1")
 	c := ts.Client()
 
 	base := ts.URL + "/subscriptions/sub1/resourceGroups/rg1/providers/Microsoft.DBforMySQL/flexibleServers/db2"

@@ -7,7 +7,9 @@ package cosmosaccount_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -44,11 +46,23 @@ func newDatabaseAccountsClient(t *testing.T) *armcosmos.DatabaseAccountsClient {
 func newDatabaseAccountsClientURL(t *testing.T) (*armcosmos.DatabaseAccountsClient, string) {
 	t.Helper()
 
+	client, ts := newDatabaseAccountsClientServer(t)
+
+	return client, ts.URL
+}
+
+// newDatabaseAccountsClientServer is newDatabaseAccountsClient but also returns
+// the underlying httptest server, for tests that need to provision additional
+// resource groups beyond rg-1.
+func newDatabaseAccountsClientServer(t *testing.T) (*armcosmos.DatabaseAccountsClient, *httptest.Server) {
+	t.Helper()
+
 	cloudP := cloudemu.NewAzure()
 	srv := azureserver.New(azureserver.Drivers{CosmosDB: cloudP.CosmosDB})
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
@@ -71,7 +85,34 @@ func newDatabaseAccountsClientURL(t *testing.T) (*armcosmos.DatabaseAccountsClie
 	client, err := armcosmos.NewDatabaseAccountsClient("sub-1", fakeCred{}, opts)
 	require.NoError(t, err)
 
-	return client, ts.URL
+	return client, ts
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	url := ts.URL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
 }
 
 func TestSDKDatabaseAccountCreateGet(t *testing.T) {
@@ -249,7 +290,9 @@ func TestSDKDatabaseAccountRegenerateKey(t *testing.T) {
 // TestSDKDatabaseAccountList drives List (subscription) and ListByResourceGroup.
 func TestSDKDatabaseAccountList(t *testing.T) {
 	ctx := context.Background()
-	client := newDatabaseAccountsClient(t)
+	client, ts := newDatabaseAccountsClientServer(t)
+	ensureRG(t, ts, "sub-1", "rg-a")
+	ensureRG(t, ts, "sub-1", "rg-b")
 
 	createAccount(t, client, "rg-a", "acct-a1", "eastus")
 	createAccount(t, client, "rg-a", "acct-a2", "eastus")

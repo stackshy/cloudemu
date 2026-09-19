@@ -154,6 +154,10 @@ type Handler struct {
 	net    netdriver.Networking
 	extras Extras
 	work   *workrequest.Store
+	// compartmentExists reports whether a compartment OCID exists. It is nil
+	// unless SetCompartmentChecker wires it from Identity; a nil checker skips
+	// the check so handlers built without identity keep working.
+	compartmentExists func(id string) bool
 }
 
 // New returns a VCN handler. work records the asynchronous compartment moves;
@@ -162,6 +166,25 @@ func New(n netdriver.Networking, work *workrequest.Store) *Handler {
 	extras, _ := n.(Extras)
 
 	return &Handler{net: n, extras: extras, work: work}
+}
+
+// SetCompartmentChecker wires a compartment-existence check so a create into
+// a resource group / compartment that does not exist is rejected with
+// 404 NotAuthorizedOrNotFound, as real OCI does. When unset (nil) the check
+// is skipped, so handlers constructed without identity keep working.
+func (h *Handler) SetCompartmentChecker(fn func(id string) bool) { h.compartmentExists = fn }
+
+// requireCompartment reports whether compartmentID exists; if not it writes
+// the OCI 404 NotAuthorizedOrNotFound and returns false. A nil checker (no
+// identity wired) is a no-op that allows the request.
+func (h *Handler) requireCompartment(w http.ResponseWriter, r *http.Request, compartmentID string) bool {
+	if h.compartmentExists == nil || compartmentID == "" || h.compartmentExists(compartmentID) {
+		return true
+	}
+
+	ocirest.WriteError(w, r, http.StatusNotFound, codeNotFound, compartmentID+" not found")
+
+	return false
 }
 
 // route is a parsed Core Networking path.

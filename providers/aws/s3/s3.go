@@ -219,6 +219,27 @@ type Mock struct {
 	sns        SNSPublisher
 	lambda     LambdaInvoker
 	eventSeq   atomic.Uint64 // monotonic source for object-event sequencer tokens
+	// bucketNames is the shared, cross-region S3 bucket-name namespace. Nil for a
+	// standalone (single-region library) mock, which then enforces only its own
+	// store's uniqueness. Wired by the provider factory to a *NameReservation
+	// shared with every other region's S3 mock, so bucket names are globally
+	// unique as in real S3.
+	bucketNames *NameReservation
+}
+
+// SetNameReservation wires the shared cross-region bucket-name namespace so
+// CreateBucket enforces global name uniqueness across every region. Called by
+// the provider factory with the shared reservation; unwired (nil) mocks keep the
+// single-region per-store uniqueness behavior.
+func (m *Mock) SetNameReservation(r *NameReservation) {
+	m.bucketNames = r
+}
+
+// NameReservation returns the shared bucket-name namespace wired into this mock
+// (nil when none is), so the provider factory can hand the same reservation to
+// sibling region mocks.
+func (m *Mock) NameReservation() *NameReservation {
+	return m.bucketNames
 }
 
 // SetSQSDeliverer wires the SQS backend so object events deliver to buckets' SQS
@@ -309,6 +330,13 @@ func (m *Mock) CreateBucketInRegion(_ context.Context, name, region string) erro
 		return cerrors.Newf(cerrors.AlreadyExists, "bucket %q already exists", name)
 	}
 
+	// Enforce the global S3 name namespace: a name held in ANY region blocks the
+	// create with BucketAlreadyExists, matching real S3. Reserving before the
+	// local Set also guards two concurrent regions racing the same name.
+	if !m.bucketNames.reserve(name) {
+		return cerrors.Newf(cerrors.AlreadyExists, "bucket %q already exists", name)
+	}
+
 	if region == "" {
 		region = m.opts.Region
 	}
@@ -343,6 +371,9 @@ func (m *Mock) DeleteBucket(_ context.Context, name string) error {
 	}
 
 	m.buckets.Delete(name)
+	// Free the name in the shared namespace so it can be re-created (in this or
+	// another region), matching real S3 where a deleted bucket's name is released.
+	m.bucketNames.release(name)
 
 	return nil
 }

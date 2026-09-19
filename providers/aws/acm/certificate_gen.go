@@ -127,6 +127,12 @@ func rsaKeyMaterial(bits int) (signer crypto.Signer, keyPEM, sigAlg string, err 
 		bits = rsaBits2048
 	}
 
+	if bits > rsaBits4096 {
+		bits = rsaBits4096
+	}
+
+	// bits is now clamped into [rsaBits2048, rsaBits4096], so the emulator-generated
+	// cert material is never weaker than 2048 bits.
 	key, err := rsa.GenerateKey(rand.Reader, bits)
 	if err != nil {
 		return nil, "", "", errors.Newf(errors.Internal, "generate key: %v", err)

@@ -58,8 +58,9 @@ func TestSDKAzureCacheUpdateMissingIs404(t *testing.T) {
 // actually created in leaves that cache untouched — it must not be reachable,
 // let alone deletable, via a resource group it doesn't belong to.
 func TestSDKAzureCacheDeleteWrongResourceGroupIsNoop(t *testing.T) {
-	client := newRedisClient(t)
+	client, ts := newRedisClientAndServer(t)
 	ctx := context.Background()
+	ensureRG(t, ts, testSub, otherRG)
 
 	createRedis(t, client, testRG, "cross-rg-delete", nil)
 
@@ -87,8 +88,9 @@ func TestSDKAzureCacheDeleteWrongResourceGroupIsNoop(t *testing.T) {
 // actually belongs to is a 404 — it must not silently re-parent (steal) the
 // cache into the URL's resource group.
 func TestSDKAzureCacheUpdateWrongResourceGroupNotFound(t *testing.T) {
-	client := newRedisClient(t)
+	client, ts := newRedisClientAndServer(t)
 	ctx := context.Background()
+	ensureRG(t, ts, testSub, otherRG)
 
 	createRedis(t, client, testRG, "cross-rg-update", nil)
 
@@ -121,8 +123,9 @@ func TestSDKAzureCacheUpdateWrongResourceGroupNotFound(t *testing.T) {
 // hostname), so this scope cannot "adopt" another group's cache by re-PUTting
 // its name.
 func TestSDKAzureCachePutWrongResourceGroupConflict(t *testing.T) {
-	client := newRedisClient(t)
+	client, ts := newRedisClientAndServer(t)
 	ctx := context.Background()
+	ensureRG(t, ts, testSub, otherRG)
 
 	createRedis(t, client, testRG, "cross-rg-put", nil)
 

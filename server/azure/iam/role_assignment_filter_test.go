@@ -40,7 +40,8 @@ func listAssignmentPrincipals(
 // just that principal's assignments, matching real Azure — and that a
 // different principalId returns none.
 func TestSDKAzureIAMListRoleAssignmentsFilterByPrincipalID(t *testing.T) {
-	roleAssigns := newClientFactory(t).NewRoleAssignmentsClient()
+	cf, _ := newClientFactory(t)
+	roleAssigns := cf.NewRoleAssignmentsClient()
 	ctx := context.Background()
 
 	const (

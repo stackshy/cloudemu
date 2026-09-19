@@ -32,6 +32,10 @@ func (h *Handler) createSubnet(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	info, err := h.net.CreateSubnet(r.Context(), netdriver.SubnetConfig{
 		VPCID:            req.VCNID,
 		CIDRBlock:        req.CIDRBlock,

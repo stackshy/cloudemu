@@ -30,7 +30,13 @@ jobs:
           version: "~> v2"
           args: release --clean
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Author the GitHub Release under a maintainer's identity rather than
+          # the github-actions[bot]. Add a repo secret RELEASE_TOKEN — a PAT
+          # (fine-grained with Contents: read/write on this repo, or classic
+          # with `repo`) owned by the maintainer who should appear as the
+          # release author. Falls back to the default token when unset, so the
+          # release still publishes (attributed to github-actions) without it.
+          GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN || secrets.GITHUB_TOKEN }}
           # Pushes the Homebrew formula to github.com/stackshy/homebrew-tap.
           # MAINTAINER PREREQUISITE (one-time): add a repo secret named
           # HOMEBREW_TAP_TOKEN — a PAT with write access to the tap repo.

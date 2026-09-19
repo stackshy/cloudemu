@@ -28,6 +28,8 @@ func newDataDiskTestServer(t *testing.T) (*armcompute.VirtualMachinesClient, *ar
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	vmClient := newSDKClient(t, ts)
 
 	diskClient, err := armcompute.NewDisksClient("sub-1", fakeCred{}, sdkClientOptions(ts))

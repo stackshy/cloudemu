@@ -20,6 +20,33 @@ const (
 	apiVer = "?api-version=2022-03-01"
 )
 
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, client *http.Client, baseURL, sub, rg string) {
+	t.Helper()
+
+	url := baseURL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
+}
+
 func sitesURL(name string) string {
 	return "/subscriptions/" + subID +
 		"/resourceGroups/" + rgName +
@@ -36,6 +63,8 @@ func TestMatches_AcceptsArmAndApiPaths(t *testing.T) {
 	cloud := cloudemu.NewAzure()
 	srv := httptest.NewServer(azureserver.New(azureserver.Drivers{Functions: cloud.Functions}))
 	t.Cleanup(srv.Close)
+
+	ensureRG(t, http.DefaultClient, srv.URL, subID, rgName)
 
 	cases := []struct {
 		method, url string
@@ -65,6 +94,8 @@ func TestPutGetDeleteSiteRoundTrip(t *testing.T) {
 	cloud := cloudemu.NewAzure()
 	srv := httptest.NewServer(azureserver.New(azureserver.Drivers{Functions: cloud.Functions}))
 	t.Cleanup(srv.Close)
+
+	ensureRG(t, http.DefaultClient, srv.URL, subID, rgName)
 
 	body := `{
         "kind":"functionapp",
@@ -129,6 +160,8 @@ func TestList(t *testing.T) {
 	srv := httptest.NewServer(azureserver.New(azureserver.Drivers{Functions: cloud.Functions}))
 	t.Cleanup(srv.Close)
 
+	ensureRG(t, http.DefaultClient, srv.URL, subID, rgName)
+
 	for _, n := range []string{"a", "b", "c"} {
 		body := `{"kind":"functionapp","location":"eastus","properties":{"siteConfig":{}}}`
 
@@ -159,6 +192,8 @@ func TestPutIsIdempotent(t *testing.T) {
 	cloud := cloudemu.NewAzure()
 	srv := httptest.NewServer(azureserver.New(azureserver.Drivers{Functions: cloud.Functions}))
 	t.Cleanup(srv.Close)
+
+	ensureRG(t, http.DefaultClient, srv.URL, subID, rgName)
 
 	body := `{"kind":"functionapp","location":"eastus","properties":{"siteConfig":{"linuxFxVersion":"Node|18"}}}`
 
@@ -193,6 +228,8 @@ func TestInvokeRunsRegisteredHandler(t *testing.T) {
 	cloud := cloudemu.NewAzure()
 	srv := httptest.NewServer(azureserver.New(azureserver.Drivers{Functions: cloud.Functions}))
 	t.Cleanup(srv.Close)
+
+	ensureRG(t, http.DefaultClient, srv.URL, subID, rgName)
 
 	body := `{"kind":"functionapp","location":"eastus","properties":{"siteConfig":{}}}`
 	if r := doRequest(t, srv, http.MethodPut, sitesURL("echo")+apiVer, body); r.StatusCode != http.StatusOK {

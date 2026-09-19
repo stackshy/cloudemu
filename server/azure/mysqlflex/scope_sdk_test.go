@@ -29,7 +29,9 @@ func mustCreateServerInRG(t *testing.T, cf *armmysqlflexibleservers.ClientFactor
 // TestSDKMySQLFlexScopedListing asserts a server created in one resource
 // group must not appear when listing a different resource group.
 func TestSDKMySQLFlexScopedListing(t *testing.T) {
-	cf := newFactory(t)
+	cf, ts := newFactory(t)
+	ensureRG(t, ts, "sub-1", "rg-team-a")
+	ensureRG(t, ts, "sub-1", "rg-team-b")
 	mustCreateServerInRG(t, cf, "rg-team-a", "srv-a1")
 	mustCreateServerInRG(t, cf, "rg-team-a", "srv-a2")
 	mustCreateServerInRG(t, cf, "rg-team-b", "srv-b1")
@@ -70,7 +72,8 @@ func TestSDKMySQLFlexScopedListing(t *testing.T) {
 // resource group cannot be resolved via Get under a different resource group
 // (real ARM answers 404, since the id would contradict the request path).
 func TestSDKMySQLFlexScopedGetNotFound(t *testing.T) {
-	cf := newFactory(t)
+	cf, ts := newFactory(t)
+	ensureRG(t, ts, "sub-1", "rg-team-a")
 	mustCreateServerInRG(t, cf, "rg-team-a", "srv-a1")
 
 	ctx := context.Background()
@@ -89,7 +92,8 @@ func TestSDKMySQLFlexScopedGetNotFound(t *testing.T) {
 // wrong resource group cannot remove another resource group's server —
 // the cross-tenant leak this behavior guards against.
 func TestSDKMySQLFlexScopedDeleteNotFound(t *testing.T) {
-	cf := newFactory(t)
+	cf, ts := newFactory(t)
+	ensureRG(t, ts, "sub-1", "rg-team-a")
 	mustCreateServerInRG(t, cf, "rg-team-a", "srv-a1")
 
 	ctx := context.Background()
@@ -122,7 +126,8 @@ func skuName(s *armmysqlflexibleservers.Server) string {
 // resource group cannot mutate another resource group's server (the SKU/storage
 // cross-tenant write) — it must 404 and leave the real server untouched.
 func TestSDKMySQLFlexScopedUpdateNotFound(t *testing.T) {
-	cf := newFactory(t)
+	cf, ts := newFactory(t)
+	ensureRG(t, ts, "sub-1", "rg-team-a")
 	mustCreateServerInRG(t, cf, "rg-team-a", "srv-a1")
 
 	ctx := context.Background()
@@ -160,7 +165,9 @@ func TestSDKMySQLFlexScopedUpdateNotFound(t *testing.T) {
 // different resource group conflicts (Flex names are globally FQDN-unique)
 // rather than silently mutating the real owner's server.
 func TestSDKMySQLFlexCrossGroupCreateConflict(t *testing.T) {
-	cf := newFactory(t)
+	cf, ts := newFactory(t)
+	ensureRG(t, ts, "sub-1", "rg-team-a")
+	ensureRG(t, ts, "sub-1", "rg-team-b")
 	ctx := context.Background()
 	servers := cf.NewServersClient()
 
@@ -205,7 +212,8 @@ func TestSDKMySQLFlexCrossGroupCreateConflict(t *testing.T) {
 // TestSDKMySQLFlexScopedStartStopNotFound asserts start/stop issued under the
 // wrong resource group cannot act on another resource group's server.
 func TestSDKMySQLFlexScopedStartStopNotFound(t *testing.T) {
-	cf := newFactory(t)
+	cf, ts := newFactory(t)
+	ensureRG(t, ts, "sub-1", "rg-team-a")
 	mustCreateServerInRG(t, cf, "rg-team-a", "srv-a1")
 
 	ctx := context.Background()

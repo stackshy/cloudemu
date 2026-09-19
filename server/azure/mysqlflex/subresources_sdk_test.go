@@ -26,7 +26,7 @@ func mustCreateServer(t *testing.T, cf *armmysqlflexibleservers.ClientFactory) {
 }
 
 func TestSDKMySQLFlexDatabases(t *testing.T) {
-	cf := newFactory(t)
+	cf, _ := newFactory(t)
 	mustCreateServer(t, cf)
 
 	ctx := context.Background()
@@ -81,7 +81,7 @@ func TestSDKMySQLFlexDatabases(t *testing.T) {
 }
 
 func TestSDKMySQLFlexFirewallRules(t *testing.T) {
-	cf := newFactory(t)
+	cf, _ := newFactory(t)
 	mustCreateServer(t, cf)
 
 	ctx := context.Background()
@@ -136,7 +136,7 @@ func TestSDKMySQLFlexFirewallRules(t *testing.T) {
 }
 
 func TestSDKMySQLFlexConfigurations(t *testing.T) {
-	cf := newFactory(t)
+	cf, _ := newFactory(t)
 	mustCreateServer(t, cf)
 
 	ctx := context.Background()
@@ -251,7 +251,7 @@ func mustCreateHAServer(t *testing.T, cf *armmysqlflexibleservers.ClientFactory,
 }
 
 func TestSDKMySQLFlexFailover(t *testing.T) {
-	cf := newFactory(t)
+	cf, _ := newFactory(t)
 	mustCreateHAServer(t, cf, "srv1")
 
 	ctx := context.Background()
@@ -281,7 +281,7 @@ func TestSDKMySQLFlexFailover(t *testing.T) {
 // behavior: a forced failover on a server with HighAvailability Disabled (no
 // standby) is rejected rather than silently succeeding.
 func TestSDKMySQLFlexFailoverRequiresHighAvailability(t *testing.T) {
-	cf := newFactory(t)
+	cf, _ := newFactory(t)
 	mustCreateServer(t, cf) // no HighAvailability configured
 
 	ctx := context.Background()

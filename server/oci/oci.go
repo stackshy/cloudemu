@@ -7,6 +7,8 @@
 package oci
 
 import (
+	"context"
+
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/oci/identity"
@@ -93,7 +95,17 @@ func New(d Drivers) *server.Server {
 	}
 
 	if d.VCN != nil {
-		srv.Register(vcn.New(d.VCN, d.WorkRequests))
+		vcnHandler := vcn.New(d.VCN, d.WorkRequests)
+
+		if comps, ok := d.Identity.(identity.Compartments); ok {
+			vcnHandler.SetCompartmentChecker(func(id string) bool {
+				_, err := comps.GetCompartment(context.Background(), id)
+
+				return err == nil
+			})
+		}
+
+		srv.Register(vcnHandler)
 	}
 
 	return srv

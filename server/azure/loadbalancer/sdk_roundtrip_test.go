@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,6 +29,42 @@ type fakeCred struct{}
 
 func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcore.AccessToken, error) {
 	return azcore.AccessToken{Token: "fake", ExpiresOn: time.Now().Add(time.Hour)}, nil
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	ensureRGWith(t, ts.Client(), ts.URL, sub, rg)
+}
+
+// ensureRGWith is ensureRG for a caller that only has a raw *http.Client and
+// base URL (e.g. a bundle of sub-resource clients sharing one server), rather
+// than the *httptest.Server itself.
+func ensureRGWith(t *testing.T, client *http.Client, baseURL, sub, rg string) {
+	t.Helper()
+
+	url := baseURL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
 }
 
 // lbServer bundles the emulator's TLS wire server endpoint with the
@@ -56,6 +93,8 @@ func newLBServer(t *testing.T) lbServer {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, testSub, testRG)
 
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",

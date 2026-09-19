@@ -88,6 +88,7 @@ func TestFunctionsInvokeStillRoutesToFunctions(t *testing.T) {
 
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	// Provision the site so the invoke target exists, then register its handler.
 	sitePath := ts.URL + "/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Web/sites/echo" +

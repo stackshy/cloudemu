@@ -30,7 +30,7 @@ func bootPreRel(t *testing.T) *compat.AzureSession {
 
 	p := cloudemu.NewAzure()
 
-	return compat.BootAzure(t, azureserver.Drivers{
+	sess := compat.BootAzure(t, azureserver.Drivers{
 		VirtualMachines:    p.VirtualMachines,
 		Disks:              p.VirtualMachines,
 		Network:            p.VNet,
@@ -44,6 +44,9 @@ func bootPreRel(t *testing.T) *compat.AzureSession {
 		MySQLFlex:          p.MySQLFlex,
 		Monitor:            p.Monitor,
 	})
+	sess.EnsureResourceGroup(preRelSub, preRelRG)
+
+	return sess
 }
 
 // armReq issues one raw ARM request and returns the status code and parsed body.

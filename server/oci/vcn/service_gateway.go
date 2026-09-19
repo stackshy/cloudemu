@@ -34,6 +34,10 @@ func (h *Handler) createServiceGateway(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	if len(req.Services) == 0 {
 		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter, "at least one service is required")
 		return

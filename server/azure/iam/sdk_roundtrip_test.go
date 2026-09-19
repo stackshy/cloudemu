@@ -2,7 +2,9 @@ package iam_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -31,7 +33,7 @@ const (
 // newClientFactory spins up an in-process Azure wire server backed by a fresh
 // cloudemu Azure provider and returns an armauthorization client factory
 // pointed at it. Individual tests pull the specific client(s) they need.
-func newClientFactory(t *testing.T) *armauthorization.ClientFactory {
+func newClientFactory(t *testing.T) (*armauthorization.ClientFactory, *httptest.Server) {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
@@ -63,7 +65,34 @@ func newClientFactory(t *testing.T) *armauthorization.ClientFactory {
 		t.Fatal(err)
 	}
 
-	return cf
+	return cf, ts
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	url := ts.URL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
 }
 
 func newSDKClients(t *testing.T) (
@@ -72,7 +101,7 @@ func newSDKClients(t *testing.T) (
 ) {
 	t.Helper()
 
-	cf := newClientFactory(t)
+	cf, _ := newClientFactory(t)
 
 	return cf.NewRoleDefinitionsClient(), cf.NewRoleAssignmentsClient()
 }
@@ -234,8 +263,11 @@ func TestSDKAzureIAMRoleAssignmentLifecycle(t *testing.T) {
 // definitions scoped to that scope and its ancestors, never one scoped only
 // to a descendant resource beneath it.
 func TestSDKAzureIAMRoleDefinitionListScopeAndAbove(t *testing.T) {
-	roleDefs, _ := newSDKClients(t)
+	cf, ts := newClientFactory(t)
+	roleDefs := cf.NewRoleDefinitionsClient()
 	ctx := context.Background()
+
+	ensureRG(t, ts, testSubscription, "rg1")
 
 	const (
 		subRoleID = "11111111-aaaa-aaaa-aaaa-111111111111"

@@ -21,6 +21,8 @@ func TestSDKAutoscaleSettingRoundTrip(t *testing.T) {
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Monitor: cloudP.Monitor}))
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	client, err := armmonitor.NewAutoscaleSettingsClient("sub-1", fakeCred{}, armClientOptions(ts))
 	if err != nil {
 		t.Fatal(err)

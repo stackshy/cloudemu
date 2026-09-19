@@ -26,6 +26,7 @@ func rawARMServer(t *testing.T) (*httptest.Server, *http.Client) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	return ts, ts.Client()
 }

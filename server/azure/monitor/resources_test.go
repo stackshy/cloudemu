@@ -31,7 +31,23 @@ func newMonitorServer(t *testing.T) (*httptest.Server, *azureprovider.Provider) 
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	return ts, cloudP
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	url := "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	code, _ := doJSON(t, ts, http.MethodPut, url, `{"location":"eastus"}`)
+	if code != http.StatusOK && code != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, code)
+	}
 }
 
 func doJSON(t *testing.T, ts *httptest.Server, method, url string, body string) (int, map[string]any) {
@@ -267,6 +283,8 @@ func TestMetricAlertActionsWireActionGroup(t *testing.T) {
 // a metricAlert of the same name in both resource groups must not collide.
 func TestMetricAlertListScopedToResourceGroup(t *testing.T) {
 	ts, _ := newMonitorServer(t)
+
+	ensureRG(t, ts, "sub-1", "rg-2")
 
 	body := `{"location":"global","properties":{"windowSize":"PT5M",
 		"criteria":{"allOf":[{"metricName":"Percentage CPU","operator":"GreaterThan","threshold":20,"timeAggregation":"Average"}]}}}`

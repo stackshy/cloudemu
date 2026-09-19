@@ -23,6 +23,8 @@ func TestSDKAzureLBCaseInsensitiveAddressing(t *testing.T) {
 		upperLB = "MyLb"
 	)
 
+	ensureRGWith(t, c.srv.HTTPClient, c.srv.Endpoint, testSub, lowerRG)
+
 	mustCreate := func(rg, name string) {
 		poller, err := c.lb.BeginCreateOrUpdate(ctx, rg, name, armnetwork.LoadBalancer{
 			Location: to.Ptr("eastus"),

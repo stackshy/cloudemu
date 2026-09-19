@@ -23,7 +23,7 @@ func TestServeCostEstimatesInventory(t *testing.T) {
 		t.Fatalf("run instances: %v", err)
 	}
 
-	engines := map[string]*resourcediscovery.Engine{"aws": aws.ResourceDiscovery}
+	engines := map[string][]*resourcediscovery.Engine{"aws": {aws.ResourceDiscovery}}
 
 	rec := httptest.NewRecorder()
 	serveCost(rec, httptest.NewRequest(http.MethodGet, "/_cloudemu/cost", nil), engines)
@@ -45,7 +45,7 @@ func TestServeCostEstimatesInventory(t *testing.T) {
 }
 
 func TestServeCostEmptyInventory(t *testing.T) {
-	engines := map[string]*resourcediscovery.Engine{"aws": cloudemu.NewAWS().ResourceDiscovery}
+	engines := map[string][]*resourcediscovery.Engine{"aws": {cloudemu.NewAWS().ResourceDiscovery}}
 
 	rec := httptest.NewRecorder()
 	serveCost(rec, httptest.NewRequest(http.MethodGet, "/_cloudemu/cost", nil), engines)

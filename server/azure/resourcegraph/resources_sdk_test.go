@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/cloud"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/runtime"
+	"github.com/Azure/azure-sdk-for-go/sdk/azcore/to"
 	"github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/resources/armresources"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,6 +43,13 @@ func TestSDKGenericResourcesList(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	// Real Azure requires the resource group to exist before it will list — the
+	// generic-resources listing 404s ResourceGroupNotFound otherwise. Create the
+	// group carrying the workspace, plus an empty group, through the RG wire.
+	rgClient := newResourceGroupsClient(t, ts)
+	require.NoError(t, createResourceGroup(ctx, rgClient, "rg-e2e"))
+	require.NoError(t, createResourceGroup(ctx, rgClient, "empty-rg"))
+
 	client := newGenericResourcesClient(t, ts)
 
 	t.Run("list by resource group", func(t *testing.T) {
@@ -61,12 +69,35 @@ func TestSDKGenericResourcesList(t *testing.T) {
 	})
 
 	t.Run("empty group returns nothing", func(t *testing.T) {
-		names := collect(ctx, t, client.NewListByResourceGroupPager("no-such-rg", nil),
+		names := collect(ctx, t, client.NewListByResourceGroupPager("empty-rg", nil),
 			func(p armresources.ClientListByResourceGroupResponse) []*armresources.GenericResourceExpanded {
 				return p.Value
 			})
 		assert.Empty(t, names)
 	})
+}
+
+func newResourceGroupsClient(t *testing.T, ts *httptest.Server) *armresources.ResourceGroupsClient {
+	t.Helper()
+
+	opts := &arm.ClientOptions{ClientOptions: azcore.ClientOptions{
+		Cloud: cloud.Configuration{Services: map[cloud.ServiceName]cloud.ServiceConfiguration{
+			cloud.ResourceManager: {Endpoint: ts.URL, Audience: "https://management.azure.com"},
+		}},
+		Transport: ts.Client(),
+		Retry:     policy.RetryOptions{MaxRetries: -1},
+	}}
+
+	c, err := armresources.NewResourceGroupsClient("123456789012", fakeCred{}, opts)
+	require.NoError(t, err)
+
+	return c
+}
+
+func createResourceGroup(ctx context.Context, client *armresources.ResourceGroupsClient, name string) error {
+	_, err := client.CreateOrUpdate(ctx, name, armresources.ResourceGroup{Location: to.Ptr("eastus")}, nil)
+
+	return err
 }
 
 // collect drains a pager, extracting resource names via value, so it works for

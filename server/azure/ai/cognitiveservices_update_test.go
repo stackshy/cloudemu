@@ -25,6 +25,7 @@ func newCSTLSServer(t *testing.T) *httptest.Server {
 	srv := azureserver.New(azureserver.Drivers{CognitiveServices: cloudP.AI})
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, sub, rg)
 
 	return ts
 }

@@ -61,6 +61,9 @@ func TestSDKNamespaceTagsAndScopedListing(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, subID, "rg-a")
+	ensureRG(t, ts, subID, "rg-b")
+
 	c := newNamespacesClient(t, ts)
 	ctx := context.Background()
 

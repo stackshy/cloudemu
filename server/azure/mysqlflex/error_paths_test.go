@@ -25,7 +25,7 @@ func statusOf(t *testing.T, err error) int {
 // Verifies the ARM wire layer maps canonical errors to HTTP status (parity with
 // GCP's TestSDKCloudSQLErrorPaths).
 func TestSDKMySQLFlexWireErrorMapping(t *testing.T) {
-	cf := newFactory(t)
+	cf, _ := newFactory(t)
 	ctx := context.Background()
 
 	// 404 — server that doesn't exist.

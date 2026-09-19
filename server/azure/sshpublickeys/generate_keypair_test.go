@@ -23,6 +23,8 @@ func newSSHServer(t *testing.T) *httptest.Server {
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	return ts
 }
 

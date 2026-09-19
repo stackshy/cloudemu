@@ -246,18 +246,84 @@ type Provider struct {
 	engineClosers []io.Closer
 }
 
-// New creates a new AWS provider with all mock services.
+// GlobalServices is the bundle of AWS services whose state is global — a single
+// shared instance across every region rather than one per region. Real AWS
+// isolates regional services (EC2, DynamoDB, SQS, …) per region but serves these
+// from one global data plane: IAM users/roles, Route 53 hosted zones, CloudFront
+// distributions, and Global Accelerator accelerators are the same in every
+// region, and the S3 bucket-name namespace (S3Names) is globally unique.
+//
+// The multi-region region mux builds a fresh regional Provider per region but
+// injects one shared GlobalServices into all of them (see NewRegional), so a
+// cross-service wire from a regional service to a global one — e.g.
+// EC2.SetInstanceProfileResolver(IAM) — resolves to the shared instance.
+//
+// S3 itself is REGIONAL (each region owns its bucket data plane so notifications
+// and metrics wire to that region's SQS/SNS/Lambda/CloudWatch); only its NAME
+// namespace is global, carried here as S3Names.
+type GlobalServices struct {
+	IAM               *iam.Mock
+	Route53           *route53.Mock
+	CloudFront        *cloudfront.Mock
+	GlobalAccelerator *globalaccelerator.Mock
+	S3Names           *s3.NameReservation
+}
+
+// newGlobalServices constructs a fresh set of shared global services. Called
+// once for a standalone provider, and once per multi-region mux to seed the
+// bundle every region provider then shares.
+func newGlobalServices(o *config.Options) *GlobalServices {
+	return &GlobalServices{
+		IAM:               iam.New(o),
+		Route53:           route53.New(o),
+		CloudFront:        cloudfront.New(o),
+		GlobalAccelerator: globalaccelerator.New(o),
+		S3Names:           s3.NewNameReservation(),
+	}
+}
+
+// Globals extracts the provider's shared global services so a region mux can
+// inject the same bundle into freshly-built region providers via NewRegional.
+func (p *Provider) Globals() *GlobalServices {
+	return &GlobalServices{
+		IAM:               p.IAM,
+		Route53:           p.Route53,
+		CloudFront:        p.CloudFront,
+		GlobalAccelerator: p.GlobalAccelerator,
+		S3Names:           p.S3.NameReservation(),
+	}
+}
+
+// New creates a new AWS provider with all mock services, owning its own set of
+// global services (the single-region default).
 func New(opts ...config.Option) *Provider {
-	o := config.NewOptions(opts...)
-	p := &Provider{
+	return newProvider(config.NewOptions(opts...), nil)
+}
+
+// NewRegional creates a regional AWS provider that SHARES the given global
+// services instead of creating its own, so IAM/Route53/CloudFront/Global
+// Accelerator state and the S3 bucket-name namespace are common to every region
+// built with the same bundle. Pass config.WithRegion(region) to stamp the region
+// onto this provider's regional resources. When shared is nil it behaves exactly
+// like New.
+func NewRegional(shared *GlobalServices, opts ...config.Option) *Provider {
+	return newProvider(config.NewOptions(opts...), shared)
+}
+
+// newProviderMocks constructs every service mock for one provider, injecting the
+// shared global services (g) so a region provider shares IAM/Route53/CloudFront/
+// GlobalAccelerator (and the S3 name namespace) with its siblings while owning
+// fresh regional services.
+func newProviderMocks(o *config.Options, g *GlobalServices) *Provider {
+	return &Provider{
 		S3:                  s3.New(o),
 		EC2:                 ec2.New(o),
 		DynamoDB:            dynamodb.New(o),
 		Lambda:              lambda.New(o),
 		VPC:                 vpc.New(o),
 		CloudWatch:          cloudwatch.New(o),
-		IAM:                 iam.New(o),
-		Route53:             route53.New(o),
+		IAM:                 g.IAM,
+		Route53:             g.Route53,
 		ELB:                 elbv2.New(o),
 		SQS:                 sqs.New(o),
 		ElastiCache:         elasticache.New(o),
@@ -310,20 +376,36 @@ func New(opts ...config.Option) *Provider {
 		TimestreamWrite:     timestreamwrite.New(o),
 		HealthLake:          healthlake.New(o),
 		AppRunner:           apprunner.New(o),
-		GlobalAccelerator:   globalaccelerator.New(o),
+		GlobalAccelerator:   g.GlobalAccelerator,
 		Transfer:            transfer.New(o),
 		Cognito:             cognito.New(o),
 		Config:              configservice.New(o),
 		GuardDuty:           guardduty.New(o),
 		APIGateway:          apigateway.New(o),
 		APIGatewayV2:        apigatewayv2.New(o),
-		CloudFront:          cloudfront.New(o),
+		CloudFront:          g.CloudFront,
 		AccountID:           o.AccountID,
 		Region:              o.Region,
 		EnforceAuth:         o.EnforceAuth,
 		Clock:               o.Clock,
 		engineClosers:       o.EngineClosers(),
 	}
+}
+
+// newProvider builds a provider, using the supplied shared global services when
+// non-nil (multi-region) or a fresh bundle when nil (standalone). The global
+// struct fields are assigned BEFORE the cross-service Set* wiring runs, so every
+// regional→global wire (e.g. EC2→IAM) points at the shared instance.
+func newProvider(o *config.Options, shared *GlobalServices) *Provider {
+	g := shared
+	if g == nil {
+		g = newGlobalServices(o)
+	}
+
+	p := newProviderMocks(o, g)
+	// S3 is regional but shares the global bucket-name namespace, so a name taken
+	// in any region blocks a create in another (BucketAlreadyExists).
+	p.S3.SetNameReservation(g.S3Names)
 	p.EC2.SetMonitoring(p.CloudWatch)
 	p.S3.SetMonitoring(p.CloudWatch)
 	p.DynamoDB.SetMonitoring(p.CloudWatch)
@@ -508,4 +590,47 @@ func (p *Provider) Close() error {
 // snapshot.Snapshottable — no hand-kept registry to drift.
 func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
 	return snapshot.Discover(p)
+}
+
+// globalSnapshotKeys are the lowercased field names of the services whose state
+// is global (shared across regions). persist captures these once under the "aws"
+// key; everything else is captured per region under "aws@<region>". S3 is NOT
+// here — it is regional (only its name namespace is global, and that is rebuilt
+// from restored buckets, not snapshotted).
+//
+//nolint:gochecknoglobals // an immutable classification set, the multi-region counterpart of the field map.
+var globalSnapshotKeys = map[string]struct{}{
+	"iam":               {},
+	"route53":           {},
+	"cloudfront":        {},
+	"globalaccelerator": {},
+}
+
+// GlobalSnapshotServices returns only the shared global services' snapshotters,
+// keyed by service name. The region mux snapshots these once (under "aws")
+// rather than once per region, since every region provider shares the same
+// instances.
+func (p *Provider) GlobalSnapshotServices() map[string]snapshot.Snapshottable {
+	all := snapshot.Discover(p)
+	out := make(map[string]snapshot.Snapshottable, len(globalSnapshotKeys))
+
+	for k := range globalSnapshotKeys {
+		if s, ok := all[k]; ok {
+			out[k] = s
+		}
+	}
+
+	return out
+}
+
+// RegionalSnapshotServices returns every snapshotter EXCEPT the shared global
+// ones, so the region mux captures a region's own regional state under
+// "aws@<region>" without duplicating the global services in each region.
+func (p *Provider) RegionalSnapshotServices() map[string]snapshot.Snapshottable {
+	all := snapshot.Discover(p)
+	for k := range globalSnapshotKeys {
+		delete(all, k)
+	}
+
+	return all
 }

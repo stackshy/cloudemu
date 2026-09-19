@@ -129,6 +129,23 @@ func TestServeOutOfProcess(t *testing.T) {
 		}
 		client := cf.NewNamespacesClient()
 
+		// Real Azure rejects a resource operation scoped to a resource group that
+		// does not exist, so create the group first (as a real user would).
+		rgURL := azureEndpoint + "/subscriptions/000000000000/resourcegroups/rg-1?api-version=2021-04-01"
+		rgReq, err := http.NewRequestWithContext(ctx, http.MethodPut, rgURL, strings.NewReader(`{"location":"eastus"}`))
+		if err != nil {
+			t.Fatalf("new RG request: %v", err)
+		}
+		rgReq.Header.Set("Content-Type", "application/json")
+		rgResp, err := httpClient.Do(rgReq)
+		if err != nil {
+			t.Fatalf("create RG over HTTPS: %v", err)
+		}
+		_ = rgResp.Body.Close()
+		if rgResp.StatusCode != http.StatusOK && rgResp.StatusCode != http.StatusCreated {
+			t.Fatalf("create RG rg-1 = %d, want 200/201", rgResp.StatusCode)
+		}
+
 		poller, err := client.BeginCreateOrUpdate(ctx, "rg-1", "ns-demo", armservicebus.SBNamespace{
 			Location: to.Ptr("eastus"),
 		}, nil)

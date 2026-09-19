@@ -1,6 +1,7 @@
 package resourcegraph
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 
@@ -21,6 +22,12 @@ import (
 type ResourcesHandler struct {
 	engine         *resourcediscovery.Engine
 	subscriptionID string
+	// rgExists, when set, reports whether a resource group exists. It gates the
+	// resource-group-scoped listing so a nonexistent group yields the real
+	// 404 ResourceGroupNotFound rather than an empty 200. The central RG gate
+	// (server/azure/rggate.go) cannot cover this path: it has no /providers/
+	// segment, so ParsePath returns Provider == "" and the gate exempts it.
+	rgExists func(sub, rg string) bool
 }
 
 // NewResources returns a generic-resources handler backed by engine.
@@ -34,27 +41,35 @@ func NewResources(engine *resourcediscovery.Engine, subscriptionID string) *Reso
 	return &ResourcesHandler{engine: engine, subscriptionID: subscriptionID}
 }
 
-// resourcesRoute reports the resource group scope for a generic-resources path,
-// or ok=false when the path is not a generic-resources listing. An empty group
-// means the subscription-wide listing.
-func resourcesRoute(urlPath string) (group string, ok bool) {
+// SetResourceGroupChecker installs a nil-safe resource-group existence check.
+// When set, the resource-group-scoped listing returns 404 ResourceGroupNotFound
+// for a group that does not exist, matching real Azure. A nil checker (the
+// default) skips the check, so handlers built without it keep working.
+func (h *ResourcesHandler) SetResourceGroupChecker(fn func(sub, rg string) bool) {
+	h.rgExists = fn
+}
+
+// resourcesRoute reports the subscription and resource group scope for a
+// generic-resources path, or ok=false when the path is not a generic-resources
+// listing. An empty group means the subscription-wide listing.
+func resourcesRoute(urlPath string) (sub, group string, ok bool) {
 	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
 	if len(parts) < 3 || !strings.EqualFold(parts[0], "subscriptions") {
-		return "", false
+		return "", "", false
 	}
 
 	// /subscriptions/{sub}/resources
 	if len(parts) == 3 && strings.EqualFold(parts[2], "resources") {
-		return "", true
+		return parts[1], "", true
 	}
 
 	// /subscriptions/{sub}/resourceGroups/{rg}/resources
 	if len(parts) == 5 && strings.EqualFold(parts[2], "resourcegroups") &&
 		strings.EqualFold(parts[4], "resources") {
-		return parts[3], true
+		return parts[1], parts[3], true
 	}
 
-	return "", false
+	return "", "", false
 }
 
 // Matches claims a GET of the generic-resources listing at either scope.
@@ -63,15 +78,25 @@ func (*ResourcesHandler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	_, ok := resourcesRoute(r.URL.Path)
+	_, _, ok := resourcesRoute(r.URL.Path)
 
 	return ok
 }
 
 func (h *ResourcesHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	group, ok := resourcesRoute(r.URL.Path)
+	sub, group, ok := resourcesRoute(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusNotFound, "NotFound", "unknown resources path: "+r.URL.Path)
+		return
+	}
+
+	// Real Azure rejects an RG-scoped listing against a nonexistent group with
+	// 404 ResourceGroupNotFound. The subscription-wide listing (group == "") has
+	// no group to check and is never gated.
+	if group != "" && h.rgExists != nil && !h.rgExists(sub, group) {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceGroupNotFound",
+			fmt.Sprintf("Resource group '%s' could not be found.", group))
+
 		return
 	}
 
