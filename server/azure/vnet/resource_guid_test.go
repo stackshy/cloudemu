@@ -26,6 +26,8 @@ func TestSDKVNetResourceGUID(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	ctx := context.Background()
 	opts := clientOpts(ts)
 
@@ -107,6 +109,8 @@ func TestSDKNSGResourceGUID(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	ctx := context.Background()
 	opts := clientOpts(ts)
 
@@ -159,6 +163,8 @@ func TestSDKPublicIPResourceGUID(t *testing.T) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	ctx := context.Background()
 	opts := clientOpts(ts)

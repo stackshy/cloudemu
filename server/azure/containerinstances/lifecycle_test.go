@@ -16,6 +16,7 @@ func TestContainerGroupUpdateReturns200(t *testing.T) {
 	cloud := cloudemu.NewAzure()
 	srv := httptest.NewServer(azureserver.New(azureserver.DriversFrom(cloud)))
 	t.Cleanup(srv.Close)
+	ensureRG(t, srv.URL, subID, rgName)
 
 	// First PUT creates → 201.
 	doReq(t, srv.URL, http.MethodPut, groupURL("cg2")+apiVer, strings.NewReader(createBody), http.StatusCreated)
@@ -27,6 +28,7 @@ func TestContainerGroupLifecycleVerbs(t *testing.T) {
 	cloud := cloudemu.NewAzure()
 	srv := httptest.NewServer(azureserver.New(azureserver.DriversFrom(cloud)))
 	t.Cleanup(srv.Close)
+	ensureRG(t, srv.URL, subID, rgName)
 
 	doReq(t, srv.URL, http.MethodPut, groupURL("cg1")+apiVer, strings.NewReader(createBody), http.StatusCreated)
 
@@ -58,6 +60,7 @@ func TestContainerExecReturnsSession(t *testing.T) {
 	cloud := cloudemu.NewAzure(config.WithContainerEngine(eng))
 	srv := httptest.NewServer(azureserver.New(azureserver.DriversFrom(cloud)))
 	t.Cleanup(srv.Close)
+	ensureRG(t, srv.URL, subID, rgName)
 
 	doReq(t, srv.URL, http.MethodPut, groupURL("cg1")+apiVer, strings.NewReader(createBody), http.StatusCreated)
 
@@ -90,6 +93,7 @@ func TestPublicIPAddressAssigned(t *testing.T) {
 	cloud := cloudemu.NewAzure()
 	srv := httptest.NewServer(azureserver.New(azureserver.DriversFrom(cloud)))
 	t.Cleanup(srv.Close)
+	ensureRG(t, srv.URL, subID, rgName)
 
 	body := `{
       "location": "westus2",

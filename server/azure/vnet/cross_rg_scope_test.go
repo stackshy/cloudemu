@@ -41,6 +41,9 @@ func TestVNetGetIsResourceGroupScoped(t *testing.T) {
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Network: cloudP.VNet}))
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rgA")
+	ensureRG(t, ts, "sub-1", "rgB")
+
 	ctx := context.Background()
 
 	client, err := armnetwork.NewVirtualNetworksClient("sub-1", fakeCred{}, clientOpts(ts))
@@ -129,6 +132,9 @@ func TestNSGGetIsResourceGroupScoped(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Network: cloudP.VNet}))
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rgA")
+	ensureRG(t, ts, "sub-1", "rgB")
 
 	ctx := context.Background()
 

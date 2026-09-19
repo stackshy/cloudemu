@@ -64,6 +64,8 @@ func TestSDKSnapshotRoundTrip(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	ctx := context.Background()
 
 	// Create a source disk via the disks SDK client first — snapshots need a

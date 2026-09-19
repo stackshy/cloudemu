@@ -844,11 +844,15 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, rp azurearm.Res
 // an exact match. Resource-group comparison is case-insensitive, matching ARM.
 // The subscription is unused (the emulator is single-estate).
 //
-// Each VM's attached managed disks cascade per their deleteOption inside
-// TerminateInstances — the same release the single-VM delete() path relies on —
-// so a cascade-deleted VM deletes its "Delete" disks and releases its "Detach"
-// disks (returned to Unattached) rather than leaving them dangling at the
-// now-deleted VM.
+// Real Azure's resource-group delete removes every resource the group contains,
+// including managed disks, regardless of a VM's attachment-scoped deleteOption
+// (which governs VM deletion, not RG deletion). So purgeInstances terminates the
+// VMs first (detaching their disks), then purgeDisks deletes every managed disk
+// recorded under this group — attached-then-detached, "Detach"-option, and
+// standalone disks alike. A disk that lives in a DIFFERENT resource group but was
+// attached to a VM here keeps its own group's tag, so purgeDisks leaves it
+// behind: it survives, detached (Unattached), exactly as real Azure leaves a
+// cross-group disk when its VM's group is deleted.
 func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
 	var firstErr error
 
@@ -858,6 +862,38 @@ func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup strin
 
 	if serr := h.purgeScaleSets(ctx, resourceGroup); serr != nil && firstErr == nil {
 		firstErr = serr
+	}
+
+	if derr := h.purgeDisks(ctx, resourceGroup); derr != nil && firstErr == nil {
+		firstErr = derr
+	}
+
+	return firstErr
+}
+
+// purgeDisks deletes every managed disk recorded under the given resource group,
+// the disk half of the RG cascade. It runs after purgeInstances, so any disk
+// still attached has been released (Unattached) and DeleteVolume accepts it; a
+// "Delete"-option disk already removed by TerminateInstances no longer appears in
+// the volume list, so it is not double-deleted. Membership is the disk's recorded
+// group tag (diskRGTag), matching the disks handler, so a cross-group disk is left
+// untouched. Resource-group comparison is case-insensitive, matching ARM.
+func (h *Handler) purgeDisks(ctx context.Context, resourceGroup string) error {
+	vols, err := h.compute.DescribeVolumes(ctx, nil)
+	if err != nil {
+		return err
+	}
+
+	var firstErr error
+
+	for i := range vols {
+		if !strings.EqualFold(tagOr(vols[i].Tags, diskRGTag, ""), resourceGroup) {
+			continue
+		}
+
+		if derr := h.compute.DeleteVolume(ctx, vols[i].ID); derr != nil && firstErr == nil {
+			firstErr = derr
+		}
 	}
 
 	return firstErr

@@ -22,6 +22,8 @@ func newFunctionsTestServer(t *testing.T) (*armappservice.WebAppsClient, context
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Functions: cloudP.Functions}))
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts.Client(), ts.URL, subID, rgName)
+
 	return newWebAppsClient(t, ts), context.Background()
 }
 

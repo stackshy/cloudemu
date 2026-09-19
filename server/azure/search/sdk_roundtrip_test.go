@@ -66,7 +66,31 @@ func newServer(t *testing.T) string {
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts.Client(), ts.URL, sub, rg)
+
 	return ts.URL
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, client *http.Client, baseURL, sub, rg string) {
+	t.Helper()
+
+	url := baseURL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		bytes.NewReader([]byte(`{"location":"eastus"}`)))
+	require.NoError(t, err)
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	require.Truef(t, resp.StatusCode == http.StatusOK || resp.StatusCode == http.StatusCreated,
+		"ensureRG %s: unexpected status %d", url, resp.StatusCode)
 }
 
 func do(t *testing.T, method, url string, body any) map[string]any {
@@ -209,6 +233,8 @@ func newSearchClientFactory(t *testing.T) *armsearch.ClientFactory {
 	srv := azureserver.New(azureserver.Drivers{SearchControl: cloudP.Search})
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts.Client(), ts.URL, sub, rg)
 
 	cf, err := armsearch.NewClientFactory(sub, fakeCred{}, armClientOptions(ts))
 	require.NoError(t, err)

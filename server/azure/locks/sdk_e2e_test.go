@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func armClientOptions(ts *httptest.Server) *arm.ClientOptions {
 	}
 }
 
-func newClient(t *testing.T) *armlocks.ManagementLocksClient {
+func newClient(t *testing.T) (*armlocks.ManagementLocksClient, *httptest.Server) {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
@@ -60,17 +61,48 @@ func newClient(t *testing.T) *armlocks.ManagementLocksClient {
 		t.Fatalf("new client: %v", err)
 	}
 
-	return client
+	return client, ts
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+// Locks scoped at the resource-group level are no exception: this is correct
+// real-Azure behavior, not a gate to route around.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	url := ts.URL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
 }
 
 // TestSDKResourceGroupLockRoundTrip drives the full create→get→list→delete
 // cycle at resource-group scope through the real armlocks client and asserts
 // level and notes survive each hop.
 func TestSDKResourceGroupLockRoundTrip(t *testing.T) {
-	client := newClient(t)
+	client, ts := newClient(t)
 	ctx := context.Background()
 
 	const rg, lockName, notes = "rg-1", "no-delete", "protect prod"
+
+	ensureRG(t, ts, testSub, rg)
 
 	created, err := client.CreateOrUpdateAtResourceGroupLevel(ctx, rg, lockName, armlocks.ManagementLockObject{
 		Properties: &armlocks.ManagementLockProperties{
@@ -119,7 +151,7 @@ func TestSDKResourceGroupLockRoundTrip(t *testing.T) {
 // preserving the ReadOnly level, and that CreateOrUpdate on an existing lock
 // updates it in place rather than duplicating it.
 func TestSDKSubscriptionLockRoundTrip(t *testing.T) {
-	client := newClient(t)
+	client, _ := newClient(t)
 	ctx := context.Background()
 
 	const lockName = "sub-readonly"
@@ -178,10 +210,12 @@ func TestSDKSubscriptionLockRoundTrip(t *testing.T) {
 // (registered) VM handler. If the locks handler is not dispatched first this
 // returns 501 instead of round-tripping the lock.
 func TestSDKResourceLevelLockOnExistingHandlerPath(t *testing.T) {
-	client := newClient(t)
+	client, ts := newClient(t)
 	ctx := context.Background()
 
 	const rg, vm, lockName = "rg-1", "vm-1", "vm-lock"
+
+	ensureRG(t, ts, testSub, rg)
 
 	created, err := client.CreateOrUpdateAtResourceLevel(ctx, rg,
 		"Microsoft.Compute", "", "virtualMachines", vm, lockName,
@@ -215,10 +249,12 @@ func TestSDKResourceLevelLockOnExistingHandlerPath(t *testing.T) {
 // ByScope, an empty parentResourcePath segment on AtResourceLevel, differing
 // resourceGroups casing) that must normalize to one store key.
 func TestSDKResourceLevelAndByScopeAddressSameLock(t *testing.T) {
-	client := newClient(t)
+	client, ts := newClient(t)
 	ctx := context.Background()
 
 	const rg, vm = "rg-1", "vm-1"
+
+	ensureRG(t, ts, testSub, rg)
 
 	// Scope string as a ByScope caller would supply it: single slashes,
 	// canonical resourceGroups casing.

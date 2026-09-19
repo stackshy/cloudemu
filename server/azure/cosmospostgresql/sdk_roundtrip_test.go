@@ -38,12 +38,40 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 	return azcore.AccessToken{Token: "fake", ExpiresOn: time.Now().Add(time.Hour)}, nil
 }
 
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	url := ts.URL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
+}
+
 func newFactory(t *testing.T) *armcosmosforpostgresql.ClientFactory {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
 	ts := httptest.NewTLSServer(azureserver.NewFromProvider(cloudP))
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, subID, "rg1")
 
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
@@ -622,6 +650,7 @@ func TestMalformedBodyRejected(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	ts := httptest.NewServer(azureserver.NewFromProvider(cloudP))
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, subID, "rg1")
 
 	url := ts.URL + "/subscriptions/" + subID +
 		"/resourceGroups/rg1/providers/Microsoft.DBforPostgreSQL/serverGroupsv2/pg1?api-version=2023-03-02-preview"
@@ -648,6 +677,7 @@ func TestServerErrorPaths(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	ts := httptest.NewServer(azureserver.NewFromProvider(cloudP))
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, subID, "rg1")
 
 	base := ts.URL + "/subscriptions/" + subID + "/resourceGroups/rg1/providers/Microsoft.DBforPostgreSQL"
 	const ver = "?api-version=2023-03-02-preview"

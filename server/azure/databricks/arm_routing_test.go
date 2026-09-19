@@ -28,6 +28,8 @@ func TestARMRoutingCaseInsensitive(t *testing.T) {
 		routeAC  = "ac1"
 	)
 
+	ensureRG(t, ts, routeSub, routeRG)
+
 	if _, err := cloudP.Databricks.CreateOrUpdateAccessConnector(context.Background(), dbxdriver.AccessConnectorConfig{
 		Name:          routeAC,
 		ResourceGroup: routeRG,

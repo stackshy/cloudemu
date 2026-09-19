@@ -509,6 +509,23 @@ func (h *Handler) store(sub, name string, group map[string]any) (existed bool) {
 	return existed
 }
 
+// Exists reports whether a resource group of the given name exists in the
+// subscription. ARM resolves resource-group names case-insensitively, so the
+// lookup lowercases the name to match how store keys them.
+func (h *Handler) Exists(sub, name string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	groups, ok := h.groups[sub]
+	if !ok {
+		return false
+	}
+
+	_, ok = groups[strings.ToLower(name)]
+
+	return ok
+}
+
 func azureGroupID(sub, name string) string {
 	return "/subscriptions/" + sub + "/resourceGroups/" + name
 }

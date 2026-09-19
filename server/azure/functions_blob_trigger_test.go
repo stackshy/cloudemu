@@ -58,6 +58,7 @@ func newBlobClient(t *testing.T, ts *httptest.Server) *azblob.Client {
 
 func TestBlobStorageTriggerInvokesFunction(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-bt", "rg-bt")
 	ctx := context.Background()
 
 	const (
@@ -104,6 +105,7 @@ func TestBlobStorageTriggerInvokesFunction(t *testing.T) {
 // succeeds).
 func TestBlobStorageTriggerUnboundContainerDoesNotFire(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-bt", "rg-bt")
 	ctx := context.Background()
 
 	const app = "bt-app2"
@@ -138,6 +140,7 @@ func TestBlobStorageTriggerUnboundContainerDoesNotFire(t *testing.T) {
 // create, then not again when that same blob is deleted.
 func TestBlobStorageTriggerDeleteDoesNotFire(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-bt", "rg-bt")
 	ctx := context.Background()
 
 	const (
@@ -182,6 +185,7 @@ func TestBlobStorageTriggerDeleteDoesNotFire(t *testing.T) {
 // semantics.
 func TestBlobStorageTriggerOverwriteFires(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-bt", "rg-bt")
 	ctx := context.Background()
 
 	const (
@@ -222,6 +226,7 @@ func TestBlobStorageTriggerOverwriteFires(t *testing.T) {
 // container.
 func TestBlobStorageTriggerDisabledFunctionSkipped(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-bt", "rg-bt")
 	ctx := context.Background()
 
 	const (
@@ -267,6 +272,7 @@ func TestBlobStorageTriggerDisabledFunctionSkipped(t *testing.T) {
 // is the channel the guard rides on.
 func TestBlobStorageTriggerRecursionGuard(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-bt", "rg-bt")
 	ctx := context.Background()
 
 	const (
@@ -307,6 +313,10 @@ func TestBlobStorageTriggerRecursionGuard(t *testing.T) {
 // cross-fire between them.
 func TestBlobAndQueueStorageTriggersCoexist(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-bt", "rg-bt")
+	// createQueueStorageTriggeredApp provisions its app under the Service Bus
+	// trigger test's resource group (sub-sbt/rg-sbt), so ensure that one too.
+	ensureRG(t, ts, "sub-sbt", "rg-sbt")
 	ctx := context.Background()
 
 	const (

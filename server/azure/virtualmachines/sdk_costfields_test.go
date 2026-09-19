@@ -45,6 +45,8 @@ func TestSDKVMCostFields(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	client, err := armcompute.NewVirtualMachinesClient("sub-1", fakeCred{}, armOptions(t, ts))
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +111,8 @@ func TestSDKVMSSCostFields(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	client, err := armcompute.NewVirtualMachineScaleSetsClient("sub-1", fakeCred{}, armOptions(t, ts))
 	if err != nil {
 		t.Fatal(err)
@@ -171,6 +175,8 @@ func TestSDKVMSSScaleToZero(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	client, err := armcompute.NewVirtualMachineScaleSetsClient("sub-1", fakeCred{}, armOptions(t, ts))
 	if err != nil {
 		t.Fatal(err)
@@ -213,6 +219,8 @@ func TestSDKVMSSCapacityDefaultsWhenOmitted(t *testing.T) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	client, err := armcompute.NewVirtualMachineScaleSetsClient("sub-1", fakeCred{}, armOptions(t, ts))
 	if err != nil {

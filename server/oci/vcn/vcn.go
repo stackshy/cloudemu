@@ -103,6 +103,10 @@ func (h *Handler) createVCN(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	if req.CIDRBlock != "" && len(req.CIDRBlocks) > 0 {
 		ocirest.WriteError(w, r, http.StatusBadRequest, codeInvalidParameter,
 			"cidrBlock and cidrBlocks are mutually exclusive")

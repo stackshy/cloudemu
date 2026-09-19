@@ -28,6 +28,8 @@ func TestFunctionRePUTPreservesKeysAnd200(t *testing.T) {
 	base := ts.URL + "/subscriptions/" + subID + "/resourceGroups/" + rgName +
 		"/providers/Microsoft.Web/sites/reput-app"
 
+	ensureRG(t, hc, ts.URL, subID, rgName)
+
 	// The site must exist before a function can be deployed to it.
 	if st := doJSON(t, ctx, hc, http.MethodPut, base, `{"location":"eastus","properties":{"siteConfig":{}}}`); st != http.StatusOK {
 		t.Fatalf("site create status = %d, want 200", st)

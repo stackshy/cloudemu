@@ -28,6 +28,8 @@ func TestSDKNetworkInterfaceRoundTrip(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	ctx := context.Background()
 	opts := clientOpts(ts)
 	poll := &runtime.PollUntilDoneOptions{Frequency: time.Millisecond}
@@ -187,6 +189,8 @@ func TestSDKNetworkInterfaceCrossVnetSubnetScoping(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	ctx := context.Background()
 	opts := clientOpts(ts)
 	poll := &runtime.PollUntilDoneOptions{Frequency: time.Millisecond}
@@ -274,6 +278,8 @@ func TestSDKNetworkInterfaceUnknownSubnet(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	ctx := context.Background()
 	opts := clientOpts(ts)
 
@@ -311,6 +317,8 @@ func TestSDKNetworkInterfacePublicIPDoubleAttachRejected(t *testing.T) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	ctx := context.Background()
 	opts := clientOpts(ts)
@@ -398,6 +406,8 @@ func TestSDKNetworkInterfaceSoleIPConfigForcedPrimary(t *testing.T) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	ctx := context.Background()
 	opts := clientOpts(ts)

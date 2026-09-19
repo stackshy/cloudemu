@@ -26,7 +26,23 @@ func newVaultServer(t *testing.T) *httptest.Server {
 	ts := httptest.NewServer(azureserver.NewFromProvider(cloudemu.NewAzure()))
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, vaultSub, vaultRG)
+
 	return ts
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	url := ts.URL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	status, _ := doJSON(t, http.MethodPut, url, map[string]any{"location": "eastus"})
+	if status != http.StatusOK && status != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, status)
+	}
 }
 
 func vaultURL(base, sub, rg, name string) string {

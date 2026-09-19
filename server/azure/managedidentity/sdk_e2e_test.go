@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -46,7 +47,7 @@ func armClientOptions(ts *httptest.Server) *arm.ClientOptions {
 	}
 }
 
-func newClient(t *testing.T) *armmsi.UserAssignedIdentitiesClient {
+func newClient(t *testing.T) (*armmsi.UserAssignedIdentitiesClient, *httptest.Server) {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
@@ -60,7 +61,34 @@ func newClient(t *testing.T) *armmsi.UserAssignedIdentitiesClient {
 		t.Fatalf("new client: %v", err)
 	}
 
-	return client
+	return client, ts
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	url := ts.URL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
 }
 
 // TestSDKUserAssignedIdentityStableIdentifiers is the load-bearing regression:
@@ -69,10 +97,12 @@ func newClient(t *testing.T) *armmsi.UserAssignedIdentitiesClient {
 // grant the identity RBAC role assignments, so regenerating it on a read would
 // silently break those assignments.
 func TestSDKUserAssignedIdentityStableIdentifiers(t *testing.T) {
-	client := newClient(t)
+	client, ts := newClient(t)
 	ctx := context.Background()
 
 	const rg, name = "rg-1", "id-1"
+
+	ensureRG(t, ts, testSub, rg)
 
 	created, err := client.CreateOrUpdate(ctx, rg, name, armmsi.Identity{
 		Location: to.Ptr("eastus"),
@@ -129,10 +159,12 @@ func TestSDKUserAssignedIdentityStableIdentifiers(t *testing.T) {
 // TestSDKUserAssignedIdentityUpdatePreservesIDs verifies an update changes
 // tags/location but keeps the minted ids.
 func TestSDKUserAssignedIdentityUpdatePreservesIDs(t *testing.T) {
-	client := newClient(t)
+	client, ts := newClient(t)
 	ctx := context.Background()
 
 	const rg, name = "rg-1", "id-1"
+
+	ensureRG(t, ts, testSub, rg)
 
 	created, err := client.CreateOrUpdate(ctx, rg, name, armmsi.Identity{Location: to.Ptr("eastus")}, nil)
 	if err != nil {
@@ -161,8 +193,11 @@ func TestSDKUserAssignedIdentityUpdatePreservesIDs(t *testing.T) {
 // TestSDKUserAssignedIdentityListing verifies ListByResourceGroup scopes to one
 // group while ListBySubscription surfaces every identity.
 func TestSDKUserAssignedIdentityListing(t *testing.T) {
-	client := newClient(t)
+	client, ts := newClient(t)
 	ctx := context.Background()
+
+	ensureRG(t, ts, testSub, "rg-a")
+	ensureRG(t, ts, testSub, "rg-b")
 
 	if _, err := client.CreateOrUpdate(ctx, "rg-a", "id-a", armmsi.Identity{Location: to.Ptr("eastus")}, nil); err != nil {
 		t.Fatalf("create a: %v", err)
@@ -212,10 +247,12 @@ func TestSDKUserAssignedIdentityListing(t *testing.T) {
 // TestSDKUserAssignedIdentityDelete verifies delete removes the identity and a
 // subsequent Get is a 404.
 func TestSDKUserAssignedIdentityDelete(t *testing.T) {
-	client := newClient(t)
+	client, ts := newClient(t)
 	ctx := context.Background()
 
 	const rg, name = "rg-1", "id-1"
+
+	ensureRG(t, ts, testSub, rg)
 
 	if _, err := client.CreateOrUpdate(ctx, rg, name, armmsi.Identity{Location: to.Ptr("eastus")}, nil); err != nil {
 		t.Fatalf("create: %v", err)

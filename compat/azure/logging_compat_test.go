@@ -31,6 +31,7 @@ const (
 func TestLogAnalyticsCompat(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	sess := compat.BootAzureTLS(t, azureserver.Drivers{LogAnalytics: cloudP.LogAnalytics})
+	sess.EnsureResourceGroup(logsSub, logsRG)
 
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",

@@ -3,7 +3,9 @@ package eventgrid_test
 import (
 	"context"
 	"errors"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -29,7 +31,34 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 	return azcore.AccessToken{Token: "fake", ExpiresOn: time.Now().Add(time.Hour)}, nil
 }
 
-func newTopicsClient(t *testing.T) *armeventgrid.TopicsClient {
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	url := ts.URL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
+}
+
+func newTopicsClient(t *testing.T) (*armeventgrid.TopicsClient, *httptest.Server) {
 	t.Helper()
 
 	cloudP := cloudemu.NewAzure()
@@ -37,6 +66,8 @@ func newTopicsClient(t *testing.T) *armeventgrid.TopicsClient {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, testSub, testRG)
 
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
@@ -61,11 +92,11 @@ func newTopicsClient(t *testing.T) *armeventgrid.TopicsClient {
 		t.Fatalf("armeventgrid.NewClientFactory: %v", err)
 	}
 
-	return cf.NewTopicsClient()
+	return cf.NewTopicsClient(), ts
 }
 
 func TestSDKAzureEventGridTopicLifecycle(t *testing.T) {
-	topics := newTopicsClient(t)
+	topics, _ := newTopicsClient(t)
 	ctx := context.Background()
 
 	createPoller, err := topics.BeginCreateOrUpdate(ctx, testRG, "orders-topic", armeventgrid.Topic{
@@ -130,7 +161,7 @@ func TestSDKAzureEventGridTopicLifecycle(t *testing.T) {
 }
 
 func TestSDKAzureEventGridErrors(t *testing.T) {
-	topics := newTopicsClient(t)
+	topics, _ := newTopicsClient(t)
 	ctx := context.Background()
 
 	_, err := topics.Get(ctx, testRG, "missing", nil)

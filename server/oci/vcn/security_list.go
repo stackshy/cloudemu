@@ -31,6 +31,10 @@ func (h *Handler) createSecurityList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	info, err := h.net.CreateNetworkACL(r.Context(), req.VCNID,
 		withInternal(req.FreeformTags, tagDisplayName, req.DisplayName))
 	if err != nil {

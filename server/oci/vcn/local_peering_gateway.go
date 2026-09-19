@@ -74,6 +74,10 @@ func (h *Handler) createLPG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	info, err := h.extras.CreateLocalPeeringGateway(r.Context(), req.VCNID,
 		withInternal(req.FreeformTags, tagDisplayName, req.DisplayName, tagRouteTable, req.RouteTableID))
 	if err != nil {

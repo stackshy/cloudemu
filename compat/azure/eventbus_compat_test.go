@@ -32,6 +32,7 @@ func TestCompatAzureEventBusEventGrid(t *testing.T) {
 
 	cloudP := cloudemu.NewAzure()
 	sess := compat.BootAzureTLS(t, azureserver.Drivers{EventGrid: cloudP.EventGrid})
+	sess.EnsureResourceGroup(testSub, testRG)
 
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",

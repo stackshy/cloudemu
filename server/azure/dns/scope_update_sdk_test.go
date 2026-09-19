@@ -12,8 +12,10 @@ import (
 // TestSDKScopedListing asserts through the real SDK that zones created in one
 // resource group do not appear in another group's ListByResourceGroup pager.
 func TestSDKScopedListing(t *testing.T) {
-	zones, _ := newDNSClients(t)
+	zones, _, ts := newDNSClientsAndServer(t)
 	ctx := context.Background()
+	ensureRG(t, ts, testSub, "rg-team-a")
+	ensureRG(t, ts, testSub, "rg-team-b")
 
 	create := func(rg, name string) {
 		if _, err := zones.CreateOrUpdate(ctx, rg, name, armdns.Zone{Location: to.Ptr("global")}, nil); err != nil {
@@ -87,8 +89,10 @@ func TestSDKUpsertAppliesTags(t *testing.T) {
 // zone rather than hijacking the existing one — the same name legitimately
 // exists in more than one group.
 func TestSDKSameNameZonesStayIndependent(t *testing.T) {
-	zones, _ := newDNSClients(t)
+	zones, _, ts := newDNSClientsAndServer(t)
 	ctx := context.Background()
+	ensureRG(t, ts, testSub, "rg-shared-a")
+	ensureRG(t, ts, testSub, "rg-shared-b")
 
 	mk := func(rg, env string) {
 		if _, err := zones.CreateOrUpdate(ctx, rg, "shared.com", armdns.Zone{
@@ -178,8 +182,10 @@ func TestSDKTXTRecordChunking(t *testing.T) {
 // exists in two resource groups, a Get resolves to the zone in the request's
 // group — not an arbitrary same-named zone in another group.
 func TestSDKGetResolvesWithinRequestScope(t *testing.T) {
-	zones, _ := newDNSClients(t)
+	zones, _, ts := newDNSClientsAndServer(t)
 	ctx := context.Background()
+	ensureRG(t, ts, testSub, "rg-get-a")
+	ensureRG(t, ts, testSub, "rg-get-b")
 
 	mk := func(rg, env string) {
 		if _, err := zones.CreateOrUpdate(ctx, rg, "dup.com", armdns.Zone{
@@ -213,8 +219,9 @@ func TestSDKGetResolvesWithinRequestScope(t *testing.T) {
 // TestSDKZoneIDMatchesRequestScope asserts through the real SDK that the
 // returned ARM id carries the request's subscription and resource group.
 func TestSDKZoneIDMatchesRequestScope(t *testing.T) {
-	zones, _ := newDNSClients(t)
+	zones, _, ts := newDNSClientsAndServer(t)
 	ctx := context.Background()
+	ensureRG(t, ts, testSub, "rg-id-check")
 
 	created, err := zones.CreateOrUpdate(ctx, "rg-id-check", "id.com", armdns.Zone{
 		Location: to.Ptr("global"),

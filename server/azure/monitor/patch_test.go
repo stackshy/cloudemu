@@ -175,6 +175,8 @@ func newInsightsServer(t *testing.T) *insightsServer {
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{Monitor: cloudP.Monitor}))
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	return &insightsServer{ts: ts}
 }
 

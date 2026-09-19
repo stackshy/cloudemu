@@ -64,6 +64,7 @@ func newCacheClient(t *testing.T, sess *compat.AzureSession) *armredis.Client {
 func TestCompatAzureCache(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	sess := compat.BootAzureTLS(t, azureserver.Drivers{Cache: cloudP.Cache})
+	sess.EnsureResourceGroup(cacheSub, cacheRG)
 	client := newCacheClient(t, sess)
 	ctx := context.Background()
 

@@ -33,6 +33,8 @@ func TestQueueScopedAuthorizationRuleDoesNotCorruptQueue(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, subID, rgName)
+
 	nsClient := newNamespacesClient(t, ts)
 	createNS(t, nsClient, rgName, nsName, nil)
 

@@ -30,6 +30,7 @@ func newACRClient(t *testing.T) (*azacr.Client, crdriver.ContainerRegistry) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	client, err := azacr.NewClient(ts.URL, fakeCred{}, &azacr.ClientOptions{
 		ClientOptions: azcore.ClientOptions{

@@ -45,6 +45,10 @@ func (h *Handler) createNSG(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	info, err := h.net.CreateSecurityGroup(r.Context(), netdriver.SecurityGroupConfig{
 		Name:  req.DisplayName,
 		VPCID: req.VCNID,

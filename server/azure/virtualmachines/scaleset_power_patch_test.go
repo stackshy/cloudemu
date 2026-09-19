@@ -25,6 +25,8 @@ func TestSDKVMSSWholeSetPower(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	ssClient, err := armcompute.NewVirtualMachineScaleSetsClient("sub-1", fakeCred{}, sdkClientOptions(ts))
 	if err != nil {
 		t.Fatal(err)
@@ -109,6 +111,8 @@ func TestSDKVMSSWholeSetPowerSubset(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	ssClient, err := armcompute.NewVirtualMachineScaleSetsClient("sub-1", fakeCred{}, sdkClientOptions(ts))
 	if err != nil {
 		t.Fatal(err)
@@ -161,6 +165,8 @@ func TestSDKVMSSUpdate(t *testing.T) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	ssClient, err := armcompute.NewVirtualMachineScaleSetsClient("sub-1", fakeCred{}, sdkClientOptions(ts))
 	if err != nil {
@@ -229,6 +235,8 @@ func TestSDKVMSSPowerAndPatchMissing(t *testing.T) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	ssClient, err := armcompute.NewVirtualMachineScaleSetsClient("sub-1", fakeCred{}, sdkClientOptions(ts))
 	if err != nil {

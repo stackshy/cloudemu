@@ -28,6 +28,8 @@ func newImagesClient(t *testing.T, ctx context.Context) *armcompute.ImagesClient
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	opts := clientOpts(ts)
 
 	vmClient, err := armcompute.NewVirtualMachinesClient("sub-1", fakeCred{}, opts)

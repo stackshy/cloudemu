@@ -69,6 +69,8 @@ func newMongoEnv(t *testing.T) mongoEnv {
 func (e mongoEnv) createAccount(t *testing.T, rg, name, region string) {
 	t.Helper()
 
+	ensureRG(t, e.ts, "sub-1", rg)
+
 	poller, err := e.acct.BeginCreateOrUpdate(context.Background(), rg, name, armcosmos.DatabaseAccountCreateUpdateParameters{
 		Location: to.Ptr(region),
 		Kind:     to.Ptr(armcosmos.DatabaseAccountKindMongoDB),

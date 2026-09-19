@@ -36,13 +36,19 @@ func newTestServer(t *testing.T) (*httptest.Server, *cloudemuHandle) {
 	srv := httptest.NewServer(azureserver.New(azureserver.Drivers{ServiceBus: cloud.ServiceBus}))
 	t.Cleanup(srv.Close)
 
+	ensureRG(t, srv, subID, rgName)
+
 	return srv, &cloudemuHandle{provider: cloud}
 }
 
-// seedNamespace creates the parent namespace so queue/topic operations under it
-// resolve. Real Service Bus rejects child creates under a missing namespace.
+// seedNamespace creates the parent resource group and namespace so queue/topic
+// operations under it resolve. Real Service Bus rejects child creates under a
+// missing namespace, and real ARM rejects any create under a missing resource
+// group.
 func seedNamespace(t *testing.T, srv *httptest.Server) {
 	t.Helper()
+
+	ensureRG(t, srv, subID, rgName)
 
 	resp := doRequest(t, srv, http.MethodPut, nsURL()+apiVer, `{"location":"eastus"}`)
 	if resp.StatusCode != http.StatusCreated {
@@ -50,6 +56,35 @@ func seedNamespace(t *testing.T, srv *httptest.Server) {
 	}
 
 	_ = resp.Body.Close()
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+// It uses srv.Client() (rather than doRequest's http.DefaultClient) so it also
+// works against an httptest.NewTLSServer.
+func ensureRG(t *testing.T, srv *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	url := srv.URL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := srv.Client().Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
 }
 
 type cloudemuHandle struct {

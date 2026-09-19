@@ -28,6 +28,7 @@ func TestSDKDiskGrantAndRevokeAccess(t *testing.T) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	client := newDisksClient(t, ts)
 	ctx := context.Background()
