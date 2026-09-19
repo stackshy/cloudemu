@@ -997,8 +997,13 @@ func New(d Drivers) http.Handler {
 	if d.ResourceDiscovery != nil {
 		srv.Register(resourcegraph.New(d.ResourceDiscovery, d.SubscriptionID))
 		// Generic Microsoft.Resources listing (az resource list) at subscription
-		// and resource-group scope, backed by the same discovery engine.
-		srv.Register(resourcegraph.NewResources(d.ResourceDiscovery, d.SubscriptionID))
+		// and resource-group scope, backed by the same discovery engine. Gate the
+		// RG-scoped variant on group existence so a nonexistent group returns the
+		// real 404 ResourceGroupNotFound (the central RG gate cannot see this path
+		// — it has no /providers/ segment).
+		resourcesHandler := resourcegraph.NewResources(d.ResourceDiscovery, d.SubscriptionID)
+		resourcesHandler.SetResourceGroupChecker(rgHandler.Exists)
+		srv.Register(resourcesHandler)
 		// Cost Management query matches any scope ending in
 		// /providers/Microsoft.CostManagement/query — a distinct ARM provider
 		// name from every other handler, so registration order is unconstrained.
