@@ -27,7 +27,12 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 )
 
-// SchemaVersion is the on-disk snapshot format version. Bumped to 4 for the
+// SchemaVersion is the on-disk snapshot format version. Bumped to 5 for AWS
+// multi-region isolation: AWS regional state is now captured per region under
+// keys "aws@<region>" (the shared global services stay under "aws"), so a v4
+// snapshot's single "aws" provider state no longer matches this layout.
+//
+// It was bumped to 4 for the
 // shared Kubernetes data-plane (#868): a top-level "kubernetes" field now sits
 // alongside the per-provider state, so a v3 snapshot (which lacks it) can no
 // longer be read into a build that expects it. It was bumped to 3 for the
@@ -35,7 +40,7 @@ import (
 // ProviderState.Services and the bespoke per-kind arrays of the v2 layout are
 // gone. Snapshots are a dev-only convenience, so a clean break with a clear
 // error is acceptable.
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 const dirPerm = 0o755
 
@@ -113,10 +118,29 @@ func ExportAll(ctx context.Context, targets map[string]Services, opts Options) (
 // Providers in the snapshot with no matching running target are skipped, and
 // targets should be freshly rebuilt (empty) before calling.
 func RestoreAll(ctx context.Context, snap *Snapshot, targets map[string]Services) error {
+	return RestoreAllWithFactory(ctx, snap, targets, nil)
+}
+
+// RestoreAllWithFactory is RestoreAll with an escape hatch for lazily-created
+// targets: when a snapshot provider key has no matching entry in targets, ensure
+// (if non-nil) is called with that key to materialize its Services on demand —
+// this is how AWS multi-region restore creates a region provider for an
+// "aws@<region>" key that has no live provider yet. When ensure is nil, or
+// returns ok=false, the key is skipped exactly as before.
+func RestoreAllWithFactory(
+	ctx context.Context, snap *Snapshot, targets map[string]Services, ensure func(providerKey string) (Services, bool),
+) error {
 	for name := range snap.Providers {
 		svcs, ok := targets[name]
 		if !ok {
-			continue
+			if ensure == nil {
+				continue
+			}
+
+			svcs, ok = ensure(name)
+			if !ok {
+				continue
+			}
 		}
 
 		ps := snap.Providers[name]

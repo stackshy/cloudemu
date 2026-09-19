@@ -197,50 +197,148 @@ func parseWiredSetters(t *testing.T, path string) map[fieldMethod]bool {
 		t.Fatalf("%s: no top-level func New() found", path)
 	}
 
-	recv := providerReceiverName(newFn)
-	if recv == "" {
-		t.Fatalf("%s: New() has no `<var> := &Provider{...}` assignment to identify its receiver variable", path)
-	}
-
 	wired := map[fieldMethod]bool{}
 
-	// Scan New()'s body plus the bodies of the same-file helper functions New()
-	// calls (e.g. a wireXxx(p) helper extracted for length): wiring factored out
-	// of New() still counts. The acceptable base variable is New()'s provider var
-	// for New() itself, and the helper's parameter names for each helper.
-	scanBody(newFn.Body, map[string]bool{recv: true}, wired)
+	// Assembly may be factored out of New() into same-file helpers it delegates
+	// to — New() → newProvider() → newProviderMocks()/wirePostBuildServices(),
+	// each split out to stay within the function-length budget — so wiring in any
+	// of them still counts. Walk the call graph from New(), scanning every
+	// reachable same-file function with its own base provider variables (its
+	// parameters plus any local assigned `&Provider{...}` or the result of
+	// another same-file assembly helper). foundAssembly guards against a total
+	// parse/structure failure: at least one reachable function must actually build
+	// or receive a *Provider.
+	visited := map[string]bool{}
+	foundAssembly := false
 
-	ast.Inspect(newFn.Body, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok {
-			return true
+	var walk func(fn *ast.FuncDecl)
+	walk = func(fn *ast.FuncDecl) {
+		if fn == nil || fn.Body == nil || visited[fn.Name.Name] {
+			return
 		}
 
-		id, ok := call.Fun.(*ast.Ident)
-		if !ok {
-			return true
+		visited[fn.Name.Name] = true
+
+		bases, sawProvider := providerBaseVars(fn, funcs)
+		if sawProvider {
+			foundAssembly = true
 		}
 
-		helper, ok := funcs[id.Name]
-		if !ok || helper == newFn || helper.Body == nil {
-			return true
-		}
+		scanBody(fn.Body, bases, wired)
 
-		bases := map[string]bool{}
-		if helper.Type.Params != nil {
-			for _, p := range helper.Type.Params.List {
-				for _, nm := range p.Names {
-					bases[nm.Name] = true
-				}
+		ast.Inspect(fn.Body, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+
+			if id, ok := call.Fun.(*ast.Ident); ok {
+				walk(funcs[id.Name])
+			}
+
+			return true
+		})
+	}
+
+	walk(newFn)
+
+	if !foundAssembly {
+		t.Fatalf("%s: no `&Provider{...}` assembly reachable from New()", path)
+	}
+
+	return wired
+}
+
+// providerBaseVars returns the local identifiers in fn that name a *Provider
+// being assembled — its parameters plus any local assigned `&Provider{...}` or
+// the result of another same-file function (e.g. `p := newProviderMocks(o, g)`)
+// — and whether fn itself builds or takes a *Provider. scanBody uses the names
+// as the accepted receivers for `<base>.<Field>.Set<X>()` wiring calls.
+func providerBaseVars(fn *ast.FuncDecl, funcs map[string]*ast.FuncDecl) (bases map[string]bool, sawProvider bool) {
+	bases = map[string]bool{}
+
+	if fn.Type.Params != nil {
+		for _, p := range fn.Type.Params.List {
+			for _, nm := range p.Names {
+				bases[nm.Name] = true
+			}
+
+			if isProviderPtr(p.Type) {
+				sawProvider = true
+			}
+		}
+	}
+
+	ast.Inspect(fn.Body, func(n ast.Node) bool {
+		if lit, ok := n.(*ast.CompositeLit); ok {
+			if id, ok := lit.Type.(*ast.Ident); ok && id.Name == "Provider" {
+				sawProvider = true
 			}
 		}
 
-		scanBody(helper.Body, bases, wired)
+		as, ok := n.(*ast.AssignStmt)
+		if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
+			return true
+		}
+
+		lhs, ok := as.Lhs[0].(*ast.Ident)
+		if !ok {
+			return true
+		}
+
+		if providerRHS(as.Rhs[0], funcs) {
+			bases[lhs.Name] = true
+			sawProvider = true
+		}
 
 		return true
 	})
 
-	return wired
+	return bases, sawProvider
+}
+
+// providerRHS reports whether an assignment's right-hand side yields a *Provider
+// this file assembles: a `&Provider{...}` literal or a call to another top-level
+// function in the same file (e.g. newProviderMocks).
+func providerRHS(rhs ast.Expr, funcs map[string]*ast.FuncDecl) bool {
+	switch e := rhs.(type) {
+	case *ast.UnaryExpr:
+		if e.Op != token.AND {
+			return false
+		}
+
+		cl, ok := e.X.(*ast.CompositeLit)
+		if !ok {
+			return false
+		}
+
+		id, ok := cl.Type.(*ast.Ident)
+
+		return ok && id.Name == "Provider"
+	case *ast.CallExpr:
+		id, ok := e.Fun.(*ast.Ident)
+		if !ok {
+			return false
+		}
+
+		_, isHelper := funcs[id.Name]
+
+		return isHelper
+	default:
+		return false
+	}
+}
+
+// isProviderPtr reports whether a parameter type is *Provider.
+func isProviderPtr(t ast.Expr) bool {
+	star, ok := t.(*ast.StarExpr)
+	if !ok {
+		return false
+	}
+
+	id, ok := star.X.(*ast.Ident)
+
+	return ok && id.Name == "Provider"
 }
 
 // scanBody records every `<base>.<Field>.Set<Method>()` wiring call in body
@@ -271,42 +369,6 @@ func scanBody(body *ast.BlockStmt, bases map[string]bool, wired map[fieldMethod]
 
 		return true
 	})
-}
-
-// providerReceiverName finds the local variable New() assigns `&Provider{}`
-// to, e.g. `p` in `p := &Provider{...}`.
-func providerReceiverName(newFn *ast.FuncDecl) string {
-	recv := ""
-
-	ast.Inspect(newFn.Body, func(n ast.Node) bool {
-		as, ok := n.(*ast.AssignStmt)
-		if !ok || len(as.Lhs) != 1 || len(as.Rhs) != 1 {
-			return true
-		}
-
-		lhs, ok := as.Lhs[0].(*ast.Ident)
-		if !ok {
-			return true
-		}
-
-		unary, ok := as.Rhs[0].(*ast.UnaryExpr)
-		if !ok || unary.Op != token.AND {
-			return true
-		}
-
-		cl, ok := unary.X.(*ast.CompositeLit)
-		if !ok {
-			return true
-		}
-
-		if id, ok := cl.Type.(*ast.Ident); ok && id.Name == "Provider" {
-			recv = lhs.Name
-		}
-
-		return true
-	})
-
-	return recv
 }
 
 // thisDir returns the directory containing this test file, so the New()
