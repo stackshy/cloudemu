@@ -79,14 +79,16 @@ func decodeBody(w http.ResponseWriter, r *http.Request) (fields map[string]json.
 // verbatim body fields (including the seeded output-only and defaulted values)
 // with the computed name/createTime/updateTime output fields.
 func toResourceJSON(r *msdriver.Resource) (json.RawMessage, error) {
-	// r.Fields is populated from the request body, so bound the map's pre-sized
-	// capacity before allocating it. This never drops fields (the map still grows
-	// to hold every entry); it only caps the initial allocation hint.
+	// r.Fields is populated from the request body. Guard the raw field count
+	// against a cap that leaves headroom for the injected computed fields — there
+	// is no runtime arithmetic on the request-derived value, so nothing for an
+	// overflow check to flag, and the guard bounds the allocation. The map still
+	// grows to hold every entry; this only sizes the initial hint.
 	const maxResourceFields = 10000
 
-	capHint := len(r.Fields) + minComputedFields
-	if capHint > maxResourceFields {
-		capHint = maxResourceFields
+	capHint := len(r.Fields)
+	if capHint > maxResourceFields-minComputedFields {
+		capHint = maxResourceFields - minComputedFields
 	}
 
 	m := make(map[string]json.RawMessage, capHint)

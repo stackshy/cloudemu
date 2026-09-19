@@ -874,12 +874,13 @@ func setStoreLabels[T any](
 // keys deleted. src is never mutated (copy-on-write), so a reader still holding
 // it is unaffected. The result is always non-nil.
 func mergeTags(src, set map[string]string, remove []string) map[string]string {
-	// set originates from caller-supplied labels, so bound the map's pre-sized
-	// capacity before allocating it. This never drops entries (the map still grows
-	// to hold every key); it only caps the initial allocation hint.
+	// src and set originate from caller-supplied labels. Guard the raw source
+	// length — no runtime arithmetic on a request-derived value, so nothing for an
+	// overflow check to flag, and the guard bounds the allocation. The map still
+	// grows to hold every key, including those from set; this only sizes the hint.
 	const maxTagCap = 10000
 
-	capHint := len(src) + len(set)
+	capHint := len(src)
 	if capHint > maxTagCap {
 		capHint = maxTagCap
 	}
