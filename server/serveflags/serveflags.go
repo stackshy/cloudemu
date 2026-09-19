@@ -73,6 +73,7 @@ type CommonConfig struct {
 
 	AccountID         string
 	AzureSubscription string
+	OCITenancy        string
 	Region            string
 	ProjectID         string
 
@@ -127,6 +128,9 @@ func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) strin
 	fs.StringVar(&c.AccountID, "account-id", "000000000000", "AWS account ID (also GCP/OCI) reported by the emulator")
 	fs.StringVar(&c.AzureSubscription, "azure-subscription", "00000000-0000-0000-0000-000000000000",
 		"Azure subscription id reported by the emulator (a GUID; real Azure SDKs/CLIs require one)")
+	fs.StringVar(&c.OCITenancy, "oci-tenancy", config.DefaultTenancyOCID,
+		"OCI tenancy OCID reported by the emulator; it is also the root compartment and "+
+			"the Object Storage namespace is derived from it")
 	fs.StringVar(&c.Region, "region", "us-east-1", "default region reported by the emulator")
 	fs.StringVar(&c.ProjectID, "project-id", "cloudemu-local", "GCP project ID reported by the emulator")
 	fs.DurationVar(&c.Latency, "latency", 0, "artificial latency added to every emulated call (e.g. 20ms)")
@@ -262,6 +266,7 @@ func (c *CommonConfig) ToServerkitConfig(providers []string) serverkit.Config {
 			config.WithAccountID(c.AccountID),
 			config.WithRegion(c.Region),
 			config.WithProjectID(c.ProjectID),
+			config.WithTenancyOCID(c.OCITenancy),
 		},
 		Out: os.Stdout,
 	}

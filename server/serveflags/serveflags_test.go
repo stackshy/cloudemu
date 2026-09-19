@@ -25,7 +25,7 @@ func noEnv(string) string { return "" }
 var commonFlagNames = []string{
 	"account-id", "admin", "advertise-host", "aws-port", "azure-port", "azure-subscription",
 	"endpoints-file", "enforce-auth", "gcp-grpc-port", "gcp-port", "host", "init-dir", "k8s-nodes", "k8s-port",
-	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-port",
+	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-port", "oci-tenancy",
 	"persist", "persist-interval", "persist-metadata-only", "persist-strategy", "project-id",
 	"providers", "quiet", "region", "shutdown-timeout", "state-file", "tls-cert", "tls-host",
 	"tls-key", "vcr", "vcr-cassette", "vcr-strict",

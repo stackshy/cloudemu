@@ -1,9 +1,9 @@
 // Package blobstore provides an opt-in real object-storage engine that persists
 // object bytes to a real local filesystem — no Docker — backing CloudEmu's
-// object stores (AWS S3, Azure Blob, GCP GCS). Bytes are written to real files
-// under a root directory, so they survive in the store for the process's
-// lifetime and can be inspected with ordinary tools. Wire it in with
-// config.WithStorageEngine(blobstore.New("")).
+// object stores (AWS S3, Azure Blob, GCP GCS, OCI Object Storage). Bytes are
+// written to real files under a root directory, so they survive in the store
+// for the process's lifetime and can be inspected with ordinary tools. Wire it
+// in with config.WithStorageEngine(blobstore.New("")).
 //
 // It lives in a separate module on purpose: the storage-backing dependency
 // stays out of CloudEmu's core. The in-memory provider keeps each object's
