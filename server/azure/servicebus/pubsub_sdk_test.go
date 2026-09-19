@@ -47,6 +47,8 @@ func pubsubServer(t *testing.T) *httptest.Server {
 	ts := httptest.NewTLSServer(azureserver.New(azureserver.Drivers{ServiceBus: cloudP.ServiceBus}))
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, subID, rgName)
+
 	return ts
 }
 

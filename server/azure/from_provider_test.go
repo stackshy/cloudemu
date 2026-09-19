@@ -44,6 +44,7 @@ func TestNewFromProvider(t *testing.T) {
 	// endpoint must be TLS (mirrors the existing server/azure roundtrip tests).
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, fpSubID, fpRGName)
 
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",

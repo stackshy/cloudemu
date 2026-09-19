@@ -10,7 +10,7 @@ import (
 )
 
 func TestSDKListOrderingDeterministic(t *testing.T) {
-	client := newWorkspacesClient(t)
+	client, _ := newWorkspacesClient(t)
 	ctx := context.Background()
 
 	// Create workspaces deliberately out of alphabetical order.

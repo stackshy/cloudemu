@@ -67,10 +67,13 @@ func TestSDKAKSDataPlane_FullWorkloadStack(t *testing.T) {
 
 	k8sAPI.SetBaseURL(ts.URL)
 
+	const rg, name = "rg-wave2", "shop-cluster"
+
+	ensureRG(t, ts, "sub-1", rg)
+
 	clusters := newAKSClusterClient(t, ts)
 
 	ctx := context.Background()
-	const rg, name = "rg-wave2", "shop-cluster"
 
 	poller, err := clusters.BeginCreateOrUpdate(ctx, rg, name, armcontainerservice.ManagedCluster{
 		Location: to.Ptr("eastus"),

@@ -90,6 +90,8 @@ func newReconcileFixture(t *testing.T) (*armcompute.VirtualMachinesClient, *armn
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	nicClient, err := armnetwork.NewInterfacesClient("sub-1", fakeCred{}, sdkClientOptions(ts))
 	if err != nil {
 		t.Fatal(err)

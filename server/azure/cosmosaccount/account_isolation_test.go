@@ -78,6 +78,8 @@ func newCosmosStack(t *testing.T) *cosmosStack {
 func (s *cosmosStack) createAccountEndpoint(t *testing.T, rg, name string) string {
 	t.Helper()
 
+	ensureRG(t, s.ts, "sub-1", rg)
+
 	poller, err := s.arm.BeginCreateOrUpdate(context.Background(), rg, name, armcosmos.DatabaseAccountCreateUpdateParameters{
 		Location: to.Ptr("eastus"),
 		Kind:     to.Ptr(armcosmos.DatabaseAccountKindGlobalDocumentDB),

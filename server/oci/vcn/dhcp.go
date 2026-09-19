@@ -37,6 +37,10 @@ func (h *Handler) createDHCPOptions(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	serverType, customDNS, searchDomains := splitOptions(req.Options)
 
 	info, err := h.extras.CreateDHCPOptions(r.Context(), req.VCNID, req.DisplayName, serverType, customDNS, searchDomains)

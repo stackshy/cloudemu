@@ -63,6 +63,8 @@ func TestSDKMetricAlertCreateOrUpdateReturns200(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	client, err := armmonitor.NewMetricAlertsClient("sub-1", fakeCred{}, armClientOptions(ts))
 	if err != nil {
 		t.Fatal(err)
@@ -196,6 +198,8 @@ func TestSDKMetricsIsolatedPerResource(t *testing.T) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	vmClient := newVMSDKClient(t, ts)
 	putSDKVM(t, vmClient, "vm1")

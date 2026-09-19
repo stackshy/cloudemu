@@ -680,7 +680,8 @@ func New(d Drivers) http.Handler {
 	// emulator tracks membership by the ids resources already carry. The
 	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
 	// the purgers cascade a group delete into its resources.
-	srv.Register(resourcegroups.New(d.ResourceDiscovery, rgPurgers...))
+	rgHandler := resourcegroups.New(d.ResourceDiscovery, rgPurgers...)
+	srv.Register(rgHandler)
 
 	// Tags resource provider (Microsoft.Resources/tags/default). Self-contained
 	// (no driver): it owns the per-scope tag sets an armresources TagsClient
@@ -1240,7 +1241,7 @@ func New(d Drivers) http.Handler {
 		authGate = newAuthGate(config.RealClock{})
 	}
 
-	srv.SetPreDispatch(composePreDispatch(authGate, newLockGate(locksHandler)))
+	srv.SetPreDispatch(composePreDispatch(authGate, newResourceGroupGate(rgHandler), newLockGate(locksHandler)))
 
 	// When the monitoring backend can record Activity Log events, observe every
 	// served ARM request and log a management event so the Activity Log API

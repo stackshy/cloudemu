@@ -25,6 +25,8 @@ import (
 	"github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"google.golang.org/api/option"
+
+	"github.com/stackshy/cloudemu/v2/config"
 )
 
 // buildServeBinary compiles the cloudemu binary once for a durability test.
@@ -338,7 +340,9 @@ func assertDurableObjectBodySurvives(t *testing.T, s3c *s3.Client) {
 func createOCIVCN(t *testing.T, port string) {
 	t.Helper()
 
-	body := `{"compartmentId":"ocid1.compartment.oc1..durable","cidrBlock":"10.77.0.0/16","displayName":"oci-durable-vcn"}`
+	// The seeded root tenancy compartment always exists, so the create clears
+	// the compartment-existence gate; a bogus compartment would (correctly) 404.
+	body := `{"compartmentId":"` + config.DefaultTenancyOCID + `","cidrBlock":"10.77.0.0/16","displayName":"oci-durable-vcn"}`
 
 	resp, err := http.Post("http://127.0.0.1:"+port+"/20160918/vcns", "application/json", strings.NewReader(body)) //nolint:noctx // short-lived test call
 	if err != nil {
@@ -358,7 +362,7 @@ func createOCIVCN(t *testing.T, port string) {
 func assertOCIVCNExists(t *testing.T, port string) {
 	t.Helper()
 
-	url := "http://127.0.0.1:" + port + "/20160918/vcns?compartmentId=ocid1.compartment.oc1..durable"
+	url := "http://127.0.0.1:" + port + "/20160918/vcns?compartmentId=" + config.DefaultTenancyOCID
 
 	resp, err := http.Get(url) //nolint:noctx // short-lived test call
 	if err != nil {

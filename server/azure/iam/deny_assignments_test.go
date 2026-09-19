@@ -13,7 +13,7 @@ import (
 // error) — matching a real subscription that has never had Blueprints or
 // Managed Applications create one.
 func TestSDKAzureIAMDenyAssignmentsListEmpty(t *testing.T) {
-	cf := newClientFactory(t)
+	cf, _ := newClientFactory(t)
 	ctx := context.Background()
 
 	pager := cf.NewDenyAssignmentsClient().NewListForScopePager(testScope, nil)
@@ -35,7 +35,7 @@ func TestSDKAzureIAMDenyAssignmentsListEmpty(t *testing.T) {
 // TestSDKAzureIAMDenyAssignmentGetNotFound confirms Get on an unknown deny
 // assignment id returns a typed 404 rather than a malformed body.
 func TestSDKAzureIAMDenyAssignmentGetNotFound(t *testing.T) {
-	cf := newClientFactory(t)
+	cf, _ := newClientFactory(t)
 	ctx := context.Background()
 
 	_, err := cf.NewDenyAssignmentsClient().Get(ctx, testScope, "missing-deny-id", nil)

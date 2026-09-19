@@ -18,6 +18,8 @@ func newFuncServer(t *testing.T) *httptest.Server {
 	srv := httptest.NewServer(azureserver.New(azureserver.Drivers{Functions: cloud.Functions}))
 	t.Cleanup(srv.Close)
 
+	ensureRG(t, http.DefaultClient, srv.URL, subID, rgName)
+
 	return srv
 }
 
@@ -185,6 +187,9 @@ func TestRestart(t *testing.T) {
 // TestListFiltersByResourceGroup covers findings 9 and 10.
 func TestListFiltersByResourceGroup(t *testing.T) {
 	srv := newFuncServer(t)
+
+	ensureRG(t, http.DefaultClient, srv.URL, subID, "rgA")
+	ensureRG(t, http.DefaultClient, srv.URL, subID, "rgB")
 
 	putSite := func(rg, name string) {
 		doRequest(t, srv, http.MethodPut, siteInRG(rg, name)+apiVer,

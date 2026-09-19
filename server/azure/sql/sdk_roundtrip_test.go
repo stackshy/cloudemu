@@ -2,7 +2,9 @@ package sql_test
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -23,6 +25,33 @@ func (fakeCred) GetToken(_ context.Context, _ policy.TokenRequestOptions) (azcor
 	return azcore.AccessToken{Token: "fake", ExpiresOn: time.Now().Add(time.Hour)}, nil
 }
 
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	url := ts.URL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
+}
+
 func newRawServer(t *testing.T) *httptest.Server {
 	t.Helper()
 
@@ -31,6 +60,8 @@ func newRawServer(t *testing.T) *httptest.Server {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	return ts
 }
@@ -43,6 +74,8 @@ func newFactory(t *testing.T) *armsql.ClientFactory {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",

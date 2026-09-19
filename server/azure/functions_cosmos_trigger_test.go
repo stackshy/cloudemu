@@ -120,6 +120,7 @@ func makeCosmosContainer(ctx context.Context, t *testing.T, client *azcosmos.Cli
 
 func TestCosmosDBTriggerInvokesFunction(t *testing.T) {
 	ts, p := newFullAzureTLSServerWithProvider(t)
+	ensureRG(t, ts, "sub-ct", "rg-ct")
 	ctx := context.Background()
 
 	const (
@@ -173,6 +174,7 @@ func TestCosmosDBTriggerInvokesFunction(t *testing.T) {
 // the same database.
 func TestCosmosDBTriggerDifferentContainerDoesNotFire(t *testing.T) {
 	ts, p := newFullAzureTLSServerWithProvider(t)
+	ensureRG(t, ts, "sub-ct", "rg-ct")
 	ctx := context.Background()
 
 	const (
@@ -208,6 +210,7 @@ func TestCosmosDBTriggerDifferentContainerDoesNotFire(t *testing.T) {
 // databaseName and containerName must match.
 func TestCosmosDBTriggerDifferentDatabaseDoesNotFire(t *testing.T) {
 	ts, p := newFullAzureTLSServerWithProvider(t)
+	ensureRG(t, ts, "sub-ct", "rg-ct")
 	ctx := context.Background()
 
 	const app = "ct-app3"
@@ -241,6 +244,7 @@ func TestCosmosDBTriggerDifferentDatabaseDoesNotFire(t *testing.T) {
 // deleted.
 func TestCosmosDBTriggerDeleteDoesNotFire(t *testing.T) {
 	ts, p := newFullAzureTLSServerWithProvider(t)
+	ensureRG(t, ts, "sub-ct", "rg-ct")
 	ctx := context.Background()
 
 	const (
@@ -286,6 +290,7 @@ func TestCosmosDBTriggerDeleteDoesNotFire(t *testing.T) {
 // semantics.
 func TestCosmosDBTriggerReplaceFires(t *testing.T) {
 	ts, p := newFullAzureTLSServerWithProvider(t)
+	ensureRG(t, ts, "sub-ct", "rg-ct")
 	ctx := context.Background()
 
 	const (
@@ -328,6 +333,7 @@ func TestCosmosDBTriggerReplaceFires(t *testing.T) {
 // (database, container).
 func TestCosmosDBTriggerDisabledFunctionSkipped(t *testing.T) {
 	ts, p := newFullAzureTLSServerWithProvider(t)
+	ensureRG(t, ts, "sub-ct", "rg-ct")
 	ctx := context.Background()
 
 	const (
@@ -377,6 +383,7 @@ func TestCosmosDBTriggerDisabledFunctionSkipped(t *testing.T) {
 // default (unaccounted) account: "{database}/{container}".
 func TestCosmosDBTriggerRecursionGuard(t *testing.T) {
 	ts, p := newFullAzureTLSServerWithProvider(t)
+	ensureRG(t, ts, "sub-ct", "rg-ct")
 	ctx := context.Background()
 
 	const (

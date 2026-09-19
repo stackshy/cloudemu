@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -64,8 +65,36 @@ func newServer(t *testing.T) string {
 	srv := azureserver.New(azureserver.Drivers{CognitiveServices: cloud.AI})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, sub, rg)
 
 	return ts.URL
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, subID, rgName string) {
+	t.Helper()
+
+	url := ts.URL + "/subscriptions/" + subID + "/resourcegroups/" + rgName + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
 }
 
 func do(t *testing.T, method, url string, body any) map[string]any {
@@ -222,6 +251,7 @@ func newCSAccountsClient(t *testing.T) *armcognitiveservices.AccountsClient {
 	srv := azureserver.New(azureserver.Drivers{CognitiveServices: cloudP.AI})
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, sub, rg)
 
 	c, err := armcognitiveservices.NewAccountsClient(sub, fakeCred{}, armClientOptions(ts))
 	require.NoError(t, err)

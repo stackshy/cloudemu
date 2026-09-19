@@ -39,6 +39,7 @@ func TestAzureComputeCompat(t *testing.T) {
 
 	provider := cloudemu.NewAzure()
 	sess := compat.BootAzureTLS(t, azureserver.Drivers{VirtualMachines: provider.VirtualMachines})
+	sess.EnsureResourceGroup("sub-compat", rg)
 	ctx := context.Background()
 
 	myCloud := cloud.Configuration{

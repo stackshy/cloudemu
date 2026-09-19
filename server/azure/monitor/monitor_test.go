@@ -22,6 +22,8 @@ func TestMonitorAlertCRUD(t *testing.T) {
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	const alertURL = "/subscriptions/sub-1/resourceGroups/rg-1/providers/microsoft.insights/metricAlerts/alert-1?api-version=2018-03-01"
 
 	body := bytes.NewBufferString(`{

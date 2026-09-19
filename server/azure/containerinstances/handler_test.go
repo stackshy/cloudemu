@@ -86,6 +86,7 @@ func TestContainerGroupLifecycleDrivesEngine(t *testing.T) {
 	cloud := cloudemu.NewAzure(config.WithContainerEngine(eng))
 	srv := httptest.NewServer(azureserver.New(azureserver.DriversFrom(cloud)))
 	t.Cleanup(srv.Close)
+	ensureRG(t, srv.URL, subID, rgName)
 
 	// 1. PUT create — the engine runs the container.
 	body := doReq(t, srv.URL, http.MethodPut, groupURL("cg1")+apiVer,
@@ -154,6 +155,8 @@ func TestContainerGroupsIsolatedAcrossResourceGroups(t *testing.T) {
 	cloud := cloudemu.NewAzure()
 	srv := httptest.NewServer(azureserver.New(azureserver.DriversFrom(cloud)))
 	t.Cleanup(srv.Close)
+	ensureRG(t, srv.URL, subID, rgName)
+	ensureRG(t, srv.URL, subID, otherRG)
 
 	// Same group name ("shared") created in two different resource groups.
 	doReq(t, srv.URL, http.MethodPut, groupURLInRG(rgName, "shared")+apiVer,
@@ -182,6 +185,7 @@ func TestNilEngineStaysSynthetic(t *testing.T) {
 	cloud := cloudemu.NewAzure()
 	srv := httptest.NewServer(azureserver.New(azureserver.DriversFrom(cloud)))
 	t.Cleanup(srv.Close)
+	ensureRG(t, srv.URL, subID, rgName)
 
 	body := doReq(t, srv.URL, http.MethodPut, groupURL("cg2")+apiVer,
 		strings.NewReader(createBody), http.StatusCreated)
@@ -245,6 +249,16 @@ func decodeGroup(t *testing.T, body []byte) wireGroup {
 	}
 
 	return g
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, base, sub, rg string) {
+	t.Helper()
+
+	url := "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+	doReq(t, base, http.MethodPut, url, strings.NewReader(`{"location":"eastus"}`), http.StatusCreated)
 }
 
 func doReq(t *testing.T, base, method, path string, body io.Reader, wantStatus int) []byte {

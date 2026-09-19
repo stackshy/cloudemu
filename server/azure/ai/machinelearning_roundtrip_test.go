@@ -26,6 +26,7 @@ func newMLServer(t *testing.T) string {
 	srv := azureserver.New(azureserver.Drivers{MachineLearning: cloud.AI})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, sub, rg)
 
 	return ts.URL
 }
@@ -169,6 +170,7 @@ func newMLClientFactory(t *testing.T) *armmachinelearning.ClientFactory {
 	srv := azureserver.New(azureserver.Drivers{MachineLearning: cloudP.AI})
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, sub, rg)
 
 	cf, err := armmachinelearning.NewClientFactory(sub, fakeCred{}, armClientOptions(ts))
 	require.NoError(t, err)

@@ -51,6 +51,8 @@ func TestSDKAzureAppServicePlanCreateGet(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts.Client(), ts.URL, subID, rgName)
+
 	client := newPlansClient(t, ts)
 	ctx := context.Background()
 

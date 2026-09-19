@@ -61,6 +61,8 @@ func TestSDKAzureFunctionsCreateGetDelete(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts.Client(), ts.URL, subID, rgName)
+
 	client := newWebAppsClient(t, ts)
 	ctx := context.Background()
 

@@ -30,8 +30,11 @@ func createWS(t *testing.T, client *armoperationalinsights.WorkspacesClient, rg,
 // TestSDKScopedListing asserts #259 item 1 through the real SDK: workspaces
 // created in one resource group must not appear in another group's list.
 func TestSDKScopedListing(t *testing.T) {
-	client := newWorkspacesClient(t)
+	client, ts := newWorkspacesClient(t)
 	ctx := context.Background()
+
+	ensureRG(t, ts, testSub, "rg-team-a")
+	ensureRG(t, ts, testSub, "rg-team-b")
 
 	createWS(t, client, "rg-team-a", "ws-a1", nil)
 	createWS(t, client, "rg-team-a", "ws-a2", nil)
@@ -66,7 +69,7 @@ func TestSDKScopedListing(t *testing.T) {
 // CreateOrUpdate on an existing workspace must apply the request's tags,
 // not echo the stale resource.
 func TestSDKUpsertAppliesUpdates(t *testing.T) {
-	client := newWorkspacesClient(t)
+	client, _ := newWorkspacesClient(t)
 	ctx := context.Background()
 
 	createWS(t, client, testRG, "ws-upsert", map[string]*string{"env": to.Ptr("dev")})
@@ -90,7 +93,9 @@ func TestSDKUpsertAppliesUpdates(t *testing.T) {
 // SDK: the returned ARM id carries the request's subscription and resource
 // group, not a hardcoded default.
 func TestSDKResourceIDMatchesRequestScope(t *testing.T) {
-	client := newWorkspacesClient(t)
+	client, ts := newWorkspacesClient(t)
+
+	ensureRG(t, ts, testSub, "rg-id-check")
 
 	ws := createWS(t, client, "rg-id-check", "ws-id", nil)
 	if ws.ID == nil {

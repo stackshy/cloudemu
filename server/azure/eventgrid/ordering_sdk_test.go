@@ -10,7 +10,7 @@ import (
 )
 
 func TestSDKListOrderingDeterministic(t *testing.T) {
-	topics := newTopicsClient(t)
+	topics, _ := newTopicsClient(t)
 	ctx := context.Background()
 
 	// Create topics deliberately out of alphabetical order.

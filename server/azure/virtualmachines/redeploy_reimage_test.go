@@ -48,6 +48,8 @@ func TestSDKRedeployReimage(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	client := newSDKClient(t, ts)
 	ctx := context.Background()
 
@@ -94,6 +96,8 @@ func TestSDKRedeployReimageFromDeallocated(t *testing.T) {
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	client := newSDKClient(t, ts)
 	ctx := context.Background()

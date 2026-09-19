@@ -27,6 +27,10 @@ func (h *Handler) createInternetGateway(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	if !h.requireCompartment(w, r, req.CompartmentID) {
+		return
+	}
+
 	enabled := req.IsEnabled == nil || *req.IsEnabled
 
 	info, err := h.net.CreateInternetGateway(r.Context(), netdriver.InternetGatewayConfig{
@@ -170,6 +174,10 @@ func (h *Handler) natGatewayOps() crud {
 func (h *Handler) createNATGateway(w http.ResponseWriter, r *http.Request) {
 	req, ok := decodeGateway(w, r)
 	if !ok {
+		return
+	}
+
+	if !h.requireCompartment(w, r, req.CompartmentID) {
 		return
 	}
 

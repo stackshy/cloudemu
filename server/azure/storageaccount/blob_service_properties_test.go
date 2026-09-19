@@ -35,6 +35,8 @@ func newBlobServicesClient(t *testing.T, cloudP *azureprovider.Provider) *armsto
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
 		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{

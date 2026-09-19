@@ -37,8 +37,10 @@ func createRedis(t *testing.T, client *armredis.Client, rg, name string, tags ma
 // TestSDKScopedListing asserts #259 item 1 through the real SDK: caches
 // created in one resource group must not appear in another group's list.
 func TestSDKScopedListing(t *testing.T) {
-	client := newRedisClient(t)
+	client, ts := newRedisClientAndServer(t)
 	ctx := context.Background()
+	ensureRG(t, ts, testSub, "rg-team-a")
+	ensureRG(t, ts, testSub, "rg-team-b")
 
 	createRedis(t, client, "rg-team-a", "cache-a1", nil)
 	createRedis(t, client, "rg-team-a", "cache-a2", nil)
@@ -97,7 +99,8 @@ func TestSDKUpsertAppliesUpdates(t *testing.T) {
 // SDK: the returned ARM id carries the request's subscription and resource
 // group, not a hardcoded default.
 func TestSDKResourceIDMatchesRequestScope(t *testing.T) {
-	client := newRedisClient(t)
+	client, ts := newRedisClientAndServer(t)
+	ensureRG(t, ts, testSub, "rg-id-check")
 
 	created := createRedis(t, client, "rg-id-check", "cache-id", nil)
 	if created.ID == nil {

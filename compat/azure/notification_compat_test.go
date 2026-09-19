@@ -29,6 +29,7 @@ const (
 func TestNotificationHubsCompat(t *testing.T) {
 	provider := cloudemu.NewAzure()
 	sess := compat.BootAzureTLS(t, azureserver.Drivers{NotificationHubs: provider.NotificationHubs})
+	sess.EnsureResourceGroup(notifSub, notifRG)
 
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",

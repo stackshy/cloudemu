@@ -27,6 +27,9 @@ func newFactory(t *testing.T) *armnotificationhubs.ClientFactory {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, testSub, testRG)
+	ensureRG(t, ts, testSub, "rg-alpha")
+
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",
 		Services: map[cloud.ServiceName]cloud.ServiceConfiguration{

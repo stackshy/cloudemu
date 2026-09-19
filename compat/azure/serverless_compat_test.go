@@ -67,6 +67,7 @@ func newFunctionsClient(t *testing.T, sess *compat.AzureSession) *armappservice.
 func TestFunctionsCompat(t *testing.T) {
 	p := cloudemu.NewAzure()
 	sess := compat.BootAzureTLS(t, azureserver.Drivers{Functions: p.Functions})
+	sess.EnsureResourceGroup(fnSubID, fnRGName)
 	client := newFunctionsClient(t, sess)
 	ctx := context.Background()
 

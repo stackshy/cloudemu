@@ -60,6 +60,8 @@ func TestSDKAlarmBreachFiresActionGroup(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	var webhookHits int32
 
 	webhookSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -139,6 +141,8 @@ func TestSDKDimensionScopedAlertIgnoresOtherResource(t *testing.T) {
 	srv := azureserver.New(azureserver.Drivers{Monitor: cloudP.Monitor})
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	ctx := context.Background()
 
@@ -266,6 +270,8 @@ func TestSDKAlarmBreachDefaultDelivererPOSTsWebhook(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
+	ensureRG(t, ts, "sub-1", "rg-1")
+
 	var (
 		hits int32
 		body atomic.Value
@@ -306,6 +312,8 @@ func TestSDKAlarmBreachUnreachableWebhookBestEffort(t *testing.T) {
 	srv := azureserver.New(azureserver.Drivers{Monitor: cloudP.Monitor})
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, "sub-1", "rg-1")
 
 	// Close the receiver immediately so its URL refuses connections — a fast,
 	// deterministic stand-in for an unreachable webhook endpoint.

@@ -43,6 +43,7 @@ import (
 func TestAzureNetworkingCompat(t *testing.T) {
 	provider := cloudemu.NewAzure()
 	sess := compat.BootAzureTLS(t, azureserver.Drivers{Network: provider.VNet})
+	sess.EnsureResourceGroup("sub-1", "rg-1")
 
 	const (
 		testSub = "sub-1"

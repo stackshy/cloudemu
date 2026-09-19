@@ -40,6 +40,7 @@ func newDNSClientsWithStatus(t *testing.T) (*armdns.ZonesClient, *armdns.RecordS
 
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
+	ensureRG(t, ts, testSub, testRG)
 
 	myCloud := cloud.Configuration{
 		ActiveDirectoryAuthorityHost: "https://login.microsoftonline.com/",

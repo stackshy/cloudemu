@@ -54,12 +54,41 @@ func newFactory(t *testing.T) *armcosmos.ClientFactory {
 		ClientOptions: azcore.ClientOptions{Cloud: myCloud, Transport: ts.Client()},
 	}
 
+	ensureRG(t, ts, subID, "rg1")
+
 	f, err := armcosmos.NewClientFactory(subID, fakeCred{}, opts)
 	if err != nil {
 		t.Fatalf("client factory: %v", err)
 	}
 
 	return f
+}
+
+// ensureRG creates a resource group so tests can PUT resources into it. Real
+// Azure requires the group to exist first (the emulator enforces this via a
+// pre-dispatch gate), so tests must provision it before their resource ops.
+func ensureRG(t *testing.T, ts *httptest.Server, sub, rg string) {
+	t.Helper()
+
+	url := ts.URL + "/subscriptions/" + sub + "/resourcegroups/" + rg + "?api-version=2021-04-01"
+
+	req, err := http.NewRequestWithContext(context.Background(), http.MethodPut, url,
+		strings.NewReader(`{"location":"eastus"}`))
+	if err != nil {
+		t.Fatalf("ensureRG new request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("ensureRG PUT %s: %v", url, err)
+	}
+	defer resp.Body.Close() //nolint:errcheck // test cleanup
+
+	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
+		t.Fatalf("ensureRG %s: unexpected status %d", url, resp.StatusCode)
+	}
 }
 
 func lroCtx(t *testing.T) context.Context {
@@ -350,6 +379,8 @@ func TestMalformedBodyRejected(t *testing.T) {
 	cloudP := cloudemu.NewAzure()
 	ts := httptest.NewServer(azureserver.NewFromProvider(cloudP))
 	t.Cleanup(ts.Close)
+
+	ensureRG(t, ts, subID, "rg1")
 
 	url := ts.URL + "/subscriptions/" + subID +
 		"/resourceGroups/rg1/providers/Microsoft.DocumentDB/cassandraClusters/cass?api-version=2024-11-15"

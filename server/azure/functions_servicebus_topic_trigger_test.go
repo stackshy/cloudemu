@@ -51,6 +51,7 @@ func createSBTopicSub(t *testing.T, ts *httptest.Server, topic, sub string) {
 
 func TestServiceBusTopicTriggerInvokesFunction(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-sbt", "rg-sbt")
 
 	const (
 		app   = "sbt-app"
@@ -92,6 +93,7 @@ func TestServiceBusTopicTriggerInvokesFunction(t *testing.T) {
 // to a different subscription of the SAME topic.
 func TestServiceBusTopicTriggerWrongTargetDoesNotFire(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-sbt", "rg-sbt")
 
 	const (
 		app        = "sbt-app2"
@@ -148,6 +150,7 @@ func createQueueStorageTriggeredApp(t *testing.T, ts *httptest.Server, app, queu
 // predates this change and is out of scope for topic/subscription delivery.)
 func TestServiceBusQueueAndTopicTriggersCoexist(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-sbt", "rg-sbt")
 	ctx := context.Background()
 
 	const (
@@ -221,6 +224,7 @@ func TestServiceBusQueueAndTopicTriggersCoexist(t *testing.T) {
 // and subscription.
 func TestServiceBusTopicTriggerDisabledFunctionSkipped(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-sbt", "rg-sbt")
 
 	const (
 		app   = "sbt-disabled-app"
@@ -262,6 +266,7 @@ func TestServiceBusTopicTriggerDisabledFunctionSkipped(t *testing.T) {
 // channel the guard rides on.
 func TestServiceBusTopicTriggerRecursionGuard(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)
+	ensureRG(t, ts, "sub-sbt", "rg-sbt")
 	ctx := context.Background()
 
 	const (

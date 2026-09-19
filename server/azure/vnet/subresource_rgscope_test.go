@@ -24,6 +24,9 @@ import (
 // NSG is a 404.
 func TestSecurityRuleSubResourceIsResourceGroupScoped(t *testing.T) {
 	ts := newVNetServer(t)
+	ensureRG(t, ts, "sub-1", "rgA")
+	ensureRG(t, ts, "sub-1", "rgB")
+
 	ctx := context.Background()
 	opts := clientOpts(ts)
 
@@ -125,6 +128,9 @@ func TestSecurityRuleSubResourceIsResourceGroupScoped(t *testing.T) {
 // an op under a group holding no such vnet is a 404.
 func TestVNetPeeringSubResourceIsResourceGroupScoped(t *testing.T) {
 	ts := newVNetServer(t)
+	ensureRG(t, ts, "sub-1", "rgA")
+	ensureRG(t, ts, "sub-1", "rgB")
+
 	ctx := context.Background()
 	opts := clientOpts(ts)
 
