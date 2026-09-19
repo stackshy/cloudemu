@@ -875,11 +875,13 @@ func setStoreLabels[T any](
 // it is unaffected. The result is always non-nil.
 func mergeTags(src, set map[string]string, remove []string) map[string]string {
 	// set originates from caller-supplied labels, so bound the map's pre-sized
-	// capacity before allocating it. This never drops entries (the map still grows
-	// to hold every key); it only caps the initial allocation hint.
+	// capacity before allocating it. min() clamps each length to the constant
+	// BEFORE the add, so the value used to size the map is provably bounded and the
+	// addition cannot overflow. This never drops entries (the map still grows to
+	// hold every key); it only caps the initial allocation hint.
 	const maxTagCap = 10000
 
-	capHint := len(src) + len(set)
+	capHint := min(len(src), maxTagCap) + min(len(set), maxTagCap)
 	if capHint > maxTagCap {
 		capHint = maxTagCap
 	}
