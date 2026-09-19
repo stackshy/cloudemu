@@ -319,6 +319,15 @@ func instanceNames(cluster, role string, count int64) []string {
 		return []string{cluster + "-m"}
 	}
 
+	// Bound the per-group instance count (originating from the request's
+	// NumInstances) with an explicit comparison immediately before the allocation
+	// it sizes. A real Dataproc cluster stays far under this; the ceiling only
+	// stops a pathological value from driving an unbounded slice.
+	const maxInstanceGroupSize = 10000
+	if count > maxInstanceGroupSize {
+		count = maxInstanceGroupSize
+	}
+
 	names := make([]string, 0, count)
 	for i := int64(0); i < count; i++ {
 		names = append(names, cluster+"-"+role+"-"+strconv.FormatInt(i, 10))

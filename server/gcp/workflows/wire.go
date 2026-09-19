@@ -78,7 +78,17 @@ func decodeBody(w http.ResponseWriter, r *http.Request) (fields map[string]json.
 // toResourceJSON renders a driver resource as workflows/v1 wire JSON, merging the
 // verbatim body fields with the computed output-only fields.
 func toResourceJSON(r *wdriver.Resource) (json.RawMessage, error) {
-	m := make(map[string]json.RawMessage, len(r.Fields)+minComputedFields)
+	// r.Fields is populated from the request body, so bound the map's pre-sized
+	// capacity before allocating it. This never drops fields (the map still grows
+	// to hold every entry); it only caps the initial allocation hint.
+	const maxResourceFields = 10000
+
+	capHint := len(r.Fields) + minComputedFields
+	if capHint > maxResourceFields {
+		capHint = maxResourceFields
+	}
+
+	m := make(map[string]json.RawMessage, capHint)
 	for k, v := range r.Fields {
 		m[k] = v
 	}

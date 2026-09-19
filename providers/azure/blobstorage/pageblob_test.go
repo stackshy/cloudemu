@@ -7,6 +7,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
 func TestPageBlobCreateAndGetRanges(t *testing.T) {
@@ -45,6 +47,21 @@ func TestPageBlobCreateAndGetRanges(t *testing.T) {
 	assert.Equal(t, bytes.Repeat([]byte{1}, 512), obj.Data[0:512])
 	assert.Equal(t, make([]byte, 512), obj.Data[512:1024])
 	assert.Equal(t, bytes.Repeat([]byte{2}, 512), obj.Data[1024:1536])
+}
+
+func TestPageBlobRejectsOversizedRequest(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	require.NoError(t, m.CreateBucket(ctx, "c1"))
+
+	// A size above the documented ceiling (still page-aligned) is rejected with a
+	// wire error rather than driving an unbounded allocation.
+	_, err := m.CreatePageBlob(ctx, "c1", "pb", maxPageBlobBytes+pageSize, nil, nil)
+	require.Error(t, err)
+
+	var opErr *driver.BlobOpError
+	require.ErrorAs(t, err, &opErr)
+	assert.Equal(t, "InvalidHeaderValue", opErr.Code)
 }
 
 func TestPageBlobClearAndCoalesce(t *testing.T) {
