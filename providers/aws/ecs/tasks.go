@@ -213,6 +213,13 @@ type taskSpec struct {
 // instance the behavior depends on pendingOnShortfall: RunTask (false) returns a
 // placement failure and stores nothing, while the service scheduler (true)
 // stores the task PENDING so the service reports RunningCount<DesiredCount.
+//
+// Every branch that actually stores the task also calls recordTags(task.ARN,
+// spec.tags), mirroring CreateCluster/CreateService/RegisterTaskDefinition:
+// task.Tags alone (echoed on RunTask/DescribeTasks) is not enough, because
+// ListTagsForResource reads the separate m.tags store keyed by ARN — without
+// this call a task launched with --tags describes with them but
+// ListTagsForResource silently reports none.
 func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfall bool) (*driver.Task, *driver.Failure) {
 	task := &driver.Task{
 		ARN:               m.arnIn(arnRegion(spec.clusterARN, m.opts.Region), "task/"+spec.cluster+"/"+m.hexID()),
@@ -231,6 +238,7 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 		m.placeFargate(task, spec.netCfg, spec.platformVersion)
 		m.backTaskWithEngine(ctx, task, spec)
 		m.tasks.Set(task.ARN, task)
+		m.recordTags(task.ARN, spec.tags)
 		m.beginLaunchSettle(task)
 		clone := cloneTask(task)
 
@@ -246,6 +254,7 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 		markContainers(task, statusPending)
 		task.LastStatus = statusPending
 		m.tasks.Set(task.ARN, task)
+		m.recordTags(task.ARN, spec.tags)
 		clone := cloneTask(task)
 
 		return &clone, nil
@@ -254,6 +263,7 @@ func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfal
 	task.LastStatus = statusRunning
 	m.backTaskWithEngine(ctx, task, spec)
 	m.tasks.Set(task.ARN, task)
+	m.recordTags(task.ARN, spec.tags)
 	m.beginLaunchSettle(task)
 	clone := cloneTask(task)
 

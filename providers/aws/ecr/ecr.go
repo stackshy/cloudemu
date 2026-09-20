@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"path"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -877,10 +878,39 @@ func matchesTagRule(img *imageData, rule *driver.LifecycleRule) bool {
 	case "untagged":
 		return len(img.detail.Tags) == 0
 	case "tagged":
-		return len(img.detail.Tags) > 0 && matchTagPattern(img.detail.Tags, rule.TagPattern)
+		return len(img.detail.Tags) > 0 && matchesTagSelection(img.detail.Tags, rule)
 	default: // "any"
 		return true
 	}
+}
+
+// matchesTagSelection reports whether any of the image's tags satisfies the
+// rule's tag selection: real ECR's selection.tagPatternList (glob patterns)
+// and selection.tagPrefixList (literal prefixes) are matched against ANY tag
+// on the image, and an image matches the rule if it satisfies ANY entry in
+// EITHER list — using only the first entry of either list, as an earlier
+// version of this function did, would silently ignore the remaining
+// prefixes/patterns a caller configured. TagPattern is the legacy single-glob
+// field still used by Azure ACR/GCP Artifact Registry, kept as a fallback for
+// a rule with no list populated.
+func matchesTagSelection(tags []string, rule *driver.LifecycleRule) bool {
+	if len(rule.TagPatternList) == 0 && len(rule.TagPrefixList) == 0 {
+		return matchTagPattern(tags, rule.TagPattern)
+	}
+
+	for _, pattern := range rule.TagPatternList {
+		if matchTagPattern(tags, pattern) {
+			return true
+		}
+	}
+
+	for _, prefix := range rule.TagPrefixList {
+		if matchTagPrefix(tags, prefix) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // matchTagPattern checks if any tag matches the given glob pattern.
@@ -891,6 +921,22 @@ func matchTagPattern(tags []string, pattern string) bool {
 
 	for _, tag := range tags {
 		if matched, err := path.Match(pattern, tag); err == nil && matched {
+			return true
+		}
+	}
+
+	return false
+}
+
+// matchTagPrefix checks if any tag begins with the given literal prefix,
+// matching ECR's tagPrefixList semantics (a plain string prefix, not a glob).
+func matchTagPrefix(tags []string, prefix string) bool {
+	if prefix == "" {
+		return true
+	}
+
+	for _, tag := range tags {
+		if strings.HasPrefix(tag, prefix) {
 			return true
 		}
 	}
@@ -953,7 +999,12 @@ func copyTags(src map[string]string) map[string]string {
 
 func copyLifecyclePolicy(p driver.LifecyclePolicy) driver.LifecyclePolicy {
 	rules := make([]driver.LifecycleRule, len(p.Rules))
-	copy(rules, p.Rules)
+
+	for i := range p.Rules {
+		rules[i] = p.Rules[i]
+		rules[i].TagPatternList = append([]string(nil), p.Rules[i].TagPatternList...)
+		rules[i].TagPrefixList = append([]string(nil), p.Rules[i].TagPrefixList...)
+	}
 
 	return driver.LifecyclePolicy{Rules: rules, Document: p.Document}
 }

@@ -173,6 +173,73 @@ func TestSDKECRLifecyclePolicyPreviewAgeRule(t *testing.T) {
 	}
 }
 
+// multiPrefixPolicyDoc selects on a tagPrefixList with TWO prefixes: "prod" and
+// "stg". Real ECR matches an image if any of its tags starts with ANY listed
+// prefix. An earlier version of the emulator collapsed tagPrefixList to its
+// first entry before evaluation, so only "prod"-prefixed images matched and
+// "stg"-prefixed images were silently spared from expiry.
+const multiPrefixPolicyDoc = `{"rules":[{"rulePriority":1,"description":"expire prod/stg",` +
+	`"selection":{"tagStatus":"tagged","tagPrefixList":["prod","stg"],` +
+	`"countType":"imageCountMoreThan","countNumber":0},"action":{"type":"expire"}}]}`
+
+// TestSDKECRLifecyclePolicyPreviewMultiPrefixSelection guards that every entry
+// of a multi-element tagPrefixList is honored during evaluation, not just the
+// first. It pushes three images tagged "prod-v1", "stg-v1", and "dev-v1", and
+// asserts the preview expires both the prod- and stg-prefixed images while
+// sparing the dev-prefixed one.
+func TestSDKECRLifecyclePolicyPreviewMultiPrefixSelection(t *testing.T) {
+	client := newECRClient(t)
+	ctx := context.Background()
+
+	const repoName = "preview-multi-prefix-repo"
+
+	mustCreateRepo(ctx, t, client, repoName)
+
+	if _, err := client.PutLifecyclePolicy(ctx, &awsecr.PutLifecyclePolicyInput{
+		RepositoryName:      aws.String(repoName),
+		LifecyclePolicyText: aws.String(multiPrefixPolicyDoc),
+	}); err != nil {
+		t.Fatalf("PutLifecyclePolicy: %v", err)
+	}
+
+	mustPutImage(ctx, t, client, repoName, sampleManifest+"prod", "prod-v1")
+	mustPutImage(ctx, t, client, repoName, sampleManifest+"stg", "stg-v1")
+	mustPutImage(ctx, t, client, repoName, sampleManifest+"dev", "dev-v1")
+
+	if _, err := client.StartLifecyclePolicyPreview(ctx, &awsecr.StartLifecyclePolicyPreviewInput{
+		RepositoryName: aws.String(repoName),
+	}); err != nil {
+		t.Fatalf("StartLifecyclePolicyPreview: %v", err)
+	}
+
+	got, err := client.GetLifecyclePolicyPreview(ctx, &awsecr.GetLifecyclePolicyPreviewInput{
+		RepositoryName: aws.String(repoName),
+	})
+	if err != nil {
+		t.Fatalf("GetLifecyclePolicyPreview: %v", err)
+	}
+
+	expiring := map[string]bool{}
+
+	for _, res := range got.PreviewResults {
+		for _, tag := range res.ImageTags {
+			expiring[tag] = true
+		}
+	}
+
+	if !expiring["prod-v1"] {
+		t.Fatalf("preview results %v missing prod-v1 (first tagPrefixList entry)", expiring)
+	}
+
+	if !expiring["stg-v1"] {
+		t.Fatalf("preview results %v missing stg-v1 — tagPrefixList entries beyond the first were dropped", expiring)
+	}
+
+	if expiring["dev-v1"] {
+		t.Fatalf("preview results %v wrongly expire dev-v1, which matches neither prefix", expiring)
+	}
+}
+
 // TestSDKECRLifecyclePolicyPreviewOverride exercises StartLifecyclePolicyPreview's
 // optional lifecyclePolicyText: a repository with NO stored policy can still be
 // previewed by supplying an ad-hoc policy, and doing so does not persist it (a
