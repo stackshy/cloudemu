@@ -112,3 +112,92 @@ func TestCreateClusterConfigIPv6(t *testing.T) {
 	assertEqual(t, "fd00::/108", got.NetworkConfig.ServiceIPv6CIDR)
 	assertEqual(t, "", got.NetworkConfig.ServiceIPv4CIDR)
 }
+
+// TestUpdateClusterConfigAppliesLogging verifies UpdateClusterConfig actually
+// applies a supplied logging change (not just VPC config/tags) to the stored
+// cluster, so a subsequent DescribeCluster reflects it, and that the returned
+// Update reports the LoggingUpdate type rather than a stale hardcoded one.
+func TestUpdateClusterConfigAppliesLogging(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{
+		Name:    "log-cluster",
+		RoleArn: "arn:aws:iam::123456789012:role/eks-cluster",
+	})
+	requireNoError(t, err)
+
+	upd, err := m.UpdateClusterConfig(ctx, "log-cluster", nil,
+		[]eksdriver.ClusterLogging{{Types: []string{"api", "audit"}, Enabled: true}}, nil, nil)
+	requireNoError(t, err)
+	assertEqual(t, "LoggingUpdate", upd.Type)
+	assertEqual(t, "Successful", upd.Status)
+
+	got, err := m.DescribeCluster(ctx, "log-cluster")
+	requireNoError(t, err)
+
+	enabled := map[string]bool{}
+	for _, l := range got.Logging {
+		for _, ty := range l.Types {
+			enabled[ty] = l.Enabled
+		}
+	}
+
+	assertEqual(t, true, enabled["api"])
+	assertEqual(t, true, enabled["audit"])
+	// Types not mentioned in the update stay at their prior (default-disabled)
+	// state rather than being dropped or reset.
+	assertEqual(t, false, enabled["scheduler"])
+}
+
+// TestUpdateClusterConfigAppliesAccessConfig verifies UpdateClusterConfig
+// applies a supplied accessConfig.authenticationMode change and returns an
+// Update whose type reflects that (AccessConfigUpdate), matching real EKS.
+func TestUpdateClusterConfigAppliesAccessConfig(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{
+		Name:    "access-cluster",
+		RoleArn: "arn:aws:iam::123456789012:role/eks-cluster",
+	})
+	requireNoError(t, err)
+
+	upd, err := m.UpdateClusterConfig(ctx, "access-cluster", nil,
+		nil, &eksdriver.AccessConfigUpdate{AuthenticationMode: "API_AND_CONFIG_MAP"}, nil)
+	requireNoError(t, err)
+	assertEqual(t, "AccessConfigUpdate", upd.Type)
+
+	got, err := m.DescribeCluster(ctx, "access-cluster")
+	requireNoError(t, err)
+	assertEqual(t, "API_AND_CONFIG_MAP", got.AccessConfig.AuthenticationMode)
+}
+
+// TestUpdateClusterConfigPreservesEndpointAccess verifies a logging-only update
+// (no resourcesVpcConfig in the request) does NOT reset the cluster's endpoint
+// public/private access flags — real EKS only changes the fields the request
+// actually carries, so an omitted resourcesVpcConfig leaves VPC config intact.
+func TestUpdateClusterConfigPreservesEndpointAccess(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{
+		Name:    "vpc-cluster",
+		RoleArn: "arn:aws:iam::123456789012:role/eks-cluster",
+		VPCConfig: eksdriver.VPCConfig{
+			EndpointPublicAccess:  true,
+			EndpointPrivateAccess: true,
+		},
+	})
+	requireNoError(t, err)
+
+	// A logging-only update must not touch the endpoint-access flags.
+	_, err = m.UpdateClusterConfig(ctx, "vpc-cluster", nil,
+		[]eksdriver.ClusterLogging{{Types: []string{"api"}, Enabled: true}}, nil, nil)
+	requireNoError(t, err)
+
+	got, err := m.DescribeCluster(ctx, "vpc-cluster")
+	requireNoError(t, err)
+	assertEqual(t, true, got.VPCConfig.EndpointPublicAccess)
+	assertEqual(t, true, got.VPCConfig.EndpointPrivateAccess)
+}

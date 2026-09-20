@@ -105,7 +105,7 @@ func TestAsyncSettleClusterCreateUpdate(t *testing.T) {
 	}
 
 	// A second update is rejected while the first is still settling.
-	if _, err := m.UpdateClusterConfig(ctx, "c1", eksdriver.VPCConfig{}, nil); err == nil {
+	if _, err := m.UpdateClusterConfig(ctx, "c1", nil, nil, nil, nil); err == nil {
 		t.Fatal("expected UpdateClusterConfig to reject an overlapping update")
 	}
 

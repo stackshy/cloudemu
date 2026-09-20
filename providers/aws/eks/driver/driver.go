@@ -97,6 +97,14 @@ type AccessConfig struct {
 	BootstrapClusterCreatorAdminPermissions bool
 }
 
+// AccessConfigUpdate is the caller-supplied access-configuration change on
+// UpdateClusterConfig. Real EKS only allows changing the authentication mode
+// after creation (BootstrapClusterCreatorAdminPermissions is create-only), so
+// this intentionally carries just that one field.
+type AccessConfigUpdate struct {
+	AuthenticationMode string
+}
+
 // ClusterConfig configures a new EKS cluster.
 type ClusterConfig struct {
 	Name          string
@@ -174,6 +182,16 @@ type NodegroupUpdateConfig struct {
 	MaxUnavailablePercentage int
 }
 
+// LaunchTemplateSpecification identifies the EC2 launch template a managed
+// node group is based on. Real EKS requires exactly one of ID or Name on the
+// request; Version is optional and defaults to the template's default version
+// when omitted.
+type LaunchTemplateSpecification struct {
+	ID      string
+	Name    string
+	Version string
+}
+
 // NodegroupConfig configures a new managed node group.
 type NodegroupConfig struct {
 	ClusterName    string
@@ -191,6 +209,9 @@ type NodegroupConfig struct {
 	Labels         map[string]string
 	Taints         []Taint
 	Tags           map[string]string
+	// LaunchTemplate is optional; when set, it names the EC2 launch template
+	// backing the node group's instances.
+	LaunchTemplate *LaunchTemplateSpecification
 }
 
 // Nodegroup is the mock-side representation of a managed node group.
@@ -216,6 +237,8 @@ type Nodegroup struct {
 	// ModifiedAt advances on every mutating op (config/version update); on a
 	// freshly created nodegroup it equals CreatedAt.
 	ModifiedAt time.Time
+	// LaunchTemplate mirrors the caller-supplied launch template, when set.
+	LaunchTemplate *LaunchTemplateSpecification
 }
 
 // NodegroupConfigUpdate carries the mutable fields UpdateNodegroupConfig
@@ -291,7 +314,10 @@ type EKS interface {
 	CreateCluster(ctx context.Context, cfg ClusterConfig) (*Cluster, error)
 	DescribeCluster(ctx context.Context, name string) (*Cluster, error)
 	ListClusters(ctx context.Context) ([]string, error)
-	UpdateClusterConfig(ctx context.Context, name string, cfg VPCConfig, tags map[string]string) (*ClusterUpdate, error)
+	UpdateClusterConfig(
+		ctx context.Context, name string, cfg *VPCConfig,
+		logging []ClusterLogging, accessConfig *AccessConfigUpdate, tags map[string]string,
+	) (*ClusterUpdate, error)
 	UpdateClusterVersion(ctx context.Context, name, version string) (*ClusterUpdate, error)
 	DeleteCluster(ctx context.Context, name string) (*Cluster, error)
 

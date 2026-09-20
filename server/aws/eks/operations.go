@@ -140,12 +140,23 @@ func (h *Handler) updateClusterConfig(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
-	var vpc eksdriver.VPCConfig
+	var vpc *eksdriver.VPCConfig
 	if body.ResourcesVpcConfig != nil {
-		vpc = vpcRequestToDriver(body.ResourcesVpcConfig)
+		v := vpcRequestToDriver(body.ResourcesVpcConfig)
+		vpc = &v
 	}
 
-	upd, err := h.eks.UpdateClusterConfig(r.Context(), name, vpc, body.Tags)
+	var logging []eksdriver.ClusterLogging
+	if body.Logging != nil {
+		logging = loggingRequestToDriver(body.Logging)
+	}
+
+	var accessConfig *eksdriver.AccessConfigUpdate
+	if body.AccessConfig != nil {
+		accessConfig = &eksdriver.AccessConfigUpdate{AuthenticationMode: body.AccessConfig.AuthenticationMode}
+	}
+
+	upd, err := h.eks.UpdateClusterConfig(r.Context(), name, vpc, logging, accessConfig, body.Tags)
 	if err != nil {
 		writeErr(w, err)
 
@@ -246,6 +257,10 @@ func (h *Handler) createNodegroup(w http.ResponseWriter, r *http.Request, cluste
 
 	if body.UpdateConfig != nil {
 		cfg.UpdateConfig = updateConfigFromJSON(body.UpdateConfig)
+	}
+
+	if body.LaunchTemplate != nil {
+		cfg.LaunchTemplate = launchTemplateFromJSON(body.LaunchTemplate)
 	}
 
 	ng, err := h.eks.CreateNodegroup(r.Context(), cfg)
@@ -573,6 +588,29 @@ func accessConfigRequestToDriver(a *accessConfigRequest) eksdriver.AccessConfigR
 	}
 }
 
+// launchTemplateFromJSON converts the wire launchTemplate to the driver shape.
+func launchTemplateFromJSON(l *launchTemplateSpecificationJSON) *eksdriver.LaunchTemplateSpecification {
+	return &eksdriver.LaunchTemplateSpecification{
+		ID:      l.ID,
+		Name:    l.Name,
+		Version: l.Version,
+	}
+}
+
+// launchTemplateToJSON renders the driver launchTemplate to the wire response
+// shape, returning nil when the nodegroup has none.
+func launchTemplateToJSON(l *eksdriver.LaunchTemplateSpecification) *launchTemplateSpecificationJSON {
+	if l == nil {
+		return nil
+	}
+
+	return &launchTemplateSpecificationJSON{
+		ID:      l.ID,
+		Name:    l.Name,
+		Version: l.Version,
+	}
+}
+
 // mergeScaling overlays only the sizes present in s onto dst, leaving omitted
 // fields untouched. This is the partial-update semantics real EKS applies.
 func mergeScaling(dst *eksdriver.NodegroupScalingConfig, s *nodegroupScalingConfigJSON) {
@@ -784,6 +822,8 @@ func toNodegroupJSON(n *eksdriver.Nodegroup) nodegroupJSON {
 	if n.DiskSize > 0 {
 		out.DiskSize = &disk
 	}
+
+	out.LaunchTemplate = launchTemplateToJSON(n.LaunchTemplate)
 
 	// Real EKS always reports a health block (empty issues when healthy) and a
 	// resources block naming at least one managed Auto Scaling group. The mock
