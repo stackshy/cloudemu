@@ -19,11 +19,17 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	"github.com/stackshy/cloudemu/v2/services/mq/driver"
 )
 
 // apiPrefix is the version prefix every MQ operation path carries.
 const apiPrefix = "/v1/"
+
+// credentialScopeMQ is Amazon MQ's SigV4 signing name. Amazon MSK (Kafka) also
+// serves /v1/configurations, so the two are told apart by the credential scope
+// service — otherwise MQ (registered first) shadows every MSK configuration op.
+const credentialScopeMQ = "mq"
 
 // Path roots below the /v1/ prefix.
 const (
@@ -60,6 +66,13 @@ func New(d driver.MQ) *Handler {
 // services, so it is claimed only for MQ ARNs; a non-MQ ARN falls through.
 func (*Handler) Matches(r *http.Request) bool {
 	if !strings.HasPrefix(r.URL.Path, apiPrefix) {
+		return false
+	}
+
+	// /v1/configurations is shared with Amazon MSK (Kafka). Decline a request
+	// signed for a different service so its own handler can claim it; an
+	// unsigned request (empty scope) still matches, preserving prior behavior.
+	if svc := awsquery.CredentialScopeService(r.Header.Get("Authorization")); svc != "" && svc != credentialScopeMQ {
 		return false
 	}
 
