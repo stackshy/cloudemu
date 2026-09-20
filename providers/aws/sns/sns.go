@@ -3,6 +3,8 @@ package sns
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"maps"
@@ -522,6 +524,14 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 		return nil, err
 	}
 
+	// A FIFO topic with ContentBasedDeduplication enabled and no explicit
+	// MessageDeduplicationId gets one derived here, exactly as real SNS does,
+	// so fan-out to a FIFO SQS subscription (which requires a dedup id) is not
+	// silently rejected downstream.
+	if td.info.FifoTopic && input.MessageDeduplicationID == "" && td.info.ContentBasedDeduplication {
+		input.MessageDeduplicationID = contentBasedDeduplicationID(input.Message)
+	}
+
 	msgID := idgen.GenerateID("msg-")
 
 	attrs := make(map[string]string, len(input.Attributes))
@@ -848,6 +858,17 @@ func envelopeAttributes(input *driver.PublishInput) map[string]any {
 	}
 
 	return out
+}
+
+// contentBasedDeduplicationID derives the FIFO MessageDeduplicationId SNS
+// computes for a publish when the topic has ContentBasedDeduplication enabled:
+// the hex-encoded SHA-256 hash of the message body, matching real SNS/SQS
+// content-based dedup (and mirroring providers/aws/sqs's own derivation so the
+// two stay consistent).
+func contentBasedDeduplicationID(message string) string {
+	sum := sha256.Sum256([]byte(message))
+
+	return hex.EncodeToString(sum[:])
 }
 
 // defaultDataType returns dt, or "String" when dt is empty.
