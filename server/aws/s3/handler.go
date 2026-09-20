@@ -21,6 +21,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	"github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
@@ -130,6 +131,18 @@ func (*Handler) Matches(r *http.Request) bool {
 	if r.Method == http.MethodPost &&
 		strings.HasPrefix(r.Header.Get("Content-Type"),
 			"application/x-www-form-urlencoded") {
+		return false
+	}
+
+	// S3 shares the single wire endpoint with every other REST service and has no
+	// distinguishing path prefix (bucket names are arbitrary), so it must not act
+	// as a blind REST catch-all — otherwise another service's unrouted op is
+	// swallowed here and answered with a bogus NoSuchBucket (or a false 200). The
+	// SigV4 credential scope names the service the caller signed for, so decline a
+	// request explicitly signed for a different service; it then reaches that
+	// service's handler or cleanly 501s. Unsigned requests carry no scope and
+	// still fall to S3, preserving path-style access for unsigned callers.
+	if svc := awsquery.CredentialScopeService(r.Header.Get("Authorization")); svc != "" && svc != "s3" {
 		return false
 	}
 
