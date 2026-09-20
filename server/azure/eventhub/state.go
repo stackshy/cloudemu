@@ -33,11 +33,19 @@ const (
 	// the Basic and Standard tiers; messageRetentionInDays is 1 day on Basic and up
 	// to 7 on Standard (higher tiers use retentionDescription and are left
 	// unbounded here).
-	minPartitionCount    = 1
-	maxPartitionCount    = 32
-	minRetentionDays     = 1
-	maxRetentionBasic    = 1
-	maxRetentionStandard = 7
+	minPartitionCount = 1
+	maxPartitionCount = 32
+	// maxAllocablePartitions is a hard safety-net ceiling on the partition-id
+	// slice partitionIDs allocates. Basic/Standard tiers are already validated
+	// against maxPartitionCount above; Premium/Dedicated tiers are left
+	// unbounded by that business-rule check (real Azure allows up to 1024
+	// partitions on a Dedicated cluster), so this constant — well above any real
+	// tier's ceiling — is the only bound protecting the allocation itself from a
+	// pathological partitionCount.
+	maxAllocablePartitions = 1024
+	minRetentionDays       = 1
+	maxRetentionBasic      = 1
+	maxRetentionStandard   = 7
 	// listPageSize is how many entities a list returns before emitting a nextLink.
 	listPageSize = 100
 	// skipParam is the query parameter a paged list request carries to resume at

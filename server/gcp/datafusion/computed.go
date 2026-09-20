@@ -18,6 +18,13 @@ const (
 	bucketHashLen = 20
 	tenantHashLen = 20
 	agentHashLen  = 12
+
+	// minComputedFields is the extra map capacity reserved for the fields
+	// computedOutputs injects (name, state, createTime, updateTime,
+	// serviceEndpoint, apiEndpoint, gcsBucket, tenantProjectId,
+	// p4ServiceAccount, serviceAccount) plus the conditionally injected
+	// default version.
+	minComputedFields = 11
 )
 
 // computedOutputs returns the output-only fields CloudEmu derives for an
