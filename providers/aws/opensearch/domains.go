@@ -321,11 +321,16 @@ func (m *Mock) UpdateDomainConfig(_ context.Context, in driver.UpdateDomainConfi
 	return &out, true, nil
 }
 
-// applyConfigPatch applies only the non-nil fields of an update to cfg.
+// applyConfigPatch applies only the non-nil/present fields of an update to
+// cfg, preserving everything the request omitted. ClusterConfig is merged
+// field by field; AdvancedOptions is merged key by key; RawOptions blocks
+// (EBSOptions, VPCOptions, CognitoOptions, LogPublishingOptions,
+// EncryptionAtRestOptions, NodeToNodeEncryptionOptions, SnapshotOptions,
+// DomainEndpointOptions, AdvancedSecurityOptions, AutoTuneOptions, ...) are
+// deep-merged so setting one nested field never drops sibling fields real AWS
+// would have kept.
 func applyConfigPatch(cfg *driver.DomainConfig, in driver.UpdateDomainConfigInput) {
-	if in.ClusterConfig != nil {
-		cfg.ClusterConfig = copyClusterConfig(*in.ClusterConfig)
-	}
+	applyClusterConfigPatch(&cfg.ClusterConfig, in.ClusterConfig)
 
 	if in.AccessPolicies != nil {
 		cfg.AccessPolicies = *in.AccessPolicies
@@ -335,8 +340,12 @@ func applyConfigPatch(cfg *driver.DomainConfig, in driver.UpdateDomainConfigInpu
 		cfg.IPAddressType = *in.IPAddressType
 	}
 
-	if in.AdvancedOptions != nil {
-		cfg.AdvancedOptions = copyTags(in.AdvancedOptions)
+	for k, v := range in.AdvancedOptions {
+		if cfg.AdvancedOptions == nil {
+			cfg.AdvancedOptions = map[string]string{}
+		}
+
+		cfg.AdvancedOptions[k] = v
 	}
 
 	for k, v := range in.RawOptions {
@@ -344,8 +353,95 @@ func applyConfigPatch(cfg *driver.DomainConfig, in driver.UpdateDomainConfigInpu
 			cfg.RawOptions = map[string]json.RawMessage{}
 		}
 
-		cfg.RawOptions[k] = append(json.RawMessage(nil), v...)
+		cfg.RawOptions[k] = mergeRawJSON(cfg.RawOptions[k], v)
 	}
+}
+
+// applyClusterConfigPatch applies only the non-nil fields of patch to cfg,
+// leaving every omitted field at its prior stored value.
+func applyClusterConfigPatch(cfg *driver.ClusterConfig, patch *driver.ClusterConfigPatch) {
+	if patch == nil {
+		return
+	}
+
+	applyInstancePatch(cfg, patch)
+	applyWarmPatch(cfg, patch)
+}
+
+// applyInstancePatch merges the instance/dedicated-master fields of patch.
+func applyInstancePatch(cfg *driver.ClusterConfig, patch *driver.ClusterConfigPatch) {
+	if patch.InstanceType != nil {
+		cfg.InstanceType = *patch.InstanceType
+	}
+
+	if patch.InstanceCount != nil {
+		cfg.InstanceCount = *patch.InstanceCount
+	}
+
+	if patch.DedicatedMasterEnabled != nil {
+		cfg.DedicatedMasterEnabled = *patch.DedicatedMasterEnabled
+	}
+
+	if patch.DedicatedMasterType != nil {
+		cfg.DedicatedMasterType = *patch.DedicatedMasterType
+	}
+
+	if patch.DedicatedMasterCount != nil {
+		cfg.DedicatedMasterCount = *patch.DedicatedMasterCount
+	}
+}
+
+// applyWarmPatch merges the zone-awareness/warm-node fields of patch.
+func applyWarmPatch(cfg *driver.ClusterConfig, patch *driver.ClusterConfigPatch) {
+	if patch.ZoneAwarenessEnabled != nil {
+		cfg.ZoneAwarenessEnabled = *patch.ZoneAwarenessEnabled
+	}
+
+	if patch.WarmEnabled != nil {
+		cfg.WarmEnabled = *patch.WarmEnabled
+	}
+
+	if patch.WarmType != nil {
+		cfg.WarmType = *patch.WarmType
+	}
+
+	if patch.WarmCount != nil {
+		cfg.WarmCount = *patch.WarmCount
+	}
+}
+
+// mergeRawJSON merges incoming onto existing, recursively, when both decode
+// as JSON objects: keys present in incoming overwrite existing's, keys
+// omitted from incoming keep existing's value. When either side is not a
+// JSON object (a scalar, array, or absent block) incoming replaces existing
+// wholesale, matching AWS's behavior for list-typed fields (e.g. a fully
+// replaced SubnetIds/MaintenanceSchedules array).
+func mergeRawJSON(existing, incoming json.RawMessage) json.RawMessage {
+	var incomingObj map[string]json.RawMessage
+	if err := json.Unmarshal(incoming, &incomingObj); err != nil || incomingObj == nil {
+		return append(json.RawMessage(nil), incoming...)
+	}
+
+	var existingObj map[string]json.RawMessage
+	if err := json.Unmarshal(existing, &existingObj); err != nil || existingObj == nil {
+		existingObj = map[string]json.RawMessage{}
+	}
+
+	merged := make(map[string]json.RawMessage, len(existingObj)+len(incomingObj))
+	for k, v := range existingObj {
+		merged[k] = v
+	}
+
+	for k, v := range incomingObj {
+		merged[k] = mergeRawJSON(existingObj[k], v)
+	}
+
+	out, err := json.Marshal(merged)
+	if err != nil {
+		return append(json.RawMessage(nil), incoming...)
+	}
+
+	return out
 }
 
 // reflectConfigOnStatus copies the modeled config fields onto the domain status.

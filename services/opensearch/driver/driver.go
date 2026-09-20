@@ -73,6 +73,22 @@ type ClusterConfig struct {
 	WarmCount              int32
 }
 
+// ClusterConfigPatch describes a field-level change to a domain's
+// ClusterConfig. Only non-nil fields are applied; an omitted field keeps its
+// prior stored value, matching real UpdateDomainConfig semantics (callers can
+// change WarmCount alone without reverting InstanceType/InstanceCount/etc).
+type ClusterConfigPatch struct {
+	InstanceType           *string
+	InstanceCount          *int32
+	DedicatedMasterEnabled *bool
+	DedicatedMasterType    *string
+	DedicatedMasterCount   *int32
+	ZoneAwarenessEnabled   *bool
+	WarmEnabled            *bool
+	WarmType               *string
+	WarmCount              *int32
+}
+
 // DomainStatus is the full description returned by DescribeDomain.
 type DomainStatus struct {
 	DomainID               string
@@ -113,10 +129,12 @@ type CreateDomainInput struct {
 }
 
 // UpdateDomainConfigInput describes a config change. Only non-nil pointers are
-// applied so callers can patch a single option.
+// applied so callers can patch a single option. AdvancedOptions and RawOptions
+// are merged key-by-key into the stored config rather than replacing it
+// wholesale, so an update that touches one option preserves the others.
 type UpdateDomainConfigInput struct {
 	DomainName      string
-	ClusterConfig   *ClusterConfig
+	ClusterConfig   *ClusterConfigPatch
 	AccessPolicies  *string
 	AdvancedOptions map[string]string
 	IPAddressType   *string

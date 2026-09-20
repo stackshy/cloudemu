@@ -50,12 +50,17 @@ const (
 	// family default), and clients rely on it: terraform's aws_redshift_cluster
 	// reads ClusterParameterGroups[0] unconditionally and panics on an empty list.
 	defaultParameterGroupName = "default.redshift-1.0"
-	snapshotBackupSizeMB      = 100.0
-	cpuUtilizationRunning     = 25.0
-	databaseConnectionsRun    = 5.0
-	readIOPSRunning           = 10.0
-	writeIOPSRunning          = 5.0
-	networkReceiveThroughput  = 1024.0
+	// defaultMaintenanceTrack is the maintenance track a cluster runs on when
+	// CreateCluster omits MaintenanceTrackName; terraform's
+	// maintenance_track_name defaults to the same value, so an unset one never
+	// drifts.
+	defaultMaintenanceTrack  = "current"
+	snapshotBackupSizeMB     = 100.0
+	cpuUtilizationRunning    = 25.0
+	databaseConnectionsRun   = 5.0
+	readIOPSRunning          = 10.0
+	writeIOPSRunning         = 5.0
+	networkReceiveThroughput = 1024.0
 )
 
 // errInstanceOpsUnsupported is the canonical error returned for instance-level
@@ -596,6 +601,16 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		maintenanceWindow = defaultMaintenanceWindow
 	}
 
+	maintenanceTrack := cfg.MaintenanceTrackName
+	if maintenanceTrack == "" {
+		maintenanceTrack = defaultMaintenanceTrack
+	}
+
+	allowVersionUpgrade := true
+	if cfg.AllowVersionUpgrade != nil {
+		allowVersionUpgrade = *cfg.AllowVersionUpgrade
+	}
+
 	cluster := rdbdriver.Cluster{
 		ID:                               cfg.ID,
 		ARN:                              clusterARN(m.opts.Region, m.opts.AccountID, cfg.ID),
@@ -607,6 +622,7 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		Port:                             port,
 		State:                            rdbdriver.StateAvailable,
 		VPCSecurityGroups:                append([]string(nil), cfg.VPCSecurityGroups...),
+		ClusterSecurityGroups:            append([]string(nil), cfg.ClusterSecurityGroups...),
 		SubnetGroupName:                  cfg.SubnetGroupName,
 		DBClusterParameterGroupName:      parameterGroup,
 		NodeType:                         cfg.NodeType,
@@ -617,6 +633,9 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		AvailabilityZone:                 cfg.AvailabilityZone,
 		AutomatedSnapshotRetentionPeriod: cfg.AutomatedSnapshotRetentionPeriod,
 		PreferredMaintenanceWindow:       maintenanceWindow,
+		AllowVersionUpgrade:              allowVersionUpgrade,
+		MaintenanceTrackName:             maintenanceTrack,
+		ElasticIP:                        cfg.ElasticIP,
 		CreatedAt:                        m.opts.Clock.Now().UTC(),
 		Tags:                             copyTags(cfg.Tags),
 	}
@@ -720,9 +739,13 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdbdriver.Cl
 	return out, nil
 }
 
-// ModifyCluster applies changes.
+// ModifyCluster applies only the fields present in input, preserving every
+// attribute the request omitted (a field-level merge matching real Redshift
+// ModifyCluster semantics).
+//
+//nolint:gocritic // hugeParam: signature fixed by driver.RelationalDB (by-value input, shared across RDS/Aurora/Azure/GCP).
 func (m *Mock) ModifyCluster(
-	_ context.Context, id string, input rdbdriver.ModifyInstanceInput,
+	ctx context.Context, id string, input rdbdriver.ModifyInstanceInput,
 ) (*rdbdriver.Cluster, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -732,25 +755,17 @@ func (m *Mock) ModifyCluster(
 		return nil, cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
 	}
 
-	if input.EngineVersion != "" {
-		cluster.EngineVersion = input.EngineVersion
+	// Rotate the master password on the backing engine (if one is wired) before
+	// persisting anything else, so a failed rotation leaves the cluster row
+	// untouched.
+	if input.MasterUserPassword != "" {
+		inst := rdbdriver.Instance{ID: cluster.ID, Engine: cluster.Engine, DBName: cluster.DatabaseName, MasterUsername: cluster.MasterUsername}
+		if err := dbengine.RotatePassword(ctx, m.opts.DatabaseEngine, &inst, input.MasterUserPassword); err != nil {
+			return nil, err
+		}
 	}
 
-	applyResize(&cluster, &input)
-
-	if input.PreferredMaintenanceWindow != "" {
-		cluster.PreferredMaintenanceWindow = input.PreferredMaintenanceWindow
-	}
-
-	// Retention is a pointer so a modify that sets it to 0 (disable automated
-	// snapshots) is distinguished from a modify that leaves it unchanged.
-	if input.AutomatedSnapshotRetentionPeriod != nil {
-		cluster.AutomatedSnapshotRetentionPeriod = *input.AutomatedSnapshotRetentionPeriod
-	}
-
-	if input.Tags != nil {
-		cluster.Tags = copyTags(input.Tags)
-	}
+	applyClusterModify(&cluster, &input)
 
 	m.clusters.Set(id, cluster)
 
@@ -764,6 +779,69 @@ func (m *Mock) ModifyCluster(
 	out.State = m.settleClusterState(id, out.State)
 
 	return &out, nil
+}
+
+// applyClusterModify applies only the non-empty/non-nil fields of input onto
+// cluster; every omitted field keeps its prior stored value.
+func applyClusterModify(cluster *rdbdriver.Cluster, input *rdbdriver.ModifyInstanceInput) {
+	if input.EngineVersion != "" {
+		cluster.EngineVersion = input.EngineVersion
+	}
+
+	applyResize(cluster, input)
+
+	if input.PreferredMaintenanceWindow != "" {
+		cluster.PreferredMaintenanceWindow = input.PreferredMaintenanceWindow
+	}
+
+	// Retention is a pointer so a modify that sets it to 0 (disable automated
+	// snapshots) is distinguished from a modify that leaves it unchanged.
+	if input.AutomatedSnapshotRetentionPeriod != nil {
+		cluster.AutomatedSnapshotRetentionPeriod = *input.AutomatedSnapshotRetentionPeriod
+	}
+
+	if input.DBClusterParameterGroupName != "" {
+		cluster.DBClusterParameterGroupName = input.DBClusterParameterGroupName
+	}
+
+	if input.VPCSecurityGroups != nil {
+		cluster.VPCSecurityGroups = append([]string(nil), input.VPCSecurityGroups...)
+	}
+
+	if input.ClusterSecurityGroups != nil {
+		cluster.ClusterSecurityGroups = append([]string(nil), input.ClusterSecurityGroups...)
+	}
+
+	if input.Tags != nil {
+		cluster.Tags = copyTags(input.Tags)
+	}
+
+	applyClusterModifyFlags(cluster, input)
+}
+
+// applyClusterModifyFlags merges the boolean/string attributes ModifyCluster
+// exposes beyond resize/retention/security-groups: AllowVersionUpgrade,
+// PubliclyAccessible, Encrypted, MaintenanceTrackName, ElasticIP.
+func applyClusterModifyFlags(cluster *rdbdriver.Cluster, input *rdbdriver.ModifyInstanceInput) {
+	if input.AllowVersionUpgrade != nil {
+		cluster.AllowVersionUpgrade = *input.AllowVersionUpgrade
+	}
+
+	if input.PubliclyAccessible != nil {
+		cluster.PubliclyAccessible = *input.PubliclyAccessible
+	}
+
+	if input.Encrypted != nil {
+		cluster.Encrypted = *input.Encrypted
+	}
+
+	if input.MaintenanceTrackName != "" {
+		cluster.MaintenanceTrackName = input.MaintenanceTrackName
+	}
+
+	if input.ElasticIP != "" {
+		cluster.ElasticIP = input.ElasticIP
+	}
 }
 
 // applyResize applies a Redshift ModifyCluster resize (NodeType / NumberOfNodes

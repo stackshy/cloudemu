@@ -39,6 +39,20 @@ type vpcSecurityGroupsXML struct {
 	VpcSecurityGroup []vpcSecurityGroupXML `xml:"VpcSecurityGroup,omitempty"`
 }
 
+type clusterSecurityGroupXML struct {
+	ClusterSecurityGroupName string `xml:"ClusterSecurityGroupName"`
+	Status                   string `xml:"Status"`
+}
+
+type clusterSecurityGroupsXML struct {
+	ClusterSecurityGroup []clusterSecurityGroupXML `xml:"ClusterSecurityGroup,omitempty"`
+}
+
+type elasticIPStatusXML struct {
+	ElasticIP string `xml:"ElasticIp"`
+	Status    string `xml:"Status"`
+}
+
 type clusterXML struct {
 	ClusterIdentifier         string `xml:"ClusterIdentifier"`
 	ClusterNamespaceArn       string `xml:"ClusterNamespaceArn"`
@@ -49,35 +63,38 @@ type clusterXML struct {
 	// resolve to "enabled"/"disabled", so an unset value hangs the waiter.
 	AvailabilityZoneRelocationStatus string `xml:"AvailabilityZoneRelocationStatus"`
 	MultiAZ                          string `xml:"MultiAZ"`
-	// AllowVersionUpgrade / ManualSnapshotRetentionPeriod are not modeled and
-	// always report the AWS account defaults; terraform reads them back into its
-	// schema (whose defaults match), so omitting them drifts.
+	// AllowVersionUpgrade echoes the cluster's stored value (AWS default true),
+	// so a caller-set value round-trips instead of always reporting the default.
 	AllowVersionUpgrade bool `xml:"AllowVersionUpgrade"`
 	// AutomatedSnapshotRetentionPeriod / PreferredMaintenanceWindow carry the
 	// cluster's stored values so a user-set retention or maintenance window
 	// round-trips instead of always reporting the create-time default (which
 	// would drift the moment terraform changes either attribute).
-	AutomatedSnapshotRetentionPeriod int                        `xml:"AutomatedSnapshotRetentionPeriod"`
-	PreferredMaintenanceWindow       string                     `xml:"PreferredMaintenanceWindow,omitempty"`
-	ManualSnapshotRetentionPeriod    int                        `xml:"ManualSnapshotRetentionPeriod"`
-	MaintenanceTrackName             string                     `xml:"MaintenanceTrackName"`
-	ClusterVersion                   string                     `xml:"ClusterVersion,omitempty"`
-	MasterUsername                   string                     `xml:"MasterUsername,omitempty"`
-	DBName                           string                     `xml:"DBName,omitempty"`
-	Endpoint                         *endpointXML               `xml:"Endpoint,omitempty"`
-	ClusterCreateTime                string                     `xml:"ClusterCreateTime,omitempty"`
-	ClusterSubnetGroupName           string                     `xml:"ClusterSubnetGroupName,omitempty"`
-	VpcSecurityGroups                *vpcSecurityGroupsXML      `xml:"VpcSecurityGroups,omitempty"`
-	Tags                             *tagsXML                   `xml:"Tags,omitempty"`
-	NodeType                         string                     `xml:"NodeType,omitempty"`
-	NumberOfNodes                    int                        `xml:"NumberOfNodes,omitempty"`
-	Encrypted                        bool                       `xml:"Encrypted"`
-	KmsKeyID                         string                     `xml:"KmsKeyId,omitempty"`
-	PubliclyAccessible               bool                       `xml:"PubliclyAccessible"`
-	AvailabilityZone                 string                     `xml:"AvailabilityZone,omitempty"`
-	VpcID                            string                     `xml:"VpcId,omitempty"`
-	ClusterParameterGroups           *clusterParameterGroupsXML `xml:"ClusterParameterGroups,omitempty"`
-	ClusterNodes                     *clusterNodesXML           `xml:"ClusterNodes,omitempty"`
+	AutomatedSnapshotRetentionPeriod int    `xml:"AutomatedSnapshotRetentionPeriod"`
+	PreferredMaintenanceWindow       string `xml:"PreferredMaintenanceWindow,omitempty"`
+	ManualSnapshotRetentionPeriod    int    `xml:"ManualSnapshotRetentionPeriod"`
+	// MaintenanceTrackName echoes the cluster's stored value (AWS default
+	// "current").
+	MaintenanceTrackName   string                     `xml:"MaintenanceTrackName"`
+	ClusterVersion         string                     `xml:"ClusterVersion,omitempty"`
+	MasterUsername         string                     `xml:"MasterUsername,omitempty"`
+	DBName                 string                     `xml:"DBName,omitempty"`
+	Endpoint               *endpointXML               `xml:"Endpoint,omitempty"`
+	ClusterCreateTime      string                     `xml:"ClusterCreateTime,omitempty"`
+	ClusterSubnetGroupName string                     `xml:"ClusterSubnetGroupName,omitempty"`
+	VpcSecurityGroups      *vpcSecurityGroupsXML      `xml:"VpcSecurityGroups,omitempty"`
+	ClusterSecurityGroups  *clusterSecurityGroupsXML  `xml:"ClusterSecurityGroups,omitempty"`
+	Tags                   *tagsXML                   `xml:"Tags,omitempty"`
+	NodeType               string                     `xml:"NodeType,omitempty"`
+	NumberOfNodes          int                        `xml:"NumberOfNodes,omitempty"`
+	Encrypted              bool                       `xml:"Encrypted"`
+	KmsKeyID               string                     `xml:"KmsKeyId,omitempty"`
+	PubliclyAccessible     bool                       `xml:"PubliclyAccessible"`
+	AvailabilityZone       string                     `xml:"AvailabilityZone,omitempty"`
+	VpcID                  string                     `xml:"VpcId,omitempty"`
+	ElasticIPStatus        *elasticIPStatusXML        `xml:"ElasticIpStatus,omitempty"`
+	ClusterParameterGroups *clusterParameterGroupsXML `xml:"ClusterParameterGroups,omitempty"`
+	ClusterNodes           *clusterNodesXML           `xml:"ClusterNodes,omitempty"`
 }
 
 type clusterParameterGroupStatusXML struct {
@@ -262,13 +279,10 @@ const (
 	// cluster with AZ relocation off (the only mode modeled).
 	azRelocationDisabled = "disabled"
 
-	// AWS cluster defaults reported for unmodeled attributes so terraform's
-	// matching schema defaults do not perpetually drift.
-	defaultAllowVersionUpgrade      = true
+	// defaultManualSnapshotRetainNone is the AWS account default reported for
+	// ManualSnapshotRetentionPeriod, which is not modeled, so terraform's
+	// matching schema default does not perpetually drift.
 	defaultManualSnapshotRetainNone = -1
-	// defaultMaintenanceTrack is the maintenance track a cluster runs on by
-	// default; terraform's maintenance_track_name defaults to the same value.
-	defaultMaintenanceTrack = "current"
 
 	// multiAZDisabled is the Redshift MultiAZ value for a single-AZ cluster — the
 	// only mode modeled. The field is an "Enabled"/"Disabled" string (not a bool);
@@ -301,11 +315,11 @@ func toClusterXML(cluster *rdbdriver.Cluster) clusterXML {
 		ClusterAvailabilityStatus:        clusterAvailabilityStatus(cluster.State),
 		AvailabilityZoneRelocationStatus: azRelocationDisabled,
 		MultiAZ:                          multiAZDisabled,
-		AllowVersionUpgrade:              defaultAllowVersionUpgrade,
+		AllowVersionUpgrade:              cluster.AllowVersionUpgrade,
 		AutomatedSnapshotRetentionPeriod: cluster.AutomatedSnapshotRetentionPeriod,
 		PreferredMaintenanceWindow:       cluster.PreferredMaintenanceWindow,
 		ManualSnapshotRetentionPeriod:    defaultManualSnapshotRetainNone,
-		MaintenanceTrackName:             defaultMaintenanceTrack,
+		MaintenanceTrackName:             cluster.MaintenanceTrackName,
 		ClusterVersion:                   cluster.EngineVersion,
 		MasterUsername:                   cluster.MasterUsername,
 		DBName:                           cluster.DatabaseName,
@@ -313,6 +327,7 @@ func toClusterXML(cluster *rdbdriver.Cluster) clusterXML {
 		ClusterCreateTime:                cluster.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
 		ClusterSubnetGroupName:           cluster.SubnetGroupName,
 		VpcSecurityGroups:                toVpcSGsXML(cluster.VPCSecurityGroups),
+		ClusterSecurityGroups:            toClusterSGsXML(cluster.ClusterSecurityGroups),
 		Tags:                             toTagsXML(cluster.Tags),
 		NodeType:                         cluster.NodeType,
 		NumberOfNodes:                    cluster.NumberOfNodes,
@@ -321,6 +336,7 @@ func toClusterXML(cluster *rdbdriver.Cluster) clusterXML {
 		PubliclyAccessible:               cluster.PubliclyAccessible,
 		AvailabilityZone:                 cluster.AvailabilityZone,
 		VpcID:                            cluster.VpcID,
+		ElasticIPStatus:                  toElasticIPStatusXML(cluster.ElasticIP),
 		ClusterParameterGroups:           toClusterParameterGroupsXML(cluster.DBClusterParameterGroupName),
 		ClusterNodes:                     toClusterNodesXML(cluster.NumberOfNodes),
 	}
@@ -428,6 +444,32 @@ func toVpcSGsXML(sgs []string) *vpcSecurityGroupsXML {
 	}
 
 	return out
+}
+
+func toClusterSGsXML(sgs []string) *clusterSecurityGroupsXML {
+	if len(sgs) == 0 {
+		return nil
+	}
+
+	out := &clusterSecurityGroupsXML{
+		ClusterSecurityGroup: make([]clusterSecurityGroupXML, 0, len(sgs)),
+	}
+	for _, sg := range sgs {
+		out.ClusterSecurityGroup = append(out.ClusterSecurityGroup, clusterSecurityGroupXML{
+			ClusterSecurityGroupName: sg,
+			Status:                   "active",
+		})
+	}
+
+	return out
+}
+
+func toElasticIPStatusXML(elasticIP string) *elasticIPStatusXML {
+	if elasticIP == "" {
+		return nil
+	}
+
+	return &elasticIPStatusXML{ElasticIP: elasticIP, Status: "attached"}
 }
 
 // formInt returns the integer value of a form field, or 0 on missing/parse error.

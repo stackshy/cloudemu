@@ -139,6 +139,92 @@ func TestModifyCluster(t *testing.T) {
 	assertEqual(t, "prod", updated.Tags["env"])
 }
 
+// TestModifyCluster_FieldLevelMerge proves ModifyCluster is a field-level
+// merge: a first call sets NodeType/security groups/parameter group/booleans/
+// maintenance track/elastic IP, and a second call that touches only
+// NumberOfNodes must not revert any of them.
+func TestModifyCluster_FieldLevelMerge(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, rdbdriver.ClusterConfig{ID: "warehouse"})
+	requireNoError(t, err)
+
+	allowUpgrade := false
+	publiclyAccessible := true
+	encrypted := true
+
+	first, err := m.ModifyCluster(ctx, "warehouse", rdbdriver.ModifyInstanceInput{
+		NodeType:                    "ra3.xlplus",
+		VPCSecurityGroups:           []string{"sg-1", "sg-2"},
+		ClusterSecurityGroups:       []string{"classic-sg"},
+		DBClusterParameterGroupName: "custom-pg",
+		AllowVersionUpgrade:         &allowUpgrade,
+		PubliclyAccessible:          &publiclyAccessible,
+		Encrypted:                   &encrypted,
+		MaintenanceTrackName:        "trailing",
+		ElasticIP:                   "192.0.2.10",
+	})
+	requireNoError(t, err)
+
+	assertEqual(t, "ra3.xlplus", first.NodeType)
+	assertEqual(t, "custom-pg", first.DBClusterParameterGroupName)
+	assertEqual(t, false, first.AllowVersionUpgrade)
+	assertEqual(t, true, first.PubliclyAccessible)
+	assertEqual(t, true, first.Encrypted)
+	assertEqual(t, "trailing", first.MaintenanceTrackName)
+	assertEqual(t, "192.0.2.10", first.ElasticIP)
+
+	if len(first.VPCSecurityGroups) != 2 || len(first.ClusterSecurityGroups) != 1 {
+		t.Fatalf("security groups not applied: vpc=%v classic=%v", first.VPCSecurityGroups, first.ClusterSecurityGroups)
+	}
+
+	// Second call touches only NumberOfNodes; every field set above must survive.
+	second, err := m.ModifyCluster(ctx, "warehouse", rdbdriver.ModifyInstanceInput{
+		ClusterType:   "multi-node",
+		NumberOfNodes: 4,
+	})
+	requireNoError(t, err)
+
+	assertEqual(t, 4, second.NumberOfNodes)
+	assertEqual(t, "ra3.xlplus", second.NodeType)
+	assertEqual(t, "custom-pg", second.DBClusterParameterGroupName)
+	assertEqual(t, false, second.AllowVersionUpgrade)
+	assertEqual(t, true, second.PubliclyAccessible)
+	assertEqual(t, true, second.Encrypted)
+	assertEqual(t, "trailing", second.MaintenanceTrackName)
+	assertEqual(t, "192.0.2.10", second.ElasticIP)
+
+	if len(second.VPCSecurityGroups) != 2 || len(second.ClusterSecurityGroups) != 1 {
+		t.Fatalf("second modify dropped security groups: vpc=%v classic=%v",
+			second.VPCSecurityGroups, second.ClusterSecurityGroups)
+	}
+
+	// DescribeClusters must reflect the same preserved state.
+	desc, err := m.DescribeClusters(ctx, []string{"warehouse"})
+	requireNoError(t, err)
+	assertEqual(t, "ra3.xlplus", desc[0].NodeType)
+	assertEqual(t, 4, desc[0].NumberOfNodes)
+	assertEqual(t, "192.0.2.10", desc[0].ElasticIP)
+}
+
+// TestModifyCluster_MasterUserPasswordDoesNotError proves a MasterUserPassword
+// change on ModifyCluster is accepted (and, with no real database engine wired,
+// is safely a no-op) rather than causing an error or being silently mishandled.
+func TestModifyCluster_MasterUserPasswordDoesNotError(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, rdbdriver.ClusterConfig{ID: "warehouse", MasterUsername: "admin"})
+	requireNoError(t, err)
+
+	updated, err := m.ModifyCluster(ctx, "warehouse", rdbdriver.ModifyInstanceInput{
+		MasterUserPassword: "NewPassw0rd!",
+	})
+	requireNoError(t, err)
+	assertEqual(t, "warehouse", updated.ID)
+}
+
 func TestClusterSnapshotAndRestore(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

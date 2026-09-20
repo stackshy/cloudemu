@@ -97,6 +97,27 @@ func (c *clusterConfigJSON) toDriver() driver.ClusterConfig {
 	return out
 }
 
+// toPatch converts a wire cluster config to a field-level driver patch: only
+// the fields the caller set on the wire carry through as non-nil, so
+// UpdateDomainConfig can merge instead of replacing the whole ClusterConfig.
+func (c *clusterConfigJSON) toPatch() *driver.ClusterConfigPatch {
+	if c == nil {
+		return nil
+	}
+
+	return &driver.ClusterConfigPatch{
+		InstanceType:           c.InstanceType,
+		InstanceCount:          c.InstanceCount,
+		DedicatedMasterEnabled: c.DedicatedMasterEnabled,
+		DedicatedMasterType:    c.DedicatedMasterType,
+		DedicatedMasterCount:   c.DedicatedMasterCount,
+		ZoneAwarenessEnabled:   c.ZoneAwarenessEnabled,
+		WarmEnabled:            c.WarmEnabled,
+		WarmType:               c.WarmType,
+		WarmCount:              c.WarmCount,
+	}
+}
+
 // clusterConfigToWire renders a driver cluster config as its wire shape.
 func clusterConfigToWire(c driver.ClusterConfig) clusterConfigJSON {
 	instanceType := c.InstanceType
