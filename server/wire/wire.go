@@ -46,9 +46,15 @@ func WriteJSON(w http.ResponseWriter, v any) {
 	json.NewEncoder(w).Encode(v) //nolint:errcheck // best-effort response
 }
 
-// WriteJSONError writes a JSON error response with the given status.
+// WriteJSONError writes a JSON error response with the given status. It sets
+// both the `__type` body member and the `X-Amzn-Errortype` HTTP header: real
+// AWS awsJson1.0/1.1 services emit the header on every error, and botocore /
+// the AWS CLI read it (preferring it over the body) to resolve the modeled
+// exception type — so omitting it leaves those clients unable to recognize the
+// error, even though the Go SDK falls back to the body.
 func WriteJSONError(w http.ResponseWriter, status int, errType, msg string) {
 	w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+	w.Header().Set("X-Amzn-Errortype", errType)
 	w.WriteHeader(status)
 
 	json.NewEncoder(w).Encode(map[string]string{ //nolint:errcheck // best-effort response
@@ -70,6 +76,7 @@ func WriteJSONError(w http.ResponseWriter, status int, errType, msg string) {
 // "<legacy code>;Receiver", matching the header's documented format.
 func WriteJSONErrorQueryCompat(w http.ResponseWriter, status int, errType, queryCode, msg string) {
 	w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+	w.Header().Set("X-Amzn-Errortype", errType)
 	w.Header().Set("x-amzn-query-error", queryCode)
 	w.WriteHeader(status)
 
@@ -85,6 +92,7 @@ func WriteJSONErrorQueryCompat(w http.ResponseWriter, status int, errType, query
 // Item member when ReturnValuesOnConditionCheckFailure=ALL_OLD.
 func WriteJSONErrorFields(w http.ResponseWriter, status int, errType, msg string, extra map[string]any) {
 	w.Header().Set("Content-Type", "application/x-amz-json-1.0")
+	w.Header().Set("X-Amzn-Errortype", errType)
 	w.WriteHeader(status)
 
 	body := map[string]any{
