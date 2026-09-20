@@ -101,7 +101,7 @@ func TestClusterLifecycle(t *testing.T) {
 
 	_, err = m.UpdateClusterConfig(ctx, "c1",
 		eksdriver.VPCConfig{EndpointPublicAccess: true, PublicAccessCidrs: []string{"0.0.0.0/0"}},
-		map[string]string{"env": "dev"})
+		nil, nil, map[string]string{"env": "dev"})
 	requireNoError(t, err)
 
 	got, err = m.DescribeCluster(ctx, "c1")
@@ -126,7 +126,7 @@ func TestUpdateCluster_NotFound(t *testing.T) {
 		t.Fatal("expected error for missing cluster")
 	}
 
-	if _, err := m.UpdateClusterConfig(ctx, "missing", eksdriver.VPCConfig{}, nil); err == nil {
+	if _, err := m.UpdateClusterConfig(ctx, "missing", eksdriver.VPCConfig{}, nil, nil, nil); err == nil {
 		t.Fatal("expected error for missing cluster")
 	}
 }

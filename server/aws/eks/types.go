@@ -84,6 +84,13 @@ type accessConfigResponse struct {
 	BootstrapClusterCreatorAdminPermissions bool   `json:"bootstrapClusterCreatorAdminPermissions"`
 }
 
+// updateAccessConfigRequest is the UpdateClusterConfig request shape for
+// access config. Unlike the CreateCluster accessConfig, real EKS only allows
+// changing authenticationMode after creation.
+type updateAccessConfigRequest struct {
+	AuthenticationMode string `json:"authenticationMode,omitempty"`
+}
+
 // clusterJSON is the EKS cluster resource shape.
 type clusterJSON struct {
 	Name                    string                           `json:"name"`
@@ -127,29 +134,38 @@ type taintJSON struct {
 	Effect string `json:"effect,omitempty"`
 }
 
+// launchTemplateSpecificationJSON mirrors the SDK LaunchTemplateSpecification
+// shape (id/name/version), used on CreateNodegroup and DescribeNodegroup.
+type launchTemplateSpecificationJSON struct {
+	ID      string `json:"id,omitempty"`
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
+}
+
 // nodegroupJSON is the EKS nodegroup resource shape.
 type nodegroupJSON struct {
-	NodegroupName  string                      `json:"nodegroupName"`
-	NodegroupArn   string                      `json:"nodegroupArn"`
-	ClusterName    string                      `json:"clusterName"`
-	Version        string                      `json:"version,omitempty"`
-	ReleaseVersion string                      `json:"releaseVersion,omitempty"`
-	CreatedAt      float64                     `json:"createdAt"`
-	ModifiedAt     float64                     `json:"modifiedAt"`
-	Status         string                      `json:"status"`
-	CapacityType   string                      `json:"capacityType,omitempty"`
-	ScalingConfig  *nodegroupScalingConfigJSON `json:"scalingConfig,omitempty"`
-	UpdateConfig   *nodegroupUpdateConfigJSON  `json:"updateConfig,omitempty"`
-	InstanceTypes  []string                    `json:"instanceTypes,omitempty"`
-	Subnets        []string                    `json:"subnets,omitempty"`
-	AmiType        string                      `json:"amiType,omitempty"`
-	NodeRole       string                      `json:"nodeRole,omitempty"`
-	Labels         map[string]string           `json:"labels,omitempty"`
-	Taints         []taintJSON                 `json:"taints,omitempty"`
-	DiskSize       *int32                      `json:"diskSize,omitempty"`
-	Health         *nodegroupHealthJSON        `json:"health,omitempty"`
-	Resources      *nodegroupResourcesJSON     `json:"resources,omitempty"`
-	Tags           map[string]string           `json:"tags,omitempty"`
+	NodegroupName  string                           `json:"nodegroupName"`
+	NodegroupArn   string                           `json:"nodegroupArn"`
+	ClusterName    string                           `json:"clusterName"`
+	Version        string                           `json:"version,omitempty"`
+	ReleaseVersion string                           `json:"releaseVersion,omitempty"`
+	CreatedAt      float64                          `json:"createdAt"`
+	ModifiedAt     float64                          `json:"modifiedAt"`
+	Status         string                           `json:"status"`
+	CapacityType   string                           `json:"capacityType,omitempty"`
+	ScalingConfig  *nodegroupScalingConfigJSON      `json:"scalingConfig,omitempty"`
+	UpdateConfig   *nodegroupUpdateConfigJSON       `json:"updateConfig,omitempty"`
+	InstanceTypes  []string                         `json:"instanceTypes,omitempty"`
+	Subnets        []string                         `json:"subnets,omitempty"`
+	AmiType        string                           `json:"amiType,omitempty"`
+	NodeRole       string                           `json:"nodeRole,omitempty"`
+	Labels         map[string]string                `json:"labels,omitempty"`
+	Taints         []taintJSON                      `json:"taints,omitempty"`
+	DiskSize       *int32                           `json:"diskSize,omitempty"`
+	LaunchTemplate *launchTemplateSpecificationJSON `json:"launchTemplate,omitempty"`
+	Health         *nodegroupHealthJSON             `json:"health,omitempty"`
+	Resources      *nodegroupResourcesJSON          `json:"resources,omitempty"`
+	Tags           map[string]string                `json:"tags,omitempty"`
 }
 
 // nodegroupHealthJSON carries a nodegroup's health issues. A healthy nodegroup
@@ -232,8 +248,10 @@ type createClusterRequest struct {
 }
 
 type updateClusterConfigRequest struct {
-	ResourcesVpcConfig *vpcConfigRequest `json:"resourcesVpcConfig,omitempty"`
-	Tags               map[string]string `json:"tags,omitempty"`
+	ResourcesVpcConfig *vpcConfigRequest          `json:"resourcesVpcConfig,omitempty"`
+	Logging            *loggingJSON               `json:"logging,omitempty"`
+	AccessConfig       *updateAccessConfigRequest `json:"accessConfig,omitempty"`
+	Tags               map[string]string          `json:"tags,omitempty"`
 }
 
 type updateClusterVersionRequest struct {
@@ -241,20 +259,21 @@ type updateClusterVersionRequest struct {
 }
 
 type createNodegroupRequest struct {
-	NodegroupName  string                      `json:"nodegroupName"`
-	NodeRole       string                      `json:"nodeRole,omitempty"`
-	Subnets        []string                    `json:"subnets,omitempty"`
-	InstanceTypes  []string                    `json:"instanceTypes,omitempty"`
-	AmiType        string                      `json:"amiType,omitempty"`
-	CapacityType   string                      `json:"capacityType,omitempty"`
-	DiskSize       *int32                      `json:"diskSize,omitempty"`
-	Version        string                      `json:"version,omitempty"`
-	ReleaseVersion string                      `json:"releaseVersion,omitempty"`
-	ScalingConfig  *nodegroupScalingConfigJSON `json:"scalingConfig,omitempty"`
-	UpdateConfig   *nodegroupUpdateConfigJSON  `json:"updateConfig,omitempty"`
-	Labels         map[string]string           `json:"labels,omitempty"`
-	Taints         []taintJSON                 `json:"taints,omitempty"`
-	Tags           map[string]string           `json:"tags,omitempty"`
+	NodegroupName  string                           `json:"nodegroupName"`
+	NodeRole       string                           `json:"nodeRole,omitempty"`
+	Subnets        []string                         `json:"subnets,omitempty"`
+	InstanceTypes  []string                         `json:"instanceTypes,omitempty"`
+	AmiType        string                           `json:"amiType,omitempty"`
+	CapacityType   string                           `json:"capacityType,omitempty"`
+	DiskSize       *int32                           `json:"diskSize,omitempty"`
+	Version        string                           `json:"version,omitempty"`
+	ReleaseVersion string                           `json:"releaseVersion,omitempty"`
+	ScalingConfig  *nodegroupScalingConfigJSON      `json:"scalingConfig,omitempty"`
+	UpdateConfig   *nodegroupUpdateConfigJSON       `json:"updateConfig,omitempty"`
+	Labels         map[string]string                `json:"labels,omitempty"`
+	Taints         []taintJSON                      `json:"taints,omitempty"`
+	Tags           map[string]string                `json:"tags,omitempty"`
+	LaunchTemplate *launchTemplateSpecificationJSON `json:"launchTemplate,omitempty"`
 }
 
 type updateNodegroupConfigRequest struct {

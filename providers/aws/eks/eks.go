@@ -304,6 +304,66 @@ func resolveClusterLogging(in []eksdriver.ClusterLogging) []eksdriver.ClusterLog
 	return out
 }
 
+// clusterLoggingGroups is the max number of groups a normalized logging
+// config carries: one for enabled types, one for disabled types.
+const clusterLoggingGroups = 2
+
+// clusterLoggingState flattens a []ClusterLogging into a per-type enabled map.
+func clusterLoggingState(groups []eksdriver.ClusterLogging) map[string]bool {
+	state := make(map[string]bool, len(allClusterLogTypes()))
+
+	for _, l := range groups {
+		for _, t := range l.Types {
+			state[t] = l.Enabled
+		}
+	}
+
+	return state
+}
+
+// applyClusterLogging merges incoming per-type log setup onto cur, preserving
+// the state of any log type the caller doesn't mention. Real EKS UpdateClusterConfig
+// only touches the log types actually listed in the request, not the whole set.
+// The result is normalized into (up to) two groups — enabled types and disabled
+// types, in allClusterLogTypes() order — matching the canonical shape real EKS
+// reports after an update.
+func applyClusterLogging(cur, incoming []eksdriver.ClusterLogging) []eksdriver.ClusterLogging {
+	if len(incoming) == 0 {
+		return cur
+	}
+
+	state := clusterLoggingState(cur)
+	for t, enabled := range clusterLoggingState(incoming) {
+		state[t] = enabled
+	}
+
+	var enabled, disabled []string
+
+	for _, t := range allClusterLogTypes() {
+		v, ok := state[t]
+		if !ok {
+			continue
+		}
+
+		if v {
+			enabled = append(enabled, t)
+		} else {
+			disabled = append(disabled, t)
+		}
+	}
+
+	out := make([]eksdriver.ClusterLogging, 0, clusterLoggingGroups)
+	if len(enabled) > 0 {
+		out = append(out, eksdriver.ClusterLogging{Types: enabled, Enabled: true})
+	}
+
+	if len(disabled) > 0 {
+		out = append(out, eksdriver.ClusterLogging{Types: disabled, Enabled: false})
+	}
+
+	return out
+}
+
 // resolveNetworkConfig fills in the EKS networking defaults: ipFamily "ipv4",
 // and a service CIDR for the chosen family when the caller omits it (real EKS
 // auto-assigns one so DescribeCluster is always populated).
@@ -356,6 +416,18 @@ func copyTaints(src []eksdriver.Taint) []eksdriver.Taint {
 	copy(out, src)
 
 	return out
+}
+
+// copyLaunchTemplate returns a defensive copy of a nodegroup's launch template
+// spec, or nil when the caller omitted one.
+func copyLaunchTemplate(src *eksdriver.LaunchTemplateSpecification) *eksdriver.LaunchTemplateSpecification {
+	if src == nil {
+		return nil
+	}
+
+	out := *src
+
+	return &out
 }
 
 // taintKey identifies a taint for merge/remove; real EKS treats Key+Effect as
@@ -690,13 +762,36 @@ func (m *Mock) ListClusters(_ context.Context) ([]string, error) {
 	return m.clusters.Keys(), nil
 }
 
+// clusterConfigUpdateType picks the EKS UpdateType that best reflects what a
+// UpdateClusterConfig call actually changed, matching the real API's
+// per-change-kind types (a single call only ever changes one kind of thing:
+// access config, logging, or VPC config). accessConfig takes priority since
+// it is the narrowest / most specific change; vpcEndpointChanged separates
+// the "endpoint access" flavor from a broader subnet/SG/CIDR VpcConfigUpdate.
+func clusterConfigUpdateType(accessConfigChanged, loggingChanged, vpcEndpointChanged, vpcOtherChanged bool) string {
+	switch {
+	case accessConfigChanged:
+		return "AccessConfigUpdate"
+	case loggingChanged:
+		return "LoggingUpdate"
+	case vpcEndpointChanged:
+		return "EndpointAccessUpdate"
+	case vpcOtherChanged:
+		return "VpcConfigUpdate"
+	default:
+		return "ConfigUpdate"
+	}
+}
+
 // UpdateClusterConfig records a logical update for VPC config / logging /
-// tags. Wave 1 applies the changes synchronously and returns a Successful
-// update so SDK pollers terminate immediately.
+// access config / tags, applying every supplied change to the stored cluster
+// so DescribeCluster reflects it. Wave 1 applies changes synchronously and
+// returns a Successful update so SDK pollers terminate immediately.
 //
 //nolint:gocritic // cfg matches the driver interface signature; one copy on entry is fine.
 func (m *Mock) UpdateClusterConfig(
-	_ context.Context, name string, cfg eksdriver.VPCConfig, tags map[string]string,
+	_ context.Context, name string, cfg eksdriver.VPCConfig,
+	logging []eksdriver.ClusterLogging, accessConfig *eksdriver.AccessConfigUpdate, tags map[string]string,
 ) (*eksdriver.ClusterUpdate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -710,6 +805,10 @@ func (m *Mock) UpdateClusterConfig(
 		return nil, resourceInUseErrf(
 			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
 	}
+
+	vpcOtherChanged := len(cfg.SubnetIDs) > 0 || len(cfg.SecurityGroupIDs) > 0 || len(cfg.PublicAccessCidrs) > 0
+	vpcEndpointChanged := cfg.EndpointPublicAccess != c.VPCConfig.EndpointPublicAccess ||
+		cfg.EndpointPrivateAccess != c.VPCConfig.EndpointPrivateAccess
 
 	if len(cfg.SubnetIDs) > 0 {
 		c.VPCConfig.SubnetIDs = copyStrings(cfg.SubnetIDs)
@@ -726,6 +825,16 @@ func (m *Mock) UpdateClusterConfig(
 	c.VPCConfig.EndpointPublicAccess = cfg.EndpointPublicAccess
 	c.VPCConfig.EndpointPrivateAccess = cfg.EndpointPrivateAccess
 
+	loggingChanged := len(logging) > 0
+	if loggingChanged {
+		c.Logging = applyClusterLogging(c.Logging, logging)
+	}
+
+	accessConfigChanged := accessConfig != nil && accessConfig.AuthenticationMode != ""
+	if accessConfigChanged {
+		c.AccessConfig.AuthenticationMode = accessConfig.AuthenticationMode
+	}
+
 	if tags != nil {
 		c.Tags = copyTags(tags)
 	}
@@ -737,7 +846,7 @@ func (m *Mock) UpdateClusterConfig(
 
 	return m.recordUpdate(&eksdriver.ClusterUpdate{
 		ID:          newUpdateID(),
-		Type:        "EndpointAccessUpdate",
+		Type:        clusterConfigUpdateType(accessConfigChanged, loggingChanged, vpcEndpointChanged, vpcOtherChanged),
 		Status:      "Successful",
 		CreatedAt:   m.opts.Clock.Now().UTC(),
 		ClusterName: name,
@@ -944,6 +1053,7 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 		Tags:           copyTags(cfg.Tags),
 		CreatedAt:      now,
 		ModifiedAt:     now,
+		LaunchTemplate: copyLaunchTemplate(cfg.LaunchTemplate),
 	}
 
 	m.nodegroups.Set(key, ng)
