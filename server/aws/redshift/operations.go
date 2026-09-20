@@ -36,7 +36,7 @@ func clusterConfigFromForm(form url.Values) rdbdriver.ClusterConfig {
 		retention = formInt(form.Get("AutomatedSnapshotRetentionPeriod"))
 	}
 
-	return rdbdriver.ClusterConfig{
+	cfg := rdbdriver.ClusterConfig{
 		ID:                               form.Get("ClusterIdentifier"),
 		Engine:                           "redshift",
 		EngineVersion:                    form.Get("ClusterVersion"),
@@ -45,6 +45,7 @@ func clusterConfigFromForm(form url.Values) rdbdriver.ClusterConfig {
 		DatabaseName:                     form.Get("DBName"),
 		Port:                             formInt(form.Get("Port")),
 		VPCSecurityGroups:                awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
+		ClusterSecurityGroups:            awsquery.ListStrings(form, "ClusterSecurityGroups.ClusterSecurityGroupName"),
 		SubnetGroupName:                  form.Get("ClusterSubnetGroupName"),
 		DBClusterParameterGroupName:      form.Get("ClusterParameterGroupName"),
 		NodeType:                         form.Get("NodeType"),
@@ -55,8 +56,17 @@ func clusterConfigFromForm(form url.Values) rdbdriver.ClusterConfig {
 		AvailabilityZone:                 form.Get("AvailabilityZone"),
 		AutomatedSnapshotRetentionPeriod: retention,
 		PreferredMaintenanceWindow:       form.Get("PreferredMaintenanceWindow"),
+		MaintenanceTrackName:             form.Get("MaintenanceTrackName"),
+		ElasticIP:                        form.Get("ElasticIp"),
 		Tags:                             parseRedshiftTags(form),
 	}
+
+	if form.Has("AllowVersionUpgrade") {
+		allow := formBool(form.Get("AllowVersionUpgrade"))
+		cfg.AllowVersionUpgrade = &allow
+	}
+
+	return cfg
 }
 
 // parseRedshiftTags parses Redshift-style Tags.Tag.N.{Key,Value} entries. Some
@@ -142,13 +152,18 @@ func (h *Handler) modifyCluster(w http.ResponseWriter, r *http.Request) {
 	id := form.Get("ClusterIdentifier")
 
 	input := rdbdriver.ModifyInstanceInput{
-		EngineVersion:              form.Get("ClusterVersion"),
-		MasterUserPassword:         form.Get("MasterUserPassword"),
-		NodeType:                   form.Get("NodeType"),
-		NumberOfNodes:              formInt(form.Get("NumberOfNodes")),
-		ClusterType:                form.Get("ClusterType"),
-		PreferredMaintenanceWindow: form.Get("PreferredMaintenanceWindow"),
-		Tags:                       parseRedshiftTags(form),
+		EngineVersion:               form.Get("ClusterVersion"),
+		MasterUserPassword:          form.Get("MasterUserPassword"),
+		NodeType:                    form.Get("NodeType"),
+		NumberOfNodes:               formInt(form.Get("NumberOfNodes")),
+		ClusterType:                 form.Get("ClusterType"),
+		PreferredMaintenanceWindow:  form.Get("PreferredMaintenanceWindow"),
+		DBClusterParameterGroupName: form.Get("ClusterParameterGroupName"),
+		VPCSecurityGroups:           awsquery.ListStrings(form, "VpcSecurityGroupIds.VpcSecurityGroupId"),
+		ClusterSecurityGroups:       awsquery.ListStrings(form, "ClusterSecurityGroups.ClusterSecurityGroupName"),
+		MaintenanceTrackName:        form.Get("MaintenanceTrackName"),
+		ElasticIP:                   form.Get("ElasticIp"),
+		Tags:                        parseRedshiftTags(form),
 	}
 
 	// Retention is applied only when the client sends it; a pointer preserves an
@@ -156,6 +171,22 @@ func (h *Handler) modifyCluster(w http.ResponseWriter, r *http.Request) {
 	if form.Has("AutomatedSnapshotRetentionPeriod") {
 		retention := formInt(form.Get("AutomatedSnapshotRetentionPeriod"))
 		input.AutomatedSnapshotRetentionPeriod = &retention
+	}
+
+	// Booleans use a pointer so an explicit false is distinct from "not sent".
+	if form.Has("AllowVersionUpgrade") {
+		allow := formBool(form.Get("AllowVersionUpgrade"))
+		input.AllowVersionUpgrade = &allow
+	}
+
+	if form.Has("PubliclyAccessible") {
+		public := formBool(form.Get("PubliclyAccessible"))
+		input.PubliclyAccessible = &public
+	}
+
+	if form.Has("Encrypted") {
+		encrypted := formBool(form.Get("Encrypted"))
+		input.Encrypted = &encrypted
 	}
 
 	cluster, err := h.db.ModifyCluster(r.Context(), id, input)

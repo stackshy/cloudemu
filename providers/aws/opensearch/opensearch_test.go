@@ -2,6 +2,7 @@ package opensearch_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
@@ -112,10 +113,12 @@ func TestUpdateAndDeleteDomain(t *testing.T) {
 	}
 
 	policy := `{"Version":"2012-10-17"}`
+	instanceType := "m6g.large.search"
+	instanceCount := int32(3)
 	cfg, persisted, err := m.UpdateDomainConfig(ctx, driver.UpdateDomainConfigInput{
 		DomainName:     "upd-domain",
 		AccessPolicies: &policy,
-		ClusterConfig:  &driver.ClusterConfig{InstanceType: "m6g.large.search", InstanceCount: 3},
+		ClusterConfig:  &driver.ClusterConfigPatch{InstanceType: &instanceType, InstanceCount: &instanceCount},
 	})
 	if err != nil {
 		t.Fatalf("UpdateDomainConfig: %v", err)
@@ -497,5 +500,154 @@ func TestVersionsAndCompatible(t *testing.T) {
 	// The newest version has no upgrade targets; an older one has some.
 	if len(compat["OpenSearch_1.0"]) == 0 {
 		t.Fatalf("expected upgrade targets for OpenSearch_1.0: %+v", compat["OpenSearch_1.0"])
+	}
+}
+
+// TestUpdateDomainConfig_ClusterConfigFieldMerge proves ClusterConfig updates
+// are a field-level merge: a second update that only touches WarmCount must
+// not revert the InstanceType/InstanceCount set by the first update.
+func TestUpdateDomainConfig_ClusterConfigFieldMerge(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	if _, err := m.CreateDomain(ctx, driver.CreateDomainInput{DomainName: "merge-domain"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	instanceType := "m6g.large.search"
+	instanceCount := int32(3)
+
+	if _, _, err := m.UpdateDomainConfig(ctx, driver.UpdateDomainConfigInput{
+		DomainName: "merge-domain",
+		ClusterConfig: &driver.ClusterConfigPatch{
+			InstanceType:  &instanceType,
+			InstanceCount: &instanceCount,
+		},
+	}); err != nil {
+		t.Fatalf("first UpdateDomainConfig: %v", err)
+	}
+
+	warmCount := int32(2)
+
+	cfg, _, err := m.UpdateDomainConfig(ctx, driver.UpdateDomainConfigInput{
+		DomainName: "merge-domain",
+		ClusterConfig: &driver.ClusterConfigPatch{
+			WarmCount: &warmCount,
+		},
+	})
+	if err != nil {
+		t.Fatalf("second UpdateDomainConfig: %v", err)
+	}
+
+	if cfg.ClusterConfig.InstanceType != instanceType || cfg.ClusterConfig.InstanceCount != instanceCount {
+		t.Fatalf("second update reverted untouched fields: %+v", cfg.ClusterConfig)
+	}
+
+	if cfg.ClusterConfig.WarmCount != warmCount {
+		t.Fatalf("second update did not apply WarmCount: %+v", cfg.ClusterConfig)
+	}
+}
+
+// TestUpdateDomainConfig_AdvancedOptionsMerge proves AdvancedOptions updates
+// merge key-by-key: setting one option in a second call must not drop an
+// option set by an earlier call.
+func TestUpdateDomainConfig_AdvancedOptionsMerge(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	if _, err := m.CreateDomain(ctx, driver.CreateDomainInput{DomainName: "adv-domain"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, _, err := m.UpdateDomainConfig(ctx, driver.UpdateDomainConfigInput{
+		DomainName:      "adv-domain",
+		AdvancedOptions: map[string]string{"rest.action.multi.allow_explicit_index": "true"},
+	}); err != nil {
+		t.Fatalf("first UpdateDomainConfig: %v", err)
+	}
+
+	cfg, _, err := m.UpdateDomainConfig(ctx, driver.UpdateDomainConfigInput{
+		DomainName:      "adv-domain",
+		AdvancedOptions: map[string]string{"override_main_response_version": "true"},
+	})
+	if err != nil {
+		t.Fatalf("second UpdateDomainConfig: %v", err)
+	}
+
+	if cfg.AdvancedOptions["rest.action.multi.allow_explicit_index"] != "true" {
+		t.Fatalf("second update dropped first option: %+v", cfg.AdvancedOptions)
+	}
+
+	if cfg.AdvancedOptions["override_main_response_version"] != "true" {
+		t.Fatalf("second update did not apply its own option: %+v", cfg.AdvancedOptions)
+	}
+}
+
+// TestUpdateDomainConfig_RawOptionsDeepMerge proves a nested option block
+// (EBSOptions) is merged field-by-field: a second update that only changes
+// VolumeType must not drop the VolumeSize/EBSEnabled set by the first update.
+func TestUpdateDomainConfig_RawOptionsDeepMerge(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	if _, err := m.CreateDomain(ctx, driver.CreateDomainInput{DomainName: "ebs-domain"}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+
+	if _, _, err := m.UpdateDomainConfig(ctx, driver.UpdateDomainConfigInput{
+		DomainName: "ebs-domain",
+		RawOptions: map[string]json.RawMessage{
+			"EBSOptions": json.RawMessage(`{"EBSEnabled":true,"VolumeType":"gp2","VolumeSize":100}`),
+		},
+	}); err != nil {
+		t.Fatalf("first UpdateDomainConfig: %v", err)
+	}
+
+	cfg, _, err := m.UpdateDomainConfig(ctx, driver.UpdateDomainConfigInput{
+		DomainName: "ebs-domain",
+		RawOptions: map[string]json.RawMessage{
+			"EBSOptions": json.RawMessage(`{"VolumeType":"gp3"}`),
+		},
+	})
+	if err != nil {
+		t.Fatalf("second UpdateDomainConfig: %v", err)
+	}
+
+	var ebs struct {
+		EBSEnabled bool
+		VolumeType string
+		VolumeSize int
+	}
+
+	if err := json.Unmarshal(cfg.RawOptions["EBSOptions"], &ebs); err != nil {
+		t.Fatalf("unmarshal EBSOptions: %v", err)
+	}
+
+	if !ebs.EBSEnabled || ebs.VolumeSize != 100 {
+		t.Fatalf("second update dropped sibling EBSOptions fields: %+v", ebs)
+	}
+
+	if ebs.VolumeType != "gp3" {
+		t.Fatalf("second update did not apply VolumeType: %+v", ebs)
+	}
+
+	// DescribeDomainConfig must reflect the same merged state.
+	desc, err := m.DescribeDomainConfig(ctx, "ebs-domain")
+	if err != nil {
+		t.Fatalf("DescribeDomainConfig: %v", err)
+	}
+
+	var ebsDesc struct {
+		EBSEnabled bool
+		VolumeType string
+		VolumeSize int
+	}
+
+	if err := json.Unmarshal(desc.RawOptions["EBSOptions"], &ebsDesc); err != nil {
+		t.Fatalf("unmarshal DescribeDomainConfig EBSOptions: %v", err)
+	}
+
+	if !ebsDesc.EBSEnabled || ebsDesc.VolumeSize != 100 || ebsDesc.VolumeType != "gp3" {
+		t.Fatalf("DescribeDomainConfig did not reflect merged EBSOptions: %+v", ebsDesc)
 	}
 }

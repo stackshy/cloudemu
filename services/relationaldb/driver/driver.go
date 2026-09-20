@@ -310,6 +310,25 @@ type ModifyInstanceInput struct {
 	// RDS/Aurora ignore it (they use BackupRetentionPeriod). Redshift's
 	// PreferredMaintenanceWindow reuses the shared field above.
 	AutomatedSnapshotRetentionPeriod *int
+	// VPCSecurityGroups / ClusterSecurityGroups are the Redshift ModifyCluster
+	// VpcSecurityGroupIds / ClusterSecurityGroups inputs; a nil slice means "no
+	// change" so a modify that touches an unrelated field never drops the
+	// cluster's existing security-group associations. RDS/Aurora ignore them
+	// (they use the shared VPCSecurityGroups on ClusterConfig/Cluster directly
+	// at create time). Redshift-only.
+	VPCSecurityGroups     []string
+	ClusterSecurityGroups []string
+	// AllowVersionUpgrade / PubliclyAccessible / Encrypted are Redshift
+	// ModifyCluster inputs; nil means "no change" (false is a valid, distinct
+	// value from "not sent"). Redshift-only.
+	AllowVersionUpgrade *bool
+	PubliclyAccessible  *bool
+	Encrypted           *bool
+	// MaintenanceTrackName / ElasticIP are the Redshift ModifyCluster
+	// MaintenanceTrackName / ElasticIp inputs; empty means "no change".
+	// Redshift-only.
+	MaintenanceTrackName string
+	ElasticIP            string
 	// GCPDatabaseFlags / GCPBackupConfig / GCPIPConfig update the Cloud SQL
 	// settings sub-objects (opaque JSON); empty means "no change". Cloud SQL-only;
 	// RDS/Redshift ignore them.
@@ -420,6 +439,15 @@ type ClusterConfig struct {
 	// when unset). Both are Redshift-specific; zero for RDS/Aurora/Azure/GCP.
 	AutomatedSnapshotRetentionPeriod int
 	PreferredMaintenanceWindow       string
+	// ClusterSecurityGroups / AllowVersionUpgrade / MaintenanceTrackName /
+	// ElasticIP are further Redshift-specific create inputs carried on the
+	// shared config; zero for RDS/Aurora/Azure/GCP. AllowVersionUpgrade is a
+	// pointer only on the create input so the provider can fill the documented
+	// AWS default (true) when the caller omits it.
+	ClusterSecurityGroups []string
+	AllowVersionUpgrade   *bool
+	MaintenanceTrackName  string
+	ElasticIP             string
 	// Location is the Azure region an Azure SQL logical server lives in (ARM
 	// top-level "location"). Empty for AWS/GCP.
 	Location string
@@ -492,6 +520,14 @@ type Cluster struct {
 	// RDS/Aurora/Azure/GCP.
 	AutomatedSnapshotRetentionPeriod int
 	PreferredMaintenanceWindow       string
+	// ClusterSecurityGroups / AllowVersionUpgrade / MaintenanceTrackName /
+	// ElasticIP echo the corresponding Redshift cluster attributes on read, so
+	// a value set at create or by ModifyCluster round-trips instead of always
+	// reporting a hardcoded default. Zero for RDS/Aurora/Azure/GCP.
+	ClusterSecurityGroups []string
+	AllowVersionUpgrade   bool
+	MaintenanceTrackName  string
+	ElasticIP             string
 	// Location is the Azure region an Azure SQL logical server lives in (ARM
 	// top-level "location"), echoed on read. Empty for AWS/GCP.
 	Location  string
