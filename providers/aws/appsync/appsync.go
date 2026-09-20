@@ -54,7 +54,7 @@ func (m *Mock) now() time.Time {
 // newAPIID mints a fresh, stable API id. Generated once at create and never
 // regenerated, so the id (and the ARN and URIs derived from it) never drifts.
 func newAPIID() string {
-	return idgen.GenerateID("")
+	return idgen.AppSyncAPIID()
 }
 
 func (m *Mock) apiARN(apiID string) string {

@@ -1256,7 +1256,7 @@ func (m *Mock) CreateAccessKey(
 			"Cannot exceed quota for AccessKeysPerUser: %d", maxAccessKeysPerUser)
 	}
 
-	keyID := fmt.Sprintf("AKIA%s", idgen.GenerateID(""))
+	keyID := idgen.AccessKeyID()
 	secret := fmt.Sprintf("secret-%s", idgen.GenerateID(""))
 
 	ak := &accessKeyData{

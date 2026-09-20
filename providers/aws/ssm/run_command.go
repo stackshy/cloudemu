@@ -54,7 +54,7 @@ func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (strin
 	resolved := m.resolveTargets(ctx, cfg.Targets)
 	instanceIDs := dedupeStrings(append(append([]string{}, cfg.InstanceIDs...), resolved...))
 
-	commandID := idgen.GenerateID("")
+	commandID := idgen.UUID()
 
 	for _, instanceID := range instanceIDs {
 		m.commands.Set(commandKey(commandID, instanceID), driver.CommandInvocation{
