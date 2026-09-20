@@ -127,7 +127,7 @@ func TestUpdateClusterConfigAppliesLogging(t *testing.T) {
 	})
 	requireNoError(t, err)
 
-	upd, err := m.UpdateClusterConfig(ctx, "log-cluster", eksdriver.VPCConfig{},
+	upd, err := m.UpdateClusterConfig(ctx, "log-cluster", nil,
 		[]eksdriver.ClusterLogging{{Types: []string{"api", "audit"}, Enabled: true}}, nil, nil)
 	requireNoError(t, err)
 	assertEqual(t, "LoggingUpdate", upd.Type)
@@ -163,7 +163,7 @@ func TestUpdateClusterConfigAppliesAccessConfig(t *testing.T) {
 	})
 	requireNoError(t, err)
 
-	upd, err := m.UpdateClusterConfig(ctx, "access-cluster", eksdriver.VPCConfig{},
+	upd, err := m.UpdateClusterConfig(ctx, "access-cluster", nil,
 		nil, &eksdriver.AccessConfigUpdate{AuthenticationMode: "API_AND_CONFIG_MAP"}, nil)
 	requireNoError(t, err)
 	assertEqual(t, "AccessConfigUpdate", upd.Type)
@@ -171,4 +171,33 @@ func TestUpdateClusterConfigAppliesAccessConfig(t *testing.T) {
 	got, err := m.DescribeCluster(ctx, "access-cluster")
 	requireNoError(t, err)
 	assertEqual(t, "API_AND_CONFIG_MAP", got.AccessConfig.AuthenticationMode)
+}
+
+// TestUpdateClusterConfigPreservesEndpointAccess verifies a logging-only update
+// (no resourcesVpcConfig in the request) does NOT reset the cluster's endpoint
+// public/private access flags — real EKS only changes the fields the request
+// actually carries, so an omitted resourcesVpcConfig leaves VPC config intact.
+func TestUpdateClusterConfigPreservesEndpointAccess(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{
+		Name:    "vpc-cluster",
+		RoleArn: "arn:aws:iam::123456789012:role/eks-cluster",
+		VPCConfig: eksdriver.VPCConfig{
+			EndpointPublicAccess:  true,
+			EndpointPrivateAccess: true,
+		},
+	})
+	requireNoError(t, err)
+
+	// A logging-only update must not touch the endpoint-access flags.
+	_, err = m.UpdateClusterConfig(ctx, "vpc-cluster", nil,
+		[]eksdriver.ClusterLogging{{Types: []string{"api"}, Enabled: true}}, nil, nil)
+	requireNoError(t, err)
+
+	got, err := m.DescribeCluster(ctx, "vpc-cluster")
+	requireNoError(t, err)
+	assertEqual(t, true, got.VPCConfig.EndpointPublicAccess)
+	assertEqual(t, true, got.VPCConfig.EndpointPrivateAccess)
 }

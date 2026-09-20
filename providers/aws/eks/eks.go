@@ -783,31 +783,18 @@ func clusterConfigUpdateType(accessConfigChanged, loggingChanged, vpcEndpointCha
 	}
 }
 
-// UpdateClusterConfig records a logical update for VPC config / logging /
-// access config / tags, applying every supplied change to the stored cluster
-// so DescribeCluster reflects it. Wave 1 applies changes synchronously and
-// returns a Successful update so SDK pollers terminate immediately.
-//
-//nolint:gocritic // cfg matches the driver interface signature; one copy on entry is fine.
-func (m *Mock) UpdateClusterConfig(
-	_ context.Context, name string, cfg eksdriver.VPCConfig,
-	logging []eksdriver.ClusterLogging, accessConfig *eksdriver.AccessConfigUpdate, tags map[string]string,
-) (*eksdriver.ClusterUpdate, error) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	c, ok := m.clusters.Get(name)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", name)
+// applyVPCUpdate merges a caller-supplied resourcesVpcConfig onto the stored
+// cluster, reporting whether the endpoint-access flags and/or the other VPC
+// fields changed. A nil cfg means the caller omitted resourcesVpcConfig
+// entirely, so nothing is touched — critically, the endpoint-access flags are
+// NOT reset to false on a logging/accessConfig/tags-only update.
+func applyVPCUpdate(c *eksdriver.Cluster, cfg *eksdriver.VPCConfig) (endpointChanged, otherChanged bool) {
+	if cfg == nil {
+		return false, false
 	}
 
-	if status := m.clusterStatusLocked(&c); status != eksdriver.ClusterStatusActive {
-		return nil, resourceInUseErrf(
-			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
-	}
-
-	vpcOtherChanged := len(cfg.SubnetIDs) > 0 || len(cfg.SecurityGroupIDs) > 0 || len(cfg.PublicAccessCidrs) > 0
-	vpcEndpointChanged := cfg.EndpointPublicAccess != c.VPCConfig.EndpointPublicAccess ||
+	otherChanged = len(cfg.SubnetIDs) > 0 || len(cfg.SecurityGroupIDs) > 0 || len(cfg.PublicAccessCidrs) > 0
+	endpointChanged = cfg.EndpointPublicAccess != c.VPCConfig.EndpointPublicAccess ||
 		cfg.EndpointPrivateAccess != c.VPCConfig.EndpointPrivateAccess
 
 	if len(cfg.SubnetIDs) > 0 {
@@ -824,6 +811,34 @@ func (m *Mock) UpdateClusterConfig(
 
 	c.VPCConfig.EndpointPublicAccess = cfg.EndpointPublicAccess
 	c.VPCConfig.EndpointPrivateAccess = cfg.EndpointPrivateAccess
+
+	return endpointChanged, otherChanged
+}
+
+// UpdateClusterConfig records a logical update for VPC config / logging /
+// access config / tags, applying every supplied change to the stored cluster
+// so DescribeCluster reflects it. A nil cfg leaves VPC config untouched (real
+// EKS only changes the fields the request actually carries). Wave 1 applies
+// changes synchronously and returns a Successful update so SDK pollers
+// terminate immediately.
+func (m *Mock) UpdateClusterConfig(
+	_ context.Context, name string, cfg *eksdriver.VPCConfig,
+	logging []eksdriver.ClusterLogging, accessConfig *eksdriver.AccessConfigUpdate, tags map[string]string,
+) (*eksdriver.ClusterUpdate, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	c, ok := m.clusters.Get(name)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", name)
+	}
+
+	if status := m.clusterStatusLocked(&c); status != eksdriver.ClusterStatusActive {
+		return nil, resourceInUseErrf(
+			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
+	}
+
+	vpcEndpointChanged, vpcOtherChanged := applyVPCUpdate(&c, cfg)
 
 	loggingChanged := len(logging) > 0
 	if loggingChanged {

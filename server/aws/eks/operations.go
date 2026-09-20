@@ -140,9 +140,10 @@ func (h *Handler) updateClusterConfig(w http.ResponseWriter, r *http.Request, na
 		return
 	}
 
-	var vpc eksdriver.VPCConfig
+	var vpc *eksdriver.VPCConfig
 	if body.ResourcesVpcConfig != nil {
-		vpc = vpcRequestToDriver(body.ResourcesVpcConfig)
+		v := vpcRequestToDriver(body.ResourcesVpcConfig)
+		vpc = &v
 	}
 
 	var logging []eksdriver.ClusterLogging

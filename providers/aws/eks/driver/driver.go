@@ -315,7 +315,7 @@ type EKS interface {
 	DescribeCluster(ctx context.Context, name string) (*Cluster, error)
 	ListClusters(ctx context.Context) ([]string, error)
 	UpdateClusterConfig(
-		ctx context.Context, name string, cfg VPCConfig,
+		ctx context.Context, name string, cfg *VPCConfig,
 		logging []ClusterLogging, accessConfig *AccessConfigUpdate, tags map[string]string,
 	) (*ClusterUpdate, error)
 	UpdateClusterVersion(ctx context.Context, name, version string) (*ClusterUpdate, error)
