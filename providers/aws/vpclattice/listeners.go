@@ -42,7 +42,7 @@ func (m *Mock) CreateListener(_ context.Context, in *driver.CreateListenerInput)
 	}
 
 	sid := idFromIdentifier(in.ServiceID)
-	id := idgen.GenerateID("listener-")
+	id := idgen.GenerateLongID("listener-")
 	l := &driver.Listener{
 		ID:            id,
 		ARN:           m.arn("service/" + sid + "/listener/" + id),

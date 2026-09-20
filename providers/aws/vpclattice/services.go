@@ -34,7 +34,7 @@ func (m *Mock) CreateService(_ context.Context, in *driver.CreateServiceInput) (
 		idle = defaultIdleTimeoutSec
 	}
 
-	id := idgen.GenerateID("svc-")
+	id := idgen.GenerateLongID("svc-")
 	svc := &driver.Service{
 		ID:                 id,
 		ARN:                m.arn("service/" + id),

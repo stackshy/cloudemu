@@ -230,7 +230,7 @@ func TestResourceConfigGatewayCRUD(t *testing.T) {
 		Name: "gw", VpcID: "vpc-1", SubnetIDs: []string{"s-1"}, SecurityGroupIDs: []string{"sg-1"}, IPAddressType: "IPV4",
 	})
 	require.NoError(t, err)
-	assert.Contains(t, gw.ID, "rgw-")
+	assert.Contains(t, gw.ID, "rg-")
 
 	ugw, err := m.UpdateResourceGateway(ctx, gw.ID, []string{"sg-1", "sg-2"})
 	require.NoError(t, err)
@@ -244,7 +244,7 @@ func TestResourceConfigGatewayCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, gws, 1)
 
-	_, err = m.GetResourceGateway(ctx, "rgw-missing")
+	_, err = m.GetResourceGateway(ctx, "rg-missing")
 	assert.True(t, cerrors.IsNotFound(err))
 	require.NoError(t, m.DeleteResourceGateway(ctx, gw.ID))
 	assert.True(t, cerrors.IsNotFound(m.DeleteResourceGateway(ctx, gw.ID)))
@@ -254,7 +254,7 @@ func TestResourceConfigGatewayCRUD(t *testing.T) {
 		Definition: []byte(`{"ipResource":{"ipAddress":"10.0.0.9"}}`),
 	})
 	require.NoError(t, err)
-	assert.Contains(t, rc.ID, "rcfg-")
+	assert.Contains(t, rc.ID, "rc-")
 
 	urc, err := m.UpdateResourceConfiguration(ctx, &driver.UpdateResourceConfigurationInput{ID: rc.ID, PortRanges: []string{"443", "8443"}})
 	require.NoError(t, err)
@@ -266,10 +266,10 @@ func TestResourceConfigGatewayCRUD(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, rcs, 1)
 
-	_, err = m.GetResourceConfiguration(ctx, "rcfg-missing")
+	_, err = m.GetResourceConfiguration(ctx, "rc-missing")
 	assert.True(t, cerrors.IsNotFound(err))
 	require.NoError(t, m.DeleteResourceConfiguration(ctx, rc.ID))
-	_, err = m.UpdateResourceConfiguration(ctx, &driver.UpdateResourceConfigurationInput{ID: "rcfg-missing"})
+	_, err = m.UpdateResourceConfiguration(ctx, &driver.UpdateResourceConfigurationInput{ID: "rc-missing"})
 	assert.True(t, cerrors.IsNotFound(err))
 }
 

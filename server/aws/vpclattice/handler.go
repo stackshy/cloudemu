@@ -135,7 +135,7 @@ func isLatticeIdentifier(s string) bool {
 
 	for _, p := range []string{
 		"sn-", "svc-", "listener-", "rule-", "tg-",
-		"snva-", "snsa-", "snra-", "rcfg-", "rgw-", "als-", "dv-", "rea-",
+		"snva-", "snsa-", "snra-", "rc-", "rg-", "als-", "dv-", "rea-",
 	} {
 		if strings.HasPrefix(s, p) {
 			return true
