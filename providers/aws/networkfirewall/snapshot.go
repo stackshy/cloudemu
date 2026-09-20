@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
+	nfdriver "github.com/stackshy/cloudemu/v2/services/networkfirewall/driver"
 )
 
 var _ snapshot.Snapshottable = (*Mock)(nil)
@@ -19,10 +20,10 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // name -> log types) is captured beside the stores. The wired opts is
 // intentionally not serialized.
 type networkfirewallSnapshot struct {
-	Firewalls  json.RawMessage     `json:"firewalls,omitempty"`
-	Policies   json.RawMessage     `json:"policies,omitempty"`
-	RuleGroups json.RawMessage     `json:"ruleGroups,omitempty"`
-	Logging    map[string][]string `json:"logging,omitempty"`
+	Firewalls  json.RawMessage                            `json:"firewalls,omitempty"`
+	Policies   json.RawMessage                            `json:"policies,omitempty"`
+	RuleGroups json.RawMessage                            `json:"ruleGroups,omitempty"`
+	Logging    map[string][]nfdriver.LogDestinationConfig `json:"logging,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused —
@@ -34,10 +35,10 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	}
 
 	m.mu.RLock()
-	logging := make(map[string][]string, len(m.logging))
+	logging := make(map[string][]nfdriver.LogDestinationConfig, len(m.logging))
 
-	for name, types := range m.logging {
-		logging[name] = append([]string(nil), types...)
+	for name, configs := range m.logging {
+		logging[name] = cloneLogConfigs(configs)
 	}
 
 	m.mu.RUnlock()

@@ -126,19 +126,20 @@ func (h *Handler) updateLoggingConfiguration(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	logTypes := make([]string, 0, len(req.LoggingConfiguration.LogDestinationConfigs))
-	for _, c := range req.LoggingConfiguration.LogDestinationConfigs {
-		logTypes = append(logTypes, c.LogType)
+	name := firewallName(req.FirewallName, req.FirewallArn)
+	if err := h.db.UpdateLoggingConfiguration(r.Context(), name, toLogConfigs(req.LoggingConfiguration.LogDestinationConfigs)); err != nil {
+		writeErr(w, err)
+		return
 	}
 
-	name := firewallName(req.FirewallName, req.FirewallArn)
-	if err := h.db.UpdateLoggingConfiguration(r.Context(), name, logTypes); err != nil {
+	fw, err := h.db.DescribeFirewall(r.Context(), name, "")
+	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
 	wire.WriteJSON(w, map[string]any{
-		"FirewallArn": req.FirewallArn, "FirewallName": name,
+		"FirewallArn": fw.ARN, "FirewallName": name,
 		"LoggingConfiguration": req.LoggingConfiguration,
 	})
 }
@@ -151,21 +152,52 @@ func (h *Handler) describeLoggingConfiguration(w http.ResponseWriter, r *http.Re
 
 	name := firewallName(req.FirewallName, req.FirewallArn)
 
-	logTypes, err := h.db.DescribeLoggingConfiguration(r.Context(), name)
+	configs, err := h.db.DescribeLoggingConfiguration(r.Context(), name)
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	configs := make([]logDestinationConfig, 0, len(logTypes))
-	for _, lt := range logTypes {
-		configs = append(configs, logDestinationConfig{LogType: lt})
+	fw, err := h.db.DescribeFirewall(r.Context(), name, "")
+	if err != nil {
+		writeErr(w, err)
+		return
 	}
 
 	wire.WriteJSON(w, map[string]any{
-		"FirewallArn":          req.FirewallArn,
-		"LoggingConfiguration": loggingConfiguration{LogDestinationConfigs: configs},
+		"FirewallArn":          fw.ARN,
+		"LoggingConfiguration": loggingConfiguration{LogDestinationConfigs: fromLogConfigs(configs)},
 	})
+}
+
+func toLogConfigs(cs []logDestinationConfig) []nfdriver.LogDestinationConfig {
+	if len(cs) == 0 {
+		return nil
+	}
+
+	out := make([]nfdriver.LogDestinationConfig, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, nfdriver.LogDestinationConfig{
+			LogType: c.LogType, LogDestinationType: c.LogDestinationType, LogDestination: c.LogDestination,
+		})
+	}
+
+	return out
+}
+
+func fromLogConfigs(cs []nfdriver.LogDestinationConfig) []logDestinationConfig {
+	if len(cs) == 0 {
+		return nil
+	}
+
+	out := make([]logDestinationConfig, 0, len(cs))
+	for _, c := range cs {
+		out = append(out, logDestinationConfig{
+			LogType: c.LogType, LogDestinationType: c.LogDestinationType, LogDestination: c.LogDestination,
+		})
+	}
+
+	return out
 }
 
 type tagResourceRequest struct {

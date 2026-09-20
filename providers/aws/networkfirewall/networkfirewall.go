@@ -3,6 +3,7 @@ package networkfirewall
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"sync"
 
@@ -31,7 +32,7 @@ type Mock struct {
 	firewalls  *memstore.Store[*nfdriver.Firewall]
 	policies   *memstore.Store[*nfdriver.FirewallPolicy]
 	ruleGroups *memstore.Store[*nfdriver.RuleGroup]
-	logging    map[string][]string
+	logging    map[string][]nfdriver.LogDestinationConfig
 	opts       *config.Options
 }
 
@@ -41,7 +42,7 @@ func New(opts *config.Options) *Mock {
 		firewalls:  memstore.New[*nfdriver.Firewall](),
 		policies:   memstore.New[*nfdriver.FirewallPolicy](),
 		ruleGroups: memstore.New[*nfdriver.RuleGroup](),
-		logging:    map[string][]string{},
+		logging:    map[string][]nfdriver.LogDestinationConfig{},
 		opts:       opts,
 	}
 }
@@ -69,6 +70,25 @@ func cloneStrings(s []string) []string {
 	}
 
 	return append([]string(nil), s...)
+}
+
+func cloneRawJSON(r json.RawMessage) json.RawMessage {
+	if len(r) == 0 {
+		return nil
+	}
+
+	out := make(json.RawMessage, len(r))
+	copy(out, r)
+
+	return out
+}
+
+func cloneRuleGroupRefs(refs []nfdriver.RuleGroupReference) []nfdriver.RuleGroupReference {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	return append([]nfdriver.RuleGroupReference(nil), refs...)
 }
 
 // ---- Firewalls ----
@@ -202,6 +222,8 @@ func (m *Mock) CreateFirewallPolicy(_ context.Context, cfg nfdriver.CreateFirewa
 		Description:                     cfg.Description,
 		StatelessDefaultActions:         cloneStrings(cfg.StatelessDefaultActions),
 		StatelessFragmentDefaultActions: cloneStrings(cfg.StatelessFragmentDefaultActions),
+		StatefulRuleGroupReferences:     cloneRuleGroupRefs(cfg.StatefulRuleGroupReferences),
+		StatelessRuleGroupReferences:    cloneRuleGroupRefs(cfg.StatelessRuleGroupReferences),
 		Tags:                            copyTags(cfg.Tags),
 	}
 	m.policies.Set(cfg.Name, p)
@@ -240,6 +262,8 @@ func (m *Mock) UpdateFirewallPolicy(
 	p.Description = cfg.Description
 	p.StatelessDefaultActions = cloneStrings(cfg.StatelessDefaultActions)
 	p.StatelessFragmentDefaultActions = cloneStrings(cfg.StatelessFragmentDefaultActions)
+	p.StatefulRuleGroupReferences = cloneRuleGroupRefs(cfg.StatefulRuleGroupReferences)
+	p.StatelessRuleGroupReferences = cloneRuleGroupRefs(cfg.StatelessRuleGroupReferences)
 
 	out := cloneFirewallPolicy(p)
 
@@ -320,6 +344,8 @@ func cloneFirewallPolicy(p *nfdriver.FirewallPolicy) nfdriver.FirewallPolicy {
 	out := *p
 	out.StatelessDefaultActions = cloneStrings(p.StatelessDefaultActions)
 	out.StatelessFragmentDefaultActions = cloneStrings(p.StatelessFragmentDefaultActions)
+	out.StatefulRuleGroupReferences = cloneRuleGroupRefs(p.StatefulRuleGroupReferences)
+	out.StatelessRuleGroupReferences = cloneRuleGroupRefs(p.StatelessRuleGroupReferences)
 	out.Tags = copyTags(p.Tags)
 
 	return out
@@ -356,6 +382,7 @@ func (m *Mock) CreateRuleGroup(_ context.Context, cfg nfdriver.CreateRuleGroupCo
 		Type:        cfg.Type,
 		Capacity:    cfg.Capacity,
 		Description: cfg.Description,
+		Rules:       cloneRawJSON(cfg.Rules),
 		Tags:        copyTags(cfg.Tags),
 	}
 	m.ruleGroups.Set(key, rg)
@@ -392,6 +419,9 @@ func (m *Mock) UpdateRuleGroup(
 	}
 
 	rg.Description = cfg.Description
+	if len(cfg.Rules) > 0 {
+		rg.Rules = cloneRawJSON(cfg.Rules)
+	}
 
 	out := cloneRuleGroup(rg)
 
@@ -448,6 +478,7 @@ func ruleGroupKey(name, ruleType string) string {
 
 func cloneRuleGroup(rg *nfdriver.RuleGroup) nfdriver.RuleGroup {
 	out := *rg
+	out.Rules = cloneRawJSON(rg.Rules)
 	out.Tags = copyTags(rg.Tags)
 
 	return out
@@ -558,8 +589,8 @@ func (m *Mock) UpdateFirewallDeleteProtection(_ context.Context, firewallName st
 	return &out, nil
 }
 
-// UpdateLoggingConfiguration sets the firewall's log types.
-func (m *Mock) UpdateLoggingConfiguration(_ context.Context, firewallName string, logTypes []string) error {
+// UpdateLoggingConfiguration sets the firewall's log destination configs.
+func (m *Mock) UpdateLoggingConfiguration(_ context.Context, firewallName string, configs []nfdriver.LogDestinationConfig) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -567,13 +598,13 @@ func (m *Mock) UpdateLoggingConfiguration(_ context.Context, firewallName string
 		return cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
 	}
 
-	m.logging[firewallName] = append([]string(nil), logTypes...)
+	m.logging[firewallName] = cloneLogConfigs(configs)
 
 	return nil
 }
 
-// DescribeLoggingConfiguration returns the firewall's log types.
-func (m *Mock) DescribeLoggingConfiguration(_ context.Context, firewallName string) ([]string, error) {
+// DescribeLoggingConfiguration returns the firewall's log destination configs.
+func (m *Mock) DescribeLoggingConfiguration(_ context.Context, firewallName string) ([]nfdriver.LogDestinationConfig, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -581,7 +612,24 @@ func (m *Mock) DescribeLoggingConfiguration(_ context.Context, firewallName stri
 		return nil, cerrors.Newf(cerrors.NotFound, "firewall %q not found", firewallName)
 	}
 
-	return append([]string(nil), m.logging[firewallName]...), nil
+	return cloneLogConfigs(m.logging[firewallName]), nil
+}
+
+func cloneLogConfigs(cfgs []nfdriver.LogDestinationConfig) []nfdriver.LogDestinationConfig {
+	if len(cfgs) == 0 {
+		return nil
+	}
+
+	out := make([]nfdriver.LogDestinationConfig, len(cfgs))
+	for i, c := range cfgs {
+		out[i] = nfdriver.LogDestinationConfig{
+			LogType:            c.LogType,
+			LogDestinationType: c.LogDestinationType,
+			LogDestination:     copyTags(c.LogDestination),
+		}
+	}
+
+	return out
 }
 
 // TagResource adds tags to a firewall / policy / rule group by ARN.

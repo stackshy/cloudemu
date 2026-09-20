@@ -1,6 +1,7 @@
 package networkfirewall
 
 import (
+	"encoding/json"
 	"net/http"
 	"strings"
 
@@ -207,9 +208,16 @@ type firewallPolicyResponseJSON struct {
 	Tags               []tag  `json:"Tags,omitempty"`
 }
 
+type ruleGroupReferenceJSON struct {
+	ResourceArn string `json:"ResourceArn"`
+	Priority    int    `json:"Priority,omitempty"`
+}
+
 type firewallPolicyDetailJSON struct {
-	StatelessDefaultActions         []string `json:"StatelessDefaultActions,omitempty"`
-	StatelessFragmentDefaultActions []string `json:"StatelessFragmentDefaultActions,omitempty"`
+	StatelessDefaultActions         []string                 `json:"StatelessDefaultActions,omitempty"`
+	StatelessFragmentDefaultActions []string                 `json:"StatelessFragmentDefaultActions,omitempty"`
+	StatefulRuleGroupReferences     []ruleGroupReferenceJSON `json:"StatefulRuleGroupReferences,omitempty"`
+	StatelessRuleGroupReferences    []ruleGroupReferenceJSON `json:"StatelessRuleGroupReferences,omitempty"`
 }
 
 type createFirewallPolicyRequest struct {
@@ -235,6 +243,8 @@ func (h *Handler) createFirewallPolicy(w http.ResponseWriter, r *http.Request) {
 		Description:                     req.Description,
 		StatelessDefaultActions:         req.FirewallPolicy.StatelessDefaultActions,
 		StatelessFragmentDefaultActions: req.FirewallPolicy.StatelessFragmentDefaultActions,
+		StatefulRuleGroupReferences:     toRuleGroupRefs(req.FirewallPolicy.StatefulRuleGroupReferences),
+		StatelessRuleGroupReferences:    toRuleGroupRefs(req.FirewallPolicy.StatelessRuleGroupReferences),
 		Tags:                            tagsToMap(req.Tags),
 	})
 	if err != nil {
@@ -266,6 +276,8 @@ func (h *Handler) describeFirewallPolicy(w http.ResponseWriter, r *http.Request)
 		"FirewallPolicy": firewallPolicyDetailJSON{
 			StatelessDefaultActions:         p.StatelessDefaultActions,
 			StatelessFragmentDefaultActions: p.StatelessFragmentDefaultActions,
+			StatefulRuleGroupReferences:     fromRuleGroupRefs(p.StatefulRuleGroupReferences),
+			StatelessRuleGroupReferences:    fromRuleGroupRefs(p.StatelessRuleGroupReferences),
 		},
 	})
 }
@@ -289,6 +301,8 @@ func (h *Handler) updateFirewallPolicy(w http.ResponseWriter, r *http.Request) {
 			Description:                     req.Description,
 			StatelessDefaultActions:         req.FirewallPolicy.StatelessDefaultActions,
 			StatelessFragmentDefaultActions: req.FirewallPolicy.StatelessFragmentDefaultActions,
+			StatefulRuleGroupReferences:     toRuleGroupRefs(req.FirewallPolicy.StatefulRuleGroupReferences),
+			StatelessRuleGroupReferences:    toRuleGroupRefs(req.FirewallPolicy.StatelessRuleGroupReferences),
 		})
 	if err != nil {
 		writeErr(w, err)
@@ -351,11 +365,13 @@ type ruleGroupResponseJSON struct {
 }
 
 type createRuleGroupRequest struct {
-	RuleGroupName string `json:"RuleGroupName"`
-	Type          string `json:"Type"`
-	Capacity      int    `json:"Capacity"`
-	Description   string `json:"Description"`
-	Tags          []tag  `json:"Tags"`
+	RuleGroupName string          `json:"RuleGroupName"`
+	RuleGroup     json.RawMessage `json:"RuleGroup"`
+	Rules         string          `json:"Rules"`
+	Type          string          `json:"Type"`
+	Capacity      int             `json:"Capacity"`
+	Description   string          `json:"Description"`
+	Tags          []tag           `json:"Tags"`
 }
 
 type ruleGroupNameArnRequest struct {
@@ -372,7 +388,7 @@ func (h *Handler) createRuleGroup(w http.ResponseWriter, r *http.Request) {
 
 	rg, err := h.db.CreateRuleGroup(r.Context(), nfdriver.CreateRuleGroupConfig{
 		Name: req.RuleGroupName, Type: req.Type, Capacity: req.Capacity,
-		Description: req.Description, Tags: tagsToMap(req.Tags),
+		Description: req.Description, Rules: ruleGroupPayload(req.RuleGroup, req.Rules), Tags: tagsToMap(req.Tags),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -382,6 +398,7 @@ func (h *Handler) createRuleGroup(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{
 		"UpdateToken":       updateToken,
 		"RuleGroupResponse": toRuleGroupResponseJSON(rg),
+		"RuleGroup":         rg.Rules,
 	})
 }
 
@@ -400,15 +417,18 @@ func (h *Handler) describeRuleGroup(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{
 		"UpdateToken":       updateToken,
 		"RuleGroupResponse": toRuleGroupResponseJSON(rg),
+		"RuleGroup":         rg.Rules,
 	})
 }
 
 type updateRuleGroupRequest struct {
-	UpdateToken   string `json:"UpdateToken"`
-	RuleGroupName string `json:"RuleGroupName"`
-	RuleGroupArn  string `json:"RuleGroupArn"`
-	Type          string `json:"Type"`
-	Description   string `json:"Description"`
+	UpdateToken   string          `json:"UpdateToken"`
+	RuleGroupName string          `json:"RuleGroupName"`
+	RuleGroupArn  string          `json:"RuleGroupArn"`
+	RuleGroup     json.RawMessage `json:"RuleGroup"`
+	Rules         string          `json:"Rules"`
+	Type          string          `json:"Type"`
+	Description   string          `json:"Description"`
 }
 
 func (h *Handler) updateRuleGroup(w http.ResponseWriter, r *http.Request) {
@@ -418,7 +438,7 @@ func (h *Handler) updateRuleGroup(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rg, err := h.db.UpdateRuleGroup(r.Context(), req.RuleGroupName, req.RuleGroupArn, req.Type,
-		nfdriver.UpdateRuleGroupConfig{Description: req.Description})
+		nfdriver.UpdateRuleGroupConfig{Description: req.Description, Rules: ruleGroupPayload(req.RuleGroup, req.Rules)})
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -427,6 +447,7 @@ func (h *Handler) updateRuleGroup(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{
 		"UpdateToken":       updateToken,
 		"RuleGroupResponse": toRuleGroupResponseJSON(rg),
+		"RuleGroup":         rg.Rules,
 	})
 }
 
@@ -503,6 +524,58 @@ func mapToTags(m map[string]string) []tag {
 	out := make([]tag, 0, len(m))
 	for k, v := range m {
 		out = append(out, tag{Key: k, Value: v})
+	}
+
+	return out
+}
+
+// ruleGroupPayload resolves the rules content for Create/UpdateRuleGroup: the
+// modern "RuleGroup" object takes precedence; the deprecated top-level
+// "Rules" Suricata string (used by aws_networkfirewall_rule_group's
+// rules_source_list-free legacy form) is normalized into the equivalent
+// {"RulesSource":{"RulesString":...}} shape so DescribeRuleGroup always
+// returns rules via RuleGroup.RulesSource regardless of which form was used
+// to write them.
+func ruleGroupPayload(ruleGroup json.RawMessage, legacyRules string) json.RawMessage {
+	if len(ruleGroup) > 0 {
+		return ruleGroup
+	}
+
+	if legacyRules == "" {
+		return nil
+	}
+
+	b, err := json.Marshal(map[string]any{
+		"RulesSource": map[string]any{"RulesString": legacyRules},
+	})
+	if err != nil {
+		return nil
+	}
+
+	return b
+}
+
+func toRuleGroupRefs(refs []ruleGroupReferenceJSON) []nfdriver.RuleGroupReference {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	out := make([]nfdriver.RuleGroupReference, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, nfdriver.RuleGroupReference{ResourceARN: r.ResourceArn, Priority: r.Priority})
+	}
+
+	return out
+}
+
+func fromRuleGroupRefs(refs []nfdriver.RuleGroupReference) []ruleGroupReferenceJSON {
+	if len(refs) == 0 {
+		return nil
+	}
+
+	out := make([]ruleGroupReferenceJSON, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, ruleGroupReferenceJSON{ResourceArn: r.ResourceARN, Priority: r.Priority})
 	}
 
 	return out
