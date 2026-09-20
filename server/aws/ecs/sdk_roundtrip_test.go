@@ -853,6 +853,82 @@ func TestSDKTagRoundtrip(t *testing.T) {
 	}
 }
 
+// TestSDKRunTaskTagsRoundtrip guards that tags supplied to RunTask are
+// reflected both on DescribeTasks (which reads the task's own Tags field) and
+// ListTagsForResource (which reads the separate ARN-keyed tag store every
+// other ECS resource's TagResource/UntagResource/ListTagsForResource use).
+// RunTask storing tags only on the Task struct — without also registering
+// them in that store — left ListTagsForResource silently reporting no tags
+// for a task launched with --tags.
+func TestSDKRunTaskTagsRoundtrip(t *testing.T) {
+	client, cloud := newECSServer(t)
+	ctx := context.Background()
+
+	if _, err := client.CreateCluster(ctx, &awsecs.CreateClusterInput{ClusterName: aws.String("prod")}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	registerNginx(t, client, ctx)
+	cloud.ECS.SeedContainerInstance("prod", "i-0tags")
+
+	run, err := client.RunTask(ctx, &awsecs.RunTaskInput{
+		Cluster:        aws.String("prod"),
+		TaskDefinition: aws.String("web"),
+		Tags:           []ecstypes.Tag{{Key: aws.String("env"), Value: aws.String("prod")}},
+	})
+	if err != nil {
+		t.Fatalf("RunTask: %v", err)
+	}
+
+	if len(run.Tasks) != 1 {
+		t.Fatalf("RunTask = %d tasks, want 1", len(run.Tasks))
+	}
+
+	taskArn := aws.ToString(run.Tasks[0].TaskArn)
+
+	if len(run.Tasks[0].Tags) != 1 || aws.ToString(run.Tasks[0].Tags[0].Key) != "env" {
+		t.Fatalf("RunTask response tags = %+v, want [env=prod]", run.Tasks[0].Tags)
+	}
+
+	desc, err := client.DescribeTasks(ctx, &awsecs.DescribeTasksInput{
+		Cluster: aws.String("prod"),
+		Tasks:   []string{taskArn},
+	})
+	if err != nil {
+		t.Fatalf("DescribeTasks: %v", err)
+	}
+
+	if len(desc.Tasks) != 1 || len(desc.Tasks[0].Tags) != 1 || aws.ToString(desc.Tasks[0].Tags[0].Key) != "env" {
+		t.Fatalf("DescribeTasks tags = %+v, want [env=prod]", desc.Tasks[0].Tags)
+	}
+
+	list, err := client.ListTagsForResource(ctx, &awsecs.ListTagsForResourceInput{ResourceArn: aws.String(taskArn)})
+	if err != nil {
+		t.Fatalf("ListTagsForResource: %v", err)
+	}
+
+	if len(list.Tags) != 1 || aws.ToString(list.Tags[0].Key) != "env" || aws.ToString(list.Tags[0].Value) != "prod" {
+		t.Fatalf("ListTagsForResource(task) = %+v, want [env=prod]", list.Tags)
+	}
+
+	// TagResource must also reach the task, same as any other ECS resource.
+	if _, err = client.TagResource(ctx, &awsecs.TagResourceInput{
+		ResourceArn: aws.String(taskArn),
+		Tags:        []ecstypes.Tag{{Key: aws.String("team"), Value: aws.String("platform")}},
+	}); err != nil {
+		t.Fatalf("TagResource(task): %v", err)
+	}
+
+	list, err = client.ListTagsForResource(ctx, &awsecs.ListTagsForResourceInput{ResourceArn: aws.String(taskArn)})
+	if err != nil {
+		t.Fatalf("ListTagsForResource after TagResource: %v", err)
+	}
+
+	if len(list.Tags) != 2 {
+		t.Fatalf("ListTagsForResource(task) after TagResource = %d tags, want 2", len(list.Tags))
+	}
+}
+
 func TestSDKAccountSettingsRoundtrip(t *testing.T) {
 	client := newECSClient(t)
 	ctx := context.Background()

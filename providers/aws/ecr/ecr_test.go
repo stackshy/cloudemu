@@ -951,6 +951,82 @@ func TestPreviewLifecyclePolicy(t *testing.T) {
 	})
 }
 
+// TestLifecyclePolicyMultiEntrySelection guards that a rule's tagPatternList
+// and tagPrefixList are matched against ALL of their entries, not just the
+// first. Real ECR expires an image if any of its tags satisfies any pattern
+// (glob) or prefix (literal) in either list.
+func TestLifecyclePolicyMultiEntrySelection(t *testing.T) {
+	m, fc := newTestMock()
+	ctx := context.Background()
+
+	createTestRepo(t, m, "multi-selection-repo")
+
+	policy := driver.LifecyclePolicy{
+		Rules: []driver.LifecycleRule{
+			{
+				Priority:      1,
+				TagStatus:     "tagged",
+				TagPrefixList: []string{"prod", "stg"},
+				CountType:     "imageCountMoreThan",
+				CountValue:    0,
+				Action:        "expire",
+			},
+		},
+	}
+
+	require.NoError(t, m.PutLifecyclePolicy(ctx, "multi-selection-repo", policy))
+
+	prod := pushTestImage(t, m, "multi-selection-repo", "prod-v1")
+	fc.Advance(time.Minute)
+	stg := pushTestImage(t, m, "multi-selection-repo", "stg-v1")
+	fc.Advance(time.Minute)
+	pushTestImage(t, m, "multi-selection-repo", "dev-v1")
+
+	results, _, err := m.PreviewLifecyclePolicy(ctx, "multi-selection-repo", nil)
+	require.NoError(t, err)
+
+	byDigest := map[string]bool{}
+	for _, r := range results {
+		byDigest[r.Digest] = true
+	}
+
+	assert.True(t, byDigest[prod.Digest], "prod-v1 (first tagPrefixList entry) should match")
+	assert.True(t, byDigest[stg.Digest], "stg-v1 (second tagPrefixList entry) should also match, not just the first")
+	assert.Len(t, results, 2, "dev-v1 matches neither prefix and must not expire")
+}
+
+// TestLifecyclePolicyTagPrefixIsLiteralNotGlob guards that tagPrefixList
+// entries are matched as literal string prefixes, not glob patterns: a prefix
+// of "prod" must match the tag "prod-v1" even though "prod" is not a glob that
+// matches "prod-v1" under path.Match semantics.
+func TestLifecyclePolicyTagPrefixIsLiteralNotGlob(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+
+	createTestRepo(t, m, "prefix-literal-repo")
+
+	policy := driver.LifecyclePolicy{
+		Rules: []driver.LifecycleRule{
+			{
+				Priority:      1,
+				TagStatus:     "tagged",
+				TagPrefixList: []string{"prod"},
+				CountType:     "imageCountMoreThan",
+				CountValue:    0,
+				Action:        "expire",
+			},
+		},
+	}
+
+	require.NoError(t, m.PutLifecyclePolicy(ctx, "prefix-literal-repo", policy))
+	pushTestImage(t, m, "prefix-literal-repo", "prod-v1")
+
+	results, _, err := m.PreviewLifecyclePolicy(ctx, "prefix-literal-repo", nil)
+	require.NoError(t, err)
+	require.Len(t, results, 1)
+	assert.Equal(t, []string{"prod-v1"}, results[0].Tags)
+}
+
 func TestImageScan(t *testing.T) {
 	m, _ := newTestMock()
 	ctx := context.Background()
