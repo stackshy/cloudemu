@@ -85,7 +85,19 @@ func decodeBody(w http.ResponseWriter, r *http.Request) (fields map[string]json.
 // toResourceJSON renders a driver resource as privateca/v1 wire JSON, merging the
 // verbatim body fields with the computed name/createTime/updateTime output fields.
 func (m meta) toResourceJSON(r *pcadriver.Resource) (json.RawMessage, error) {
-	out := make(map[string]json.RawMessage, len(r.Fields)+minComputedFields)
+	// r.Fields is populated from the request body. Guard the raw field count
+	// against a cap that leaves headroom for the injected computed fields — there
+	// is no runtime arithmetic on the request-derived value, so nothing for an
+	// overflow check to flag, and the guard bounds the allocation. The map still
+	// grows to hold every entry; this only sizes the initial hint.
+	const maxResourceFields = 10000
+
+	capHint := len(r.Fields)
+	if capHint > maxResourceFields-minComputedFields {
+		capHint = maxResourceFields - minComputedFields
+	}
+
+	out := make(map[string]json.RawMessage, capHint)
 	for k, v := range r.Fields {
 		out[k] = v
 	}

@@ -20,6 +20,7 @@
 package backup
 
 import (
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -147,9 +148,9 @@ func atoiDefault(s string) int32 {
 	}
 
 	n, err := strconv.Atoi(s)
-	if err != nil || n < 0 {
+	if err != nil || n < 0 || n > math.MaxInt32 {
 		return 0
 	}
 
-	return int32(n) //nolint:gosec // bounded by request query length; overflow not reachable in practice.
+	return int32(n) //nolint:gosec // explicitly range-checked against math.MaxInt32 above; gosec's G109 can't see the guard.
 }
