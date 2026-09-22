@@ -32,7 +32,7 @@ func TestRandFloatDistributionRoughlyMatchesProbability(t *testing.T) {
 		}
 	}
 
-	// Expect ~5000 hits. Tolerance ±5% absolute (i.e. 4500–5500).
+	// Expect ~5000 hits. Tolerance ±5% absolute (i.e. 4500-5500).
 	const expected = samples / 2
 
 	const tolerance = samples / 20
@@ -43,7 +43,7 @@ func TestRandFloatDistributionRoughlyMatchesProbability(t *testing.T) {
 	}
 }
 
-// TestRandFloatBoundsZeroProb confirms p=0.0 produces zero hits — guards
+// TestRandFloatBoundsZeroProb confirms p=0.0 produces zero hits. It guards
 // against off-by-one bugs where the random source could produce 1.0.
 func TestRandFloatBoundsZeroProb(t *testing.T) {
 	e := chaos.New(config.RealClock{})
@@ -58,7 +58,7 @@ func TestRandFloatBoundsZeroProb(t *testing.T) {
 	}
 }
 
-// TestRandFloatBoundsOneProb confirms p=1.0 produces all hits — guards
+// TestRandFloatBoundsOneProb confirms p=1.0 produces all hits. It guards
 // against off-by-one bugs where the random source could produce 0.0 only.
 func TestRandFloatBoundsOneProb(t *testing.T) {
 	e := chaos.New(config.RealClock{})

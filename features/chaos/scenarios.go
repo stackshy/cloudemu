@@ -9,7 +9,7 @@ import (
 
 // window holds the common "active from start to start+duration" timing logic.
 // All scenarios with a duration embed it. The start (and thus end) is bound to
-// the engine's clock when the scenario is applied — see bind — so the window is
+// the engine's clock when the scenario is applied (see bind), so the window is
 // relative to the engine clock, not wall-clock at construction. This keeps
 // FakeClock-driven deterministic tests working. Until bound, the window is
 // inactive.
@@ -107,7 +107,7 @@ type probabilisticFailure struct {
 	p       float64
 }
 
-// ProbabilisticFailure injects err on a fraction p (0.0–1.0) of calls to
+// ProbabilisticFailure injects err on a fraction p (0.0-1.0) of calls to
 // service.operation, for the next duration window. If op is empty, applies
 // to every operation on the service.
 func ProbabilisticFailure(svc, op string, err error, p float64, duration time.Duration) Scenario {

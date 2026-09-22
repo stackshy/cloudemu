@@ -7,8 +7,8 @@ import (
 )
 
 // chaosSageMaker wraps a SageMaker service. It consults the engine on the
-// calls most worth failing in tests — job submission, endpoint creation, the
-// inference runtime, and the Feature Store online store — and delegates every
+// calls most worth failing in tests (job submission, endpoint creation, the
+// inference runtime, and the Feature Store online store) and delegates every
 // other operation through the embedded driver.Service unchanged.
 type chaosSageMaker struct {
 	driver.Service

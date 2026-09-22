@@ -1,5 +1,5 @@
 // Package chaos lets tests deliberately fail or slow down CloudEmu services
-// in controlled, time-bounded ways — so app code that handles cloud failure
+// in controlled, time-bounded ways, so app code that handles cloud failure
 // can be exercised without waiting for real cloud to misbehave.
 //
 // Typical usage:
@@ -95,7 +95,7 @@ func New(clock config.Clock) *Engine {
 
 // clockBinder is implemented by scenarios whose active window is anchored to
 // the engine clock. Apply binds them at registration time so that time-bounded
-// scenarios start "now" on the engine's clock — including a FakeClock — rather
+// scenarios start "now" on the engine's clock (including a FakeClock), rather
 // than on wall-clock at construction.
 type clockBinder interface {
 	bind(now time.Time)

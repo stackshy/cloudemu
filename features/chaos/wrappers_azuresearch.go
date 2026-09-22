@@ -7,8 +7,8 @@ import (
 )
 
 // chaosAzureSearch wraps an Azure AI Search service. It consults the engine on
-// the calls most worth failing in tests — service and index creation, document
-// indexing, and the query runtime — and delegates every other operation through
+// the calls most worth failing in tests (service and index creation, document
+// indexing, and the query runtime) and delegates every other operation through
 // the embedded driver.AzureSearch unchanged.
 type chaosAzureSearch struct {
 	driver.AzureSearch
