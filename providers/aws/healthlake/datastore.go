@@ -2,7 +2,9 @@ package healthlake
 
 import (
 	"context"
+	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/services/healthlake/driver"
 )
 
@@ -10,8 +12,20 @@ import (
 // (id, arn, endpoint, createdAt) and reports it ACTIVE at once, so an IaC waiter
 // completes without a provisioning wait. When no SSE config is supplied the data
 // store reports an AWS-owned KMS key, mirroring real HealthLake. The SSE,
-// preload and identity-provider blocks round-trip verbatim.
-func (m *Mock) CreateFHIRDatastore(_ context.Context, in *driver.CreateFHIRDatastoreInput) (*driver.Datastore, error) {
+// preload and identity-provider blocks round-trip verbatim. A repeated
+// ClientToken within the dedup window returns the live data store already
+// provisioned for it (as it reads now, e.g. after tagging) instead of minting a
+// second one; once that data store is deleted the token creates afresh.
+func (m *Mock) CreateFHIRDatastore(ctx context.Context, in *driver.CreateFHIRDatastoreInput) (*driver.Datastore, error) {
+	now := m.now()
+
+	return idempotency.Do(ctx, m.createTokens, in.ClientToken, now, m.DescribeFHIRDatastore,
+		func() (*driver.Datastore, error) { return m.createFHIRDatastore(in, now) },
+		func(ds *driver.Datastore) string { return ds.DatastoreID })
+}
+
+// createFHIRDatastore validates the request and provisions one new data store.
+func (m *Mock) createFHIRDatastore(in *driver.CreateFHIRDatastoreInput, now time.Time) (*driver.Datastore, error) {
 	version := in.DatastoreTypeVersion
 	if version == "" {
 		return nil, validation("DatastoreTypeVersion is required")
@@ -37,7 +51,7 @@ func (m *Mock) CreateFHIRDatastore(_ context.Context, in *driver.CreateFHIRDatas
 		DatastoreName:                 in.DatastoreName,
 		DatastoreStatus:               driver.StatusActive,
 		DatastoreTypeVersion:          version,
-		CreatedAt:                     m.opts.Clock.Now().UTC(),
+		CreatedAt:                     now,
 		SseConfiguration:              sse,
 		PreloadDataConfig:             copyPreload(in.PreloadDataConfig),
 		IdentityProviderConfiguration: copyIdentityProvider(in.IdentityProviderConfiguration),

@@ -3,7 +3,9 @@ package globalaccelerator
 import (
 	"context"
 	"strings"
+	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/globalaccelerator/driver"
 )
@@ -12,8 +14,20 @@ import (
 // computed fields (arn, two deterministic static IPv4 addresses, dnsName,
 // dualStackDnsName, status, createdTime) minted once and stored. Status settles
 // to DEPLOYED immediately. A default (flow-logs-disabled) attributes record is
-// created alongside it.
-func (m *Mock) CreateAccelerator(_ context.Context, in *driver.CreateAcceleratorInput) (*driver.Accelerator, error) {
+// created alongside it. A repeated IdempotencyToken within the dedup window
+// returns the live accelerator already provisioned for it (as it reads now,
+// after any update) instead of a second one; once that accelerator is deleted
+// the token creates afresh.
+func (m *Mock) CreateAccelerator(ctx context.Context, in *driver.CreateAcceleratorInput) (*driver.Accelerator, error) {
+	now := m.now()
+
+	return idempotency.Do(ctx, m.acceleratorTokens, in.IdempotencyToken, now, m.DescribeAccelerator,
+		func() (*driver.Accelerator, error) { return m.createAccelerator(in, now) },
+		func(a *driver.Accelerator) string { return a.AcceleratorArn })
+}
+
+// createAccelerator validates the request and provisions one new accelerator.
+func (m *Mock) createAccelerator(in *driver.CreateAcceleratorInput, now time.Time) (*driver.Accelerator, error) {
 	if in.Name == "" {
 		return nil, invalidArgument("Name is required")
 	}
@@ -29,7 +43,6 @@ func (m *Mock) CreateAccelerator(_ context.Context, in *driver.CreateAccelerator
 
 	id := idgen.UUID()
 	arn := m.acceleratorARN(id)
-	now := m.now()
 
 	enabled := true
 	if in.Enabled != nil {

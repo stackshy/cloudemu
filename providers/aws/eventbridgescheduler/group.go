@@ -74,6 +74,7 @@ func (m *Mock) DeleteScheduleGroup(_ context.Context, name string) error {
 	for _, key := range m.schedules.Keys() {
 		if strings.HasPrefix(key, prefix) {
 			m.schedules.Delete(key)
+			m.scheduleTokens.Forget(key)
 		}
 	}
 

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/fis/driver"
@@ -58,14 +59,25 @@ type Mock struct {
 	templates   *memstore.Store[driver.ExperimentTemplate]
 	experiments *memstore.Store[driver.Experiment]
 	opts        *config.Options
+
+	// templateTokens dedups CreateExperimentTemplate's clientToken;
+	// experimentTokens dedups StartExperiment's. Neither op has any other
+	// natural uniqueness key (each mints a fresh id every call), so without
+	// this a retried request mints a second resource outright. The FIS API
+	// reference documents no token lifetime, so both use
+	// idempotency.DefaultTTL.
+	templateTokens   *idempotency.Store
+	experimentTokens *idempotency.Store
 }
 
 // New creates a new FIS mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		templates:   memstore.New[driver.ExperimentTemplate](),
-		experiments: memstore.New[driver.Experiment](),
-		opts:        opts,
+		templates:        memstore.New[driver.ExperimentTemplate](),
+		experiments:      memstore.New[driver.Experiment](),
+		opts:             opts,
+		templateTokens:   idempotency.New(idempotency.DefaultTTL),
+		experimentTokens: idempotency.New(idempotency.DefaultTTL),
 	}
 }
 

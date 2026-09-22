@@ -2,10 +2,12 @@ package route53_test
 
 import (
 	"context"
+	"errors"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awsr53 "github.com/aws/aws-sdk-go-v2/service/route53"
+	r53types "github.com/aws/aws-sdk-go-v2/service/route53/types"
 )
 
 // TestSDKCallerReferencePersisted locks that the caller-supplied CallerReference
@@ -47,5 +49,38 @@ func TestSDKCallerReferencePersisted(t *testing.T) {
 	}
 	if !found {
 		t.Fatal("created zone not present in ListHostedZones")
+	}
+}
+
+// TestSDKReusedCallerReferenceConflicts locks that a CreateHostedZone retry with
+// a CallerReference already in use returns HostedZoneAlreadyExists instead of
+// minting a second zone.
+func TestSDKReusedCallerReferenceConflicts(t *testing.T) {
+	client := newRoute53Client(t)
+	ctx := context.Background()
+
+	in := &awsr53.CreateHostedZoneInput{
+		Name:            aws.String("retry.com."),
+		CallerReference: aws.String("retry-ref-1"),
+	}
+
+	if _, err := client.CreateHostedZone(ctx, in); err != nil {
+		t.Fatalf("CreateHostedZone: %v", err)
+	}
+
+	_, err := client.CreateHostedZone(ctx, in)
+
+	var exists *r53types.HostedZoneAlreadyExists
+	if !errors.As(err, &exists) {
+		t.Fatalf("retry err = %v, want HostedZoneAlreadyExists", err)
+	}
+
+	list, err := client.ListHostedZones(ctx, &awsr53.ListHostedZonesInput{})
+	if err != nil {
+		t.Fatalf("ListHostedZones: %v", err)
+	}
+
+	if len(list.HostedZones) != 1 {
+		t.Fatalf("zone count = %d, want 1 (no duplicate on retry)", len(list.HostedZones))
 	}
 }

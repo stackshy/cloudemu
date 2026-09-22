@@ -88,17 +88,21 @@ type LoggingConfiguration struct {
 
 // CreateWorkspaceInput is the input to CreateWorkspace.
 type CreateWorkspaceInput struct {
-	Alias     string
-	KmsKeyArn string
-	Tags      map[string]string
+	Alias       string
+	KmsKeyArn   string
+	ClientToken string
+	Tags        map[string]string
 }
 
 // RuleGroupsNamespaceInput is the input to CreateRuleGroupsNamespace and
-// PutRuleGroupsNamespace. Data is the base64 string the caller sent.
+// PutRuleGroupsNamespace. Data is the base64 string the caller sent. ClientToken
+// is only meaningful on CreateRuleGroupsNamespace (Put is create-or-replace and
+// needs no dedup).
 type RuleGroupsNamespaceInput struct {
 	WorkspaceID string
 	Name        string
 	Data        string
+	ClientToken string
 	Tags        map[string]string
 }
 

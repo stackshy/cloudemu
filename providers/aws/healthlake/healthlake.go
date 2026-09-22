@@ -12,8 +12,10 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"strconv"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/healthlake/driver"
@@ -33,14 +35,25 @@ const datastoreIDBytes = 16
 type Mock struct {
 	datastores *memstore.Store[driver.Datastore]
 	opts       *config.Options
+
+	// createTokens dedups CreateFHIRDatastore's ClientToken: a retried create
+	// returns the data store already provisioned for it instead of minting a
+	// second one. The HealthLake API reference documents no token lifetime, so
+	// it uses idempotency.DefaultTTL.
+	createTokens *idempotency.Store
 }
 
 // New creates a new HealthLake mock with the given options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		datastores: memstore.New[driver.Datastore](),
-		opts:       opts,
+		datastores:   memstore.New[driver.Datastore](),
+		opts:         opts,
+		createTokens: idempotency.New(idempotency.DefaultTTL),
 	}
+}
+
+func (m *Mock) now() time.Time {
+	return m.opts.Clock.Now().UTC()
 }
 
 // datastoreARN mints the stable ARN for a data store:
