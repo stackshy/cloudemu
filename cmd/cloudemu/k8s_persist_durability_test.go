@@ -64,7 +64,7 @@ func startServeK8s(t *testing.T, bin string, p k8sDurabilityPorts, strategy, int
 
 // insecureK8sClient dials the emulator's self-signed HTTPS data plane, skipping
 // verification (the data plane serves an eksprov-generated cert; a real client
-// would trust the advertised CA — here we only care about payload durability).
+// would trust the advertised CA, but this test only cares about payload durability).
 func insecureK8sClient() *http.Client {
 	return &http.Client{Transport: &http.Transport{
 		TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec // self-signed emulator cert
@@ -151,7 +151,7 @@ func describeK8sEndpoint(t *testing.T, eks *awseks.Client, name string, create b
 
 // TestK8sDataPlanePersistsAcrossCrash is the #868 acceptance test: an EKS cluster
 // created via the real SDK, with a Deployment + Service applied over its
-// kubeconfig endpoint, survives a SIGKILL (no graceful shutdown) and a restart —
+// kubeconfig endpoint, survives a SIGKILL (no graceful shutdown) and a restart:
 // (a) DescribeCluster returns the SAME /k8s/<uid>, (b) the OLD endpoint still
 // serves, (c) the Deployment/Pods/Service/Endpoints survive with identities
 // intact. It runs under BOTH the `scheduled` (default) and `on-request`
@@ -190,8 +190,8 @@ func k8sDataPlaneCrashCase(t *testing.T, bin, strategy string) {
 
 	k8s := insecureK8sClient()
 
-	// Apply a Deployment + Service ONLY over the k8s data plane — no provider
-	// mutation — so a save proves the pure-kubectl dirty seam.
+	// Apply a Deployment + Service ONLY over the k8s data plane, with no provider
+	// mutation, so a save proves the pure-kubectl dirty seam.
 	if code, b := k8sDo(t, k8s, http.MethodPost,
 		endpoint+"/apis/apps/v1/namespaces/default/deployments", persistDeploymentBody); code != http.StatusCreated {
 		t.Fatalf("create Deployment = %d, want 201: %s", code, b)
@@ -206,7 +206,7 @@ func k8sDataPlaneCrashCase(t *testing.T, bin, strategy string) {
 	waitPodsRunning(t, k8s, endpoint, 2, 5*time.Second)
 
 	// Wait for a background save capturing the cluster UID + the Deployment to
-	// land BEFORE the hard kill — the durability window under test.
+	// land BEFORE the hard kill: that's the durability window under test.
 	waitFileContains(t, p.state, uid, 5*time.Second)
 	waitFileContains(t, p.state, "persist-deploy", 5*time.Second)
 
@@ -284,7 +284,7 @@ func countRunningPods(t *testing.T, listBody []byte) int {
 }
 
 // assertEndpointsBackPods asserts the Service's Endpoints object survived with at
-// least one backing address — the reconciler-materialized wiring that must
+// least one backing address: the reconciler-materialized wiring must
 // round-trip, not be recomputed from scratch.
 func assertEndpointsBackPods(t *testing.T, c *http.Client, endpoint string) {
 	t.Helper()

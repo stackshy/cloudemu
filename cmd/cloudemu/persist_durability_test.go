@@ -81,7 +81,7 @@ func startServe(t *testing.T, bin string, p durabilityPorts, strategy, interval 
 	return cmd
 }
 
-// killHard sends SIGKILL — a hard crash with no graceful shutdown, so only saves
+// killHard sends SIGKILL: a hard crash with no graceful shutdown, so only saves
 // that already reached disk survive. This is the scenario today's --persist fails.
 func killHard(t *testing.T, cmd *exec.Cmd) {
 	t.Helper()
@@ -238,7 +238,7 @@ func createDurableResources(t *testing.T, p durabilityPorts) {
 }
 
 // assertDurableResourcesSurvive re-reads every resource after a crash+restart and
-// fails if any is missing — the crux of #447.
+// fails if any is missing: the crux of #447.
 func assertDurableResourcesSurvive(t *testing.T, p durabilityPorts) {
 	t.Helper()
 
@@ -279,7 +279,7 @@ func assertDurableResourcesSurvive(t *testing.T, p durabilityPorts) {
 
 // assertDurableObjectBodySurvives is the FIX-1 check: the restored object must
 // return its ORIGINAL bytes via GET (not an empty body), and HEAD/List must
-// report a size matching those bytes — no size/empty mismatch after a crash.
+// report a size matching those bytes: no size/empty mismatch after a crash.
 func assertDurableObjectBodySurvives(t *testing.T, s3c *s3.Client) {
 	t.Helper()
 
@@ -301,7 +301,7 @@ func assertDurableObjectBodySurvives(t *testing.T, s3c *s3.Client) {
 		t.Fatalf("restored object body = %q, want %q (bodies must be crash-safe by default)", body, durableObjectBody)
 	}
 
-	// HEAD size must match the restored body — the mismatch this fix closes.
+	// HEAD size must match the restored body: the mismatch this fix closes.
 	head, err := s3c.HeadObject(ctx, &s3.HeadObjectInput{Bucket: aws.String("durable"), Key: aws.String(durableObjectKey)})
 	if err != nil {
 		t.Fatalf("HeadObject after crash: %v", err)
@@ -334,7 +334,7 @@ func assertDurableObjectBodySurvives(t *testing.T, s3c *s3.Client) {
 	}
 }
 
-// createOCIVCN creates a VCN through the OCI wire REST API — the 4th wired
+// createOCIVCN creates a VCN through the OCI wire REST API. It's the 4th wired
 // provider, whose wrapDirty + SnapshotServices path was previously untested for
 // SIGKILL durability.
 func createOCIVCN(t *testing.T, port string) {
@@ -431,7 +431,7 @@ func assertAzureContainerExists(t *testing.T, port string) {
 
 // TestPersistCrashDurability is the #447 acceptance test: with an always-on
 // strategy, resources created via real SDKs survive a SIGKILL (no graceful
-// shutdown) and a restart — which today's shutdown-only --persist loses entirely.
+// shutdown) and a restart, which today's shutdown-only --persist loses entirely.
 // It runs for both scheduled and on-request, and asserts the S3/IAM
 // Get-then-mutate writes (caught only by the request-boundary seam) survive too.
 func TestPersistCrashDurability(t *testing.T) {
@@ -454,7 +454,7 @@ func TestPersistCrashDurability(t *testing.T) {
 			cmd := startServe(t, bin, p, strategy, "150ms")
 			createDurableResources(t, p)
 
-			// Wait for a background save to land BEFORE the hard kill — this is the
+			// Wait for a background save to land BEFORE the hard kill: this is the
 			// durability window under test. Both the bucket and the IAM inline
 			// policy must be on disk.
 			// Wait for a marker from every provider's last-created resource, so the
@@ -476,8 +476,8 @@ func TestPersistCrashDurability(t *testing.T) {
 }
 
 // TestPersistManualDoesNotAutoSave locks the manual contract end to end: nothing
-// is saved automatically, and — the regression guard for the replaced
-// unconditional shutdown save — nothing is saved even on a graceful SIGTERM
+// is saved automatically, and (the regression guard for the replaced
+// unconditional shutdown save) nothing is saved even on a graceful SIGTERM
 // shutdown.
 func TestPersistManualDoesNotAutoSave(t *testing.T) {
 	if testing.Short() {
@@ -514,7 +514,7 @@ func TestPersistManualDoesNotAutoSave(t *testing.T) {
 
 // TestPersistAdminRestoreSurvivesCrash proves the explicit dirty-set in
 // App.restore: a POST /_cloudemu/snapshot restore, with NO subsequent provider
-// request, is persisted on the next tick and survives a SIGKILL — the
+// request, is persisted on the next tick and survives a SIGKILL. It's the
 // admin-surface analogue of the Get-then-mutate hole.
 func TestPersistAdminRestoreSurvivesCrash(t *testing.T) {
 	if testing.Short() {
@@ -542,7 +542,7 @@ func TestPersistAdminRestoreSurvivesCrash(t *testing.T) {
 	snapshot := httpGet(t, awsBase+"/_cloudemu/snapshot")
 
 	// Wipe, then restore from the captured snapshot. The restore is the LAST
-	// state-mutating call — no provider request follows it.
+	// state-mutating call: no provider request follows it.
 	httpPost(t, awsBase+"/_cloudemu/reset", nil)
 	httpPost(t, awsBase+"/_cloudemu/snapshot", snapshot)
 

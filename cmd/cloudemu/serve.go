@@ -21,7 +21,7 @@ const enginesImagePointer = "docker run -p 4566:4566 ghcr.io/stackshy/cloudemu:e
 
 // errEnginesNotInLeanBinary is returned when engine flags/env are passed to the
 // lean cloudemu binary, which deliberately does not compile the real engines
-// (postgres/redis/subprocess/docker/localfs) — those heavy deps live only in the
+// (postgres/redis/subprocess/docker/localfs); those heavy deps live only in the
 // :engines image (contrib/server). Rather than silently ignore the intent, serve
 // points the user at the batteries image.
 var errEnginesNotInLeanBinary = errors.New(
@@ -114,7 +114,7 @@ func registerEngineStubs(fs *flag.FlagSet) {
 	}
 }
 
-// enginesRequested reports whether the user asked for a real engine — either by
+// enginesRequested reports whether the user asked for a real engine, either by
 // setting an engine flag on the command line (detected via fs.Visit after a real
 // parse, so an engine name that is another flag's value does not count) or via a
 // non-empty engine env var.

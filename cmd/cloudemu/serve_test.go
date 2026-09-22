@@ -30,7 +30,7 @@ import (
 )
 
 // TestServeOutOfProcess builds the binary, runs it as a separate process, and
-// drives real cloud SDK clients against the listening sockets — the way an
+// drives real cloud SDK clients against the listening sockets, the way an
 // actual user runs `cloudemu serve` and points an app at it. It exercises the
 // HTTP path (AWS) and the self-signed HTTPS path (Azure) end to end.
 func TestServeOutOfProcess(t *testing.T) {
@@ -228,7 +228,7 @@ func TestServeOutOfProcess(t *testing.T) {
 	})
 
 	// Concurrent resets must serialise and stay consistent, not deadlock or
-	// corrupt the swap — this exercises the rebuild mutex.
+	// corrupt the swap: this exercises the rebuild mutex.
 	t.Run("admin-reset-concurrent", func(t *testing.T) {
 		var wg sync.WaitGroup
 		errs := make(chan error, 6)
