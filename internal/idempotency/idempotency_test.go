@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 )
 
@@ -21,7 +22,7 @@ type fakeResources struct {
 
 func newFake() *fakeResources { return &fakeResources{live: map[string]string{}} }
 
-var errGone = errors.New("gone")
+var errGone = cerrors.New(cerrors.NotFound, "gone")
 
 func (f *fakeResources) replay(_ context.Context, id string) (string, error) {
 	f.mu.Lock()
@@ -226,5 +227,38 @@ func TestPutSweepsExpiredEntries(t *testing.T) {
 	// Rewinding the clock would re-hit a surviving entry; the sweep dropped it.
 	if got := do(s, f, "old", now); got == old {
 		t.Fatalf("expired entry %q should have been swept by the later create", old)
+	}
+}
+
+func TestDoReplayFailureOtherThanNotFoundIsReturned(t *testing.T) {
+	s, f, now := idempotency.New(time.Minute), newFake(), time.Unix(0, 0)
+
+	first := do(s, f, "tok", now)
+	errTransient := errors.New("transient")
+
+	_, err := idempotency.Do(context.Background(), s, "tok", now,
+		func(context.Context, string) (string, error) { return "", errTransient },
+		f.create, idOf)
+	if !errors.Is(err, errTransient) {
+		t.Fatalf("replay failure err = %v, want the replay error returned", err)
+	}
+
+	if len(f.live) != 1 {
+		t.Fatalf("a non-NotFound replay failure created a duplicate: %d resources", len(f.live))
+	}
+
+	if got := do(s, f, "tok", now); got != first {
+		t.Fatalf("token after a transient replay failure = %q, want %q", got, first)
+	}
+}
+
+func TestForgetDropsTokensForID(t *testing.T) {
+	s, f, now := idempotency.New(time.Minute), newFake(), time.Unix(0, 0)
+
+	first := do(s, f, "tok", now)
+	s.Forget(first)
+
+	if got := do(s, f, "tok", now); got == first {
+		t.Fatalf("forgotten token replayed %q", first)
 	}
 }

@@ -173,6 +173,10 @@ func (m *Mock) DeleteRuleGroupsNamespace(_ context.Context, workspaceID, name st
 		return notFound("rule groups namespace %s not found in workspace %s", name, workspaceID)
 	}
 
+	// The token's id is the name-derived ARN, so drop it: a same-name namespace
+	// created later by another request must not replay to this token.
+	m.rgTokens.Forget(m.ruleGroupsNamespaceARN(workspaceID, name))
+
 	return nil
 }
 

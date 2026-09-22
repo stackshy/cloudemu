@@ -90,9 +90,14 @@ func (m *Mock) UpdateSchedule(_ context.Context, in *driver.ScheduleInput) (*dri
 func (m *Mock) DeleteSchedule(_ context.Context, group, name string) error {
 	group = resolveGroup(group)
 
-	if !m.schedules.Delete(scheduleKey(group, name)) {
+	key := scheduleKey(group, name)
+	if !m.schedules.Delete(key) {
 		return notFound("schedule %q does not exist in group %q", name, group)
 	}
+
+	// The token's id is the name-derived key, so drop it: a same-name schedule
+	// created later by another request must not replay to this token.
+	m.scheduleTokens.Forget(key)
 
 	return nil
 }

@@ -136,3 +136,28 @@ func TestCreateScheduleClientTokenConcurrent(t *testing.T) {
 		t.Fatalf("schedule count = %d, want 1", len(list))
 	}
 }
+
+func TestCreateScheduleTokenDoesNotReplayOtherRequestsSameName(t *testing.T) {
+	ctx := context.Background()
+	m := newMock()
+
+	in := scheduleInput("s1", "")
+	in.ClientToken = "tok-1"
+
+	_, err := m.CreateSchedule(ctx, in)
+	requireNoError(t, err)
+	requireNoError(t, m.DeleteSchedule(ctx, "", "s1"))
+
+	other := scheduleInput("s1", "")
+	other.ClientToken = "tok-other"
+	other.Description = "someone else's"
+
+	_, err = m.CreateSchedule(ctx, other)
+	requireNoError(t, err)
+
+	// tok-1's schedule is gone; the live s1 belongs to another request, so the
+	// original token must conflict rather than hand that schedule back.
+	if got, err := m.CreateSchedule(ctx, in); err == nil {
+		t.Fatalf("tok-1 replayed another request's schedule (description %q)", got.Description)
+	}
+}

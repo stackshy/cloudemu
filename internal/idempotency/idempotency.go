@@ -19,6 +19,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 // DefaultTTL is the dedup window for operations whose API reference documents
@@ -77,7 +79,7 @@ func New(ttl time.Duration) *Store {
 // the service's own Describe/Get method, so a replay reports exactly what a read
 // would); if it
 // succeeds its result is returned without creating anything. Otherwise — no
-// entry, an expired entry, or a resource deleted since (replay errors) — create
+// entry, an expired entry, or a resource deleted since (replay NotFound) — create
 // runs, and on success idOf's id for the new resource is recorded under token.
 // Callers sharing a token run one at a time, so a concurrent retry waits for
 // the first create and then replays it rather than racing it.
@@ -96,8 +98,17 @@ func Do[R any](
 	defer unlock()
 
 	if id, ok := s.lookup(token, now); ok {
-		if out, err := replay(ctx, id); err == nil {
+		out, err := replay(ctx, id)
+		if err == nil {
 			return out, nil
+		}
+
+		// Only a vanished resource means "create afresh"; any other replay
+		// failure (a canceled context, an injected fault) is returned as is,
+		// because creating here would mint the duplicate the token exists to
+		// prevent.
+		if !cerrors.IsNotFound(err) {
+			return out, err
 		}
 	}
 
@@ -177,4 +188,18 @@ func (s *Store) put(token string, now time.Time, id string) {
 	}
 
 	s.entries[token] = entry{id: id, expireAt: now.Add(s.ttl)}
+}
+
+// Forget drops every token recorded for id. A provider calls it when it deletes
+// a resource whose id is derived from its name, so a later same-name resource
+// created by a different request is never replayed to the original token.
+func (s *Store) Forget(id string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	for k, e := range s.entries {
+		if e.id == id {
+			delete(s.entries, k)
+		}
+	}
 }
