@@ -21,6 +21,7 @@ type createFHIRDatastoreRequest struct {
 	SseConfiguration              *sseConfigurationJSON       `json:"SseConfiguration"`
 	PreloadDataConfig             *preloadDataConfigJSON      `json:"PreloadDataConfig"`
 	IdentityProviderConfiguration *identityProviderConfigJSON `json:"IdentityProviderConfiguration"`
+	ClientToken                   string                      `json:"ClientToken"`
 	Tags                          []tagJSON                   `json:"Tags"`
 }
 
@@ -41,6 +42,7 @@ func (h *Handler) createFHIRDatastore(w http.ResponseWriter, r *http.Request) {
 			SseConfiguration:              sseFromWire(req.SseConfiguration),
 			PreloadDataConfig:             preloadFromWire(req.PreloadDataConfig),
 			IdentityProviderConfiguration: identityProviderFromWire(req.IdentityProviderConfiguration),
+			ClientToken:                   req.ClientToken,
 			Tags:                          tagsFromWire(req.Tags),
 		})
 		if err != nil {

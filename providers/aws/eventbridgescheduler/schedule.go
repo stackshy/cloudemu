@@ -4,30 +4,47 @@ import (
 	"context"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/services/eventbridgescheduler/driver"
 )
 
 // CreateSchedule creates a schedule inside its (defaulted) group with a stable
 // arn and creation timestamp. The group must exist; the target,
-// flexible-time-window and start/end dates are carried verbatim.
+// flexible-time-window and start/end dates are carried verbatim. A repeated
+// ClientToken within the dedup window returns the schedule already created for
+// it instead of hitting the already-exists check below — a retried create
+// resends the same group+name and would otherwise get a spurious
+// ConflictException instead of its original result. The token is scoped to the
+// group+name it was sent for and only replays while that schedule still exists.
 func (m *Mock) CreateSchedule(_ context.Context, in *driver.ScheduleInput) (*driver.Schedule, error) {
 	if err := validateScheduleInput(in); err != nil {
 		return nil, err
 	}
 
+	now := m.now()
 	group := resolveGroup(in.GroupName)
+	key := scheduleKey(group, in.Name)
+	token := idempotency.Scoped(in.ClientToken, key)
+
+	if _, ok := m.scheduleTokens.Lookup(token, now); ok {
+		if s, exists := m.schedules.Get(key); exists {
+			out := copySchedule(&s)
+
+			return &out, nil
+		}
+	}
+
 	if !m.groupExists(group) {
 		return nil, notFound("schedule group %q does not exist", group)
 	}
 
-	key := scheduleKey(group, in.Name)
 	if m.schedules.Has(key) {
 		return nil, conflict("schedule %q already exists in group %q", in.Name, group)
 	}
 
-	now := m.now()
 	sched := m.buildSchedule(in, group, now, now)
 	m.schedules.Set(key, sched)
+	m.scheduleTokens.Put(token, now, idempotency.DefaultTTL, key)
 
 	out := copySchedule(&sched)
 

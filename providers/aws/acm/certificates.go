@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/acm/driver"
 )
@@ -16,6 +17,12 @@ import (
 //
 //nolint:gocritic // in is the public RequestCertificate input, taken by value to match the driver API
 func (m *Mock) RequestCertificate(_ context.Context, in driver.RequestCertificateInput) (string, error) {
+	now := m.now()
+
+	if arn, ok := m.requestTokens.Lookup(in.IdempotencyToken, now); ok {
+		return arn, nil
+	}
+
 	if in.DomainName == "" {
 		return "", invalidParameter("DomainName is required")
 	}
@@ -49,8 +56,6 @@ func (m *Mock) RequestCertificate(_ context.Context, in driver.RequestCertificat
 	if ct == "" {
 		ct = driver.CTLoggingEnabled
 	}
-
-	now := m.now()
 
 	// generateCertificate issues real key material for the requested algorithm
 	// (RSA/EC) and rejects a genuinely-unsupported one with
@@ -90,6 +95,7 @@ func (m *Mock) RequestCertificate(_ context.Context, in driver.RequestCertificat
 	window := settle.Pending(driver.StatusPendingValidation, now,
 		m.opts.SettleDuration(settle.DefaultCertificateSettle))
 	m.certs.Set(arn, &certData{cert: cert, settle: window})
+	m.requestTokens.Put(in.IdempotencyToken, now, idempotency.DefaultTTL, arn)
 
 	return arn, nil
 }

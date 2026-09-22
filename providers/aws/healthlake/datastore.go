@@ -3,6 +3,7 @@ package healthlake
 import (
 	"context"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/services/healthlake/driver"
 )
 
@@ -10,8 +11,18 @@ import (
 // (id, arn, endpoint, createdAt) and reports it ACTIVE at once, so an IaC waiter
 // completes without a provisioning wait. When no SSE config is supplied the data
 // store reports an AWS-owned KMS key, mirroring real HealthLake. The SSE,
-// preload and identity-provider blocks round-trip verbatim.
+// preload and identity-provider blocks round-trip verbatim. A repeated
+// ClientToken within the dedup window returns the data store already
+// provisioned for it instead of minting a second one.
 func (m *Mock) CreateFHIRDatastore(_ context.Context, in *driver.CreateFHIRDatastoreInput) (*driver.Datastore, error) {
+	now := m.now()
+
+	if cached, ok := m.createTokens.Lookup(in.ClientToken, now); ok {
+		out := copyDatastore(&cached)
+
+		return &out, nil
+	}
+
 	version := in.DatastoreTypeVersion
 	if version == "" {
 		return nil, validation("DatastoreTypeVersion is required")
@@ -37,7 +48,7 @@ func (m *Mock) CreateFHIRDatastore(_ context.Context, in *driver.CreateFHIRDatas
 		DatastoreName:                 in.DatastoreName,
 		DatastoreStatus:               driver.StatusActive,
 		DatastoreTypeVersion:          version,
-		CreatedAt:                     m.opts.Clock.Now().UTC(),
+		CreatedAt:                     now,
 		SseConfiguration:              sse,
 		PreloadDataConfig:             copyPreload(in.PreloadDataConfig),
 		IdentityProviderConfiguration: copyIdentityProvider(in.IdentityProviderConfiguration),
@@ -45,6 +56,7 @@ func (m *Mock) CreateFHIRDatastore(_ context.Context, in *driver.CreateFHIRDatas
 	}
 
 	m.datastores.Set(id, ds)
+	m.createTokens.Put(in.ClientToken, now, idempotency.DefaultTTL, copyDatastore(&ds))
 
 	out := copyDatastore(&ds)
 

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/globalaccelerator/driver"
@@ -79,16 +80,22 @@ type Mock struct {
 	endpointGroups *memstore.Store[driver.EndpointGroup]
 	attributes     *memstore.Store[driver.AcceleratorAttributes]
 	opts           *config.Options
+
+	// acceleratorTokens dedups CreateAccelerator's IdempotencyToken: a retried
+	// create returns the accelerator already provisioned for it (same ARN and
+	// static IPs) instead of minting a second one.
+	acceleratorTokens *idempotency.Store[driver.Accelerator]
 }
 
 // New creates a new Global Accelerator mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		accelerators:   memstore.New[driver.Accelerator](),
-		listeners:      memstore.New[driver.Listener](),
-		endpointGroups: memstore.New[driver.EndpointGroup](),
-		attributes:     memstore.New[driver.AcceleratorAttributes](),
-		opts:           opts,
+		accelerators:      memstore.New[driver.Accelerator](),
+		listeners:         memstore.New[driver.Listener](),
+		endpointGroups:    memstore.New[driver.EndpointGroup](),
+		attributes:        memstore.New[driver.AcceleratorAttributes](),
+		opts:              opts,
+		acceleratorTokens: idempotency.New[driver.Accelerator](),
 	}
 }
 

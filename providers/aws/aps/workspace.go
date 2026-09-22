@@ -4,15 +4,25 @@ import (
 	"context"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/services/aps/driver"
 )
 
 // CreateWorkspace provisions a new workspace directly in the ACTIVE state with
 // stable computed fields (workspaceId, arn, prometheusEndpoint, createdAt). The
-// alias, kmsKeyArn and tags are stored as supplied.
+// alias, kmsKeyArn and tags are stored as supplied. A repeated ClientToken
+// within the dedup window returns the workspace already minted for it instead
+// of provisioning a second one.
 func (m *Mock) CreateWorkspace(_ context.Context, in *driver.CreateWorkspaceInput) (*driver.Workspace, error) {
-	id := newWorkspaceID()
 	now := m.now()
+
+	if cached, ok := m.workspaceTokens.Lookup(in.ClientToken, now); ok {
+		out := copyWorkspace(&cached)
+
+		return &out, nil
+	}
+
+	id := newWorkspaceID()
 
 	ws := driver.Workspace{
 		WorkspaceID:        id,
@@ -28,6 +38,7 @@ func (m *Mock) CreateWorkspace(_ context.Context, in *driver.CreateWorkspaceInpu
 	m.workspaces.Set(id, ws)
 
 	out := copyWorkspace(&ws)
+	m.workspaceTokens.Put(in.ClientToken, now, idempotency.DefaultTTL, copyWorkspace(&ws))
 
 	return &out, nil
 }

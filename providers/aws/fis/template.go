@@ -3,15 +3,26 @@ package fis
 import (
 	"context"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/services/fis/driver"
 )
 
 // CreateExperimentTemplate provisions a new experiment template synchronously
 // with stable computed fields (id, arn, creationTime, lastUpdateTime). The
-// actions, targets and stop conditions are stored verbatim.
+// actions, targets and stop conditions are stored verbatim. A repeated
+// clientToken within the dedup window returns the template already created for
+// it instead of minting a second one.
 func (m *Mock) CreateExperimentTemplate(
 	_ context.Context, in *driver.CreateExperimentTemplateInput,
 ) (*driver.ExperimentTemplate, error) {
+	now := m.now()
+
+	if cached, ok := m.templateTokens.Lookup(in.ClientToken, now); ok {
+		out := copyTemplate(&cached)
+
+		return &out, nil
+	}
+
 	if in.Description == "" {
 		return nil, validation("description is required")
 	}
@@ -28,7 +39,6 @@ func (m *Mock) CreateExperimentTemplate(
 		return nil, validation("at least one action is required")
 	}
 
-	now := m.now()
 	id := templateID()
 
 	t := driver.ExperimentTemplate{
@@ -47,6 +57,7 @@ func (m *Mock) CreateExperimentTemplate(
 	}
 
 	m.templates.Set(id, t)
+	m.templateTokens.Put(in.ClientToken, now, idempotency.DefaultTTL, copyTemplate(&t))
 
 	out := copyTemplate(&t)
 

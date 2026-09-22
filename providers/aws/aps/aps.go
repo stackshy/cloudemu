@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/aps/driver"
@@ -50,14 +51,25 @@ const workspaceIDPrefix = "ws-"
 // Mock is an in-memory implementation of the Amazon APS control plane.
 type Mock struct {
 	workspaces *memstore.Store[driver.Workspace]
-	opts       *config.Options
+
+	// workspaceTokens dedups CreateWorkspace's clientToken; rgTokens dedups
+	// CreateRuleGroupsNamespace's, keyed on the token alone (both operations
+	// mint a fresh identity with no other natural uniqueness key, so a retried
+	// request would otherwise create a second resource / hit a spurious
+	// conflict).
+	workspaceTokens *idempotency.Store[driver.Workspace]
+	rgTokens        *idempotency.Store[string]
+
+	opts *config.Options
 }
 
 // New creates a new APS mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		workspaces: memstore.New[driver.Workspace](),
-		opts:       opts,
+		workspaces:      memstore.New[driver.Workspace](),
+		workspaceTokens: idempotency.New[driver.Workspace](),
+		rgTokens:        idempotency.New[string](),
+		opts:            opts,
 	}
 }
 

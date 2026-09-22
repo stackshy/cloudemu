@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/services/fis/driver"
 )
 
@@ -12,8 +13,18 @@ import (
 // places it directly in the running state. There is no data plane, so the
 // experiment stays running (a stable state) until StopExperiment moves it to the
 // stopped terminal state; id, arn, state, creationTime and startTime are minted
-// once and stable across reads.
+// once and stable across reads. A repeated clientToken within the dedup window
+// returns the experiment already started for it instead of starting a second
+// one.
 func (m *Mock) StartExperiment(_ context.Context, in *driver.StartExperimentInput) (*driver.Experiment, error) {
+	now := m.now()
+
+	if cached, ok := m.experimentTokens.Lookup(in.ClientToken, now); ok {
+		out := copyExperiment(&cached)
+
+		return &out, nil
+	}
+
 	if in.ExperimentTemplateID == "" {
 		return nil, validation("experimentTemplateId is required")
 	}
@@ -23,7 +34,6 @@ func (m *Mock) StartExperiment(_ context.Context, in *driver.StartExperimentInpu
 		return nil, notFound("experiment template %s not found", in.ExperimentTemplateID)
 	}
 
-	now := m.now()
 	id := experimentID()
 
 	opts := t.ExperimentOptions
@@ -50,6 +60,7 @@ func (m *Mock) StartExperiment(_ context.Context, in *driver.StartExperimentInpu
 	}
 
 	m.experiments.Set(id, e)
+	m.experimentTokens.Put(in.ClientToken, now, idempotency.DefaultTTL, copyExperiment(&e))
 
 	out := copyExperiment(&e)
 

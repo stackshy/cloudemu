@@ -5,17 +5,32 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/services/aps/driver"
 )
 
 // CreateRuleGroupsNamespace creates a rule-groups namespace under a workspace,
-// directly in the ACTIVE state. The definition blob is stored verbatim. A name
-// already in use yields a ConflictException.
+// directly in the ACTIVE state. The definition blob is stored verbatim. A
+// repeated ClientToken within the dedup window returns the namespace already
+// created for it instead of hitting the name-conflict check below — a retried
+// create otherwise resends the same Name and would spuriously conflict with
+// itself. The token is scoped to the workspace+name it was sent for and only
+// replays while that namespace still exists. A name already in use under a different (or no) token yields a
+// ConflictException.
 func (m *Mock) CreateRuleGroupsNamespace(
-	_ context.Context, in *driver.RuleGroupsNamespaceInput,
+	ctx context.Context, in *driver.RuleGroupsNamespaceInput,
 ) (*driver.RuleGroupsNamespace, error) {
 	if in.Name == "" {
 		return nil, validation("name is required")
+	}
+
+	now := m.now()
+	token := idempotency.Scoped(in.ClientToken, in.WorkspaceID, in.Name)
+
+	if _, ok := m.rgTokens.Lookup(token, now); ok {
+		if ns, err := m.DescribeRuleGroupsNamespace(ctx, in.WorkspaceID, in.Name); err == nil {
+			return ns, nil
+		}
 	}
 
 	var (
@@ -34,7 +49,6 @@ func (m *Mock) CreateRuleGroupsNamespace(
 			return w
 		}
 
-		now := m.now()
 		ns := driver.RuleGroupsNamespace{
 			Name:       in.Name,
 			Arn:        m.ruleGroupsNamespaceARN(in.WorkspaceID, in.Name),
@@ -59,6 +73,8 @@ func (m *Mock) CreateRuleGroupsNamespace(
 
 	out := result
 	out.Tags = copyTags(result.Tags)
+
+	m.rgTokens.Put(token, now, idempotency.DefaultTTL, result.Arn)
 
 	return &out, nil
 }
