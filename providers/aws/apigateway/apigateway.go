@@ -17,6 +17,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/apigateway/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 // Compile-time check that Mock implements driver.APIGateway.
@@ -65,6 +66,10 @@ type Mock struct {
 	// the Lambda backend. InvokeRoute is nil-safe when it is unset (returns a
 	// 502, matching a Lambda integration whose backend is unreachable).
 	lambda LambdaInvoker
+
+	// monitoring, when wired via SetMonitoring, receives the AWS/ApiGateway
+	// request metrics real API Gateway publishes for data-plane traffic.
+	monitoring mondriver.Monitoring
 }
 
 // New creates a new API Gateway mock.

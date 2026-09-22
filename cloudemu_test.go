@@ -5058,12 +5058,17 @@ func TestAWSMetricsEmission(t *testing.T) {
 			t.Errorf("ConsumedWriteCapacityUnits: expected 1, got %v", v)
 		}
 
-		v = helperGetMetric(t, ctx, mon, clk, ns, "SuccessfulRequestCount", dims)
-		if v < 1.0 {
-			t.Errorf("SuccessfulRequestCount: expected >=1, got %v", v)
+		lat, err := mon.GetMetricData(ctx, mondriver.GetMetricInput{
+			Namespace: ns, MetricName: "SuccessfulRequestLatency",
+			Dimensions: map[string]string{"TableName": "m-tbl", "Operation": "PutItem"},
+			StartTime:  clk.Now().Add(-time.Minute), EndTime: clk.Now().Add(time.Minute),
+			Period: 60, Stat: "SampleCount",
+		})
+		if err != nil || len(lat.Values) == 0 || lat.Values[0] < 1 || lat.Unit != "Milliseconds" {
+			t.Errorf("SuccessfulRequestLatency{PutItem}: got %+v, err %v", lat, err)
 		}
 
-		_, err := p.DynamoDB.GetItem(ctx, "m-tbl", map[string]any{"pk": "k1"})
+		_, err = p.DynamoDB.GetItem(ctx, "m-tbl", map[string]any{"pk": "k1"})
 		if err != nil {
 			t.Fatalf("GetItem: %v", err)
 		}
@@ -5101,9 +5106,15 @@ func TestAWSMetricsEmission(t *testing.T) {
 			t.Errorf("Invocations: expected 1, got %v", v)
 		}
 
-		v = helperGetMetric(t, ctx, mon, clk, ns, "Duration", dims)
-		if v != 1.0 {
-			t.Errorf("Duration: expected 1, got %v", v)
+		// Duration is the measured run time on the FakeClock (0ms here), so
+		// assert one Milliseconds sample rather than a value.
+		dur, derr := mon.GetMetricData(ctx, mondriver.GetMetricInput{
+			Namespace: ns, MetricName: "Duration", Dimensions: dims,
+			StartTime: clk.Now().Add(-time.Minute), EndTime: clk.Now().Add(time.Minute),
+			Period: 60, Stat: "SampleCount",
+		})
+		if derr != nil || len(dur.Values) != 1 || dur.Values[0] != 1 || dur.Unit != "Milliseconds" {
+			t.Errorf("Duration: got %+v, err %v; want one Milliseconds sample", dur, derr)
 		}
 
 		v = helperGetMetric(t, ctx, mon, clk, ns, "ConcurrentExecutions", dims)
@@ -5265,14 +5276,15 @@ func TestAWSMetricsEmission(t *testing.T) {
 		dims := map[string]string{"RepositoryName": "m-repo"}
 		ns := "AWS/ECR"
 
-		v := helperGetMetric(t, ctx, mon, clk, ns, "ImagePushCount", dims)
+		// Real ECR publishes only RepositoryPullCount; a push emits nothing.
+		v := helperGetMetric(t, ctx, mon, clk, ns, "RepositoryPullCount", dims)
 		if v != 1.0 {
-			t.Errorf("ImagePushCount: expected 1, got %v", v)
+			t.Errorf("RepositoryPullCount: expected 1, got %v", v)
 		}
 
-		v = helperGetMetric(t, ctx, mon, clk, ns, "ImagePullCount", dims)
-		if v != 1.0 {
-			t.Errorf("ImagePullCount: expected 1, got %v", v)
+		names, err := mon.ListMetrics(ctx, ns)
+		if err != nil || len(names) != 1 || names[0] != "RepositoryPullCount" {
+			t.Errorf("AWS/ECR metrics = %v (err %v), want [RepositoryPullCount]", names, err)
 		}
 	})
 

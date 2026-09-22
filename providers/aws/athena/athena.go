@@ -22,6 +22,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/athena/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 // Compile-time check that Mock implements driver.Athena.
@@ -56,6 +57,10 @@ type Mock struct {
 	// seq is the monotonic ordering key stamped on each query execution so
 	// ListQueryExecutions can return them most-recent-first deterministically.
 	seq atomic.Int64
+
+	// monitoring, when wired via SetMonitoring, receives the AWS/Athena query
+	// metrics of workgroups that publish CloudWatch metrics.
+	monitoring mondriver.Monitoring
 
 	opts *config.Options
 }

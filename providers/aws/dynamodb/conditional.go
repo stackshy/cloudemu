@@ -98,11 +98,11 @@ func checkConditionLocked(cond driver.Condition, item map[string]any, present bo
 }
 
 // emitWriteMetrics pushes the per-write CloudWatch metrics shared by every
-// mutating operation.
-func (m *Mock) emitWriteMetrics(table string) {
-	dims := map[string]string{"TableName": table}
-	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
-	m.emitMetric("SuccessfulRequestCount", 1, dims)
+// mutating operation: ConsumedWriteCapacityUnits on {TableName} and the
+// SuccessfulRequestLatency of op on {TableName, Operation}.
+func (m *Mock) emitWriteMetrics(ctx context.Context, table, op string, start time.Time) {
+	m.emitMetric("ConsumedWriteCapacityUnits", 1, unitCount, map[string]string{"TableName": table})
+	m.emitRequestLatency(ctx, table, op, start)
 }
 
 // PutItemConditional writes item only if cond passes, evaluating the condition
@@ -112,6 +112,8 @@ func (m *Mock) emitWriteMetrics(table string) {
 func (m *Mock) PutItemConditional(
 	ctx context.Context, table string, item map[string]any, cond driver.Condition,
 ) (map[string]any, error) {
+	start := m.opts.Clock.Now()
+
 	m.mu.Lock()
 
 	td, exists := m.tables[table]
@@ -144,7 +146,7 @@ func (m *Mock) PutItemConditional(
 	m.mu.Unlock()
 	m.flushStreamDeliveries(ctx)
 
-	m.emitWriteMetrics(table)
+	m.emitWriteMetrics(ctx, table, opPutItem, start)
 
 	return oldImage(oldItem, hadOld), nil
 }
@@ -156,6 +158,8 @@ func (m *Mock) PutItemConditional(
 func (m *Mock) DeleteItemConditional(
 	ctx context.Context, table string, key map[string]any, cond driver.Condition,
 ) (map[string]any, error) {
+	start := m.opts.Clock.Now()
+
 	m.mu.Lock()
 
 	td, exists := m.tables[table]
@@ -186,7 +190,7 @@ func (m *Mock) DeleteItemConditional(
 	m.mu.Unlock()
 	m.flushStreamDeliveries(ctx)
 
-	m.emitWriteMetrics(table)
+	m.emitWriteMetrics(ctx, table, opDeleteItem, start)
 
 	return oldImage(oldItem, hadOld), nil
 }
@@ -201,6 +205,8 @@ func (m *Mock) DeleteItemConditional(
 func (m *Mock) UpdateItemConditional(
 	ctx context.Context, input driver.UpdateItemInput, cond driver.Condition,
 ) (updated, old map[string]any, err error) {
+	start := m.opts.Clock.Now()
+
 	m.mu.Lock()
 
 	td, exists := m.tables[input.Table]
@@ -240,7 +246,7 @@ func (m *Mock) UpdateItemConditional(
 	m.mu.Unlock()
 	m.flushStreamDeliveries(ctx)
 
-	m.emitWriteMetrics(input.Table)
+	m.emitWriteMetrics(ctx, input.Table, opUpdateItem, start)
 
 	return maps.Clone(result), oldItem, nil
 }
@@ -262,39 +268,100 @@ func updateBaseImage(item map[string]any, present bool, key map[string]any) (bas
 // concurrent single-item writes. On any failed condition it returns a
 // *driver.TransactionCanceled naming the failed operations and writes nothing.
 func (m *Mock) TransactWrite(ctx context.Context, ops []driver.TransactOp, clientRequestToken string) error {
+	start := m.opts.Clock.Now()
+
+	committed, err := m.transactWriteLocked(ctx, ops, clientRequestToken)
+	if err != nil {
+		return err
+	}
+
+	// Metrics are published after m.mu is released. A committed transaction
+	// consumes 2 write capacity units per item, as real DynamoDB transactions do;
+	// an idempotent replay is a successful request that writes nothing.
+	for _, table := range transactTables(ops) {
+		if committed {
+			m.emitMetric("ConsumedWriteCapacityUnits", transactWCUPerItem*float64(transactItemCount(ops, table)),
+				unitCount, map[string]string{"TableName": table})
+		}
+
+		m.emitRequestLatency(ctx, table, opTransactWriteItems, start)
+	}
+
+	return nil
+}
+
+// transactWCUPerItem is the write capacity a transactional write consumes per
+// item (twice a standard write).
+const transactWCUPerItem = 2
+
+// transactTables returns the distinct tables of ops in first-seen order.
+func transactTables(ops []driver.TransactOp) []string {
+	var tables []string
+
+	seen := map[string]struct{}{}
+
+	for i := range ops {
+		if _, ok := seen[ops[i].Table]; ok {
+			continue
+		}
+
+		tables = append(tables, ops[i].Table)
+		seen[ops[i].Table] = struct{}{}
+	}
+
+	return tables
+}
+
+func transactItemCount(ops []driver.TransactOp, table string) int {
+	n := 0
+
+	for i := range ops {
+		if ops[i].Table == table {
+			n++
+		}
+	}
+
+	return n
+}
+
+// transactWriteLocked runs the transaction under m.mu. committed reports whether
+// writes were applied (false for an idempotent replay).
+func (m *Mock) transactWriteLocked(
+	ctx context.Context, ops []driver.TransactOp, clientRequestToken string,
+) (committed bool, err error) {
 	m.mu.Lock()
 	// flush registers before the unlock defer so it runs after the lock is
 	// released (defers are LIFO), delivering stream records outside m.mu.
 	defer func() { m.flushStreamDeliveries(ctx) }()
 	defer m.mu.Unlock()
 
-	if done, err := m.checkTransactToken(clientRequestToken, ops); done {
-		return err
+	if done, terr := m.checkTransactToken(clientRequestToken, ops); done {
+		return false, terr
 	}
 
 	tds, err := m.resolveTransactTables(ops)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	failed, err := evalTransactConditions(tds, ops)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	if len(failed) > 0 {
-		return &driver.TransactionCanceled{FailedConditions: failed}
+		return false, &driver.TransactionCanceled{FailedConditions: failed}
 	}
 
 	plans, err := planTransactMutations(tds, ops)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	m.commitTransactMutations(plans)
 	m.rememberTransactToken(clientRequestToken, ops)
 
-	return nil
+	return true, nil
 }
 
 // checkTransactToken applies TransactWriteItems idempotency. A replay carrying a

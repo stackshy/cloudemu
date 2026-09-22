@@ -105,9 +105,13 @@ type queryExecutionStatusJSON struct {
 }
 
 type queryExecutionStatisticsJSON struct {
-	EngineExecutionTimeInMillis int64 `json:"EngineExecutionTimeInMillis"`
-	DataScannedInBytes          int64 `json:"DataScannedInBytes"`
-	TotalExecutionTimeInMillis  int64 `json:"TotalExecutionTimeInMillis"`
+	EngineExecutionTimeInMillis      int64 `json:"EngineExecutionTimeInMillis"`
+	DataScannedInBytes               int64 `json:"DataScannedInBytes"`
+	TotalExecutionTimeInMillis       int64 `json:"TotalExecutionTimeInMillis"`
+	QueryQueueTimeInMillis           int64 `json:"QueryQueueTimeInMillis"`
+	QueryPlanningTimeInMillis        int64 `json:"QueryPlanningTimeInMillis"`
+	ServicePreProcessingTimeInMillis int64 `json:"ServicePreProcessingTimeInMillis"`
+	ServiceProcessingTimeInMillis    int64 `json:"ServiceProcessingTimeInMillis"`
 }
 
 type queryExecutionJSON struct {

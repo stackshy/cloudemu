@@ -283,16 +283,26 @@ func (m *Mock) SetLogSink(l logdriver.Logging) {
 	m.logs = l
 }
 
-//nolint:unparam // value is always 1 today but kept for future metrics like batch invocation counts.
 func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64, dims map[string]string) {
 	if m.monitoring == nil {
 		return
 	}
 
 	_ = m.monitoring.PutMetricData(ctx, []mondriver.MetricDatum{{
-		Namespace: "AWS/Lambda", MetricName: metricName, Value: value, Unit: "Count",
+		Namespace: "AWS/Lambda", MetricName: metricName, Value: value, Unit: lambdaMetricUnit(metricName),
 		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
 	}})
+}
+
+// lambdaMetricUnit returns the CloudWatch unit real Lambda publishes metricName
+// with: Duration is Milliseconds; the invocation/error/throttle/concurrency
+// metrics are Count.
+func lambdaMetricUnit(metricName string) string {
+	if metricName == "Duration" {
+		return "Milliseconds"
+	}
+
+	return "Count"
 }
 
 // New creates a new Lambda mock.
@@ -503,6 +513,10 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	// release returns the slot once this invocation completes.
 	release, err := m.reserveInvocationSlot(&fd, input.FunctionName)
 	if err != nil {
+		// A throttled invoke never runs, so it records Throttles (not
+		// Invocations), as real Lambda does.
+		m.emitMetric(ctx, "Throttles", 1, map[string]string{"FunctionName": input.FunctionName})
+
 		return nil, err
 	}
 
@@ -534,11 +548,12 @@ func (m *Mock) runInvocation(
 	ctx context.Context, fd *funcData, input driver.InvokeInput, executedVersion string,
 ) (*driver.InvokeOutput, error) {
 	dims := map[string]string{"FunctionName": input.FunctionName}
+	start := m.opts.Clock.Now()
 
 	h := m.resolveHandler(fd, input.FunctionName)
 
 	if h == nil && fd.engineBacked {
-		return m.invokeEngine(ctx, input, dims, executedVersion)
+		return m.invokeEngine(ctx, input, dims, executedVersion, start)
 	}
 
 	if h == nil {
@@ -549,7 +564,7 @@ func (m *Mock) runInvocation(
 		// event-source mappings) without a real runtime. Register a handler via
 		// RegisterHandler to run real logic.
 		m.emitMetric(ctx, "Invocations", 1, dims)
-		m.emitMetric(ctx, "Duration", 1.0, dims)
+		m.emitMetric(ctx, "Duration", m.durationMillis(start), dims)
 		m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", "")
 
 		payload := input.Payload
@@ -561,20 +576,29 @@ func (m *Mock) runInvocation(
 	}
 
 	payload, err := h(ctx, input.Payload)
+	duration := m.durationMillis(start)
+
 	if err != nil {
 		m.emitMetric(ctx, "Invocations", 1, dims)
 		m.emitMetric(ctx, "Errors", 1, dims)
+		m.emitMetric(ctx, "Duration", duration, dims)
 		m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", err.Error())
 
 		return &driver.InvokeOutput{StatusCode: 500, Error: err.Error(), ExecutedVersion: executedVersion}, nil
 	}
 
 	m.emitMetric(ctx, "Invocations", 1, dims)
-	m.emitMetric(ctx, "Duration", 1.0, dims)
+	m.emitMetric(ctx, "Duration", duration, dims)
 	m.emitMetric(ctx, "ConcurrentExecutions", 1, dims)
 	m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, "", "")
 
 	return &driver.InvokeOutput{StatusCode: 200, Payload: payload, ExecutedVersion: executedVersion}, nil
+}
+
+// durationMillis is the invocation's measured run time on the configured clock,
+// in milliseconds — the value real Lambda reports as Duration.
+func (m *Mock) durationMillis(start time.Time) float64 {
+	return float64(m.opts.Clock.Since(start)) / float64(time.Millisecond)
 }
 
 // resolveHandler returns the Go handler to run for an invoke: the one attached
@@ -745,9 +769,11 @@ func functionNameFromARN(arn string) string {
 // handler that raised is reported via out.Error (HTTP stays 200), matching real
 // Lambda's X-Amz-Function-Error semantics.
 func (m *Mock) invokeEngine(
-	ctx context.Context, input driver.InvokeInput, dims map[string]string, executedVersion string,
+	ctx context.Context, input driver.InvokeInput, dims map[string]string, executedVersion string, start time.Time,
 ) (*driver.InvokeOutput, error) {
 	out, err := funcengine.Invoke(ctx, m.opts.FunctionEngine, input.FunctionName, input.Payload)
+	duration := m.durationMillis(start)
+
 	if err != nil {
 		return nil, cerrors.Newf(cerrors.Internal, "invoke function %s: %v", input.FunctionName, err)
 	}
@@ -758,12 +784,13 @@ func (m *Mock) invokeEngine(
 
 	if out.Error != "" {
 		m.emitMetric(ctx, "Errors", 1, dims)
+		m.emitMetric(ctx, "Duration", duration, dims)
 		m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, out.Logs, out.Error)
 
 		return out, nil
 	}
 
-	m.emitMetric(ctx, "Duration", 1.0, dims)
+	m.emitMetric(ctx, "Duration", duration, dims)
 	m.emitMetric(ctx, "ConcurrentExecutions", 1, dims)
 	m.surfaceInvokeLogs(ctx, input.FunctionName, executedVersion, out.Logs, "")
 

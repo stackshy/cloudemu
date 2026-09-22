@@ -803,3 +803,97 @@ func TestServicesWithoutEventsWiredStillWork(t *testing.T) {
 		t.Fatalf("TerminateInstances: %v", err)
 	}
 }
+
+// TestStepFunctionsSettledExecutionPublishesTerminalEvent pins that, under
+// AsyncSettle, a run that settles on its own publishes its terminal status
+// change exactly once, at the first read that observes it settled.
+func TestStepFunctionsSettledExecutionPublishesTerminalEvent(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := aws.New(config.WithClock(clock), config.WithAsyncSettle())
+	ctx := context.Background()
+	drain := captureEvents(t, p,
+		`{"source":["aws.states"],"detail-type":["Step Functions Execution Status Change"]}`)
+
+	smArn, _, _, err := p.SFN.CreateStateMachine(ctx, sfndriver.CreateStateMachineInput{
+		Name:       "flow",
+		Definition: `{"StartAt":"Done","States":{"Done":{"Type":"Pass","End":true}}}`,
+		RoleArn:    "arn:aws:iam::123456789012:role/sfn",
+	})
+	if err != nil {
+		t.Fatalf("CreateStateMachine: %v", err)
+	}
+
+	exec, err := p.SFN.StartExecution(ctx, sfndriver.StartExecutionInput{StateMachineArn: smArn, Name: "run-1"})
+	if err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+
+	if got := statuses(t, drain()); len(got) != 1 || got[0] != "RUNNING" {
+		t.Fatalf("events at start = %v, want [RUNNING]", got)
+	}
+
+	clock.Advance(10 * time.Minute)
+
+	for range 2 {
+		got, derr := p.SFN.DescribeExecution(ctx, exec.ARN)
+		if derr != nil {
+			t.Fatalf("DescribeExecution: %v", derr)
+		}
+
+		if !got.StopDate.After(got.StartDate) {
+			t.Fatalf("settled run stopDate %v must be after startDate %v", got.StopDate, got.StartDate)
+		}
+	}
+
+	if got := statuses(t, drain()); len(got) != 1 || got[0] != "SUCCEEDED" {
+		t.Fatalf("events after settling = %v, want exactly [SUCCEEDED]", got)
+	}
+}
+
+func statuses(t *testing.T, events []lifecycleEvent) []string {
+	t.Helper()
+
+	out := make([]string, 0, len(events))
+	for i := range events {
+		s, _ := detailOf(t, &events[i])["status"].(string)
+		out = append(out, s)
+	}
+
+	return out
+}
+
+// TestStepFunctionsRedriveFirstObservationKeepsOriginalFailure pins that when a
+// redrive is the first call to observe a settled FAILED run, that run's own
+// FAILED status change is still published before the redrive's.
+func TestStepFunctionsRedriveFirstObservationKeepsOriginalFailure(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := aws.New(config.WithClock(clock), config.WithAsyncSettle())
+	ctx := context.Background()
+	drain := captureEvents(t, p,
+		`{"source":["aws.states"],"detail-type":["Step Functions Execution Status Change"]}`)
+
+	smArn, _, _, err := p.SFN.CreateStateMachine(ctx, sfndriver.CreateStateMachineInput{
+		Name:       "flaky",
+		Definition: `{"StartAt":"F","States":{"F":{"Type":"Fail","Error":"Boom"}}}`,
+		RoleArn:    "arn:aws:iam::123456789012:role/sfn",
+	})
+	if err != nil {
+		t.Fatalf("CreateStateMachine: %v", err)
+	}
+
+	exec, err := p.SFN.StartExecution(ctx, sfndriver.StartExecutionInput{StateMachineArn: smArn, Name: "run-1"})
+	if err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+
+	clock.Advance(10 * time.Minute)
+
+	if _, err = p.SFN.RedriveExecution(ctx, exec.ARN); err != nil {
+		t.Fatalf("RedriveExecution: %v", err)
+	}
+
+	want := []string{"RUNNING", "FAILED", "RUNNING", "SUCCEEDED"}
+	if got := statuses(t, drain()); len(got) != len(want) || got[1] != "FAILED" || got[3] != "SUCCEEDED" {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+}

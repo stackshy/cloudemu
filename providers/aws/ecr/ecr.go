@@ -78,14 +78,17 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
 }
 
-func (m *Mock) emitMetric(metricName string, value float64, dims map[string]string) {
+// emitPull records one image pull as the AWS/ECR RepositoryPullCount metric —
+// the only metric real ECR publishes (dimension RepositoryName). Real ECR has no
+// push-count metric, so pushes emit nothing.
+func (m *Mock) emitPull(repository string) {
 	if m.monitoring == nil {
 		return
 	}
 
 	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
-		Namespace: "AWS/ECR", MetricName: metricName, Value: value, Unit: "Count",
-		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
+		Namespace: "AWS/ECR", MetricName: "RepositoryPullCount", Value: 1, Unit: "Count",
+		Dimensions: map[string]string{"RepositoryName": repository}, Timestamp: m.opts.Clock.Now(),
 	}})
 }
 
@@ -369,8 +372,6 @@ func (m *Mock) putImage(manifest *driver.ImageManifest) (*driver.ImageDetail, er
 		autoScan(rd, digest, manifest.Repository, m.opts.Clock.Now())
 	}
 
-	m.emitMetric("ImagePushCount", 1, map[string]string{"RepositoryName": manifest.Repository})
-
 	result := img.detail
 
 	return &result, nil
@@ -406,8 +407,23 @@ func (m *Mock) storeImage(rd *repoData, manifest *driver.ImageManifest, digest s
 	return img
 }
 
-// GetImage retrieves image details by repository and reference.
+// GetImage retrieves image details by repository and reference. It is the
+// image-pull read, so it records one RepositoryPullCount — published after m.mu
+// is released, because a CloudWatch alarm on the metric can fan out (SNS ->
+// Lambda) into code that calls back into ECR.
 func (m *Mock) GetImage(_ context.Context, repository, reference string) (*driver.ImageDetail, error) {
+	result, err := m.lookupImage(repository, reference)
+	if err != nil {
+		return nil, err
+	}
+
+	m.emitPull(repository)
+
+	return result, nil
+}
+
+// lookupImage snapshots an image's details under m.mu.
+func (m *Mock) lookupImage(repository, reference string) (*driver.ImageDetail, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -420,8 +436,6 @@ func (m *Mock) GetImage(_ context.Context, repository, reference string) (*drive
 	if img == nil {
 		return nil, errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
 	}
-
-	m.emitMetric("ImagePullCount", 1, map[string]string{"RepositoryName": repository})
 
 	result := img.detail
 

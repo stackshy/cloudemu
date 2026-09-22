@@ -12,6 +12,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/aws/cloudwatch"
 	"github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -1106,21 +1107,34 @@ func TestMetricsEmission(t *testing.T) {
 
 	createTestRepo(t, m, "metrics-repo")
 
-	t.Run("PutImage emits ImagePushCount", func(t *testing.T) {
+	t.Run("PutImage emits no push metric", func(t *testing.T) {
 		pushTestImage(t, m, "metrics-repo", "v1")
 
 		metrics, err := cw.ListMetrics(ctx, "AWS/ECR")
 		require.NoError(t, err)
-		assert.Contains(t, metrics, "ImagePushCount")
+		// Real ECR publishes no push-count metric at all.
+		assert.NotContains(t, metrics, "ImagePushCount")
+		assert.Empty(t, metrics)
 	})
 
-	t.Run("GetImage emits ImagePullCount", func(t *testing.T) {
+	t.Run("GetImage emits RepositoryPullCount", func(t *testing.T) {
 		_, err := m.GetImage(ctx, "metrics-repo", "v1")
 		require.NoError(t, err)
 
 		metrics, err := cw.ListMetrics(ctx, "AWS/ECR")
 		require.NoError(t, err)
-		assert.Contains(t, metrics, "ImagePullCount")
+		assert.Equal(t, []string{"RepositoryPullCount"}, metrics)
+
+		res, err := cw.GetMetricData(ctx, mondriver.GetMetricInput{
+			Namespace: "AWS/ECR", MetricName: "RepositoryPullCount",
+			Dimensions: map[string]string{"RepositoryName": "metrics-repo"},
+			StartTime:  fc.Now().Add(-time.Minute), EndTime: fc.Now().Add(time.Minute),
+			Period: 60, Stat: "Sum",
+		})
+		require.NoError(t, err)
+		require.Len(t, res.Values, 1)
+		assert.InDelta(t, 1.0, res.Values[0], 0)
+		assert.Equal(t, "Count", res.Unit)
 	})
 }
 

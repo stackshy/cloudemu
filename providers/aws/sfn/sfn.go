@@ -21,6 +21,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/settle"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
 
@@ -68,6 +69,10 @@ type Mock struct {
 	// the Lambda backend (library-only construction leaves Task echoing input).
 	lambdaSync LambdaSyncInvoker
 
+	// monitoring, when wired via SetMonitoring, receives the AWS/States
+	// execution metrics real Step Functions publishes.
+	monitoring mondriver.Monitoring
+
 	// events publishes execution status changes to the EventBridge default
 	// bus; inactive until wired by the provider.
 	events awsevents.Emitter
@@ -95,7 +100,11 @@ type execData struct {
 	// Describe surface under AsyncSettle; zero-value reports the stored status
 	// immediately. A running execution has no stop date or output yet.
 	settle settle.Window
-	mu     sync.RWMutex
+	// closeEmitted records that the execution's close (terminal) side effects
+	// were published — exactly once, at the first observation of the settled
+	// run (or at start for a run that is already closed). Guarded by mu.
+	closeEmitted bool
+	mu           sync.RWMutex
 }
 
 // actData is an activity plus its own lock.

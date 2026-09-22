@@ -19,6 +19,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/kinesis/driver"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
 // Compile-time check that Mock implements driver.Kinesis.
@@ -93,6 +94,10 @@ type Mock struct {
 	// esmInvoker, when wired via SetLambdaInvoker, receives a Kinesis-shaped
 	// event batch on every PutRecord(s) so a mapped Lambda actually runs.
 	esmInvoker EventSourceInvoker
+
+	// monitoring, when wired via SetMonitoring, receives the stream-level
+	// AWS/Kinesis metrics real Kinesis publishes for every put/get.
+	monitoring mondriver.Monitoring
 
 	opts *config.Options
 }

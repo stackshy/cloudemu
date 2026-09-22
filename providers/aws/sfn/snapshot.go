@@ -58,8 +58,11 @@ func getAct(d *actData) driver.Activity    { d.mu.RLock(); defer d.mu.RUnlock();
 func getAlias(d *aliasData) driver.Alias   { d.mu.RLock(); defer d.mu.RUnlock(); return d.alias }
 func getRun(d *mapRunData) driver.MapRun   { d.mu.RLock(); defer d.mu.RUnlock(); return d.run }
 
-func buildSM(v *driver.StateMachine) *smData  { return &smData{sm: *v} }
-func buildExec(v *driver.Execution) *execData { return &execData{exec: *v} }
+func buildSM(v *driver.StateMachine) *smData { return &smData{sm: *v} }
+
+// buildExec restores an execution. Its close side effects were published before
+// the snapshot, so a restored run is marked closeEmitted and never re-publishes.
+func buildExec(v *driver.Execution) *execData { return &execData{exec: *v, closeEmitted: true} }
 func buildAct(v *driver.Activity) *actData    { return &actData{act: *v} }
 func buildAlias(v *driver.Alias) *aliasData   { return &aliasData{alias: *v} }
 func buildRun(v *driver.MapRun) *mapRunData   { return &mapRunData{run: *v} }
