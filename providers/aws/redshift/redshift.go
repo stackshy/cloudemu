@@ -1005,13 +1005,20 @@ func (m *Mock) transitionCluster(id, from, to, verb string, mode transitionMode)
 		return cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
 	}
 
-	if cluster.State == to && mode == transitionIdempotent {
+	current := cluster.State
+	if mode == transitionStrict {
+		// Pause/Resume check the observed state, so a cluster still creating or
+		// modifying (AsyncSettle) is rejected like real Redshift does.
+		current = m.settleClusterState(id, cluster.State)
+	}
+
+	if current == to && mode == transitionIdempotent {
 		return nil
 	}
 
-	if cluster.State != from {
+	if current != from {
 		return cerrors.Newf(cerrors.FailedPrecondition,
-			"Redshift cluster %q is in state %q; %s requires %q", id, cluster.State, verb, from)
+			"Redshift cluster %q is in state %q; %s requires %q", id, current, verb, from)
 	}
 
 	cluster.State = to
