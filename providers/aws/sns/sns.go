@@ -11,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -514,6 +515,12 @@ func (m *Mock) Publish(ctx context.Context, input driver.PublishInput) (*driver.
 
 	if input.Message == "" {
 		return nil, errors.New(errors.InvalidArgument, "message is required")
+	}
+
+	// SNS messages must be UTF-8. Rejecting here keeps an invalid body from
+	// being accepted and then dropped at SQS delivery.
+	if !utf8.ValidString(input.Message) {
+		return nil, errors.New(errors.InvalidArgument, "Invalid parameter: Message must be valid UTF-8")
 	}
 
 	if err := validateFIFOPublish(&td.info, &input); err != nil {
