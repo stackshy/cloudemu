@@ -4,6 +4,7 @@ import (
 	"context"
 	"sort"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/athena/driver"
 )
@@ -114,7 +115,7 @@ func (m *Mock) executeStatement(qe *driver.QueryExecution) {
 
 	if err := m.applyDatabaseDDL(catalog, effect); err != nil {
 		qe.Status.State = driver.QueryStateFailed
-		qe.Status.StateChangeReason = err.Error()
+		qe.Status.StateChangeReason = cerrors.Message(err)
 	}
 }
 

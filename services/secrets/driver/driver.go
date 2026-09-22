@@ -1,7 +1,21 @@
 // Package driver defines the interface for secret management service implementations.
 package driver
 
-import "context"
+import (
+	"context"
+	"errors"
+)
+
+// ErrDecryptionFailure marks a secret read that failed because KMS could not
+// decrypt the stored value (e.g. its key is disabled or pending deletion); AWS
+// Secrets Manager answers it as DecryptionFailure. The wrapped KMS error keeps
+// its canonical code and message.
+var ErrDecryptionFailure = errors.New("secrets manager can't decrypt the protected secret text using the provided KMS key")
+
+// ErrEncryptionFailure marks a secret write that failed because KMS could not
+// encrypt the value under its key (e.g. the key is disabled); AWS Secrets
+// Manager answers it as EncryptionFailure.
+var ErrEncryptionFailure = errors.New("secrets manager can't encrypt the protected secret text using the provided KMS key")
 
 // SecretConfig describes a secret to create.
 type SecretConfig struct {

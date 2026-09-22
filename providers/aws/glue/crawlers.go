@@ -3,14 +3,24 @@ package glue
 import (
 	"context"
 	"sync"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/glue/driver"
 )
 
-// crawlerData is a crawler plus its own lock.
+// crawlCancelWindow is how long after StartCrawler the just-started crawl can
+// still be canceled with StopCrawler. Runs settle synchronously (the crawler is
+// READY again as soon as StartCrawler returns), but a real crawl takes at least
+// this long, so the common "start, then cancel a bad crawl" pattern must still
+// succeed instead of raising CrawlerNotRunningException.
+const crawlCancelWindow = time.Minute
+
+// crawlerData is a crawler plus its own lock. cancelableUntil is the end of the
+// most recent run's cancel window (zero when there is no cancelable run).
 type crawlerData struct {
-	crawler driver.Crawler
-	mu      sync.RWMutex
+	crawler         driver.Crawler
+	cancelableUntil time.Time
+	mu              sync.RWMutex
 }
 
 // CreateCrawler creates a crawler in the READY state, atomically.
@@ -160,16 +170,19 @@ func (m *Mock) StartCrawler(_ context.Context, name string) error {
 		return concurrentModification("Crawler %s is already running", name)
 	}
 
+	now := m.now()
 	cd.crawler.State = driver.CrawlerReady
 	cd.crawler.LastCrawlStatus = driver.JobRunSucceeded
-	cd.crawler.LastUpdated = m.now()
+	cd.crawler.LastUpdated = now
+	cd.cancelableUntil = now.Add(crawlCancelWindow)
 
 	return nil
 }
 
-// StopCrawler stops a running crawler. Since runs settle synchronously, a
-// crawler is never actually running, so stopping one that isn't running raises
-// CrawlerNotRunningException, matching real Glue.
+// StopCrawler stops a running crawler. Runs settle synchronously, so a stop
+// issued within crawlCancelWindow of StartCrawler cancels that just-started
+// crawl (LastCrawl status canceled, crawler READY), as it would in real Glue.
+// Stopping a crawler with no run in flight raises CrawlerNotRunningException.
 func (m *Mock) StopCrawler(_ context.Context, name string) error {
 	cd, err := m.getCrawlerData(name)
 	if err != nil {
@@ -179,11 +192,17 @@ func (m *Mock) StopCrawler(_ context.Context, name string) error {
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
 
-	if cd.crawler.State != driver.CrawlerRunning {
+	now := m.now()
+	inFlight := cd.crawler.State == driver.CrawlerRunning || now.Before(cd.cancelableUntil)
+
+	if !inFlight {
 		return crawlerNotRunning("Crawler %s is not running", name)
 	}
 
 	cd.crawler.State = driver.CrawlerReady
+	cd.crawler.LastCrawlStatus = driver.CrawlCancelled
+	cd.crawler.LastUpdated = now
+	cd.cancelableUntil = time.Time{}
 
 	return nil
 }

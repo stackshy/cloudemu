@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/glue/driver"
 )
 
@@ -177,7 +178,7 @@ func (m *Mock) BatchDeleteConnection(
 
 	for _, n := range names {
 		if err := m.DeleteConnection(context.Background(), catalogID, n); err != nil {
-			errs[n] = driver.BatchError{Name: n, ErrorCode: driver.ExEntityNotFound, ErrorMessage: err.Error()}
+			errs[n] = driver.BatchError{Name: n, ErrorCode: driver.ExEntityNotFound, ErrorMessage: cerrors.Message(err)}
 		}
 	}
 
