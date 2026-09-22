@@ -26,10 +26,3 @@ func invalidArg(format string, args ...any) error {
 func expiredIterator(format string, args ...any) error {
 	return &driver.APIError{Exception: driver.ExExpiredIterator, Err: errors.Newf(errors.InvalidArgument, format, args...)}
 }
-
-// limitErr builds an InvalidArgumentException-tagged error for record/batch
-// size and count limits — real Kinesis answers these with
-// InvalidArgumentException, not ValidationException.
-func limitErr(format string, args ...any) error {
-	return &driver.APIError{Exception: driver.ExInvalidArgument, Err: errors.Newf(errors.InvalidArgument, format, args...)}
-}
