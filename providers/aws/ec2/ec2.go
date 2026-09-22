@@ -25,6 +25,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/settle"
@@ -115,6 +116,11 @@ type lifecycleTransition struct {
 	finalState        string
 	metricValues      []float64
 	errVerb           string
+	// emitsStateEvents reports whether the transition publishes
+	// "EC2 Instance State-change Notification" events for its intermediate and
+	// final states. Reboot does not: a real rebooting instance stays "running"
+	// and EC2 emits no state-change event for it.
+	emitsStateEvents bool
 	// idempotentStates are states where the operation is a no-op rather than
 	// an error. Real AWS EC2 documents StartInstances on a running instance
 	// and StopInstances on a stopped instance as idempotent — they return
@@ -132,6 +138,7 @@ var (
 		finalState:        compute.StateRunning,
 		metricValues:      runningMetricValues,
 		errVerb:           "start",
+		emitsStateEvents:  true,
 		idempotentStates:  []string{compute.StateRunning, compute.StatePending},
 	}
 	stopTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
@@ -139,6 +146,7 @@ var (
 		finalState:        compute.StateStopped,
 		metricValues:      zeroMetricValues,
 		errVerb:           "stop",
+		emitsStateEvents:  true,
 		idempotentStates:  []string{compute.StateStopped, compute.StateStopping},
 	}
 	rebootTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
@@ -152,6 +160,7 @@ var (
 		finalState:        compute.StateTerminated,
 		metricValues:      zeroMetricValues,
 		errVerb:           "terminate",
+		emitsStateEvents:  true,
 	}
 )
 
@@ -307,6 +316,9 @@ type Mock struct {
 	amiCounter             atomic.Int64
 	keyCounter             atomic.Int64
 	monitoring             mondriver.Monitoring
+	// events publishes instance state-change notifications to the EventBridge
+	// default bus. Inactive until wired by the provider.
+	events awsevents.Emitter
 	// subnetResolver derives an instance's VPC from its subnet at launch, so
 	// instances created with a --subnet-id carry the VPCID that connectivity
 	// analysis and VPC teardown depend on. nil until wired by the provider.
@@ -742,6 +754,15 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 		m.materializeInstanceVolumes(cfg, id)
 	}
 
+	// Publish pending -> running only once the whole batch launched, so a
+	// mid-batch rollback never leaves events for instances that don't exist.
+	// Managed instances stay unobservable, as with their metrics.
+	for _, inst := range created {
+		if !isManaged(inst) {
+			m.emitStateChanges(ctx, inst.ID, compute.StatePending, compute.StateRunning)
+		}
+	}
+
 	return results, nil
 }
 
@@ -998,6 +1019,10 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 		// outside inst.mu so a metrics callback can't deadlock against it.
 		if changed && !isManaged(inst) {
 			m.emitLifecycleMetrics(ctx, id, t.metricValues)
+
+			if t.emitsStateEvents {
+				m.emitStateChanges(ctx, id, t.intermediateState, t.finalState)
+			}
 		}
 	}
 

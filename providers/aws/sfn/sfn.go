@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/settle"
@@ -66,6 +67,10 @@ type Mock struct {
 	// lambdaSync is the Task->Lambda seam; nil until SetLambdaSyncInvoker wires
 	// the Lambda backend (library-only construction leaves Task echoing input).
 	lambdaSync LambdaSyncInvoker
+
+	// events publishes execution status changes to the EventBridge default
+	// bus; inactive until wired by the provider.
+	events awsevents.Emitter
 
 	opts *config.Options
 }

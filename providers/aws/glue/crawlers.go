@@ -157,17 +157,30 @@ func (m *Mock) ListCrawlers(_ context.Context, page driver.TablePagination) ([]s
 
 // StartCrawler runs a crawler; the emulator has no data source to crawl, so the
 // run settles immediately (state returns to READY, LastCrawlStatus SUCCEEDED).
-func (m *Mock) StartCrawler(_ context.Context, name string) error {
+func (m *Mock) StartCrawler(ctx context.Context, name string) error {
 	cd, err := m.getCrawlerData(name)
 	if err != nil {
 		return err
 	}
 
+	at, err := m.settleCrawl(cd, name)
+	if err != nil {
+		return err
+	}
+
+	m.emitCrawlSettled(ctx, name, at)
+
+	return nil
+}
+
+// settleCrawl is StartCrawler's locked core: it runs the crawl to completion
+// and returns the instant it ran.
+func (m *Mock) settleCrawl(cd *crawlerData, name string) (time.Time, error) {
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
 
 	if cd.crawler.State == driver.CrawlerRunning {
-		return concurrentModification("Crawler %s is already running", name)
+		return time.Time{}, concurrentModification("Crawler %s is already running", name)
 	}
 
 	now := m.now()
@@ -176,7 +189,7 @@ func (m *Mock) StartCrawler(_ context.Context, name string) error {
 	cd.crawler.LastUpdated = now
 	cd.cancelableUntil = now.Add(crawlCancelWindow)
 
-	return nil
+	return now, nil
 }
 
 // StopCrawler stops a running crawler. Runs settle synchronously, so a stop

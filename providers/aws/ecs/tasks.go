@@ -221,6 +221,19 @@ type taskSpec struct {
 // this call a task launched with --tags describes with them but
 // ListTagsForResource silently reports none.
 func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfall bool) (*driver.Task, *driver.Failure) {
+	task, failure := m.placeTask(ctx, spec, pendingOnShortfall)
+	if task != nil {
+		// placeTask has released placeMu, so a rule target calling back into
+		// ECS cannot deadlock against this launch.
+		m.emitTaskStateChange(ctx, task, taskEventVersionLaunch)
+	}
+
+	return task, failure
+}
+
+// placeTask is launchTask's placement core: it builds, places, and stores the
+// task, returning a clone (or the placement failure).
+func (m *Mock) placeTask(ctx context.Context, spec *taskSpec, pendingOnShortfall bool) (*driver.Task, *driver.Failure) {
 	task := &driver.Task{
 		ARN:               m.arnIn(arnRegion(spec.clusterARN, m.opts.Region), "task/"+spec.cluster+"/"+m.hexID()),
 		ClusterARN:        spec.clusterARN,
@@ -507,6 +520,7 @@ func (m *Mock) stopTask(ctx context.Context, cluster, task, reason string, recon
 
 	if !alreadyStopped {
 		m.beginStopSettle(updated)
+		m.emitTaskStateChange(ctx, updated, taskEventVersionStop)
 
 		if reconcile {
 			// Reconciliation may itself place a replacement task (taking

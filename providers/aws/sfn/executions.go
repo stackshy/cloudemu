@@ -77,6 +77,12 @@ func (m *Mock) runExecution(ctx context.Context, in driver.StartExecutionInput, 
 		return m.idempotentReuse(arn, name, smType, in.Input, async, now)
 	}
 
+	// Real Step Functions publishes status-change events for STANDARD
+	// executions only (EXPRESS and StartSyncExecution runs emit none).
+	if async && smType == driver.TypeStandard {
+		m.emitExecutionStarted(ctx, &exec, window.Settled(now))
+	}
+
 	out := observedExec(&exec, window, now)
 
 	return &out, nil
@@ -211,12 +217,40 @@ func (m *Mock) DescribeExecution(_ context.Context, arn string) (*driver.Executi
 	return &out, nil
 }
 
-func (m *Mock) StopExecution(_ context.Context, arn, errCode, cause string) (time.Time, error) {
+func (m *Mock) StopExecution(ctx context.Context, arn, errCode, cause string) (time.Time, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {
 		return time.Time{}, err
 	}
 
+	stopDate, aborted := m.abortExecution(ed, errCode, cause)
+
+	// Published after ed.mu is released: a rule target may call back into SFN.
+	if aborted != nil && m.isStandard(aborted.StateMachineArn) {
+		m.emitExecutionStatus(ctx, aborted, driver.ExecStatusAborted)
+	}
+
+	return stopDate, nil
+}
+
+// isStandard reports whether the state machine is a STANDARD workflow (the only
+// type whose executions publish status-change events).
+func (m *Mock) isStandard(smArn string) bool {
+	sd, err := m.getSM(smArn)
+	if err != nil {
+		return false
+	}
+
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	return sd.sm.Type == driver.TypeStandard
+}
+
+// abortExecution is StopExecution's locked core. It returns the stop date and,
+// when this call actually aborted a running execution, a copy of the aborted
+// record (nil when the execution had already settled).
+func (m *Mock) abortExecution(ed *execData, errCode, cause string) (time.Time, *driver.Execution) {
 	ed.mu.Lock()
 	defer ed.mu.Unlock()
 
@@ -235,6 +269,9 @@ func (m *Mock) StopExecution(_ context.Context, arn, errCode, cause string) (tim
 		ed.exec.Cause = cause
 		ed.exec.History = abortHistory(ed.exec.History, now, errCode, cause)
 		ed.settle = settle.Window{}
+		aborted := ed.exec
+
+		return ed.exec.StopDate, &aborted
 	}
 
 	return ed.exec.StopDate, nil

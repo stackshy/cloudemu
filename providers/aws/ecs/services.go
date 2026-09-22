@@ -124,6 +124,7 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 	m.convergeNewService(ctx, svc, td)
 	m.services.Set(serviceKey(cluster, svc.Name), svc)
 	m.recordTags(svc.ARN, in.Tags)
+	m.emitServiceSteadyState(ctx, svc)
 
 	out := cloneService(svc)
 
@@ -555,11 +556,17 @@ func (m *Mock) UpdateService(ctx context.Context, in driver.UpdateServiceInput) 
 	}
 
 	countChanged := in.DesiredCount != nil && *in.DesiredCount != svc.DesiredCount
-	if in.ForceNewDeployment || tdChanged || countChanged {
+	redeployed := in.ForceNewDeployment || tdChanged || countChanged
+
+	if redeployed {
 		m.redeployService(ctx, &updated, &in)
 	}
 
 	m.services.Set(serviceKey(cluster, updated.Name), &updated)
+
+	if redeployed {
+		m.emitServiceSteadyState(ctx, &updated)
+	}
 
 	out := cloneService(&updated)
 

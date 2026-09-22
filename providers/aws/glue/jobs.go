@@ -187,7 +187,7 @@ func (m *Mock) BatchGetJobs(_ context.Context, names []string) ([]driver.Job, []
 // StartJobRun starts a run of a job. There is no real Spark compute plane, so
 // the run completes SUCCEEDED synchronously and its ID is returned immediately.
 // This is a deliberate simplification documented in docs/services.md.
-func (m *Mock) StartJobRun(_ context.Context, jobName string, args map[string]string) (string, error) {
+func (m *Mock) StartJobRun(ctx context.Context, jobName string, args map[string]string) (string, error) {
 	jd, err := m.getJobData(jobName)
 	if err != nil {
 		return "", err
@@ -216,6 +216,7 @@ func (m *Mock) StartJobRun(_ context.Context, jobName string, args map[string]st
 	}
 
 	m.jobRuns.Set(nameKey(jobName, runID), &jobRunData{run: run})
+	m.emitJobStateChange(ctx, jobName, runID, run.JobRunState)
 
 	return runID, nil
 }
@@ -283,7 +284,7 @@ func isTerminalJobRun(state string) bool {
 // Errors (not stoppable), not SuccessfulSubmissions. Unknown IDs likewise error.
 // Returns the successful run IDs and the per-run errors.
 func (m *Mock) BatchStopJobRun(
-	_ context.Context, jobName string, runIDs []string,
+	ctx context.Context, jobName string, runIDs []string,
 ) (successful []string, errored []driver.BatchError) {
 	for _, id := range runIDs {
 		rd, ok := m.jobRuns.Get(nameKey(jobName, id))
@@ -312,6 +313,8 @@ func (m *Mock) BatchStopJobRun(
 		rd.mu.Lock()
 		rd.run.JobRunState = driver.JobRunStopped
 		rd.mu.Unlock()
+
+		m.emitJobStateChange(ctx, jobName, id, driver.JobRunStopped)
 
 		successful = append(successful, id)
 	}

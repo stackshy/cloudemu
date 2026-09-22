@@ -542,6 +542,38 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 	return result, nil
 }
 
+// PublishServiceEvent puts a native AWS service lifecycle event (EC2 instance
+// state change, ECS task state change, ...) on the default event bus, the way
+// real AWS services publish to the account's default bus automatically. The
+// event takes the same path as PutEvents — stored in the bus history, matched
+// against the bus's rules, and delivered to their targets — so a rule written
+// against the real event pattern fires in cloudemu too.
+//
+// Service events can loop back into their producer (an "ECS Task State Change"
+// rule whose target runs another task, a Step Functions status-change rule that
+// starts the same state machine), and those hops are synchronous in-process, so
+// each publish counts toward recursionguard.MaxDepth and a chain past the cap is
+// dropped instead of recursing until the goroutine stack overflows.
+func (m *Mock) PublishServiceEvent(ctx context.Context, source, detailType string, detail any, resources []string) {
+	depth := recursionguard.Depth(ctx)
+	if depth >= recursionguard.MaxDepth {
+		return
+	}
+
+	body, err := json.Marshal(detail)
+	if err != nil {
+		return
+	}
+
+	_, _ = m.PutEvents(recursionguard.WithDepth(ctx, depth+1), []driver.Event{{
+		Source:     source,
+		DetailType: detailType,
+		Detail:     string(body),
+		Resources:  resources,
+		EventBus:   defaultBusName,
+	}})
+}
+
 // deliverToTargets delivers an event to the targets of matched rules, dispatched
 // by the target ARN's service: SQS queue, Lambda function (ASYNC), SNS topic, and
 // Step Functions state machine (ASYNC) are all first-class EventBridge targets.
