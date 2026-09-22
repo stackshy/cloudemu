@@ -1,6 +1,6 @@
 # Provider Resource Reference
 
-This document is a curated deep reference for the core service categories across all three cloud providers. For the always-current, exhaustive list of every service and operation — 173 service interfaces spanning 3,700+ operations (76 AWS · 75 Azure · 55 GCP) — see the generated [capability coverage](coverage/README.md), which is produced from the driver interfaces and cannot drift.
+This is a hand-maintained reference for the core service categories on all three cloud providers. For the complete, current list of every service and operation (173 service interfaces and 3,700+ operations: 76 AWS · 75 Azure · 55 GCP), see the generated [capability coverage](coverage/README.md). It is built from the driver interfaces, so it always matches the code.
 
 > Every operation here is served from an in-memory backend by default. Selected data-plane services (relational database, cache, functions, compute, containers, object storage) can additionally be backed by opt-in [real engines](features.md#11-real-data-plane-engines-opt-in) for real SQL/Redis/function execution.
 
@@ -13,7 +13,7 @@ This document is a curated deep reference for the core service categories across
 | 3 | Database | `dynamodb` | `cosmosdb` | `firestore` |
 | 4 | Serverless | `lambda` | `functions` | `cloudfunctions` |
 | 5 | Networking | `vpc` (+ AWS-specific: Transit Gateway, VPN, DHCP options, prefix lists, egress-only IGW, endpoint services, Client VPN, Traffic Mirroring, Network Insights, VPC Block Public Access) | `vnet` (+ Azure-specific: Public IP Prefixes, Application Security Groups, Private Link (private endpoints + services), VPN & local network gateways + connections) | `vpc` |
-| 5a | Network Firewall | `network-firewall` | — | — |
+| 5a | Network Firewall | `network-firewall` | - | - |
 | 6 | Monitoring | `cloudwatch` | `monitor` (+ VM guest memory metrics) | `monitoring` |
 | 7 | IAM | `iam` | `iam` | `iam` |
 | 8 | DNS | `route53` | `dns` | `clouddns` |
@@ -26,40 +26,40 @@ This document is a curated deep reference for the core service categories across
 | 15 | Container Registry | `ecr` | `acr` | `artifactregistry` |
 | 16 | Event Bus | `eventbridge` | `eventgrid` | `eventarc` |
 | 17 | Relational Database | `rds` (+ Aurora/Neptune/DocumentDB engines), `redshift` | `sql` (+ Transparent Data Encryption), `postgresflex`, `mysqlflex` | `cloudsql`, `alloydb` |
-| 17a | In-memory Database (Redis/Valkey) | `memorydb` | — | — |
-| 17b | Wide-column (Cassandra) | `keyspaces` | `managedcassandra` | — |
-| 17c | Wide-column (Bigtable) | — | — | `bigtable` |
-| 17d | Distributed PostgreSQL (Citus) | — | `cosmospostgresql` | — |
+| 17a | In-memory Database (Redis/Valkey) | `memorydb` | - | - |
+| 17b | Wide-column (Cassandra) | `keyspaces` | `managedcassandra` | - |
+| 17c | Wide-column (Bigtable) | - | - | `bigtable` |
+| 17d | Distributed PostgreSQL (Citus) | - | `cosmospostgresql` | - |
 | 18 | Kubernetes | `eks` + shared `services/kubernetes/` | `aks` + shared `services/kubernetes/` | `gke` + shared `services/kubernetes/` |
 | 19 | Resource Discovery | `resourceexplorer2` + `resourcegroupstaggingapi` | `resourcegraph` (incl. SqlVirtualMachine discovery) | `cloudasset` |
-| 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | — | — |
-| 21 | Databricks | — | `databricks` | — |
+| 20 | Generative AI | `bedrock` (+ `bedrock-runtime`), `bedrock-agent` (+ `bedrock-agent-runtime`) | - | - |
+| 21 | Databricks | - | `databricks` | - |
 | 22 | Machine Learning | `sagemaker` (+ `sagemaker-runtime`) | `ai` (CognitiveServices + MachineLearningServices) | `vertexai` |
-| 23 | AI Search | — | `search` (Microsoft.Search) | — |
-| 24 | Container Orchestration | `ecs` | — | — |
-| 25 | DNS Resolver | `route53resolver` | — | — |
-| 26 | Application Networking | `vpclattice` | — | — |
-| 27 | Key Management | `kms` | — | — |
-| 28 | File System | `efs` | — | — |
-| 29 | Certificate Manager | `acm` | — | — |
-| 30 | Email Service | `sesv2` | — | — |
-| 31 | Web Application Firewall | `wafv2` | — | — |
-| 32 | Data Streams | `kinesis` | — | — |
-| 33 | Workflow Orchestration | `sfn` | — | — |
-| 34 | Search & Analytics | `opensearch` | — | — |
-| 35 | Audit Logging | `cloudtrail` | — | — |
-| 36 | Configuration Management | `configservice` | — | — |
-| 37 | Data Integration (ETL / Data Catalog) | `glue` | — | — |
-| 38 | Threat Detection | `guardduty` | — | — |
-| 39 | Streaming (Managed Kafka) | `kafka` | — | — |
+| 23 | AI Search | - | `search` (Microsoft.Search) | - |
+| 24 | Container Orchestration | `ecs` | - | - |
+| 25 | DNS Resolver | `route53resolver` | - | - |
+| 26 | Application Networking | `vpclattice` | - | - |
+| 27 | Key Management | `kms` | - | - |
+| 28 | File System | `efs` | - | - |
+| 29 | Certificate Manager | `acm` | - | - |
+| 30 | Email Service | `sesv2` | - | - |
+| 31 | Web Application Firewall | `wafv2` | - | - |
+| 32 | Data Streams | `kinesis` | - | - |
+| 33 | Workflow Orchestration | `sfn` | - | - |
+| 34 | Search & Analytics | `opensearch` | - | - |
+| 35 | Audit Logging | `cloudtrail` | - | - |
+| 36 | Configuration Management | `configservice` | - | - |
+| 37 | Data Integration (ETL / Data Catalog) | `glue` | - | - |
+| 38 | Threat Detection | `guardduty` | - | - |
+| 39 | Streaming (Managed Kafka) | `kafka` | - | - |
 | 40 | Billing / FinOps | `costexplorer`, `savingsplans`, `servicequotas` | `costmanagement` | `cloudbilling` |
-| 41 | Big Data (Hadoop / Spark) | `emr` | — | — |
-| 42 | Event Streaming | — | `eventhub` | — |
-| 43 | Serverless Containers | — | `containerapps` (+ ACI `containerinstances`) | — |
-| 44 | Analytics (Data Warehouse) | — | `synapse` | — |
-| 45 | Analytics (Data Explorer / Kusto) | — | `kusto` | — |
-| 46 | Managed Identity | — | `managedidentity` | — |
-| 47 | Resource Governance | — | `locks`, `tags`, `providers` | — |
+| 41 | Big Data (Hadoop / Spark) | `emr` | - | - |
+| 42 | Event Streaming | - | `eventhub` | - |
+| 43 | Serverless Containers | - | `containerapps` (+ ACI `containerinstances`) | - |
+| 44 | Analytics (Data Warehouse) | - | `synapse` | - |
+| 45 | Analytics (Data Explorer / Kusto) | - | `kusto` | - |
+| 46 | Managed Identity | - | `managedidentity` | - |
+| 47 | Resource Governance | - | `locks`, `tags`, `providers` | - |
 
 ---
 
@@ -180,7 +180,7 @@ This document is a curated deep reference for the core service categories across
 
 #### Managed-resource visibility
 
-EC2 emulates AWS *managed resources* — instances an AWS service (e.g. ECS Managed
+EC2 emulates AWS *managed resources*: instances an AWS service (e.g. ECS Managed
 Instances, EKS Auto Mode) provisions on the account's behalf. A managed instance
 carries an `Operator` block (`Managed=true`, `Principal`) and is **hidden from
 `DescribeInstances` by default** once the account's visibility is set to `hidden`,
@@ -414,7 +414,7 @@ client.DescribeInstances(ctx, &ec2.DescribeInstancesInput{IncludeManagedResource
 ## 5. Networking
 
 **Driver interface:** `services/networking/driver/driver.go`
-**AWS:** VPC | **Azure:** VNet | **GCP:** GCP VPC | **OCI:** VCN (security lists map to network ACLs; service gateways to VPC endpoints; public IPs to elastic IPs; a connected pair of local peering gateways to a peering connection — DRGs, DRG attachments and remote peering connections are not emulated)
+**AWS:** VPC | **Azure:** VNet | **GCP:** GCP VPC | **OCI:** VCN (security lists map to network ACLs; service gateways to VPC endpoints; public IPs to elastic IPs; a connected pair of local peering gateways to a peering connection. DRGs, DRG attachments and remote peering connections are not emulated.)
 
 ### VPC Operations
 
@@ -534,7 +534,7 @@ caller can discover an association ID in order to disassociate.
 | `DetachNetworkInterface` | `(ctx, attachmentID, force) error` |
 | `DeleteNetworkInterface` | `(ctx, id) error` |
 
-Managed resources attach interfaces of their own — a NAT gateway holds one for
+Managed resources attach interfaces of their own. A NAT gateway holds one for
 as long as it lives. An attached interface cannot be deleted, which is how a
 caller draining a VPC before deleting it learns the drain is not finished.
 
@@ -564,7 +564,7 @@ DNS hostnames off.
 AWS models several networking resources that don't map cleanly across clouds.
 These are **AWS-only optional capability interfaces** (discovered by type
 assertion, like `NetworkInterfaces`/`VPCAttributes`) implemented by
-`providers/aws/vpc` and served by the EC2 handler — no Azure/GCP stubs.
+`providers/aws/vpc` and served by the EC2 handler. There are no Azure/GCP stubs.
 
 | Capability | Operations |
 |-----------|-----------|
@@ -576,10 +576,10 @@ assertion, like `NetworkInterfaces`/`VPCAttributes`) implemented by
 | VPC endpoint services (PrivateLink) | Create, Delete, Describe; ModifyPermissions, DescribePermissions |
 | Client VPN | CreateEndpoint, DeleteEndpoint, DescribeEndpoints, Associate/DisassociateTargetNetwork, DescribeTargetNetworks; Authorize/RevokeIngress, DescribeAuthorizationRules; Route (Create/Delete/Describe) |
 | Traffic Mirroring | Target (Create/Delete/Describe); Filter (Create/Delete/Describe) + ModifyFilterNetworkServices; FilterRule (Create/Modify/Delete/Describe); Session (Create/Modify/Delete/Describe) |
-| Network Insights — Reachability Analyzer | Path (Create/Delete/Describe); Analysis (Start/Delete/Describe) |
-| Network Insights — Network Access Analyzer | AccessScope (Create/Delete/Describe) + GetContent; AccessScopeAnalysis (Start/Delete/Describe) + GetAnalysisFindings |
+| Network Insights: Reachability Analyzer | Path (Create/Delete/Describe); Analysis (Start/Delete/Describe) |
+| Network Insights: Network Access Analyzer | AccessScope (Create/Delete/Describe) + GetContent; AccessScopeAnalysis (Start/Delete/Describe) + GetAnalysisFindings |
 | VPC Block Public Access | Options (Describe/Modify); Exclusion (Create/Modify/Delete/Describe) |
-| IPAM (IP Address Manager) — full | Ipam/Scope/Pool CRUD+Modify; Cidr Provision/Deprovision/Get; Allocation Allocate/Release/Get/Modify; ResourceCidrs (Get/Modify) + AddressHistory; ResourceDiscovery CRUD + Associate/Disassociate + Discovered Accounts/ResourceCidrs/PublicAddresses; BYOASN (Provision/Deprovision/Associate/Disassociate/Describe); BYOIP (Move/Provision/Deprovision/Describe/Advertise/Withdraw); PrefixListResolver + Targets + Versions/Rules/Entries; ExternalResourceVerificationToken (Create/Delete/Describe); Policy (Create/Delete/Describe/Enable/Disable/GetEnabled/AllocationRules/OrgTargets) + OrganizationAdminAccount (Enable/Disable) |
+| IPAM (IP Address Manager): full | Ipam/Scope/Pool CRUD+Modify; Cidr Provision/Deprovision/Get; Allocation Allocate/Release/Get/Modify; ResourceCidrs (Get/Modify) + AddressHistory; ResourceDiscovery CRUD + Associate/Disassociate + Discovered Accounts/ResourceCidrs/PublicAddresses; BYOASN (Provision/Deprovision/Associate/Disassociate/Describe); BYOIP (Move/Provision/Deprovision/Describe/Advertise/Withdraw); PrefixListResolver + Targets + Versions/Rules/Entries; ExternalResourceVerificationToken (Create/Delete/Describe); Policy (Create/Delete/Describe/Enable/Disable/GetEnabled/AllocationRules/OrgTargets) + OrganizationAdminAccount (Enable/Disable) |
 
 **AWS-specific total: 162 operations**
 
@@ -632,7 +632,7 @@ IPAM publishes derived metrics through the CloudWatch service (ListMetrics / Get
 
 ### OCI Monitoring
 
-**Optional capability:** `server/oci/monitoring.Extras` — OCI scopes metrics
+**Optional capability:** `server/oci/monitoring.Extras`. OCI scopes metrics
 and alarms to a compartment and identifies alarms by OCID, neither of which the
 portable model carries. Its value types live in `providers/oci/monitoring`.
 **Provider:** `providers/oci/monitoring` | **Wire:** `server/oci/monitoring`
@@ -655,7 +655,7 @@ returning the cursor as `opc-next-page`. Alarm mutations are synchronous in real
 OCI Monitoring, so none of them returns a work request.
 
 Queries are read in MQL's single-metric threshold form plus the optional
-dimension predicate that scopes an alarm to one series —
+dimension predicate that scopes an alarm to one series, for example
 `CpuUtilization[1m]{resourceId = "ocid1.instance…"}.mean() > 80`. The predicate
 supports `=` and `!=`; the pattern operators `=~` and `!~` are rejected rather
 than answered with a false "no data". A resolution finer than OCI's `1m`
@@ -663,7 +663,7 @@ minimum is rejected; richer MQL is stored verbatim and never fires.
 
 An alarm fires only once its condition has held for `pendingDuration`, read as
 an ISO-8601 duration such as `PT5M`; the portable `EvaluationPeriods` maps onto
-it. Unset, it fires on the first breaching datapoint — evaluation runs on
+it. Unset, it fires on the first breaching datapoint, because evaluation runs on
 `PostMetricData` rather than on a timer, so OCI's `PT1M` default would never
 elapse on its own. Alarm `suppression` and `overrides` are rejected rather than
 accepted and dropped.
@@ -1001,7 +1001,7 @@ a fixed struct would silently drop whatever it had not been taught.
 ### Replication Groups (optional capability)
 
 A primary node plus replicas, addressed through one primary endpoint. Callers
-build a connection string from it, so the endpoint is always populated — a group
+build a connection string from it, so the endpoint is always populated. A group
 without one is indistinguishable from a broken provision.
 
 | Operation | Signature |
@@ -1020,7 +1020,7 @@ Both interfaces are AWS-only concepts, discovered by type assertion.
 ## 11a. MemoryDB (AWS)
 
 **Driver interface:** `services/memorydb/driver/driver.go`
-**AWS:** MemoryDB for Redis/Valkey | **Azure:** — | **GCP:** —
+**AWS:** MemoryDB for Redis/Valkey | **Azure:** none | **GCP:** none
 
 A durable, in-VPC Redis/Valkey cluster service. Unlike Cache, MemoryDB is a
 control-plane-only surface (no `Set`/`Get` data plane), so it has its own driver
@@ -1091,7 +1091,7 @@ rather than reusing `services/cache`. Served as AWS JSON 1.1 on the
 | `DescribeEngineVersions` | `(ctx, engine, version) ([]EngineVersionInfo, error)` |
 | `DescribeEvents` | `(ctx) ([]Event, error)` |
 
-### Multi-Region Clusters (optional capability — `MultiRegion`)
+### Multi-Region Clusters (optional capability: `MultiRegion`)
 
 | Operation | Signature |
 |-----------|-----------|
@@ -1103,7 +1103,7 @@ rather than reusing `services/cache`. Served as AWS JSON 1.1 on the
 | `DescribeMultiRegionParameterGroups` | `(ctx, names) ([]MultiRegionParameterGroup, error)` |
 | `DescribeMultiRegionParameters` | `(ctx, groupName) ([]Parameter, error)` |
 
-### Reserved Nodes (optional capability — `ReservedNodes`)
+### Reserved Nodes (optional capability: `ReservedNodes`)
 
 | Operation | Signature |
 |-----------|-----------|
@@ -1111,7 +1111,7 @@ rather than reusing `services/cache`. Served as AWS JSON 1.1 on the
 | `DescribeReservedNodesOfferings` | `(ctx) ([]ReservedNodesOffering, error)` |
 | `PurchaseReservedNodesOffering` | `(ctx, offeringID, reservationID, count) (*ReservedNode, error)` |
 
-### Service Updates (optional capability — `ServiceUpdates`)
+### Service Updates (optional capability: `ServiceUpdates`)
 
 | Operation | Signature |
 |-----------|-----------|
@@ -1120,7 +1120,7 @@ rather than reusing `services/cache`. Served as AWS JSON 1.1 on the
 
 `BatchUpdateCluster` applies a service update to each named cluster; a name that
 does not exist is returned in `unprocessed` (with `ClusterNotFoundFault`) rather
-than failing the whole batch — matching AWS's partial-success semantics.
+than failing the whole batch, which matches AWS's partial-success semantics.
 
 The three optional interfaces are AWS-only concepts, discovered by type
 assertion.
@@ -1136,7 +1136,7 @@ base64 offset token; a malformed token yields `InvalidParameterValueException`.
 ## 11b. Keyspaces (AWS)
 
 **Driver interface:** `services/keyspaces/driver/driver.go`
-**AWS:** Amazon Keyspaces (for Apache Cassandra) | **Azure:** — | **GCP:** —
+**AWS:** Amazon Keyspaces (for Apache Cassandra) | **Azure:** none | **GCP:** none
 
 A managed, Cassandra-compatible wide-column service. Control-plane only (CQL
 data operations are out of scope), so it has its own driver rather than reusing
@@ -1193,7 +1193,7 @@ table.
 | `UntagResource` | `(ctx, arn, keys) error` |
 | `ListTagsForResource` | `(ctx, arn) ([]Tag, error)` |
 
-### Auto Scaling (optional capability — `AutoScaling`)
+### Auto Scaling (optional capability: `AutoScaling`)
 
 | Operation | Signature |
 |-----------|-----------|
@@ -1213,7 +1213,7 @@ deterministic result set; a malformed token yields `ValidationException`).
 ## 11c. Managed Cassandra (Azure)
 
 **Driver interface:** `services/managedcassandra/driver/driver.go`
-**AWS:** — | **Azure:** Azure Managed Instance for Apache Cassandra | **GCP:** —
+**AWS:** none | **Azure:** Azure Managed Instance for Apache Cassandra | **GCP:** none
 
 A managed, Cassandra-compatible cluster service under Cosmos DB. Control-plane
 only (CQL is out of scope), so it has its own driver. Served as ARM REST/JSON
@@ -1266,7 +1266,7 @@ deallocate/start propagate to all datacenters.
 ## 11d. Bigtable (GCP)
 
 **Driver interface:** `services/bigtable/driver/driver.go`
-**AWS:** — | **Azure:** — | **GCP:** Cloud Bigtable
+**AWS:** none | **Azure:** none | **GCP:** Cloud Bigtable
 
 A wide-column NoSQL database. Control-plane only (the data plane is out of
 scope), so it has its own driver. Served as GCP REST/JSON under `/v2/...`
@@ -1345,7 +1345,7 @@ counts are bounded; clone-on-read on every path.
 ## 11e. Cosmos DB for PostgreSQL (Azure)
 
 **Driver interface:** `services/cosmospostgresql/driver/driver.go`
-**Azure:** Cosmos DB for PostgreSQL (Citus) — `Microsoft.DBforPostgreSQL/serverGroupsv2`
+**Azure:** Cosmos DB for PostgreSQL (Citus), `Microsoft.DBforPostgreSQL/serverGroupsv2`
 
 Real `armcosmosforpostgresql` clients configured with a custom endpoint hit the
 ARM handler (`server/azure/cosmospostgresql`) the same way they hit
@@ -1363,7 +1363,7 @@ reply `202` + `Location` and the poller reads a terminal status from the
 | `UpdateCluster` | `(ctx, rg, name, ClusterPatch) (*Cluster, error)` (PATCH) |
 | `DeleteCluster` | `(ctx, rg, name) error` |
 | `RestartCluster` / `StartCluster` / `StopCluster` | lifecycle actions (LRO) |
-| `PromoteReadReplica` | `(ctx, rg, name) error` — detach a replica |
+| `PromoteReadReplica` | `(ctx, rg, name) error`: detach a replica |
 | `CheckNameAvailability` | `(ctx, name, type) (*NameAvailability, error)` |
 
 ### Firewall Rules & Roles
@@ -1592,7 +1592,7 @@ a source cluster and detach on promote; clone-on-read on every path.
 
 A single portable interface backs every RDBMS handler. Engine selection (MySQL / PostgreSQL / Aurora / Neptune / DocumentDB / Redshift / Cloud SQL / Azure SQL / AlloyDB / …) is a field on the input config, not a separate driver.
 
-**AlloyDB (GCP):** a PostgreSQL-compatible managed database served on the `alloydb.googleapis.com/v1` REST API (`server/gcp/alloydb`). It reuses the relational driver — AlloyDB clusters map to `Cluster`, instances (PRIMARY / READ_POOL / SECONDARY) to `Instance`, and cluster backups to `ClusterSnapshot` — plus the `Users` and `Databases` capabilities. AlloyDB-specific behavior (instance types, machine vCPU config, cross-region secondary clusters + promote, instance failover/restart, continuous/automated backup config) lives in the optional `AlloyDB` capability. Because AlloyDB's REST paths (`/v1/projects/{p}/locations/{l}/clusters…`) are identical to GKE's, the two cannot be multiplexed on one server; the combined GCP server leaves `Drivers.AlloyDB` nil and callers inject it in place of GKE.
+**AlloyDB (GCP):** a PostgreSQL-compatible managed database served on the `alloydb.googleapis.com/v1` REST API (`server/gcp/alloydb`). It reuses the relational driver (AlloyDB clusters map to `Cluster`, instances (PRIMARY / READ_POOL / SECONDARY) to `Instance`, and cluster backups to `ClusterSnapshot`), plus the `Users` and `Databases` capabilities. AlloyDB-specific behavior (instance types, machine vCPU config, cross-region secondary clusters + promote, instance failover/restart, continuous/automated backup config) lives in the optional `AlloyDB` capability. Because AlloyDB's REST paths (`/v1/projects/{p}/locations/{l}/clusters…`) are identical to GKE's, the two cannot be multiplexed on one server; the combined GCP server leaves `Drivers.AlloyDB` nil and callers inject it in place of GKE.
 
 ### Instance Operations
 
@@ -1637,7 +1637,7 @@ A single portable interface backs every RDBMS handler. Engine selection (MySQL /
 
 ### Subnet Groups (optional capability)
 
-DB subnet groups are an AWS concept — Azure and GCP place managed databases with
+DB subnet groups are an AWS concept. Azure and GCP place managed databases with
 vnet integration instead. The `SubnetGroups` interface is therefore kept out of
 `RelationalDB` and discovered by type assertion; drivers that do not implement it
 answer `InvalidAction`.
@@ -1652,7 +1652,7 @@ answer `InvalidAction`.
 matching the real service. Callers tearing down a VPC list subnet groups and
 match on it.
 
-### Parameter Groups (optional capability — `ParameterGroups`)
+### Parameter Groups (optional capability: `ParameterGroups`)
 
 DB and DB **cluster** parameter groups. Only user-set parameters are modeled;
 the emulator does not fabricate the hundreds of engine defaults real AWS
@@ -1670,7 +1670,7 @@ variants, so error mapping is shared.
 | `CopyDBParameterGroup` | `(ctx, source, target, description) (*ParameterGroup, error)` |
 | `CreateDBClusterParameterGroup` … `CopyDBClusterParameterGroup` | cluster-scoped analogues (7) |
 
-### Option Groups (optional capability — `OptionGroups`)
+### Option Groups (optional capability: `OptionGroups`)
 
 | Operation | Signature |
 |-----------|-----------|
@@ -1684,7 +1684,7 @@ variants, so error mapping is shared.
 `DescribeOptionGroupOptions` returns a representative per-engine catalog of
 well-known option names, not AWS's exhaustive version-specific list.
 
-### Read Replicas (optional capability — `ReadReplicas`)
+### Read Replicas (optional capability: `ReadReplicas`)
 
 | Operation | Signature |
 |-----------|-----------|
@@ -1694,7 +1694,7 @@ well-known option names, not AWS's exhaustive version-specific list.
 A replica inherits its source's engine/version/storage; the source tracks its
 replica IDs and the replica records its source. Promotion detaches it.
 
-### Snapshot Copy & Point-in-Time Restore (optional capability — `AdvancedRestore`)
+### Snapshot Copy & Point-in-Time Restore (optional capability: `AdvancedRestore`)
 
 | Operation | Signature |
 |-----------|-----------|
@@ -1707,7 +1707,7 @@ The emulator retains no historical timeline, so PITR clones the source's
 current spec; `RestoreTime` / `UseLatestRestorableTime` are accepted but not
 replayed.
 
-### RDS Proxy (optional capability — `DBProxies`)
+### RDS Proxy (optional capability: `DBProxies`)
 
 A proxy has a single implicit `default` target group; targets are RDS instances
 (`RDS_INSTANCE`) or clusters (`TRACKED_CLUSTER`), validated on registration.
@@ -1718,12 +1718,12 @@ A proxy has a single implicit `default` target group; targets are RDS instances
 | `RegisterDBProxyTargets` / `DeregisterDBProxyTargets` / `DescribeDBProxyTargets` | target membership (3) |
 | `DescribeDBProxyTargetGroups` | `(ctx, name) ([]ProxyTargetGroup, error)` |
 
-### Event Subscriptions (optional capability — `EventSubscriptions`)
+### Event Subscriptions (optional capability: `EventSubscriptions`)
 
 | Operation | Signature |
 |-----------|-----------|
 | `CreateEventSubscription` / `DescribeEventSubscriptions` / `ModifyEventSubscription` / `DeleteEventSubscription` | subscription CRUD (4) |
-| `DescribeEvents` | `(ctx, sourceType, sourceID, categories) ([]Event, error)` — empty: no event timeline is retained |
+| `DescribeEvents` | `(ctx, sourceType, sourceID, categories) ([]Event, error)`: returns empty, since no event timeline is retained |
 | `DescribeEventCategories` | `(ctx, sourceType) ([]EventCategoryGroup, error)` |
 
 ### Aurora Cluster Endpoints, Failover & Global Clusters
@@ -1734,8 +1734,8 @@ A proxy has a single implicit `default` target group; targets are RDS instances
 
 ### Metadata & Tagging
 
-- `Metadata`: `DescribeDBEngineVersions`, `DescribeOrderableDBInstanceOptions` — representative per-engine catalogs (2).
-- `Tagging`: `AddTagsToResource`, `RemoveTagsFromResource`, `ListTagsForResource` — addressed by resource ARN over the tag-bearing stores (instances, clusters, instance/cluster snapshots) (3).
+- `Metadata`: `DescribeDBEngineVersions`, `DescribeOrderableDBInstanceOptions`: representative per-engine catalogs (2).
+- `Tagging`: `AddTagsToResource`, `RemoveTagsFromResource`, `ListTagsForResource`, addressed by resource ARN over the tag-bearing stores (instances, clusters, instance/cluster snapshots) (3).
 
 ### Azure & GCP managed-SQL native sub-resources (optional capabilities)
 
@@ -1777,7 +1777,7 @@ cross-service discovery (Azure Resource Graph as `microsoft.sql/servers`,
 (including the `Microsoft.Sql/servers/elasticpools` pool namespace).
 
 **Total: 21 core operations + 109 optional across 25 type-asserted capability
-interfaces** — the 12 RDS-oriented ones (`SubnetGroups`, `ParameterGroups`,
+interfaces**: the 12 RDS-oriented ones (`SubnetGroups`, `ParameterGroups`,
 `OptionGroups`, `ReadReplicas`, `AdvancedRestore`, `DBProxies`,
 `EventSubscriptions`, `ClusterEndpoints`, `ClusterFailover`, `GlobalClusters`,
 `Metadata`, `Tagging`) plus the 13 Azure/GCP managed-SQL ones (`Databases`,
@@ -1790,10 +1790,10 @@ maps to a real resource and answers `InvalidAction` otherwise.
 
 ## 18. Kubernetes
 
-**Control plane:** AWS `eks`, Azure `aks`, GCP `gke` — cluster, node-pool, and addon / Fargate-profile / maintenance-config lifecycle, driven by the real cloud SDKs.
-**Data plane:** shared `services/kubernetes/` package — an in-memory Kubernetes API server registered by every cluster across all three providers. Kubeconfigs returned by the control plane point at `<base>/k8s/<cluster-uid>` so `client-go` and `kubectl` operate end-to-end.
+**Control plane:** AWS `eks`, Azure `aks`, GCP `gke`: cluster, node-pool, and addon / Fargate-profile / maintenance-config lifecycle, driven by the real cloud SDKs.
+**Data plane:** the shared `services/kubernetes/` package, an in-memory Kubernetes API server registered by every cluster across all three providers. Kubeconfigs returned by the control plane point at `<base>/k8s/<cluster-uid>` so `client-go` and `kubectl` operate end-to-end.
 
-Each provider exposes its native control-plane API. The data plane has no portable driver — clients connect via the kubeconfig the control plane hands out, then talk standard Kubernetes REST.
+Each provider exposes its native control-plane API. The data plane has no portable driver. Clients connect via the kubeconfig the control plane hands out, then talk standard Kubernetes REST.
 
 ### AWS EKS (`providers/aws/eks`)
 
@@ -1813,7 +1813,7 @@ Operations: **21**
 | Managed Clusters | CreateOrUpdateCluster, GetCluster, UpdateClusterTags, DeleteCluster, ListClusters, ListClustersByResourceGroup, RotateClusterCertificates |
 | Agent Pools | CreateOrUpdateAgentPool, GetAgentPool, DeleteAgentPool, ListAgentPools |
 | Maintenance Configs | CreateOrUpdateMaintenanceConfig, GetMaintenanceConfig, DeleteMaintenanceConfig, ListMaintenanceConfigs |
-| Credentials | `ListClusterAdminCredentials`, `ListClusterUserCredentials`, `ListClusterMonitoringUserCredentials` — return a kubeconfig pointing at the in-memory data plane (or the `*-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local` sentinel when no APIServer is wired) |
+| Credentials | `ListClusterAdminCredentials`, `ListClusterUserCredentials`, `ListClusterMonitoringUserCredentials`: return a kubeconfig pointing at the in-memory data plane (or the `*-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local` sentinel when no APIServer is wired) |
 
 Operations: **18**
 
@@ -1829,33 +1829,33 @@ Operations: **26**
 
 ### Data plane (`services/kubernetes/`)
 
-Shared in-memory K8s API server registered by every cluster from any provider. URL: `<base>/k8s/<cluster-uid>/...`. Served over **real TLS**: the control plane advertises a shared CA (`internal/k8spki`) that certifies the serving cert, so `client-go` and `kubectl` validate the connection normally — kubeconfigs carry `certificate-authority-data`, not `insecure-skip-tls-verify`.
+Shared in-memory K8s API server registered by every cluster from any provider. URL: `<base>/k8s/<cluster-uid>/...`. Served over **real TLS**: the control plane advertises a shared CA (`internal/k8spki`) that certifies the serving cert, so `client-go` and `kubectl` validate the connection normally; kubeconfigs carry `certificate-authority-data`, not `insecure-skip-tls-verify`.
 
 **Real `kubectl` works end-to-end**, not just `client-go`: the server decodes the **protobuf** request bodies kubectl sends on writes (it accepts protobuf and replies JSON, which kubectl's `Accept` allows), and serves an **OpenAPI v3** discovery document (plus a protobuf **v2** for the legacy path) carrying every served GVK so `kubectl apply` validation passes. Verified against `kubectl` v1.36 across all three providers: `create/apply/scale/set image/patch/rollout/delete`, `get` with short names (`pvc`, `hpa`, `sts`, …), and cascade teardown.
 
-It behaves like a tiny always-converged cluster (minikube-like) rather than a bare object store: a **synchronous reconcile engine** runs on every write — there are no controller goroutines, so results are immediate and deterministic. Controllers materialize Running Pods, Services get Endpoints, PVCs bind, Jobs complete.
+It behaves like a tiny always-converged cluster (minikube-like) rather than a bare object store: a **synchronous reconcile engine** runs on every write. There are no controller goroutines, so results are immediate and deterministic. Controllers materialize Running Pods, Services get Endpoints, PVCs bind, Jobs complete.
 
-**Discovery** is derived from the resource registry (`registeredResources()`), so `/api`, `/apis`, and every `/apis/<group>/<version>` list exactly the resources the server serves — discovery can't promise a kind that 404s.
+**Discovery** is derived from the resource registry (`registeredResources()`), so `/api`, `/apis`, and every `/apis/<group>/<version>` list exactly the resources the server serves, so discovery never advertises a kind that 404s.
 
-**Core (`core/v1`)**: Namespace, ConfigMap, Secret (StringData merged into Data), ServiceAccount (`default` auto-created per namespace), Pod (driven **Running** with a synthetic Pod IP — a directly-created Pod with a terminal phase is preserved), Service (ClusterIP from 10.96.0.0/12, immutable on update), Endpoints (get/list/watch only — auto-managed per Service), PersistentVolumeClaim (→ Bound), PersistentVolume (→ Available), Node, Event, ResourceQuota, LimitRange.
+**Core (`core/v1`)**: Namespace, ConfigMap, Secret (StringData merged into Data), ServiceAccount (`default` auto-created per namespace), Pod (driven **Running** with a synthetic Pod IP; a directly-created Pod with a terminal phase is preserved), Service (ClusterIP from 10.96.0.0/12, immutable on update), Endpoints (get/list/watch only, managed automatically per Service), PersistentVolumeClaim (→ Bound), PersistentVolume (→ Available), Node, Event, ResourceQuota, LimitRange.
 
-**Workload controllers (`apps/v1`)**: Deployment, ReplicaSet, StatefulSet (stable `-0..-N` names + one Bound PVC per `volumeClaimTemplate`), DaemonSet (one Pod per node whose labels satisfy the template `nodeSelector` **and whose taints the pod tolerates** — zero Pods when nothing matches; under multi-node it fans out one Pod per matching+tolerated node, e.g. kube-proxy on all N). A **Deployment interposes a ReplicaSet** per pod-template revision (Deployment→RS→Pod, matching real topology), and a template change creates a new ReplicaSet and deletes the old one outright — an instantaneous swap (no `revisionHistoryLimit`, no `kubectl rollout undo`, no surge/unavailable pacing). All materialize Running Pods owned via `ownerReferences`; deleting a controller cascade-deletes the chain and drains Endpoints. Deployments/StatefulSets expose **`/scale`** and **`/status`** subresources. CronJob scheduling fires on the wall-clock progression ticker when `--k8s-progression` is running, and via `TickCronJobs()` on the deterministic/test path; either way it performs real due-evaluation against the cluster clock: it parses the standard 5-field `spec.schedule` (`*`, `*/n`, lists, `a-b` ranges) and materializes a Job only when a scheduled time falls in `(status.lastScheduleTime, now]` — advancing `lastScheduleTime` to the fired slot so re-ticking the same instant never double-creates — and honors `concurrencyPolicy` (`Forbid`/`Replace`/`Allow`) and `startingDeadlineSeconds`.
+**Workload controllers (`apps/v1`)**: Deployment, ReplicaSet, StatefulSet (stable `-0..-N` names + one Bound PVC per `volumeClaimTemplate`), DaemonSet (one Pod per node whose labels satisfy the template `nodeSelector` **and whose taints the pod tolerates**; zero Pods when nothing matches; under multi-node it fans out one Pod per matching+tolerated node, e.g. kube-proxy on all N). A **Deployment interposes a ReplicaSet** per pod-template revision (Deployment→RS→Pod, matching real topology), and a template change creates a new ReplicaSet and deletes the old one outright, an instant swap (no `revisionHistoryLimit`, no `kubectl rollout undo`, no surge/unavailable pacing). All materialize Running Pods owned via `ownerReferences`; deleting a controller cascade-deletes the chain and drains Endpoints. Deployments/StatefulSets expose **`/scale`** and **`/status`** subresources. CronJob scheduling fires on the wall-clock progression ticker when `--k8s-progression` is running, and via `TickCronJobs()` on the deterministic/test path; either way it performs real due-evaluation against the cluster clock: it parses the standard 5-field `spec.schedule` (`*`, `*/n`, lists, `a-b` ranges) and materializes a Job only when a scheduled time falls in `(status.lastScheduleTime, now]`. It advances `lastScheduleTime` to the fired slot, so re-ticking the same instant never creates a second Job, and it honors `concurrencyPolicy` (`Forbid`/`Replace`/`Allow`) and `startingDeadlineSeconds`.
 
 **Other groups** (registry-backed CRUD + list/watch/patch/delete): `batch/v1` Job (→ Succeeded Pods) / CronJob; `networking.k8s.io/v1` Ingress (→ load-balancer IP) / IngressClass / NetworkPolicy; `rbac.authorization.k8s.io/v1` Role / RoleBinding / ClusterRole / ClusterRoleBinding; `storage.k8s.io/v1` StorageClass; `autoscaling/v2` HorizontalPodAutoscaler; `discovery.k8s.io/v1` EndpointSlice; `policy/v1` PodDisruptionBudget; `apiextensions.k8s.io/v1` CustomResourceDefinition; `admissionregistration.k8s.io/v1` Mutating/ValidatingWebhookConfiguration.
 
-**Custom resources (CRDs)**: creating a `CustomResourceDefinition` dynamically materializes a servable store for every served version — the custom-resource kind is then served by the generic handler (CRUD/list/watch/`/status`) and advertised in discovery immediately; the CRD is marked `Established`. Deleting the CRD deregisters the kind and cascade-deletes its custom resources — including when the CRD carries a finalizer, in which case teardown runs once the last finalizer drains. Structural schema validation of CRs is a documented simplification (accept-and-store).
+**Custom resources (CRDs)**: creating a `CustomResourceDefinition` dynamically materializes a servable store for every served version. The custom-resource kind is then served by the generic handler (CRUD/list/watch/`/status`) and advertised in discovery immediately; the CRD is marked `Established`. Deleting the CRD deregisters the kind and cascade-deletes its custom resources, including when the CRD carries a finalizer, in which case teardown runs once the last finalizer drains. Structural schema validation of CRs is a documented simplification (accept-and-store).
 
-**Selectors & pagination**: label selectors on list; field selectors for `metadata.name` / `metadata.namespace`, Pod `status.phase` / `spec.nodeName`, and Event fields (`involvedObject.name/namespace/kind/uid`, `reason`, `type`). List responses honor **`?limit=&continue=`** chunked pagination across the registry and typed list paths: the `metadata.continue` token is key-anchored (it encodes the last object's `namespace/name`), so an insert or delete before that key cannot skip or duplicate later items under concurrent mutation, and a malformed token returns `410 Gone` (reason `Expired`) per client-go's pager contract. A well-formed token whose key was since deleted resumes gracefully at the next greater key rather than `410`-ing on a compacted resourceVersion — strictly more forgiving than upstream.
+**Selectors & pagination**: label selectors on list; field selectors for `metadata.name` / `metadata.namespace`, Pod `status.phase` / `spec.nodeName`, and Event fields (`involvedObject.name/namespace/kind/uid`, `reason`, `type`). List responses honor **`?limit=&continue=`** chunked pagination across the registry and typed list paths: the `metadata.continue` token is key-anchored (it encodes the last object's `namespace/name`), so an insert or delete before that key cannot skip or duplicate later items under concurrent mutation, and a malformed token returns `410 Gone` (reason `Expired`) per client-go's pager contract. A well-formed token whose key was since deleted resumes gracefully at the next greater key rather than `410`-ing on a compacted resourceVersion, which is more forgiving than upstream.
 
-**Patch & server-side apply**: JSON-merge-patch, JSONPatch (RFC 6902), and strategic-merge-patch (real strategic merge against the typed struct for core/apps kinds, so `kubectl set image` merges the container list by name). **Server-side apply** (`application/apply-patch+yaml`) tracks per-`fieldManager` field ownership in `metadata.managedFields`; an apply that changes a field owned by another manager returns **409 Conflict** unless `?force=true` (which transfers ownership), and an owner re-applying the same value is a no-op. A re-apply by the same manager that omits a field it previously owned removes that field, unless another manager also owns it. Plain PUT/PATCH updates record an `Update`-operation `managedFields` entry for their `fieldManager` (defaulted from the User-Agent when absent), taking or sharing ownership rather than conflicting (only Apply-vs-Apply is a 409). Ownership is tracked at leaf granularity (map keys / whole arrays) — per-element list merging is not modeled, a documented subset of upstream SSA.
+**Patch & server-side apply**: JSON-merge-patch, JSONPatch (RFC 6902), and strategic-merge-patch (real strategic merge against the typed struct for core/apps kinds, so `kubectl set image` merges the container list by name). **Server-side apply** (`application/apply-patch+yaml`) tracks per-`fieldManager` field ownership in `metadata.managedFields`; an apply that changes a field owned by another manager returns **409 Conflict** unless `?force=true` (which transfers ownership), and an owner re-applying the same value is a no-op. A re-apply by the same manager that omits a field it previously owned removes that field, unless another manager also owns it. Plain PUT/PATCH updates record an `Update`-operation `managedFields` entry for their `fieldManager` (defaulted from the User-Agent when absent), taking or sharing ownership rather than conflicting (only Apply-vs-Apply is a 409). Ownership is tracked at leaf granularity (map keys / whole arrays). Per-element list merging is not modeled; this is a documented subset of upstream SSA.
 
-**Dry-run**: writes with `?dryRun=All` (`kubectl apply|create|delete --dry-run=server`) run validation, defaulting, and quota admission (a create against an at-limit namespace returns the same `403` a real create would), echo the object the server would store, and persist nothing — no resourceVersion bump, reconcile, quota reservation, or watch event.
+**Dry-run**: writes with `?dryRun=All` (`kubectl apply|create|delete --dry-run=server`) run validation, defaulting, and quota admission (a create against an at-limit namespace returns the same `403` a real create would), echo the object the server would store, and persist nothing: no resourceVersion bump, reconcile, quota reservation, or watch event.
 
-**Finalizers**: an object carrying `metadata.finalizers` goes **Terminating** on delete (`deletionTimestamp` stamped, object retained) and is removed only when the last finalizer is cleared via update/patch — on the registry path and typed Namespace/Pod. Finalizers are also honored during cascade: a finalizer-bearing child reached by owner garbage-collection or namespace teardown goes Terminating rather than being reaped, until its finalizers drain. The server-owned `deletionTimestamp` survives a merge-patch — an RFC-7396 `null` cannot resurrect a Terminating object.
+**Finalizers**: an object carrying `metadata.finalizers` goes **Terminating** on delete (`deletionTimestamp` stamped, object retained) and is removed only when the last finalizer is cleared via update/patch, on both the registry path and typed Namespace/Pod. Finalizers are also honored during cascade: a finalizer-bearing child reached by owner garbage-collection or namespace teardown goes Terminating rather than being reaped, until its finalizers drain. The server-owned `deletionTimestamp` survives a merge-patch; an RFC-7396 `null` cannot resurrect a Terminating object.
 
-**Pod subresources**: `pods/{name}/log` returns synthetic container output; `exec` and `attach` complete the WebSocket streaming upgrade (`v5.channel.k8s.io`, plus v4 and the base protocols) and run a deterministic synthetic session — a self-describing banner on stdout (exec also echoes the requested command) followed by a Success `Status` on the error channel (exit 0) — there is no real container runtime, so no command actually runs and nothing is written to disk; a non-WebSocket (SPDY-only) client still gets a clean typed `Status`. `portforward` still returns a typed `501` (deferred). `pods/{name}/eviction` honors PodDisruptionBudgets.
+**Pod subresources**: `pods/{name}/log` returns synthetic container output; `exec` and `attach` complete the WebSocket streaming upgrade (`v5.channel.k8s.io`, plus v4 and the base protocols) and run a deterministic synthetic session: a self-describing banner on stdout (exec also echoes the requested command) followed by a Success `Status` on the error channel (exit 0). There is no real container runtime, so no command actually runs and nothing is written to disk; a non-WebSocket (SPDY-only) client still gets a clean typed `Status`. `portforward` still returns a typed `501` (deferred). `pods/{name}/eviction` honors PodDisruptionBudgets.
 
-**Metrics & autoscaling**: `metrics.k8s.io/v1beta1` (`kubectl top`) serves synthetic Pod/Node metrics from the live pods + synthetic node; a HorizontalPodAutoscaler reconcile drives its target Deployment on a Resource CPU `averageUtilization` metric — sampling the target Pods' CPU from that metrics source and applying the real HPA ratio `desiredReplicas = ceil(currentReplicas × currentUtilization ÷ targetUtilization)`, clamped into `[minReplicas, maxReplicas]` — and falls back to a plain min/max clamp when no CPU metric is configured or the target Pods declare no CPU request, reporting `currentReplicas`/`desiredReplicas`/`currentMetrics` on status.
+**Metrics & autoscaling**: `metrics.k8s.io/v1beta1` (`kubectl top`) serves synthetic Pod/Node metrics from the live pods + synthetic node; a HorizontalPodAutoscaler reconcile drives its target Deployment on a Resource CPU `averageUtilization` metric. It samples the target Pods' CPU from that metrics source and applying the real HPA ratio `desiredReplicas = ceil(currentReplicas × currentUtilization ÷ targetUtilization)`, clamped into `[minReplicas, maxReplicas]`. It falls back to a plain min/max clamp when no CPU metric is configured or the target Pods declare no CPU request, reporting `currentReplicas`/`desiredReplicas`/`currentMetrics` on status.
 
 **Policy enforcement**: object-count **ResourceQuota** is enforced on create (403 over limit) and on server-side dry-run; `status.used` is updated on create and recomputed from the live count on delete (it tracks the live object count rather than climbing monotonically); **LimitRange** applies container defaults and min/max validation on pod create; **PodDisruptionBudget** gates `pods/eviction` (429 when eviction would violate the budget); **RBAC** is queryable via `authorization.k8s.io/v1` SubjectAccessReview (evaluated against stored Roles/ClusterRoles + bindings); **NetworkPolicy** is queryable via an in-process evaluation (no live traffic).
 
@@ -1865,27 +1865,27 @@ It behaves like a tiny always-converged cluster (minikube-like) rather than a ba
 
 **Deterministic time**: every data-plane timestamp (creationTimestamp, pod start/conditions, managedFields) is sourced from an injectable clock (`APIServer.SetClock`); a `config.FakeClock` makes them fully deterministic for tests.
 
-**Persistence**: the data plane is part of the standalone server's [snapshot surface](persistence.md#kubernetes-data-plane) — every cluster's state (namespaces, pods, deployments, services/endpoints, all registry kinds, and CRDs + custom resources) is captured keyed by cluster UID, so a `--persist` stop/start or a crash restores each cluster under the same `/k8s/<uid>` endpoint with a pre-restart kubeconfig still valid. A watch open across the restart relists rather than resuming (no cross-restart event history).
+**Persistence**: the data plane is part of the standalone server's [snapshot surface](persistence.md#kubernetes-data-plane). Every cluster's state (namespaces, pods, deployments, services/endpoints, all registry kinds, and CRDs + custom resources) is captured keyed by cluster UID, so a `--persist` stop/start or a crash restores each cluster under the same `/k8s/<uid>` endpoint with a pre-restart kubeconfig still valid. A watch open across the restart relists rather than resuming (no cross-restart event history).
 
-**Watch streaming**: each list endpoint accepts `?watch=true` and upgrades to a `Transfer-Encoding: chunked` JSON event stream (`{"type":"ADDED|MODIFIED|DELETED","object":{...}}`). Initial state replays as ADDED events on subscribe, and the request's `labelSelector`/`fieldSelector` filters both the initial snapshot and live events, so `client-go` `Informer` / `SharedIndexInformer` machinery (operator-sdk, Helm, ArgoCD, …) — including selective informers — just works. A fresh cluster bootstraps a synthetic Ready node (`cloudemu-node-0`), and each selector Service's endpoints are mirrored into a `discovery.k8s.io` **EndpointSlice** so EndpointSlice-mode consumers see the same backends as the `Endpoints` object.
+**Watch streaming**: each list endpoint accepts `?watch=true` and upgrades to a `Transfer-Encoding: chunked` JSON event stream (`{"type":"ADDED|MODIFIED|DELETED","object":{...}}`). Initial state replays as ADDED events on subscribe, and the request's `labelSelector`/`fieldSelector` filters both the initial snapshot and live events, so `client-go` `Informer` / `SharedIndexInformer` machinery (operator-sdk, Helm, ArgoCD, …) works, including selective informers. A fresh cluster bootstraps a synthetic Ready node (`cloudemu-node-0`), and each selector Service's endpoints are mirrored into a `discovery.k8s.io` **EndpointSlice** so EndpointSlice-mode consumers see the same backends as the `Endpoints` object.
 
-**Cascade**: deleting a Namespace or an owning controller publishes DELETED events for every child resource (garbage collection follows `ownerReferences`) — finalizer-bearing children instead go Terminating (MODIFIED) until drained.
+**Cascade**: deleting a Namespace or an owning controller publishes DELETED events for every child resource (garbage collection follows `ownerReferences`). Finalizer-bearing children instead go Terminating (MODIFIED) until drained.
 
-**`kubectl` display fidelity**: list/get endpoints honor server-side **Table** printing (`Accept: application/json;as=Table;g=meta.k8s.io;v=v1`), returning a `meta.k8s.io/v1 Table` with the real per-kind columns — so `kubectl get pods/deployments/services/nodes/...` shows READY/STATUS/UP-TO-DATE/AVAILABLE/etc. (plus `-o wide` extras) instead of raw JSON, and unknown kinds fall back to NAME/AGE. Every list also carries a collection-level `resourceVersion` (a single monotonic cluster counter), so `client-go` reflectors and `kubectl rollout status` complete their List→Watch handshake rather than hanging.
+**`kubectl` display fidelity**: list/get endpoints honor server-side **Table** printing (`Accept: application/json;as=Table;g=meta.k8s.io;v=v1`), returning a `meta.k8s.io/v1 Table` with the real per-kind columns, so `kubectl get pods/deployments/services/nodes/...` shows READY/STATUS/UP-TO-DATE/AVAILABLE/etc. (plus `-o wide` extras) instead of raw JSON, and unknown kinds fall back to NAME/AGE. Every list also carries a collection-level `resourceVersion` (a single monotonic cluster counter), so `client-go` reflectors and `kubectl rollout status` complete their List→Watch handshake rather than hanging.
 
-**Events**: controllers emit standard `core/v1` Events during reconcile — `ScalingReplicaSet` (Deployment, on an actual replica-count change), `SuccessfulCreate` (ReplicaSet/StatefulSet/DaemonSet/Job/CronJob pods), `Scheduled` (Pod placement), `Started`/`Completed` — deduplicated by `(involvedObject, reason, message, type)` with a rolling `count`, so `kubectl describe` and `kubectl get events` show real activity. The synthetic node reports a Ready condition, capacity/allocatable, and a `coordination.k8s.io` **Lease** in `kube-node-lease`.
+**Events**: controllers emit standard `core/v1` Events during reconcile: `ScalingReplicaSet` (Deployment, on an actual replica-count change), `SuccessfulCreate` (ReplicaSet/StatefulSet/DaemonSet/Job/CronJob pods), `Scheduled` (Pod placement), `Started`/`Completed`. They are deduplicated by `(involvedObject, reason, message, type)` with a rolling `count`, so `kubectl describe` and `kubectl get events` show real activity. The synthetic node reports a Ready condition, capacity/allocatable, and a `coordination.k8s.io` **Lease** in `kube-node-lease`.
 
-**Opt-in Pod lifecycle progression**: by default Pods are driven straight to Running (deterministic, no kubelet). Enabling `APIServer.SetLifecycleProgression(true)` — or `cloudemu serve --k8s-progression` (env `CLOUDEMU_K8S_PROGRESSION`) — instead starts each Pod `Pending` and advances it `Pending → ContainerCreating → Running` (and `→ Terminating` on delete) on a logical clock, emitting the kubelet Event sequence at each step. In tests the transitions are driven explicitly via `Tick()` (fully deterministic under `FakeClock`); a live `cloudemu serve` runs a real-time ticker (`--k8s-progression-interval`, default 1s) so Pods visibly progress.
+**Opt-in Pod lifecycle progression**: by default Pods are driven straight to Running (deterministic, no kubelet). Enabling `APIServer.SetLifecycleProgression(true)`, or running `cloudemu serve --k8s-progression` (env `CLOUDEMU_K8S_PROGRESSION`), instead starts each Pod `Pending` and advances it `Pending → ContainerCreating → Running` (and `→ Terminating` on delete) on a logical clock, emitting the kubelet Event sequence at each step. In tests the transitions are driven explicitly via `Tick()` (fully deterministic under `FakeClock`); a live `cloudemu serve` runs a real-time ticker (`--k8s-progression-interval`, default 1s) so Pods visibly progress.
 
-**Scheduling** is a real filter-then-score scheduler, not a single fixed node. It defaults to one synthetic node (`cloudemu-node-0`, instant-Running), and `cloudemu serve --k8s-nodes N` (opt-in) seeds N nodes — 1 control-plane carrying a `node-role.kubernetes.io/control-plane:NoSchedule` taint plus workers. Placement honors `spec.nodeName`, `nodeSelector`, taints/tolerations (`NoSchedule`/`NoExecute` at schedule time), resource requests-vs-allocatable fit, **required and preferred node affinity**, inter-pod **affinity/anti-affinity** by `topologyKey`, and **topology spread** constraints, with **scoring** by preferred node/pod-(anti)affinity weights and topology-spread skew minimization (no resource-utilization bin-packing) — an unplaceable Pod stays `Pending` with `PodScheduled=False`/`Unschedulable` and a `FailedScheduling` event. The seed count is set at startup, but **nodes can be added or removed at runtime**: adding a node reschedules Pending Pods and re-fans DaemonSets, and removing one evacuates and reschedules the Pods bound to it.
+**Scheduling** is a real filter-then-score scheduler, not a single fixed node. It defaults to one synthetic node (`cloudemu-node-0`, instant-Running), and `cloudemu serve --k8s-nodes N` (opt-in) seeds N nodes: 1 control-plane node carrying a `node-role.kubernetes.io/control-plane:NoSchedule` taint plus workers. Placement honors `spec.nodeName`, `nodeSelector`, taints/tolerations (`NoSchedule`/`NoExecute` at schedule time), resource requests-vs-allocatable fit, **required and preferred node affinity**, inter-pod **affinity/anti-affinity** by `topologyKey`, and **topology spread** constraints, with **scoring** by preferred node/pod-(anti)affinity weights and topology-spread skew minimization (no resource-utilization bin-packing). An unplaceable Pod stays `Pending` with `PodScheduled=False`/`Unschedulable` and a `FailedScheduling` event. The seed count is set at startup, but **nodes can be added or removed at runtime**: adding a node reschedules Pending Pods and re-fans DaemonSets, and removing one evacuates and reschedules the Pods bound to it.
 
-**Emulation boundaries** (deliberate simplifications, not gaps): there is no real kubelet — Pods are driven Running synthetically (or through the opt-in staged progression above), `pods/log` is synthetic, and `exec`/`attach` serve a deterministic synthetic WebSocket session (banner + Success, exit 0) rather than executing anything in a real container while `pods/portforward` returns a typed 501; `tolerationSeconds` and live `NoExecute` taint-based **eviction** are modeled at schedule time only (a running Pod is not evicted when a `NoExecute` taint is added after placement); admission webhooks make outbound calls only when explicitly enabled (off by default to stay zero-network); server-side apply tracks ownership at leaf granularity (no per-element list merge); NetworkPolicy and RBAC are **queryable** (SubjectAccessReview / EvaluateNetworkPolicy) rather than request-time-enforced, since the emulator has no packet path or authenticated identity; CronJob schedules are evaluated by a ticker — on a wall-clock interval when the opt-in progression ticker is running (`--k8s-progression`), or explicitly via `TickCronJobs` in tests — and support only the standard 5-field cron syntax (nonstandard `@`-macros, `L`/`W`/`#`/`?` characters, and seconds/year fields are rejected); rollouts converge instantly (no surge/unavailable pacing, minimal revision history); and OpenAPI is served cluster-independently, so CRD schemas aren't published there (custom resources still work via discovery).
+**Emulation boundaries** (deliberate simplifications, not gaps): there is no real kubelet. Pods are driven Running synthetically (or through the opt-in staged progression above), `pods/log` is synthetic, and `exec`/`attach` serve a deterministic synthetic WebSocket session (banner + Success, exit 0) rather than executing anything in a real container while `pods/portforward` returns a typed 501; `tolerationSeconds` and live `NoExecute` taint-based **eviction** are modeled at schedule time only (a running Pod is not evicted when a `NoExecute` taint is added after placement); admission webhooks make outbound calls only when explicitly enabled (off by default to stay zero-network); server-side apply tracks ownership at leaf granularity (no per-element list merge); NetworkPolicy and RBAC are **queryable** (SubjectAccessReview / EvaluateNetworkPolicy) rather than request-time-enforced, since the emulator has no packet path or authenticated identity; CronJob schedules are evaluated by a ticker (on a wall-clock interval when the opt-in progression ticker is running with `--k8s-progression`, or explicitly via `TickCronJobs` in tests) and support only the standard 5-field cron syntax (nonstandard `@`-macros, `L`/`W`/`#`/`?` characters, and seconds/year fields are rejected); rollouts converge instantly (no surge/unavailable pacing, minimal revision history); and OpenAPI is served cluster-independently, so CRD schemas aren't published there (custom resources still work via discovery).
 
 ---
 
 ## 19. Resource Discovery
 
-**Engine:** `services/resourcediscovery/` — a cross-service inventory engine that walks the Compute, Networking, Storage, Database, Serverless, Databricks, Kubernetes, and Relational Database drivers of any provider and returns a normalized `Resource` view (provider, service, type, ID, ARN/URN, region, tags, created-at). Auto-wired by every provider factory and exposed as `Provider.ResourceDiscovery`.
+**Engine:** `services/resourcediscovery/`, a cross-service inventory engine that walks the Compute, Networking, Storage, Database, Serverless, Databricks, Kubernetes, and Relational Database drivers of any provider and returns a normalized `Resource` view (provider, service, type, ID, ARN/URN, region, tags, created-at). Auto-wired by every provider factory and exposed as `Provider.ResourceDiscovery`.
 
 **SDK-compat handlers:** AWS Resource Explorer Two + Resource Groups Tagging API, Azure Resource Graph, and GCP Cloud Asset Inventory. All three sit on top of the same engine, so a tag written through any one path is visible through the others.
 
@@ -1898,7 +1898,7 @@ It behaves like a tiny always-converged cluster (minikube-like) rather than a ba
 | `storage/Bucket` | `storage:bucket` | `microsoft.storage/storageaccounts` | `storage.googleapis.com/Bucket` |
 | `database/Table` | `database:table` | `microsoft.documentdb/databaseaccounts` | `firestore.googleapis.com/Database` |
 | `serverless/Function` | `serverless:function` | `microsoft.web/sites` | `cloudfunctions.googleapis.com/Function` |
-| `databricks/Workspace` | — | `microsoft.databricks/workspaces` | — |
+| `databricks/Workspace` | - | `microsoft.databricks/workspaces` | - |
 | `kubernetes/Cluster` | `kubernetes:cluster` | `microsoft.containerservice/managedclusters` | `container.googleapis.com/Cluster` |
 | `kubernetes/NodeGroup` | `kubernetes:nodegroup` | `microsoft.containerservice/managedclusters/agentpools` | `container.googleapis.com/NodePool` |
 
@@ -1912,20 +1912,20 @@ Relational databases follow the same pattern via a `RelationalDatabases` adapter
 |-----------|-----------|
 | `New` | `(provider, accountID, region string, drivers *Drivers) *Engine` |
 | `ListAll` | `(ctx) ([]Resource, error)` |
-| `List` | `(ctx, Query) ([]Resource, error)` — filter by `Services`, `Type`, `Region`, `Tags` |
+| `List` | `(ctx, Query) ([]Resource, error)`: filter by `Services`, `Type`, `Region`, `Tags` |
 | `SearchByTag` | `(ctx, key, value string) ([]Resource, error)` |
 | `GetTagKeys` | `(ctx) ([]string, error)` |
 | `GetTagValues` | `(ctx, key string) ([]string, error)` |
 | `TagResourceByARN` | `(ctx, arn string, tags map[string]string) error` |
 | `UntagResourceByARN` | `(ctx, arn string, keys []string) error` |
 
-### AWS — Resource Explorer 2 (`server/aws/resourceexplorer2`)
+### AWS: Resource Explorer 2 (`server/aws/resourceexplorer2`)
 
 | Operation | Notes |
 |-----------|-------|
 | `Search` | Free-text + filter expression over the unified inventory; returns ARN, resource type, region, owning account, tags |
 
-### AWS — Resource Groups Tagging API (`server/aws/resourcegroupstaggingapi`)
+### AWS: Resource Groups Tagging API (`server/aws/resourcegroupstaggingapi`)
 
 | Operation | Notes |
 |-----------|-------|
@@ -1935,11 +1935,11 @@ Relational databases follow the same pattern via a `RelationalDatabases` adapter
 | `GetTagKeys` | All tag keys across the inventory |
 | `GetTagValues` | All values for a given tag key |
 
-### Azure — Resource Graph (`server/azure/resourcegraph`)
+### Azure: Resource Graph (`server/azure/resourcegraph`)
 
 | Operation | Notes |
 |-----------|-------|
-| `Resources` | `POST /providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` — KQL-shaped query over the unified inventory; supports `subscriptions[]` scoping and `$top`/`$skipToken` pagination |
+| `Resources` | `POST /providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01`: KQL-shaped query over the unified inventory; supports `subscriptions[]` scoping and `$top`/`$skipToken` pagination |
 
 **Cost-discovery field projection.** Each row projects the `sku` (name/tier/capacity)
 and `properties` a real discoverer prices on, per Azure type:
@@ -1969,18 +1969,18 @@ Fields are seeded through the portable driver configs (`VolumeConfig.IOPS/Throug
 discovery capabilities, and the optional `BucketAttributes` / `TableAttributes` capabilities
 that enrich storage accounts and Cosmos DB) so a value set at create time round-trips over
 the real `armresourcegraph` SDK. Storage/Cosmos/serverfarms follow the established discovery
-patterns — optional type-asserted capabilities (like networking's `NetworkInterfaces`) for
+patterns: optional type-asserted capabilities (like networking's `NetworkInterfaces`) for
 per-resource enrichment, and provider-projected discovery adapters (like the relational-DB
 and Kubernetes walkers) for the net-new plan/scale-set resources.
 
-### GCP — Cloud Asset Inventory (`server/gcp/cloudasset`)
+### GCP: Cloud Asset Inventory (`server/gcp/cloudasset`)
 
 | Resource | Operations |
 |----------|-----------|
-| Assets | `assets.list` (filter by `assetTypes[]`), `searchAllResources` (query string + asset-type filter), `searchAllIamPolicies` (returns empty — out of scope) |
-| Export | `exportAssets` — synchronous, returns an `Operation` with inline results |
+| Assets | `assets.list` (filter by `assetTypes[]`), `searchAllResources` (query string + asset-type filter), `searchAllIamPolicies` (returns empty: out of scope) |
+| Export | `exportAssets`: synchronous, returns an `Operation` with inline results |
 | Feeds | `feeds.create`, `feeds.list`, `feeds.get`, `feeds.patch`, `feeds.delete` |
-| Operations | `operations.get` — fetches cached `exportAssets` results |
+| Operations | `operations.get`: fetches cached `exportAssets` results |
 | Batch | `batchGetAssetsHistory` |
 
 Operations: **Engine 8** + **AWS Resource Explorer 1** + **AWS Resource Groups Tagging 5** + **Azure Resource Graph 1** + **GCP Cloud Asset 11** = **26**
@@ -1990,7 +1990,7 @@ Operations: **Engine 8** + **AWS Resource Explorer 1** + **AWS Resource Groups T
 ## 20. Generative AI
 
 **Driver interface:** `services/bedrock/driver/driver.go`
-**AWS:** `bedrock` (+ `bedrock-runtime`) | **Azure:** — | **GCP:** —
+**AWS:** `bedrock` (+ `bedrock-runtime`) | **Azure:** none | **GCP:** none
 
 AWS-only. Backs the real `aws-sdk-go-v2/service/bedrock` and `.../bedrockruntime` clients against the in-memory backend.
 
@@ -2058,9 +2058,9 @@ AWS-only. Backs the real `aws-sdk-go-v2/service/bedrock` and `.../bedrockruntime
 ## 21. Databricks
 
 **Driver interfaces:** `services/databricks/driver/driver.go` (control plane), `services/databricks/driver/dataplane.go` (data plane)
-**AWS:** — | **Azure:** `databricks` | **GCP:** —
+**AWS:** none | **Azure:** `databricks` | **GCP:** none
 
-Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane backs the real `databricks-sdk-go` WorkspaceClient. The SDK-compat-only workspace families (secrets, tokens, git credentials, repos, DBFS, workspace files, SQL warehouses, pipelines, serving endpoints, SCIM identity, Unity Catalog) have no portable Go API — see [sdk-server.md](sdk-server.md).
+Azure-only. The control plane backs the real `armdatabricks` SDK; the data plane backs the real `databricks-sdk-go` WorkspaceClient. The SDK-compat-only workspace families (secrets, tokens, git credentials, repos, DBFS, workspace files, SQL warehouses, pipelines, serving endpoints, SCIM identity, Unity Catalog) have no portable Go API; see [sdk-server.md](sdk-server.md).
 
 ### Workspace Operations (control plane)
 
@@ -2092,7 +2092,7 @@ The rest of the `Microsoft.Databricks` ARM surface beyond workspaces
 (access connectors and peerings persist and are listed/described; a
 system-assigned access-connector identity gets synthesized principal/tenant
 IDs; a created peering springs to `Connected`/`Succeeded`), but the underlying
-Azure networking side effects are **not** simulated — a private-endpoint
+Azure networking side effects are **not** simulated. A private-endpoint
 connection stores its approval state without a real private endpoint on the
 platform side, private-link resources and outbound-dependency endpoints are a
 synthesized (workspace-scoped) catalog rather than a live probe, and a VNet
@@ -2186,7 +2186,7 @@ static catalog of the RBAC operations the namespace exposes.
 
 ## 22. Machine Learning
 
-### AWS — SageMaker AI
+### AWS: SageMaker AI
 
 **Driver interface:** `services/sagemaker/driver/driver.go` (control plane + `Runtime`)
 
@@ -2197,7 +2197,7 @@ to a terminal state so Describe/List are deterministic. Auto-metrics → CloudWa
 
 | Family | Resources / Operations |
 |--------|------------------------|
-| Jobs | Training, Processing, Transform, HyperParameterTuning, AutoML (V2), Labeling, Compilation — each Create/Describe/List/Stop |
+| Jobs | Training, Processing, Transform, HyperParameterTuning, AutoML (V2), Labeling, Compilation: each Create/Describe/List/Stop |
 | Inference | Model, EndpointConfig, Endpoint (+ UpdateEndpoint, UpdateEndpointWeightsAndCapacities), InferenceComponent |
 | Runtime | InvokeEndpoint, InvokeEndpointAsync (sagemaker-runtime) |
 | Model Registry | ModelPackageGroup, ModelPackage (versioned, approval status) |
@@ -2212,9 +2212,9 @@ SDK-compat HTTP coverage spans every family above, round-tripped against the rea
 `aws-sdk-go-v2/service/sagemaker`, `sagemakerruntime` and `sagemakerfeaturestoreruntime`
 clients. **Total: 121 operations.**
 
-### GCP — Vertex AI
+### GCP: Vertex AI
 
-**Driver interface:** `services/vertexai/driver/` — `aiplatform.googleapis.com`
+**Driver interface:** `services/vertexai/driver/` (`aiplatform.googleapis.com`)
 
 REST rooted at `/v1/projects/{p}/locations/{l}/...` with the Model Garden `generateContent`
 surface at `/v1/publishers/...`. Control-plane mutations return done
@@ -2234,7 +2234,7 @@ field). Auto-metrics → Cloud Monitoring via `SetMonitoring`.
 | ML Metadata | MetadataStore, Tensorboard, Schedule, NotebookRuntimeTemplate, NotebookRuntime |
 
 The full Go API/driver, in-memory provider, and SDK-compat HTTP server (REST round-tripped)
-cover every family above — models (+versions/evaluations), endpoints (+predict), datasets,
+cover every family above: models (+versions/evaluations), endpoints (+predict), datasets,
 custom/batch-prediction/hyperparameter-tuning jobs, training & pipeline jobs, tuning jobs,
 cached contents, Feature Store (featurestores/entityTypes/features + online read/write),
 Feature Registry & online stores, Vector Search (indexes + index endpoints), ML metadata,
@@ -2243,9 +2243,9 @@ Layer-1 wrapper (`vertexai/vertexai.go`), chaos injection (`chaos.WrapVertexAI`)
 rates integrate Vertex with the cross-cutting layers like every other service.
 **Total: 128 operations** (Go API/driver).
 
-### Azure — Azure AI
+### Azure: Azure AI
 
-**Driver interface:** `services/ai/driver/` — spans both ARM providers plus the data planes.
+**Driver interface:** `services/ai/driver/`. It spans both ARM providers plus the data planes.
 **Azure:** Azure AI Foundry / AI Studio / Azure OpenAI (`Microsoft.CognitiveServices`) and
 Azure Machine Learning (`Microsoft.MachineLearningServices`).
 
@@ -2268,7 +2268,7 @@ Azure Monitor via `SetMonitoring`.
 | AML compute | computes CRUD + list, start/stop/restart (state machine) |
 | AML endpoints | online/batchEndpoints CRUD + list, deployments CRUD + list |
 | AML jobs | jobs create/get/list/cancel |
-| AML assets | models, data, environments, components, featuresets — versioned CRUD + list (container/versions) |
+| AML assets | models, data, environments, components, featuresets: versioned CRUD + list (container/versions) |
 | AML datastores / connections / schedules | CRUD + list |
 | AML registries | cross-workspace registries CRUD + list |
 | AML scoring | online-endpoint `/score` data plane |
@@ -2276,14 +2276,14 @@ Azure Monitor via `SetMonitoring`.
 Full Go API/driver, in-memory provider, SDK-compat ARM + data-plane HTTP server, a portable
 Layer-1 wrapper (`ai/ai.go`), chaos injection (`chaos.WrapAzureAI`), and cost rates
 integrate Azure AI with the cross-cutting layers like every other service.
-**Total: 92 operations** (Go API/driver) — 31 CognitiveServices + 46 MachineLearningServices
-+ 15 data plane — all exposed over the SDK-compat HTTP server.
+**Total: 92 operations** (Go API/driver): 31 CognitiveServices + 46 MachineLearningServices
++ 15 data plane, all exposed over the SDK-compat HTTP server.
 
 ---
 
 ## 23. AI Search
 
-**Driver interface:** `services/search/driver/` — `Microsoft.Search/searchServices` (ARM control
+**Driver interface:** `services/search/driver/`: `Microsoft.Search/searchServices` (ARM control
 plane) plus the `{service}.search.windows.net` data plane.
 **Azure:** Azure AI Search (the RAG / retrieval backbone). **AWS / GCP:** _not applicable_.
 
@@ -2307,22 +2307,22 @@ push to Azure Monitor via `SetMonitoring`.
 Full Go API/driver, in-memory provider, SDK-compat ARM + data-plane HTTP server, a portable
 Layer-1 wrapper (`search/search.go`), chaos injection (`chaos.WrapAzureSearch`), and
 cost rates integrate Azure AI Search with the cross-cutting layers like every other service.
-**Total: 53 operations** (Go API/driver) — 19 control plane + 34 data plane.
+**Total: 53 operations** (Go API/driver): 19 control plane + 34 data plane.
 
 ---
 
 ## 24. Container Orchestration
 
 **Driver interface:** `services/ecs/driver/driver.go`
-**AWS:** ECS (`AmazonEC2ContainerServiceV20141113.*`, AWS JSON 1.1) | **Azure:** — | **GCP:** —
+**AWS:** ECS (`AmazonEC2ContainerServiceV20141113.*`, AWS JSON 1.1) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/ecs` clients work against the SDK-compat
 server (`awsserver.Drivers{ECS: cloud.ECS}`).
 
 **Scheduling & placement.** Container instances carry CPU/memory capacity;
 `RunTask`/services with launch type **EC2** are first-fit **placed** onto an
-instance with sufficient remaining capacity (reserving it, releasing on stop) —
-no capacity leaves the task in `failures[]` (`AGENT`/`RESOURCE:*`) or, for a
+instance with sufficient remaining capacity (reserving it, releasing on stop).
+No capacity leaves the task in `failures[]` (`AGENT`/`RESOURCE:*`) or, for a
 service, `PENDING`. **FARGATE** requires `networkConfiguration.awsvpcConfiguration`
 + an `awsvpc` task-def with cpu+memory, and synthesizes an ENI `attachment` +
 `platformVersion` (no capacity pool). `launchType` is validated against the
@@ -2341,7 +2341,7 @@ the SDK.
 
 *Accepted but not simulated* (stored and round-tripped so SDK calls succeed, but
 with no behavioral effect): `capacityProviderStrategy` (placement still falls
-through to EC2/Fargate by launch type — no FARGATE_SPOT/ASG providers),
+through to EC2/Fargate by launch type; no FARGATE_SPOT/ASG providers),
 `loadBalancers` / `serviceRegistries` (no target-group registration, health
 checks, or Service Connect), and the deployment circuit-breaker / rollback.
 Fargate task-level `cpu`/`memory` **is** validated against the supported
@@ -2355,7 +2355,7 @@ real EC2 instance subject to managed-resource visibility.
 | Family | Operations |
 |--------|-----------|
 | Clusters | CreateCluster, ListClusters, DescribeClusters, DeleteCluster (cascade-guarded), UpdateCluster, UpdateClusterSettings, PutClusterCapacityProviders |
-| Task definitions | RegisterTaskDefinition (auto-incrementing revision; the full container/task runtime surface — portMappings, environment, secrets, healthCheck, logConfiguration, mountPoints, ulimits, resourceRequirements, volumes, ephemeralStorage, runtimePlatform, proxyConfiguration, … — is accepted and round-tripped on the task definition, **not** reflected onto launched containers, which carry only name/image/status), ListTaskDefinitions, DescribeTaskDefinition, DeregisterTaskDefinition, ListTaskDefinitionFamilies |
+| Task definitions | RegisterTaskDefinition (auto-incrementing revision; the full container/task runtime surface: portMappings, environment, secrets, healthCheck, logConfiguration, mountPoints, ulimits, resourceRequirements, volumes, ephemeralStorage, runtimePlatform, proxyConfiguration, …; is accepted and round-tripped on the task definition, **not** reflected onto launched containers, which carry only name/image/status), ListTaskDefinitions, DescribeTaskDefinition, DeregisterTaskDefinition, ListTaskDefinitionFamilies |
 | Tasks | RunTask (EC2 placement / Fargate ENI), StopTask, ListTasks, DescribeTasks, ExecuteCommand |
 | Services | CreateService, UpdateService, ListServices, DescribeServices, DeleteService (force) |
 | Container instances | RegisterContainerInstance, DeregisterContainerInstance, UpdateContainerInstancesState (DRAINING), ListContainerInstances, DescribeContainerInstances |
@@ -2369,7 +2369,7 @@ real EC2 instance subject to managed-resource visibility.
 ## 25. DNS Resolver
 
 **Driver interface:** `services/route53resolver/driver/driver.go`
-**AWS:** Route 53 Resolver (`Route53Resolver.*`, AWS JSON 1.1) | **Azure:** — | **GCP:** —
+**AWS:** Route 53 Resolver (`Route53Resolver.*`, AWS JSON 1.1) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/route53resolver` clients work against the
 SDK-compat server (`awsserver.Drivers{Route53Resolver: cloud.Route53Resolver}`).
@@ -2389,11 +2389,11 @@ corresponding List once touched. Firewall rules are identified within a group by
 | Resolver rules | Create/Get/Update/Delete/ListResolverRule(s), Associate/DisassociateResolverRule, Get/ListResolverRuleAssociation(s), Put/GetResolverRulePolicy |
 | Query-log configs | Create/Get/Delete/ListResolverQueryLogConfig(s), Associate/DisassociateResolverQueryLogConfig, Get/ListResolverQueryLogConfigAssociation(s), Put/GetResolverQueryLogConfigPolicy |
 | Resolver & DNSSEC configs | Get/Update/ListResolverConfig(s), Get/Update/ListResolverDnssecConfig(s) |
-| DNS Firewall — domain lists | Create/Get/Delete/ListFirewallDomainList(s), Update/Import/ListFirewallDomains |
-| DNS Firewall — rules | Create/Update/Delete/ListFirewallRule(s), BatchCreate/BatchUpdate/BatchDeleteFirewallRule |
-| DNS Firewall — rule groups | Create/Get/Delete/ListFirewallRuleGroup(s), Put/GetFirewallRuleGroupPolicy |
-| DNS Firewall — associations | Associate/Disassociate/Get/Update/ListFirewallRuleGroupAssociation(s) |
-| DNS Firewall — configs | Get/Update/ListFirewallConfig(s), ListFirewallRuleTypes |
+| DNS Firewall: domain lists | Create/Get/Delete/ListFirewallDomainList(s), Update/Import/ListFirewallDomains |
+| DNS Firewall: rules | Create/Update/Delete/ListFirewallRule(s), BatchCreate/BatchUpdate/BatchDeleteFirewallRule |
+| DNS Firewall: rule groups | Create/Get/Delete/ListFirewallRuleGroup(s), Put/GetFirewallRuleGroupPolicy |
+| DNS Firewall: associations | Associate/Disassociate/Get/Update/ListFirewallRuleGroupAssociation(s) |
+| DNS Firewall: configs | Get/Update/ListFirewallConfig(s), ListFirewallRuleTypes |
 | Outpost resolvers | Create/Get/Update/Delete/ListOutpostResolver(s) |
 | Tagging | TagResource, UntagResource, ListTagsForResource |
 
@@ -2410,7 +2410,7 @@ policies are stored verbatim without RAM enforcement.
 ## 26. Application Networking
 
 **Driver interface:** `services/vpclattice/driver/driver.go`
-**AWS:** VPC Lattice (REST-JSON, `awsRestjson1`) | **Azure:** — | **GCP:** —
+**AWS:** VPC Lattice (REST-JSON, `awsRestjson1`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/vpclattice` clients work against the
 SDK-compat server (`awsserver.Drivers{VPCLattice: cloud.VPCLattice}`). Full
@@ -2421,7 +2421,7 @@ is selected by HTTP method + URL path (e.g. `POST /services`, `GET
 /services/{id}/listeners/{id}`, `PATCH /servicenetworks/{id}`) rather than an
 `X-Amz-Target` header. The handler gates on path root + method + **identifier
 shape**, so a path-style S3 object op on a bucket named like a Lattice root
-(e.g. `GET /services/mykey`) falls through to the S3 catch-all — only a
+(e.g. `GET /services/mykey`) falls through to the S3 catch-all. Only a
 Lattice-shaped id (a known prefix or a `vpc-lattice` ARN) is claimed. The single
 unavoidable residual is a bare `GET /<root>` (list) vs. an S3 list-bucket on an
 identically-named bucket. Identifiers accept either a bare ID or a full ARN. Union-typed fields
@@ -2461,7 +2461,7 @@ stored but not used to route real traffic.
 ## 27. Key Management (KMS)
 
 **Driver interface:** `services/kms/driver/`
-**AWS:** KMS (AWS JSON 1.1, `X-Amz-Target: TrentService.<Op>`) | **Azure:** — | **GCP:** —
+**AWS:** KMS (AWS JSON 1.1, `X-Amz-Target: TrentService.<Op>`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/kms` clients (and the `aws kms` CLI) work
 against the SDK-compat server (`awsserver.Drivers{KMS: cloud.KMS}`). Full parity
@@ -2497,7 +2497,7 @@ operation list and encryption-context constraints are **not** enforced against
 crypto calls (there is no principal to evaluate them for). Grant management
 round-trips faithfully; request-time authorization is out of scope.
 
-*Out of scope:* Custom Key Stores / CloudHSM / external (XKS) key stores — these
+*Out of scope:* Custom Key Stores / CloudHSM / external (XKS) key stores. These
 are backed by real HSM hardware or third-party stores that can't be emulated
 meaningfully. Multi-region replicas are modeled within a single process, so
 cross-region replica lookup isn't observable; `ReplicateKey`/`UpdatePrimaryRegion`
@@ -2510,7 +2510,7 @@ return wire-complete metadata but there is no second regional endpoint to query.
 ## 28. File System (EFS)
 
 **Driver interface:** `services/efs/driver/`
-**AWS:** EFS (REST-JSON, `awsRestjson1`) | **Azure:** — | **GCP:** —
+**AWS:** EFS (REST-JSON, `awsRestjson1`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/efs` clients (and the `aws efs` CLI) work
 against the SDK-compat server (`awsserver.Drivers{EFS: cloud.EFS}`). Full parity
@@ -2547,7 +2547,7 @@ queryable in a single-process emulator.
 ## 29. Certificate Manager (ACM)
 
 **Driver interface:** `services/acm/driver/`
-**AWS:** ACM (AWS JSON 1.1, `X-Amz-Target: CertificateManager.<Op>`) | **Azure:** — | **GCP:** —
+**AWS:** ACM (AWS JSON 1.1, `X-Amz-Target: CertificateManager.<Op>`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/acm` clients (and the `aws acm` CLI) work
 against the SDK-compat server (`awsserver.Drivers{ACM: cloud.ACM}`). Full parity
@@ -2556,7 +2556,7 @@ account configuration.
 
 **Certificates are real, not stubbed.** `RequestCertificate` generates a genuine
 self-signed X.509 certificate (RSA-2048, SHA-256) for the requested domain +
-SANs and — since the emulator can't perform real domain validation — auto-issues
+SANs and, since the emulator can't perform real domain validation, auto-issues
 it (status `ISSUED`) so it's immediately usable; `GetCertificate` returns
 parseable PEM. `ImportCertificate` validates and stores externally-supplied PEM;
 `ExportCertificate` returns the cert, chain, and private key; `RenewCertificate`
@@ -2582,7 +2582,7 @@ validated public certificate.
 ## 32. Data Streams (Kinesis)
 
 **Driver interface:** `services/kinesis/driver/`
-**AWS:** Kinesis Data Streams (AWS JSON 1.1, `X-Amz-Target: Kinesis_20131202.<Op>`) | **Azure:** — | **GCP:** —
+**AWS:** Kinesis Data Streams (AWS JSON 1.1, `X-Amz-Target: Kinesis_20131202.<Op>`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/kinesis` clients (and the `aws kinesis`
 CLI) work against the SDK-compat server (`awsserver.Drivers{Kinesis: cloud.Kinesis}`).
@@ -2626,7 +2626,7 @@ sequence number, and `MillisBehindLatest`. Polling via
 ## 33. Step Functions (SFN)
 
 **Driver interface:** `services/sfn/driver/`
-**AWS:** Step Functions (AWS JSON 1.0, `X-Amz-Target: AWSStepFunctions.<Op>`) | **Azure:** — | **GCP:** —
+**AWS:** Step Functions (AWS JSON 1.0, `X-Amz-Target: AWSStepFunctions.<Op>`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/sfn` clients (and the `aws stepfunctions`
 CLI) work against the SDK-compat server (`awsserver.Drivers{SFN: cloud.SFN}`).
@@ -2654,25 +2654,25 @@ Choice, Wait, Task, Parallel, Map, Succeed, and Fail** states, following
 Task Scheduled/Started/Succeeded/Failed, Parallel/Map iteration events, and the
 terminal `ExecutionSucceeded`/`ExecutionFailed`). Supported semantics:
 
-- **I/O processing** — `InputPath`, `Parameters`, `ResultSelector`,
+- **I/O processing**: `InputPath`, `Parameters`, `ResultSelector`,
   `ResultPath`, and `OutputPath` with JSONPath evaluation, including the `.$`
   reference form and merge-onto-input `ResultPath` semantics.
-- **Choice rules** — string/numeric/boolean/timestamp comparators and the
+- **Choice rules**: string/numeric/boolean/timestamp comparators and the
   `And`/`Or`/`Not` combinators (including the `...Path` variants), with `Default`.
-- **Error handling** — `Retry` (with `IntervalSeconds`/`MaxAttempts`/`BackoffRate`
+- **Error handling**: `Retry` (with `IntervalSeconds`/`MaxAttempts`/`BackoffRate`
   and `ErrorEquals` matching) and `Catch` (routing to a fallback state with the
   error carried on `ResultPath`).
-- **Intrinsic functions** — `States.Format`, `States.Array`,
+- **Intrinsic functions**: `States.Format`, `States.Array`,
   `States.ArrayGetItem`, `States.StringToJson`, `States.JsonToString`, and
   `States.UUID`.
-- **The context object** — `$$` resolves the execution/state context
+- **The context object**: `$$` resolves the execution/state context
   (`Execution.Name`, `StateMachine`, `State.EnteredTime`, …).
-- **Task → Lambda** — a `Task` whose `Resource` is `arn:aws:states:::lambda:invoke`
+- **Task → Lambda**: a `Task` whose `Resource` is `arn:aws:states:::lambda:invoke`
   (payload from `Parameters.Payload`) or a direct Lambda function ARN really
   invokes the wired Lambda backend; a `FunctionError` feeds `Retry`/`Catch`.
 
 Definitions are **validated at create time**: `CreateStateMachine` (and
-`ValidateStateMachineDefinition`) parse the ASL and reject structural errors —
+`ValidateStateMachineDefinition`) parse the ASL and reject structural errors:
 unknown `Type`, missing `Next`/`End`, a `Next`/`Default` that names no state,
 result-shaping fields on states that don't support them, malformed Choice rules,
 and out-of-range `Retry` fields. `TestState` runs a single state through the
@@ -2682,7 +2682,7 @@ and Parallel/Map nesting depth (`CloudEmu.ExecutionNestingLimitExceeded`).
 
 **Deferred (not yet interpreted):** the **JSONata** query language is rejected at
 create time (JSONPath only); the **`.sync`** and **`.waitForTaskToken`**
-service-integration patterns; and **service integrations other than Lambda** —
+service-integration patterns; and **service integrations other than Lambda**,
 including **Activity** tasks, so `GetActivityTask` still returns an empty token
 and `SendTaskSuccess/Failure/Heartbeat` reject any token as `InvalidToken`.
 `RedriveExecution` records a fresh redrive date rather than re-running.
@@ -2695,7 +2695,7 @@ records seeded through the provider's `SeedMapRun` helper.
 ## 31. Web Application Firewall (WAFv2)
 
 **Driver interface:** `services/wafv2/driver/`
-**AWS:** WAFv2 (AWS JSON 1.1, `X-Amz-Target: AWSWAF_20190729.<Op>`) | **Azure:** — | **GCP:** —
+**AWS:** WAFv2 (AWS JSON 1.1, `X-Amz-Target: AWSWAF_20190729.<Op>`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/wafv2` clients (and the `aws wafv2` CLI)
 work against the SDK-compat server (`awsserver.Drivers{WAFv2: cloud.WAFv2}`).
@@ -2732,7 +2732,7 @@ Distinct exceptions (`WAFNonexistentItemException`, `WAFDuplicateItemException`,
 real typed errors so SDK `errors.As` checks work.
 
 **Stateful additions.** `CheckCapacity` computes a deterministic, self-consistent
-WCU estimate from the submitted rules (documented, non-authoritative — the full
+WCU estimate from the submitted rules (documented, non-authoritative; the full
 WCU cost table is not modeled). Logging configurations are stored and echoed
 verbatim keyed by `ResourceArn`; permission policies are stored per rule-group
 ARN; API keys are issued as opaque base64 tokens stored per scope with their
@@ -2750,7 +2750,7 @@ hosted, and `DeleteFirewallManagerRuleGroups` echoes back the presented lock tok
 ## 30. Email Service (SES v2)
 
 **Driver interface:** `services/sesv2/driver/`
-**AWS:** SES v2 (REST-JSON `awsRestjson1`, path prefix `/v2/email/…`) | **Azure:** — | **GCP:** —
+**AWS:** SES v2 (REST-JSON `awsRestjson1`, path prefix `/v2/email/…`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/sesv2` clients (and the `aws sesv2` CLI)
 work against the SDK-compat server (`awsserver.Drivers{SESV2: cloud.SESV2}`).
@@ -2758,8 +2758,8 @@ SES v2 uses REST-JSON path + method routing under the `/v2/email/` version
 prefix, so its handler gates on that prefix ahead of the S3 catch-all.
 
 **Identities auto-verify.** `CreateEmailIdentity` marks an address or domain
-verified for sending immediately (status `SUCCESS`) — the emulator can't perform
-a real DNS/email round-trip — and domains receive three Easy-DKIM CNAME tokens.
+verified for sending immediately (status `SUCCESS`), since the emulator can't perform
+a real DNS/email round-trip, and domains receive three Easy-DKIM CNAME tokens.
 `SendEmail` validates the from-identity (the address itself or its domain must be
 a verified identity) and any referenced configuration set / template, then
 returns a generated `MessageId`; accepted messages are retained so tests can
@@ -2812,7 +2812,7 @@ the referenced identity, configuration set, or template.
 ## 34. Search & Analytics (OpenSearch)
 
 **Driver interface:** `services/opensearch/driver/`
-**AWS:** OpenSearch Service (REST-JSON `awsRestjson1`, version-path prefix `/2021-01-01/opensearch/…`) | **Azure:** — | **GCP:** —
+**AWS:** OpenSearch Service (REST-JSON `awsRestjson1`, version-path prefix `/2021-01-01/opensearch/…`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/opensearch` clients (and the `aws opensearch`
 CLI) work against the SDK-compat server (`awsserver.Drivers{OpenSearch: cloud.OpenSearch}`).
@@ -2856,7 +2856,7 @@ one cloud and has no counterpart to abstract. They are reached through the same
 endpoints as everything else; the difference is that no portable driver
 interface covers them.
 
-### GCP — networking
+### GCP: networking
 
 | Resource | Operations |
 |---|---|
@@ -2871,7 +2871,7 @@ network uses all three, and releases them when the network goes away.
 Addresses are keyed by the scope they were reserved in, so a global address and
 a regional one sharing a name stay distinct.
 
-### Azure — Resource Manager
+### Azure: Resource Manager
 
 | Resource | Operations |
 |---|---|
@@ -2891,7 +2891,7 @@ fabricate an authorization boundary that does not exist here.
 
 Two families exist in every real AWS account without anyone creating them, so
 callers reference them directly. Both are materialized on first reference,
-matched against the sets AWS actually publishes — an unrecognized name is
+matched against the sets AWS actually publishes. An unrecognized name is
 rejected, because accepting anything would let a typo through here and fail
 only in production.
 
@@ -2900,7 +2900,7 @@ only in production.
 | IAM managed policies (`arn:aws:iam::aws:policy/…`) | A catalog of real policy names, pathed ones included |
 | SSM parameters (`/aws/service/…/ami-id`) | The published image trees; the id is derived from the parameter name, so it is stable per parameter and distinct across distros |
 
-## Parameter Store — Run Command (optional capability)
+## Parameter Store: Run Command (optional capability)
 
 | Operation | Signature |
 |---|---|
@@ -2916,14 +2916,14 @@ bring-up.
 
 **Nothing executes.** An emulated instance has no guest operating system, so
 invocations report success with empty output. This exercises a caller's
-send-and-poll orchestration — that it waits for a terminal status and reads the
-response code — but not the script. A caller whose bootstrap script is wrong
+send-and-poll orchestration (that it waits for a terminal status and reads the
+response code), but not the script. A caller whose bootstrap script is wrong
 still sees success.
 
 ## 35. Audit Logging (CloudTrail)
 
 **Driver interface:** `services/cloudtrail/driver/`
-**AWS:** CloudTrail (AWS JSON 1.1, `X-Amz-Target: CloudTrail_20131101.<Op>`) | **Azure:** — | **GCP:** —
+**AWS:** CloudTrail (AWS JSON 1.1, `X-Amz-Target: CloudTrail_20131101.<Op>`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/cloudtrail` clients (and the
 `aws cloudtrail` CLI) work against the SDK-compat server
@@ -2950,7 +2950,7 @@ synthesized/limited.
 | Read-only (recorded) | LookupEvents |
 | Read-only (synthesized) | ListPublicKeys, ListInsightsData, ListInsightsMetricData, SearchSampleQueries |
 
-`CreateTrail` validates the trail name (3–128 chars, allowed charset, no
+`CreateTrail` validates the trail name (3 to 128 chars, allowed charset, no
 adjacent separators, not an IP) → `InvalidTrailNameException`, claims the name
 atomically (a duplicate is `TrailAlreadyExistsException`), stores the config and
 returns the trail ARN. `StartLogging`/`StopLogging` flip `IsLogging` (with real
@@ -2964,8 +2964,8 @@ created `ENABLED` with an ARN; a malformed EDS ARN is
 post-dispatch observer derives a CloudTrail management event from each served
 request (the operation name from `X-Amz-Target`/`Action`, the source service and
 access-key id from the SigV4 credential scope, and a read-only classification by
-verb prefix), so `LookupEvents` returns the real API activity — newest first,
-paginated, and filtered by the request's attribute/time selectors — rather than
+verb prefix), so `LookupEvents` returns the real API activity (newest first,
+paginated, and filtered by the request's attribute/time selectors) rather than
 an empty page. CloudTrail's own read-only polling is not recorded, so a client
 tailing `LookupEvents` never crowds out the activity it is observing, and the log
 is bounded. The remaining analytics surfaces stay synthesized: `ListInsightsData`,
@@ -2979,14 +2979,14 @@ Lake sample queries; and emulated imports complete instantly with no failures.
 ## 36. Configuration Management (AWS Config)
 
 **Driver interface:** `services/configservice/driver/`
-**AWS:** AWS Config (AWS JSON 1.1, `X-Amz-Target: StarlingDoveService.<Op>`) | **Azure:** — | **GCP:** —
+**AWS:** AWS Config (AWS JSON 1.1, `X-Amz-Target: StarlingDoveService.<Op>`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/configservice` clients (and the
 `aws configservice` CLI) work against the SDK-compat server
 (`awsserver.Drivers{Config: cloud.Config}`). All 102 SDK operations are wired.
-The control-plane CRUD/state paths — configuration recorders, delivery channels,
+The control-plane CRUD/state paths (configuration recorders, delivery channels,
 config rules, conformance packs, organization rules/packs, aggregators and
-authorizations, remediation, stored queries, and retention — are faithfully
+authorizations, remediation, stored queries, and retention) are faithfully
 emulated. The compliance, evaluation, discovered-resource, and aggregate-query
 read/analytics surfaces are **synthesized approximations** (see below), not full
 parity: the emulator runs no real Config recording pipeline, so they answer from
@@ -3023,7 +3023,7 @@ evaluations and roll a rule's aggregate compliance up from them (any
 NON_COMPLIANT wins). Batch mutations (`PutRemediationConfigurations`) validate
 every entry before applying any, so a bad entry never partially mutates.
 
-**Synthesized surfaces — a deliberate simplification.** The emulator runs no real
+**Synthesized surfaces (a deliberate simplification).** The emulator runs no real
 recording pipeline, so the discovered-resource and query surfaces are backed by
 what callers supply via `PutResourceConfig`: `GetResourceConfigHistory`,
 `BatchGetResourceConfig`, `ListDiscoveredResources`, `GetDiscoveredResourceCounts`
@@ -3034,7 +3034,7 @@ grammar (a projection plus an optional `WHERE resourceType = '...'` equality);
 unsupported syntax is a typed `InvalidExpressionException`. Aggregate-query
 operations validate the aggregator exists and gate results on authorization: the
 local account/region contributes data only when the aggregator selects it AND a
-matching `AggregationAuthorization` exists — an unauthorized source contributes
+matching `AggregationAuthorization` exists. An unauthorized source contributes
 nothing. Compliance summaries are derived from reported evaluations.
 `PutEvaluations` validates an opaque result token (issued per rule at create time
 and refreshed by `StartConfigRulesEvaluation`); an unknown/malformed token is
@@ -3049,7 +3049,7 @@ build-and-orchestrate testing without a dependency on real Config data.
 ## 37. Data Integration (Glue)
 
 **Driver interface:** `services/glue/driver/`
-**AWS:** Glue (AWS JSON 1.1, `X-Amz-Target: AWSGlue.<Op>`) | **Azure:** — | **GCP:** —
+**AWS:** Glue (AWS JSON 1.1, `X-Amz-Target: AWSGlue.<Op>`) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/glue` clients (and the `aws glue` CLI) work
 against the SDK-compat server (`awsserver.Drivers{Glue: cloud.Glue}`). Full
@@ -3058,7 +3058,7 @@ crawler, ETL job/run, trigger, workflow, blueprint, schema-registry,
 dev-endpoint, and tag control-plane paths model real CRUD and lifecycle state in
 memory, including enum/required-field validation (connection type, classifier
 kind, trigger type/schedule), schema-registry compatibility + dedup, and the
-`PutResourcePolicy` conditional-put — where noted below. The read/analytics
+`PutResourcePolicy` conditional-put, where noted below. The read/analytics
 surfaces (analytics, ML-transform, data-quality, integration,
 glossary/asset/form, column-statistics, session/statement, usage-profile,
 materialized-view, identity-center, and unfiltered-metadata) remain synthesized:
@@ -3094,14 +3094,14 @@ their name atomically (`memstore.SetIfAbsent`) so a duplicate is
 (`Get*`/`Batch*`/list) return deep copies so callers never alias stored maps,
 column lists, partition value lists, or parameters. `UpdateTable` appends a table
 version. `DeleteDatabase` cascades to its tables, table partitions, and UDFs;
-`DeleteTable` releases its partitions — no dependents are orphaned, and the write
+`DeleteTable` releases its partitions. No dependents are orphaned, and the write
 lock is held across the check+delete. `CatalogId` defaults to the account ID.
 Tag caps and `BatchGet*` size caps are enforced *before* any mutation, so a
 breach leaves committed state unchanged. Pagination honors `NextToken`/
 `MaxResults`; a malformed token is an `InvalidInputException`, never a silent
 page-one restart. Real ARNs are minted for registries/schemas.
 
-**No real compute or data plane — a deliberate simplification.** A `StartJobRun`
+**No real compute or data plane (a deliberate simplification).** A `StartJobRun`
 completes `SUCCEEDED` synchronously and returns its run ID; crawler, workflow,
 and blueprint runs settle immediately as well. This preserves the SDK wire
 shapes for build-and-orchestrate testing without a real Spark cluster. The
@@ -3114,7 +3114,7 @@ well-formed response body rather than fabricating fake job results or scores.
 ## 38. Threat Detection (GuardDuty)
 
 **Driver interface:** `services/guardduty/driver/`
-**AWS:** GuardDuty (REST-JSON `awsRestjson1`, path + HTTP-method routing, no version prefix) | **Azure:** — | **GCP:** —
+**AWS:** GuardDuty (REST-JSON `awsRestjson1`, path + HTTP-method routing, no version prefix) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/guardduty` clients (and the `aws guardduty`
 CLI) work against the SDK-compat server (`awsserver.Drivers{GuardDuty: cloud.GuardDuty}`).
@@ -3123,7 +3123,7 @@ segments (`detector`, `admin`, `invitation`, `tags`, `malware-scan`,
 `malware-protection-plan`, `object-malware-scan`, `organization`) and registers
 before the S3 catch-all; an S3 bucket named exactly one of those roots would be
 shadowed (a documented limitation). Full `aws-sdk-go-v2/service/guardduty`
-parity — every one of the 87 client operations is implemented.
+parity: every one of the 87 client operations is implemented.
 
 **Detectors and their children behave realistically.** `CreateDetector` mints a
 detector id atomically; child resources (IP sets, threat-intel/entity sets,
@@ -3152,19 +3152,19 @@ so concurrent tag/config mutations don't race.
 ## 39. Streaming (Managed Kafka / MSK)
 
 **Driver interface:** `services/kafka/driver/`
-**AWS:** MSK (REST-JSON `awsRestjson1`, path + HTTP-method routing under the `/v1/`, `/api/v2/`, and `/replication/v1/` version prefixes) | **Azure:** — | **GCP:** —
+**AWS:** MSK (REST-JSON `awsRestjson1`, path + HTTP-method routing under the `/v1/`, `/api/v2/`, and `/replication/v1/` version prefixes) | **Azure:** none | **GCP:** none
 
 AWS-only. Real `aws-sdk-go-v2/service/kafka` clients (and the `aws kafka` CLI)
 work against the SDK-compat server (`awsserver.Drivers{Kafka: cloud.Kafka}`). The
 handler gates on the three version prefixes plus a known root segment, so it
 registers before the S3 catch-all without shadowing it (a bucket literally named
-`v1`/`api`/`replication` would be shadowed — a documented limitation). Full
-`aws-sdk-go-v2/service/kafka` parity — every one of the 59 client operations is
+`v1`/`api`/`replication` would be shadowed, a documented limitation). Full
+`aws-sdk-go-v2/service/kafka` parity: every one of the 59 client operations is
 implemented.
 
 **Clusters behave realistically.** `CreateCluster`/`CreateClusterV2` claim the
 cluster name atomically (`ConflictException` on a duplicate) and return a cluster
-that is immediately `ACTIVE` (deterministic — no wall-clock provisioning). The v1
+that is immediately `ACTIVE` (deterministic, no wall-clock provisioning). The v1
 and v2 shapes render the same underlying cluster, so a v1-created cluster is
 describable via `DescribeClusterV2`. Each mutating op (broker count/storage/type,
 storage, configuration, version, connectivity, monitoring, security, rebalancing,
@@ -3172,7 +3172,7 @@ reboot) validates the optimistic-concurrency `CurrentVersion`, applies the chang
 records a `ClusterOperation`, and bumps the version; reads deep-copy. Broker
 counts validate real MSK's constraints (increase-only, a multiple of the AZ
 count); `CreateCluster` validates the `kafka.*` instance type and the EBS volume
-size (1–16384 GiB); a VPC connection's target cluster must exist and be
+size (1 to 16384 GiB); a VPC connection's target cluster must exist and be
 provisioned. Tags apply to all four taggable resources (clusters, configurations,
 VPC connections, replicators), routed by ARN.
 
@@ -3180,7 +3180,7 @@ VPC connections, replicators), routed by ARN.
 and every mutation applies synchronously, so a cluster never passes through the
 transient `CREATING`/`UPDATING` states and `DeleteCluster` removes it rather than
 leaving it `DELETING`. Consequently real MSK's rule "reject a mutation while the
-cluster is `CREATING`/`UPDATING`/`DELETING`" is not reproduced — back-to-back
+cluster is `CREATING`/`UPDATING`/`DELETING`" is not reproduced; back-to-back
 updates all succeed. Optimistic-concurrency `CurrentVersion` (including on
 delete) is still enforced.
 
@@ -3210,53 +3210,53 @@ delete) is still enforced.
 | Database | 21 |
 | Serverless | 26 |
 | Networking | 51 |
-| Networking — AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN / Traffic Mirroring / Network Insights / VPC Block Public Access / IPAM full incl. discovery/BYOASN/BYOIP/resolver/policy + AWS/IPAM metrics) | 162 |
-| Network Firewall — AWS | 20 |
+| Networking: AWS-specific (Transit Gateway / VPN / DHCP / prefix lists / egress-only IGW / endpoint services / Client VPN / Traffic Mirroring / Network Insights / VPC Block Public Access / IPAM full incl. discovery/BYOASN/BYOIP/resolver/policy + AWS/IPAM metrics) | 162 |
+| Network Firewall: AWS | 20 |
 | Monitoring | 12 |
 | IAM | 35 |
 | DNS | 15 |
 | Load Balancer | 21 |
 | Message Queue | 14 |
 | Cache | 16 (+7 optional) |
-| MemoryDB — AWS (Redis/Valkey control plane) | 33 (+13 optional) |
-| Keyspaces — AWS (Cassandra control plane) | 18 (+1 optional) |
-| Managed Cassandra — Azure (Cosmos DB) | 15 |
-| Bigtable — GCP (wide-column NoSQL) | 38 |
-| Cosmos DB for PostgreSQL — Azure (Citus) | 34 |
+| MemoryDB: AWS (Redis/Valkey control plane) | 33 (+13 optional) |
+| Keyspaces: AWS (Cassandra control plane) | 18 (+1 optional) |
+| Managed Cassandra: Azure (Cosmos DB) | 15 |
+| Bigtable: GCP (wide-column NoSQL) | 38 |
+| Cosmos DB for PostgreSQL: Azure (Citus) | 34 |
 | Secrets | 7 |
 | Logging | 13 |
 | Notification | 8 |
 | Container Registry | 14 |
 | Event Bus | 15 |
 | Relational Database | 21 (+117 optional) |
-| Kubernetes — AWS EKS (control plane) | 21 |
-| Kubernetes — Azure AKS (control plane) | 18 |
-| Kubernetes — GCP GKE (control plane) | 26 |
-| Kubernetes — data plane (30 resources, most × 7 verbs incl. Watch, + /scale and /status subresources) | 249 |
+| Kubernetes: AWS EKS (control plane) | 21 |
+| Kubernetes: Azure AKS (control plane) | 18 |
+| Kubernetes: GCP GKE (control plane) | 26 |
+| Kubernetes: data plane (30 resources, most × 7 verbs incl. Watch, + /scale and /status subresources) | 249 |
 | Resource Discovery (engine + AWS + Azure + GCP handlers) | 26 |
-| Generative AI — AWS Bedrock (control plane + runtime) | 65 |
-| Generative AI — AWS Bedrock Agent (control plane + runtime) | 32 |
-| Databricks — Azure (control + data plane) | 70 |
-| Machine Learning — AWS SageMaker (control plane + runtime) | 121 |
-| Machine Learning — Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
-| Machine Learning — GCP Vertex AI (Go API/driver) | 128 |
-| AI Search — Azure AI Search (control + data plane) | 53 |
-| Container Orchestration — AWS ECS | 37 |
-| DNS Resolver — AWS Route 53 Resolver | 72 |
-| Application Networking — AWS VPC Lattice | 73 |
-| Key Management — AWS KMS | 45 |
-| File System — AWS EFS | 30 |
-| Certificate Manager — AWS ACM | 17 |
-| Email Service — AWS SES v2 | 113 |
-| Web Application Firewall — AWS WAFv2 | 59 |
-| Data Streams — AWS Kinesis | 39 |
-| Step Functions — AWS SFN | 36 |
-| Search & Analytics — AWS OpenSearch | 96 |
-| Audit Logging — AWS CloudTrail | 60 |
-| Configuration Management — AWS Config | 102 |
-| Data Integration — AWS Glue | 299 |
-| Threat Detection — Amazon GuardDuty | 87 |
-| Streaming — Amazon MSK | 59 |
+| Generative AI: AWS Bedrock (control plane + runtime) | 65 |
+| Generative AI: AWS Bedrock Agent (control plane + runtime) | 32 |
+| Databricks: Azure (control + data plane) | 70 |
+| Machine Learning: AWS SageMaker (control plane + runtime) | 121 |
+| Machine Learning: Azure AI (CognitiveServices + MachineLearningServices + data plane) | 92 |
+| Machine Learning: GCP Vertex AI (Go API/driver) | 128 |
+| AI Search: Azure AI Search (control + data plane) | 53 |
+| Container Orchestration: AWS ECS | 37 |
+| DNS Resolver: AWS Route 53 Resolver | 72 |
+| Application Networking: AWS VPC Lattice | 73 |
+| Key Management: AWS KMS | 45 |
+| File System: AWS EFS | 30 |
+| Certificate Manager: AWS ACM | 17 |
+| Email Service: AWS SES v2 | 113 |
+| Web Application Firewall: AWS WAFv2 | 59 |
+| Data Streams: AWS Kinesis | 39 |
+| Step Functions: AWS SFN | 36 |
+| Search & Analytics: AWS OpenSearch | 96 |
+| Audit Logging: AWS CloudTrail | 60 |
+| Configuration Management: AWS Config | 102 |
+| Data Integration: AWS Glue | 299 |
+| Threat Detection: Amazon GuardDuty | 87 |
+| Streaming: Amazon MSK | 59 |
 | **Grand Total** | **2749** (+138 optional) |
 
 Optional operations are capabilities a driver may implement but is not required
