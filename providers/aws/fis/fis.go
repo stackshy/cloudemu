@@ -63,9 +63,11 @@ type Mock struct {
 	// templateTokens dedups CreateExperimentTemplate's clientToken;
 	// experimentTokens dedups StartExperiment's. Neither op has any other
 	// natural uniqueness key (each mints a fresh id every call), so without
-	// this a retried request mints a second resource outright.
-	templateTokens   *idempotency.Store[driver.ExperimentTemplate]
-	experimentTokens *idempotency.Store[driver.Experiment]
+	// this a retried request mints a second resource outright. The FIS API
+	// reference documents no token lifetime, so both use
+	// idempotency.DefaultTTL.
+	templateTokens   *idempotency.Store
+	experimentTokens *idempotency.Store
 }
 
 // New creates a new FIS mock with the given configuration options.
@@ -74,8 +76,8 @@ func New(opts *config.Options) *Mock {
 		templates:        memstore.New[driver.ExperimentTemplate](),
 		experiments:      memstore.New[driver.Experiment](),
 		opts:             opts,
-		templateTokens:   idempotency.New[driver.ExperimentTemplate](),
-		experimentTokens: idempotency.New[driver.Experiment](),
+		templateTokens:   idempotency.New(idempotency.DefaultTTL),
+		experimentTokens: idempotency.New(idempotency.DefaultTTL),
 	}
 }
 

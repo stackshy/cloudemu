@@ -21,6 +21,9 @@ var _ driver.ACM = (*Mock)(nil)
 
 const (
 	defaultDaysBeforeExpiry = 45
+	// requestTokenTTL is RequestCertificate's documented idempotency-token
+	// lifetime: "Idempotency tokens time out after one hour."
+	requestTokenTTL = time.Hour
 	// maxDomains is ACM's cap on domains (CN + SANs) per certificate.
 	maxDomains = 100
 	// maxTags is ACM's cap on tags per certificate.
@@ -44,7 +47,7 @@ type Mock struct {
 	// requestTokens dedups RequestCertificate's IdempotencyToken: a retried
 	// request (the network-timeout retry the token exists for) returns the
 	// ARN already minted for that token instead of a second certificate.
-	requestTokens *idempotency.Store[string]
+	requestTokens *idempotency.Store
 
 	opts *config.Options
 }
@@ -82,7 +85,7 @@ func New(opts *config.Options) *Mock {
 	return &Mock{
 		certs:         memstore.New[*certData](),
 		accountFg:     driver.AccountConfiguration{DaysBeforeExpiry: defaultDaysBeforeExpiry},
-		requestTokens: idempotency.New[string](),
+		requestTokens: idempotency.New(requestTokenTTL),
 		opts:          opts,
 	}
 }

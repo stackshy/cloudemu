@@ -38,8 +38,9 @@ type Mock struct {
 
 	// createTokens dedups CreateFHIRDatastore's ClientToken: a retried create
 	// returns the data store already provisioned for it instead of minting a
-	// second one.
-	createTokens *idempotency.Store[driver.Datastore]
+	// second one. The HealthLake API reference documents no token lifetime, so
+	// it uses idempotency.DefaultTTL.
+	createTokens *idempotency.Store
 }
 
 // New creates a new HealthLake mock with the given options.
@@ -47,7 +48,7 @@ func New(opts *config.Options) *Mock {
 	return &Mock{
 		datastores:   memstore.New[driver.Datastore](),
 		opts:         opts,
-		createTokens: idempotency.New[driver.Datastore](),
+		createTokens: idempotency.New(idempotency.DefaultTTL),
 	}
 }
 

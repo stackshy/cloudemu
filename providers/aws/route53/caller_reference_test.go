@@ -2,6 +2,7 @@ package route53
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -53,5 +54,52 @@ func TestCreateZoneEmptyCallerReferenceNeverCollides(t *testing.T) {
 		if _, err := m.CreateZone(ctx, driver.ZoneConfig{Name: "example.com"}); err != nil {
 			t.Fatalf("CreateZone without CallerReference: %v", err)
 		}
+	}
+}
+
+func TestCreateZoneCallerReferenceConcurrent(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	const n = 20
+
+	errs := make([]error, n)
+
+	var wg sync.WaitGroup
+
+	start := make(chan struct{})
+
+	for i := range n {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			<-start
+
+			_, errs[i] = m.CreateZone(ctx, driver.ZoneConfig{Name: "example.com", CallerReference: "burst"})
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	created := 0
+
+	for i := range n {
+		switch {
+		case errs[i] == nil:
+			created++
+		case !errors.IsAlreadyExists(errs[i]):
+			t.Fatalf("call %d: err = %v, want nil or AlreadyExists", i, errs[i])
+		}
+	}
+
+	zones, err := m.ListZones(ctx, scope.Scope{})
+	if err != nil {
+		t.Fatalf("ListZones: %v", err)
+	}
+
+	if created != 1 || len(zones) != 1 {
+		t.Fatalf("created=%d zones=%d, want exactly 1 zone for one CallerReference", created, len(zones))
 	}
 }

@@ -1,102 +1,205 @@
 package idempotency_test
 
 import (
+	"context"
+	"errors"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 )
 
-func TestLookupMissEmptyToken(t *testing.T) {
-	s := idempotency.New[string]()
-	now := time.Unix(0, 0)
+// fakeResources is a minimal live-record table standing in for a provider store.
+type fakeResources struct {
+	mu   sync.Mutex
+	next int
+	live map[string]string
+}
 
-	s.Put("", now, time.Minute, "value")
+func newFake() *fakeResources { return &fakeResources{live: map[string]string{}} }
 
-	if _, ok := s.Lookup("", now); ok {
-		t.Fatalf("empty token should never match")
+var errGone = errors.New("gone")
+
+func (f *fakeResources) replay(_ context.Context, id string) (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if _, ok := f.live[id]; !ok {
+		return "", errGone
+	}
+
+	return id, nil
+}
+
+func (f *fakeResources) create() (string, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	f.next++
+	id := "res-" + strconv.Itoa(f.next)
+	f.live[id] = id
+
+	return id, nil
+}
+
+func idOf(id string) string { return id }
+
+func do(s *idempotency.Store, f *fakeResources, token string, now time.Time) string {
+	out, _ := idempotency.Do(context.Background(), s, token, now, f.replay, f.create, idOf)
+
+	return out
+}
+
+func TestDoReplaysSameToken(t *testing.T) {
+	s, f, now := idempotency.New(time.Minute), newFake(), time.Unix(0, 0)
+
+	first := do(s, f, "tok", now)
+	if again := do(s, f, "tok", now); again != first {
+		t.Fatalf("same token = %q, want replay of %q", again, first)
+	}
+
+	if other := do(s, f, "tok-2", now); other == first {
+		t.Fatalf("different token replayed %q", first)
 	}
 }
 
-func TestPutThenLookupHit(t *testing.T) {
-	s := idempotency.New[string]()
-	now := time.Unix(0, 0)
+func TestDoEmptyTokenNeverDedups(t *testing.T) {
+	s, f, now := idempotency.New(time.Minute), newFake(), time.Unix(0, 0)
 
-	s.Put("tok-1", now, time.Minute, "res-1")
-
-	got, ok := s.Lookup("tok-1", now)
-	if !ok || got != "res-1" {
-		t.Fatalf("expected hit res-1, got %q ok=%v", got, ok)
+	if do(s, f, "", now) == do(s, f, "", now) {
+		t.Fatal("empty token must never replay")
 	}
 }
 
-func TestLookupExpiresAfterTTL(t *testing.T) {
-	s := idempotency.New[string]()
-	now := time.Unix(0, 0)
+func TestDoExpiresAfterTTL(t *testing.T) {
+	s, f, now := idempotency.New(time.Minute), newFake(), time.Unix(0, 0)
 
-	s.Put("tok-1", now, time.Minute, "res-1")
+	first := do(s, f, "tok", now)
 
-	if _, ok := s.Lookup("tok-1", now.Add(2*time.Minute)); ok {
-		t.Fatalf("expected expired entry to miss")
+	if got := do(s, f, "tok", now.Add(time.Minute)); got != first {
+		t.Fatalf("within ttl = %q, want %q", got, first)
+	}
+
+	if got := do(s, f, "tok", now.Add(2*time.Minute)); got == first {
+		t.Fatal("expired token must create anew")
 	}
 }
 
-func TestLookupUnknownToken(t *testing.T) {
-	s := idempotency.New[string]()
+func TestDoNonPositiveTTLRecordsNothing(t *testing.T) {
+	s, f, now := idempotency.New(0), newFake(), time.Unix(0, 0)
 
-	if _, ok := s.Lookup("nope", time.Unix(0, 0)); ok {
-		t.Fatalf("expected miss for unknown token")
+	if do(s, f, "tok", now) == do(s, f, "tok", now) {
+		t.Fatal("zero ttl must not record the token")
 	}
 }
 
-func TestPutNonPositiveTTLIsNoop(t *testing.T) {
-	s := idempotency.New[string]()
-	now := time.Unix(0, 0)
+func TestDoDeletedResourceIsMiss(t *testing.T) {
+	s, f, now := idempotency.New(time.Minute), newFake(), time.Unix(0, 0)
 
-	s.Put("tok-1", now, 0, "res-1")
+	first := do(s, f, "tok", now)
+	delete(f.live, first)
 
-	if _, ok := s.Lookup("tok-1", now); ok {
-		t.Fatalf("non-positive TTL should not store an entry")
+	second := do(s, f, "tok", now)
+	if second == first {
+		t.Fatalf("replayed deleted resource %q", first)
+	}
+
+	if got := do(s, f, "tok", now); got != second {
+		t.Fatalf("token must now replay the recreated %q, got %q", second, got)
 	}
 }
 
-func TestDeleteRemovesEntry(t *testing.T) {
-	s := idempotency.New[string]()
-	now := time.Unix(0, 0)
+func TestDoCreateErrorRecordsNothing(t *testing.T) {
+	s, f, now := idempotency.New(time.Minute), newFake(), time.Unix(0, 0)
+	boom := errors.New("boom")
 
-	s.Put("tok-1", now, time.Minute, "res-1")
-	s.Delete("tok-1")
+	_, err := idempotency.Do(context.Background(), s, "tok", now, f.replay, func() (string, error) { return "", boom }, idOf)
+	if !errors.Is(err, boom) {
+		t.Fatalf("err = %v, want boom", err)
+	}
 
-	if _, ok := s.Lookup("tok-1", now); ok {
-		t.Fatalf("expected entry to be gone after Delete")
+	if got := do(s, f, "tok", now); got != "res-1" {
+		t.Fatalf("failed create must not bind the token, got %q", got)
 	}
 }
 
-func TestDeleteEmptyTokenIsNoop(t *testing.T) {
-	s := idempotency.New[string]()
-	// Must not panic on an empty token with no entries.
-	s.Delete("")
+func TestDoConcurrentSameTokenCreatesOnce(t *testing.T) {
+	s, now := idempotency.New(time.Minute), time.Unix(0, 0)
+	f := newFake()
+
+	var creates atomic.Int32
+
+	create := func() (string, error) {
+		creates.Add(1)
+		time.Sleep(time.Millisecond) // widen the window a check-then-set race would hit
+
+		return f.create()
+	}
+
+	const n = 32
+
+	results := make([]string, n)
+
+	var wg sync.WaitGroup
+
+	for i := range n {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+
+			results[i], _ = idempotency.Do(context.Background(), s, "burst", now, f.replay, create, idOf)
+		}()
+	}
+
+	wg.Wait()
+
+	if creates.Load() != 1 {
+		t.Fatalf("create ran %d times, want exactly 1", creates.Load())
+	}
+
+	for i := range n {
+		if results[i] != results[0] {
+			t.Fatalf("caller %d got %q, want %q", i, results[i], results[0])
+		}
+	}
 }
 
-func TestConcurrentPutLookup(t *testing.T) {
-	s := idempotency.New[int]()
-	now := time.Unix(0, 0)
+func TestDoDistinctTokensDoNotSerialize(t *testing.T) {
+	s, now := idempotency.New(time.Minute), time.Unix(0, 0)
+	f := newFake()
+
+	release := make(chan struct{})
+	entered := make(chan struct{})
+
+	go func() {
+		_, _ = idempotency.Do(context.Background(), s, "slow", now, f.replay, func() (string, error) {
+			close(entered)
+			<-release
+
+			return f.create()
+		}, idOf)
+	}()
+
+	<-entered
 
 	done := make(chan struct{})
 
 	go func() {
-		for i := 0; i < 1000; i++ {
-			s.Put("tok", now, time.Minute, i)
-		}
-
+		do(s, f, "fast", now)
 		close(done)
 	}()
 
-	for i := 0; i < 1000; i++ {
-		s.Lookup("tok", now)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("a different token blocked behind an in-flight create")
 	}
 
-	<-done
+	close(release)
 }
 
 func TestScopedEmptyTokenStaysEmpty(t *testing.T) {
@@ -115,13 +218,13 @@ func TestScopedSeparatesResources(t *testing.T) {
 }
 
 func TestPutSweepsExpiredEntries(t *testing.T) {
-	s := idempotency.New[string]()
-	now := time.Unix(0, 0)
+	s, f, now := idempotency.New(time.Minute), newFake(), time.Unix(0, 0)
 
-	s.Put("old", now, time.Minute, "v1")
-	s.Put("new", now.Add(2*time.Minute), time.Minute, "v2")
+	old := do(s, f, "old", now)
+	do(s, f, "new", now.Add(2*time.Minute))
 
-	if _, ok := s.Lookup("old", now); ok {
-		t.Fatalf("expired entry should have been swept by the later Put")
+	// Rewinding the clock would re-hit a surviving entry; the sweep dropped it.
+	if got := do(s, f, "old", now); got == old {
+		t.Fatalf("expired entry %q should have been swept by the later create", old)
 	}
 }

@@ -52,13 +52,13 @@ const workspaceIDPrefix = "ws-"
 type Mock struct {
 	workspaces *memstore.Store[driver.Workspace]
 
-	// workspaceTokens dedups CreateWorkspace's clientToken; rgTokens dedups
-	// CreateRuleGroupsNamespace's, keyed on the token alone (both operations
-	// mint a fresh identity with no other natural uniqueness key, so a retried
-	// request would otherwise create a second resource / hit a spurious
-	// conflict).
-	workspaceTokens *idempotency.Store[driver.Workspace]
-	rgTokens        *idempotency.Store[string]
+	// workspaceTokens dedups CreateWorkspace's clientToken (a retry would
+	// otherwise mint a second workspace); rgTokens dedups
+	// CreateRuleGroupsNamespace's, scoped to workspace+name (a retry would
+	// otherwise hit a spurious name conflict). Neither API reference documents
+	// a token lifetime, so both use idempotency.DefaultTTL.
+	workspaceTokens *idempotency.Store
+	rgTokens        *idempotency.Store
 
 	opts *config.Options
 }
@@ -67,8 +67,8 @@ type Mock struct {
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		workspaces:      memstore.New[driver.Workspace](),
-		workspaceTokens: idempotency.New[driver.Workspace](),
-		rgTokens:        idempotency.New[string](),
+		workspaceTokens: idempotency.New(idempotency.DefaultTTL),
+		rgTokens:        idempotency.New(idempotency.DefaultTTL),
 		opts:            opts,
 	}
 }

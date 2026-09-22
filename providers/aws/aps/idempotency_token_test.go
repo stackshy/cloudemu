@@ -2,6 +2,7 @@ package aps_test
 
 import (
 	"context"
+	"sync"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/services/aps/driver"
@@ -100,5 +101,133 @@ func TestCreateRuleGroupsNamespaceTokenAfterDelete(t *testing.T) {
 
 	if _, err = m.DescribeRuleGroupsNamespace(ctx, ws.WorkspaceID, "rg"); err != nil {
 		t.Fatalf("namespace should exist after recreate: %v", err)
+	}
+}
+
+func TestCreateWorkspaceTokenAfterDelete(t *testing.T) {
+	ctx := context.Background()
+	m := newMock()
+
+	in := &driver.CreateWorkspaceInput{Alias: "prod", ClientToken: "g1"}
+
+	first, err := m.CreateWorkspace(ctx, in)
+	requireNoError(t, err)
+	requireNoError(t, m.DeleteWorkspace(ctx, first.WorkspaceID))
+
+	again, err := m.CreateWorkspace(ctx, in)
+	requireNoError(t, err)
+
+	if again.WorkspaceID == first.WorkspaceID {
+		t.Fatalf("same-token create after delete replayed the deleted workspace %s", first.WorkspaceID)
+	}
+
+	if _, err = m.DescribeWorkspace(ctx, again.WorkspaceID); err != nil {
+		t.Fatalf("workspace returned after delete must exist: %v", err)
+	}
+}
+
+func TestCreateWorkspaceTokenAfterUpdate(t *testing.T) {
+	ctx := context.Background()
+	m := newMock()
+
+	in := &driver.CreateWorkspaceInput{Alias: "prod", ClientToken: "g1"}
+
+	first, err := m.CreateWorkspace(ctx, in)
+	requireNoError(t, err)
+	requireNoError(t, m.UpdateWorkspaceAlias(ctx, first.WorkspaceID, "renamed"))
+
+	retry, err := m.CreateWorkspace(ctx, in)
+	requireNoError(t, err)
+
+	if retry.WorkspaceID != first.WorkspaceID {
+		t.Fatalf("same-token retry = %s, want %s", retry.WorkspaceID, first.WorkspaceID)
+	}
+
+	if retry.Alias != "renamed" {
+		t.Fatalf("replay alias = %q, want the live alias %q", retry.Alias, "renamed")
+	}
+}
+
+func TestCreateWorkspaceTokenConcurrent(t *testing.T) {
+	ctx := context.Background()
+	m := newMock()
+
+	const n = 20
+
+	ids := make([]string, n)
+	errs := make([]error, n)
+
+	var wg sync.WaitGroup
+
+	start := make(chan struct{})
+
+	for i := range n {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			<-start
+
+			ws, err := m.CreateWorkspace(ctx, &driver.CreateWorkspaceInput{Alias: "prod", ClientToken: "burst"})
+			if err == nil {
+				ids[i] = ws.WorkspaceID
+			}
+
+			errs[i] = err
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	for i := range n {
+		requireNoError(t, errs[i])
+
+		if ids[i] != ids[0] {
+			t.Fatalf("call %d returned %s, want the single workspace %s", i, ids[i], ids[0])
+		}
+	}
+
+	list, _, err := m.ListWorkspaces(ctx, "", driver.Page{})
+	requireNoError(t, err)
+
+	if len(list) != 1 {
+		t.Fatalf("workspace count = %d, want exactly 1 for one token", len(list))
+	}
+}
+
+func TestCreateRuleGroupsNamespaceTokenConcurrent(t *testing.T) {
+	ctx := context.Background()
+	m := newMock()
+	ws := createWorkspace(t, m, "prod")
+
+	const n = 20
+
+	errs := make([]error, n)
+
+	var wg sync.WaitGroup
+
+	start := make(chan struct{})
+
+	for i := range n {
+		wg.Add(1)
+
+		go func() {
+			defer wg.Done()
+			<-start
+
+			_, errs[i] = m.CreateRuleGroupsNamespace(ctx, &driver.RuleGroupsNamespaceInput{
+				WorkspaceID: ws.WorkspaceID, Name: "rg", Data: "ZGF0YQ==", ClientToken: "burst",
+			})
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+
+	// Every caller shares one token, so each is a retry of the same create:
+	// none may see a spurious ConflictException from its sibling.
+	for i := range n {
+		requireNoError(t, errs[i])
 	}
 }

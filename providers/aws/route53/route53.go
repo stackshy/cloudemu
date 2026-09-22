@@ -26,6 +26,11 @@ type Mock struct {
 	healthChecks *memstore.Store[driver.HealthCheckInfo]
 	opts         *config.Options
 
+	// createMu makes CreateZone's CallerReference check and the zone insert
+	// one atomic step, so concurrent creates sharing a CallerReference yield
+	// exactly one zone and HostedZoneAlreadyExists for the rest.
+	createMu sync.Mutex
+
 	tagsMu   sync.Mutex
 	tagsByID map[string]map[string]string // ResourceId -> tags
 }
@@ -146,6 +151,9 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "zone name is required")
 	}
+
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
 
 	if m.callerReferenceInUse(cfg.CallerReference) {
 		return nil, errors.Newf(errors.AlreadyExists,

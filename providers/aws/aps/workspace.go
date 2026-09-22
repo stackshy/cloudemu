@@ -11,36 +11,34 @@ import (
 // CreateWorkspace provisions a new workspace directly in the ACTIVE state with
 // stable computed fields (workspaceId, arn, prometheusEndpoint, createdAt). The
 // alias, kmsKeyArn and tags are stored as supplied. A repeated ClientToken
-// within the dedup window returns the workspace already minted for it instead
-// of provisioning a second one.
-func (m *Mock) CreateWorkspace(_ context.Context, in *driver.CreateWorkspaceInput) (*driver.Workspace, error) {
+// within the dedup window returns the live workspace already minted for it (as
+// it reads now, after any update) instead of provisioning a second one; once
+// that workspace is deleted the token creates afresh.
+func (m *Mock) CreateWorkspace(ctx context.Context, in *driver.CreateWorkspaceInput) (*driver.Workspace, error) {
 	now := m.now()
 
-	if cached, ok := m.workspaceTokens.Lookup(in.ClientToken, now); ok {
-		out := copyWorkspace(&cached)
+	return idempotency.Do(ctx, m.workspaceTokens, in.ClientToken, now, m.DescribeWorkspace,
+		func() (*driver.Workspace, error) {
+			id := newWorkspaceID()
 
-		return &out, nil
-	}
+			ws := driver.Workspace{
+				WorkspaceID:        id,
+				Arn:                m.workspaceARN(id),
+				Alias:              in.Alias,
+				Status:             driver.StatusActive,
+				KmsKeyArn:          in.KmsKeyArn,
+				PrometheusEndpoint: m.prometheusEndpoint(id),
+				CreatedAt:          now,
+				Tags:               copyTags(in.Tags),
+			}
 
-	id := newWorkspaceID()
+			m.workspaces.Set(id, ws)
 
-	ws := driver.Workspace{
-		WorkspaceID:        id,
-		Arn:                m.workspaceARN(id),
-		Alias:              in.Alias,
-		Status:             driver.StatusActive,
-		KmsKeyArn:          in.KmsKeyArn,
-		PrometheusEndpoint: m.prometheusEndpoint(id),
-		CreatedAt:          now,
-		Tags:               copyTags(in.Tags),
-	}
+			out := copyWorkspace(&ws)
 
-	m.workspaces.Set(id, ws)
-
-	out := copyWorkspace(&ws)
-	m.workspaceTokens.Put(in.ClientToken, now, idempotency.DefaultTTL, copyWorkspace(&ws))
-
-	return &out, nil
+			return &out, nil
+		},
+		func(ws *driver.Workspace) string { return ws.WorkspaceID })
 }
 
 // DescribeWorkspace returns a copy of the workspace. The stored workspaceId,

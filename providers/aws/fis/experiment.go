@@ -14,17 +14,19 @@ import (
 // experiment stays running (a stable state) until StopExperiment moves it to the
 // stopped terminal state; id, arn, state, creationTime and startTime are minted
 // once and stable across reads. A repeated clientToken within the dedup window
-// returns the experiment already started for it instead of starting a second
-// one.
-func (m *Mock) StartExperiment(_ context.Context, in *driver.StartExperimentInput) (*driver.Experiment, error) {
+// returns the experiment already started for it — re-read through
+// GetExperiment, so the replay reports its current state rather than the
+// create-time snapshot — instead of starting a second one.
+func (m *Mock) StartExperiment(ctx context.Context, in *driver.StartExperimentInput) (*driver.Experiment, error) {
 	now := m.now()
 
-	if cached, ok := m.experimentTokens.Lookup(in.ClientToken, now); ok {
-		out := copyExperiment(&cached)
+	return idempotency.Do(ctx, m.experimentTokens, in.ClientToken, now, m.GetExperiment,
+		func() (*driver.Experiment, error) { return m.startExperiment(in, now) },
+		func(e *driver.Experiment) string { return e.ID })
+}
 
-		return &out, nil
-	}
-
+// startExperiment validates the request and starts one new experiment.
+func (m *Mock) startExperiment(in *driver.StartExperimentInput, now time.Time) (*driver.Experiment, error) {
 	if in.ExperimentTemplateID == "" {
 		return nil, validation("experimentTemplateId is required")
 	}
@@ -60,7 +62,6 @@ func (m *Mock) StartExperiment(_ context.Context, in *driver.StartExperimentInpu
 	}
 
 	m.experiments.Set(id, e)
-	m.experimentTokens.Put(in.ClientToken, now, idempotency.DefaultTTL, copyExperiment(&e))
 
 	out := copyExperiment(&e)
 

@@ -44,8 +44,10 @@ type Mock struct {
 	// scheduleTokens dedups CreateSchedule's ClientToken: a retried create
 	// otherwise resends the same group+name key and hits the
 	// already-exists conflict below instead of returning the original
-	// schedule. Values are the schedule's store key.
-	scheduleTokens *idempotency.Store[string]
+	// schedule. Values are the schedule's store key. The Scheduler API
+	// reference documents no token lifetime, so it uses
+	// idempotency.DefaultTTL.
+	scheduleTokens *idempotency.Store
 }
 
 // New creates a new Scheduler mock with the given configuration options.
@@ -54,7 +56,7 @@ func New(opts *config.Options) *Mock {
 		schedules:      memstore.New[driver.Schedule](),
 		groups:         memstore.New[driver.ScheduleGroup](),
 		opts:           opts,
-		scheduleTokens: idempotency.New[string](),
+		scheduleTokens: idempotency.New(idempotency.DefaultTTL),
 	}
 	m.defaultGroupTime = m.now()
 

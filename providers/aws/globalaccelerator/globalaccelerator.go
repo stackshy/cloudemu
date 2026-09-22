@@ -81,21 +81,28 @@ type Mock struct {
 	attributes     *memstore.Store[driver.AcceleratorAttributes]
 	opts           *config.Options
 
-	// acceleratorTokens dedups CreateAccelerator's IdempotencyToken: a retried
-	// create returns the accelerator already provisioned for it (same ARN and
-	// static IPs) instead of minting a second one.
-	acceleratorTokens *idempotency.Store[driver.Accelerator]
+	// acceleratorTokens, listenerTokens and endpointGroupTokens dedup the
+	// IdempotencyToken of CreateAccelerator, CreateListener and
+	// CreateEndpointGroup: a retried create returns the resource already
+	// provisioned for it (same ARN, static IPs) instead of minting a second one.
+	// The Global Accelerator API reference documents no token lifetime, so all
+	// three use idempotency.DefaultTTL.
+	acceleratorTokens   *idempotency.Store
+	listenerTokens      *idempotency.Store
+	endpointGroupTokens *idempotency.Store
 }
 
 // New creates a new Global Accelerator mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		accelerators:      memstore.New[driver.Accelerator](),
-		listeners:         memstore.New[driver.Listener](),
-		endpointGroups:    memstore.New[driver.EndpointGroup](),
-		attributes:        memstore.New[driver.AcceleratorAttributes](),
-		opts:              opts,
-		acceleratorTokens: idempotency.New[driver.Accelerator](),
+		accelerators:        memstore.New[driver.Accelerator](),
+		listeners:           memstore.New[driver.Listener](),
+		endpointGroups:      memstore.New[driver.EndpointGroup](),
+		attributes:          memstore.New[driver.AcceleratorAttributes](),
+		opts:                opts,
+		acceleratorTokens:   idempotency.New(idempotency.DefaultTTL),
+		listenerTokens:      idempotency.New(idempotency.DefaultTTL),
+		endpointGroupTokens: idempotency.New(idempotency.DefaultTTL),
 	}
 }
 

@@ -12,11 +12,11 @@ import (
 // arn and creation timestamp. The group must exist; the target,
 // flexible-time-window and start/end dates are carried verbatim. A repeated
 // ClientToken within the dedup window returns the schedule already created for
-// it instead of hitting the already-exists check below — a retried create
+// it (as it reads now, after any update) instead of hitting the already-exists check — a retried create
 // resends the same group+name and would otherwise get a spurious
 // ConflictException instead of its original result. The token is scoped to the
 // group+name it was sent for and only replays while that schedule still exists.
-func (m *Mock) CreateSchedule(_ context.Context, in *driver.ScheduleInput) (*driver.Schedule, error) {
+func (m *Mock) CreateSchedule(ctx context.Context, in *driver.ScheduleInput) (*driver.Schedule, error) {
 	if err := validateScheduleInput(in); err != nil {
 		return nil, err
 	}
@@ -24,31 +24,26 @@ func (m *Mock) CreateSchedule(_ context.Context, in *driver.ScheduleInput) (*dri
 	now := m.now()
 	group := resolveGroup(in.GroupName)
 	key := scheduleKey(group, in.Name)
-	token := idempotency.Scoped(in.ClientToken, key)
 
-	if _, ok := m.scheduleTokens.Lookup(token, now); ok {
-		if s, exists := m.schedules.Get(key); exists {
-			out := copySchedule(&s)
+	return idempotency.Do(ctx, m.scheduleTokens, idempotency.Scoped(in.ClientToken, key), now,
+		func(ctx context.Context, _ string) (*driver.Schedule, error) {
+			return m.GetSchedule(ctx, group, in.Name)
+		},
+		func() (*driver.Schedule, error) {
+			if !m.groupExists(group) {
+				return nil, notFound("schedule group %q does not exist", group)
+			}
+
+			sched := m.buildSchedule(in, group, now, now)
+			if !m.schedules.SetIfAbsent(key, sched) {
+				return nil, conflict("schedule %q already exists in group %q", in.Name, group)
+			}
+
+			out := copySchedule(&sched)
 
 			return &out, nil
-		}
-	}
-
-	if !m.groupExists(group) {
-		return nil, notFound("schedule group %q does not exist", group)
-	}
-
-	if m.schedules.Has(key) {
-		return nil, conflict("schedule %q already exists in group %q", in.Name, group)
-	}
-
-	sched := m.buildSchedule(in, group, now, now)
-	m.schedules.Set(key, sched)
-	m.scheduleTokens.Put(token, now, idempotency.DefaultTTL, key)
-
-	out := copySchedule(&sched)
-
-	return &out, nil
+		},
+		func(*driver.Schedule) string { return key })
 }
 
 // GetSchedule returns a copy of the schedule. The stored computed fields are
