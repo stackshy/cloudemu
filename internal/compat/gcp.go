@@ -49,8 +49,8 @@ func BootGCP(tb TB, d gcpserver.Drivers) *GCPSession {
 // Endpoint().
 func (g *GCPSession) Transport() *http.Client { return g.transport }
 
-// StorageClient returns a real GCS client pointed at the emulator (anonymous;
-// retries disabled). The /storage/v1/ suffix is required — the SDK appends
+// StorageClient returns a real GCS client pointed at the emulator (anonymous,
+// retries disabled). The /storage/v1/ suffix is required: the SDK appends
 // /b/... directly to the endpoint.
 func (g *GCPSession) StorageClient(ctx context.Context) (*storage.Client, error) {
 	c, err := storage.NewClient(ctx,

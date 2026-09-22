@@ -23,7 +23,7 @@ const (
 // subtest so each one starts from an empty, isolated backend.
 //
 // Only the lifecycle surface genuinely shared across AWS EC2, Azure VM and GCP
-// GCE is encoded here — RunInstances/DescribeInstances/Start/Stop/Reboot/
+// GCE is encoded here: RunInstances/DescribeInstances/Start/Stop/Reboot/
 // Terminate/ModifyInstance and the instance-id/instance-type/instance-state-name/
 // tag: filters. Provider-only capabilities (Azure PowerOff vs Deallocate, AWS
 // launch templates/spot/volumes/snapshots/images/key pairs, ...) stay out of
@@ -284,7 +284,7 @@ func testLifecycleUnknownID(t *testing.T, d computedriver.Compute) {
 // testTerminate covers TerminateInstances' shared contract: a terminated
 // instance settles at StateTerminated and stays describable (none of the
 // three providers delete the record), a second Terminate on it is rejected
-// (FailedPrecondition — none of the three define a transition out of
+// (FailedPrecondition, since none of the three define a transition out of
 // terminated), and Start/Stop/Reboot against a terminated instance are
 // likewise rejected.
 func testTerminate(t *testing.T, d computedriver.Compute) {
@@ -311,7 +311,7 @@ func testTerminate(t *testing.T, d computedriver.Compute) {
 
 // testModifyInstance covers ModifyInstance's shared contract: it requires the
 // target instance to be stopped (FailedPrecondition otherwise), rejects an
-// unknown ID with NotFound, and — once stopped — applies InstanceType and
+// unknown ID with NotFound, and once stopped applies InstanceType and
 // merges Tags, both visible on the next DescribeInstances.
 func testModifyInstance(t *testing.T, d computedriver.Compute) {
 	t.Helper()

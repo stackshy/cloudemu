@@ -15,7 +15,7 @@ const driversStructName = "Drivers"
 // checkRegistrations cross-references, for every provider, the services its
 // Provider factory actually implements (Service.Providers, populated by
 // attachProviders) against the driver-typed fields server/<cloud>/<cloud>.go's
-// Drivers struct declares AND reads inside New() — i.e. actually wires to a
+// Drivers struct declares AND reads inside New(), i.e. actually wires to a
 // registered handler.
 //
 // A service with a driver interface and a populated provider field but no

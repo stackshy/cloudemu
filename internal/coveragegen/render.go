@@ -212,7 +212,7 @@ func renderProviderPage(outDir, prov, native string, svc *Service) string {
 // provider is credited only when its mock has every method of the capability's
 // interface (a satisfied type assertion), so a provider page never claims a
 // capability it does not implement (e.g. OCI's VCN page must not list AWS-only
-// TransitGateways/IPAM). A single overlapping method is not enough — several
+// TransitGateways/IPAM). A single overlapping method is not enough: several
 // interfaces share a name like DeleteNetworkInterface.
 func renderCapabilities(b *strings.Builder, prov string, svc *Service) {
 	methods := svc.providerMethods[prov]

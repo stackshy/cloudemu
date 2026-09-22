@@ -5,8 +5,8 @@
 // A cluster's advertised CA has to certify the data plane it points at, or it
 // is decoration: a client building a rest.Config from the cluster's endpoint +
 // CA would present that CA to a server whose serving certificate it did not
-// sign, and the TLS handshake would fail. Keeping one CA here — used by both
-// the serving TLS config and all three providers' advertised CA — makes the
+// sign, and the TLS handshake would fail. Keeping one CA here, used by both
+// the serving TLS config and all three providers' advertised CA, makes the
 // three connect paths validate identically.
 package k8spki
 
@@ -95,7 +95,7 @@ func CertificatePEM() string {
 
 // ServingTLSConfig returns a TLS config for the Kubernetes data plane carrying a
 // leaf signed by the advertised CA, with SANs for the given hosts. Serving the
-// data plane with this is what makes the advertised CA true — a client can
+// data plane with this is what makes the advertised CA true: a client can
 // validate the endpoint against it.
 func ServingTLSConfig(hosts []string) (*tls.Config, error) {
 	ca, err := loadCA()
@@ -110,7 +110,7 @@ func ServingTLSConfig(hosts []string) (*tls.Config, error) {
 
 	// A distinct random serial per leaf: ServingTLSConfig is called once per
 	// listener/test, each minting a fresh key, so a fixed serial would present
-	// two different public keys under the same (issuer, serial) — which strict,
+	// two different public keys under the same (issuer, serial), which strict,
 	// non-Go verifiers (the cross-SDK parity this package promises) can reject.
 	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), serialBits))
 	if err != nil {

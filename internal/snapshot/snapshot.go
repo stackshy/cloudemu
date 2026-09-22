@@ -1,7 +1,7 @@
 // Package snapshot defines the optional per-driver snapshotting contract a mock
 // implements so persist can capture and restore its state identity-preservingly.
 //
-// It is a leaf package — it imports only context and encoding/json — so any mock
+// It is a leaf package: it imports only context and encoding/json, so any mock
 // can implement Snapshottable without risking an import cycle back into persist,
 // exactly like internal/memstore. persist type-asserts each driver to this
 // interface and falls back to its bespoke path for mocks that do not implement
@@ -18,7 +18,7 @@ import (
 // Snapshottable is implemented by a service mock that can serialize its entire
 // in-memory state to JSON and restore it under the same identities (resource
 // IDs, cross-reference keys), so a snapshot/restore round-trip is transparent to
-// clients — unlike a driver-level replay that mints fresh IDs.
+// clients, unlike a driver-level replay that mints fresh IDs.
 //
 // includeAssets selects whether large object bodies (e.g. S3 object bytes) are
 // captured; false yields a metadata-only snapshot. Restore is called on a
@@ -35,7 +35,7 @@ type Snapshottable interface {
 // "EC2"->"ec2", "VPC"->"vpc"): a deterministic, build-independent identifier so
 // a snapshot restores into the same service across runs. persist iterates this
 // map, so the persisted surface automatically tracks whichever services
-// implement Snapshottable — no hand-kept registry that can drift.
+// implement Snapshottable, with no hand-kept registry that can drift.
 //
 // This is a one-shot enumeration run at snapshot/restore time (not a hot path).
 // A nil pointer field, an unexported field, or a field that does not implement
