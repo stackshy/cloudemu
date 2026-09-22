@@ -19,7 +19,7 @@ import (
 // client. Artifact Registry maps onto the portable "containerregistry" driver,
 // so operation names match AWS ECR's in docs/coverage/coverage.json.
 //
-// The v1 REST API only exposes repository CRUD + a dockerImages list — image
+// The v1 REST API only exposes repository CRUD + a dockerImages list. Image
 // mutation (PutImage/TagImage/DeleteImage), scanning and lifecycle policies
 // have no REST surface, so those coverage ops are gaps for GCP and are not
 // asserted here.
@@ -90,7 +90,7 @@ func TestGCPContainerRegistryCompat(t *testing.T) {
 		return nil
 	})
 
-	// Artifact Registry has no REST "push image" call — images arrive via
+	// Artifact Registry has no REST "push image" call; images arrive via
 	// docker push. Seed one through the driver so the SDK ListImages below has
 	// something to return. This is setup, not an attributed compat op.
 	if _, err := provider.ArtifactRegistry.PutImage(ctx, &crdriver.ImageManifest{
@@ -157,7 +157,7 @@ func TestArtifactRegistryPackageVersionDelete(t *testing.T) {
 		t.Fatalf("create repo: %v (done=%v)", err, createOp != nil && createOp.Done)
 	}
 
-	// Seed two images (distinct digests) — one exercised via packages.delete, the
+	// Seed two images (distinct digests): one exercised via packages.delete, the
 	// other via versions.delete.
 	seed := func(tag string) string {
 		img, perr := provider.ArtifactRegistry.PutImage(ctx, &crdriver.ImageManifest{

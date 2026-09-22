@@ -2,7 +2,7 @@
 // init → apply → plan → destroy against an in-process CloudEmu AWS wire server,
 // proving CloudEmu is IaC-compatible. The load-bearing assertion is the
 // post-apply plan: it must report NO changes (exit 0). A change means a
-// resource read did not round-trip what apply wrote — a "perpetual diff" — the
+// resource read did not round-trip what apply wrote (a "perpetual diff"), the
 // class of wire-fidelity bug this suite exists to catch.
 package terraform_test
 
@@ -42,7 +42,7 @@ func TestTerraformApplyIsIdempotent(t *testing.T) {
 func applyFixture(t *testing.T, fixture, bin string) {
 	t.Helper()
 
-	// In-process AWS wire server — no subprocess, no Docker.
+	// In-process AWS wire server, no subprocess, no Docker.
 	srv := httptest.NewServer(awsserver.NewFromProvider(cloudemu.NewAWS()))
 	defer srv.Close()
 
@@ -69,7 +69,7 @@ func applyFixture(t *testing.T, fixture, bin string) {
 	assert.False(t, changed, "plan after apply reports changes → a resource read did not round-trip")
 
 	// Destroy must succeed (the config still declares the resources, so a plan
-	// after destroy naturally wants to re-create them — success is the signal).
+	// after destroy naturally wants to re-create them; success is the signal).
 	require.NoError(t, tf.Destroy(ctx, endpoint), "terraform destroy")
 }
 

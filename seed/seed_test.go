@@ -100,7 +100,7 @@ func TestLoadMalformed(t *testing.T) {
 }
 
 // TestApplyValidationRejectsBeforeWriting is the important guard: an invalid
-// fixture (here, a table with no partition key — whose items would otherwise
+// fixture (here, a table with no partition key, whose items would otherwise
 // silently collapse to one key) must be rejected, and nothing created.
 func TestApplyValidationRejectsBeforeWriting(t *testing.T) {
 	ctx := context.Background()

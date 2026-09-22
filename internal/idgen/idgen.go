@@ -51,8 +51,8 @@ const secretARNSuffixLen = 6
 
 // SecretARNSuffix returns a fresh random 6-character alphanumeric suffix,
 // matching the trailing "-XXXXXX" AWS adds to a Secrets Manager ARN's resource
-// segment. Real Secrets Manager draws a new suffix on every CreateSecret call —
-// including when a secret is deleted and recreated under the same name — so
+// segment. Real Secrets Manager draws a new suffix on every CreateSecret call,
+// including when a secret is deleted and recreated under the same name, so
 // the old ARN never accidentally resolves to the new secret; callers must
 // generate it once at creation time and persist the resulting ARN (it is not
 // re-derivable from the name). It draws from crypto/rand; a random source
@@ -78,7 +78,7 @@ func SecretARNSuffix() string {
 
 // SyntheticGUID derives a deterministic GUID-shaped string from seed. The value
 // is synthetic (a stand-in for an Azure principal/tenant id), not a real
-// security identifier — the same seed always yields the same GUID so tests are
+// security identifier: the same seed always yields the same GUID so tests are
 // stable.
 func SyntheticGUID(seed string) string {
 	h1 := fnv.New64a()
@@ -152,7 +152,7 @@ func TempAccessKeyID() string { return "ASIA" + randString(accessKeyRandLen, bas
 // longIDRandLen is the hex-suffix length AWS's newer resource ids use.
 const longIDRandLen = 17
 
-// GenerateLongID returns prefix followed by a 17-character lowercase hex suffix —
+// GenerateLongID returns prefix followed by a 17-character lowercase hex suffix,
 // the length AWS's newer resource ids use (e.g. VPC Lattice svc-/sn-/tg-/rule-).
 // The SDKs validate these client-side, so the legacy 8-char GenerateID is too
 // short and is rejected before the request is sent.

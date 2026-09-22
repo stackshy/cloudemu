@@ -11,8 +11,8 @@ import (
 )
 
 // restoreState loads the snapshot at path (if any) into the freshly-built
-// providers and the shared Kubernetes data plane. A missing file is not an error
-// — the server just starts empty, exactly as it does without --persist. Providers
+// providers and the shared Kubernetes data plane. A missing file is not an error:
+// the server just starts empty, exactly as it does without --persist. Providers
 // present in the snapshot but not running now are skipped. k8s may be nil (the
 // data plane is disabled), in which case any persisted Kubernetes state is left
 // alone.
@@ -23,7 +23,7 @@ func restoreState(
 	snap, err := persist.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return nil // first run — nothing to restore
+			return nil // first run, nothing to restore
 		}
 
 		// A corrupt / truncated / unknown-schema snapshot must not wedge startup
@@ -68,8 +68,8 @@ func restoreKubernetes(ctx context.Context, snap *persist.Snapshot, k8s *kuberne
 //
 // The ordering is a correctness requirement, not a preference: a CreateCluster
 // completing between the two captures inserts a provider-side UID whose
-// ClusterState a later Kubernetes capture would still see, but never the reverse
-// — so capturing providers first bounds the race to the harmless direction (an
+// ClusterState a later Kubernetes capture would still see, but never the reverse.
+// Capturing providers first bounds the race to the harmless direction (an
 // orphan ClusterState with no provider reference), never a dangling provider UID
 // that restores to a 404.
 func exportSnapshot(

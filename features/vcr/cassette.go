@@ -8,7 +8,7 @@
 // Matching is deterministic on method + path + canonical query + a hash of the
 // request body (see Request). Fuzzy/normalized matching, response-body secret
 // redaction beyond dropping volatile/hop-by-hop headers, and sequence/ordering
-// replay modes are intentionally out of scope — follow-ups.
+// replay modes are intentionally out of scope for now.
 package vcr
 
 import (
@@ -139,7 +139,7 @@ func bodyHash(body []byte) string {
 
 // volatileHeaders are response headers the transport recomputes or that change
 // per-response; recording them would break replay (Content-Length) or add noise
-// (Date). This minimal drop-list is the only header filtering VCR does — broader
+// (Date). This minimal drop-list is the only header filtering VCR does; broader
 // redaction is a follow-up.
 //
 //nolint:gochecknoglobals // fixed lookup table, read-only

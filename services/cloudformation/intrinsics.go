@@ -129,7 +129,7 @@ func (r *Resolver) evalIntrinsic(fn string, arg any) (any, error) {
 }
 
 // ref resolves Ref: a pseudo-parameter, a template parameter, or a resource
-// (returning that resource's Ref value — its physical id or ARN).
+// (returning that resource's Ref value, its physical id or ARN).
 func (r *Resolver) ref(name string) (string, error) {
 	if v, ok := r.pseudo(name); ok {
 		return v, nil

@@ -1,6 +1,6 @@
 // Package dockerengine is the module root for CloudEmu's Docker-backed data-plane
 // engines: opt-in backings that run real Docker containers so clients can run
-// true-fidelity workloads against the emulator — real VMs (via a backing
+// true-fidelity workloads against the emulator: real VMs (via a backing
 // container), real containers (ECS/ACI/Cloud Run), a real MySQL server, and a
 // real Azure Functions host. It is the Docker-required sibling of
 // contrib/realengine, which covers the no-Docker backings.

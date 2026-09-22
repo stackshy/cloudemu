@@ -58,7 +58,7 @@ func TestResourceQuota_ObjectCountEnforced(t *testing.T) {
 		t.Fatalf("status reason: got %q, want Forbidden", status.Reason)
 	}
 
-	// The rejected create must not have been counted — the namespace still has
+	// The rejected create must not have been counted; the namespace still has
 	// exactly the one Pod the quota allowed.
 	resp = do(t, http.MethodGet, base+"/api/v1/namespaces/default/pods", nil)
 
@@ -71,7 +71,7 @@ func TestResourceQuota_ObjectCountEnforced(t *testing.T) {
 }
 
 // TestResourceQuota_NoQuotaNoEnforcement pins that a namespace with no
-// ResourceQuota object never gets denials — existing tests and callers that
+// ResourceQuota object never gets denials; existing tests and callers that
 // create many Pods in a namespace without a quota must keep working.
 func TestResourceQuota_NoQuotaNoEnforcement(t *testing.T) {
 	base, cleanup := newFixture(t)

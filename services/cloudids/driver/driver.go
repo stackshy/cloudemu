@@ -1,5 +1,5 @@
 // Package driver defines the portable interface for the Google Cloud IDS control
-// plane (ids.googleapis.com/v1). It is control-plane only — the single
+// plane (ids.googleapis.com/v1). It is control-plane only: the single
 // region-scoped resource collection a Terraform google provider or a real
 // google.golang.org/api/ids client CRUDs is modeled:
 //
@@ -14,7 +14,7 @@
 // threat alerts (see BUILDOUT_BACKLOG.md). The identity + computed fields (name,
 // createTime, updateTime) are derived at create and stay stable across reads so a
 // Terraform refresh does not drift. The output-only endpoint attributes seeded
-// once at create — state (READY), endpointForwardingRule, endpointIp — are the
+// once at create (state (READY), endpointForwardingRule, endpointIp) are the
 // classic Cloud IDS drift point: endpointForwardingRule and endpointIp are
 // derived deterministically from the endpoint identity so they are identical on
 // every read. Every other caller-supplied body key (network, severity,
@@ -32,7 +32,7 @@ import (
 // Resource is one Cloud IDS endpoint. Name components are stored separately so
 // the full resource name and location scoping can be rebuilt without re-parsing.
 // CreateTime/UpdateTime are derived deterministically and stay stable across
-// reads. Fields holds every caller-supplied, non-computed body key verbatim —
+// reads. Fields holds every caller-supplied, non-computed body key verbatim,
 // plus the computed body values seeded once at create (state,
 // endpointForwardingRule, endpointIp), which then round-trip as stable
 // passthrough values.

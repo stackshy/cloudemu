@@ -13,12 +13,12 @@ import (
 // (cluster DNS), the kube-dns Service that fronts it, and a kube-proxy DaemonSet.
 // Seeding these as plain objects that ride the existing generic reconcile makes
 // `kubectl -n kube-system get pods/deploy/ds/svc` look like a managed cluster
-// (EKS/AKS/GKE) instead of a bare object store — without any bespoke controller.
+// (EKS/AKS/GKE) instead of a bare object store, without any bespoke controller.
 // They are cosmetic: coredns does not actually resolve DNS (there is no real
 // resolver), it just makes the cluster look real to tooling.
 //
 // Control-plane static pods (apiserver/scheduler/controller-manager/etcd) are
-// intentionally omitted — managed clusters hide them, which is the look we want.
+// intentionally omitted: managed clusters hide them, which is the look we want.
 
 const (
 	// kubeDNSName is the shared name of the coredns Deployment's fronting Service
@@ -40,7 +40,7 @@ const (
 	kubeDNSClusterIPOffset uint32 = 10
 	kubeDNSClusterIP              = "10.96.0.10"
 
-	// coredns / kube-proxy container images. Cosmetic — nothing pulls them.
+	// coredns / kube-proxy container images. Cosmetic: nothing pulls them.
 	corednsImage   = "registry.k8s.io/coredns/coredns:v1.11.1"
 	kubeProxyImage = "registry.k8s.io/kube-proxy:" + nodeKubeletVersion
 
@@ -136,7 +136,7 @@ func (s *ClusterState) seedKubeDNSServiceLocked() {
 
 // seedKubeProxyDaemonSetLocked stores kube-proxy as a real DaemonSet object (not
 // a hand-written static pod) so the generic DaemonSet reconcile yields one pod
-// per node — one today, and N automatically once multi-node scheduling lands.
+// per node: one today, and N automatically once multi-node scheduling lands.
 func (s *ClusterState) seedKubeProxyDaemonSetLocked() {
 	store := s.reg.getStore(apiGroupApps, "v1", "daemonsets")
 	if store == nil {
@@ -160,7 +160,7 @@ func (s *ClusterState) seedKubeProxyDaemonSetLocked() {
 				"spec": map[string]any{
 					"containers": []any{map[string]any{"name": kubeProxyName, "image": kubeProxyImage}},
 					// Real kube-proxy tolerates every taint (operator: Exists) so it
-					// runs on every node, control-plane included — so its per-node
+					// runs on every node, control-plane included, so its per-node
 					// fan-out yields one Pod per node (N) once --k8s-nodes>1.
 					"tolerations": []any{map[string]any{"operator": "Exists"}},
 				},

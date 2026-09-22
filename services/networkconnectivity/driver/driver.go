@@ -1,6 +1,6 @@
 // Package driver defines the portable interface for the Google Network
 // Connectivity Center control plane (networkconnectivity.googleapis.com/v1). It
-// is control-plane only — the two resource collections a Terraform google
+// is control-plane only: the two resource collections a Terraform google
 // provider or a real google.golang.org/api/networkconnectivity/v1 client CRUDs
 // are modeled:
 //

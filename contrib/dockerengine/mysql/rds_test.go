@@ -23,7 +23,7 @@ import (
 
 // TestRDSMySQLE2E runs the exact flow a real user runs against AWS: create an RDS
 // MySQL instance with the AWS SDK, read its endpoint, connect with a real MySQL
-// client using the master credentials, run SQL, then delete — all against
+// client using the master credentials, run SQL, then delete, all against
 // CloudEmu backed by a real MySQL container (no cloud account).
 func TestRDSMySQLE2E(t *testing.T) {
 	if !dtest.DockerUp() {
@@ -57,7 +57,7 @@ func TestRDSMySQLE2E(t *testing.T) {
 		password   = "app-secret-pw"
 	)
 
-	// 1. Create the instance — exactly like `aws rds create-db-instance`.
+	// 1. Create the instance, like `aws rds create-db-instance`.
 	if _, err = client.CreateDBInstance(ctx, &rds.CreateDBInstanceInput{
 		DBInstanceIdentifier: aws.String(instanceID),
 		Engine:               aws.String("mysql"),
@@ -70,7 +70,7 @@ func TestRDSMySQLE2E(t *testing.T) {
 		t.Fatalf("CreateDBInstance: %v", err)
 	}
 
-	// 2. Read the endpoint the SDK reports — the real MySQL container address.
+	// 2. Read the endpoint the SDK reports: the real MySQL container address.
 	desc, err := client.DescribeDBInstances(ctx, &rds.DescribeDBInstancesInput{
 		DBInstanceIdentifier: aws.String(instanceID),
 	})
@@ -84,7 +84,7 @@ func TestRDSMySQLE2E(t *testing.T) {
 
 	ep := desc.DBInstances[0].Endpoint
 
-	// Connect using ONLY the SDK-reported endpoint + port — no out-of-band knowledge.
+	// Connect using ONLY the SDK-reported endpoint + port, no out-of-band knowledge.
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:%d)/%s",
 		user, password, aws.ToString(ep.Address), aws.ToInt32(ep.Port), dbName)
 
@@ -119,7 +119,7 @@ func TestRDSMySQLE2E(t *testing.T) {
 
 	_ = db.Close()
 
-	// 4. Delete the instance — the real database is torn down.
+	// 4. Delete the instance: the real database is torn down.
 	if _, err := client.DeleteDBInstance(ctx, &rds.DeleteDBInstanceInput{
 		DBInstanceIdentifier: aws.String(instanceID),
 		SkipFinalSnapshot:    aws.Bool(true),

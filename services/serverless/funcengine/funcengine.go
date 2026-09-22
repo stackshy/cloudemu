@@ -18,7 +18,7 @@ import (
 const okStatusCode = 200
 
 // Deploy deploys cfg's code to the engine and reports whether the function is
-// now engine-backed — true only when an engine is configured and code was
+// now engine-backed: true only when an engine is configured and code was
 // uploaded. Providers persist the returned flag and consult it on Invoke so a
 // function created before an engine was wired keeps the stub behavior.
 func Deploy(ctx context.Context, engine config.FunctionEngine, cfg *driver.FunctionConfig) (bool, error) {

@@ -30,7 +30,7 @@ func TestAWSIDFormats(t *testing.T) {
 		})
 	}
 
-	// Access key ids must be >= 16 chars total — the minimum the AWS SDKs enforce
+	// Access key ids must be >= 16 chars total, the minimum the AWS SDKs enforce
 	// client-side before UpdateAccessKey/DeleteAccessKey.
 	if len(idgen.AccessKeyID()) < 16 {
 		t.Fatalf("AccessKeyID length %d < 16", len(idgen.AccessKeyID()))

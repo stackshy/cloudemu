@@ -181,7 +181,7 @@ func killChild(cmd *exec.Cmd) {
 	}
 }
 
-// daemonReachable reports whether the recorded endpoints answer — a portable
+// daemonReachable reports whether the recorded endpoints answer. It's a portable
 // identity check that guards against a recycled PID (a live but unrelated
 // process) before we signal it. It TCP-probes the first present endpoint: a
 // plain accept works regardless of provider mix, TLS, or whether the admin
@@ -200,7 +200,7 @@ func daemonReachable(eps map[string]string) bool {
 
 // pollTCP polls until a TCP connection to hostPort succeeds or timeout elapses.
 // It confirms a listener is accepting without needing TLS trust or the admin
-// control plane — serve binds every listener before writing the endpoints file,
+// control plane: serve binds every listener before writing the endpoints file,
 // so "accepts a connection" is a sufficient, admin-independent readiness signal.
 func pollTCP(hostPort string, timeout time.Duration) error {
 	var dialer net.Dialer
@@ -230,7 +230,7 @@ func pollTCP(hostPort string, timeout time.Duration) error {
 // waitServerReady blocks until every present endpoint is accepting TCP
 // connections. A TCP-accept probe is used for all providers (not an HTTP
 // /_cloudemu/health check) so readiness does not depend on the admin control
-// plane being mounted — otherwise `start --admin=false` would boot a healthy
+// plane being mounted. Otherwise `start --admin=false` would boot a healthy
 // server the probe could never see, time out, and kill it.
 func waitServerReady(eps map[string]string, timeout time.Duration) error {
 	present := 0
@@ -513,7 +513,7 @@ func runStop(args []string) error {
 	}
 
 	// Treat a dead pid, or a live pid whose endpoints don't answer (PID reused
-	// by an unrelated process), as stale — clean up without signaling it.
+	// by an unrelated process), as stale: clean up without signaling it.
 	if !processAlive(s.PID) || !daemonReachable(s.Endpoints) {
 		_ = removeState(dir)
 
@@ -605,7 +605,7 @@ func runLogs(args []string) error {
 }
 
 // runDelete stops the daemon (if running) and removes only cloudemu's own files
-// from the run directory — never a blanket RemoveAll of a user-supplied --home.
+// from the run directory. Never a blanket RemoveAll of a user-supplied --home.
 func runDelete(args []string) error {
 	home, _ := splitHomeFlag(args)
 

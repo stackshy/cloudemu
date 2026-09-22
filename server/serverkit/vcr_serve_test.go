@@ -14,7 +14,7 @@ import (
 )
 
 // s3ClientFor builds a path-style aws-sdk-go-v2 S3 client pointed at url. Real
-// SDK, real SigV4 signing, real wire protocol — the emulator (and, in replay,
+// SDK, real SigV4 signing, real wire protocol: the emulator (and, in replay,
 // the VCR) sees genuine SDK traffic.
 func s3ClientFor(t *testing.T, url string) *s3.Client {
 	t.Helper()
@@ -36,7 +36,7 @@ func s3ClientFor(t *testing.T, url string) *s3.Client {
 // TestVCRRecordReplayS3 is the issue #245 acceptance flow end-to-end: record a
 // real aws-sdk-go-v2 S3 session (create bucket, put, get, list) through the wire
 // server into a cassette, then replay it against a FRESH, EMPTY backend and prove
-// the recorded responses come back verbatim — the real backend never serves them.
+// the recorded responses come back verbatim: the real backend never serves them.
 func TestVCRRecordReplayS3(t *testing.T) {
 	ctx := context.Background()
 	cassette := t.TempDir() + "/s3.cassette.json"

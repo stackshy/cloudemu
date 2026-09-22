@@ -4,10 +4,10 @@
 // interface still lives here so the wire handler (server/gcp/cloudrun) depends
 // on an abstraction rather than the concrete mock.
 //
-// Scope covers both Cloud Run surfaces: Jobs (run-to-completion workloads —
+// Scope covers both Cloud Run surfaces: Jobs (run-to-completion workloads;
 // a Job stores a container template; running it creates an Execution whose
 // tasks run the template's containers to completion) and Services (HTTP
-// ingress workloads — a Service stores a revision template; creating or
+// ingress workloads; a Service stores a revision template; creating or
 // updating it materializes a Revision and serves traffic at a stable URL).
 package driver
 
@@ -18,7 +18,7 @@ import (
 
 // CloudRun is the control-plane surface for Cloud Run Jobs and Services.
 type CloudRun interface {
-	// CreateJob stores a job spec. It does not run anything — RunJob does.
+	// CreateJob stores a job spec. It does not run anything; RunJob does.
 	CreateJob(ctx context.Context, cfg JobConfig) (*Job, error)
 
 	// GetJob returns a job by name. name may be the bare job id or a fully
@@ -117,7 +117,7 @@ type InvokeResponse struct {
 	Body       []byte
 }
 
-// JobConfig is the input to CreateJob / UpdateJob — the subset of the Cloud Run
+// JobConfig is the input to CreateJob / UpdateJob: the subset of the Cloud Run
 // Job template CloudEmu models.
 type JobConfig struct {
 	Name                 string
@@ -159,7 +159,7 @@ type ContainerPort struct {
 	ContainerPort int
 }
 
-// ResourceRequirements is a container's compute allocation — the limits map
+// ResourceRequirements is a container's compute allocation: the limits map
 // (e.g. {"cpu":"1000m","memory":"512Mi"}) plus CPU behavior toggles. Every
 // Terraform/gcloud deploy sends and reads these back, so they must round-trip.
 type ResourceRequirements struct {
@@ -263,7 +263,7 @@ type Condition struct {
 	Reason  string
 }
 
-// ServiceConfig is the input to CreateService / UpdateService — the subset of
+// ServiceConfig is the input to CreateService / UpdateService: the subset of
 // the Cloud Run Service the emulator models.
 type ServiceConfig struct {
 	Name                 string

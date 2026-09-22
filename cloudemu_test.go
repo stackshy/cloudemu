@@ -416,7 +416,7 @@ func TestCrossProvider(t *testing.T) {
 
 // Real-World Scenario Tests
 // These simulate what a real user would do: create a cloud environment,
-// seed resources, then perform operations — all without real cloud resources.
+// seed resources, then perform operations, all without real cloud resources.
 // TestRealWorldAWS_InfraSetup simulates setting up a full AWS infrastructure:
 // VPC → Subnets → Security Groups → EC2 instances → S3 buckets → DNS → Monitoring
 func TestRealWorldAWS_InfraSetup(t *testing.T) {
@@ -466,7 +466,7 @@ func TestRealWorldAWS_InfraSetup(t *testing.T) {
 		t.Fatalf("expected 3 instances, got %d", len(instances))
 	}
 
-	// 3. List running instances — like a real dashboard would
+	// 3. List running instances, like a real dashboard would
 	allInstances, err := aws.EC2.DescribeInstances(ctx, nil, []computedriver.DescribeFilter{
 		{Name: "instance-state-name", Values: []string{compute.StateRunning}},
 	})
@@ -518,7 +518,7 @@ func TestRealWorldAWS_InfraSetup(t *testing.T) {
 		t.Fatalf("PutObject: %v", err)
 	}
 
-	// 9. List objects in bucket — like S3 console
+	// 9. List objects in bucket, like S3 console
 	listResult, err := aws.S3.ListObjects(ctx, "app-configs", storagedriver.ListOptions{Prefix: "prod/"})
 	if err != nil {
 		t.Fatalf("ListObjects: %v", err)
@@ -559,7 +559,7 @@ func TestRealWorldAWS_InfraSetup(t *testing.T) {
 		t.Fatalf("PutMetricData: %v", err)
 	}
 
-	// 13. Query metrics — like CloudWatch dashboard
+	// 13. Query metrics, like CloudWatch dashboard
 	cpuResult, err := aws.CloudWatch.GetMetricData(ctx, mondriver.GetMetricInput{
 		Namespace: "App/Web", MetricName: "CPUUtilization",
 		Dimensions: map[string]string{"InstanceId": instances[1].ID},
@@ -905,7 +905,7 @@ func TestFIFODeduplication(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Send duplicate within 5-min window — should return same message ID
+	// Send duplicate within 5-min window, should return same message ID
 	out2, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
 		QueueURL:        qInfo.URL,
 		Body:            "hello again",
@@ -928,7 +928,7 @@ func TestFIFODeduplication(t *testing.T) {
 	// Advance clock past 5-minute window
 	clock.Advance(6 * time.Minute)
 
-	// Send same dedup ID again — should be accepted as new message
+	// Send same dedup ID again, should be accepted as new message
 	out3, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
 		QueueURL:        qInfo.URL,
 		Body:            "hello after window",
@@ -1011,7 +1011,7 @@ func TestIAMCheckPermission(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// No policies attached — should deny
+	// No policies attached, should deny
 	allowed, err := p.IAM.CheckPermission(ctx, "alice", "s3:GetObject", "arn:aws:s3:::my-bucket/*")
 	if err != nil {
 		t.Fatal(err)
@@ -1172,7 +1172,7 @@ func TestAlarmTriggeredByAutoMetrics(t *testing.T) {
 
 	// Launch the instance first so we know its id; EC2 auto-metrics are dimensioned
 	// by InstanceId, and CloudWatch matches an alarm to a metric series by its exact
-	// dimension set — so a real user alarms on that instance's InstanceId.
+	// dimension set, so a real user alarms on that instance's InstanceId.
 	instances, err := p.EC2.RunInstances(ctx, computedriver.InstanceConfig{
 		ImageID: "ami-test", InstanceType: "t2.micro",
 	}, 1)
@@ -1343,7 +1343,7 @@ func TestDeadLetterQueue(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 4. Receive the message twice (simulating failed processing — not deleting it)
+	// 4. Receive the message twice (simulating failed processing: not deleting it)
 	for i := 0; i < 2; i++ {
 		msgs, err := p.SQS.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{
 			QueueURL: mainQ.URL,
@@ -1354,7 +1354,7 @@ func TestDeadLetterQueue(t *testing.T) {
 		if len(msgs) != 1 {
 			t.Fatalf("receive %d: expected 1 message, got %d", i+1, len(msgs))
 		}
-		// Don't delete — simulating failure. Make it visible again.
+		// Don't delete, simulating failure. Make it visible again.
 		clock.Advance(2 * time.Second)
 	}
 
@@ -1576,7 +1576,7 @@ func TestLambdaSQSTrigger(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// 4. Send messages — Lambda should be invoked automatically.
+	// 4. Send messages, Lambda should be invoked automatically.
 	for i := 0; i < 5; i++ {
 		if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{
 			QueueURL: q.URL,
@@ -1630,7 +1630,7 @@ func TestLambdaSQSTriggerRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Send one message — the mapping fires.
+	// Send one message: the mapping fires.
 	if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "first"}); err != nil {
 		t.Fatal(err)
 	}
@@ -1644,7 +1644,7 @@ func TestLambdaSQSTriggerRemove(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Send another message — the mapping should NOT fire.
+	// Send another message: the mapping should NOT fire.
 	if _, err := p.SQS.SendMessage(ctx, mqdriver.SendMessageInput{QueueURL: q.URL, Body: "second"}); err != nil {
 		t.Fatal(err)
 	}
@@ -2550,7 +2550,7 @@ func TestCrossProviderNewServices(t *testing.T) {
 		})
 	}
 
-	// Test notification across providers — all use name-based topic lookup
+	// Test notification across providers: all use name-based topic lookup
 	notifProviders := []struct {
 		name string
 		d    notifdriver.Notification
@@ -2570,7 +2570,7 @@ func TestCrossProviderNewServices(t *testing.T) {
 				t.Error("expected non-empty ResourceID")
 			}
 
-			// All providers use name as key — portable API contract
+			// All providers use name as key: portable API contract
 			got, err := np.d.GetTopic(ctx, "alerts")
 			if err != nil {
 				t.Fatalf("GetTopic by name: %v", err)
@@ -2697,7 +2697,7 @@ func TestLogQueryInputPointer(t *testing.T) {
 				t.Fatalf("PutLogEvents: %v", err)
 			}
 
-			// Query with pointer — basic query
+			// Query with pointer: basic query
 			results, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 				LogGroup: "ptr-test-group",
 			})
@@ -2708,7 +2708,7 @@ func TestLogQueryInputPointer(t *testing.T) {
 				t.Errorf("expected 3 events, got %d", len(results))
 			}
 
-			// Query with pointer — pattern filter
+			// Query with pointer: pattern filter
 			filtered, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 				LogGroup: "ptr-test-group",
 				Pattern:  "error",
@@ -2720,7 +2720,7 @@ func TestLogQueryInputPointer(t *testing.T) {
 				t.Errorf("expected 1 error event, got %d", len(filtered))
 			}
 
-			// Query with pointer — specific stream
+			// Query with pointer: specific stream
 			streamResults, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 				LogGroup:  "ptr-test-group",
 				LogStream: "stream-1",
@@ -2732,7 +2732,7 @@ func TestLogQueryInputPointer(t *testing.T) {
 				t.Errorf("expected 3 events from stream-1, got %d", len(streamResults))
 			}
 
-			// Query with pointer — limit
+			// Query with pointer: limit
 			limited, err := p.d.GetLogEvents(ctx, &loggingdriver.LogQueryInput{
 				LogGroup: "ptr-test-group",
 				Limit:    1,
@@ -6150,7 +6150,7 @@ func TestUpdateItemMissingKey(t *testing.T) {
 
 	// DynamoDB UpdateItem upserts: an update against a missing key creates the
 	// item. Cosmos DB and Firestore instead require the document to exist, so
-	// they return NotFound — the semantics diverge by provider.
+	// they return NotFound: the semantics diverge by provider.
 	t.Run("AWS", func(t *testing.T) {
 		p := NewAWS()
 

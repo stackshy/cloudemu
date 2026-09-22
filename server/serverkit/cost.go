@@ -18,7 +18,7 @@ type costLine struct {
 
 // serveCost answers GET /_cloudemu/cost with an estimated monthly cost of the
 // current inventory (always-on resources only; usage-based services excluded).
-// Each provider maps to one or more discovery engines — AWS contributes one per
+// Each provider maps to one or more discovery engines: AWS contributes one per
 // live region so the estimate aggregates every region under the "aws" label.
 func serveCost(w http.ResponseWriter, r *http.Request, engines map[string][]*resourcediscovery.Engine) {
 	var (

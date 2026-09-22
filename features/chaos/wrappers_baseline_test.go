@@ -22,8 +22,8 @@ import (
 
 // Baseline tests exercise every wrapped op against an engine with no scenarios
 // applied, so the success path through each wrapper is covered. Errors from
-// the inner drivers (e.g. NotFound on Get without a prior Create) are ignored
-// — the goal here is to land coverage on the post-applyChaos delegation line,
+// the inner drivers (e.g. NotFound on Get without a prior Create) are ignored:
+// the goal here is to land coverage on the post-applyChaos delegation line,
 // not to validate inner-driver behaviour, which is tested in provider tests.
 
 func TestWrapServerlessBaseline(t *testing.T) {

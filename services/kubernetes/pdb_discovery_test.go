@@ -7,8 +7,8 @@ import (
 
 // Discovery is a promise: a client reads it and then only issues the verbs it
 // found. Advertising one the server does not serve moves the failure into the
-// client — a reflector opening a watch that never streams, or a patch that
-// 405s — far from the document that promised it.
+// client, far from the document that promised it: a reflector opening a
+// watch that never streams, or a patch that 405s.
 //
 // This pins the two together so adding a verb to the advertisement without
 // implementing it fails here rather than in whatever tool hits it first.

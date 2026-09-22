@@ -88,9 +88,9 @@ func MatchDimensions(dataDims, filterDims map[string]string) bool {
 }
 
 // MatchAlarmDimensions reports whether a datum contributes to a metric alert's
-// evaluation. Unlike MatchDimensions — which pins down one exact metric series
-// for a read query, matching how CloudWatch alarms monitor a single series —
-// Azure Monitor and GCP alerting aggregate across unspecified dimensions: a
+// evaluation. MatchDimensions pins down one exact metric series for a read query,
+// matching how CloudWatch alarms monitor a single series. Azure Monitor and GCP
+// alerting instead aggregate across unspecified dimensions: a
 // criterion carrying no dimension filter evaluates over ALL timeseries of the
 // metric, and a filter naming some dimensions matches any datum whose dimensions
 // CONTAIN them (a superset is allowed). AWS/CloudWatch alarm evaluation keeps
@@ -130,7 +130,7 @@ func StatOf(datums []driver.MetricDatum, stat string) float64 {
 
 // EvaluateWindow applies CloudWatch's M-of-N rule. It groups datums (already
 // filtered to the alarm's metric series and evaluation window) into the last
-// EvaluationPeriods per-Period buckets — bucket 0 is the most recent period —
+// EvaluationPeriods per-Period buckets (bucket 0 is the most recent period),
 // evaluates the statistic per bucket, and returns ALARM when at least
 // DatapointsToAlarm buckets breach, otherwise OK (which is how an alarm recovers
 // once the breaching periods age out of the window). Empty periods are counted
@@ -233,7 +233,7 @@ func (a *statAgg) add(count, sum, low, high float64) {
 // stat returns the requested statistic, or 0 when no data was accumulated.
 //
 // The accumulator keeps only count/sum/min/max, so a true percentile (an
-// ExtendedStatistic such as p95) is not computable from it — a percentile needs
+// ExtendedStatistic such as p95) is not computable from it: a percentile needs
 // the raw sample distribution. An alarm configured with only an ExtendedStatistic
 // passes an empty Stat here and is therefore approximated by Average. This is a
 // documented approximation (tracked with the deferred percentile support), not a
@@ -268,8 +268,8 @@ func aggregate(datums []driver.MetricDatum) statAgg {
 	return a
 }
 
-// foldDatum folds one datum — plain Value, StatisticValues set, or Values/Counts
-// arrays — into the accumulator.
+// foldDatum folds one datum (plain Value, StatisticValues set, or Values/Counts
+// arrays) into the accumulator.
 func foldDatum(a *statAgg, d *driver.MetricDatum) {
 	switch {
 	case d.StatisticValues != nil:

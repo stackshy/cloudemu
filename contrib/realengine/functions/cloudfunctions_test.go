@@ -18,7 +18,7 @@ import (
 // gcfHTTPHandler is a gen1 Cloud Functions (functions-framework) HTTP handler:
 // it takes a Flask-Request-like object, reads JSON off it, and returns a dict
 // that Flask coerces to JSON. Doubling the input means a passing test can only
-// mean the uploaded Python actually ran — not an echo. The source lives in
+// mean the uploaded Python actually ran, not an echo. The source lives in
 // main.py by the gen1 convention; the entrypoint is the bare name hello_http.
 const gcfHTTPHandler = `def hello_http(request):
     body = request.get_json()
@@ -61,7 +61,7 @@ func TestGCPCloudFunctionsPythonE2E(t *testing.T) {
 	parent := "projects/demo/locations/us-central1"
 	fqName := parent + "/functions/doubler"
 
-	// 1. GenerateUploadUrl — now points back at this same server.
+	// 1. GenerateUploadUrl: now points back at this same server.
 	up, err := svc.Projects.Locations.Functions.GenerateUploadUrl(parent,
 		&cloudfunctions.GenerateUploadUrlRequest{}).Context(ctx).Do()
 	if err != nil {

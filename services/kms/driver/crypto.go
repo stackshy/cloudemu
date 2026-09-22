@@ -13,21 +13,21 @@ import (
 var (
 	ErrSignatureInvalid = errors.New(errors.InvalidArgument, "signature verification failed")
 	ErrMacInvalid       = errors.New(errors.InvalidArgument, "MAC verification failed")
-	// ErrInvalidCiphertext — ciphertext is malformed, tampered, or fails the
+	// ErrInvalidCiphertext: the ciphertext is malformed, tampered, or fails the
 	// encryption-context binding (→ InvalidCiphertextException).
 	ErrInvalidCiphertext = errors.New(errors.InvalidArgument, "invalid ciphertext")
-	// ErrIncorrectKey — the supplied key did not encrypt this ciphertext
+	// ErrIncorrectKey: the supplied key did not encrypt this ciphertext
 	// (→ IncorrectKeyException).
 	ErrIncorrectKey = errors.New(errors.InvalidArgument, "ciphertext was not encrypted under the supplied key")
-	// ErrKeyDisabled — the key exists but is Disabled (→ DisabledException).
+	// ErrKeyDisabled: the key exists but is Disabled (→ DisabledException).
 	ErrKeyDisabled = errors.New(errors.FailedPrecondition, "key is disabled")
-	// ErrKeyInvalidState — the key is in a state that forbids the operation,
+	// ErrKeyInvalidState: the key is in a state that forbids the operation,
 	// e.g. PendingDeletion / PendingImport (→ KMSInvalidStateException).
 	ErrKeyInvalidState = errors.New(errors.FailedPrecondition, "key is in an invalid state for this operation")
-	// ErrInvalidKeyUsage — the key's usage/spec doesn't support the requested
+	// ErrInvalidKeyUsage: the key's usage/spec doesn't support the requested
 	// operation or algorithm (→ InvalidKeyUsageException).
 	ErrInvalidKeyUsage = errors.New(errors.InvalidArgument, "key usage does not permit this operation")
-	// ErrUnsupportedOperation — the operation is not valid for this key's spec,
+	// ErrUnsupportedOperation: the operation is not valid for this key's spec,
 	// e.g. GetPublicKey on a symmetric key (→ UnsupportedOperationException).
 	ErrUnsupportedOperation = errors.New(errors.InvalidArgument, "operation not supported for this key spec")
 )

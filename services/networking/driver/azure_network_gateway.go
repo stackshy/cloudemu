@@ -2,10 +2,10 @@ package driver
 
 import "context"
 
-// Microsoft.Network's site-to-site VPN surface — virtualNetworkGateways,
-// localNetworkGateways and connections — has no equivalent in the cross-cloud
-// Networking model, so — like AzureApplicationSecurityGroups and
-// AzurePublicIPPrefixes — the Azure provider stores it through this OPTIONAL,
+// Microsoft.Network's site-to-site VPN surface (virtualNetworkGateways,
+// localNetworkGateways and connections) has no equivalent in the cross-cloud
+// Networking model, so, like AzureApplicationSecurityGroups and
+// AzurePublicIPPrefixes, the Azure provider stores it through this OPTIONAL,
 // type-asserted capability. AWS and GCP do not implement it. All three resource
 // types are addressed by (resourceGroup, name) to match ARM; an empty
 // resourceGroup on a List means subscription-wide.
@@ -46,7 +46,7 @@ type AzureVirtualNetworkGateway struct {
 }
 
 // AzureLocalNetworkGateway is one Microsoft.Network/localNetworkGateways
-// resource — the on-premises end of a site-to-site tunnel.
+// resource: the on-premises end of a site-to-site tunnel.
 type AzureLocalNetworkGateway struct {
 	Name             string
 	ResourceGroup    string

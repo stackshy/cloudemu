@@ -10,7 +10,7 @@ import (
 )
 
 // TestRestoreStateIgnoresUnreadableFile covers the fail-open half: a corrupt or
-// missing snapshot must not wedge startup — restoreState warns and starts empty
+// missing snapshot must not wedge startup. restoreState warns and starts empty
 // rather than returning an error that aborts New.
 func TestRestoreStateIgnoresUnreadableFile(t *testing.T) {
 	dir := t.TempDir()

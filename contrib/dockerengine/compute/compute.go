@@ -173,7 +173,7 @@ func (c *Compute) runContainer(ctx context.Context, instanceID string) (string, 
 
 // runBoot execs the boot script inside the container, injecting env, and returns
 // the combined stdout/stderr. An empty script skips the exec (empty console). A
-// non-zero script exit is NOT an error — its output is still valid console output,
+// non-zero script exit is NOT an error: its output is still valid console output,
 // just as a real cloud-init-output.log records a failed boot; only the docker exec
 // itself failing to run is surfaced as an error.
 func runBoot(ctx context.Context, containerID string, script []byte, env map[string]string) ([]byte, error) {
@@ -205,7 +205,7 @@ func runBoot(ctx context.Context, containerID string, script []byte, env map[str
 }
 
 // containerIP returns the container's IP from docker inspect, or "" when none is
-// available — an empty IP is acceptable per the ComputeEngine contract, so any
+// available. An empty IP is acceptable per the ComputeEngine contract, so any
 // inspect failure degrades to "".
 func containerIP(ctx context.Context, containerID string) string {
 	const tmpl = "{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}"

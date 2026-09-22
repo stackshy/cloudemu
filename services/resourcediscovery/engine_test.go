@@ -89,8 +89,8 @@ func TestNew(t *testing.T) {
 
 // TestListAllEmpty confirms an account with no user-created resources lists
 // only the account/region's seeded default VPC family (a VPC, its 3 default
-// subnets, default security group, main route table, and internet gateway) —
-// real EC2 never has a truly empty networking surface — and nothing from any
+// subnets, default security group, main route table, and internet gateway),
+// since real EC2 never has a truly empty networking surface, and nothing from any
 // other service.
 func TestListAllEmpty(t *testing.T) {
 	f := newAWSFixture(t)

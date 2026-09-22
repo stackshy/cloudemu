@@ -75,7 +75,7 @@ func (s *ClusterState) serverSideApply(
 		return nil, false
 	}
 
-	// Snapshot server-owned identity BEFORE the merge — mergeRFC7396 mutates
+	// Snapshot server-owned identity BEFORE the merge: mergeRFC7396 mutates
 	// cur.Object in place, so reading these after the merge would see the
 	// applied body's values (e.g. the `creationTimestamp: null` kubectl sends).
 	prevUID := cur.GetUID()
@@ -104,8 +104,8 @@ func (s *ClusterState) serverSideApply(
 	}
 
 	// Server-owned identity metadata is never settable by an apply. Re-assert the
-	// pre-merge snapshot here — the one place every apply path (typed and
-	// registry) flows through — so an applied body carrying `creationTimestamp:
+	// pre-merge snapshot here, the one place every apply path (typed and
+	// registry) flows through, so an applied body carrying `creationTimestamp:
 	// null` (kubectl always sends it) or omitting uid/deletionTimestamp cannot
 	// blank or re-identify the object via the RFC-7396 merge. ssaSkipMeta already
 	// keeps these out of ownership tracking; this protects the values.
@@ -235,7 +235,7 @@ func collectLeaves(node any, prefix []string, out map[string]bool) {
 }
 
 // skipLeaf reports whether a (prefix, key) should not be tracked as an owned
-// field — identity, server-owned metadata, and status.
+// field: identity, server-owned metadata, and status.
 func skipLeaf(prefix []string, key string) bool {
 	if len(prefix) == 0 {
 		return ssaSkipTop[key]
@@ -430,7 +430,7 @@ func updateEntry(manager string, leaves map[string]bool, apiVersion string, now 
 }
 
 // changedLeaves returns the owned leaves whose value differs between cur and
-// patched — the fields a patch actually set.
+// patched: the fields a patch actually set.
 func changedLeaves(cur, patched map[string]any) map[string]bool {
 	out := ownedLeaves(patched)
 

@@ -17,7 +17,7 @@ import (
 
 // ClusterState is the in-memory backing store for one Kubernetes cluster's
 // data plane. Every cluster registered with an APIServer gets its own
-// ClusterState — two EKS clusters in the same test never see each other's
+// ClusterState: two EKS clusters in the same test never see each other's
 // resources.
 //
 // Resources are kept in plain Go maps under a single RWMutex. The K8s API
@@ -31,7 +31,7 @@ type ClusterState struct {
 	// write (create/update/patch/delete, across the typed maps AND the registry
 	// stores) sources its object resourceVersion from nextClusterRVLocked at
 	// write time, and every list stamps its list-level resourceVersion from the
-	// current value — so a list's resourceVersion is always >= every item's, the
+	// current value, so a list's resourceVersion is always >= every item's, the
 	// invariant client-go reflectors rely on to start a watch. It is a plain
 	// value field guarded by mu (snapshot-friendly for #868).
 	rv uint64
@@ -49,36 +49,36 @@ type ClusterState struct {
 	lifecycleProgression bool
 
 	// nodeCount is how many synthetic Nodes this cluster seeds at creation
-	// (default 1). It is fixed for the cluster's lifetime — node membership is
+	// (default 1). It is fixed for the cluster's lifetime; node membership is
 	// immutable. N>1 opts into the multi-node first-fit scheduler; N=1 keeps the
 	// single-node instant-schedule behavior. Set once at registration (see
 	// APIServer.SetNodeCount).
 	nodeCount int
 
-	// namespaces is cluster-scoped — keyed by namespace name.
+	// namespaces is cluster-scoped, keyed by namespace name.
 	namespaces map[string]*corev1.Namespace
 
-	// configMaps is namespaced — keyed by "<namespace>/<name>".
+	// configMaps is namespaced, keyed by "<namespace>/<name>".
 	configMaps map[string]*corev1.ConfigMap
 
-	// pods is namespaced — keyed by "<namespace>/<name>".
+	// pods is namespaced, keyed by "<namespace>/<name>".
 	pods map[string]*corev1.Pod
 
-	// secrets is namespaced — keyed by "<namespace>/<name>".
+	// secrets is namespaced, keyed by "<namespace>/<name>".
 	secrets map[string]*corev1.Secret
 
-	// serviceAccounts is namespaced — keyed by "<namespace>/<name>".
+	// serviceAccounts is namespaced, keyed by "<namespace>/<name>".
 	serviceAccounts map[string]*corev1.ServiceAccount
 
-	// services is namespaced — keyed by "<namespace>/<name>".
+	// services is namespaced, keyed by "<namespace>/<name>".
 	services map[string]*corev1.Service
 
-	// deployments lives under apps/v1 — keyed by "<namespace>/<name>".
+	// deployments lives under apps/v1, keyed by "<namespace>/<name>".
 	deployments map[string]*appsv1.Deployment
-	// pdbs lives under policy/v1 — keyed by "<namespace>/<name>".
+	// pdbs lives under policy/v1, keyed by "<namespace>/<name>".
 	pdbs map[string]*policyv1.PodDisruptionBudget
 
-	// endpoints — keyed by "<namespace>/<name>". Real apiserver populates
+	// endpoints is keyed by "<namespace>/<name>". Real apiserver populates
 	// Subsets[].Addresses from Pods that match the Service selector via the
 	// endpoints controller. Wave 2 doesn't ship a controller, so endpoints
 	// objects are auto-created (empty) when their backing Service is created
@@ -129,7 +129,7 @@ type ClusterState struct {
 
 // firstClusterIPOffset is the first integer offset above 10.96.0.0 that the
 // service ClusterIP allocator hands out (so the first allocated IP is
-// 10.96.0.1). 10.96.0.0/12 is the kubeadm default service CIDR — we keep
+// 10.96.0.1). 10.96.0.0/12 is the kubeadm default service CIDR; we keep
 // the same convention so allocations look familiar in tests.
 const firstClusterIPOffset uint32 = 1
 
@@ -274,7 +274,7 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// metrics.k8s.io is an aggregated API, not a registry-backed kind — it has
+	// metrics.k8s.io is an aggregated API, not a registry-backed kind: it has
 	// no persisted objects, so it can't go through parseRoute/serveRegistry.
 	if strings.HasPrefix(r.URL.Path, metricsAPIPrefix) {
 		s.serveMetrics(w, r)
@@ -282,7 +282,7 @@ func (s *ClusterState) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// SubjectAccessReview is a POST-only, non-persisted "review" API — it has
+	// SubjectAccessReview is a POST-only, non-persisted "review" API: it has
 	// no registry store and no Route shape (parseRoute assumes a resource
 	// collection/item), so it's dispatched here before route parsing.
 	if r.Method == http.MethodPost && r.URL.Path == pathSubjectAccessReviews {

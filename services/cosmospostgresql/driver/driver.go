@@ -1,8 +1,8 @@
 // Package driver defines the portable interface for Azure Cosmos DB for
 // PostgreSQL (Microsoft.DBforPostgreSQL/serverGroupsv2), the Citus-based
-// distributed-Postgres offering. It is control-plane only — server-group
+// distributed-Postgres offering. It is control-plane only (server-group
 // clusters and their firewall rules, roles, nodes, configurations, and private
-// endpoints — so it is independent of the relational/database drivers.
+// endpoints), so it is independent of the relational/database drivers.
 package driver
 
 import "context"

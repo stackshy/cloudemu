@@ -1,6 +1,6 @@
 // Direct broadcaster + streamWatch unit tests. The HTTP-level end-to-end
 // path is exercised by TestSDKEKSDataPlane_InformerObservesAddAndDelete in
-// server/aws/eks — that's where the full real-client-go Watch scenario
+// server/aws/eks; that's where the full real-client-go Watch scenario
 // runs. These tests bypass HTTP entirely and hit the in-package primitives,
 // which keeps them fast (~1ms each) and avoids the chunked-transfer
 // teardown races that http.Server.Close() exhibits when subscribers don't
@@ -140,7 +140,7 @@ func TestBroadcaster_DropsOnFullChannel(t *testing.T) {
 		case <-sub.ch:
 			drained++
 		default:
-			// Channel drained — verify we got exactly the buffer's worth
+			// Channel drained; verify we got exactly the buffer's worth
 			// (publisher dropped the overflow rather than blocking).
 			if drained != watchSubscriberBuffer {
 				t.Fatalf("drained %d events, want %d (= buffer size)", drained, watchSubscriberBuffer)
@@ -223,7 +223,7 @@ func TestBroadcaster_ConcurrentPublishersAndSubscribers(t *testing.T) {
 }
 
 // TestWatchHandlersOverHTTP exercises each watchXxx dispatcher through
-// the full HTTP stack — keeps per-function coverage honest. The tight
+// the full HTTP stack, keeping per-function coverage honest. The tight
 // context deadline (100ms) makes streamWatch return via ctx.Done() before
 // httptest.Server.Close() needs to wait for it.
 func TestWatchHandlersOverHTTP(t *testing.T) {
@@ -267,7 +267,7 @@ func TestWatchHandlersOverHTTP(t *testing.T) {
 
 			resp, err := httpClient().Do(req)
 			if err != nil {
-				// context deadline tripped before headers came back — also acceptable
+				// context deadline tripped before headers came back; also acceptable
 				return
 			}
 
@@ -292,7 +292,7 @@ func TestWatchHandlersOverHTTP(t *testing.T) {
 }
 
 // TestStreamWatch_NoFlusher500s exercises the defensive
-// flusher-not-supported branch — a ResponseWriter that doesn't implement
+// flusher-not-supported branch: a ResponseWriter that doesn't implement
 // http.Flusher must error out before headers are set so the caller gets
 // a proper 500 status.
 func TestStreamWatch_NoFlusher500s(t *testing.T) {
@@ -315,7 +315,7 @@ func TestStreamWatch_NoFlusher500s(t *testing.T) {
 }
 
 // TestStreamWatch_EncodeErrorReturns exercises the path where the
-// underlying writer fails mid-stream — streamWatch must return without
+// underlying writer fails mid-stream: streamWatch must return without
 // trying to encode further events.
 func TestStreamWatch_EncodeErrorReturns(t *testing.T) {
 	b := newBroadcaster()
@@ -371,7 +371,7 @@ func TestStreamWatch_InitialSnapshotAndLiveEvents(t *testing.T) {
 		t.Fatal("streamWatch did not return after ctx cancel")
 	}
 
-	// Decode the recorded body — should be 3 JSON objects on separate
+	// Decode the recorded body: should be 3 JSON objects on separate
 	// lines (newline added by json.Encoder).
 	body := rec.Body.String()
 	dec := json.NewDecoder(strings.NewReader(body))

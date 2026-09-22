@@ -1,6 +1,6 @@
 // Package idempotency provides a shared token -> resource-id store that lets a
 // Create* operation detect a retried request and replay its original result
-// instead of minting a duplicate resource — the standard AWS
+// instead of minting a duplicate resource: the standard AWS
 // ClientToken/IdempotencyToken contract. A network-timeout retry (the exact
 // scenario these tokens exist for) must observe the SAME resource the first,
 // successful-but-unacknowledged call created, not a second one.
@@ -78,9 +78,10 @@ func New(ttl time.Duration) *Store {
 // When token already maps to a live id, replay re-reads that resource (typically
 // the service's own Describe/Get method, so a replay reports exactly what a read
 // would); if it
-// succeeds its result is returned without creating anything. Otherwise — no
-// entry, an expired entry, or a resource deleted since (replay NotFound) — create
-// runs, and on success idOf's id for the new resource is recorded under token.
+// succeeds its result is returned without creating anything. Otherwise (no
+// entry, an expired entry, or a resource deleted since, i.e. replay NotFound),
+// create runs, and on success idOf's id for the new resource is recorded under
+// token.
 // Callers sharing a token run one at a time, so a concurrent retry waits for
 // the first create and then replays it rather than racing it.
 //

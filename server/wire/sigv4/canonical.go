@@ -27,7 +27,7 @@ func canonicalRequest(r *http.Request, body []byte, in *signInputs) string {
 
 // canonicalURI is the URI-encoded path. S3 signs the raw escaped path;
 // every other service URI-encodes it a second time (matching aws-sdk-go-v2's
-// EscapePath, which the SDK applies unless DisableURIPathEscaping is set — and
+// EscapePath, which the SDK applies unless DisableURIPathEscaping is set, and
 // it is set only for S3).
 func canonicalURI(r *http.Request, service string) string {
 	path := r.URL.EscapedPath()

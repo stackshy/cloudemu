@@ -25,7 +25,7 @@ import (
 // Azure: create a VM with the armcompute SDK, passing a boot script via
 // osProfile.customData, then call RetrieveBootDiagnosticsData, download the serial
 // log the returned URI points at, and assert it contains the marker the boot script
-// echoed — proving a real container actually ran the boot script — all against
+// echoed, proving a real container actually ran the boot script, all against
 // CloudEmu backed by a real Docker container (no cloud account). Then delete the VM
 // and assert the serial log no longer surfaces the marker.
 //
@@ -60,7 +60,7 @@ func TestComputeAzureVMBootDiagnosticsE2E(t *testing.T) {
 	script := "#!/bin/sh\necho " + marker
 	customData := base64.StdEncoding.EncodeToString([]byte(script))
 
-	// 1. Create the VM — exactly like `az vm create`, boot script in customData.
+	// 1. Create the VM, like `az vm create`, boot script in customData.
 	poller, err := client.BeginCreateOrUpdate(ctx, rg, vmName, armcompute.VirtualMachine{
 		Location: to.Ptr("eastus"),
 		Properties: &armcompute.VirtualMachineProperties{
@@ -82,7 +82,7 @@ func TestComputeAzureVMBootDiagnosticsE2E(t *testing.T) {
 		t.Fatalf("CreateOrUpdate poll: %v", err)
 	}
 
-	// 2. Retrieve boot diagnostics — returns the serial-log blob URI.
+	// 2. Retrieve boot diagnostics: returns the serial-log blob URI.
 	diag, err := client.RetrieveBootDiagnosticsData(ctx, rg, vmName, nil)
 	if err != nil {
 		t.Fatalf("RetrieveBootDiagnosticsData: %v", err)
@@ -92,12 +92,12 @@ func TestComputeAzureVMBootDiagnosticsE2E(t *testing.T) {
 		t.Fatal("no serialConsoleLogBlobUri returned")
 	}
 
-	// 3. Download the serial log the URI points at — the real container's boot output.
+	// 3. Download the serial log the URI points at: the real container's boot output.
 	if got := fetchSerialLog(t, ts, *diag.SerialConsoleLogBlobURI); !strings.Contains(got, marker) {
 		t.Fatalf("serial log missing marker %q: got %q", marker, got)
 	}
 
-	// 4. Delete the VM — the real container is torn down.
+	// 4. Delete the VM: the real container is torn down.
 	delPoller, err := client.BeginDelete(ctx, rg, vmName, nil)
 	if err != nil {
 		t.Fatalf("BeginDelete: %v", err)

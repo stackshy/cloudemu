@@ -15,13 +15,13 @@ import (
 
 // subresourceEviction is the pods subresource a real apiserver serves at
 // POST .../pods/{name}/eviction (policy/v1 Eviction). It has no group of its
-// own — it hangs off the core Pod resource, same as /log and /exec would.
+// own: it hangs off the core Pod resource, same as /log and /exec would.
 const subresourceEviction = "eviction"
 
 // evictPod handles POST .../namespaces/{ns}/pods/{name}/eviction: it deletes
 // the named Pod unless doing so would violate a PodDisruptionBudget whose
 // selector matches it, in which case it responds 429 Too Many Requests and
-// leaves the Pod in place — mirroring the real apiserver's eviction handler.
+// leaves the Pod in place, mirroring the real apiserver's eviction handler.
 func (s *ClusterState) evictPod(w http.ResponseWriter, r *http.Request, namespace, name string) {
 	if r.Method != http.MethodPost {
 		writeMethodNotAllowed(w, "k8s api: pods/eviction: method not allowed: "+r.Method)
@@ -30,8 +30,8 @@ func (s *ClusterState) evictPod(w http.ResponseWriter, r *http.Request, namespac
 	}
 
 	// The Eviction body (policy/v1 Eviction, carrying only ObjectMeta and
-	// optional DeleteOptions) adds nothing this handler needs — namespace and
-	// name already come from the URL — but real clients send one, so it must
+	// optional DeleteOptions) adds nothing this handler needs (namespace and
+	// name already come from the URL), but real clients send one, so it must
 	// be drained rather than left to leak the connection.
 	_, _ = io.Copy(io.Discard, r.Body)
 
@@ -98,7 +98,7 @@ func (s *ClusterState) checkPDBAllowsEvictionLocked(namespace string, pod *corev
 
 // matchingPodCountsLocked returns, among namespace's non-terminal Pods
 // matching sel: expected (the total count) and healthy (those Running and
-// Ready) — the inputs a PodDisruptionBudget's status is computed from.
+// Ready), the inputs a PodDisruptionBudget's status is computed from.
 // Callers hold s.mu.
 func (s *ClusterState) matchingPodCountsLocked(namespace string, sel labels.Selector) (expected, healthy int) {
 	for _, p := range s.pods {
@@ -171,7 +171,7 @@ func updatePDBStatusLocked(pdb *policyv1.PodDisruptionBudget, healthy, desiredHe
 // math.MaxInt32]. allowed can go negative when a PDB is already violated
 // (more disruptions have happened than the budget permits), which the 429
 // decision in checkPDBAllowsEvictionLocked relies on seeing as "no budget
-// left" rather than a negative DisruptionsAllowed on the wire — matching
+// left" rather than a negative DisruptionsAllowed on the wire, matching
 // what a real PodDisruptionBudgetStatus reports. The upper clamp makes the
 // int->int32 narrowing a deliberate, bound-checked conversion instead of
 // gosec G115's unchecked one (mirrors safeInt32 in server/aws/eks/operations.go).

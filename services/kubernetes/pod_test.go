@@ -142,7 +142,7 @@ func TestPod_AllNamespacesListAndUpdate(t *testing.T) {
 		t.Fatalf("all-ns list: got %d items, want 5", len(list.Items))
 	}
 
-	// Update via PUT — name must match URL.
+	// Update via PUT; name must match URL.
 	updated := &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "p-default"},
 		Spec: corev1.PodSpec{

@@ -213,7 +213,7 @@ func TestProviderNativeNamesResolve(t *testing.T) {
 
 // TestPrimaryInterfaceNotOptionalCapability guards against #383: a service whose
 // primary driver interface coexists with a smaller optional capability must
-// report the primary. networking is the canonical case — driver.Networking
+// report the primary. networking is the canonical case: driver.Networking
 // (~50+ ops) alongside the 3-method driver.NetworkInterfaces capability.
 func TestPrimaryInterfaceNotOptionalCapability(t *testing.T) {
 	services := loadServices(t)
@@ -259,8 +259,8 @@ func TestEmbeddedInterfacesFlatten(t *testing.T) {
 //
 // The generator decides that by reading the factory's AST. This checks the same
 // claim against a real provider value, so a parsing bug cannot credit a slot
-// that is merely declared — which is what OCI's nil service fields would
-// otherwise do.
+// that is merely declared (which is what OCI's nil service fields would
+// otherwise do).
 func TestCreditedServicesAreConstructed(t *testing.T) {
 	services := loadServices(t)
 
@@ -318,7 +318,7 @@ func constructed(provider any) map[string]bool {
 // set) but that server/<cloud>/<cloud>.go never wires up: a Drivers field
 // backing it is either absent or declared-but-unread in New(). Such a service
 // is reachable through the Go library and the in-process SDK-compat server,
-// but never through the standalone wire-protocol server for that cloud — a
+// but never through the standalone wire-protocol server for that cloud: a
 // silent capability gap.
 func TestNoDeadWireHandlers(t *testing.T) {
 	services := loadServices(t)
@@ -368,7 +368,7 @@ func renderedCapabilities(t *testing.T, outDir, prov string, svc *Service) map[s
 // TestOptionalCapabilitiesGatedToImplementers is the honesty guarantee for
 // optional capabilities (#394, #498): a provider page lists a capability only
 // when that provider's mock implements the capability's FULL method set. Before
-// this gate, every provider page listed every capability of the service — so
+// this gate, every provider page listed every capability of the service, so
 // oci/vcn.md falsely claimed AWS-only TransitGateways/IPAM, gcp/gce.md claimed
 // ImageRegistrar/VolumeModifier, etc.
 func TestOptionalCapabilitiesGatedToImplementers(t *testing.T) {
@@ -389,7 +389,7 @@ func TestOptionalCapabilitiesGatedToImplementers(t *testing.T) {
 			rendered := renderedCapabilities(t, outDir, prov, svc)
 
 			// Every rendered capability must be one the provider's mock covers,
-			// and every covered capability must render — the page reflects the
+			// and every covered capability must render: the page reflects the
 			// mock's method set exactly, never more, never less.
 			for _, capability := range svc.Capabilities {
 				covered := covers(svc.providerMethods[prov], capability.Operations)
@@ -448,8 +448,8 @@ func TestOptionalCapabilityVanishRemainAnchors(t *testing.T) {
 		{"compute", "aws", "ImageRegistrar", true},
 		{"compute", "aws", "VolumeModifier", true},
 		// Remain: ConsoleReader is implemented by all three, so it stays on every
-		// compute page — the exact case #498's crude "AWS-page-only" filter got
-		// wrong, and why the fix must be a per-provider method-set gate.
+		// compute page. This is the exact case #498's crude "AWS-page-only" filter
+		// got wrong, and why the fix must be a per-provider method-set gate.
 		{"compute", "aws", "ConsoleReader", true},
 		{"compute", "azure", "ConsoleReader", true},
 		{"compute", "gcp", "ConsoleReader", true},

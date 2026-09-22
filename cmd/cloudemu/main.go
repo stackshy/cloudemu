@@ -1,7 +1,7 @@
 // Command cloudemu runs the in-memory cloud emulator as a long-lived,
 // out-of-process HTTP server. Point real AWS, Azure, and GCP SDK clients at
 // the printed endpoints and they talk to cloudemu over the network exactly as
-// they would to the real cloud — no code changes, no accounts, no Docker.
+// they would to the real cloud: no code changes, no accounts, no Docker.
 //
 // This is purely additive: the in-process test-double API
 // (cloudemu.NewAWS(), server/*.New(Drivers{...})) is unchanged.

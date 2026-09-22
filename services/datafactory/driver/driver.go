@@ -1,8 +1,8 @@
 // Package driver defines the storage contract for Azure Data Factory
 // (Microsoft.DataFactory/factories, API version 2018-06-01).
 //
-// A factory is an Azure-only ARM resource with no cross-cloud equivalent, so —
-// like Azure Firewall and the Databricks access connector — the Azure provider
+// A factory is an Azure-only ARM resource with no cross-cloud equivalent, so,
+// like Azure Firewall and the Databricks access connector, the Azure provider
 // stores the ARM body natively and exposes it through this dedicated,
 // single-provider interface. AWS and GCP have no counterpart.
 //
@@ -11,8 +11,8 @@
 //
 //   - identity is TOP-LEVEL on a factory (the echo overlay only reaches the
 //     nested properties object), and its principalId/tenantId are computed GUIDs
-//     when the identity includes SystemAssigned — synthesized once and returned
-//     verbatim on every read so Terraform's computed identity never drifts.
+//     when the identity includes SystemAssigned. They are synthesized once and
+//     returned verbatim on every read so Terraform's computed identity never drifts.
 //   - publicNetworkAccess is an explicit enum: the echo overlay swallows an
 //     explicit zero, so public_network_enabled=false (→ Disabled) would be lost.
 //   - provisioningState (Succeeded), createTime (ISO8601, stable across reads)
@@ -97,7 +97,7 @@ type FactoryConfig struct {
 
 // Factories is the Azure-only Data Factory store, keyed by (resourceGroup, name)
 // to match ARM addressing. CreateOrUpdate is a full replace; Update (PATCH) is a
-// tags+identity replace. An empty resourceGroup is not used on List — the
+// tags+identity replace. An empty resourceGroup is not used on List: the
 // interface exposes both a by-resource-group and a subscription-wide listing.
 type Factories interface {
 	// CreateOrUpdateFactory stores the factory as a full replace and reports

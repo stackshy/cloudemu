@@ -16,7 +16,7 @@ import (
 
 // awsWorld is a minimal live-state harness: it captures the current provider's
 // whole-emulator state via persist.ExportAll and restores it into a FRESH,
-// empty provider via persist.RestoreAll — exactly the reset-then-restore the
+// empty provider via persist.RestoreAll, exactly the reset-then-restore the
 // standalone server does on a rewind. Reassigning p on restore means later
 // captures observe the restored state.
 type awsWorld struct {
@@ -74,7 +74,7 @@ func (w *awsWorld) buckets(t *testing.T) map[string]bool {
 
 // TestRewindAndForkIsolation is the real-user time-travel flow: save a named
 // point, mutate past it, rewind back to it, then fork the point into a branch
-// and mutate the branch — asserting the original point is untouched.
+// and mutate the branch, asserting the original point is untouched.
 func TestRewindAndForkIsolation(t *testing.T) {
 	w := &awsWorld{ctx: context.Background(), p: cloudemu.NewAWS()}
 	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -86,7 +86,7 @@ func TestRewindAndForkIsolation(t *testing.T) {
 		t.Fatalf("save v1: %v", err)
 	}
 
-	// Mutate past v1, then rewind — the later bucket must be gone, v1 present.
+	// Mutate past v1, then rewind: the later bucket must be gone, v1 present.
 	w.createBucket(t, "b-later")
 	if err := reg.Rewind("v1"); err != nil {
 		t.Fatalf("rewind v1: %v", err)

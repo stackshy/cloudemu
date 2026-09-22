@@ -1,6 +1,6 @@
 // Package driver defines the portable interface for an Amazon Keyspaces
-// (Apache Cassandra–compatible) control plane. Keyspaces is control-plane only
-// here — CQL data operations are out of scope — so this driver is independent
+// (Apache Cassandra-compatible) control plane. Keyspaces is control-plane only
+// here (CQL data operations are out of scope), so this driver is independent
 // of the cache/relational drivers.
 package driver
 

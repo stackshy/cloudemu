@@ -58,7 +58,7 @@ type VCR struct {
 }
 
 // New builds a VCR. In replay mode the cassette is loaded from CassettePath now
-// (a missing/invalid file is a hard error — replay against nothing is a bug). In
+// (a missing/invalid file is a hard error: replay against nothing is a bug). In
 // record mode a fresh cassette is created and stamped with Clock.Now(); it is
 // persisted by Flush.
 func New(opts Options) (*VCR, error) {

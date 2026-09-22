@@ -3,7 +3,7 @@
 // renders the compatibility matrix into docs/compat/.
 //
 // It is deliberately not a `go generate` target: unlike coverage (a pure AST
-// parse), the compat matrix is evidence-based — it must actually run real SDK
+// parse), the compat matrix is evidence-based, so it must actually run real SDK
 // calls. Invoke it directly:
 //
 //	go run ./internal/compatgen

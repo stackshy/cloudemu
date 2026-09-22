@@ -176,7 +176,7 @@ func (s *Store[V]) Filter(fn func(key string, value V) bool) map[string]V {
 // Snapshot serializes the whole store as a JSON object keyed by id
 // (map[string]V), so a restore can reinstate every value under its exact key.
 // Identity is preserved: the keys are the resource ids and round-trip unchanged.
-// V must be JSON-serializable for the dump to be lossless — a value type with
+// V must be JSON-serializable for the dump to be lossless: a value type with
 // unexported data fields needs an exported snapshot form or custom JSON methods.
 func (s *Store[V]) Snapshot() ([]byte, error) {
 	return json.Marshal(s.All())

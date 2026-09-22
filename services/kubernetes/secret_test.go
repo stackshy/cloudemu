@@ -13,7 +13,7 @@ func TestSecret_LifecycleAndStringDataMerge(t *testing.T) {
 	base, cleanup := newFixture(t)
 	t.Cleanup(cleanup)
 
-	// Create with StringData — should merge into Data on persist.
+	// Create with StringData; should merge into Data on persist.
 	sec := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "creds"},
 		StringData: map[string]string{"username": "admin", "password": "s3cret"},
@@ -56,11 +56,11 @@ func TestSecret_LifecycleAndStringDataMerge(t *testing.T) {
 
 	resp.Body.Close()
 
-	// Update via PUT — re-introduce StringData, expect another merge + type preservation.
+	// Update via PUT; re-introduce StringData, expect another merge + type preservation.
 	updated := &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "creds"},
 		StringData: map[string]string{"password": "rotated"},
-		// Type omitted — should preserve existing.
+		// Type omitted; should preserve existing.
 	}
 
 	resp = do(t, http.MethodPut, base+"/api/v1/namespaces/default/secrets/creds", mustJSON(t, updated))
@@ -79,7 +79,7 @@ func TestSecret_LifecycleAndStringDataMerge(t *testing.T) {
 		t.Fatalf("Type preserved on update: got %q", got.Type)
 	}
 
-	// One cluster-wide monotonic resourceVersion counter — a fresh, positive
+	// One cluster-wide monotonic resourceVersion counter: a fresh, positive
 	// value on update (not a per-object "2").
 	assertRVGreater(t, got.ResourceVersion, "0")
 

@@ -7,7 +7,7 @@
 // the instant it settles. Describe/Get emits Window.Observe(clock.Now(), final):
 // the intermediate value until readyAt, then the final value. Observe never
 // mutates, so it composes with a provider's existing read lock with no
-// escalation, and it uses no goroutines or timers — advancing a FakeClock (in
+// escalation, and it uses no goroutines or timers: advancing a FakeClock (in
 // tests) or wall-clock (under `cloudemu serve`) is what moves the observed
 // state. The zero-value Window is inactive: Observe returns the final state
 // unconditionally, which preserves the synchronous behavior callers had before
@@ -91,12 +91,12 @@ func (w Window) Settled(now time.Time) bool {
 	return !(w.active && now.Before(w.ReadyAt))
 }
 
-// Set is a keyed collection of settle Windows — one per resource id. A provider
+// Set is a keyed collection of settle Windows, one per resource id. A provider
 // holds one Set per resource kind whose stored struct is a SHARED driver type
 // (so a per-struct settle field is unavailable): the RDS instSettle/snapSettle
 // pattern, generalized. All methods are safe for concurrent use; the zero value
-// is not usable — construct with NewSet. Set wraps the proven Window primitive
-// and imports only "sync" and "time" — callers pass now (from config.Clock) so
+// is not usable, so construct with NewSet. Set wraps the proven Window primitive
+// and imports only "sync" and "time"; callers pass now (from config.Clock) so
 // settle stays dependency-free.
 type Set struct {
 	mu sync.RWMutex
@@ -109,7 +109,7 @@ func NewSet() *Set {
 }
 
 // Begin records that id is settling from intermediate to its (stored) final
-// state over createdAt+d. A non-positive d clears any window for id — i.e. the
+// state over createdAt+d. A non-positive d clears any window for id, i.e. the
 // resource is immediately observed as final. This is the single opt-in call:
 // set.Begin(id, StateCreating, now, m.opts.SettleDuration(settle.DefaultX)).
 func (s *Set) Begin(id, intermediate string, createdAt time.Time, d time.Duration) {

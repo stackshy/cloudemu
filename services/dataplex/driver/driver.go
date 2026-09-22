@@ -1,5 +1,5 @@
 // Package driver defines the portable interface for the Google Cloud Dataplex
-// control plane (dataplex.googleapis.com/v1). It is control-plane only — the
+// control plane (dataplex.googleapis.com/v1). It is control-plane only. The
 // three-level hierarchy a Terraform google provider or a real
 // google.golang.org/api/dataplex client CRUDs is modeled:
 //
@@ -21,9 +21,9 @@
 //
 // The identity + computed fields (name, createTime, updateTime) are derived at
 // create and stay stable across reads so a Terraform refresh does not drift. The
-// remaining output-only fields a resource carries — uid, state, service_account
-// (lake), and the nested status blocks (assetStatus/metastoreStatus/
-// resourceStatus/securityStatus/discoveryStatus) — are seeded once at create by
+// remaining output-only fields a resource carries (uid, state, service_account
+// on the lake, and the nested status blocks: assetStatus/metastoreStatus/
+// resourceStatus/securityStatus/discoveryStatus) are seeded once at create by
 // the wire layer and carried in Fields verbatim, so they too stay stable. Every
 // caller-supplied body key (description, displayName, labels, metastore,
 // discoverySpec, resourceSpec, type, …) is carried as Fields verbatim, matching

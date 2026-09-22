@@ -39,7 +39,7 @@ type Container struct {
 	*testcontainers.DockerContainer
 }
 
-// WithImage overrides the image (default DefaultImage) — e.g. to pin a version
+// WithImage overrides the image (default DefaultImage), e.g. to pin a version
 // or use a locally-built tag.
 func WithImage(image string) testcontainers.ContainerCustomizer {
 	return testcontainers.WithImage(image)
@@ -82,7 +82,7 @@ func (c *Container) KubernetesEndpoint(ctx context.Context) (string, error) {
 	return c.PortEndpoint(ctx, k8sPort, "http")
 }
 
-// Reset wipes all emulator state — call it between tests for a clean slate.
+// Reset wipes all emulator state. Call it between tests for a clean slate.
 func (c *Container) Reset(ctx context.Context) error {
 	return c.control(ctx, "reset", nil)
 }

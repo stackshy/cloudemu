@@ -61,8 +61,8 @@ func matchPatternKey(key string, pv any, event map[string]any) bool {
 }
 
 // matchNestedObject applies a nested-object pattern to an event value. It matches
-// an object directly, and matches a JSON array if the pattern matches any element
-// — mirroring MatchLeaf's array handling. This makes a nested filter policy like
+// an object directly, and matches a JSON array if the pattern matches any element,
+// mirroring MatchLeaf's array handling. This makes a nested filter policy like
 // the documented S3->SNS body filter {"Records":{"s3":{"object":{"key":[...]}}}}
 // match an S3 event whose top-level "Records" is an array of objects.
 func matchNestedObject(pattern map[string]any, ev any) bool {
@@ -460,7 +460,7 @@ func (e *PatternError) Error() string {
 // pattern / SNS filter policy. A pattern is a JSON object whose every leaf value
 // is an array (of match values or content-operator objects); a value that is a
 // nested object is validated recursively. A scalar leaf (string/number/bool), a
-// non-object top level, or malformed JSON is invalid — real EventBridge rejects
+// non-object top level, or malformed JSON is invalid: real EventBridge rejects
 // these with InvalidEventPatternException rather than silently matching nothing.
 func ValidatePattern(raw string) error {
 	if strings.TrimSpace(raw) == "" {
@@ -473,7 +473,7 @@ func ValidatePattern(raw string) error {
 	}
 
 	// A top-level empty object {} (or null) is rejected: real EventBridge refuses
-	// an empty pattern on PutRule. Empty nested objects stay legal — they are
+	// an empty pattern on PutRule. Empty nested objects stay legal; they are
 	// validated recursively by validatePatternObject, not here.
 	if len(p) == 0 {
 		return &PatternError{Reason: "Empty patterns are not allowed"}

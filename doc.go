@@ -19,13 +19,13 @@
 //   - cmd/cloudemu: the standalone "cloudemu serve" binary (also shipped as a
 //     Docker image) that runs the SDK-compat servers as a long-lived process.
 //
-//   - features/<name>: cross-cutting capabilities you wrap drivers with —
+//   - features/<name>: cross-cutting capabilities you wrap drivers with:
 //     chaos, recorder, metrics, inject, ratelimit, and topology.
 //
 //   - config, errors: foundational options and the canonical error type.
 //
-// Every surface builds on the same drivers — the SDK-compat server (in-process
+// Every surface builds on the same drivers: the SDK-compat server (in-process
 // or standalone via cmd/cloudemu), the Portable API (services/<name>), and the
-// cross-cutting features — so a behavior implemented in a driver lights up
+// cross-cutting features. A behavior implemented in a driver lights up
 // across all of them.
 package cloudemu

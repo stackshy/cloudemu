@@ -1,5 +1,5 @@
 // Package driver defines the portable interface for the Google Cloud Data Fusion
-// control plane (datafusion.googleapis.com/v1). It is control-plane only — the
+// control plane (datafusion.googleapis.com/v1). It is control-plane only. The
 // single location-scoped resource collection a Terraform google provider
 // (google_data_fusion_instance) or a real google.golang.org/api/datafusion/v1
 // client CRUDs is modeled:

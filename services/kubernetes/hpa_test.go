@@ -115,7 +115,7 @@ func TestHPA_DefaultMinReplicas(t *testing.T) {
 	do(t, http.MethodPost, base+"/apis/apps/v1/namespaces/default/deployments",
 		mustJSON(t, makeDeployment("nomin", 0))).Body.Close()
 
-	// No minReplicas in the spec — the emulator should default it to 1.
+	// No minReplicas in the spec: the emulator should default it to 1.
 	hpa := map[string]any{
 		"apiVersion": "autoscaling/v2",
 		"kind":       "HorizontalPodAutoscaler",
@@ -318,7 +318,7 @@ func TestHPA_MetricAtTargetLeavesReplicasUnchanged(t *testing.T) {
 }
 
 // With a CPU metric configured but no CPU request on the Pods, utilization is
-// unknown — the HPA must not scale on missing data and must fall back to the
+// unknown: the HPA must not scale on missing data and must fall back to the
 // min/max clamp (here capping 8 replicas at max=5), without panicking.
 func TestHPA_MetricMissingFallsBackToClamp(t *testing.T) {
 	base, cleanup := newFixture(t)

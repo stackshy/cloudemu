@@ -127,7 +127,7 @@ type InstanceProfileInfo struct {
 // SimulationResult is one action-on-resource evaluation returned by an IAM
 // policy simulation (SimulatePrincipalPolicy / SimulateCustomPolicy). Decision
 // is one of "allowed", "explicitDeny", or "implicitDeny". It is an AWS-only
-// shape, so it is not referenced by the IAM interface below — providers that
+// shape, so it is not referenced by the IAM interface below; providers that
 // support simulation expose it through a type-asserted optional method.
 type SimulationResult struct {
 	ActionName   string
@@ -138,7 +138,7 @@ type SimulationResult struct {
 // PolicyEntity is one principal (user, group, or role) that a managed policy is
 // attached to. Path lets the wire layer apply the ListEntitiesForPolicy
 // PathPrefix filter. It is an AWS-only shape (ListEntitiesForPolicy), so it is
-// not referenced by the IAM interface below — providers that support it expose
+// not referenced by the IAM interface below; providers that support it expose
 // it through a type-asserted optional method.
 type PolicyEntity struct {
 	Name string

@@ -203,7 +203,7 @@ func newChaosCompute(t *testing.T) (interface {
 	}, int) ([]struct{}, error)
 }, *chaos.Engine) {
 	t.Helper()
-	// We don't need this helper — RunInstances signature doesn't match the
+	// We don't need this helper: RunInstances signature doesn't match the
 	// anonymous struct above. Tests below construct the wrapped driver
 	// directly with the concrete provider type.
 	return nil, nil

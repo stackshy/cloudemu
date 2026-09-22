@@ -1,7 +1,7 @@
 // Package driver defines the portable interface for the Google Cloud Bigtable
-// Admin API (bigtableadmin.googleapis.com/v2). It is control-plane only —
-// instances, clusters, tables, app profiles, backups, their IAM policies, and
-// long-running operations — so it is independent of the other DB drivers.
+// Admin API (bigtableadmin.googleapis.com/v2). It is control-plane only
+// (instances, clusters, tables, app profiles, backups, their IAM policies, and
+// long-running operations), so it is independent of the other DB drivers.
 package driver
 
 import (
@@ -148,7 +148,7 @@ type CreateClusterConfig struct {
 // stripped) naming the fields the caller intends to change. When it is nil the
 // update falls back to presence heuristics (a non-empty value replaces, an
 // empty one is kept) for back-compat; when it is non-nil only the named fields
-// are written — even to an empty/zero value — and every other field is kept.
+// are written, even to an empty/zero value, and every other field is kept.
 type UpdateInstanceConfig struct {
 	DisplayName string
 	Type        string

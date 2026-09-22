@@ -1,5 +1,5 @@
 // Package driver defines the portable interface for the Google Cloud Dataproc
-// cluster control plane (dataproc.googleapis.com/v1). It is control-plane only —
+// cluster control plane (dataproc.googleapis.com/v1). It is control-plane only:
 // clusters plus the long-running operations their mutating RPCs return. Job
 // execution, cluster start/stop, workflow templates, autoscaling policies, and
 // any real Hadoop/Spark runtime are deliberately out of scope.

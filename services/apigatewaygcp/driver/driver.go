@@ -4,7 +4,7 @@
 // Gateway REST-API-v1 service, a wholly different API that shares only a
 // marketing name; the two cannot share a portable interface.
 //
-// It is control-plane only — the three resource collections a Terraform
+// It is control-plane only: the three resource collections a Terraform
 // google-beta provider or a real google.golang.org/api/apigateway client CRUDs
 // are modeled:
 //
@@ -48,7 +48,7 @@ import (
 // and location scoping can be rebuilt without re-parsing. API names the parent
 // api of a config and is empty for an api or a gateway. CreateTime/UpdateTime
 // are derived deterministically and stay stable across reads. Fields holds every
-// caller-supplied, non-computed body key verbatim — plus any computed body value
+// caller-supplied, non-computed body key verbatim, plus any computed body value
 // seeded once at create (state, an apiConfig's serviceConfigId, a gateway's
 // defaultHostname), which then round-trips as a stable passthrough value.
 type Resource struct {

@@ -245,7 +245,7 @@ func TestPaginate_MalformedTokenBehaviorUnchanged(t *testing.T) {
 
 func TestPaginateSorted_StableAcrossShuffledInput(t *testing.T) {
 	// Same logical set presented in different orders must yield identical
-	// pages — the invariant PaginateSorted exists to enforce.
+	// pages: the invariant PaginateSorted exists to enforce.
 	a := []string{"c", "a", "e", "b", "d"}
 	b := []string{"e", "d", "c", "b", "a"}
 	less := func(x, y string) bool { return x < y }

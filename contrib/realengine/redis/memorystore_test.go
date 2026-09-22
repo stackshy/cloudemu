@@ -18,7 +18,7 @@ import (
 
 // TestGCPMemorystoreRedisE2E runs the real-user flow against GCP Memorystore for
 // Redis: create the instance with the real google-cloud client, read its
-// host/port, connect with a real Redis client, run real commands, then delete —
+// host/port, connect with a real Redis client, run real commands, then delete,
 // all against CloudEmu backed by a real in-process Redis (no Docker).
 func TestGCPMemorystoreRedisE2E(t *testing.T) {
 	eng := redisengine.New()
@@ -47,7 +47,7 @@ func TestGCPMemorystoreRedisE2E(t *testing.T) {
 	parent := "projects/mock-project/locations/" + location
 	name := parent + "/instances/" + instance
 
-	// 1. Create the instance — like `gcloud redis instances create`.
+	// 1. Create the instance, like `gcloud redis instances create`.
 	op, err := svc.Projects.Locations.Instances.Create(parent, &redisapi.Instance{
 		Tier:         "BASIC",
 		MemorySizeGb: 1,
@@ -60,7 +60,7 @@ func TestGCPMemorystoreRedisE2E(t *testing.T) {
 		t.Fatalf("create operation not done: %+v", op)
 	}
 
-	// 2. Read the endpoint the SDK reports — the real Redis host/port.
+	// 2. Read the endpoint the SDK reports, the real Redis host/port.
 	got, err := svc.Projects.Locations.Instances.Get(name).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -90,7 +90,7 @@ func TestGCPMemorystoreRedisE2E(t *testing.T) {
 
 	_ = rdb.Close()
 
-	// 4. Delete the instance — the real Redis server is torn down.
+	// 4. Delete the instance, the real Redis server is torn down.
 	if _, err := svc.Projects.Locations.Instances.Delete(name).Context(ctx).Do(); err != nil {
 		t.Fatalf("Delete: %v", err)
 	}

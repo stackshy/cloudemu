@@ -68,7 +68,7 @@ func TestSDKObservesChaos(t *testing.T) {
 		t.Fatal("expected failure during chaos outage, got nil")
 	}
 
-	// Wait past the outage window — ops succeed again (the SDK observes recovery).
+	// Wait past the outage window: ops succeed again (the SDK observes recovery).
 	time.Sleep(300 * time.Millisecond)
 
 	if _, err = client.PutObject(ctx, &s3.PutObjectInput{

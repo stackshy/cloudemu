@@ -11,7 +11,7 @@ const strategyRollingUpdate = "RollingUpdate"
 
 // Workload updateStrategy defaulting (#874 seam 3). `kubectl rollout status` on
 // a StatefulSet/DaemonSet errors ("only available for RollingUpdate strategy
-// type") if the strategy type is unset, so — like a real apiserver — the
+// type") if the strategy type is unset, so, like a real apiserver, the
 // reconciler defaults it at write time. Deployments default to RollingUpdate
 // 25%/25%, StatefulSets to RollingUpdate partition 0, DaemonSets to
 // RollingUpdate maxUnavailable 1 / maxSurge 0. All defaulting is

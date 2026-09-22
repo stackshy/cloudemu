@@ -13,7 +13,7 @@ type DashboardInfo struct {
 	Size         int
 }
 
-// DashboardEntry is a ListDashboards summary row — the dashboard's name, ARN,
+// DashboardEntry is a ListDashboards summary row: the dashboard's name, ARN,
 // last-modified time, and body size, without the body itself.
 type DashboardEntry struct {
 	Name         string

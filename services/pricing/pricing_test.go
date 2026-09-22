@@ -74,7 +74,7 @@ func TestMonthlyVolumeBySize(t *testing.T) {
 	}
 }
 
-// Azure managed disks and GCE PDs must price too — the walker's VolumeType maps
+// Azure managed disks and GCE PDs must price too: the walker's VolumeType maps
 // to the provider's disk rate, not a hardcoded AWS prefix.
 func TestMonthlyVolumeAzureGCP(t *testing.T) {
 	// Azure Premium_LRS 100 GB ≈ 0.135 × 100 = $13.50/mo.

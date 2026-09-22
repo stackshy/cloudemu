@@ -15,7 +15,7 @@ import (
 // TestIdentityPreservedAcrossRestore is the headline guarantee of the per-driver
 // snapshot: after a full Export→JSON→Restore into a FRESH provider, resource
 // identifiers and id-string cross-references survive unchanged. In particular an
-// EC2 instance keeps the SAME instance id and its security-group reference — the
+// EC2 instance keeps the SAME instance id and its security-group reference, the
 // thing the old driver-replay compute path could not do (it minted a fresh id).
 func TestIdentityPreservedAcrossRestore(t *testing.T) {
 	ctx := context.Background()
@@ -97,7 +97,7 @@ func TestIdentityPreservedAcrossRestore(t *testing.T) {
 
 	// The restored instance is still a live, transitionable resource: the state
 	// machine was re-registered, so a Stop succeeds (it would fail "not found" if
-	// only the record — not the FSM state — had been restored).
+	// only the record, not the FSM state, had been restored).
 	if err := dst.EC2.StopInstances(ctx, []string{wantInstanceID}); err != nil {
 		t.Fatalf("stop restored instance: %v", err)
 	}

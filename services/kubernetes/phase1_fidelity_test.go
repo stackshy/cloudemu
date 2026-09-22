@@ -108,7 +108,7 @@ func TestDryRun_RegistryCreateNotPersisted(t *testing.T) {
 
 // TestDryRun_TypedWritesDoNotAdvanceClusterRV guards that a server dry-run
 // create/update/patch on a typed kind (ConfigMap) is side-effect-free with
-// respect to the cluster resourceVersion counter — it echoes the would-be RV
+// respect to the cluster resourceVersion counter: it echoes the would-be RV
 // (the peeked value) but must not consume it, mirroring the registry kinds.
 func TestDryRun_TypedWritesDoNotAdvanceClusterRV(t *testing.T) {
 	base, done := newFixture(t)

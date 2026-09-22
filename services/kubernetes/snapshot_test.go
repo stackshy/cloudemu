@@ -43,21 +43,21 @@ var clusterStatePersistedFields = map[string]struct{}{
 //
 //nolint:gochecknoglobals // test fixture: the reviewed non-persisted-field set.
 var clusterStateRuntimeFields = map[string]struct{}{
-	"mu":                   {}, // lock — never serialized
+	"mu":                   {}, // lock, never serialized
 	"clock":                {}, // config re-injected via newClusterState
 	"lifecycleProgression": {}, // config re-injected via newClusterState
 	"nodeCount":            {}, // config re-injected via newClusterState; Node objects persist in the registry store
 	"admissionEnabled":     {}, // config re-injected via newClusterState
 	"admissionClient":      {}, // runtime *http.Client, reconstructed
-	"eventIndex":           {}, // derived — rebuilt from the restored Event store
-	"wNamespaces":          {}, // watch broadcaster — live channels, rebuilt fresh
-	"wConfigMaps":          {}, // watch broadcaster — rebuilt fresh
-	"wPods":                {}, // watch broadcaster — rebuilt fresh
-	"wSecrets":             {}, // watch broadcaster — rebuilt fresh
-	"wServiceAccounts":     {}, // watch broadcaster — rebuilt fresh
-	"wServices":            {}, // watch broadcaster — rebuilt fresh
-	"wDeployments":         {}, // watch broadcaster — rebuilt fresh
-	"wEndpoints":           {}, // watch broadcaster — rebuilt fresh
+	"eventIndex":           {}, // derived, rebuilt from the restored Event store
+	"wNamespaces":          {}, // watch broadcaster, live channels, rebuilt fresh
+	"wConfigMaps":          {}, // watch broadcaster, rebuilt fresh
+	"wPods":                {}, // watch broadcaster, rebuilt fresh
+	"wSecrets":             {}, // watch broadcaster, rebuilt fresh
+	"wServiceAccounts":     {}, // watch broadcaster, rebuilt fresh
+	"wServices":            {}, // watch broadcaster, rebuilt fresh
+	"wDeployments":         {}, // watch broadcaster, rebuilt fresh
+	"wEndpoints":           {}, // watch broadcaster, rebuilt fresh
 }
 
 // apiServerPersistedFields / apiServerRuntimeFields do the same classification
@@ -71,8 +71,8 @@ var apiServerPersistedFields = map[string]struct{}{
 
 //nolint:gochecknoglobals // test fixture: the reviewed non-persisted-field set.
 var apiServerRuntimeFields = map[string]struct{}{
-	"mu":                   {}, // lock — never serialized
-	"baseURL":              {}, // host/port differ per run — must NOT persist
+	"mu":                   {}, // lock, never serialized
+	"baseURL":              {}, // host/port differ per run, must NOT persist
 	"clock":                {}, // config re-injected before restore
 	"admissionEnabled":     {}, // config re-injected before restore
 	"admissionClient":      {}, // runtime *http.Client
@@ -83,7 +83,7 @@ var apiServerRuntimeFields = map[string]struct{}{
 // TestSnapshotFieldGuard is the permanent completeness guard for #868: every
 // field of ClusterState AND APIServer must be classified as either persisted or
 // runtime/config. A newly-added field lands in neither set and fails here, naming
-// the field — so a future stateful field can't silently escape persistence the
+// the field, so a future stateful field can't silently escape persistence the
 // way the provider guard (persist/completeness_test.go, blind to these plain-map
 // types) would miss.
 func TestSnapshotFieldGuard(t *testing.T) {
@@ -111,7 +111,7 @@ func TestSnapshotFieldGuard(t *testing.T) {
 // objects, one object of EVERY registered registry kind, and a CRD + custom
 // resource, then Snapshot -> Restore into a fresh APIServer and asserts the two
 // snapshots are byte-identical. Byte-equality of the whole serializable surface
-// proves the round-trip is lossless — a dropped store, allocator, or the CRD
+// proves the round-trip is lossless: a dropped store, allocator, or the CRD
 // store reconstruction would diverge the bytes and fail here. Registry coverage
 // is automatic: the populate loop walks registeredResources(), so a newly-added
 // registry kind is exercised without touching this test.
@@ -201,7 +201,7 @@ func TestSnapshotRestorePreservesAllocatorsAndRV(t *testing.T) {
 
 	// A list stamps its collection resourceVersion from the restored high-water
 	// mark (>= every restored item's rv, the reflector invariant), and the next
-	// mutating write advances FROM it — not from 0/1.
+	// mutating write advances FROM it, not from 0/1.
 	if lv := got.clusterRVLocked(); lv != "4242" {
 		t.Errorf("list resourceVersion = %s, want 4242 (restored high-water mark)", lv)
 	}

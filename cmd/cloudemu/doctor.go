@@ -30,7 +30,7 @@ const (
 
 // portCheck is one default endpoint the emulator would bind. required marks a
 // port the default provider set (aws,azure,gcp) plus the k8s data-plane bind on
-// startup — an in-use required port is a genuine blocker. OCI is opt-in, so a
+// startup: an in-use required port is a genuine blocker. OCI is opt-in, so a
 // busy OCI port is only a warning.
 type portCheck struct {
 	label    string

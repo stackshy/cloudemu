@@ -28,7 +28,7 @@ const (
 )
 
 // harness wires the gRPC BigtableAdmin servers onto the transport foundation,
-// backed by a real provider Mock, and dials it over an in-memory bufconn — a
+// backed by a real provider Mock, and dials it over an in-memory bufconn: a
 // full gRPC round trip exercising the proto<->driver conversions and the store.
 type harness struct {
 	instances adminpb.BigtableInstanceAdminClient

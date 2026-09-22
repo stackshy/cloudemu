@@ -54,7 +54,7 @@ func onDeleteCRD(s *ClusterState, obj *unstructured.Unstructured) {
 	}
 }
 
-// crdResourceDefs derives the registry resourceDef(s) — one per served version —
+// crdResourceDefs derives the registry resourceDef(s), one per served version,
 // from a CRD object. Returns nil for a structurally-incomplete CRD (missing
 // group/plural/kind) rather than registering a shadowing or malformed store.
 func crdResourceDefs(obj *unstructured.Unstructured) []*resourceDef {

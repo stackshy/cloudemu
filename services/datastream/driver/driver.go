@@ -1,5 +1,5 @@
 // Package driver defines the portable interface for the Google Datastream
-// control plane (datastream.googleapis.com/v1). It is control-plane only — the
+// control plane (datastream.googleapis.com/v1). It is control-plane only. The
 // two location-scoped resource collections a Terraform google provider or a
 // real google.golang.org/api/datastream/v1 client CRUDs are modeled:
 //
@@ -17,7 +17,7 @@
 // Neither resource carries a uid or etag in the real API. A connection profile
 // has no state; a stream has a state enum minted at create (default NOT_STARTED)
 // and mutated via a state-masked patch. The identity + computed fields (name,
-// createTime, updateTime, and — for a stream — state) are derived at create and
+// createTime, updateTime, and, for a stream, state) are derived at create and
 // stay stable across reads so a Terraform refresh does not drift. Every other
 // caller-supplied body key (the rich oracle/mysql/postgresql/gcs/bigquery
 // profile and source/destination config blocks, backfill oneof, labels, …) is
@@ -35,7 +35,7 @@ import (
 // stream). Name components are stored separately so the full resource name and
 // location scoping can be rebuilt without re-parsing. CreateTime/UpdateTime are
 // derived deterministically and stay stable across reads. Fields holds every
-// caller-supplied, non-computed body key verbatim — including a stream's state,
+// caller-supplied, non-computed body key verbatim, including a stream's state,
 // which round-trips as a passthrough value seeded at create.
 type Resource struct {
 	Project    string

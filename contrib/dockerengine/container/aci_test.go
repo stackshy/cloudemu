@@ -21,7 +21,7 @@ import (
 // Container Instances: create a container group with the real ACI SDK (one
 // alpine container, restartPolicy Never → run-to-completion), poll the group's
 // container instanceView until it reaches Terminated, assert exitCode 0, then
-// read the container's logs and assert they carry the marker — all against
+// read the container's logs and assert they carry the marker, all against
 // CloudEmu backed by a real Docker container (no cloud account). It proves the
 // real container ran to completion (its exit code reaches the wire) and its
 // real stdout was captured and surfaced through Containers.ListLogs.
@@ -57,7 +57,7 @@ func TestACIContainerGroupE2E(t *testing.T) {
 
 	ctx := context.Background()
 
-	// 1. Create the container group — like `az container create`. restartPolicy
+	// 1. Create the container group, like `az container create`. restartPolicy
 	//    Never makes it a run-to-completion workload.
 	createPoller, err := groupsClient.BeginCreateOrUpdate(ctx, rg, group, armcontainerinstance.ContainerGroup{
 		Location: to.Ptr("eastus"),
@@ -88,7 +88,7 @@ func TestACIContainerGroupE2E(t *testing.T) {
 	}
 
 	// 2. Poll GET until the container's instanceView reports Terminated, then
-	//    assert it exited 0 — proving the real container ran to completion and its
+	//    assert it exited 0, proving the real container ran to completion and its
 	//    real exit code reached the wire.
 	var exitCode int32 = -1
 
@@ -130,7 +130,7 @@ func TestACIContainerGroupE2E(t *testing.T) {
 		t.Fatalf("marker %q not found in container logs: %v", marker, logs.Content)
 	}
 
-	// 4. Delete the group — the real container is torn down and no leak remains.
+	// 4. Delete the group: the real container is torn down and no leak remains.
 	delPoller, err := groupsClient.BeginDelete(ctx, rg, group, nil)
 	if err != nil {
 		t.Fatalf("BeginDelete: %v", err)

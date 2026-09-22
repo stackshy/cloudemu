@@ -19,7 +19,7 @@ import (
 
 // TestAzureCacheRedisE2E runs the real-user flow against Azure Cache for Redis:
 // create the cache with the real Azure SDK, read its host/port, connect with a
-// real Redis client, run real commands, then delete — all against CloudEmu
+// real Redis client, run real commands, then delete, all against CloudEmu
 // backed by a real in-process Redis (no Docker, no cloud account).
 func TestAzureCacheRedisE2E(t *testing.T) {
 	eng := redisengine.New()
@@ -41,7 +41,7 @@ func TestAzureCacheRedisE2E(t *testing.T) {
 		cache = "app-cache"
 	)
 
-	// 1. Create the cache — like `az redis create`.
+	// 1. Create the cache, like `az redis create`.
 	createPoller, err := client.BeginCreate(ctx, rg, cache, armredis.CreateParameters{
 		Location: to.Ptr("eastus"),
 		Properties: &armredis.CreateProperties{
@@ -60,7 +60,7 @@ func TestAzureCacheRedisE2E(t *testing.T) {
 		t.Fatalf("create poll: %v", err)
 	}
 
-	// 2. Read the endpoint the SDK reports — the real Redis host/port.
+	// 2. Read the endpoint the SDK reports, the real Redis host/port.
 	got, err := client.Get(ctx, rg, cache, nil)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
@@ -94,7 +94,7 @@ func TestAzureCacheRedisE2E(t *testing.T) {
 
 	_ = rdb.Close()
 
-	// 4. Delete the cache — the real Redis server is torn down.
+	// 4. Delete the cache, the real Redis server is torn down.
 	delPoller, err := client.BeginDelete(ctx, rg, cache, nil)
 	if err != nil {
 		t.Fatalf("BeginDelete: %v", err)

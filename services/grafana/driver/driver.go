@@ -5,8 +5,8 @@
 // This is a control-plane-only surface: the emulator never runs a Grafana
 // server. A workspace is created directly in the ACTIVE state so an IaC waiter
 // that blocks on status does not hang. The computed fields clients and IaC
-// tools read back — the id (g-[0-9a-f]{10}), the derived arn, the endpoint, the
-// grafanaVersion, the status and the created timestamp — are minted once at
+// tools read back (the id (g-[0-9a-f]{10}), the derived arn, the endpoint, the
+// grafanaVersion, the status and the created timestamp) are minted once at
 // create and stored, so repeated DescribeWorkspace/ListWorkspaces reads and a
 // later UpdateWorkspace never drift. The nested vpcConfiguration and
 // networkAccessControl blocks are carried verbatim as json.RawMessage so a

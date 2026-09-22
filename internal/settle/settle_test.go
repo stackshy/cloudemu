@@ -46,7 +46,7 @@ func TestZeroWindowIsInactive(t *testing.T) {
 	t.Parallel()
 
 	// The zero value (and a non-positive duration) must report the final state
-	// immediately — this is what preserves the synchronous default behavior.
+	// immediately: this preserves the synchronous default behavior.
 	var zero settle.Window
 	if got := zero.Observe(base, "available"); got != "available" {
 		t.Fatalf("zero Observe = %q, want available", got)

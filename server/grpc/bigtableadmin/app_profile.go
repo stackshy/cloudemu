@@ -12,8 +12,8 @@ import (
 // Bigtable app profiles on the instance-admin gRPC surface. Create/Get/List and
 // Delete are plain synchronous RPCs; UpdateAppProfile is long-running and, like
 // the other admin LROs here, completes synchronously (a done Operation carrying
-// the updated profile in Response), so the terraform google provider — which
-// drives these over BIGTABLE_EMULATOR_HOST — round-trips without hanging.
+// the updated profile in Response), so the terraform google provider, which
+// drives these over BIGTABLE_EMULATOR_HOST, round-trips without hanging.
 
 func (s *instanceAdminServer) CreateAppProfile(
 	ctx context.Context, req *adminpb.CreateAppProfileRequest,

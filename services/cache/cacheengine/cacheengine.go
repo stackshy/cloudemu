@@ -18,7 +18,7 @@ const engineRedis = "redis"
 
 // IsRedisFamily reports whether a real Redis server can back this engine. The
 // no-Docker miniredis backing speaks the Redis (RESP) protocol. Matching is
-// case-insensitive — providers spell the engine "redis"/"Redis".
+// case-insensitive, since providers spell the engine "redis"/"Redis".
 func IsRedisFamily(engine string) bool {
 	return strings.EqualFold(engine, engineRedis)
 }

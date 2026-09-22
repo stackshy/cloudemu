@@ -3,7 +3,7 @@
 // The core Server is protocol-agnostic: it dispatches incoming requests to
 // registered Handlers via a Matches predicate. Each Handler is a self-contained
 // package (e.g. server/aws/s3, server/aws/dynamodb) that speaks its own wire
-// format. Adding a new service — AWS EC2, Azure Blob, GCP GCS — is one new
+// format. Adding a new service (AWS EC2, Azure Blob, GCP GCS) is one new
 // package and one Register call; the core server never changes.
 package server
 
@@ -30,7 +30,7 @@ type Server struct {
 	// the request, replace it (e.g. attaching a resolved principal to the
 	// context), and report whether dispatch should proceed. When it returns
 	// proceed=false it has already written the response. Nil by default, so it
-	// adds no behavior — the default request path is byte-for-byte unchanged.
+	// adds no behavior; the default request path is byte-for-byte unchanged.
 	preDispatch func(http.ResponseWriter, *http.Request) (*http.Request, bool)
 }
 

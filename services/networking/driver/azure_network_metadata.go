@@ -9,7 +9,7 @@ import "context"
 // AWS-shaped structs (or force AWS/GCP to carry fields they never populate),
 // the Azure provider stores these alongside the cross-cloud resource and
 // exposes them through AzureNetworkMetadata, an OPTIONAL capability discovered
-// by type assertion — the same pattern as AzureNetworkInterfaces.
+// by type assertion, the same pattern as AzureNetworkInterfaces.
 
 // AzureVNetMetadata holds the Azure-only virtual-network fields (region and the
 // full address-prefix list). The cross-cloud VPCInfo keeps a single CIDR; this
@@ -18,7 +18,7 @@ type AzureVNetMetadata struct {
 	Location        string
 	AddressPrefixes []string
 	// ResourceGUID is the persisted identifier ARM reports as
-	// properties.resourceGuid — stable for the resource's lifetime and
+	// properties.resourceGuid: stable for the resource's lifetime and
 	// regenerated only if it is deleted and recreated. The provider assigns it
 	// on first PutAzureVNetMetadata and preserves it across every later PUT;
 	// callers building a metadata value to store should leave it empty and let
@@ -44,7 +44,7 @@ type AzureNSGRule struct {
 	// SourceAddressPrefixes / DestinationAddressPrefixes and SourcePortRanges /
 	// DestinationPortRanges are the ARM plural (string[]) forms of the matching
 	// singular fields above (properties.sourceAddressPrefixes etc.). A caller
-	// sends either the singular or the plural form of each pair — never both —
+	// sends either the singular or the plural form of each pair, never both,
 	// and real Azure round-trips exactly what was sent, so these are kept
 	// verbatim and stay empty when the singular form was used.
 	SourceAddressPrefixes      []string
@@ -67,7 +67,7 @@ type AzureNSGMetadata struct {
 	Location      string
 	SecurityRules []AzureNSGRule
 	// ResourceGUID is the persisted identifier ARM reports as
-	// properties.resourceGuid — stable for the resource's lifetime and
+	// properties.resourceGuid: stable for the resource's lifetime and
 	// regenerated only if it is deleted and recreated. The provider assigns it
 	// on first PutAzureNSGMetadata and preserves it across every later PUT;
 	// callers building a metadata value to store should leave it empty and let
@@ -147,7 +147,7 @@ type AzureNetworkMetadata interface {
 	DeleteAzureNSGMetadata(ctx context.Context, id string)
 
 	// UpsertAzureNSGRule creates or replaces a single custom security rule by
-	// name, leaving every sibling rule untouched — the atomic read-modify-write
+	// name, leaving every sibling rule untouched: the atomic read-modify-write
 	// the SecurityRules sub-resource CRUD (securityRules/{ruleName}) needs.
 	// Returns NotFound when the network security group itself doesn't exist.
 	UpsertAzureNSGRule(ctx context.Context, id string, rule AzureNSGRule) (AzureNSGMetadata, error)
@@ -158,7 +158,7 @@ type AzureNetworkMetadata interface {
 
 	// UpsertAzureVNetPeering creates or replaces a single virtualNetworkPeerings
 	// sub-resource by name on the VNet with the given driver id, leaving every
-	// sibling peering untouched — the atomic read-modify-write the peerings
+	// sibling peering untouched: the atomic read-modify-write the peerings
 	// sub-resource CRUD needs. Returns NotFound when the virtual network itself
 	// doesn't exist.
 	UpsertAzureVNetPeering(ctx context.Context, vnetID string, peering AzureVNetPeering) (AzureVNetPeering, error)
@@ -200,7 +200,7 @@ type AzureNetworkMetadata interface {
 	// UpsertAzureRoute creates or replaces a single route by name in the route
 	// table with the given driver id, via an atomic read-modify-write on the
 	// stored metadata that leaves every sibling route (and the table's other
-	// fields) untouched — the routes sub-resource CRUD's (azurerm_route)
+	// fields) untouched: the routes sub-resource CRUD's (azurerm_route)
 	// mutation. Returns NotFound when no route table has that id.
 	UpsertAzureRoute(ctx context.Context, id string, route AzureRoute) (AzureRouteTableMetadata, error)
 	// DeleteAzureRoute removes a single route by name from the route table with

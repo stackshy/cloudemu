@@ -7,9 +7,9 @@ import (
 )
 
 // chaosVertexAI wraps a Vertex AI service. It consults the engine on the calls
-// most worth failing in tests — job and pipeline submission, model deployment,
+// most worth failing in tests (job and pipeline submission, model deployment,
 // the online prediction and generateContent runtimes, and Feature Store online
-// serving — and delegates every other operation through the embedded
+// serving) and delegates every other operation through the embedded
 // driver.VertexAI unchanged.
 type chaosVertexAI struct {
 	driver.VertexAI

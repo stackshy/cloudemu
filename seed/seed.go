@@ -3,8 +3,8 @@
 // state deterministically.
 //
 // Fixtures are provider-agnostic: they name resource kinds (buckets, tables,
-// secrets, instances), and Apply writes them through the driver interfaces —
-// which every provider implements — so the same fixture file seeds AWS, Azure,
+// secrets, instances), and Apply writes them through the driver interfaces,
+// which every provider implements, so the same fixture file seeds AWS, Azure,
 // or GCP depending on which drivers you pass in the Target.
 package seed
 
@@ -85,7 +85,7 @@ func Load(data []byte) (Fixtures, error) {
 	return f, nil
 }
 
-// LoadFS reads and parses a fixture file from fsys — pass an embed.FS to load
+// LoadFS reads and parses a fixture file from fsys. Pass an embed.FS to load
 // go:embed-ed fixtures.
 func LoadFS(fsys fs.FS, name string) (Fixtures, error) {
 	data, err := fs.ReadFile(fsys, name)
@@ -172,7 +172,7 @@ type applyOptions struct{ ignoreExisting bool }
 // IgnoreExisting makes Apply skip a resource that already exists (an
 // AlreadyExists error) and continue with the rest of the fixture, instead of
 // failing at the first collision. Use it for boot-time init, where a fixture may
-// overlap resources already present from restored state or an earlier file — so
+// overlap resources already present from restored state or an earlier file, so
 // a duplicate skips just that resource rather than truncating everything after
 // it in the fixture.
 func IgnoreExisting() Option {
@@ -183,7 +183,7 @@ func IgnoreExisting() Option {
 // a fixed order (buckets, tables, secrets, instances). Validation runs first so
 // an invalid fixture is rejected before anything is created. Writes are not
 // transactional: on a mid-write failure (e.g. seeding a backend that isn't
-// empty), earlier resources remain — reset and retry against a fresh backend,
+// empty), earlier resources remain. Reset and retry against a fresh backend,
 // or pass IgnoreExisting to tolerate resources that already exist.
 //
 //nolint:gocritic // hugeParam: Fixtures is passed by value to keep the stable public Apply signature.
@@ -218,7 +218,7 @@ func applyBuckets(ctx context.Context, buckets []Bucket, d storagedriver.Bucket,
 			if !ignoreExisting || !cerrors.IsAlreadyExists(err) {
 				return fmt.Errorf("seed bucket %q: %w", b.Name, err)
 			}
-			// Bucket already exists — still (re)put its declared objects below.
+			// Bucket already exists; still (re)put its declared objects below.
 		}
 
 		for _, o := range b.Objects {
@@ -244,7 +244,7 @@ func applyTables(ctx context.Context, tables []Table, d dbdriver.Database, ignor
 			if !ignoreExisting || !cerrors.IsAlreadyExists(err) {
 				return fmt.Errorf("seed table %q: %w", tb.Name, err)
 			}
-			// Table already exists — still (re)put its declared items below.
+			// Table already exists; still (re)put its declared items below.
 		}
 
 		for i, item := range tb.Items {

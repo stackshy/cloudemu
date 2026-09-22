@@ -45,7 +45,7 @@ func Available() bool {
 }
 
 // Runner is the low-level plumbing shared by every Docker-backed engine backing
-// added in later waves. It shells out to the docker CLI via os/exec — all
+// added in later waves. It shells out to the docker CLI via os/exec; all
 // arguments are first-party, so they are passed as an argv slice (never a shell
 // string), sidestepping command injection. It spawns no goroutines.
 type Runner struct{}
@@ -56,8 +56,8 @@ type Runner struct{}
 // are sorted so the emitted argv is deterministic.
 //
 // Run deliberately does NOT pass `--rm`. Engines built on the Runner read a
-// container's exit state and logs *after* it stops (Inspect + Logs) — the
-// run-to-completion container pattern — and `--rm` deletes the container the
+// container's exit state and logs *after* it stops (Inspect + Logs), the
+// run-to-completion container pattern, and `--rm` deletes the container the
 // instant it exits, which would race those reads away before Status/Logs could
 // see them. Teardown is therefore explicit: callers own the container and remove
 // it via Rm (or the engine's Close), which trades a small leak window on an

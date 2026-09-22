@@ -1,4 +1,4 @@
-// Package recursionguard bounds cross-service re-entrant call chains — e.g. a
+// Package recursionguard bounds cross-service re-entrant call chains, e.g. a
 // DynamoDB Streams -> Lambda event source mapping whose handler writes back
 // into its own source table (mark-processed, audit-append, status-bump). Left
 // unbounded, that pattern recurses synchronously on the same goroutine

@@ -7,8 +7,8 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
-// ParseProjection parses a DynamoDB ProjectionExpression — a comma-separated
-// list of document paths (top-level names, nested a.b, and a[n] indexes) —
+// ParseProjection parses a DynamoDB ProjectionExpression, a comma-separated
+// list of document paths (top-level names, nested a.b, and a[n] indexes),
 // into the paths to retain. names resolves #alias steps
 // (ExpressionAttributeNames). An empty expression yields a nil slice, which
 // callers treat as "return the whole item".
@@ -164,7 +164,7 @@ func leafOrMerge(existing any, parts []PathPart, val any) any {
 
 // sparseList accumulates projected list elements by their source index while a
 // projection is being built. finalize converts it to a compacted list ordered
-// by index — DynamoDB returns only the projected elements, dropping the gaps
+// by index: DynamoDB returns only the projected elements, dropping the gaps
 // between them.
 type sparseList struct {
 	byIndex map[int]any

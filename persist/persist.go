@@ -61,8 +61,8 @@ type Snapshot struct {
 	Providers     map[string]ProviderState `json:"providers,omitempty"`
 
 	// Kubernetes is the serialized shared Kubernetes data-plane (APIServer
-	// state keyed by cluster UID). It is NOT part of any single provider —
-	// AWS/Azure/GCP all register clusters into the same data plane — so it lives
+	// state keyed by cluster UID). It is NOT part of any single provider:
+	// AWS/Azure/GCP all register clusters into the same data plane, so it lives
 	// at the top level rather than under Providers. It is populated and consumed
 	// by the caller (server/serverkit), NOT by the generic ExportAll/RestoreAll,
 	// which stay strictly provider-only: a direct ExportAll caller therefore gets
@@ -123,8 +123,8 @@ func RestoreAll(ctx context.Context, snap *Snapshot, targets map[string]Services
 
 // RestoreAllWithFactory is RestoreAll with an escape hatch for lazily-created
 // targets: when a snapshot provider key has no matching entry in targets, ensure
-// (if non-nil) is called with that key to materialize its Services on demand —
-// this is how AWS multi-region restore creates a region provider for an
+// (if non-nil) is called with that key to materialize its Services on demand.
+// This is how AWS multi-region restore creates a region provider for an
 // "aws@<region>" key that has no live provider yet. When ensure is nil, or
 // returns ok=false, the key is skipped exactly as before.
 func RestoreAllWithFactory(
@@ -198,7 +198,7 @@ func Restore(ctx context.Context, services Services, ps *ProviderState) error {
 			// The snapshot carries a service this build no longer exposes (a
 			// wider-surface or newer snapshot restored into a narrower build).
 			// Skipping is intentional, but a silent skip hides state loss, so
-			// warn — this is what #817 asked for.
+			// warn (see #817).
 			log.Printf("persist: restore: snapshot service %q has no matching target service; skipping", name)
 
 			continue
@@ -240,8 +240,8 @@ func (s Snapshot) WriteFile(path string) error {
 	}
 
 	// Write to a temp file in the same dir, fsync it, then rename onto the
-	// target. The full ordering — temp-write → fsync file → rename → best-effort
-	// fsync parent dir — is what makes the write crash-safe: fsync forces the
+	// target. The full ordering (temp-write, fsync file, rename, best-effort
+	// fsync parent dir) is what makes the write crash-safe: fsync forces the
 	// data blocks to disk before the rename publishes the name, so power loss can
 	// leave the previous snapshot (or none) but never a truncated/empty file, and
 	// rename is atomic on the same filesystem. The parent-dir fsync then makes the

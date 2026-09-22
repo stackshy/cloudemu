@@ -1,4 +1,4 @@
-// Package scope identifies the cloud-side container a resource lives in —
+// Package scope identifies the cloud-side container a resource lives in:
 // the Azure subscription/resource group, the GCP project, or the OCI
 // compartment. Drivers record a resource's scope at create time and filter
 // lists by it, so scoped list endpoints (ListByResourceGroup, per-project
@@ -26,7 +26,7 @@ func (s Scope) IsZero() bool {
 // Matches reports whether a resource created in scope s is visible under
 // filter f. Empty filter fields match anything, so a zero filter lists
 // everything and a subscription-only filter spans its resource groups.
-// Resources created without scope (portable API) are visible everywhere —
+// Resources created without scope (portable API) are visible everywhere;
 // hiding them from scoped lists would make them unreachable over the wire.
 func (s Scope) Matches(f Scope) bool {
 	if s.IsZero() {

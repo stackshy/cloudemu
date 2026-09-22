@@ -14,7 +14,7 @@ import (
 )
 
 // labeledNodeJSON registers a schedulable, untainted worker Node with an
-// explicit label set and 4 CPU allocatable — a client seeding a labeled node
+// explicit label set and 4 CPU allocatable, for a client seeding a labeled node
 // pool (zones, disk types) for affinity/spread scheduling.
 func labeledNodeJSON(t *testing.T, name string, labels map[string]any) []byte {
 	t.Helper()
@@ -49,7 +49,7 @@ func registerNode(t *testing.T, base string, body []byte) {
 // zonedPoolFixture returns a fixture whose only labeled worker pool is the nodes
 // the caller registers. It starts from a single (untainted) seed node with no
 // "pool" label, so a pod pinned via nodeSelector pool=app only ever considers
-// the registered zone nodes — isolating affinity/spread behavior from the seed.
+// the registered zone nodes, isolating affinity/spread behavior from the seed.
 func zonedPoolFixture(t *testing.T, nodes ...[]byte) (string, func()) {
 	t.Helper()
 

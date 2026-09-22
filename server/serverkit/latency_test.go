@@ -11,7 +11,7 @@ import (
 // TestLatencyDelaysProviderRequestsNotAdmin is the regression guard for the
 // --latency no-op bug: with a latency configured, an emulated provider request
 // must be delayed by at least that duration on the wire path, while an admin
-// control-plane request (/_cloudemu/health) must NOT be — latency simulation is
+// control-plane request (/_cloudemu/health) must NOT be. Latency simulation is
 // for the emulated cloud APIs, not the control plane.
 func TestLatencyDelaysProviderRequestsNotAdmin(t *testing.T) {
 	const latency = 40 * time.Millisecond

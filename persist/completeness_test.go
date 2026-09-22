@@ -19,7 +19,7 @@ const maxStoreScanDepth = 4
 // guardExclude lists provider fields (keyed "provider/Field") that transitively
 // hold a *memstore.Store but are deliberately NOT persisted. It MUST stay empty
 // unless a field genuinely holds only transient/derived state that must not
-// survive a restart — and then only WITH a comment here justifying why. It is
+// survive a restart, and then only WITH a comment here justifying why. It is
 // not an escape hatch for unfinished persistence work: a real stateful field
 // belongs behind snapshot.Snapshottable, not in this list.
 //

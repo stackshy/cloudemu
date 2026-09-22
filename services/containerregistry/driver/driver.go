@@ -134,8 +134,8 @@ type LifecyclePolicy struct {
 // LifecyclePreviewResult describes one image a lifecycle policy evaluation
 // would expire, with enough detail to render AWS ECR's
 // GetLifecyclePolicyPreview response (imageDigest/imageTags/imagePushedAt/
-// appliedRulePriority). AWS-specific — Azure ACR and GCP Artifact Registry
-// have no lifecycle-preview API — so it is not part of the ContainerRegistry
+// appliedRulePriority). AWS-specific (Azure ACR and GCP Artifact Registry
+// have no lifecycle-preview API), so it is not part of the ContainerRegistry
 // interface below; the AWS provider exposes a PreviewLifecyclePolicy method
 // that the ECR wire handler reaches via type assertion (see
 // providers/aws/ecr and server/aws/ecr).
@@ -158,7 +158,7 @@ type ScanResult struct {
 // ReplicationConfiguration is an AWS ECR registry-level cross-region/cross-account
 // replication configuration. AWS-specific (Azure ACR and GCP Artifact Registry have
 // no equivalent registry-level replication API), so it is not part of the
-// ContainerRegistry interface below — the AWS provider exposes registry-level
+// ContainerRegistry interface below; the AWS provider exposes registry-level
 // methods the ECR wire handler reaches via type assertion, the same pattern used for
 // LifecyclePreviewResult.
 type ReplicationConfiguration struct {

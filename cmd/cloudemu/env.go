@@ -9,7 +9,7 @@ import (
 
 // runEnv prints shell `export` lines that point real SDKs/CLIs at a running
 // cloudemu, so `eval "$(cloudemu env)"` wires the AWS CLI/SDK with zero code
-// change (the GCP/Azure on-ramps are printed as comments — they have no single
+// change (the GCP/Azure on-ramps are printed as comments, since they have no single
 // endpoint env var). Ports/host mirror `cloudemu serve` defaults.
 func runEnv(args []string) error {
 	fs := flag.NewFlagSet("env", flag.ContinueOnError)

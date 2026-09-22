@@ -1,15 +1,15 @@
 // Package driver defines the interface and types for the Amazon Location Service
 // control-plane API (restJson1). It models the five Location resource types the
-// Terraform AWS provider manages — maps, place indexes, route calculators,
-// geofence collections and trackers — plus their resource tags.
+// Terraform AWS provider manages (maps, place indexes, route calculators,
+// geofence collections and trackers) plus their resource tags.
 //
 // This is a control-plane-only surface. The Location data plane (geocoding,
 // routing, geofence evaluation, device-position ingestion, map tiles) is out of
 // scope: the emulator provisions and describes the resources so unmodified SDK,
 // CLI and Terraform code manages them, but performs no real geospatial work.
 //
-// Every computed field a client or IaC tool reads back — each resource's ARN,
-// CreateTime and UpdateTime — is minted once at create and stored, so repeated
+// Every computed field a client or IaC tool reads back (each resource's ARN,
+// CreateTime and UpdateTime) is minted once at create and stored, so repeated
 // Describe/List reads never drift. An Update mutates only the requested fields
 // and bumps UpdateTime; the ARN and CreateTime stay stable for the life of the
 // resource.

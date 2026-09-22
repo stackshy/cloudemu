@@ -99,7 +99,7 @@ func acceptParam(media, key string) string {
 	return ""
 }
 
-// writeList stamps the list-level resourceVersion and renders the list — as a
+// writeList stamps the list-level resourceVersion and renders the list, as a
 // Table when the client's Accept asks for one, else as the plain typed/unstructured
 // list. Callers hold s.mu (read lock), so clusterRVLocked reads a consistent RV.
 func (s *ClusterState) writeList(w http.ResponseWriter, r *http.Request, list any) {
@@ -152,7 +152,7 @@ func (s *ClusterState) writeListWithColumns(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, table)
 }
 
-// writeObject renders a single object — as a one-row Table when the client asks
+// writeObject renders a single object, as a one-row Table when the client asks
 // for one, else as the plain object. Used by the GET-item handlers.
 func (s *ClusterState) writeObject(w http.ResponseWriter, r *http.Request, obj any) {
 	s.writeObjectWithColumns(w, r, obj, nil)

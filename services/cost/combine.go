@@ -7,7 +7,7 @@ import (
 )
 
 // combined is the union of several Commitments sources. It lets the billing
-// engine amortize commitments that live in different backends together — AWS
+// engine amortize commitments that live in different backends together: AWS
 // Reserved Instances (served by the EC2 handler) and Savings Plans (served by
 // the Savings Plans handler) both implement Commitments, and the Cost Explorer
 // reservation coverage/utilization consumer reads them as one source.

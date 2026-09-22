@@ -52,8 +52,8 @@ type Service struct {
 	// backing this service for that provider. It gates which optional
 	// capabilities each provider page lists (a provider implements a capability
 	// only when its mock has every method of that capability's interface).
-	// Unexported, so it is never serialized: the public coverage schema — and
-	// coverage.json, which the compat matrix reads — is unchanged.
+	// Unexported, so it is never serialized: the public coverage schema, and
+	// coverage.json, which the compat matrix reads, is unchanged.
 	providerMethods map[string]map[string]bool
 }
 

@@ -21,7 +21,7 @@ import (
 
 // TestMemoryDBRedisE2E runs the real-user flow: create a MemoryDB cluster with
 // the AWS SDK, read the cluster endpoint, connect to it with a real Redis
-// client, run real commands, then delete the cluster — all against CloudEmu
+// client, run real commands, then delete the cluster, all against CloudEmu
 // backed by a real in-process Redis (no Docker, no cloud account). MemoryDB is
 // Redis-compatible, so it reuses the existing Redis CacheEngine.
 func TestMemoryDBRedisE2E(t *testing.T) {
@@ -45,7 +45,7 @@ func TestMemoryDBRedisE2E(t *testing.T) {
 
 	const clusterName = "app-memorydb"
 
-	// 1. Create the cluster — like `aws memorydb create-cluster`.
+	// 1. Create the cluster, like `aws memorydb create-cluster`.
 	out, err := client.CreateCluster(ctx, &memorydb.CreateClusterInput{
 		ClusterName: aws.String(clusterName),
 		NodeType:    aws.String("db.t4g.small"),
@@ -55,7 +55,7 @@ func TestMemoryDBRedisE2E(t *testing.T) {
 		t.Fatalf("CreateCluster: %v", err)
 	}
 
-	// 2. Read the cluster endpoint the SDK reports — the real Redis address.
+	// 2. Read the cluster endpoint the SDK reports, the real Redis address.
 	if out.Cluster == nil || out.Cluster.ClusterEndpoint == nil {
 		t.Fatalf("no cluster endpoint reported: %+v", out.Cluster)
 	}
@@ -85,7 +85,7 @@ func TestMemoryDBRedisE2E(t *testing.T) {
 
 	_ = rdb.Close()
 
-	// 4. Delete the cluster — the real Redis server is torn down.
+	// 4. Delete the cluster, the real Redis server is torn down.
 	if _, err := client.DeleteCluster(ctx, &memorydb.DeleteClusterInput{
 		ClusterName: aws.String(clusterName),
 	}); err != nil {

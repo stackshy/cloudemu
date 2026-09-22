@@ -9,13 +9,13 @@ import "github.com/stackshy/cloudemu/v2/services/database/driver/expr"
 type ProjKind int
 
 const (
-	// ProjStar is SELECT * — the whole document.
+	// ProjStar is SELECT *: the whole document.
 	ProjStar ProjKind = iota
-	// ProjFields is SELECT c.a, c.b AS x — an object of the named fields.
+	// ProjFields is SELECT c.a, c.b AS x: an object of the named fields.
 	ProjFields
-	// ProjValue is SELECT VALUE c.a — the bare value of one path per document.
+	// ProjValue is SELECT VALUE c.a: the bare value of one path per document.
 	ProjValue
-	// ProjAggregate is SELECT VALUE COUNT(1) / SUM(c.x) — a single scalar over
+	// ProjAggregate is SELECT VALUE COUNT(1) / SUM(c.x): a single scalar over
 	// the whole result set.
 	ProjAggregate
 )

@@ -7,7 +7,7 @@ import (
 )
 
 // Per-provider ARN/URN builders. These produce best-effort canonical
-// identifiers — enough for resource discovery output, not necessarily
+// identifiers, enough for resource discovery output, not necessarily
 // byte-equal to what each service's own driver would emit when it owns
 // the canonical ID. Phases 2-4 may refine these as the SDK-compat
 // handlers expose the exact strings real clients expect.
@@ -86,8 +86,8 @@ func (e *Engine) computeInstanceARN(id, resourceGroup string) string {
 
 // computeSQLVirtualMachineARN builds the ARM id for the Microsoft.SqlVirtualMachine
 // overlay paired with a compute VM. It shares the VM's name and resource group,
-// differing from computeInstanceARN only in the provider/type segment. Azure-only
-// — the overlay walker never calls it for AWS/GCP — so no per-provider switch.
+// differing from computeInstanceARN only in the provider/type segment. Azure-only:
+// the overlay walker never calls it for AWS/GCP, so no per-provider switch.
 func (e *Engine) computeSQLVirtualMachineARN(name, resourceGroup string) string {
 	return idgen.AzureID(e.accountID, azureResourceGroupOrDefault(resourceGroup),
 		"Microsoft.SqlVirtualMachine", "sqlVirtualMachines", name)

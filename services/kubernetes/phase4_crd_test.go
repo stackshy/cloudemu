@@ -1,4 +1,4 @@
-// Tests for Phase 4: CustomResourceDefinition support — a created CRD
+// Tests for Phase 4: CustomResourceDefinition support. A created CRD
 // dynamically registers a servable custom-resource kind, surfaces in discovery,
 // and deregisters (cascade-deleting its CRs) when the CRD is deleted.
 

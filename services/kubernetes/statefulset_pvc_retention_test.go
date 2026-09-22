@@ -115,7 +115,7 @@ func TestStatefulSetPVC_SurvivesDelete_DefaultRetain(t *testing.T) {
 	}
 	del.Body.Close()
 
-	// The PVC must SURVIVE — data is not lost on uninstall.
+	// The PVC must SURVIVE: data is not lost on uninstall.
 	if !pvcExists(t, base, "data-web-0") {
 		t.Fatalf("data-web-0 was deleted on STS delete under default Retain (data loss)")
 	}

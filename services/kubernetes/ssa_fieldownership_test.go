@@ -128,7 +128,7 @@ func TestSSA_ApplyRemovesOmittedOwnedField(t *testing.T) {
 	}
 	r1.Body.Close()
 
-	// mgr-1 re-applies WITHOUT spec.b — real SSA removes the omitted owned field.
+	// mgr-1 re-applies WITHOUT spec.b: real SSA removes the omitted owned field.
 	r2 := apply(t, itemURL, "mgr-1", false, npBody(float64(1), nil))
 	if r2.StatusCode != http.StatusOK {
 		r2.Body.Close()

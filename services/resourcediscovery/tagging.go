@@ -249,8 +249,8 @@ func parseEC2ARN(arn, resource string) (parsedARN, error) {
 	}
 }
 
-// parseLambdaARN accepts arn:aws:lambda:region:account:function:name — and the
-// versioned/aliased form (…:function:name:1) — resolving both to the function
+// parseLambdaARN accepts arn:aws:lambda:region:account:function:name and the
+// versioned/aliased form (…:function:name:1), resolving both to the function
 // name, since a Lambda's tags are shared across its versions and aliases.
 func parseLambdaARN(arn, resource string) (parsedARN, error) {
 	rt, rest, ok := splitTypeID(resource, ':')
@@ -283,7 +283,7 @@ func parseSecretsARN(arn, resource string) (parsedARN, error) {
 // parseSNSARN accepts arn:aws:sns:region:account:topic-name. A topic name is
 // alphanumeric plus '-'/'_', so a resource segment carrying a ':' or '/' is a
 // subscription (real AWS uses "MyTopic:<uuid>"; the mock uses
-// "subscription/<uuid>") — rejected, since a subscription is not taggable.
+// "subscription/<uuid>"), and is rejected, since a subscription is not taggable.
 func parseSNSARN(arn, resource string) (parsedARN, error) {
 	if resource == "" || strings.ContainsAny(resource, ":/") {
 		return parsedARN{}, cerrors.Newf(cerrors.InvalidArgument, "expected SNS topic ARN, got %q", arn)
@@ -323,8 +323,8 @@ func parseECRARN(arn, resource string) (parsedARN, error) {
 	return parsedARN{service: awsServiceECR, resourceType: rt, id: id}, nil
 }
 
-// parseLogsARN accepts arn:aws:logs:region:account:log-group:name — and the
-// stream-qualified form (…:log-group:name:*) — resolving both to the group
+// parseLogsARN accepts arn:aws:logs:region:account:log-group:name and the
+// stream-qualified form (…:log-group:name:*), resolving both to the group
 // name, since a log group's tags are the tag-operation target.
 func parseLogsARN(arn, resource string) (parsedARN, error) {
 	rt, rest, ok := splitTypeID(resource, ':')
@@ -430,7 +430,7 @@ func (e *Engine) tagEC2(ctx context.Context, res parsedARN, tags map[string]stri
 // implement them, and the AWS Resource Groups Tagging API is the only surface
 // that reaches this dispatcher. Rather than widen every shared services/*/driver
 // interface (which would force Azure/GCP to implement AWS-only tag plumbing),
-// we type-assert the driver to a narrow capability interface — the same pattern
+// we type-assert the driver to a narrow capability interface, the same pattern
 // resourcediscovery already uses for KubernetesClusters/ScaleSets/RelationalDatabases.
 
 // computeTagger is implemented by the AWS EC2 mock; it tags instances, volumes,

@@ -30,8 +30,8 @@ import (
 //   - silently collapses two fields onto one key (collision).
 //
 // Because both sides recompute from the live struct, a NEW Snapshottable service
-// grows both sets together and needs no edit here — that is the point: parallel
-// persist waves never touch this file.
+// grows both sets together and needs no edit here: parallel persist waves never
+// touch this file.
 func TestSnapshotServicesDiscovery(t *testing.T) {
 	tests := []struct {
 		provider string
@@ -63,7 +63,7 @@ func TestSnapshotServicesDiscovery(t *testing.T) {
 			}
 		}
 
-		// A discovered value must never be nil — Snapshot would panic on it.
+		// A discovered value must never be nil: Snapshot would panic on it.
 		for name, s := range discovered {
 			if s == nil {
 				t.Errorf("%s service %q discovered as nil", tc.provider, name)
@@ -130,7 +130,7 @@ func TestSnapshotDiscoveryCatchesRegressions(t *testing.T) {
 	}
 
 	// Two fields implement Snapshottable, but Discover keys by lowercased name and
-	// so collapses them into one entry — the silent data loss the collision report
+	// so collapses them into one entry: the silent data loss the collision report
 	// exists to surface.
 	if got := snapshot.Discover(&colliding{}); len(got) != 1 {
 		t.Fatalf("Discover(&colliding{}) has %d keys, want 1 (collision collapsed)", len(got))
@@ -173,8 +173,8 @@ func TestSnapshotServicesOCIDiscovered(t *testing.T) {
 }
 
 // TestReadFileRejectsIncompatibleSchema is the load-compat guard: a v2 (or any
-// non-current) snapshot — whose bespoke per-kind layout this build no longer
-// reads — is rejected with a clear error, not silently mis-restored.
+// non-current) snapshot, whose bespoke per-kind layout this build no longer
+// reads, is rejected with a clear error, not silently mis-restored.
 func TestReadFileRejectsIncompatibleSchema(t *testing.T) {
 	dir := t.TempDir()
 
@@ -206,7 +206,7 @@ func TestReadFileRejectsIncompatibleSchema(t *testing.T) {
 // the lowercased field name. It uses reflect.Type.Implements (not a value type
 // assertion, as Discover does) so the two are not the same code path. Any key
 // produced by more than one field is reported in collisions rather than silently
-// overwritten — the divergence a plain map would hide.
+// overwritten: the divergence a plain map would hide.
 func reflectSnapshotKeys(p any) (keys map[string]struct{}, collisions []string) {
 	keys = map[string]struct{}{}
 	seen := map[string]int{}

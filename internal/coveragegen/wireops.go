@@ -3,7 +3,7 @@ package main
 import "sort"
 
 // nativeWireOperations supplies the operation surface for provider-native
-// services whose handler is wire-only — it has no backing provider mock package
+// services whose handler is wire-only. It has no backing provider mock package
 // under providers/<prov>/<pkg>, so nativeOperations() (which reads a mock's
 // method set) finds nothing and would otherwise leave the service at "0
 // operations". These handlers dispatch requests directly on the wire shape
@@ -21,7 +21,7 @@ import "sort"
 //
 // Keyed by "<provider>/<handler-package>".
 var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // generator config, mirrors providerOrder
-	// AWS — query / JSON-RPC handlers, dispatched on Action / X-Amz-Target.
+	// AWS: query / JSON-RPC handlers, dispatched on Action / X-Amz-Target.
 	"aws/sts": {
 		"AssumeRole", "AssumeRoleWithSAML", "AssumeRoleWithWebIdentity",
 		"DecodeAuthorizationMessage", "GetAccessKeyInfo", "GetCallerIdentity",
@@ -57,7 +57,7 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"UntagResource",
 	},
 
-	// Azure — ARM handlers, routed on HTTP method + resource path shape.
+	// Azure: ARM handlers, routed on HTTP method + resource path shape.
 	"azure/aad": {
 		"GetMetadataEndpoints", "GetToken",
 	},
@@ -128,7 +128,7 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"Pause", "Resume", "Start", "Stop", "Update",
 	},
 
-	// GCP — REST handlers, routed on method + resource path / custom verb.
+	// GCP: REST handlers, routed on method + resource path / custom verb.
 	"gcp/cloudasset": {
 		"BatchGetAssetsHistory", "CreateFeed", "DeleteFeed", "ExportAssets", "GetFeed",
 		"GetOperation", "ListAssets", "ListFeeds", "SearchAllIamPolicies", "SearchAllResources", "UpdateFeed",
@@ -160,7 +160,7 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"PatchBudget", "UpdateProjectBillingInfo",
 	},
 
-	// OCI — REST work-request envelope.
+	// OCI: REST work-request envelope.
 	"oci/workrequest": {
 		"GetWorkRequest", "ListWorkRequestErrors", "ListWorkRequestLogs", "ListWorkRequests",
 	},

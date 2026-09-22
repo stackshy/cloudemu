@@ -47,7 +47,7 @@ const (
 
 // MODE statuses reported per capability in the startup banner.
 const (
-	modeOff    = "off"                 // no real engine selected — in-memory
+	modeOff    = "off"                 // no real engine selected, in-memory
 	modeReal   = "real"                // the selected real engine is wired
 	modeMemory = "fell-back-to-memory" // selected but unavailable, degraded
 )
@@ -60,7 +60,7 @@ const reasonNoDocker = "no docker socket"
 const defaultEnginePort = 0
 
 // Engine-selection errors. Static so err113 stays satisfied; the offending
-// value is wrapped in at the call site. Docker absence is NOT an error — a
+// value is wrapped in at the call site. Docker absence is NOT an error: a
 // Docker-backed selection degrades to in-memory instead (see buildEngineOptions).
 var (
 	errInvalidDB         = errors.New("invalid --db value (want off|postgres|mysql|both)")

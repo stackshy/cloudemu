@@ -21,7 +21,7 @@ import (
 // functionAppPy is a real Python v2 (function_app.py) HTTP function. The route
 // name matches the site/function name the engine invokes by, so the modeled
 // invoke path (POST /api/doubler) reaches this handler. It doubles the "n" field
-// of the JSON body — proving the REAL azure-functions host executed the code.
+// of the JSON body, proving the REAL azure-functions host executed the code.
 const functionAppPy = `import azure.functions as func
 
 app = func.FunctionApp()
@@ -46,7 +46,7 @@ const hostJSON = `{"version":"2.0"}`
 //	the response is "42".
 //
 // A "42" response can only come from the real Python handler running inside the
-// official Azure Functions host image — the in-memory emulator would echo the
+// official Azure Functions host image; the in-memory emulator would echo the
 // request payload back instead.
 func TestAzureFunctionsE2E(t *testing.T) {
 	if !dtest.DockerUp() {
@@ -61,7 +61,7 @@ func TestAzureFunctionsE2E(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	// The zipdeploy PUT blocks until the engine has pulled the image, started the
-	// host, and the app is READY — a cold image pull can take minutes.
+	// host, and the app is READY; a cold image pull can take minutes.
 	client := ts.Client()
 	client.Timeout = 6 * time.Minute
 
@@ -81,7 +81,7 @@ func TestAzureFunctionsE2E(t *testing.T) {
         }
     }`
 
-	// 1. Create the Function App (ARM site PUT) — like `az functionapp create`.
+	// 1. Create the Function App (ARM site PUT), like `az functionapp create`.
 	doAzureReq(t, client, ts.URL, http.MethodPut, siteURL+apiVer, strings.NewReader(siteBody), http.StatusOK)
 
 	// 2. Deploy the code (Kudu zipdeploy PUT of the real app zip). This drives the
@@ -97,7 +97,7 @@ func TestAzureFunctionsE2E(t *testing.T) {
 		t.Fatalf("invoke body = %q, want \"42\" (the real Python handler doubling 21)", got)
 	}
 
-	// 4. Delete the site — the real container is torn down and no leak remains.
+	// 4. Delete the site: the real container is torn down and no leak remains.
 	doAzureReq(t, client, ts.URL, http.MethodDelete, siteURL+apiVer, nil, http.StatusOK)
 }
 
@@ -142,7 +142,7 @@ func TestAzureFunctionsEngineDirectE2E(t *testing.T) {
 }
 
 // functionAppZip builds the deployment zip (host.json + function_app.py) in
-// memory — the exact shape a `func azure functionapp publish` / zipdeploy sends.
+// memory, the exact shape a `func azure functionapp publish` / zipdeploy sends.
 func functionAppZip(t *testing.T) []byte {
 	t.Helper()
 

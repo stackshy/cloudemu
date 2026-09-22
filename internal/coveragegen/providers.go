@@ -104,7 +104,7 @@ func providerMockDirsByField(root, prov string, file *ast.File, aliases map[stri
 // form `p.Field = pkg.NewXxx(...)` and maps the field name to that constructor
 // package's import path when it sits under marker. This surfaces the concrete
 // mock behind a bare driver-interface field (OCI's style), which the struct type
-// alone does not reveal — modeled on native.go's handlerCallPkg.
+// alone does not reveal. Modeled on native.go's handlerCallPkg.
 func constructorMockPkgs(file *ast.File, aliases map[string]string, marker string) map[string]string {
 	out := map[string]string{}
 
@@ -359,7 +359,7 @@ func importAliases(file *ast.File) map[string]string {
 }
 
 // implementedService returns the service whose primary interface the mock
-// package actually implements — the service with the most operations fully
+// package actually implements: the service with the most operations fully
 // covered by the mock's method set. A package that merely consumes another
 // service's driver (e.g. EKS emitting metrics) will not cover that service's
 // full interface, so it is not misattributed.
@@ -380,9 +380,9 @@ func implementedService(mockDir string, byName map[string]*Service) *Service {
 
 		// A portable service with its own dedicated, name-matched provider mock
 		// (providers/<prov>/<svc>) is implemented only by that mock. A different
-		// mock that merely name-covers the same driver surface — e.g. the GKE
+		// mock that merely name-covers the same driver surface, e.g. the GKE
 		// cluster mock (CreateCluster/GetCluster/…) covering the Dataproc cluster
-		// interface — must not be misattributed to it.
+		// interface, must not be misattributed to it.
 		if dedicated := filepath.Join(provDir, svc.Name); dedicated != mockDir && isDir(dedicated) {
 			continue
 		}
