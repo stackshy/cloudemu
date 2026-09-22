@@ -54,8 +54,8 @@ func (m *Mock) publishExec(ctx context.Context, smARN string, at time.Time, data
 	_ = m.monitoring.PutMetricData(ctx, data)
 }
 
-// emitExecutionStarted publishes ExecutionsStarted for a new execution.
-func (m *Mock) emitExecutionStarted(ctx context.Context, smARN string, at time.Time) {
+// emitStartedMetric publishes ExecutionsStarted for a new execution.
+func (m *Mock) emitStartedMetric(ctx context.Context, smARN string, at time.Time) {
 	m.publishExec(ctx, smARN, at, []mondriver.MetricDatum{
 		{MetricName: "ExecutionsStarted", Value: 1, Unit: unitCount},
 	})
@@ -63,8 +63,7 @@ func (m *Mock) emitExecutionStarted(ctx context.Context, smARN string, at time.T
 
 // executionClosed is the single completion hook of an execution: it runs
 // exactly once per close (start-closed, first settled observation, abort, or
-// redrive), outside every lock. It publishes the AWS/States close metrics; the
-// execution status-change event belongs here as well.
+// redrive), outside every lock. It publishes the AWS/States close metrics.
 func (m *Mock) executionClosed(ctx context.Context, exec *driver.Execution, prefix string) {
 	m.emitExecutionClosed(ctx, exec, prefix)
 }

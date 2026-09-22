@@ -3,6 +3,7 @@ package globalaccelerator
 import (
 	"context"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/globalaccelerator/driver"
 )
@@ -10,10 +11,20 @@ import (
 // CreateEndpointGroup provisions an endpoint group under a listener. The listener
 // must exist (ListenerNotFoundException). EndpointGroupArn is minted once and
 // stable; the health-check settings, traffic dial and endpoint list round-trip
-// verbatim, with the real-service defaults applied to omitted members.
+// verbatim, with the real-service defaults applied to omitted members. A
+// repeated IdempotencyToken on the same listener within the dedup window returns
+// the live endpoint group already created for it instead of a second one.
 func (m *Mock) CreateEndpointGroup(
-	_ context.Context, in *driver.CreateEndpointGroupInput,
+	ctx context.Context, in *driver.CreateEndpointGroupInput,
 ) (*driver.EndpointGroup, error) {
+	return idempotency.Do(ctx, m.endpointGroupTokens, idempotency.Scoped(in.IdempotencyToken, in.ListenerArn), m.now(),
+		m.DescribeEndpointGroup,
+		func() (*driver.EndpointGroup, error) { return m.createEndpointGroup(in) },
+		func(g *driver.EndpointGroup) string { return g.EndpointGroupArn })
+}
+
+// createEndpointGroup validates the request and provisions one new endpoint group.
+func (m *Mock) createEndpointGroup(in *driver.CreateEndpointGroupInput) (*driver.EndpointGroup, error) {
 	listener, ok := m.listeners.Get(in.ListenerArn)
 	if !ok {
 		return nil, listenerNotFound(in.ListenerArn)

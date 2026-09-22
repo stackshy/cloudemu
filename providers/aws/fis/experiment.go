@@ -4,6 +4,7 @@ import (
 	"context"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/services/fis/driver"
 )
 
@@ -11,8 +12,21 @@ import (
 // actions, targets, stop conditions, role and log configuration verbatim. The
 // experiment then advances initiating -> running -> completed on the clock (see
 // lifecycle.go) until StopExperiment stops it; id, arn, creationTime and
-// startTime are minted once and stable across reads.
-func (m *Mock) StartExperiment(_ context.Context, in *driver.StartExperimentInput) (*driver.Experiment, error) {
+// startTime are minted once and stable across reads. A repeated clientToken
+// within the dedup window returns the experiment already started for it,
+// re-read through GetExperiment so the replay reports its current observed
+// state (running, completed, stopped) rather than the create-time snapshot,
+// instead of starting a second one.
+func (m *Mock) StartExperiment(ctx context.Context, in *driver.StartExperimentInput) (*driver.Experiment, error) {
+	now := m.now()
+
+	return idempotency.Do(ctx, m.experimentTokens, in.ClientToken, now, m.GetExperiment,
+		func() (*driver.Experiment, error) { return m.startExperiment(in, now) },
+		func(e *driver.Experiment) string { return e.ID })
+}
+
+// startExperiment validates the request and starts one new experiment.
+func (m *Mock) startExperiment(in *driver.StartExperimentInput, now time.Time) (*driver.Experiment, error) {
 	if in.ExperimentTemplateID == "" {
 		return nil, validation("experimentTemplateId is required")
 	}
@@ -22,7 +36,6 @@ func (m *Mock) StartExperiment(_ context.Context, in *driver.StartExperimentInpu
 		return nil, notFound("experiment template %s not found", in.ExperimentTemplateID)
 	}
 
-	now := m.now()
 	id := experimentID()
 
 	opts := t.ExperimentOptions

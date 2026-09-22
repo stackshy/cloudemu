@@ -3,14 +3,25 @@ package globalaccelerator
 import (
 	"context"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/globalaccelerator/driver"
 )
 
 // CreateListener provisions a listener under an accelerator. The accelerator must
 // exist (AcceleratorNotFoundException). ListenerArn is minted once and stable;
-// PortRanges, Protocol and ClientAffinity round-trip verbatim.
-func (m *Mock) CreateListener(_ context.Context, in *driver.CreateListenerInput) (*driver.Listener, error) {
+// PortRanges, Protocol and ClientAffinity round-trip verbatim. A repeated
+// IdempotencyToken on the same accelerator within the dedup window returns the
+// live listener already created for it instead of a second one.
+func (m *Mock) CreateListener(ctx context.Context, in *driver.CreateListenerInput) (*driver.Listener, error) {
+	return idempotency.Do(ctx, m.listenerTokens, idempotency.Scoped(in.IdempotencyToken, in.AcceleratorArn), m.now(),
+		m.DescribeListener,
+		func() (*driver.Listener, error) { return m.createListener(in) },
+		func(l *driver.Listener) string { return l.ListenerArn })
+}
+
+// createListener validates the request and provisions one new listener.
+func (m *Mock) createListener(in *driver.CreateListenerInput) (*driver.Listener, error) {
 	if !m.accelerators.Has(in.AcceleratorArn) {
 		return nil, acceleratorNotFound(in.AcceleratorArn)
 	}

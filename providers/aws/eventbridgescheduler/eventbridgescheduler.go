@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/eventbridgescheduler/driver"
@@ -39,14 +40,23 @@ type Mock struct {
 	// default group so repeated reads of it are byte-stable (minted once here,
 	// not re-derived from the clock on every synthesis).
 	defaultGroupTime time.Time
+
+	// scheduleTokens dedups CreateSchedule's ClientToken: a retried create
+	// otherwise resends the same group+name key and hits the
+	// already-exists conflict below instead of returning the original
+	// schedule. Values are the schedule's store key. The Scheduler API
+	// reference documents no token lifetime, so it uses
+	// idempotency.DefaultTTL.
+	scheduleTokens *idempotency.Store
 }
 
 // New creates a new Scheduler mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	m := &Mock{
-		schedules: memstore.New[driver.Schedule](),
-		groups:    memstore.New[driver.ScheduleGroup](),
-		opts:      opts,
+		schedules:      memstore.New[driver.Schedule](),
+		groups:         memstore.New[driver.ScheduleGroup](),
+		opts:           opts,
+		scheduleTokens: idempotency.New(idempotency.DefaultTTL),
 	}
 	m.defaultGroupTime = m.now()
 

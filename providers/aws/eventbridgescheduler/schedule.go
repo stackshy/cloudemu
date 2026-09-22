@@ -4,34 +4,46 @@ import (
 	"context"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/services/eventbridgescheduler/driver"
 )
 
 // CreateSchedule creates a schedule inside its (defaulted) group with a stable
 // arn and creation timestamp. The group must exist; the target,
-// flexible-time-window and start/end dates are carried verbatim.
-func (m *Mock) CreateSchedule(_ context.Context, in *driver.ScheduleInput) (*driver.Schedule, error) {
+// flexible-time-window and start/end dates are carried verbatim. A repeated
+// ClientToken within the dedup window returns the schedule already created for
+// it (as it reads now, after any update) instead of hitting the already-exists check — a retried create
+// resends the same group+name and would otherwise get a spurious
+// ConflictException instead of its original result. The token is scoped to the
+// group+name it was sent for and only replays while that schedule still exists.
+func (m *Mock) CreateSchedule(ctx context.Context, in *driver.ScheduleInput) (*driver.Schedule, error) {
 	if err := validateScheduleInput(in); err != nil {
 		return nil, err
 	}
 
-	group := resolveGroup(in.GroupName)
-	if !m.groupExists(group) {
-		return nil, notFound("schedule group %q does not exist", group)
-	}
-
-	key := scheduleKey(group, in.Name)
-	if m.schedules.Has(key) {
-		return nil, conflict("schedule %q already exists in group %q", in.Name, group)
-	}
-
 	now := m.now()
-	sched := m.buildSchedule(in, group, now, now)
-	m.schedules.Set(key, sched)
+	group := resolveGroup(in.GroupName)
+	key := scheduleKey(group, in.Name)
 
-	out := copySchedule(&sched)
+	return idempotency.Do(ctx, m.scheduleTokens, idempotency.Scoped(in.ClientToken, key), now,
+		func(ctx context.Context, _ string) (*driver.Schedule, error) {
+			return m.GetSchedule(ctx, group, in.Name)
+		},
+		func() (*driver.Schedule, error) {
+			if !m.groupExists(group) {
+				return nil, notFound("schedule group %q does not exist", group)
+			}
 
-	return &out, nil
+			sched := m.buildSchedule(in, group, now, now)
+			if !m.schedules.SetIfAbsent(key, sched) {
+				return nil, conflict("schedule %q already exists in group %q", in.Name, group)
+			}
+
+			out := copySchedule(&sched)
+
+			return &out, nil
+		},
+		func(*driver.Schedule) string { return key })
 }
 
 // GetSchedule returns a copy of the schedule. The stored computed fields are
@@ -78,9 +90,14 @@ func (m *Mock) UpdateSchedule(_ context.Context, in *driver.ScheduleInput) (*dri
 func (m *Mock) DeleteSchedule(_ context.Context, group, name string) error {
 	group = resolveGroup(group)
 
-	if !m.schedules.Delete(scheduleKey(group, name)) {
+	key := scheduleKey(group, name)
+	if !m.schedules.Delete(key) {
 		return notFound("schedule %q does not exist in group %q", name, group)
 	}
+
+	// The token's id is the name-derived key, so drop it: a same-name schedule
+	// created later by another request must not replay to this token.
+	m.scheduleTokens.Forget(key)
 
 	return nil
 }

@@ -12,7 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
 
-const failDefinition = `{"StartAt":"F","States":{"F":{"Type":"Fail","Error":"Boom","Cause":"c"}}}`
+const metricsFailDefinition = `{"StartAt":"F","States":{"F":{"Type":"Fail","Error":"Boom","Cause":"c"}}}`
 
 // sfnMetric returns the Sum of an AWS/States metric for smARN around clk.Now,
 // and its unit.
@@ -59,7 +59,7 @@ func TestExecutionMetrics(t *testing.T) {
 	okARN := createSM(t, m, "ok")
 
 	failARN, _, _, err := m.CreateStateMachine(ctx, driver.CreateStateMachineInput{
-		Name: "bad", Definition: failDefinition, RoleArn: "arn:aws:iam::000000000000:role/r",
+		Name: "bad", Definition: metricsFailDefinition, RoleArn: "arn:aws:iam::000000000000:role/r",
 	})
 	if err != nil {
 		t.Fatalf("CreateStateMachine: %v", err)

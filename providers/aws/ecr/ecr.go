@@ -13,6 +13,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/regionctx"
 	"github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -56,6 +57,9 @@ type Mock struct {
 	repos      *memstore.Store[*repoData]
 	opts       *config.Options
 	monitoring mondriver.Monitoring
+	// events publishes image push/delete actions to the EventBridge default
+	// bus; inactive until wired by the provider.
+	events awsevents.Emitter
 
 	// Registry-level (not per-repository) state. These back the AWS ECR
 	// registry-scoped operations (replication, pull-through cache, registry
@@ -329,8 +333,21 @@ func (m *Mock) ListRepositories(_ context.Context) ([]driver.Repository, error) 
 	return repos, nil
 }
 
-// PutImage pushes an image manifest to an ECR repository.
-func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*driver.ImageDetail, error) {
+// PutImage pushes an image manifest to an ECR repository and publishes an
+// "ECR Image Action" PUSH event once the registry lock is released.
+func (m *Mock) PutImage(ctx context.Context, manifest *driver.ImageManifest) (*driver.ImageDetail, error) {
+	img, err := m.putImage(manifest)
+	if err != nil {
+		return nil, err
+	}
+
+	m.emitImageAction(ctx, actionPush, manifest.Repository, img.Digest, manifest.Tag, img.MediaType)
+
+	return img, nil
+}
+
+// putImage is PutImage's locked core.
+func (m *Mock) putImage(manifest *driver.ImageManifest) (*driver.ImageDetail, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -445,20 +462,42 @@ func (m *Mock) ListImages(_ context.Context, repository string) ([]driver.ImageD
 	return images, nil
 }
 
-// DeleteImage deletes an image from an ECR repository by reference.
-func (m *Mock) DeleteImage(_ context.Context, repository, reference string) error {
+// DeleteImage deletes an image from an ECR repository by reference and
+// publishes an "ECR Image Action" DELETE event once the registry lock is
+// released.
+func (m *Mock) DeleteImage(ctx context.Context, repository, reference string) error {
+	deleted, err := m.deleteImage(repository, reference)
+	if err != nil {
+		return err
+	}
+
+	tag := ""
+	if reference != deleted.Digest {
+		tag = reference
+	}
+
+	m.emitImageAction(ctx, actionDelete, repository, deleted.Digest, tag, deleted.MediaType)
+
+	return nil
+}
+
+// deleteImage is DeleteImage's locked core. It returns the image the reference
+// resolved to, as it stood before the delete.
+func (m *Mock) deleteImage(repository, reference string) (driver.ImageDetail, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	rd, ok := m.repos.Get(repository)
 	if !ok {
-		return errors.Newf(errors.NotFound, "repository %q not found", repository)
+		return driver.ImageDetail{}, errors.Newf(errors.NotFound, "repository %q not found", repository)
 	}
 
 	img := findImage(rd, reference)
 	if img == nil {
-		return errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
+		return driver.ImageDetail{}, errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
 	}
+
+	resolved := img.detail
 
 	// A reference that resolves to the manifest digest deletes the whole image
 	// and all of its tags. A tag reference removes only that tag; the manifest
@@ -469,7 +508,7 @@ func (m *Mock) DeleteImage(_ context.Context, repository, reference string) erro
 			img.detail.Tags = remaining
 			rd.images.Set(img.detail.Digest, img)
 
-			return nil
+			return resolved, nil
 		}
 	}
 
@@ -477,7 +516,7 @@ func (m *Mock) DeleteImage(_ context.Context, repository, reference string) erro
 	rd.scans.Delete(img.detail.Digest)
 	rd.info.ImageCount = rd.images.Len()
 
-	return nil
+	return resolved, nil
 }
 
 // TagImage adds a new tag to an existing image in an ECR repository.

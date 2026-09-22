@@ -26,6 +26,11 @@ type Mock struct {
 	healthChecks *memstore.Store[driver.HealthCheckInfo]
 	opts         *config.Options
 
+	// createMu makes CreateZone's CallerReference check and the zone insert
+	// one atomic step, so concurrent creates sharing a CallerReference yield
+	// exactly one zone and HostedZoneAlreadyExists for the rest.
+	createMu sync.Mutex
+
 	tagsMu   sync.Mutex
 	tagsByID map[string]map[string]string // ResourceId -> tags
 }
@@ -138,10 +143,21 @@ func newHostedZoneID() string {
 	return "Z" + string(buf)
 }
 
-// CreateZone creates a new DNS hosted zone.
+// CreateZone creates a new DNS hosted zone. A CallerReference already carried
+// by an existing zone is rejected as HostedZoneAlreadyExists: real Route 53
+// treats a reused CallerReference as a retry of that create and reports the
+// conflict rather than minting a second zone.
 func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
 	if cfg.Name == "" {
 		return nil, errors.New(errors.InvalidArgument, "zone name is required")
+	}
+
+	m.createMu.Lock()
+	defer m.createMu.Unlock()
+
+	if m.callerReferenceInUse(cfg.CallerReference) {
+		return nil, errors.Newf(errors.AlreadyExists,
+			"a hosted zone with caller reference %q already exists", cfg.CallerReference)
 	}
 
 	id := newHostedZoneID()
@@ -188,6 +204,20 @@ func (m *Mock) seedZoneTags(id string, tags map[string]string) {
 	defer m.tagsMu.Unlock()
 
 	m.tagsByID[id] = seeded
+}
+
+// callerReferenceInUse reports whether any live zone was created with ref. The
+// zones themselves are the source of truth, so the check survives snapshot
+// restore and frees the reference once its zone is deleted. An empty ref (the
+// in-process driver API does not require one) never collides.
+func (m *Mock) callerReferenceInUse(ref string) bool {
+	if ref == "" {
+		return false
+	}
+
+	return len(m.zones.Filter(func(_ string, z driver.ZoneInfo) bool {
+		return z.CallerReference == ref
+	})) > 0
 }
 
 // DeleteZone deletes a DNS hosted zone by ID.

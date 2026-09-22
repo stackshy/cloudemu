@@ -371,6 +371,13 @@ type describeExecutionResponse struct {
 	Output          string   `json:"output,omitempty"`
 	Error           string   `json:"error,omitempty"`
 	Cause           string   `json:"cause,omitempty"`
+
+	// Redrive fields are DescribeExecution-only (StartSyncExecution, which
+	// shares this shape, leaves them nil/empty and so omits them).
+	RedriveCount        *int32   `json:"redriveCount,omitempty"`
+	RedriveDate         *float64 `json:"redriveDate,omitempty"`
+	RedriveStatus       string   `json:"redriveStatus,omitempty"`
+	RedriveStatusReason string   `json:"redriveStatusReason,omitempty"`
 }
 
 type stopExecutionResponse struct {

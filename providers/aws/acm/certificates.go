@@ -3,8 +3,10 @@ package acm
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/idempotency"
 	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/services/acm/driver"
 )
@@ -12,10 +14,26 @@ import (
 // RequestCertificate issues a new Amazon-managed certificate. It generates a
 // real self-signed X.509 cert and, since the emulator can't perform real
 // domain validation, auto-issues it (status ISSUED) so it is immediately
-// usable — the local-dev analog of a validated public cert.
+// usable — the local-dev analog of a validated public cert. A repeated
+// IdempotencyToken within its one-hour lifetime returns the certificate already
+// issued for it, as long as that certificate still exists.
 //
 //nolint:gocritic // in is the public RequestCertificate input, taken by value to match the driver API
-func (m *Mock) RequestCertificate(_ context.Context, in driver.RequestCertificateInput) (string, error) {
+func (m *Mock) RequestCertificate(ctx context.Context, in driver.RequestCertificateInput) (string, error) {
+	now := m.now()
+
+	return idempotency.Do(ctx, m.requestTokens, in.IdempotencyToken, now,
+		func(_ context.Context, arn string) (string, error) {
+			_, err := m.getCert(arn)
+
+			return arn, err
+		},
+		func() (string, error) { return m.requestCertificate(&in, now) },
+		func(arn string) string { return arn })
+}
+
+// requestCertificate validates the request and issues one new certificate.
+func (m *Mock) requestCertificate(in *driver.RequestCertificateInput, now time.Time) (string, error) {
 	if in.DomainName == "" {
 		return "", invalidParameter("DomainName is required")
 	}
@@ -49,8 +67,6 @@ func (m *Mock) RequestCertificate(_ context.Context, in driver.RequestCertificat
 	if ct == "" {
 		ct = driver.CTLoggingEnabled
 	}
-
-	now := m.now()
 
 	// generateCertificate issues real key material for the requested algorithm
 	// (RSA/EC) and rejects a genuinely-unsupported one with

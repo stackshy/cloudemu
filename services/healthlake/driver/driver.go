@@ -104,6 +104,7 @@ type CreateFHIRDatastoreInput struct {
 	SseConfiguration              *SseConfiguration
 	PreloadDataConfig             *PreloadDataConfig
 	IdentityProviderConfiguration *IdentityProviderConfiguration
+	ClientToken                   string
 	Tags                          []Tag
 }
 

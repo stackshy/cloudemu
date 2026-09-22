@@ -19,6 +19,9 @@ const (
 	optAwslogsPrefix   = "awslogs-stream-prefix"
 	engineStateExited  = "exited"
 	engineStateRunning = "running"
+
+	// stopCodeFailedToStart marks a task whose backing engine could not start it.
+	stopCodeFailedToStart = "TaskFailedToStart"
 )
 
 // backTaskWithEngine runs the task's containers on the configured
@@ -206,7 +209,7 @@ func markEngineFailure(task *driver.Task, err error) {
 	task.LastStatus = statusStopped
 	task.DesiredStatus = statusStopped
 	task.StoppedReason = err.Error()
-	task.StopCode = "TaskFailedToStart"
+	task.StopCode = stopCodeFailedToStart
 
 	for i := range task.Containers {
 		task.Containers[i].LastStatus = statusStopped

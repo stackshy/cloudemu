@@ -48,3 +48,28 @@ func TestTaskToWireExitZeroSurfacesOnStopped(t *testing.T) {
 		t.Fatalf("running container should omit exitCode, got %v", *wire.Containers[1].ExitCode)
 	}
 }
+
+// TestTaskToWireCarriesTimelineAndPlacement guards that the task's computed
+// timeline (startedAt/stoppingAt/stoppedAt), size, zone, connectivity and each
+// container's containerArn/taskArn reach DescribeTasks, as real ECS reports them.
+func TestTaskToWireCarriesTimelineAndPlacement(t *testing.T) {
+	task := &driver.Task{
+		ARN: "arn:task/1", CreatedAt: "2026-01-01T00:00:00Z", StartedAt: "2026-01-01T00:00:01Z",
+		StoppingAt: "2026-01-01T00:00:02Z", StoppedAt: "2026-01-01T00:00:03Z",
+		CPU: "256", Memory: "512", AvailabilityZone: "us-east-1a", Connectivity: "CONNECTED",
+		Containers: []driver.Container{{ARN: "arn:container/1", Name: "app", LastStatus: "STOPPED"}},
+	}
+
+	w := taskToWire(task)
+	if w.StartedAt != w.CreatedAt+1 || w.StoppingAt != w.CreatedAt+2 || w.StoppedAt != w.CreatedAt+3 {
+		t.Fatalf("timeline not carried: %+v", w)
+	}
+
+	if w.CPU != "256" || w.Memory != "512" || w.AvailabilityZone != "us-east-1a" || w.Connectivity != "CONNECTED" {
+		t.Fatalf("size/placement not carried: %+v", w)
+	}
+
+	if c := w.Containers[0]; c.ContainerArn != "arn:container/1" || c.TaskArn != "arn:task/1" {
+		t.Fatalf("container identity not carried: %+v", c)
+	}
+}

@@ -16,11 +16,61 @@ import (
 const crawlCancelWindow = time.Minute
 
 // crawlerData is a crawler plus its own lock. cancelableUntil is the end of the
-// most recent run's cancel window (zero when there is no cancelable run).
+// most recent run's cancel window (zero when there is no cancelable run), and
+// runStartedAt the instant that run started. A non-zero cancelableUntil also
+// marks the run's "Glue Crawler State Change" Succeeded event as not yet
+// published — see flushCrawl.
 type crawlerData struct {
 	crawler         driver.Crawler
 	cancelableUntil time.Time
+	runStartedAt    time.Time
 	mu              sync.RWMutex
+}
+
+// takeFinishedCrawl claims the Succeeded event of the crawler's most recent
+// run once that run can no longer be canceled (its cancel window has closed),
+// or unconditionally with force (a new run supersedes it). It reports the run's
+// start and completion instants, and ok=false when there is nothing to publish
+// (no run, a canceled run, an already-published run, or a still-open window).
+func (m *Mock) takeFinishedCrawl(cd *crawlerData, force bool) (started, completed time.Time, ok bool) {
+	cd.mu.Lock()
+	defer cd.mu.Unlock()
+
+	if cd.cancelableUntil.IsZero() {
+		return time.Time{}, time.Time{}, false
+	}
+
+	now := m.now()
+	if !force && now.Before(cd.cancelableUntil) {
+		return time.Time{}, time.Time{}, false
+	}
+
+	completed = cd.cancelableUntil
+	if now.Before(completed) {
+		completed = now
+	}
+
+	started = cd.runStartedAt
+	cd.cancelableUntil = time.Time{}
+
+	return started, completed, true
+}
+
+// flushCrawl publishes the crawler's pending Succeeded event if its run has
+// finished. The emulator settles crawls lazily (no timers, like
+// internal/settle): the event goes out at the first crawler operation after
+// the cancel window closes. It must be called without cd.mu held.
+func (m *Mock) flushCrawl(ctx context.Context, cd *crawlerData, name string, force bool) {
+	if started, completed, ok := m.takeFinishedCrawl(cd, force); ok {
+		m.emitCrawlSucceeded(ctx, name, started, completed)
+	}
+}
+
+// flushAllCrawls settles every crawler's finished run (used by the list reads).
+func (m *Mock) flushAllCrawls(ctx context.Context) {
+	for name, cd := range m.crawlers.All() {
+		m.flushCrawl(ctx, cd, name, false)
+	}
 }
 
 // CreateCrawler creates a crawler in the READY state, atomically.
@@ -66,11 +116,13 @@ func (m *Mock) getCrawlerData(name string) (*crawlerData, error) {
 }
 
 // GetCrawler returns a deep copy of a crawler.
-func (m *Mock) GetCrawler(_ context.Context, name string) (*driver.Crawler, error) {
+func (m *Mock) GetCrawler(ctx context.Context, name string) (*driver.Crawler, error) {
 	cd, err := m.getCrawlerData(name)
 	if err != nil {
 		return nil, err
 	}
+
+	m.flushCrawl(ctx, cd, name, false)
 
 	cd.mu.RLock()
 	defer cd.mu.RUnlock()
@@ -130,7 +182,9 @@ func (m *Mock) DeleteCrawler(_ context.Context, name string) error {
 // GetCrawlers lists crawlers with pagination.
 //
 //nolint:dupl // near-identical list/batch body per resource; separate is clearer than reflection
-func (m *Mock) GetCrawlers(_ context.Context, page driver.TablePagination) ([]driver.Crawler, string, error) {
+func (m *Mock) GetCrawlers(ctx context.Context, page driver.TablePagination) ([]driver.Crawler, string, error) {
+	m.flushAllCrawls(ctx)
+
 	keys := sortedKeys(m.crawlers.Keys())
 	all := make([]driver.Crawler, 0, len(keys))
 
@@ -151,23 +205,48 @@ func (m *Mock) GetCrawlers(_ context.Context, page driver.TablePagination) ([]dr
 // ListCrawlers returns crawler names with pagination.
 //
 //nolint:gocritic // unnamedResult: thin pass-through to paginate; names add no clarity
-func (m *Mock) ListCrawlers(_ context.Context, page driver.TablePagination) ([]string, string, error) {
+func (m *Mock) ListCrawlers(ctx context.Context, page driver.TablePagination) ([]string, string, error) {
+	m.flushAllCrawls(ctx)
+
 	return paginate(sortedKeys(m.crawlers.Keys()), page)
 }
 
 // StartCrawler runs a crawler; the emulator has no data source to crawl, so the
 // run settles immediately (state returns to READY, LastCrawlStatus SUCCEEDED).
-func (m *Mock) StartCrawler(_ context.Context, name string) error {
+//
+// It publishes "Glue Crawler State Change" Started at once, but Succeeded only
+// once the run's cancel window closes (see flushCrawl): real Glue documents
+// only Started/Succeeded/Failed crawler events, so a crawl canceled by
+// StopCrawler publishes no terminal event, and a Succeeded must never precede
+// that cancellation.
+func (m *Mock) StartCrawler(ctx context.Context, name string) error {
 	cd, err := m.getCrawlerData(name)
 	if err != nil {
 		return err
 	}
 
+	// A previous run still inside its window is superseded by this one, so it
+	// completed: publish its Succeeded before the new run's Started.
+	m.flushCrawl(ctx, cd, name, true)
+
+	at, err := m.settleCrawl(cd, name)
+	if err != nil {
+		return err
+	}
+
+	m.emitCrawlStarted(ctx, name, at)
+
+	return nil
+}
+
+// settleCrawl is StartCrawler's locked core: it runs the crawl to completion
+// and returns the instant it ran.
+func (m *Mock) settleCrawl(cd *crawlerData, name string) (time.Time, error) {
 	cd.mu.Lock()
 	defer cd.mu.Unlock()
 
 	if cd.crawler.State == driver.CrawlerRunning {
-		return concurrentModification("Crawler %s is already running", name)
+		return time.Time{}, concurrentModification("Crawler %s is already running", name)
 	}
 
 	now := m.now()
@@ -175,19 +254,26 @@ func (m *Mock) StartCrawler(_ context.Context, name string) error {
 	cd.crawler.LastCrawlStatus = driver.JobRunSucceeded
 	cd.crawler.LastUpdated = now
 	cd.cancelableUntil = now.Add(crawlCancelWindow)
+	cd.runStartedAt = now
 
-	return nil
+	return now, nil
 }
 
 // StopCrawler stops a running crawler. Runs settle synchronously, so a stop
 // issued within crawlCancelWindow of StartCrawler cancels that just-started
 // crawl (LastCrawl status canceled, crawler READY), as it would in real Glue.
 // Stopping a crawler with no run in flight raises CrawlerNotRunningException.
-func (m *Mock) StopCrawler(_ context.Context, name string) error {
+//
+// A canceled crawl publishes no further event (its pending Succeeded is
+// dropped); a run whose window already closed is settled — its Succeeded
+// published — before the stop is rejected.
+func (m *Mock) StopCrawler(ctx context.Context, name string) error {
 	cd, err := m.getCrawlerData(name)
 	if err != nil {
 		return err
 	}
+
+	m.flushCrawl(ctx, cd, name, false)
 
 	cd.mu.Lock()
 	defer cd.mu.Unlock()

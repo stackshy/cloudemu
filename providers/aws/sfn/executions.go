@@ -83,7 +83,13 @@ func (m *Mock) runExecution(ctx context.Context, in driver.StartExecutionInput, 
 		return m.idempotentReuse(arn, name, smType, in.Input, async, now)
 	}
 
-	m.emitExecutionStarted(ctx, in.StateMachineArn, now)
+	m.emitStartedMetric(ctx, in.StateMachineArn, now)
+
+	// Real Step Functions publishes status-change events for STANDARD
+	// executions only (EXPRESS and StartSyncExecution runs emit none).
+	if async && smType == driver.TypeStandard {
+		m.emitExecutionStarted(ctx, &exec, closed)
+	}
 
 	if closed {
 		m.executionClosed(ctx, &exec, "")
@@ -178,6 +184,13 @@ func observedExec(exec *driver.Execution, w settle.Window, now time.Time) driver
 		out.Status = observed
 		out.StopDate = time.Time{}
 		out.Output = ""
+
+		return out
+	}
+
+	// A settled run stopped when its window elapsed, not when it was started.
+	if !out.StopDate.IsZero() && out.StopDate.Before(w.ReadyAt) {
+		out.StopDate = w.ReadyAt
 	}
 
 	return out
@@ -222,11 +235,17 @@ func (m *Mock) settleClose(ctx context.Context, ed *execData, now time.Time) {
 	}
 
 	ed.closeEmitted = true
-	closed := ed.exec
+	closed := observedExec(&ed.exec, ed.settle, now)
 
 	ed.mu.Unlock()
 
 	m.executionClosed(ctx, &closed, "")
+
+	// Only an asynchronous run settles, so this is the terminal status change
+	// of a StartExecution run that was still RUNNING when it started.
+	if m.isStandard(closed.StateMachineArn) {
+		m.emitExecutionStatus(ctx, &closed, closed.Status)
+	}
 }
 
 func (m *Mock) DescribeExecution(ctx context.Context, arn string) (*driver.Execution, error) {
@@ -251,18 +270,41 @@ func (m *Mock) StopExecution(ctx context.Context, arn, errCode, cause string) (t
 		return time.Time{}, err
 	}
 
-	// A run that already settled (but was not yet observed) closes first; an
-	// abort's close side effects are published after ed.mu is released.
+	// A run that already settled (but was not yet observed) closes first.
 	m.settleClose(ctx, ed, m.now())
 
-	var aborted *driver.Execution
+	stopDate, aborted := m.abortExecution(ed, errCode, cause)
 
-	defer func() {
-		if aborted != nil {
-			m.executionClosed(ctx, aborted, "")
+	// Published after ed.mu is released: a rule target may call back into SFN.
+	if aborted != nil {
+		m.executionClosed(ctx, aborted, "")
+
+		if m.isStandard(aborted.StateMachineArn) {
+			m.emitExecutionStatus(ctx, aborted, driver.ExecStatusAborted)
 		}
-	}()
+	}
 
+	return stopDate, nil
+}
+
+// isStandard reports whether the state machine is a STANDARD workflow (the only
+// type whose executions publish status-change events).
+func (m *Mock) isStandard(smArn string) bool {
+	sd, err := m.getSM(smArn)
+	if err != nil {
+		return false
+	}
+
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	return sd.sm.Type == driver.TypeStandard
+}
+
+// abortExecution is StopExecution's locked core. It returns the stop date and,
+// when this call actually aborted a running execution, a copy of the aborted
+// record (nil when the execution had already settled).
+func (m *Mock) abortExecution(ed *execData, errCode, cause string) (time.Time, *driver.Execution) {
 	ed.mu.Lock()
 	defer ed.mu.Unlock()
 
@@ -282,9 +324,9 @@ func (m *Mock) StopExecution(ctx context.Context, arn, errCode, cause string) (t
 		ed.exec.History = abortHistory(ed.exec.History, now, errCode, cause)
 		ed.settle = settle.Window{}
 		ed.closeEmitted = true
+		aborted := ed.exec
 
-		snapshot := ed.exec
-		aborted = &snapshot
+		return ed.exec.StopDate, &aborted
 	}
 
 	return ed.exec.StopDate, nil
@@ -396,28 +438,61 @@ func (m *Mock) GetExecutionHistory(ctx context.Context, arn string, reverse bool
 	return events, nil
 }
 
-// RedriveExecution restarts a previously-completed execution. The emulator does
-// not re-run the workflow: it records a new redriveDate on the existing
-// execution and returns it. Repeated calls advance the redrive date.
+// RedriveExecution restarts a FAILED, ABORTED or TIMED_OUT STANDARD execution,
+// as real Step Functions does. The emulator does not re-run the workflow: the
+// redriven run succeeds, is counted in redriveCount, stamps redriveDate, and
+// publishes its RUNNING -> SUCCEEDED status changes. A RUNNING or SUCCEEDED
+// execution, or any EXPRESS one, is rejected with ExecutionNotRedrivable.
 func (m *Mock) RedriveExecution(ctx context.Context, arn string) (*driver.RedriveResult, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {
 		return nil, err
 	}
 
+	ed.mu.RLock()
+	smArn := ed.exec.StateMachineArn
+	ed.mu.RUnlock()
+
+	// Real Step Functions redrives STANDARD workflows only.
+	if !m.isStandard(smArn) {
+		return nil, execNotRedrivable("Execution %s is not of type STANDARD and cannot be redriven", arn)
+	}
+
+	redriven, err := m.redrive(ed)
+	if err != nil {
+		return nil, err
+	}
+
+	m.executionClosed(ctx, &redriven, redrivenPrefix)
+	m.emitExecutionStarted(ctx, &redriven, true)
+
+	return &driver.RedriveResult{RedriveDate: redriven.RedriveDate}, nil
+}
+
+// redrive is RedriveExecution's locked core. It checks redrivability against
+// the execution's observed status (a still-settling run is RUNNING) and returns
+// the redriven record.
+func (m *Mock) redrive(ed *execData) (driver.Execution, error) {
 	ed.mu.Lock()
+	defer ed.mu.Unlock()
 
 	now := m.now()
+
+	observed := observedExec(&ed.exec, ed.settle, now).Status
+	if status, reason := driver.ExecutionRedriveStatus(observed); status != driver.RedriveStatusRedrivable {
+		return driver.Execution{}, execNotRedrivable("%s", reason)
+	}
+
 	ed.exec.Status = driver.ExecStatusSucceeded
 	ed.exec.StopDate = now
 	ed.closeEmitted = true
-	redriven := ed.exec
+	// The redriven run succeeded, so the prior failure's error/cause no longer
+	// describe the execution.
+	ed.exec.Error, ed.exec.Cause = "", ""
+	ed.exec.RedriveCount++
+	ed.exec.RedriveDate = now
 
-	ed.mu.Unlock()
-
-	m.executionClosed(ctx, &redriven, redrivenPrefix)
-
-	return &driver.RedriveResult{RedriveDate: now}, nil
+	return ed.exec, nil
 }
 
 func (m *Mock) DescribeStateMachineForExecution(_ context.Context, executionArn string) (*driver.StateMachine, error) {

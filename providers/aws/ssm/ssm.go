@@ -27,6 +27,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
@@ -74,7 +75,10 @@ type Mock struct {
 	// kmsCrypto, when wired via SetKMSCrypto, encrypts SecureString values through
 	// real KMS. Nil stores them verbatim (library plaintext fallback).
 	kmsCrypto KMSCrypto
-	opts      *config.Options
+	// events publishes Parameter Store change events to the EventBridge
+	// default bus; inactive until wired by the provider.
+	events awsevents.Emitter
+	opts   *config.Options
 }
 
 // SetKMSCrypto wires the KMS backend so SecureString values are encrypted at
@@ -345,6 +349,26 @@ func validatePutParameter(cfg driver.PutConfig) error {
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
+	ver, tier, err := m.putParameter(ctx, cfg)
+	if err != nil {
+		return 0, "", err
+	}
+
+	operation := opUpdate
+	if ver == 1 {
+		operation = opCreate
+	}
+
+	m.emitParameterChange(ctx, operation, cfg.Name)
+
+	return ver, tier, nil
+}
+
+// putParameter is PutParameter's core, without event emission, so the
+// create-race retry in createParameter does not publish twice.
+//
+//nolint:gocritic // hugeParam: mirrors the PutParameter interface signature.
+func (m *Mock) putParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
 	if err := validatePutParameter(cfg); err != nil {
 		return 0, "", err
 	}
@@ -470,7 +494,7 @@ func (m *Mock) createParameter(
 
 		cfg.Overwrite = true
 
-		return m.PutParameter(ctx, *cfg)
+		return m.putParameter(ctx, *cfg)
 	}
 
 	return 1, tier, nil
@@ -712,23 +736,41 @@ func (m *Mock) pathParameter(
 // DeleteParameter removes a parameter and all its versions. A ":version"/
 // ":label" selector is stripped first, matching the read paths — SSM has no
 // per-version delete, so a selector addresses the base parameter.
-func (m *Mock) DeleteParameter(_ context.Context, name string) error {
+func (m *Mock) DeleteParameter(ctx context.Context, name string) error {
 	base, _ := resolveSelector(name)
-	if !m.params.Delete(base) {
+	if !m.deleteParameter(ctx, base) {
 		return errors.Newf(errors.NotFound, "parameter %q not found", base)
 	}
 
 	return nil
 }
 
+// deleteParameter removes one parameter, publishing its Delete change event.
+// The event carries the parameter's type and description, so they are read
+// before the record is dropped.
+func (m *Mock) deleteParameter(ctx context.Context, base string) bool {
+	pd, ok := m.params.Get(base)
+	if !ok {
+		return false
+	}
+
+	typ, description := pd.typeAndDescription()
+
+	if !m.params.Delete(base) {
+		return false
+	}
+
+	m.emitParameterChangeOf(ctx, opDelete, base, typ, description)
+
+	return true
+}
+
 // DeleteParameters removes multiple parameters, returning the names deleted and
 // the names that did not exist.
-func (m *Mock) DeleteParameters(_ context.Context, names []string) ([]string, []string, error) {
-	var deleted, invalid []string
-
+func (m *Mock) DeleteParameters(ctx context.Context, names []string) (deleted, invalid []string, err error) {
 	for _, name := range names {
 		base, _ := resolveSelector(name)
-		if m.params.Delete(base) {
+		if m.deleteParameter(ctx, base) {
 			deleted = append(deleted, name)
 		} else {
 			invalid = append(invalid, name)
@@ -815,12 +857,28 @@ func (m *Mock) GetParameterHistory(ctx context.Context, name string, withDecrypt
 // returning the version the labels were applied to and any labels rejected.
 // A label attached to a new version is removed from any older version that held
 // it, matching real SSM semantics.
-func (m *Mock) LabelParameterVersion(_ context.Context, name string, ver int64, labels []string) (int64, []string, error) {
+func (m *Mock) LabelParameterVersion(
+	ctx context.Context, name string, ver int64, labels []string,
+) (labeled int64, invalid []string, err error) {
 	pd, ok := m.params.Get(name)
 	if !ok {
 		return 0, nil, errors.Newf(errors.NotFound, "parameter %q not found", name)
 	}
 
+	labeled, invalid, err = labelVersion(pd, name, ver, labels)
+	if err != nil {
+		return 0, nil, err
+	}
+
+	if len(invalid) < len(labels) {
+		m.emitParameterChange(ctx, opLabelParameterVersion, name)
+	}
+
+	return labeled, invalid, nil
+}
+
+// labelVersion is LabelParameterVersion's locked core.
+func labelVersion(pd *paramData, name string, ver int64, labels []string) (labeled int64, invalid []string, err error) {
 	pd.mu.Lock()
 	defer pd.mu.Unlock()
 
@@ -832,8 +890,6 @@ func (m *Mock) LabelParameterVersion(_ context.Context, name string, ver int64, 
 	if !ok {
 		return 0, nil, errors.Newf(errors.NotFound, "parameter %q version %d not found", name, ver)
 	}
-
-	var invalid []string
 
 	for _, label := range labels {
 		// Real SSM rejects labels that begin with a digit or with "aws"/"ssm"

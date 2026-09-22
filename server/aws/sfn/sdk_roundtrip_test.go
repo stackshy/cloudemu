@@ -245,10 +245,17 @@ func TestSDKActivities(t *testing.T) {
 func TestSDKRedriveExecution(t *testing.T) {
 	ctx := context.Background()
 	c := newSFNClient(t)
-	arn := createSM(t, c, "redrive")
+	sm, err := c.CreateStateMachine(ctx, &awssfn.CreateStateMachineInput{
+		Name:       aws.String("redrive"),
+		Definition: aws.String(`{"StartAt":"Boom","States":{"Boom":{"Type":"Fail","Error":"Bad","Cause":"broken"}}}`),
+		RoleArn:    aws.String("arn:aws:iam::123456789012:role/svc"),
+	})
+	if err != nil {
+		t.Fatalf("CreateStateMachine: %v", err)
+	}
 
 	start, err := c.StartExecution(ctx, &awssfn.StartExecutionInput{
-		StateMachineArn: aws.String(arn), Name: aws.String("r1"),
+		StateMachineArn: sm.StateMachineArn, Name: aws.String("r1"),
 	})
 	if err != nil {
 		t.Fatalf("StartExecution: %v", err)
@@ -256,11 +263,25 @@ func TestSDKRedriveExecution(t *testing.T) {
 
 	out, err := c.RedriveExecution(ctx, &awssfn.RedriveExecutionInput{ExecutionArn: start.ExecutionArn})
 	if err != nil {
-		t.Fatalf("RedriveExecution: %v", err)
+		t.Fatalf("RedriveExecution of a FAILED execution: %v", err)
 	}
 
 	if out.RedriveDate == nil {
 		t.Fatal("RedriveExecution: expected a redriveDate")
+	}
+
+	desc, err := c.DescribeExecution(ctx, &awssfn.DescribeExecutionInput{ExecutionArn: start.ExecutionArn})
+	if err != nil || desc.RedriveCount == nil || *desc.RedriveCount != 1 || desc.RedriveStatus != "NOT_REDRIVABLE" {
+		t.Fatalf("DescribeExecution after redrive = %+v (%v)", desc, err)
+	}
+
+	// The redriven execution SUCCEEDED, so a second redrive is the typed
+	// ExecutionNotRedrivable error.
+	_, err = c.RedriveExecution(ctx, &awssfn.RedriveExecutionInput{ExecutionArn: start.ExecutionArn})
+
+	var notRedrivable *sfntypes.ExecutionNotRedrivable
+	if !errors.As(err, &notRedrivable) {
+		t.Fatalf("second RedriveExecution = %v, want *types.ExecutionNotRedrivable", err)
 	}
 }
 
