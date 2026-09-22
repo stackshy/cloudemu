@@ -145,114 +145,84 @@ func (h *Handler) queryPutMetricData(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) queryListMetrics(w http.ResponseWriter, r *http.Request) {
-	names, err := h.monitoring.ListMetrics(r.Context(), r.Form.Get("Namespace"))
+	res, err := h.listMetricsCore(r.Context(), queryListMetricsInput(r))
 	if err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}
 
-	sort.Strings(names)
-
-	ns := r.Form.Get("Namespace")
-	from, to, next := pageWindow(len(names), decodeOffsetToken(r.Form.Get("NextToken")), listMetricsPageSize)
-
-	members := make([]metricMemberXML, 0, to-from)
-	for _, n := range names[from:to] {
-		members = append(members, metricMemberXML{Namespace: ns, MetricName: n})
+	members := make([]metricMemberXML, 0, len(res.Metrics))
+	for _, m := range res.Metrics {
+		members = append(members, metricMemberXML{
+			Namespace: m.Namespace, MetricName: m.MetricName, Dimensions: dimsToXML(m.Dimensions),
+		})
 	}
 
-	result := listMetricsResultXML{Metrics: members}
-	if next > 0 {
-		result.NextToken = encodeOffsetToken(next)
+	writeQueryResponse(w, "ListMetricsResponse", listMetricsResultXML{Metrics: members, NextToken: res.NextToken})
+}
+
+func queryListMetricsInput(r *http.Request) listMetricsInput {
+	in := listMetricsInput{
+		Namespace:  r.Form.Get("Namespace"),
+		MetricName: r.Form.Get("MetricName"),
+		NextToken:  r.Form.Get("NextToken"),
 	}
 
-	writeQueryResponse(w, "ListMetricsResponse", result)
+	// Value is optional on a DimensionFilter, so the list ends at the first
+	// missing Name, not the first missing Value.
+	for i := 1; ; i++ {
+		p := "Dimensions.member." + strconv.Itoa(i) + "."
+
+		name := r.Form.Get(p + "Name")
+		if name == "" {
+			break
+		}
+
+		in.Dimensions = append(in.Dimensions, dimensionFilterCBR{Name: name, Value: r.Form.Get(p + "Value")})
+	}
+
+	return in
 }
 
 func (h *Handler) queryGetMetricStatistics(w http.ResponseWriter, r *http.Request) {
-	stats := queryStringList(r, "Statistics.member.")
-	if len(stats) == 0 {
-		stats = []string{statAverage}
-	}
+	in := queryGetMetricStatisticsInput(r)
 
-	start, _ := time.Parse(time.RFC3339, r.Form.Get("StartTime"))
-	end, _ := time.Parse(time.RFC3339, r.Form.Get("EndTime"))
-	period, _ := strconv.Atoi(r.Form.Get("Period"))
-	dims := queryDimensions(r, "Dimensions.member.")
-
-	acc := newQueryDatapointAcc()
-
-	for _, stat := range stats {
-		res, err := h.monitoring.GetMetricData(r.Context(), mondriver.GetMetricInput{
-			Namespace: r.Form.Get("Namespace"), MetricName: r.Form.Get("MetricName"),
-			Dimensions: dims, StartTime: start, EndTime: end, Period: period, Stat: stat,
-		})
-		if err != nil {
-			writeQueryDriverErr(w, err)
-			return
-		}
-
-		acc.add(res, stat)
-	}
-
-	writeQueryResponse(w, "GetMetricStatisticsResponse",
-		getStatsResultXML{Label: r.Form.Get("MetricName"), Datapoints: acc.datapoints()})
-}
-
-// queryDatapointAcc merges per-statistic results into one XML datapoint per
-// timestamp so a multi-statistic GetMetricStatistics returns every requested
-// statistic on each datapoint.
-type queryDatapointAcc struct {
-	byTS  map[int64]*datapointXML
-	order []int64
-	unit  string
-}
-
-func newQueryDatapointAcc() *queryDatapointAcc {
-	return &queryDatapointAcc{byTS: map[int64]*datapointXML{}}
-}
-
-func (a *queryDatapointAcc) add(res *mondriver.MetricDataResult, stat string) {
-	if res == nil {
+	res, err := h.getMetricStatisticsCore(r.Context(), &in)
+	if err != nil {
+		writeQueryDriverErr(w, err)
 		return
 	}
 
-	if a.unit == "" {
-		a.unit = res.Unit
+	points := make([]datapointXML, 0, len(res.Datapoints))
+	for _, dp := range res.Datapoints {
+		points = append(points, datapointXML{
+			Timestamp: dp.Timestamp.Format(time.RFC3339), SampleCount: dp.SampleCount, Average: dp.Average,
+			Sum: dp.Sum, Minimum: dp.Minimum, Maximum: dp.Maximum, Unit: dp.Unit,
+		})
 	}
 
-	for i := range res.Timestamps {
-		ts := res.Timestamps[i].UTC()
-		key := ts.UnixNano()
-
-		dp, ok := a.byTS[key]
-		if !ok {
-			dp = &datapointXML{Timestamp: ts.Format(time.RFC3339)}
-			a.byTS[key] = dp
-			a.order = append(a.order, key)
-		}
-
-		setQueryStat(dp, stat, res.Values[i])
-	}
+	writeQueryResponse(w, "GetMetricStatisticsResponse", getStatsResultXML{Label: res.Label, Datapoints: points})
 }
 
-func (a *queryDatapointAcc) datapoints() []datapointXML {
-	unit := a.unit
-	if unit == "" {
-		unit = defaultMetricUnit
+func queryGetMetricStatisticsInput(r *http.Request) getMetricStatisticsInput {
+	in := getMetricStatisticsInput{
+		Namespace:  r.Form.Get("Namespace"),
+		MetricName: r.Form.Get("MetricName"),
+		Statistics: queryStringList(r, "Statistics.member."),
+		Dimensions: dimsToCBR(queryDimensions(r, "Dimensions.member.")),
 	}
 
-	sort.Slice(a.order, func(i, j int) bool { return a.order[i] < a.order[j] })
+	in.Period, _ = strconv.Atoi(r.Form.Get("Period"))
 
-	out := make([]datapointXML, 0, len(a.order))
-
-	for _, key := range a.order {
-		dp := a.byTS[key]
-		dp.Unit = unit
-		out = append(out, *dp)
+	if t, err := time.Parse(time.RFC3339, r.Form.Get("StartTime")); err == nil {
+		in.StartTime = &t
 	}
 
-	return out
+	if t, err := time.Parse(time.RFC3339, r.Form.Get("EndTime")); err == nil {
+		in.EndTime = &t
+	}
+
+	return in
 }
 
 func (h *Handler) queryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
@@ -610,26 +580,12 @@ func queryStringList(r *http.Request, prefix string) []string {
 	return out
 }
 
-func setQueryStat(dp *datapointXML, stat string, v float64) {
-	switch stat {
-	case "Sum":
-		dp.Sum = v
-	case "Minimum":
-		dp.Minimum = v
-	case "Maximum":
-		dp.Maximum = v
-	case "SampleCount":
-		dp.SampleCount = v
-	default:
-		dp.Average = v
-	}
-}
-
 // ---- XML response shapes (query protocol, 2010-08-01) ----
 
 type metricMemberXML struct {
-	Namespace  string `xml:"Namespace"`
-	MetricName string `xml:"MetricName"`
+	Namespace  string         `xml:"Namespace"`
+	MetricName string         `xml:"MetricName"`
+	Dimensions []dimensionXML `xml:"Dimensions>member,omitempty"`
 }
 
 type listMetricsResultXML struct {
@@ -638,14 +594,16 @@ type listMetricsResultXML struct {
 	NextToken string            `xml:"NextToken,omitempty"`
 }
 
+// datapointXML uses pointers so a requested statistic of 0 is still sent.
+// A nil pointer means the statistic was not requested.
 type datapointXML struct {
-	Timestamp   string  `xml:"Timestamp"`
-	SampleCount float64 `xml:"SampleCount,omitempty"`
-	Average     float64 `xml:"Average,omitempty"`
-	Sum         float64 `xml:"Sum,omitempty"`
-	Minimum     float64 `xml:"Minimum,omitempty"`
-	Maximum     float64 `xml:"Maximum,omitempty"`
-	Unit        string  `xml:"Unit,omitempty"`
+	Timestamp   string   `xml:"Timestamp"`
+	SampleCount *float64 `xml:"SampleCount,omitempty"`
+	Average     *float64 `xml:"Average,omitempty"`
+	Sum         *float64 `xml:"Sum,omitempty"`
+	Minimum     *float64 `xml:"Minimum,omitempty"`
+	Maximum     *float64 `xml:"Maximum,omitempty"`
+	Unit        string   `xml:"Unit,omitempty"`
 }
 
 type getStatsResultXML struct {
