@@ -28,30 +28,41 @@ const (
 // event: the task record as DescribeTasks reports it.
 type taskStateChangeDetail struct {
 	Attachments          []taskEventAttachment `json:"attachments"`
+	AvailabilityZone     string                `json:"availabilityZone,omitempty"`
 	ClusterArn           string                `json:"clusterArn"`
+	Connectivity         string                `json:"connectivity,omitempty"`
 	ContainerInstanceArn string                `json:"containerInstanceArn,omitempty"`
 	Containers           []taskEventContainer  `json:"containers"`
+	CPU                  string                `json:"cpu,omitempty"`
 	CreatedAt            string                `json:"createdAt"`
 	DesiredStatus        string                `json:"desiredStatus"`
 	Group                string                `json:"group,omitempty"`
 	LastStatus           string                `json:"lastStatus"`
 	LaunchType           string                `json:"launchType"`
+	Memory               string                `json:"memory,omitempty"`
 	PlatformVersion      string                `json:"platformVersion,omitempty"`
+	StartedAt            string                `json:"startedAt,omitempty"`
 	StartedBy            string                `json:"startedBy,omitempty"`
 	StopCode             string                `json:"stopCode,omitempty"`
+	StoppedAt            string                `json:"stoppedAt,omitempty"`
 	StoppedReason        string                `json:"stoppedReason,omitempty"`
+	StoppingAt           string                `json:"stoppingAt,omitempty"`
 	TaskArn              string                `json:"taskArn"`
 	TaskDefinitionArn    string                `json:"taskDefinitionArn"`
 	UpdatedAt            string                `json:"updatedAt"`
 	Version              int                   `json:"version"`
 }
 
+// taskEventContainer is one entry of the event's containers[]. exitCode is
+// present only once the container has stopped, as in the real event.
 type taskEventContainer struct {
-	Image      string `json:"image,omitempty"`
-	LastStatus string `json:"lastStatus"`
-	Name       string `json:"name"`
-	Reason     string `json:"reason,omitempty"`
-	TaskArn    string `json:"taskArn"`
+	ContainerArn string `json:"containerArn,omitempty"`
+	ExitCode     *int   `json:"exitCode,omitempty"`
+	Image        string `json:"image,omitempty"`
+	LastStatus   string `json:"lastStatus"`
+	Name         string `json:"name"`
+	Reason       string `json:"reason,omitempty"`
+	TaskArn      string `json:"taskArn"`
 }
 
 type taskEventAttachment struct {
@@ -87,9 +98,16 @@ func (m *Mock) emitTaskStateChange(ctx context.Context, t *driver.Task, version 
 
 	for i := range t.Containers {
 		c := &t.Containers[i]
-		containers = append(containers, taskEventContainer{
-			Image: c.Image, LastStatus: c.LastStatus, Name: c.Name, Reason: c.Reason, TaskArn: t.ARN,
-		})
+		ec := taskEventContainer{
+			ContainerArn: c.ARN, Image: c.Image, LastStatus: c.LastStatus, Name: c.Name, Reason: c.Reason, TaskArn: t.ARN,
+		}
+
+		if c.LastStatus == statusStopped {
+			code := c.ExitCode
+			ec.ExitCode = &code
+		}
+
+		containers = append(containers, ec)
 	}
 
 	attachments := make([]taskEventAttachment, 0, len(t.Attachments))
@@ -104,10 +122,12 @@ func (m *Mock) emitTaskStateChange(ctx context.Context, t *driver.Task, version 
 	}
 
 	m.events.Emit(ctx, eventSource, eventTaskStateChange, taskStateChangeDetail{
-		Attachments: attachments, ClusterArn: t.ClusterARN, ContainerInstanceArn: t.ContainerInstanceARN,
-		Containers: containers, CreatedAt: t.CreatedAt, DesiredStatus: t.DesiredStatus, Group: t.Group,
-		LastStatus: t.LastStatus, LaunchType: t.LaunchType, PlatformVersion: t.PlatformVersion,
-		StartedBy: t.StartedBy, StopCode: t.StopCode, StoppedReason: t.StoppedReason, TaskArn: t.ARN,
+		Attachments: attachments, AvailabilityZone: t.AvailabilityZone, ClusterArn: t.ClusterARN,
+		Connectivity: t.Connectivity, ContainerInstanceArn: t.ContainerInstanceARN, Containers: containers,
+		CPU: t.CPU, CreatedAt: t.CreatedAt, DesiredStatus: t.DesiredStatus, Group: t.Group,
+		LastStatus: t.LastStatus, LaunchType: t.LaunchType, Memory: t.Memory, PlatformVersion: t.PlatformVersion,
+		StartedAt: t.StartedAt, StartedBy: t.StartedBy, StopCode: t.StopCode, StoppedAt: t.StoppedAt,
+		StoppedReason: t.StoppedReason, StoppingAt: t.StoppingAt, TaskArn: t.ARN,
 		TaskDefinitionArn: t.TaskDefinitionARN, UpdatedAt: m.now(), Version: version,
 	}, t.ARN)
 }

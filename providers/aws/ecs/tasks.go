@@ -87,6 +87,8 @@ func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Ta
 			continue
 		}
 
+		m.emitTaskStateChange(ctx, task, taskEventVersionLaunch)
+
 		// The response reflects what a caller polling DescribeTasks would see
 		// right now: the launch-settle transient (PROVISIONING/PENDING) rather
 		// than the task's already-final RUNNING, when AsyncSettle is enabled.
@@ -220,20 +222,12 @@ type taskSpec struct {
 // ListTagsForResource reads the separate m.tags store keyed by ARN — without
 // this call a task launched with --tags describes with them but
 // ListTagsForResource silently reports none.
+//
+// launchTask publishes no task state-change event: a launch can run under the
+// service's reconcileLock (see reconcileServiceAfterStop), and an event target
+// that re-enters the same service's reconciliation would deadlock on it. Each
+// caller publishes the launch with emitTaskStateChange once it holds no lock.
 func (m *Mock) launchTask(ctx context.Context, spec *taskSpec, pendingOnShortfall bool) (*driver.Task, *driver.Failure) {
-	task, failure := m.placeTask(ctx, spec, pendingOnShortfall)
-	if task != nil {
-		// placeTask has released placeMu, so a rule target calling back into
-		// ECS cannot deadlock against this launch.
-		m.emitTaskStateChange(ctx, task, taskEventVersionLaunch)
-	}
-
-	return task, failure
-}
-
-// placeTask is launchTask's placement core: it builds, places, and stores the
-// task, returning a clone (or the placement failure).
-func (m *Mock) placeTask(ctx context.Context, spec *taskSpec, pendingOnShortfall bool) (*driver.Task, *driver.Failure) {
 	task := &driver.Task{
 		ARN:               m.arnIn(arnRegion(spec.clusterARN, m.opts.Region), "task/"+spec.cluster+"/"+m.hexID()),
 		ClusterARN:        spec.clusterARN,
@@ -250,6 +244,7 @@ func (m *Mock) placeTask(ctx context.Context, spec *taskSpec, pendingOnShortfall
 	if spec.launchType == launchFargate {
 		m.placeFargate(task, spec.netCfg, spec.platformVersion)
 		m.backTaskWithEngine(ctx, task, spec)
+		m.stampLaunch(task, spec.td)
 		m.tasks.Set(task.ARN, task)
 		m.recordTags(task.ARN, spec.tags)
 		m.beginLaunchSettle(task)
@@ -266,6 +261,7 @@ func (m *Mock) placeTask(ctx context.Context, spec *taskSpec, pendingOnShortfall
 
 		markContainers(task, statusPending)
 		task.LastStatus = statusPending
+		m.stampLaunch(task, spec.td)
 		m.tasks.Set(task.ARN, task)
 		m.recordTags(task.ARN, spec.tags)
 		clone := cloneTask(task)
@@ -275,12 +271,56 @@ func (m *Mock) placeTask(ctx context.Context, spec *taskSpec, pendingOnShortfall
 
 	task.LastStatus = statusRunning
 	m.backTaskWithEngine(ctx, task, spec)
+	m.stampLaunch(task, spec.td)
 	m.tasks.Set(task.ARN, task)
 	m.recordTags(task.ARN, spec.tags)
 	m.beginLaunchSettle(task)
 	clone := cloneTask(task)
 
 	return &clone, nil
+}
+
+// connectivityConnected is the task connectivity ECS reports once a task's
+// agent/ENI is attached and it is running.
+const connectivityConnected = "CONNECTED"
+
+// defaultAZSuffix places tasks in the region's first zone ("<region>a"), the
+// same zone the EC2 mock places instances and volumes in by default.
+const defaultAZSuffix = "a"
+
+// stampLaunch fills the fields real ECS computes at launch: the task-level
+// size from the task definition, the placement zone, each container's ARN, and
+// — once the task actually ran — startedAt/connectivity (plus the stop
+// timestamps for an engine-backed task that already ran to completion).
+func (m *Mock) stampLaunch(task *driver.Task, td *driver.TaskDefinition) {
+	task.CPU, task.Memory = td.CPU, td.Memory
+	task.AvailabilityZone = arnRegion(task.ARN, m.opts.Region) + defaultAZSuffix
+	taskID := task.ARN[strings.LastIndex(task.ARN, "/")+1:]
+	cluster := clusterNameFromARN(task.ClusterARN)
+
+	for i := range task.Containers {
+		task.Containers[i].ARN = m.arnIn(arnRegion(task.ARN, m.opts.Region),
+			"container/"+cluster+"/"+taskID+"/"+m.hexID())
+	}
+
+	if task.LastStatus == statusPending {
+		return
+	}
+
+	now := m.now()
+	task.StartedAt = now
+	task.Connectivity = connectivityConnected
+
+	if task.LastStatus == statusStopped {
+		task.StoppingAt, task.StoppedAt = now, now
+	}
+}
+
+// stampStop records the instant a task began stopping and stopped. The
+// emulator stops synchronously, so both are the same instant.
+func (m *Mock) stampStop(task *driver.Task) {
+	now := m.now()
+	task.StoppingAt, task.StoppedAt = now, now
 }
 
 // beginLaunchSettle starts the task's launch settle window — a realistic
@@ -590,6 +630,7 @@ func (m *Mock) stopTaskLocked(ctx context.Context, cluster, task, reason string)
 	updated.DesiredStatus = statusStopped
 	updated.StoppedReason = reason
 	updated.StopCode = "UserInitiated"
+	m.stampStop(&updated)
 
 	for i := range updated.Containers {
 		updated.Containers[i].LastStatus = statusStopped

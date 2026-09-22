@@ -300,6 +300,10 @@ func (m *Mock) converge(
 			continue
 		}
 
+		// converge runs from CreateService/UpdateService, which hold no service
+		// lock, so the launch is published inline.
+		m.emitTaskStateChange(ctx, task, taskEventVersionLaunch)
+
 		if task.LastStatus == statusRunning {
 			running++
 
@@ -402,13 +406,18 @@ func (m *Mock) liveServiceTaskCounts(cluster, group string) (running, pending in
 // replacement, matching real ECS). A task definition that's since been
 // deregistered leaves the service short rather than erroring, same as a real
 // scheduler that can't resolve its target definition.
-func (m *Mock) launchServiceReplacements(ctx context.Context, svc *driver.Service, n int) {
+//
+// It returns the launched tasks without publishing their state-change events:
+// the caller holds the service's reconcileLock and publishes them only after
+// releasing it.
+func (m *Mock) launchServiceReplacements(ctx context.Context, svc *driver.Service, n int) []*driver.Task {
 	td, ok := m.resolveTaskDef(svc.TaskDefinition)
 	if !ok {
-		return
+		return nil
 	}
 
 	spec := m.serviceTaskSpec(svc, td, primaryDeploymentID(svc.Deployments))
+	launched := make([]*driver.Task, 0, n)
 
 	for range n {
 		t, _ := m.launchTask(ctx, &spec, true)
@@ -416,10 +425,14 @@ func (m *Mock) launchServiceReplacements(ctx context.Context, svc *driver.Servic
 			continue
 		}
 
+		launched = append(launched, t)
+
 		if t.LastStatus == statusRunning {
 			m.registerTaskTargets(ctx, svc, td, t)
 		}
 	}
+
+	return launched
 }
 
 // reconcileServiceAfterStop re-converges the stopped task's owning service (if
@@ -449,6 +462,18 @@ func (m *Mock) reconcileServiceAfterStop(ctx context.Context, task *driver.Task)
 		return
 	}
 
+	// Replacement launches are published only after reconcileLock is released:
+	// an event target (e.g. a synchronously invoked Lambda) that stops another
+	// task of this same service re-enters this function for the same key, and
+	// the lock is not reentrant.
+	for _, t := range m.reconcileServiceLocked(ctx, task, name) {
+		m.emitTaskStateChange(ctx, t, taskEventVersionLaunch)
+	}
+}
+
+// reconcileServiceLocked is reconcileServiceAfterStop's reconcileLock-guarded
+// core. It returns the replacement tasks it launched, unpublished.
+func (m *Mock) reconcileServiceLocked(ctx context.Context, task *driver.Task, name string) []*driver.Task {
 	cluster := clusterNameFromARN(task.ClusterARN)
 	key := serviceKey(cluster, name)
 
@@ -457,14 +482,16 @@ func (m *Mock) reconcileServiceAfterStop(ctx context.Context, task *driver.Task)
 
 	svc, ok := m.services.Get(key)
 	if !ok || svc.Status != statusActive {
-		return
+		return nil
 	}
 
 	m.deregisterTaskTargets(ctx, svc, task)
 
+	var launched []*driver.Task
+
 	running, pending := m.liveServiceTaskCounts(cluster, task.Group)
 	if shortfall := svc.DesiredCount - (running + pending); shortfall > 0 {
-		m.launchServiceReplacements(ctx, svc, shortfall)
+		launched = m.launchServiceReplacements(ctx, svc, shortfall)
 	}
 
 	m.services.Update(key, func(s *driver.Service) *driver.Service {
@@ -482,6 +509,8 @@ func (m *Mock) reconcileServiceAfterStop(ctx context.Context, task *driver.Task)
 
 		return &updated
 	})
+
+	return launched
 }
 
 // deploymentID mints an ECS service deployment id ("ecs-svc/<id>"). Service

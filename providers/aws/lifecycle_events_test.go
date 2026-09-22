@@ -218,6 +218,8 @@ func TestECSTaskAndServiceEvents(t *testing.T) {
 		t.Fatalf("STOPPED detail = %v", d)
 	}
 
+	requireTaskTimeline(t, detailOf(t, &events[0]), detailOf(t, &events[1]))
+
 	requireEnvelope(t, &events[2], "aws.ecs", "ECS Service Action")
 
 	if d := detailOf(t, &events[2]); d["eventName"] != "SERVICE_STEADY_STATE" || d["eventType"] != "INFO" {
@@ -226,6 +228,81 @@ func TestECSTaskAndServiceEvents(t *testing.T) {
 
 	if events[2].Resources[0] != svc.ARN {
 		t.Fatalf("service action resources = %v, want [%s]", events[2].Resources, svc.ARN)
+	}
+}
+
+// requireTaskTimeline asserts the computed task fields of the launch and stop
+// events: startedAt/connectivity/availabilityZone on RUNNING, stoppingAt and
+// stoppedAt on STOPPED, and the container identity plus a STOPPED-only
+// exitCode on containers[].
+func requireTaskTimeline(t *testing.T, running, stopped map[string]any) {
+	t.Helper()
+
+	if running["startedAt"] == nil || running["connectivity"] != "CONNECTED" || running["availabilityZone"] != "us-east-1a" ||
+		running["stoppedAt"] != nil {
+		t.Fatalf("RUNNING timeline = %v", running)
+	}
+
+	if stopped["stoppingAt"] == nil || stopped["stoppedAt"] == nil || stopped["startedAt"] != running["startedAt"] {
+		t.Fatalf("STOPPED timeline = %v", stopped)
+	}
+
+	rc := running["containers"].([]any)[0].(map[string]any)
+	sc := stopped["containers"].([]any)[0].(map[string]any)
+
+	arn, _ := rc["containerArn"].(string)
+	if arn == "" || sc["containerArn"] != arn || rc["name"] != "c" || rc["lastStatus"] != "RUNNING" {
+		t.Fatalf("RUNNING container = %v", rc)
+	}
+
+	if _, has := rc["exitCode"]; has {
+		t.Fatalf("RUNNING container reports exitCode: %v", rc)
+	}
+
+	if sc["lastStatus"] != "STOPPED" || sc["exitCode"] == nil {
+		t.Fatalf("STOPPED container = %v", sc)
+	}
+}
+
+// TestECSDeregisterInstanceStopsTasksWithEvents pins that force-deregistering a
+// container instance publishes a STOPPED event for each task it stops.
+func TestECSDeregisterInstanceStopsTasksWithEvents(t *testing.T) {
+	p := aws.New()
+	ctx := context.Background()
+
+	if _, err := p.ECS.CreateCluster(ctx, ecsdriver.CreateClusterInput{Name: "prod"}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	if _, err := p.ECS.RegisterTaskDefinition(ctx, ecsdriver.RegisterTaskDefinitionInput{
+		Family: "web", ContainerDefinitions: []ecsdriver.ContainerDefinition{{Name: "c", Image: "nginx"}},
+	}); err != nil {
+		t.Fatalf("RegisterTaskDefinition: %v", err)
+	}
+
+	ci := p.ECS.SeedContainerInstance("prod", "i-deregister")
+
+	tasks, _, err := p.ECS.RunTask(ctx, ecsdriver.RunTaskInput{Cluster: "prod", TaskDefinition: "web", Count: 2})
+	if err != nil || len(tasks) != 2 {
+		t.Fatalf("RunTask: %v (%d tasks)", err, len(tasks))
+	}
+
+	drain := captureEvents(t, p, `{"source":["aws.ecs"],"detail":{"lastStatus":["STOPPED"]}}`)
+
+	if _, err := p.ECS.DeregisterContainerInstance(ctx, "prod", ci.ARN, true); err != nil {
+		t.Fatalf("DeregisterContainerInstance: %v", err)
+	}
+
+	events := drain()
+	if len(events) != 2 {
+		t.Fatalf("got %d STOPPED events, want 2", len(events))
+	}
+
+	for i := range events {
+		d := detailOf(t, &events[i])
+		if d["stopCode"] != "TerminationNotice" || d["containerInstanceArn"] != ci.ARN || d["stoppedAt"] == nil {
+			t.Fatalf("deregister STOPPED detail = %v", d)
+		}
 	}
 }
 
@@ -270,6 +347,40 @@ func TestStepFunctionsExecutionStatusChangeEvents(t *testing.T) {
 	running, done := detailOf(t, &events[0]), detailOf(t, &events[1])
 	if running["stopDate"] != nil || running["output"] != nil || done["output"] != `{"ok":true}` || done["stopDate"] == nil {
 		t.Fatalf("RUNNING=%v SUCCEEDED=%v", running, done)
+	}
+
+	requireRedrive(t, running, 0, "NOT_REDRIVABLE", "Execution is RUNNING and cannot be redriven")
+	requireRedrive(t, done, 0, "NOT_REDRIVABLE", "Execution is SUCCEEDED and cannot be redriven")
+
+	// A redrive publishes the redriven run's status changes, counting it.
+	if _, err := p.SFN.RedriveExecution(ctx, exec.ARN); err != nil {
+		t.Fatalf("RedriveExecution: %v", err)
+	}
+
+	redriven := drain()
+	if len(redriven) != 2 {
+		t.Fatalf("got %d events after redrive, want 2", len(redriven))
+	}
+
+	for i := range redriven {
+		d := detailOf(t, &redriven[i])
+		if d["redriveCount"] != float64(1) || d["redriveDate"] == nil {
+			t.Fatalf("redriven event %d = %v, want redriveCount 1 and a redriveDate", i, d)
+		}
+	}
+}
+
+// requireRedrive asserts an execution event's redrive fields.
+func requireRedrive(t *testing.T, d map[string]any, count float64, status string, reason any) {
+	t.Helper()
+
+	if d["redriveCount"] != count || d["redriveStatus"] != status || d["redriveStatusReason"] != reason {
+		t.Fatalf("redrive fields = count %v status %v reason %v, want %v %v %v",
+			d["redriveCount"], d["redriveStatus"], d["redriveStatusReason"], count, status, reason)
+	}
+
+	if _, present := d["redriveDate"]; !present || (count == 0 && d["redriveDate"] != nil) {
+		t.Fatalf("redriveDate = %v (present %v)", d["redriveDate"], present)
 	}
 }
 
@@ -473,6 +584,9 @@ func TestStepFunctionsExpressAndAbortEvents(t *testing.T) {
 		aborted["error"] != "Cancelled" || aborted["cause"] != "user" {
 		t.Fatalf("events = %v / %v", detailOf(t, &events[0]), aborted)
 	}
+
+	// An aborted STANDARD execution is redrivable, so no reason is given.
+	requireRedrive(t, aborted, 0, "REDRIVABLE", nil)
 }
 
 // TestLifecycleEventLoopIsBounded pins the recursion guard on service events:

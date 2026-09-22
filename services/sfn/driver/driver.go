@@ -121,9 +121,32 @@ type Execution struct {
 	Cause           string
 	StartDate       time.Time
 	StopDate        time.Time
+	// RedriveCount is how many times the execution was successfully redriven,
+	// and RedriveDate the most recent redrive (zero until the first).
+	RedriveCount int32
+	RedriveDate  time.Time
 	// History is the full per-state event list the interpreter produced, stored
 	// on the execution so it round-trips through snapshot/persist for free.
 	History []HistoryEvent
+}
+
+// Execution redrive statuses (DescribeExecution / status-change event).
+const (
+	RedriveStatusRedrivable    = "REDRIVABLE"
+	RedriveStatusNotRedrivable = "NOT_REDRIVABLE"
+)
+
+// ExecutionRedriveStatus reports whether an execution in the given status can
+// be redriven, and when not, the reason AWS gives: only a FAILED, ABORTED or
+// TIMED_OUT STANDARD execution is redrivable; a RUNNING or SUCCEEDED one is
+// not. reason is empty for a redrivable execution.
+func ExecutionRedriveStatus(status string) (redriveStatus, reason string) {
+	switch status {
+	case ExecStatusFailed, ExecStatusAborted, ExecStatusTimedOut:
+		return RedriveStatusRedrivable, ""
+	default:
+		return RedriveStatusNotRedrivable, "Execution is " + status + " and cannot be redriven"
+	}
 }
 
 // HistoryEvent is one entry in an execution's event history.

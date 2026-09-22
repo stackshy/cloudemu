@@ -383,20 +383,36 @@ func (m *Mock) GetExecutionHistory(_ context.Context, arn string, reverse bool) 
 // RedriveExecution restarts a previously-completed execution. The emulator does
 // not re-run the workflow: it records a new redriveDate on the existing
 // execution and returns it. Repeated calls advance the redrive date.
-func (m *Mock) RedriveExecution(_ context.Context, arn string) (*driver.RedriveResult, error) {
+//
+// Each redrive counts toward redriveCount, and a STANDARD execution publishes
+// the RUNNING -> SUCCEEDED status changes of the redriven run.
+func (m *Mock) RedriveExecution(ctx context.Context, arn string) (*driver.RedriveResult, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {
 		return nil, err
 	}
 
+	redriven := m.redrive(ed)
+
+	if m.isStandard(redriven.StateMachineArn) {
+		m.emitExecutionStarted(ctx, &redriven, true)
+	}
+
+	return &driver.RedriveResult{RedriveDate: redriven.RedriveDate}, nil
+}
+
+// redrive is RedriveExecution's locked core; it returns the redriven record.
+func (m *Mock) redrive(ed *execData) driver.Execution {
 	ed.mu.Lock()
 	defer ed.mu.Unlock()
 
 	now := m.now()
 	ed.exec.Status = driver.ExecStatusSucceeded
 	ed.exec.StopDate = now
+	ed.exec.RedriveCount++
+	ed.exec.RedriveDate = now
 
-	return &driver.RedriveResult{RedriveDate: now}, nil
+	return ed.exec
 }
 
 func (m *Mock) DescribeStateMachineForExecution(_ context.Context, executionArn string) (*driver.StateMachine, error) {

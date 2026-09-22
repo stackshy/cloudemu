@@ -33,6 +33,12 @@ type executionStatusChangeDetail struct {
 	OutputDetails   *payloadDetails `json:"outputDetails"`
 	Error           *string         `json:"error"`
 	Cause           *string         `json:"cause"`
+	// Redrive fields (see ExecutionRedriveStatus). redriveDate and
+	// redriveStatusReason are null until they apply.
+	RedriveCount        int32   `json:"redriveCount"`
+	RedriveDate         *int64  `json:"redriveDate"`
+	RedriveStatus       string  `json:"redriveStatus"`
+	RedriveStatusReason *string `json:"redriveStatusReason"`
 }
 
 type payloadDetails struct {
@@ -52,7 +58,11 @@ func (m *Mock) emitExecutionStatus(ctx context.Context, exec *driver.Execution, 
 		ExecutionArn: exec.ARN, StateMachineArn: exec.StateMachineArn, Name: exec.Name,
 		Status: status, StartDate: exec.StartDate.UnixMilli(),
 		Input: emptyOr(exec.Input), InputDetails: payloadDetails{Included: true},
+		RedriveCount: exec.RedriveCount, RedriveDate: epochMillis(exec.RedriveDate),
 	}
+
+	redriveStatus, reason := driver.ExecutionRedriveStatus(status)
+	d.RedriveStatus, d.RedriveStatusReason = redriveStatus, nonEmpty(reason)
 
 	if status != driver.ExecStatusRunning {
 		d.StopDate = epochMillis(exec.StopDate)
