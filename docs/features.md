@@ -1,16 +1,16 @@
 # Cross-Cutting Features
 
-CloudEmu goes beyond simple CRUD mocking. These features emulate real cloud behaviors so that integration tests can validate end-to-end logic without deploying to a real cloud.
+Besides plain CRUD, CloudEmu reproduces a number of cloud behaviors so integration tests can check end-to-end logic without deploying anything. This page describes them.
 
 ---
 
 ## 1. Auto-Metric Generation
 
-When a compute instance is launched with `RunInstances`, the compute mock automatically pushes 5 metrics to the provider's monitoring service. This happens because the provider factory wires compute to monitoring via `SetMonitoring()`.
+When you launch an instance with `RunInstances`, the compute mock pushes 5 metrics to the provider's monitoring service. The provider factory sets this up by connecting compute to monitoring with `SetMonitoring()`.
 
 ### Metrics Pushed on RunInstances
 
-Each instance gets 5 metrics with 5 backfill datapoints at 1-minute intervals from launch time:
+Each instance gets 5 metrics, each with 5 backfill datapoints at 1-minute intervals from launch time:
 
 | Provider | Namespace | Metrics | Dimension Key |
 |----------|-----------|---------|---------------|
@@ -20,7 +20,7 @@ Each instance gets 5 metrics with 5 backfill datapoints at 1-minute intervals fr
 
 ### Lifecycle Metric Emission
 
-All VM lifecycle operations also emit metrics via `emitLifecycleMetrics()`:
+VM lifecycle operations also emit metrics, via `emitLifecycleMetrics()`:
 
 | Operation | Values |
 |-----------|--------|
@@ -29,30 +29,30 @@ All VM lifecycle operations also emit metrics via `emitLifecycleMetrics()`:
 | `RebootInstances` | Running values |
 | `TerminateInstances` | Zero values |
 
-Each lifecycle call emits 1 datapoint per metric at `Clock.Now()`. This allows alarms to detect state changes -- for example, a "low CPU" alarm fires when a VM is stopped.
+Each lifecycle call emits 1 datapoint per metric at `Clock.Now()`. Alarms can then react to state changes. For example, a "low CPU" alarm fires when a VM is stopped.
 
 ### Auto-Metrics for Other Services
 
-In addition to compute, 9 other services per provider are wired to push metrics to monitoring: Storage, Database, Serverless, Message Queue, Cache, Logging, Notification, Container Registry, and Event Bus.
+Besides compute, 9 other services per provider push metrics to monitoring: Storage, Database, Serverless, Message Queue, Cache, Logging, Notification, Container Registry, and Event Bus.
 
 ---
 
 ## 2. Alarm Auto-Evaluation
 
-When `PutMetricData` is called, the monitoring mock automatically evaluates all alarms that match the affected namespace and metric name. This is implemented in `evaluateAlarms()` within each monitoring mock.
+Each call to `PutMetricData` makes the monitoring mock evaluate every alarm that matches the affected namespace and metric name. The logic is in `evaluateAlarms()` in each monitoring mock.
 
 ### Evaluation Process
 
 1. For each metric datum pushed, find alarms matching the namespace + metric name + dimensions.
 2. Collect datapoints within the evaluation window: `Period * EvaluationPeriods` seconds.
 3. Compute the statistic over those datapoints:
-   - `Average` -- mean of all values
-   - `Sum` -- sum of all values
-   - `Minimum` -- smallest value
-   - `Maximum` -- largest value
-   - `SampleCount` -- number of datapoints
+   - `Average`: mean of all values
+   - `Sum`: sum of all values
+   - `Minimum`: smallest value
+   - `Maximum`: largest value
+   - `SampleCount`: number of datapoints
 4. Compare against the alarm's threshold using the configured operator.
-5. Update alarm state to `"ALARM"` or `"OK"`.
+5. Set the alarm state to `"ALARM"` or `"OK"`.
 
 ### Supported Comparison Operators
 
@@ -63,13 +63,13 @@ When `PutMetricData` is called, the monitoring mock automatically evaluates all 
 
 ### Alarm Actions and History
 
-Alarms support three types of action channels:
+Alarms have three kinds of action channels:
 
-- `AlarmActions` -- notification channel IDs to notify when state transitions to `ALARM`
-- `OKActions` -- channel IDs to notify when state transitions to `OK`
-- `InsufficientDataActions` -- channel IDs to notify on `INSUFFICIENT_DATA`
+- `AlarmActions`: notification channel IDs to notify when the state changes to `ALARM`
+- `OKActions`: channel IDs to notify when the state changes to `OK`
+- `InsufficientDataActions`: channel IDs to notify on `INSUFFICIENT_DATA`
 
-Every state transition is recorded in alarm history, queryable via `GetAlarmHistory()`. Each entry includes the alarm name, timestamp, old state, new state, and a reason string.
+Every state change is recorded in the alarm history, which you can read with `GetAlarmHistory()`. Each entry has the alarm name, timestamp, old state, new state, and a reason string.
 
 ---
 
@@ -81,12 +81,12 @@ Every state transition is recorded in alarm history, queryable via `GetAlarmHist
 
 1. Look up the principal (user or role) and collect all attached policy ARNs.
 2. For users, also collect policies attached to the user's groups.
-3. Parse each policy's JSON document into structured statements.
-4. For each statement, check if the action and resource match using `wildcardMatch()`.
+3. Parse each policy's JSON document into statements.
+4. For each statement, check whether the action and resource match using `wildcardMatch()`.
 5. Apply standard IAM evaluation logic:
-   - Explicit `Deny` always overrides `Allow`.
-   - If no statement explicitly allows the action, the default is deny.
-   - `wildcardMatch()` supports `*` (match any sequence) and `?` (match single character).
+   - An explicit `Deny` always overrides `Allow`.
+   - If no statement explicitly allows the action, the result is deny.
+   - `wildcardMatch()` supports `*` (any sequence) and `?` (a single character).
 
 ### Example Policy Document
 
@@ -108,21 +108,21 @@ Every state transition is recorded in alarm history, queryable via `GetAlarmHist
 }
 ```
 
-With this policy attached, `CheckPermission("user1", "s3:GetObject", "arn:aws:s3:::my-bucket/file.txt")` returns `true`, while `CheckPermission("user1", "s3:DeleteObject", "arn:aws:s3:::my-bucket/file.txt")` returns `false`.
+With this policy attached, `CheckPermission("user1", "s3:GetObject", "arn:aws:s3:::my-bucket/file.txt")` returns `true` and `CheckPermission("user1", "s3:DeleteObject", "arn:aws:s3:::my-bucket/file.txt")` returns `false`.
 
 ---
 
 ## 4. FIFO Message Deduplication
 
-FIFO queues enforce a 5-minute deduplication window to prevent duplicate message processing.
+FIFO queues drop duplicate messages sent within a 5-minute deduplication window.
 
 ### How It Works
 
-1. Each FIFO queue maintains a `deduplicationIndex map[string]time.Time` tracking when each `DeduplicationID` was last seen.
+1. Each FIFO queue keeps a `deduplicationIndex map[string]time.Time` recording when each `DeduplicationID` was last seen.
 2. When `SendMessage` is called with a `DeduplicationID`:
-   - If the same ID was seen within the last 5 minutes, the call returns the existing `MessageID` without creating a new message.
-   - If the ID has not been seen, or was last seen more than 5 minutes ago, a new message is created and the dedup index is updated.
-3. `SentAt time.Time` on message structs tracks when each message was sent.
+   - If the same ID was seen in the last 5 minutes, the call returns the existing `MessageID` and doesn't create a new message.
+   - If the ID is new, or was last seen more than 5 minutes ago, a new message is created and the index is updated.
+3. `SentAt time.Time` on message structs records when each message was sent.
 
 This behavior matches the real AWS SQS, Azure Service Bus, and GCP Pub/Sub FIFO semantics.
 
@@ -134,16 +134,16 @@ Use `config.FakeClock` to control time in dedup tests:
 clock := config.NewFakeClock(time.Now())
 aws := cloudemu.NewAWS(config.WithClock(clock))
 
-// First send -- creates message
+// First send: creates message
 aws.SQS.SendMessage(ctx, input)
 
-// Second send within 5 minutes -- returns same MessageID
+// Second send within 5 minutes: returns same MessageID
 aws.SQS.SendMessage(ctx, input)
 
 // Advance past dedup window
 clock.Advance(6 * time.Minute)
 
-// Third send -- creates new message
+// Third send: creates new message
 aws.SQS.SendMessage(ctx, input)
 ```
 
@@ -153,7 +153,7 @@ aws.SQS.SendMessage(ctx, input)
 
 ### Global Secondary Indexes (GSI)
 
-Tables support creating GSIs with a different partition key and optional sort key. Query operations can target a specific index by name via `QueryInput.IndexName`.
+You can add GSIs to a table with a different partition key and an optional sort key. A query targets an index by name through `QueryInput.IndexName`.
 
 | Operation | Description |
 |-----------|-------------|
@@ -164,54 +164,54 @@ Tables support creating GSIs with a different partition key and optional sort ke
 
 ### Numeric-Aware Comparisons
 
-The `compareValues(a, b string)` helper in each database mock tries `strconv.ParseFloat` on both values. If both parse as numbers, it performs numeric comparison. Otherwise it falls back to string comparison. This is used by all comparison operators in scan filters and query sort conditions.
+The `compareValues(a, b string)` helper in each database mock tries `strconv.ParseFloat` on both values. If both parse as numbers, it compares them numerically; otherwise it compares them as strings. All comparison operators in scan filters and query sort conditions use it.
 
 ### Query & Expression Grammar
 
 The database drivers evaluate the real expression grammars, not a reduced
-subset — the raw expression strings a client sends are tokenized, parsed and
+subset. The expression strings a client sends are tokenized, parsed and
 evaluated with type-aware semantics:
 
-- **DynamoDB**: full `KeyConditionExpression` (`=`/`<`/`<=`/`>`/`>=`, `BETWEEN`,
+- DynamoDB: `KeyConditionExpression` (`=`/`<`/`<=`/`>`/`>=`, `BETWEEN`,
   `begins_with`), `FilterExpression`/`ConditionExpression` (boolean operators,
   `IN`, `BETWEEN`, `attribute_exists`/`attribute_type`/`begins_with`/`contains`/
   `size`), `ProjectionExpression`, and `UpdateExpression` (`SET` with arithmetic,
-  `if_not_exists`, `list_append`; `REMOVE`; `ADD`; `DELETE`) — including the real
+  `if_not_exists`, `list_append`; `REMOVE`; `ADD`; `DELETE`), including the
   `SS`/`NS`/`BS` set types.
-- **Firestore**: structured queries with all field operators (`IN`/`NOT_IN`/
+- Firestore: structured queries with all field operators (`IN`/`NOT_IN`/
   `ARRAY_CONTAINS`/`ARRAY_CONTAINS_ANY`), `AND`/`OR` composite filters, unary
   `IS_NULL`/`IS_NOT_NULL`, `orderBy`, `offset`, `startAt`/`endAt` cursors, and
   field projection.
-- **Cosmos DB**: Cosmos SQL (`SELECT`/`WHERE`/`ORDER BY`/`OFFSET`-`LIMIT`,
-  `DISTINCT`, `TOP`, projections incl. `SELECT VALUE`, and `COUNT`/`SUM`/`AVG`/
+- Cosmos DB: Cosmos SQL (`SELECT`/`WHERE`/`ORDER BY`/`OFFSET`-`LIMIT`,
+  `DISTINCT`, `TOP`, projections including `SELECT VALUE`, and `COUNT`/`SUM`/`AVG`/
   `MIN`/`MAX` aggregates).
 
-The legacy driver-level `ScanFilter`/`SortOp` operators (`=`, `!=`, `<`, `>`,
-`<=`, `>=`, `CONTAINS`, `BEGINS_WITH`, `BETWEEN`) remain for direct Go-API
-callers.
+The older driver-level `ScanFilter`/`SortOp` operators (`=`, `!=`, `<`, `>`,
+`<=`, `>=`, `CONTAINS`, `BEGINS_WITH`, `BETWEEN`) are still there for callers
+of the Go API.
 
 ### TTL (Time To Live)
 
-Tables can be configured with TTL on a specific attribute. The TTL configuration specifies an `AttributeName` that holds a Unix timestamp. Items past their TTL can be identified and cleaned up.
+A table can have TTL on one attribute. The TTL configuration names an `AttributeName` that holds a Unix timestamp. Items past their TTL can be found and cleaned up.
 
 ### Streams / Change Feed
 
-Tables can enable streams that capture change events (`INSERT`, `MODIFY`, `REMOVE`). Each `StreamRecord` includes the event type, keys, old image, new image, and a sequence number. The stream view type controls what data is captured: `NEW_IMAGE`, `OLD_IMAGE`, `NEW_AND_OLD_IMAGES`, or `KEYS_ONLY`.
+Tables can enable streams that capture change events (`INSERT`, `MODIFY`, `REMOVE`). Each `StreamRecord` has the event type, keys, old image, new image, and a sequence number. The stream view type controls what is captured: `NEW_IMAGE`, `OLD_IMAGE`, `NEW_AND_OLD_IMAGES`, or `KEYS_ONLY`.
 
 ### Transactional Writes
 
-`TransactWriteItems` provides atomic batch writes -- a set of puts and deletes that either all succeed or all fail. This matches DynamoDB's `TransactWriteItems`, Cosmos DB's transactional batch, and Firestore's transactions.
+`TransactWriteItems` applies a set of puts and deletes atomically: either all succeed or all fail. This corresponds to DynamoDB's `TransactWriteItems`, Cosmos DB's transactional batch, and Firestore's transactions.
 
 ---
 
 ## 6. Dead-Letter Queues
 
-Message queues support dead-letter queue (DLQ) configuration. When creating a queue, you can specify a `DeadLetterConfig` with:
+Message queues support dead-letter queue (DLQ) configuration. When you create a queue, you can pass a `DeadLetterConfig` with:
 
-- `TargetQueueURL` -- the URL of the DLQ
-- `MaxReceiveCount` -- after this many receives without deletion, the message is moved to the DLQ
+- `TargetQueueURL`: the URL of the DLQ
+- `MaxReceiveCount`: after this many receives without a delete, the message moves to the DLQ
 
-This enables testing of poison message handling and retry exhaustion scenarios.
+Use this to test poison-message handling and retry exhaustion.
 
 ```go
 // Create the DLQ first
@@ -231,11 +231,11 @@ aws.SQS.CreateQueue(ctx, driver.QueueConfig{
 
 ## 7. Cost Tracking
 
-CloudEmu models cost two ways: a **per-operation tracker** (metered API usage) and a **resource-inventory estimate** (what the standing estate would cost per month). Both live in `services/cost`, backed by the rate tables in `services/pricing`.
+CloudEmu models cost in two ways: a per-operation tracker (metered API usage) and a resource-inventory estimate (what the resources that currently exist would cost per month). Both live in `services/cost` and use the rate tables in `services/pricing`.
 
 ### Per-operation tracker (`cost.Tracker`)
 
-The `cost.Tracker` provides simulated cost estimation for metered cloud operations. It ships with default per-operation rates based on approximate real cloud pricing.
+`cost.Tracker` estimates the cost of metered cloud operations. Its default per-operation rates are based on approximate real cloud prices.
 
 #### Default Rates (Subset)
 
@@ -275,11 +275,11 @@ tracker.Reset()
 
 ### Inventory estimate (line-item + commitment model)
 
-Alongside the tracker, `services/cost` builds a **bill from the standing estate** rather than from metered calls. `cost.Estimate(ctx, inv)` walks a provider's resource inventory and emits a `cost.Line` per resource (service, resource type, SKU/size, region, monthly rate), and `cost.ServiceMonthly(...)` rolls the lines up by service — the per-resource rates come from `services/pricing.Monthly(provider, service, resourceType, sku, region, props)`. On top of that, `cost.Commitment` (with the `Commitments` registry) models reservations / savings plans and computes `Coverage` and `Utilization` over a time window, mirroring the reporting shape real cost tools return.
+`services/cost` can also build a bill from the resources that exist, instead of from metered calls. `cost.Estimate(ctx, inv)` walks a provider's resource inventory and emits a `cost.Line` per resource (service, resource type, SKU/size, region, monthly rate). `cost.ServiceMonthly(...)` sums the lines by service. The per-resource rates come from `services/pricing.Monthly(provider, service, resourceType, sku, region, props)`. `cost.Commitment` (with the `Commitments` registry) models reservations and savings plans and computes `Coverage` and `Utilization` over a time window, in the same shape real cost tools report.
 
 ### Billing / FinOps SDK-compat handlers
 
-The same cost model is exposed through provider-native billing APIs, so real FinOps SDKs and CLIs work against the emulator:
+The same cost model is served through each provider's native billing APIs, so real FinOps SDKs and CLIs work against the emulator:
 
 | Provider | Handlers | Native surface |
 |----------|----------|----------------|
@@ -291,32 +291,32 @@ The same cost model is exposed through provider-native billing APIs, so real Fin
 
 ## 8. Portable API Cross-Cutting Concerns
 
-The portable API layer wraps every driver operation with five optional cross-cutting concerns. These are configured per service instance using functional options.
+The portable API layer can wrap every driver operation with five optional behaviors. You turn them on per service instance with functional options.
 
 ### 1. Recording
 
-Captures every API call with service name, operation, input, output, error, and duration. Useful for test assertions like "verify that PutObject was called exactly twice."
+Records every API call with the service name, operation, input, output, error, and duration. Use it for assertions like "PutObject was called exactly twice."
 
 ### 2. Metrics Collection
 
-Automatically records `calls_total` (counter), `call_duration` (histogram), and `errors_total` (counter) for every operation, labeled by service and operation name.
+Records `calls_total` (counter), `call_duration` (histogram), and `errors_total` (counter) for every operation, labeled by service and operation name.
 
 ### 3. Rate Limiting
 
-Token bucket rate limiter. When the bucket is exhausted, operations return a `Throttled` error without calling the underlying driver.
+A token bucket rate limiter. When the bucket is empty, operations return a `Throttled` error without calling the underlying driver.
 
 ### 4. Error Injection
 
-Inject errors into specific service/operation pairs with configurable policies:
+Inject errors into specific service/operation pairs using one of these policies:
 
-- `Always` -- fail every call
-- `NthCall(n)` -- fail every Nth call
-- `Probabilistic(p)` -- fail with probability p (0.0-1.0)
-- `Countdown(n)` -- fail the first n calls, then succeed
+- `Always`: fail every call
+- `NthCall(n)`: fail every Nth call
+- `Probabilistic(p)`: fail with probability p (0.0-1.0)
+- `Countdown(n)`: fail the first n calls, then succeed
 
 ### 5. Latency Simulation
 
-Add a fixed delay to every operation to simulate network latency.
+Adds a fixed delay to every operation to simulate network latency.
 
 ### Example
 
@@ -352,7 +352,7 @@ bucket := storage.NewBucket(awsProvider.S3,
     storage.WithLatency(5 * time.Millisecond),
 )
 
-// Use bucket normally -- all cross-cutting concerns are applied
+// Use bucket normally; all cross-cutting concerns are applied
 bucket.PutObject(ctx, "my-bucket", "key", data, "text/plain", nil)
 
 // Assert calls were recorded
@@ -367,7 +367,7 @@ allMetrics := col.All()
 
 ## 9. Deterministic Time
 
-All time-dependent features in CloudEmu use the `config.Clock` interface rather than calling `time.Now()` directly. This allows tests to use `config.FakeClock` for fully deterministic behavior.
+Every time-dependent feature in CloudEmu uses the `config.Clock` interface instead of calling `time.Now()` directly. Tests can pass a `config.FakeClock` to make timing fully deterministic.
 
 ### Clock Interface
 
@@ -400,23 +400,23 @@ clock.Set(time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC))
 
 ### Where FakeClock Matters
 
-- **FIFO deduplication** -- The 5-minute dedup window is evaluated against `clock.Now()`. Advance the clock past 5 minutes to test dedup expiry.
-- **Alarm evaluation** -- Metric timestamps and evaluation windows use the clock. Control when alarms transition between states.
-- **Auto-metrics** -- Backfill datapoints are generated at 1-minute intervals from `clock.Now()`. FakeClock ensures predictable timestamps.
-- **TTL evaluation** -- Database TTL checks compare item timestamps against the clock.
-- **Resource timestamps** -- All `CreatedAt`, `LastModified`, and similar fields use the clock.
+- FIFO deduplication: the 5-minute window is checked against `clock.Now()`. Advance the clock past 5 minutes to test expiry.
+- Alarm evaluation: metric timestamps and evaluation windows use the clock, so you control when alarms change state.
+- Auto-metrics: backfill datapoints are generated at 1-minute intervals from `clock.Now()`, so their timestamps are predictable.
+- TTL evaluation: database TTL checks compare item timestamps against the clock.
+- Resource timestamps: `CreatedAt`, `LastModified`, and similar fields all use the clock.
 
 ---
 
 ## 10. Cross-Service Resource Discovery
 
-CloudEmu ships a cross-service inventory engine (`services/resourcediscovery/`) that walks every service driver a provider holds and returns a single normalized view of what exists. It sits next to the `features/topology/` engine as a peer of the portable API — it owns no state, constructs from driver interfaces, and is purely query-driven.
+`services/resourcediscovery/` is a cross-service inventory engine. It walks every service driver a provider holds and returns one normalized view of what exists. Like `features/topology/`, it sits beside the portable API: it holds no state, is built from driver interfaces, and only answers queries.
 
-The engine is the foundation for three SDK-compat handlers that speak the real cloud inventory APIs: **AWS Resource Explorer 2 + Resource Groups Tagging API**, **Azure Resource Graph**, and **GCP Cloud Asset Inventory**. A tag set through any one of those paths is immediately visible through the others, and through the engine's own `SearchByTag`.
+Three SDK-compat handlers that speak the real cloud inventory APIs are built on it: AWS Resource Explorer 2 + Resource Groups Tagging API, Azure Resource Graph, and GCP Cloud Asset Inventory. A tag set through any one of them is visible right away through the others, and through the engine's own `SearchByTag`.
 
 ### Provider wiring
 
-Every provider factory wires the engine automatically. No setup required:
+Every provider factory wires the engine for you:
 
 ```go
 aws := cloudemu.NewAWS(config.WithAccountID("123456789012"), config.WithRegion("us-west-2"))
@@ -426,7 +426,9 @@ all, _ := aws.ResourceDiscovery.ListAll(ctx)
 // for every bucket, instance, VPC, subnet, security group, table, and function
 ```
 
-The same field exists on Azure and GCP providers (`azure.ResourceDiscovery`, `gcp.ResourceDiscovery`). Internally, the engine reads from the Compute, Networking, Storage, Database, Serverless, Databricks, Kubernetes, Relational Database, Secrets, Container Registry, Message Queue, Notification, DNS, Logging, Cache, Load Balancer, Monitoring, and IAM drivers — plus a generic `Extra` capability for services with no shared driver (ML/GenAI). Any field that's nil is silently skipped, so partial test wirings work. Managed relational servers (AWS RDS incl. DB proxies, Redshift, Azure SQL, the MySQL/PostgreSQL Flexible Servers, and Cloud SQL) surface through their cloud's inventory type strings, as do compute snapshots, networking sub-types (NAT gateways, internet gateways, VPC peering connections, route tables), secrets, container repositories, queues, topics, DNS zones, log groups, cache clusters, load balancers, metric alarms, IAM users/roles/policies/groups, and ML resources (SageMaker models/endpoints/notebooks, Vertex AI endpoints/datasets).
+Azure and GCP providers have the same field (`azure.ResourceDiscovery`, `gcp.ResourceDiscovery`). The engine reads from the Compute, Networking, Storage, Database, Serverless, Databricks, Kubernetes, Relational Database, Secrets, Container Registry, Message Queue, Notification, DNS, Logging, Cache, Load Balancer, Monitoring, and IAM drivers. There is also a generic `Extra` hook for services with no shared driver (ML/GenAI). Nil fields are skipped, so partial test setups work.
+
+These resources appear under their cloud's inventory type strings: managed relational servers (AWS RDS including DB proxies, Redshift, Azure SQL, the MySQL/PostgreSQL Flexible Servers, and Cloud SQL), compute snapshots, networking sub-types (NAT gateways, internet gateways, VPC peering connections, route tables), secrets, container repositories, queues, topics, DNS zones, log groups, cache clusters, load balancers, metric alarms, IAM users/roles/policies/groups, and ML resources (SageMaker models/endpoints/notebooks, Vertex AI endpoints/datasets).
 
 ### Engine API
 
@@ -440,7 +442,7 @@ The same field exists on Azure and GCP providers (`azure.ResourceDiscovery`, `gc
 | `TagResourceByARN(ctx, arn, tags)` | Apply tags to a resource addressed by canonical ARN/URN |
 | `UntagResourceByARN(ctx, arn, keys)` | Remove tag keys from a resource addressed by canonical ARN/URN |
 
-The `Resource` struct is uniform across clouds:
+The `Resource` struct is the same for every cloud:
 
 ```go
 type Resource struct {
@@ -457,28 +459,28 @@ type Resource struct {
 
 ### SDK-compat surfaces
 
-The engine drives three handlers, each registered on its provider's SDK-compat server. They all read from (and write tags through) the same engine, so the choice between them is purely about which SDK the calling code already speaks.
+The engine backs three handlers, each registered on its provider's SDK-compat server. They all read from (and write tags through) the same engine, so which one you use depends only on the SDK your code already uses.
 
 | Cloud | Handler | What real SDK clients see |
 |-------|---------|--------------------------|
 | AWS | `server/aws/resourceexplorer2` + `server/aws/resourcegroupstaggingapi` | `resourceexplorer2.Search`, `resourcegroupstaggingapi.GetResources/TagResources/UntagResources/GetTagKeys/GetTagValues` |
-| Azure | `server/azure/resourcegraph` | `armresourcegraph.Resources` — KQL-shaped query over the unified inventory |
+| Azure | `server/azure/resourcegraph` | `armresourcegraph.Resources`: KQL-shaped query over the unified inventory |
 | GCP | `server/gcp/cloudasset` | `cloudasset.SearchAllResources`, `assets.List`, `ExportAssets`, Feeds CRUD, `Operations.Get` |
 
-See [services.md — Resource Discovery](services.md#19-resource-discovery) for the full per-handler operation list and [sdk-server.md](sdk-server.md) for the wire protocols.
+See [services.md: Resource Discovery](services.md#19-resource-discovery) for the per-handler operation list and [sdk-server.md](sdk-server.md) for the wire protocols.
 
 ## 11. Real Data-Plane Engines (opt-in)
 
-By default CloudEmu is a pure in-memory emulator — every driver stores state in
-`memstore` and returns synthetic responses, with no external processes. For the
-cases where you want clients to run **real workloads** (real SQL, real Redis
-commands, real function code) against the emulator, drivers can be backed by an
-opt-in **real engine**. The in-memory default is unchanged; engines are strictly
-opt-in and nil means "stay in-memory".
+By default CloudEmu is purely in-memory: every driver keeps state in
+`memstore` and returns synthetic responses, and no external processes run. If
+you want clients to run real workloads (real SQL, real Redis commands, real
+function code) against the emulator, you can back drivers with an opt-in real
+engine. The in-memory default doesn't change; a nil engine means "stay
+in-memory".
 
 ### Capability → engine
 
-Six engine seams are defined in `config` (`config/engine.go`), each wired with a
+`config/engine.go` defines six engine seams. Each is set with a
 `config.With<X>Engine(...)` option:
 
 | Capability | Option | Backed by |
@@ -492,14 +494,14 @@ Six engine seams are defined in `config` (`config/engine.go`), each wired with a
 
 ### Two backing modules
 
-The engine implementations live in separate Go modules so their heavyweight
+The engine implementations are in separate Go modules, so their large
 dependencies stay out of the core `cloudemu` module:
 
-- **`contrib/realengine`** — *no Docker*. Real Postgres via `embedded-postgres`,
+- `contrib/realengine` (no Docker): real Postgres via `embedded-postgres`,
   real Redis via `miniredis`, real function execution via the host's
-  `python3`/`node`, filesystem-backed object storage.
-- **`contrib/dockerengine`** — *Docker required*. MySQL, Docker-backed compute
-  and containers, and Azure Functions. Tests skip cleanly when Docker is absent.
+  `python3`/`node`, and filesystem-backed object storage.
+- `contrib/dockerengine` (Docker required): MySQL, Docker-backed compute
+  and containers, and Azure Functions. Tests are skipped when Docker isn't available.
 
 ### Wiring engines (Go)
 
@@ -518,35 +520,34 @@ defer aws.Close()                        // Provider.Close() tears down every wi
 `Provider.Close()` calls `Options.EngineClosers()`, so every engine that
 implements `io.Closer` is shut down when the provider is closed.
 
-For the standalone server, the batteries-included `cloudemu-server` binary
-(`contrib/server`) turns engines on with flags (`--db`, `--cache`, `--functions`,
-`--compute`, `--containers`, `--all-real`) — see
-[standalone-server.md — Real engines](standalone-server.md#real-engines).
+For the standalone server, the `cloudemu-server` binary in `contrib/server`
+bundles the engines and turns them on with flags (`--db`, `--cache`, `--functions`,
+`--compute`, `--containers`, `--all-real`). See
+[standalone-server.md: Real engines](standalone-server.md#real-engines).
 
 ## 12. Persistence (snapshot & restore, opt-in)
 
-State lives in `memstore`, so CloudEmu is **ephemeral by default** — everything is
-lost on process exit, and `/_cloudemu/reset` wipes it to empty. When you want state
-to survive a restart, the `persist` package captures the **whole emulator** as one
-JSON document and restores it into a fresh instance. It is strictly opt-in;
-CloudEmu never touches disk unless asked.
+State lives in `memstore`, so by default nothing survives: it is lost when the
+process exits, and `/_cloudemu/reset` empties it. If you want state to survive
+a restart, the `persist` package saves the whole emulator as one JSON document
+and restores it into a fresh instance. It is opt-in, and CloudEmu doesn't write
+to disk unless you ask it to.
 
-Two properties distinguish it from a naive dump:
+Two properties matter:
 
-- **Full-surface.** Every stateful service (one holding an in-memory
-  `memstore.Store`) across **AWS, Azure, GCP, and OCI** is captured — not a
-  hand-picked subset. A completeness guard (`persist/completeness_test.go`) fails
-  the build if a new stateful service is added without persistence, so coverage
-  can't silently drift.
-- **Identity-preserving.** Resource IDs and the ID-string cross-references between
-  resources are serialized as-is, so a snapshot → restore round-trip is transparent
-  to clients: a restored EC2 instance keeps its original `i-…` ID.
+- It covers everything. Every stateful service (one holding an in-memory
+  `memstore.Store`) in AWS, Azure, GCP and OCI is captured. A completeness
+  test (`persist/completeness_test.go`) fails the build if someone adds a
+  stateful service without persistence support.
+- It keeps identities. Resource IDs and the ID references between resources
+  are written as-is, so clients can't tell a restored instance from the
+  original: a restored EC2 instance keeps its `i-…` ID.
 
-Services are auto-discovered by reflection (`internal/snapshot.Discover`, exposed
-per provider as `SnapshotServices()`), and each mock serializes/restores itself via
-the `internal/snapshot.Snapshottable` interface. The on-disk file is one
-human-readable, `git`-diffable JSON document spanning every provider (schema
-version 3).
+Services are found by reflection (`internal/snapshot.Discover`, exposed per
+provider as `SnapshotServices()`), and each mock saves and restores itself via
+the `internal/snapshot.Snapshottable` interface. The file on disk is a single
+readable JSON document covering every provider, which diffs cleanly in version
+control (schema version 5).
 
 ```go
 import (
@@ -565,36 +566,37 @@ loaded, _ := persist.ReadFile("state.json")
 _ = persist.RestoreAll(ctx, &loaded, map[string]persist.Services{"aws": fresh.SnapshotServices()})
 ```
 
-`Options{IncludeAssets: false}` (the default) yields a metadata-only snapshot
-(no large object bodies). On the standalone server the same capability is exposed
-as `cloudemu serve --persist`, the `cloudemu snapshot save`/`load` commands, and the
-`GET`/`POST /_cloudemu/snapshot` endpoint. Full guide: [persistence.md](persistence.md).
+`Options{IncludeAssets: false}` (the default) gives a metadata-only snapshot
+without large object bodies. On the standalone server the same feature is
+available as `cloudemu serve --persist`, the `cloudemu snapshot save`/`load` commands, and the
+`GET`/`POST /_cloudemu/snapshot` endpoint. See [persistence.md](persistence.md).
 
 ---
 
 ## 13. VCR record / replay (`features/vcr`)
 
-`features/vcr` records the wire traffic flowing through the standalone server into a
-**cassette** and replays it later, so a captured session can be re-served with no
-backend at all. It wraps each provider handler as HTTP middleware:
+`features/vcr` records the wire traffic through the standalone server into a
+cassette and replays it later, so a recorded session can be served again with no
+backend. It wraps each provider handler as HTTP middleware:
 
-- **Record** (`vcr.ModeRecord`) — proxies to the real in-memory handler and appends
-  each request/response pair to the cassette, flushed to disk on shutdown.
-- **Replay** (`vcr.ModeReplay`) — serves matching recorded responses. In **strict**
-  mode (the default) a request with no recorded match returns `501` rather than
-  falling through, so a replay is a faithful reproduction of exactly what was taped.
+- Record (`vcr.ModeRecord`) passes requests to the in-memory handler and appends
+  each request/response pair to the cassette, which is written to disk on shutdown.
+- Replay (`vcr.ModeReplay`) serves the matching recorded responses. In strict
+  mode (the default), a request with no recorded match returns `501` instead of
+  falling through, so a replay reproduces exactly what was recorded.
 
-Drive it from the server with `--vcr record|replay`, `--vcr-cassette <path>`, and
+On the server, use `--vcr record|replay`, `--vcr-cassette <path>`, and
 `--vcr-strict` (see [standalone-server.md](standalone-server.md#flags)). In Go,
-`vcr.New(vcr.Options{Mode, CassettePath, Strict, Clock})` returns a `*VCR` whose
-`Wrap(next, provider)` produces the middleware and `Flush()` writes the cassette.
+`vcr.New(vcr.Options{Mode, CassettePath, Strict, Clock})` returns a `*VCR`. Its
+`Wrap(next, provider)` method returns the middleware and `Flush()` writes the cassette.
 
 ---
 
-## 14. State fork & rewind — time travel (`features/timetravel`)
+## 14. State fork and rewind (`features/timetravel`)
 
-`features/timetravel` is a named-snapshot registry layered over the persistence
-capture/restore functions, giving the running emulator **git-like state history**:
+`features/timetravel` is a registry of named snapshots built on the persistence
+capture/restore functions. It lets you save, restore and branch the state of a
+running emulator:
 
 | Operation | Effect |
 |-----------|--------|
@@ -603,9 +605,9 @@ capture/restore functions, giving the running emulator **git-like state history*
 | `Fork(from, to)` | copy a saved state to a new name (branch off a checkpoint) |
 | `Delete(name)` / `List()` | drop a saved state / enumerate them |
 
-The standalone server exposes these over the admin control plane as
+The standalone server exposes these on the admin control plane as
 `POST /_cloudemu/snapshot/{name}` (save), `DELETE …/{name}`,
-`POST …/{name}/rewind`, and `POST …/{from}/fork/{to}` — see
+`POST …/{name}/rewind`, and `POST …/{from}/fork/{to}`. See
 [persistence.md](persistence.md#admin-endpoint-_cloudemusnapshot) and
 [standalone-server.md](standalone-server.md#named-snapshots-snapshot-save--load--list--delete).
 
@@ -613,7 +615,7 @@ The standalone server exposes these over the admin control plane as
 
 ## 15. Service quotas (`features/quota`)
 
-`features/quota` is a per-service quota registry: it holds default and overridden
+`features/quota` is a per-service quota registry. It holds default and overridden
 limits per `(serviceCode, quotaCode)`, records quota-increase requests
 (`RequestIncrease` returns a tracked `ChangeRequest`), and keeps their history.
-It backs the AWS **Service Quotas** SDK-compat handler (`server/aws/servicequotas`).
+The AWS Service Quotas SDK-compat handler (`server/aws/servicequotas`) is built on it.

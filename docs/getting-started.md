@@ -2,9 +2,9 @@
 
 ## Integrate with an existing app (start here)
 
-**To integrate cloudemu with an existing application, run it in server mode and set your SDK's endpoint, then point your already-running app or services at it** — its real code path runs against cloudemu end-to-end. Library mode (below) is for Go unit tests you write inside cloudemu-aware code.
+To use cloudemu with an existing application, run it as a server and point your SDK's endpoint at it. Your app's normal code path then runs against cloudemu. Library mode (further down) is for Go unit tests.
 
-Run the server, then override the endpoint your existing client already builds:
+Start the server, then change the endpoint on the client your app already builds:
 
 ```bash
 docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
@@ -12,15 +12,15 @@ docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
 ```
 
 ```bash
-# AWS CLI / any-language SDK — no code change, just the endpoint
+# AWS CLI or any SDK: no code change, only the endpoint
 export AWS_ENDPOINT_URL=http://127.0.0.1:4566
 export AWS_ACCESS_KEY_ID=test AWS_SECRET_ACCESS_KEY=test AWS_DEFAULT_REGION=us-east-1
 aws s3 mb s3://demo && aws s3 ls
 ```
 
-The per-SDK endpoint seam (AWS `BaseEndpoint`, GCP `option.WithEndpoint`, Azure ARM override) and the "make it injectable" pattern are in [integration.md](integration.md). Server flags, ports, and TLS are in [standalone-server.md](standalone-server.md).
+[integration.md](integration.md) shows where to set the endpoint in each SDK (AWS `BaseEndpoint`, GCP `option.WithEndpoint`, Azure ARM override) and how to make it configurable in your app. Server flags, ports and TLS are in [standalone-server.md](standalone-server.md).
 
-Everything below is **library mode** — the typed Go API and in-process server, for unit tests you write inside cloudemu-aware Go code.
+The rest of this page covers library mode: the typed Go API and the in-process server, for Go unit tests.
 
 ## Installation
 
@@ -32,7 +32,7 @@ Requires Go 1.25.0 or later.
 
 ## Creating Providers
 
-CloudEmu provides three top-level factory functions, one per cloud provider. Each returns a provider struct with every supported service ready to use.
+There is one factory function per cloud. Each returns a provider struct with every supported service set up.
 
 ### AWS
 
@@ -245,7 +245,7 @@ func main() {
 
 ## Configuration Options
 
-All three factory functions accept `config.Option` values for customization.
+All three factory functions accept `config.Option` values.
 
 ```go
 import (
@@ -291,9 +291,9 @@ aws = cloudemu.NewAWS(
 
 ### Real-engine options (opt-in)
 
-By default every driver is in-memory. To back a capability with a **real
-engine** (real SQL/Redis/function code), pass one of the `With<X>Engine` options
-— `nil`/unset keeps the in-memory default:
+By default every driver is in-memory. To back a capability with a real
+engine (real SQL, Redis or function code), pass one of the `With<X>Engine`
+options. Leaving it unset or `nil` keeps the in-memory default:
 
 | Option | Backs |
 |--------|-------|
@@ -310,11 +310,11 @@ aws := cloudemu.NewAWS(config.WithDatabaseEngine(pg))
 defer aws.Close()                                 // tears down every wired engine
 ```
 
-See [features.md — Real Data-Plane Engines](features.md#11-real-data-plane-engines-opt-in) for the engine catalog and the `cloudemu-server` binary.
+See [features.md: Real Data-Plane Engines](features.md#11-real-data-plane-engines-opt-in) for the list of engines and the `cloudemu-server` binary.
 
 ## Error Handling
 
-CloudEmu uses canonical error codes from the `errors` package. Use the helper functions to check error types.
+Errors carry canonical codes from the `errors` package. Use the helper functions to check them.
 
 ```go
 import (
@@ -356,7 +356,7 @@ default:
 
 ## Using the Topology Engine
 
-The topology engine evaluates network reachability using the live state of compute, networking, and DNS services.
+The topology engine works out network reachability from the current state of the compute, networking and DNS services.
 
 ```go
 aws := cloudemu.NewAWS()

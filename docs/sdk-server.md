@@ -1,16 +1,14 @@
 # SDK-Compatible HTTP Server
 
-CloudEmu includes an HTTP server that speaks the real cloud SDK wire protocols across all three providers — AWS, Azure, and GCP. Point the actual `aws-sdk-go-v2`, `azure-sdk-for-go`, or `cloud.google.com/go` / `google.golang.org/api` clients at it (via custom endpoint) and your production code runs unchanged against the in-memory backend.
+CloudEmu includes an HTTP server that speaks the AWS, Azure and GCP SDK wire protocols. Point the real `aws-sdk-go-v2`, `azure-sdk-for-go`, or `cloud.google.com/go` / `google.golang.org/api` clients at it with a custom endpoint, and your production code runs unchanged against the in-memory backend. The server runs in a local `httptest.NewServer`, so you don't need Docker or a cloud account, and the responses decode with the normal SDK types.
 
-Nothing to mock. No Docker. No accounts. The same SDK calls you'd run against real AWS / Azure / GCP hit a local `httptest.NewServer` and get back SDK-decodable responses.
+The backend is in-memory by default. If you need real workloads behind the wire protocol, the same drivers can be backed by opt-in [real engines](features.md#11-real-data-plane-engines-opt-in) (real SQL, Redis or function code).
 
-The backend is in-memory by default; the same drivers can be backed by opt-in [real engines](features.md#11-real-data-plane-engines-opt-in) (real SQL/Redis/function code) when you need real workloads behind the wire protocol.
-
-> **This page is library mode — the in-process SDK-compat server, for Go unit tests written inside cloudemu-aware code.** It builds the server in-process with `httptest.NewServer`. **To integrate cloudemu with an existing, already-running application, don't spin it up in a `_test.go` — run [server mode](standalone-server.md) and set your SDK's endpoint** (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override), per [integration.md](integration.md). Server mode is the default for integration and E2E. The wire protocol and per-service coverage below are identical either way — only how you start the server differs.
+> This page covers library mode: the in-process SDK-compat server for Go unit tests, built with `httptest.NewServer`. To use cloudemu with an application that is already running, don't start it from a `_test.go` file. Run [server mode](standalone-server.md) and set your SDK's endpoint (`AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override) as described in [integration.md](integration.md). Server mode is the default for integration and E2E tests. The wire protocol and service coverage below are the same in both modes; only the way you start the server differs.
 
 ## Why
 
-CloudEmu's Go API is great for new code you write for testing. But most real apps already use the official cloud SDKs directly. Rewriting those call sites just to test against an emulator is friction. The SDK-compat server removes that friction — change the endpoint, done.
+Most apps call the official cloud SDKs directly. Rewriting those call sites to use CloudEmu's Go API just for tests is extra work. With the SDK-compat server you only change the endpoint.
 
 ## Quick start (AWS)
 
@@ -155,9 +153,11 @@ w, _ := databricks.NewWorkspaceClient(&databricks.Config{
 w.InstancePools.Create(ctx, compute.CreateInstancePool{InstancePoolName: "pool-1"})
 ```
 
-Region, credentials, and tokens can be any dummy values — the server doesn't validate signatures or AAD tokens.
+Region, credentials and tokens can be any dummy values. By default the server doesn't validate signatures or AAD tokens (see [Limitations](#limitations)).
 
-## Currently supported
+## Supported operations
+
+The tables below list the main handlers. They are not the full list: the generated [capability coverage](coverage/README.md) has every service and operation.
 
 ### AWS (`server/aws/`)
 
@@ -166,20 +166,20 @@ Region, credentials, and tokens can be any dummy values — the server doesn't v
 | **S3** | CreateBucket, DeleteBucket, ListBuckets, PutObject, GetObject, HeadObject, DeleteObject, ListObjectsV2 (prefix, delimiter, common prefixes, continuation token), CopyObject |
 | **DynamoDB** | CreateTable, DeleteTable, DescribeTable, ListTables, PutItem, GetItem, DeleteItem, UpdateItem (SET/REMOVE/ADD/DELETE + arithmetic/`if_not_exists`/`list_append`), Query/Scan (full KeyCondition/Filter/Projection expressions), BatchWriteItem, BatchGetItem, TransactWriteItems (ConditionExpression, real `SS`/`NS`/`BS` sets) |
 | **EC2** | RunInstances, DescribeInstances (filters: `instance-id`, `instance-type`, `instance-state-name`, `tag:*`), Start/Stop/Reboot/TerminateInstances, ModifyInstanceAttribute |
-| **EC2 — VPC + Networking** | VPCs, Subnets, Security Groups + ingress/egress rules, Internet Gateways, Route Tables + Routes, NAT Gateways, VPC Peering, Flow Logs, Network ACLs |
-| **EC2 — EBS + Key Pairs** | Volumes (Create/Delete/Describe/Attach/Detach), Key Pairs |
-| **EC2 — Snapshots + AMIs + Spot + Launch Templates** | Snapshots, Images, Spot instance requests, Launch Templates |
+| **EC2: VPC + Networking** | VPCs, Subnets, Security Groups + ingress/egress rules, Internet Gateways, Route Tables + Routes, NAT Gateways, VPC Peering, Flow Logs, Network ACLs |
+| **EC2: EBS + Key Pairs** | Volumes (Create/Delete/Describe/Attach/Detach), Key Pairs |
+| **EC2: Snapshots + AMIs + Spot + Launch Templates** | Snapshots, Images, Spot instance requests, Launch Templates |
 | **Auto Scaling** | CreateAutoScalingGroup, Update/Delete/Describe, SetDesiredCapacity, scaling policies |
 | **Lambda** *(REST + JSON)* | CreateFunction, GetFunction, ListFunctions, DeleteFunction, Invoke (sync) |
 | **SQS** *(JSON-RPC AwsJson1_0)* | CreateQueue, GetQueueUrl, ListQueues, DeleteQueue, SendMessage, ReceiveMessage, DeleteMessage |
 | **CloudWatch** *(Smithy rpc-v2-cbor)* | PutMetricData, GetMetricStatistics, ListMetrics, PutMetricAlarm, DescribeAlarms, DeleteAlarms |
-| **RDS / Aurora** *(query protocol)* | DBInstances (Create/Describe/Modify/Delete/Start/Stop/Reboot), DBClusters (Create/Describe/Modify/Delete/Start/Stop), DBSnapshots + DBClusterSnapshots (Create/Describe/Delete/Restore). One handler also serves the **Neptune** and **DocumentDB** engines — both reuse the same `aws-sdk-go-v2/service/{neptune,docdb}` client surface. |
+| **RDS / Aurora** *(query protocol)* | DBInstances (Create/Describe/Modify/Delete/Start/Stop/Reboot), DBClusters (Create/Describe/Modify/Delete/Start/Stop), DBSnapshots + DBClusterSnapshots (Create/Describe/Delete/Restore). One handler also serves the **Neptune** and **DocumentDB** engines: both reuse the same `aws-sdk-go-v2/service/{neptune,docdb}` client surface. |
 | **Redshift** *(query protocol)* | CreateCluster, DescribeClusters, ModifyCluster, DeleteCluster, RebootCluster, CreateClusterSnapshot, DescribeClusterSnapshots, DeleteClusterSnapshot, RestoreFromClusterSnapshot |
 | **MemoryDB** *(JSON 1.1, `AmazonMemoryDB.*`)* | Clusters (Create/Describe/Update/Delete/FailoverShard/ListAllowedNodeTypeUpdates), ACLs & Users, Parameter Groups, Subnet Groups, Snapshots (Create/Describe/Copy/Delete + restore), tags, engine-version & event catalogs. Optional (type-asserted): Multi-Region clusters, Reserved Nodes. Server-side `MaxResults`/`NextToken` pagination on every Describe. |
-| **Keyspaces** *(JSON 1.0, `KeyspacesService.*`)* | Keyspaces (Create/Get/List/Update/Delete, single/multi-region replication), Tables (Create/Get/List/Update/Delete/Restore — full schema, capacity, encryption, PITR, TTL, CDC), user-defined types, tags. Optional: `GetTableAutoScalingSettings`. Responses use lower-camel keys so the case-sensitive SDK deserializer decodes them; pagination on every list. |
-| **EKS** *(REST + JSON)* | Clusters (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), NodeGroups (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), Fargate Profiles (Create/Describe/List/Delete), Addons (Create/Describe/List/Update/Delete). Stub kubeconfig only — data plane deferred to Wave 2. |
+| **Keyspaces** *(JSON 1.0, `KeyspacesService.*`)* | Keyspaces (Create/Get/List/Update/Delete, single/multi-region replication), Tables (Create/Get/List/Update/Delete/Restore: full schema, capacity, encryption, PITR, TTL, CDC), user-defined types, tags. Optional: `GetTableAutoScalingSettings`. Responses use lower-camel keys so the case-sensitive SDK deserializer decodes them; pagination on every list. |
+| **EKS** *(REST + JSON)* | Clusters (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), NodeGroups (Create/Describe/List/UpdateConfig/UpdateVersion/Delete), Fargate Profiles (Create/Describe/List/Delete), Addons (Create/Describe/List/Update/Delete). The kubeconfig points at the shared [Kubernetes data plane](#kubernetes). |
 | **IAM** *(query protocol)* | Users (Create/Get/List/Delete), Roles (Create/Get/List/Delete), Policies (Create/Get/List/Delete), Attach/Detach/ListAttached for both Users and Roles, Groups (Create/Get/List/Delete + AddUserToGroup/RemoveUserFromGroup/ListGroupsForUser), AccessKeys (Create/List/Delete), InstanceProfiles (Create/Get/List/Delete + AddRoleToInstanceProfile/RemoveRoleFromInstanceProfile). Errors surface as typed `*types.NoSuchEntityException` / `*types.EntityAlreadyExistsException`. |
-| **Resource Explorer 2** *(JSON)* | Search — free-text plus filter expression over the cross-service inventory; results include ARN, resource type, region, owning account, and tags |
+| **Resource Explorer 2** *(JSON)* | Search: free-text plus filter expression over the cross-service inventory; results include ARN, resource type, region, owning account, and tags |
 | **Resource Groups Tagging API** *(JSON-RPC)* | GetResources (filter by `ResourceTypeFilters` + `TagFilters`, paginated), TagResources, UntagResources, GetTagKeys, GetTagValues |
 | **Bedrock** *(REST + JSON, `bedrock` + `bedrock-runtime`)* | Control plane: foundation models (List/Get), model-customization jobs (Create/Get/List), custom models (List/Get/Delete), Guardrails (Create/Get/List/Update/Delete + CreateGuardrailVersion, with topic/content/word/sensitive-info/contextual-grounding policy configs and version snapshots), Provisioned Throughput (Create/Get/List/Delete), invocation-logging config (Put/Get/Delete), resource tagging (Tag/Untag/ListTagsForResource), model import jobs, model copy jobs, evaluation jobs (Create/Get/List/Stop), inference profiles (Create/Get/List/Delete), prompt routers (Create/Get/List/Delete), marketplace model endpoints (Create/Get/List/Update/Delete/Register/Deregister), foundation-model agreements (Create/Delete/ListOffers/GetAvailability), automated-reasoning policies (Create/Get/List/Update/Delete). Runtime: InvokeModel (family-aware response envelopes), Converse, ConverseStream + InvokeModelWithResponseStream (eventstream), CountTokens, ApplyGuardrail, and async invoke (Start/Get/List). |
 | **Bedrock Agent** *(REST + JSON, `bedrock-agent` + `bedrock-agent-runtime`)* | Control plane: agents (Create/Get/List/Update/Delete/Prepare + alias), knowledge bases (CRUD), data sources (CRUD + StartIngestionJob), flows (CRUD + Prepare), prompts (CRUD). Runtime: InvokeAgent (eventstream), Retrieve, RetrieveAndGenerate. Scope: the core resource lifecycle and runtime data plane above; **agent versioning/aliases beyond basic create, action groups, and agent collaborators are out of scope** for this iteration. |
@@ -190,24 +190,24 @@ All handlers speak ARM JSON over HTTPS unless noted.
 
 | Service | ARM provider / operations |
 |---------|--------------------------|
-| **Virtual Machines** | `Microsoft.Compute/virtualMachines` — CreateOrUpdate, Get, List, Delete, start, powerOff, restart |
-| **Disks / Snapshots / Images / SSH Public Keys** | `Microsoft.Compute/{disks,snapshots,images,sshPublicKeys}` — full CRUD |
+| **Virtual Machines** | `Microsoft.Compute/virtualMachines`: CreateOrUpdate, Get, List, Delete, start, powerOff, restart |
+| **Disks / Snapshots / Images / SSH Public Keys** | `Microsoft.Compute/{disks,snapshots,images,sshPublicKeys}`: full CRUD |
 | **Blob Storage** *(data plane)* | Containers + Blobs: Create/Delete/List, PutBlob, GetBlob, DeleteBlob, CopyBlob |
-| **Cosmos DB** *(data plane)* | Databases, Containers, Documents — full CRUD with `x-ms-documentdb-*` headers |
-| **Cosmos DB (SQL ARM control plane)** | `Microsoft.DocumentDB/databaseAccounts/{acct}/sqlDatabases[/containers]` — SQL databases (CreateUpdate/Get/List/Delete, cascading container delete), containers (CreateUpdate/Get/List/Delete with partitionKey, defaultTtl, uniqueKeyPolicy, indexingPolicy), and `throughputSettings/default` at database and container level (Get/Update manual RU/s or autoscale maxThroughput + migrateToAutoscale/migrateToManualThroughput). Real `armcosmos` `SQLResources` clients round-trip end-to-end, including the LRO pollers, so Terraform/Bicep/`az cosmosdb sql` can manage the data model. Shares state with the Cosmos data plane above — a control-plane database/container/throughput is visible to data-plane clients and vice versa. |
-| **Virtual Network** | `Microsoft.Network/{virtualNetworks,networkSecurityGroups,publicIPAddresses,networkInterfaces}` — CRUD + nested subnets; NICs bind a subnet and get a private IP |
+| **Cosmos DB** *(data plane)* | Databases, Containers, Documents: full CRUD with `x-ms-documentdb-*` headers |
+| **Cosmos DB (SQL ARM control plane)** | `Microsoft.DocumentDB/databaseAccounts/{acct}/sqlDatabases[/containers]`: SQL databases (CreateUpdate/Get/List/Delete, cascading container delete), containers (CreateUpdate/Get/List/Delete with partitionKey, defaultTtl, uniqueKeyPolicy, indexingPolicy), and `throughputSettings/default` at database and container level (Get/Update manual RU/s or autoscale maxThroughput + migrateToAutoscale/migrateToManualThroughput). Real `armcosmos` `SQLResources` clients round-trip end-to-end, including the LRO pollers, so Terraform/Bicep/`az cosmosdb sql` can manage the data model. Shares state with the Cosmos data plane above; a control-plane database/container/throughput is visible to data-plane clients and vice versa. |
+| **Virtual Network** | `Microsoft.Network/{virtualNetworks,networkSecurityGroups,publicIPAddresses,networkInterfaces}`: CRUD + nested subnets; NICs bind a subnet and get a private IP |
 | **Azure Monitor** | `microsoft.insights/metricAlerts` and metric data ingest/read |
 | **Functions** | `Microsoft.Web/sites` (Function Apps): CreateOrUpdate, Get, List, Delete + non-ARM `/api/{name}` invoke |
 | **Service Bus** | `Microsoft.ServiceBus/namespaces[/queues]` ARM CRUD + raw-HTTP REST data plane (`POST /{ns}/{queue}/messages`, `DELETE /messages/head`) |
-| **SQL Database** | `Microsoft.Sql/servers[/databases]` — servers and databases, full CRUD lifecycle |
-| **Managed Cassandra** | `Microsoft.DocumentDB/cassandraClusters[/dataCenters]` — clusters (CreateOrUpdate, Get, ListByResourceGroup, ListBySubscription, Update, Delete, deallocate, start, invokeCommand, status) and datacenters (CreateOrUpdate, Get, List, Update, Delete). Real `armcosmos` `CassandraClusters`/`CassandraDataCenters` clients round-trip end-to-end, including the LRO pollers. |
-| **PostgreSQL Flexible Server** | `Microsoft.DBforPostgreSQL/flexibleServers` — full CRUD lifecycle |
-| **Cosmos DB for PostgreSQL** | `Microsoft.DBforPostgreSQL/serverGroupsv2` — clusters (CreateOrUpdate, Get, ListByResourceGroup, ListBySubscription, Update, Delete, restart, start, stop, promote, checkNameAvailability), firewall rules, roles, derived servers/nodes, configurations (cluster/coordinator/node reads + updates), and private endpoint connections/links. Real `armcosmosforpostgresql` clients round-trip end-to-end, including the LRO pollers. |
-| **MySQL Flexible Server** | `Microsoft.DBforMySQL/flexibleServers` — full CRUD lifecycle |
-| **AKS** | `Microsoft.ContainerService/managedClusters` — ManagedClusters (CreateOrUpdate, Get, UpdateTags, Delete, List/ListByResourceGroup), AgentPools (CreateOrUpdate, Get, Delete, List), MaintenanceConfigurations (CreateOrUpdate, Get, Delete, List), ListClusterAdmin/User/MonitoringUser Credentials, RotateClusterCertificates. Stub kubeconfig only — data plane deferred to Wave 2. |
-| **IAM (armauthorization)** | `Microsoft.Authorization` — RoleDefinitions (CreateOrUpdate, Get, List, Delete) and RoleAssignments (Create, Get, ListForScope, Delete) at any scope (subscription, resource group, resource, management group). Real `armauthorization` SDK clients round-trip end-to-end. Microsoft Graph (users/groups) is out of scope — deferred to a future handler. |
-| **Resource Graph** | `Microsoft.ResourceGraph` — `POST /providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` with a KQL-shaped query over the cross-service inventory; supports `subscriptions[]` scoping and `$top`/`$skipToken` pagination. Rows carry the fixed columns (`id` [ARM-shaped], `name`, `type`, `location`, `resourceGroup`, `subscriptionId`, `tags`) plus resource-shape columns emitted when present — `sku.name`, `properties`, `managedBy`, `kind`, `zones` — so SKU/tier/size-sensitive consumers (e.g. a discovery + cost engine) can read a VM's size, a managed disk's tier/`diskSizeGB`/owning VM, or a flexible server's compute SKU. `project`/`summarize`/`join` are tolerated but ignored (the full row is always returned). |
-| **Databricks (ARM control plane)** | `Microsoft.Databricks/workspaces` — CreateOrUpdate, Get, Delete, UpdateTags, List / ListByResourceGroup. Real `armdatabricks` SDK clients round-trip end-to-end. |
+| **SQL Database** | `Microsoft.Sql/servers[/databases]`: servers and databases, full CRUD lifecycle |
+| **Managed Cassandra** | `Microsoft.DocumentDB/cassandraClusters[/dataCenters]`: clusters (CreateOrUpdate, Get, ListByResourceGroup, ListBySubscription, Update, Delete, deallocate, start, invokeCommand, status) and datacenters (CreateOrUpdate, Get, List, Update, Delete). Real `armcosmos` `CassandraClusters`/`CassandraDataCenters` clients round-trip end-to-end, including the LRO pollers. |
+| **PostgreSQL Flexible Server** | `Microsoft.DBforPostgreSQL/flexibleServers`: full CRUD lifecycle |
+| **Cosmos DB for PostgreSQL** | `Microsoft.DBforPostgreSQL/serverGroupsv2`: clusters (CreateOrUpdate, Get, ListByResourceGroup, ListBySubscription, Update, Delete, restart, start, stop, promote, checkNameAvailability), firewall rules, roles, derived servers/nodes, configurations (cluster/coordinator/node reads + updates), and private endpoint connections/links. Real `armcosmosforpostgresql` clients round-trip end-to-end, including the LRO pollers. |
+| **MySQL Flexible Server** | `Microsoft.DBforMySQL/flexibleServers`: full CRUD lifecycle |
+| **AKS** | `Microsoft.ContainerService/managedClusters`: ManagedClusters (CreateOrUpdate, Get, UpdateTags, Delete, List/ListByResourceGroup), AgentPools (CreateOrUpdate, Get, Delete, List), MaintenanceConfigurations (CreateOrUpdate, Get, Delete, List), ListClusterAdmin/User/MonitoringUser Credentials, RotateClusterCertificates. The kubeconfig points at the shared [Kubernetes data plane](#kubernetes). |
+| **IAM (armauthorization)** | `Microsoft.Authorization`: RoleDefinitions (CreateOrUpdate, Get, List, Delete) and RoleAssignments (Create, Get, ListForScope, Delete) at any scope (subscription, resource group, resource, management group). Real `armauthorization` SDK clients round-trip end-to-end. Microsoft Graph (users/groups) is not implemented yet. |
+| **Resource Graph** | `Microsoft.ResourceGraph`: `POST /providers/Microsoft.ResourceGraph/resources?api-version=2022-10-01` with a KQL-shaped query over the cross-service inventory; supports `subscriptions[]` scoping and `$top`/`$skipToken` pagination. Rows carry the fixed columns (`id` [ARM-shaped], `name`, `type`, `location`, `resourceGroup`, `subscriptionId`, `tags`) plus resource-shape columns emitted when present; `sku.name`, `properties`, `managedBy`, `kind`, `zones`; so SKU/tier/size-sensitive consumers (e.g. a discovery + cost engine) can read a VM's size, a managed disk's tier/`diskSizeGB`/owning VM, or a flexible server's compute SKU. `project`/`summarize`/`join` are tolerated but ignored (the full row is always returned). |
+| **Databricks (ARM control plane)** | `Microsoft.Databricks/workspaces`: CreateOrUpdate, Get, Delete, UpdateTags, List / ListByResourceGroup. Real `armdatabricks` SDK clients round-trip end-to-end. |
 | **Databricks (workspace data plane)** *(`databricks-sdk-go`, `/api/2.x`)* | Point the real `WorkspaceClient` at `Config.Host`. Clusters (create/edit/start/restart/resize/pin/unpin/delete + list-node-types / spark-versions / zones), instance pools, jobs + runs (submit / run-now / get / list / cancel / cancel-all / repair / output / delete), cluster policies, libraries (install / uninstall / status), and object permissions. Self-contained families: secrets (scopes / secrets / ACLs), tokens, git credentials, repos, DBFS (incl. block upload), workspace notebooks/directories, SQL warehouses, pipelines, serving endpoints, SCIM identity (users / groups / service principals), and Unity Catalog (catalogs / schemas / tables + metastores / external locations / storage credentials / volumes). Also serves `GET /.well-known/databricks-config` so the SDK's host-metadata resolution succeeds (workspace-host stub) instead of logging a warning. |
 
 ### GCP (`server/gcp/`)
@@ -223,17 +223,17 @@ All handlers speak REST + JSON.
 | **Cloud Monitoring** | Time-series ingest/read, alert policies |
 | **Cloud Functions v1** | Create (LRO), Get, List, Delete (LRO), `:call` (sync invoke) |
 | **Pub/Sub** | Topics + Subscriptions lifecycle, `:publish`, `:pull`, `:acknowledge` |
-| **Cloud SQL** | Instances (insert/get/list/patch/delete/start/stop/restart) + Operations (get/list) — supports the `sqladmin/v1` SDK |
+| **Cloud SQL** | Instances (insert/get/list/patch/delete/start/stop/restart) + Operations (get/list): supports the `sqladmin/v1` SDK |
 | **Bigtable** *(`bigtableadmin/v2`, `/v2`)* | Instances (create/get/list/update/partialUpdate/delete), Clusters (create/get/list/update/delete + getMemoryLayer), Tables (create/get/list/delete/undelete/modifyColumnFamilies/dropRowRange/generateConsistencyToken/checkConsistency/restore/patch), App Profiles (CRUD), Backups (create/get/list/patch/delete/copy), Operations (get), and per-resource IAM (get/set/testIamPermissions on instances/tables/backups). LROs return `Operation{done:true}` with the resource inline. |
-| **GKE** | Clusters (Create/Get/List/Update/Delete + `:setLogging`/`:setMonitoring`/`:setMasterAuth`/`:setLegacyAbac`/`:setNetworkPolicy`/`:setMaintenancePolicy`/`:setResourceLabels`/`:startIpRotation`/`:completeIpRotation`), NodePools (Create/Get/List/Update/Delete + `:setSize`/`:setAutoscaling`/`:setManagement`/`:rollback`), Operations (Get/List/`:cancel`). Stub kubeconfig only — data plane deferred to Wave 2. |
-| **Cloud Asset Inventory** | `assets.list` (filter by `assetTypes[]`), `searchAllResources` (query + asset-type filter), `searchAllIamPolicies` (returns empty — out of scope), `exportAssets` (sync; inline results in the returned Operation), `batchGetAssetsHistory`, Feeds (create/list/get/patch/delete), `operations.get`. Resource names returned as GCP-shaped `//service/path` URNs. |
+| **GKE** | Clusters (Create/Get/List/Update/Delete + `:setLogging`/`:setMonitoring`/`:setMasterAuth`/`:setLegacyAbac`/`:setNetworkPolicy`/`:setMaintenancePolicy`/`:setResourceLabels`/`:startIpRotation`/`:completeIpRotation`), NodePools (Create/Get/List/Update/Delete + `:setSize`/`:setAutoscaling`/`:setManagement`/`:rollback`), Operations (Get/List/`:cancel`). The cluster endpoint points at the shared [Kubernetes data plane](#kubernetes). |
+| **Cloud Asset Inventory** | `assets.list` (filter by `assetTypes[]`), `searchAllResources` (query + asset-type filter), `searchAllIamPolicies` (returns empty; not implemented), `exportAssets` (sync; inline results in the returned Operation), `batchGetAssetsHistory`, Feeds (create/list/get/patch/delete), `operations.get`. Resource names returned as GCP-shaped `//service/path` URNs. |
 | **IAM (iam.googleapis.com v1)** | ServiceAccounts (Create/Get/List/Delete/Patch), custom Roles (Create/Get/List/Delete/Patch), ServiceAccountKeys (Create/Get/List/Delete). Real `google.golang.org/api/iam/v1` clients round-trip end-to-end; errors surface as typed `*googleapi.Error`. Resource-level `getIamPolicy`/`setIamPolicy` bindings on individual GCP resources are out of scope. |
 
-Any operation not in these lists returns `501 Not Implemented` or the provider's native `UnknownOperation` / `NotImplemented` / `NOT_FOUND` error.
+An operation cloudemu doesn't implement returns `501 Not Implemented` or the provider's native `UnknownOperation` / `NotImplemented` / `NOT_FOUND` error.
 
 ## How it's wired internally
 
-The server is a tiny core plus a plugin-per-service model. Each service is a self-contained package under `server/`.
+The server is a small core with one plugin package per service under `server/`. The tree below shows a few of them.
 
 ```
 server/
@@ -278,11 +278,11 @@ type Handler interface {
 }
 ```
 
-`server.Server` iterates registered handlers and dispatches to the first that claims the request. Adding a new service is one new package + one `Register` call. The core never changes.
+`server.Server` goes through the registered handlers in order and dispatches to the first one that claims the request. A new service is one new package plus one `Register` call; the core doesn't change.
 
 ### Protocol detection
 
-Each handler uses a different signal so dispatch is unambiguous within a provider:
+Each handler matches on a different signal, so dispatch within a provider is unambiguous:
 
 | Handler | How it's detected |
 |---------|-------------------|
@@ -323,25 +323,60 @@ Each handler uses a different signal so dispatch is unambiguous within a provide
 | GCP GCS | Fallback (`/storage/v1/` and `/{bucket}/{object}` direct-media) |
 | **Kubernetes data plane** (shared across all 3 providers) | URL prefix `/k8s/{cluster-uid}/`. Registered on AWS, Azure, and GCP servers; cluster UID is the one minted by the matching control-plane handler on Create. |
 
-Registration order matters when handlers share a path prefix — `awsserver.New` / `azureserver.New` / `gcpserver.New` register more-specific handlers ahead of catch-alls (S3, Blob, GCS) so first-match-wins resolves correctly.
+Registration order matters when handlers share a path prefix. `awsserver.New`, `azureserver.New` and `gcpserver.New` register the more specific handlers before the catch-alls (S3, Blob, GCS), so the first match is the right one.
 
 ## Coverage status
 
+This summarizes the handlers on this page. See [docs/coverage](coverage/README.md) for everything else.
+
 | Provider | Domains shipped | Notes |
 |----------|----------------|-------|
-| AWS | Storage, Compute (+ VPC/SG/Subnet/IGW/RT/NAT/Peering/FlowLogs/NACL/EBS/Keys/AMIs/Snapshots/Spot/LaunchTemplates), NoSQL DB, Relational DB (RDS/Aurora/Neptune/DocumentDB/Redshift), Kubernetes (EKS control plane + shared data plane), Serverless, Message Queue, Monitoring | The most-mature provider — EC2 was Phase 1 of SDK-compat |
+| AWS | Storage, Compute (+ VPC/SG/Subnet/IGW/RT/NAT/Peering/FlowLogs/NACL/EBS/Keys/AMIs/Snapshots/Spot/LaunchTemplates), NoSQL DB, Relational DB (RDS/Aurora/Neptune/DocumentDB/Redshift), Kubernetes (EKS control plane + shared data plane), Serverless, Message Queue, Monitoring | |
 | Azure | Storage, Compute (+ Disks/Snapshots/Images/SSHKeys), NoSQL DB, Relational DB (SQL Database, PostgreSQL Flexible Server, MySQL Flexible Server), Kubernetes (AKS control plane + shared data plane), Serverless, Message Queue (ARM only), Networking, Monitoring | Data-plane Service Bus over AMQP is out of scope (use raw-HTTP REST data plane for tests) |
 | GCP | Storage, Compute (+ Disks/Snapshots/Images), NoSQL DB, Relational DB (Cloud SQL), Kubernetes (GKE control plane + shared data plane), Serverless, Message Queue, Networking, Monitoring | All driven via REST (the `cloud.google.com/go/*` clients with `option.WithEndpoint`, or the auto-generated `google.golang.org/api/*` clients) |
 
-Kubernetes ships as **two cooperating handlers**: per-provider control planes (EKS / AKS / GKE — clusters + node pools + addons / Fargate / maintenance configs) and a shared in-memory **data plane** registered under `/k8s/{cluster-uid}/`. The control plane mints a UID on every cluster Create and embeds it in the kubeconfig (or `Cluster.Endpoint` for GKE) along with a CA that certifies the data-plane serving cert, so `client-go` and `kubectl` connect over **validated TLS**. The data plane behaves like a tiny always-converged cluster (minikube-like): a synchronous reconcile engine runs on every write, so Deployments/ReplicaSets/StatefulSets/DaemonSets materialize **Running** Pods, Services get populated Endpoints, PVCs bind, and Jobs complete — all immediately and deterministically (no controller goroutines). Core, apps, batch, networking, rbac, storage, autoscaling, discovery, and policy groups are served, with `/scale` and `/status` subresources, label/field selectors, and `?watch=true` streaming (selector-filtered) so real `Informer` / `Reflector` machinery works. Data-plane lists are unpaginated (`limit`/`continue` are ignored — every list returns the full set).
+### Kubernetes
 
-The data plane now covers CustomResourceDefinitions (dynamic servable kinds), server-side apply with `managedFields` field ownership + conflict detection, `?dryRun=All`, finalizer-gated deletion, `?limit=&continue=` pagination, synthetic `pods/log` + PDB-gated `pods/eviction`, `metrics.k8s.io` (`kubectl top`) + HPA actuation, object-count ResourceQuota / LimitRange / PDB enforcement, RBAC SubjectAccessReview + NetworkPolicy evaluation, opt-in admission webhooks, watch `resourceVersion` resume + BOOKMARK, and a deterministic injectable clock. Scheduling is real: a filter-then-score scheduler honors required/preferred **node affinity**, inter-pod **affinity/anti-affinity** by `topologyKey`, and **topology spread** constraints, scoring by preferred node/pod-(anti)affinity weights and topology-spread skew minimization. By default a single synthetic node is seeded; `cloudemu serve --k8s-nodes N` starts a multi-node cluster (a control-plane node carrying a `NoSchedule` taint plus workers) with **taints/tolerations** and **resource-request-vs-allocatable** fit, and nodes can be **added or removed at runtime** — an unplaceable Pod stays `Pending`/`Unschedulable`, and removing a node reschedules its Pods. `exec`/`attach` run over a real **WebSocket** (v4/v5 channel protocols) as a deterministic synthetic session (banner + Success, no container runtime); `kube-system` is seeded (coredns/kube-dns/kube-proxy) and **CronJobs** fire on a wall-clock ticker when the opt-in progression ticker is running (or via `TickCronJobs` in tests). Remaining deliberate simplifications: no real kubelet (synthetic logs; `pods/portforward` returns a typed 501); `NoExecute` live taint-based **eviction** and `tolerationSeconds` are schedule-time only (not enforced after placement); admission webhooks call out only when explicitly enabled; RBAC/NetworkPolicy are queryable rather than request-time-enforced; and rollouts converge instantly. See `docs/services.md` §18 for the full resource list.
+Kubernetes is served by two handlers that work together: a control plane per provider (EKS / AKS / GKE: clusters, node pools, addons, Fargate, maintenance configs) and a shared in-memory data plane registered under `/k8s/{cluster-uid}/`. The control plane mints a UID on every cluster Create and embeds it in the kubeconfig (or `Cluster.Endpoint` for GKE), along with a CA that signs the data plane's serving cert. `client-go` and `kubectl` therefore connect over verified TLS.
 
-Two provider-specific services also ship as full SDK-compat handlers. **AWS Bedrock** covers the `bedrock` control plane (foundation models, customization jobs, custom models, guardrails with policy configs + versions, provisioned throughput, invocation logging, resource tagging, model import/copy/evaluation jobs, inference profiles, prompt routers, marketplace model endpoints, foundation-model agreements, and automated-reasoning policies) and the `bedrock-runtime` data plane (InvokeModel with family-aware response envelopes, Converse, streaming ConverseStream / InvokeModelWithResponseStream over `vnd.amazon.eventstream`, CountTokens, ApplyGuardrail, and async invoke). A companion **AWS Bedrock Agent** handler covers the `bedrock-agent` control plane (agents, knowledge bases, data sources, flows, prompts) and the `bedrock-agent-runtime` data plane (InvokeAgent streaming, Retrieve, RetrieveAndGenerate); its runtime handler registers before the control plane and matches only POST so the two never collide on the shared `/agents` and `/knowledgebases` roots. `bedrock-agent` coverage is intentionally scoped to this core resource lifecycle and runtime data plane — agent versioning/aliases beyond basic create, action groups, and agent collaborators are out of scope for this iteration. **Azure Databricks** covers the `armdatabricks` ARM workspace resource plus the `databricks-sdk-go` workspace data plane — clusters, instance pools, jobs and runs, cluster policies, libraries, permissions, secrets, tokens, git credentials, repos, DBFS, workspace notebooks/directories, SQL warehouses, pipelines, serving endpoints, SCIM identity, and Unity Catalog.
+The data plane behaves like a small cluster that is always converged, similar to minikube. A synchronous reconcile step runs on every write, so Deployments, ReplicaSets, StatefulSets and DaemonSets produce Running Pods, Services get Endpoints, PVCs bind, and Jobs complete. All of this happens immediately and deterministically, with no controller goroutines. The core, apps, batch, networking, rbac, storage, autoscaling, discovery and policy groups are served, with `/scale` and `/status` subresources, label/field selectors, and `?watch=true` streaming (selector-filtered), so real `Informer` / `Reflector` code works.
 
-**Emulation caveats (Bedrock).** Long-running jobs — model customization, import, and copy jobs (evaluation jobs start `InProgress`) — complete synchronously in the emulator, so Get/List observe a terminal state immediately rather than polling through intermediate progress. Inference and agent responses (InvokeModel, Converse, InvokeAgent, RetrieveAndGenerate) are deterministic simulations, not real model output.
+It also supports:
 
-The remaining service domains (DNS, Load Balancer, Cache, Secrets, Logging, Notifications, Container Registry, Event Bus) have full driver implementations in `providers/{aws,azure,gcp}/`; SDK-compat handlers are added in lockstep across all 3 providers as each domain ships.
+- CustomResourceDefinitions (dynamically served kinds)
+- server-side apply with `managedFields` ownership and conflict detection
+- `?dryRun=All`, finalizer-gated deletion, and `?limit=&continue=` pagination
+- synthetic `pods/log` and PDB-gated `pods/eviction`
+- `metrics.k8s.io` (`kubectl top`) and HPA scaling
+- object-count ResourceQuota / LimitRange / PDB enforcement
+- RBAC SubjectAccessReview and NetworkPolicy evaluation
+- opt-in admission webhooks
+- watch resume from `resourceVersion`, and BOOKMARK events
+- a deterministic, injectable clock
+
+Scheduling is a filter-then-score scheduler. It honors required and preferred node affinity, inter-pod affinity/anti-affinity by `topologyKey`, and topology spread constraints, and scores nodes by the preferred (anti-)affinity weights and by minimizing topology-spread skew. By default there is one synthetic node. `cloudemu serve --k8s-nodes N` starts a multi-node cluster (a control-plane node with a `NoSchedule` taint, plus workers) with taints/tolerations and resource-request-vs-allocatable fit. Nodes can be added or removed at runtime. A Pod that can't be placed stays `Pending`/`Unschedulable`, and removing a node reschedules its Pods.
+
+`exec`/`attach` run over a real WebSocket (v4/v5 channel protocols) as a deterministic synthetic session (a banner and Success; there is no container runtime). `kube-system` is seeded with coredns/kube-dns/kube-proxy. CronJobs fire on a wall-clock ticker when the opt-in progression ticker is running, or through `TickCronJobs` in tests.
+
+Known simplifications:
+
+- There is no real kubelet. Logs are synthetic and `pods/portforward` returns a typed 501.
+- `NoExecute` taint-based eviction and `tolerationSeconds` only apply at scheduling time, not after a Pod is placed.
+- Admission webhooks are only called when explicitly enabled.
+- RBAC and NetworkPolicy can be queried but aren't enforced on requests.
+- Rollouts converge instantly.
+
+See [services.md §18](services.md#18-kubernetes) for the full resource list.
+
+### Bedrock and Databricks
+
+AWS Bedrock covers the `bedrock` control plane (foundation models, customization jobs, custom models, guardrails with policy configs and versions, provisioned throughput, invocation logging, resource tagging, model import/copy/evaluation jobs, inference profiles, prompt routers, marketplace model endpoints, foundation-model agreements, and automated-reasoning policies) and the `bedrock-runtime` data plane (InvokeModel with family-aware response envelopes, Converse, streaming ConverseStream / InvokeModelWithResponseStream over `vnd.amazon.eventstream`, CountTokens, ApplyGuardrail, and async invoke).
+
+A separate AWS Bedrock Agent handler covers the `bedrock-agent` control plane (agents, knowledge bases, data sources, flows, prompts) and the `bedrock-agent-runtime` data plane (InvokeAgent streaming, Retrieve, RetrieveAndGenerate). Its runtime handler is registered before the control plane and only matches POST, so the two don't collide on the shared `/agents` and `/knowledgebases` roots. `bedrock-agent` covers only this core resource lifecycle and the runtime data plane. Agent versioning/aliases beyond basic create, action groups, and agent collaborators are not implemented yet.
+
+Azure Databricks covers the `armdatabricks` ARM workspace resource and the `databricks-sdk-go` workspace data plane: clusters, instance pools, jobs and runs, cluster policies, libraries, permissions, secrets, tokens, git credentials, repos, DBFS, workspace notebooks/directories, SQL warehouses, pipelines, serving endpoints, SCIM identity, and Unity Catalog.
+
+Bedrock caveats: long-running jobs (model customization, import and copy jobs; evaluation jobs start `InProgress`) complete synchronously, so Get/List see a terminal state right away instead of intermediate progress. Inference and agent responses (InvokeModel, Converse, InvokeAgent, RetrieveAndGenerate) are deterministic simulations, not real model output.
 
 ## Writing your own handler
 
@@ -362,15 +397,15 @@ srv := server.New()
 srv.Register(&MyHandler{...})
 ```
 
-The `Handler` interface is the only contract — no registration is needed in core CloudEmu. If the handler is generally useful, a PR to add it under `server/<provider>/<service>` is welcome.
+The `Handler` interface is the only contract; nothing needs to be registered in core CloudEmu. If the handler would be useful to others, a PR adding it under `server/<provider>/<service>` is welcome.
 
 ## Limitations
 
-- **No signature validation.** CloudEmu is a local development tool, not a security boundary. Requests are accepted regardless of AWS SigV4 / Azure AAD / GCP OAuth signatures.
-- **No AMQP for Azure Service Bus.** The modern `azservicebus` SDK uses AMQP exclusively for data plane. ARM control plane is fully supported via `armservicebus`; tests that need send/receive can use the raw-HTTP REST data plane.
-- **GCS direct-media downloads** assume path-style URLs.
-- **DynamoDB / Cosmos / Firestore queries** parse the real grammars — DynamoDB expressions (KeyCondition/Filter/Condition/Projection/Update), Firestore structured queries (composite filters, `orderBy`, cursors, `select`), and Cosmos SQL (`SELECT`/`WHERE`/`ORDER BY`/`OFFSET`-`LIMIT`/aggregates). A few advanced constructs are deliberately out of scope (e.g. Cosmos `JOIN`/spatial/UDFs); `NOT` over a composite predicate stays two-valued.
-- **Pagination tokens** are honored where present in the SDK contract; some list operations short-circuit to a single page.
-- **Resource Graph `resourceGroup`.** Rows expose `resourceGroup` derived from the resource's ARM id. Where a mock doesn't model a per-resource resource group, the id (and thus `resourceGroup`) falls back to `default`, so all such resources share one resource group — fine for SKU/tier/size-sensitive discovery and cost tests, but consumers that key on distinct resource groups should be aware. Event Hubs **is** modeled (`server/azure/eventhub`: `Microsoft.EventHub/namespaces` + `eventhubs` + `consumergroups`), so its namespaces surface in Resource Graph.
+- No signature validation by default. CloudEmu is a local development tool, not a security boundary, and it accepts requests regardless of AWS SigV4 / Azure AAD / GCP OAuth signatures. The standalone server has an opt-in `--enforce-auth` flag (SigV4 verification for AWS, Bearer-token claim checks for Azure); see `cloudemu serve -h`.
+- No AMQP for Azure Service Bus. The `azservicebus` SDK only uses AMQP for the data plane. The ARM control plane works through `armservicebus`, and tests that need send/receive can use the raw-HTTP REST data plane.
+- GCS direct-media downloads assume path-style URLs.
+- DynamoDB, Cosmos and Firestore queries use the real grammars: DynamoDB expressions (KeyCondition/Filter/Condition/Projection/Update), Firestore structured queries (composite filters, `orderBy`, cursors, `select`), and Cosmos SQL (`SELECT`/`WHERE`/`ORDER BY`/`OFFSET`-`LIMIT`/aggregates). Some advanced constructs are not supported (e.g. Cosmos `JOIN`/spatial/UDFs), and `NOT` over a composite predicate stays two-valued.
+- Pagination tokens are honored where the SDK contract has them; some list operations always return a single page.
+- Resource Graph `resourceGroup`. Rows get `resourceGroup` from the resource's ARM id. When a mock doesn't model a per-resource resource group, the id (and so `resourceGroup`) falls back to `default`, and all such resources share one resource group. That is fine for SKU/tier/size-based discovery and cost tests, but matters if your code keys on distinct resource groups. Event Hubs is modeled (`server/azure/eventhub`: `Microsoft.EventHub/namespaces` + `eventhubs` + `consumergroups`), so its namespaces do appear in Resource Graph.
 
-When a client hits an unsupported operation, the server responds with the provider's native error code so failures are easy to diagnose.
+For an unsupported operation, the server returns the provider's native error code, so the failure is easy to recognize.
