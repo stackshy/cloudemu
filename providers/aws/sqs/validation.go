@@ -184,7 +184,7 @@ func validateReceive(maxMessages int, maxSet bool, waitSeconds, visibility int) 
 // entry, so a batch reports the same code a single SendMessage would.
 func batchFailureCode(err error) string {
 	switch {
-	case stderrors.Is(err, driver.ErrMissingParameter):
+	case stderrors.Is(err, driver.ErrMissingParameter), stderrors.Is(err, driver.ErrMissingMessageGroupID):
 		return "MissingParameter"
 	case stderrors.Is(err, driver.ErrInvalidMessageContents):
 		return "InvalidMessageContents"

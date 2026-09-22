@@ -262,3 +262,71 @@ func TestSendMessageBatchPerEntryCodes(t *testing.T) {
 		}
 	}
 }
+
+// An explicit per-message DelaySeconds of 0 overrides the queue delay, while
+// an omitted value still inherits it.
+func TestSendMessageExplicitZeroDelayOverridesQueue(t *testing.T) {
+	m, fc := newTestMock()
+	ctx := context.Background()
+
+	q, err := m.CreateQueue(ctx, driver.QueueConfig{Name: "delayed-q", DelaySeconds: 60})
+	requireNoError(t, err)
+
+	_, err = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "now", DelaySecondsSet: true})
+	requireNoError(t, err)
+
+	_, err = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "later"})
+	requireNoError(t, err)
+
+	// Hold the first message long enough that it can't reappear below.
+	got, err := m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: q.URL, MaxMessages: 10, VisibilityTimeout: 600})
+	requireNoError(t, err)
+	assertEqual(t, 1, len(got))
+
+	if len(got) == 1 {
+		assertEqual(t, "now", got[0].Body)
+	}
+
+	fc.Advance(61 * time.Second)
+
+	got, err = m.ReceiveMessages(ctx, driver.ReceiveMessageInput{QueueURL: q.URL, MaxMessages: 10})
+	requireNoError(t, err)
+	assertEqual(t, 1, len(got))
+
+	if len(got) == 1 {
+		assertEqual(t, "later", got[0].Body)
+	}
+}
+
+// A FIFO send with no MessageGroupId is MissingParameter. A missing
+// MessageDeduplicationId without content-based dedup is InvalidParameterValue.
+func TestFIFOMissingGroupAndDedupCodes(t *testing.T) {
+	m, _ := newTestMock()
+	ctx := context.Background()
+	q := createFIFOQueue(m, "codes.fifo")
+
+	_, err := m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "x", DeduplicationID: "d"})
+	if !stderrors.Is(err, driver.ErrMissingMessageGroupID) {
+		t.Fatalf("missing group: err = %v, want ErrMissingMessageGroupID", err)
+	}
+
+	_, err = m.SendMessage(ctx, driver.SendMessageInput{QueueURL: q.URL, Body: "x", GroupID: "g"})
+	assertCode(t, err, errors.InvalidArgument)
+
+	if stderrors.Is(err, driver.ErrMissingMessageGroupID) || stderrors.Is(err, driver.ErrMissingParameter) {
+		t.Fatalf("missing dedup id must not be MissingParameter, got %v", err)
+	}
+
+	res, err := m.SendMessageBatch(ctx, q.URL, []driver.BatchSendEntry{
+		{ID: "nogroup", Body: "x", DeduplicationID: "d"},
+		{ID: "nodedup", Body: "x", GroupID: "g"},
+	})
+	requireNoError(t, err)
+
+	want := map[string]string{"nogroup": "MissingParameter", "nodedup": "InvalidParameterValue"}
+	for _, f := range res.Failed {
+		assertEqual(t, want[f.ID], f.Code)
+	}
+
+	assertEqual(t, 2, len(res.Failed))
+}

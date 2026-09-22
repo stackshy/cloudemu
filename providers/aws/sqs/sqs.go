@@ -749,8 +749,10 @@ func (m *Mock) buildStoredMessage(qd *queueData, input *driver.SendMessageInput,
 		attrs[k] = v
 	}
 
+	// An explicit per-message 0 overrides the queue delay. Only an omitted
+	// value falls back to it.
 	delaySeconds := input.DelaySeconds
-	if delaySeconds == 0 {
+	if delaySeconds == 0 && !input.DelaySecondsSet {
 		delaySeconds = qd.delaySeconds
 	}
 
@@ -825,11 +827,14 @@ func validateFIFORequirements(qd *queueData, input *driver.SendMessageInput) err
 	}
 
 	if input.GroupID == "" {
-		return errors.New(errors.InvalidArgument, "GroupID is required for FIFO queues")
+		return driver.ErrMissingMessageGroupID
 	}
 
+	// effectiveDedupID has already filled in the content hash when the queue
+	// uses content-based deduplication, so an empty ID here is a real error.
 	if input.DeduplicationID == "" {
-		return errors.New(errors.InvalidArgument, "DeduplicationID is required for FIFO queues")
+		return errors.New(errors.InvalidArgument,
+			"The queue should either have ContentBasedDeduplication enabled or MessageDeduplicationId provided explicitly")
 	}
 
 	return nil
@@ -1233,6 +1238,7 @@ func batchEntryToSendInput(queue string, entry *driver.BatchSendEntry) driver.Se
 		QueueURL:          queue,
 		Body:              entry.Body,
 		DelaySeconds:      entry.DelaySeconds,
+		DelaySecondsSet:   entry.DelaySecondsSet,
 		GroupID:           entry.GroupID,
 		DeduplicationID:   entry.DeduplicationID,
 		Attributes:        entry.Attributes,

@@ -17,6 +17,13 @@ import (
 var ErrMissingParameter = errors.New(errors.InvalidArgument,
 	"The request must contain the parameter MessageBody.")
 
+// ErrMissingMessageGroupID is returned by SendMessage when a FIFO queue gets a
+// message with no MessageGroupId. Real SQS reports it as MissingParameter.
+//
+//nolint:revive // exact SQS MissingParameter wording, surfaced verbatim to the SDK
+var ErrMissingMessageGroupID = errors.New(errors.InvalidArgument,
+	"The request must contain the parameter MessageGroupId.")
+
 // ErrInvalidMessageContents is returned by SendMessage when the body holds a
 // character outside the set SQS allows, or is not valid UTF-8. Real SQS
 // reports it as InvalidMessageContents. It carries InvalidArgument for the
@@ -120,9 +127,14 @@ type MessageAttributeValue struct {
 
 // SendMessageInput configures a message send operation.
 type SendMessageInput struct {
-	QueueURL        string
-	Body            string
-	DelaySeconds    int
+	QueueURL     string
+	Body         string
+	DelaySeconds int
+	// DelaySecondsSet reports that DelaySeconds was supplied explicitly, so an
+	// explicit 0 overrides the queue's default delay. The SQS wire handler
+	// sets it. The typed Go API leaves it false, where 0 means "use the
+	// queue default". Ignored by non-AWS providers.
+	DelaySecondsSet bool
 	GroupID         string // FIFO only
 	DeduplicationID string // FIFO only
 	Attributes      map[string]string
@@ -206,9 +218,11 @@ type Message struct {
 
 // BatchSendEntry represents a single message in a batch send.
 type BatchSendEntry struct {
-	ID                string
-	Body              string
-	DelaySeconds      int
+	ID           string
+	Body         string
+	DelaySeconds int
+	// DelaySecondsSet has the same meaning as on SendMessageInput.
+	DelaySecondsSet   bool
 	GroupID           string
 	DeduplicationID   string
 	Attributes        map[string]string

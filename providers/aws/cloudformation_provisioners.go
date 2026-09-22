@@ -50,6 +50,56 @@ func physicalName(req *cfn.ResourceRequest, key string, lower bool) string {
 	return name
 }
 
+// SQS name limits that shape a CloudFormation-generated queue name.
+const (
+	sqsMaxQueueName     = 80
+	sqsMaxFIFOQueueBase = 75
+	cfnNameSuffixLen    = 12
+	cfnNameSeparators   = 2 // the two "-" between stack, logical ID and suffix
+)
+
+// generatedQueueName builds the name CloudFormation gives a queue with no
+// QueueName: {stack}-{logicalId}-{suffix}. SQS caps names at 80 characters,
+// so CloudFormation shortens the stack name and logical ID to fit and keeps
+// the random suffix whole. A FIFO queue keeps 75 for the base and ends in
+// ".fifo", because SQS requires the suffix.
+func generatedQueueName(stack, logicalID string, fifo bool) string {
+	limit := sqsMaxQueueName
+	if fifo {
+		limit = sqsMaxFIFOQueueBase
+	}
+
+	suffix := strings.ReplaceAll(idgen.UUID(), "-", "")[:cfnNameSuffixLen]
+	stack, logicalID = fitNameParts(stack, logicalID, limit-len(suffix)-cfnNameSeparators)
+
+	name := stack + "-" + logicalID + "-" + suffix
+	if fifo {
+		name += ".fifo"
+	}
+
+	return name
+}
+
+// fitNameParts shortens a and b so their combined length is at most budget.
+// Each part gets half the budget, and a part shorter than its half gives the
+// unused room to the other.
+func fitNameParts(a, b string, budget int) (fitA, fitB string) {
+	if len(a)+len(b) <= budget {
+		return a, b
+	}
+
+	half := budget / 2
+
+	switch {
+	case len(a) < half:
+		return a, b[:budget-len(a)]
+	case len(b) < half:
+		return a[:budget-len(b)], b
+	default:
+		return a[:half], b[:budget-half]
+	}
+}
+
 // --- AWS::S3::Bucket ---
 
 type s3BucketProvisioner struct{ s3 storagedriver.Bucket }
@@ -143,11 +193,16 @@ type sqsQueueProvisioner struct{ sqs mqdriver.MessageQueue }
 
 //nolint:gocritic // hugeParam: interface method signature is fixed.
 func (p sqsQueueProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
-	name := physicalName(&req, "QueueName", false)
+	fifo := propBool(req.Properties, "FifoQueue")
+	name := cfn.PropString(req.Properties, "QueueName")
+
+	if name == "" {
+		name = generatedQueueName(req.StackName, req.LogicalID, fifo)
+	}
 
 	cfg := mqdriver.QueueConfig{
 		Name:              name,
-		FIFO:              propBool(req.Properties, "FifoQueue") || strings.HasSuffix(name, ".fifo"),
+		FIFO:              fifo || strings.HasSuffix(name, ".fifo"),
 		DelaySeconds:      propInt(req.Properties, "DelaySeconds"),
 		VisibilityTimeout: propInt(req.Properties, "VisibilityTimeout"),
 		MaxMessageSize:    propInt(req.Properties, "MaximumMessageSize"),

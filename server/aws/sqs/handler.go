@@ -280,7 +280,7 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QueueURL          string                          `json:"QueueUrl"`
 		MessageBody       string                          `json:"MessageBody"`
-		DelaySeconds      int                             `json:"DelaySeconds"`
+		DelaySeconds      *int                            `json:"DelaySeconds"`
 		GroupID           string                          `json:"MessageGroupId"`
 		DeduplicationID   string                          `json:"MessageDeduplicationId"`
 		MessageAttributes map[string]wireMessageAttribute `json:"MessageAttributes"`
@@ -302,7 +302,8 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	out, err := h.mq.SendMessage(r.Context(), mqdriver.SendMessageInput{
 		QueueURL:          req.QueueURL,
 		Body:              req.MessageBody,
-		DelaySeconds:      req.DelaySeconds,
+		DelaySeconds:      derefInt(req.DelaySeconds),
+		DelaySecondsSet:   req.DelaySeconds != nil,
 		GroupID:           req.GroupID,
 		DeduplicationID:   req.DeduplicationID,
 		MessageAttributes: msgAttrs,
@@ -541,7 +542,7 @@ func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
 		Entries  []struct {
 			ID                     string                          `json:"Id"`
 			MessageBody            string                          `json:"MessageBody"`
-			DelaySeconds           int                             `json:"DelaySeconds"`
+			DelaySeconds           *int                            `json:"DelaySeconds"`
 			MessageGroupID         string                          `json:"MessageGroupId"`
 			MessageDeduplicationID string                          `json:"MessageDeduplicationId"`
 			MessageAttributes      map[string]wireMessageAttribute `json:"MessageAttributes"`
@@ -584,7 +585,8 @@ func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, mqdriver.BatchSendEntry{
 			ID:                req.Entries[i].ID,
 			Body:              req.Entries[i].MessageBody,
-			DelaySeconds:      req.Entries[i].DelaySeconds,
+			DelaySeconds:      derefInt(req.Entries[i].DelaySeconds),
+			DelaySecondsSet:   req.Entries[i].DelaySeconds != nil,
 			GroupID:           req.Entries[i].MessageGroupID,
 			DeduplicationID:   req.Entries[i].MessageDeduplicationID,
 			MessageAttributes: msgAttrs,
@@ -1192,7 +1194,7 @@ func derefInt(p *int) int {
 // writeErr maps CloudEmu canonical errors to SQS-shaped HTTP error responses.
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
-	case errors.Is(err, mqdriver.ErrMissingParameter):
+	case errors.Is(err, mqdriver.ErrMissingParameter), errors.Is(err, mqdriver.ErrMissingMessageGroupID):
 		wire.WriteJSONError(w, http.StatusBadRequest, "MissingParameter", cerrors.Message(err))
 	case errors.Is(err, mqdriver.ErrInvalidMessageContents):
 		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidMessageContents", cerrors.Message(err))

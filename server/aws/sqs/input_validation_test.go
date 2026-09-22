@@ -188,6 +188,57 @@ func TestReceiveMessageExplicitZeroOnWire(t *testing.T) {
 	}
 }
 
+// An explicit DelaySeconds of 0 on the wire overrides the queue delay. The Go
+// SDK drops a zero value, so this test posts raw JSON.
+func TestSendMessageExplicitZeroDelayOnWire(t *testing.T) {
+	cloud := cloudemu.NewAWS()
+	ts := httptest.NewServer(awsserver.New(awsserver.Drivers{SQS: cloud.SQS}))
+	t.Cleanup(ts.Close)
+
+	created := postSQS(t, ts.URL, "CreateQueue", `{"QueueName":"delay-wire","Attributes":{"DelaySeconds":"60"}}`)
+	url, _ := created.body["QueueUrl"].(string)
+
+	postSQS(t, ts.URL, "SendMessage", `{"QueueUrl":"`+url+`","MessageBody":"now","DelaySeconds":0}`)
+	postSQS(t, ts.URL, "SendMessage", `{"QueueUrl":"`+url+`","MessageBody":"later"}`)
+
+	got := postSQS(t, ts.URL, "ReceiveMessage", `{"QueueUrl":"`+url+`","MaxNumberOfMessages":10}`)
+
+	msgs, _ := got.body["Messages"].([]any)
+	if len(msgs) != 1 {
+		t.Fatalf("got %d visible messages, want only the one sent with DelaySeconds=0", len(msgs))
+	}
+
+	if body, _ := msgs[0].(map[string]any)["Body"].(string); body != "now" {
+		t.Fatalf("visible message body = %q, want now", body)
+	}
+}
+
+func TestSDKFIFOMissingGroupAndDedupCodes(t *testing.T) {
+	client, _ := newSDKClient(t)
+	ctx := context.Background()
+
+	q, err := client.CreateQueue(ctx, &awssqs.CreateQueueInput{
+		QueueName: aws.String("fifo-codes.fifo"), Attributes: map[string]string{"FifoQueue": "true"},
+	})
+	if err != nil {
+		t.Fatalf("CreateQueue: %v", err)
+	}
+
+	_, err = client.SendMessage(ctx, &awssqs.SendMessageInput{
+		QueueUrl: q.QueueUrl, MessageBody: aws.String("x"), MessageDeduplicationId: aws.String("d"),
+	})
+	if code := apiErrorCode(t, err); code != "MissingParameter" {
+		t.Errorf("no MessageGroupId: code = %q, want MissingParameter", code)
+	}
+
+	_, err = client.SendMessage(ctx, &awssqs.SendMessageInput{
+		QueueUrl: q.QueueUrl, MessageBody: aws.String("x"), MessageGroupId: aws.String("g"),
+	})
+	if code := apiErrorCode(t, err); code != "InvalidParameterValue" {
+		t.Errorf("no MessageDeduplicationId: code = %q, want InvalidParameterValue", code)
+	}
+}
+
 type sqsReply struct {
 	status  int
 	errType string
