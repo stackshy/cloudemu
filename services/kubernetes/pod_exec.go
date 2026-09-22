@@ -39,8 +39,8 @@ func serveExecAttach(w http.ResponseWriter, r *http.Request, route *Route) {
 // execChannelProtocols builds the remotecommand channel protocol map: stdin=0,
 // stdout=1, stderr=2, error=3, resize=4. It adds v4/v5.channel.k8s.io, which
 // wsstream.NewDefaultChannelProtocols omits (it registers only ""/channel.k8s.io/
-// base64.channel.k8s.io), so kubectl >=1.29 and Helm v4 — which negotiate the
-// WebSocket v5 CLOSE protocol — are honored.
+// base64.channel.k8s.io), so kubectl >=1.29 and Helm v4, which negotiate the
+// WebSocket v5 CLOSE protocol, are honored.
 func execChannelProtocols() map[string]wsstream.ChannelProtocolConfig {
 	channels := []wsstream.ChannelType{
 		remotecommand.StreamStdIn:  wsstream.ReadChannel,
@@ -76,7 +76,7 @@ func runSyntheticExecSession(w http.ResponseWriter, r *http.Request, route *Rout
 	// Handshake succeeded (conn.ready is closed), so Close() won't block.
 	defer conn.Close()
 
-	// Drain stdin and resize so an interactive client isn't blocked — there is no
+	// Drain stdin and resize so an interactive client isn't blocked; there is no
 	// container to receive them. Both unblock when conn.Close closes the streams.
 	go func() { _, _ = io.Copy(io.Discard, streams[remotecommand.StreamStdIn]) }()
 	go func() { _, _ = io.Copy(io.Discard, streams[remotecommand.StreamResize]) }()
@@ -105,7 +105,7 @@ func writeExecBanner(stdout io.Writer, r *http.Request, route *Route) {
 	}
 }
 
-// writeExecStatus writes a Success metav1.Status to the error channel — the
+// writeExecStatus writes a Success metav1.Status to the error channel, the
 // remotecommand exit-0 signal.
 func writeExecStatus(errStream io.Writer) {
 	data, err := json.Marshal(&metav1.Status{

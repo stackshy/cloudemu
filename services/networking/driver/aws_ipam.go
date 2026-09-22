@@ -2,7 +2,7 @@ package driver
 
 import "context"
 
-// ---- AWS IPAM (IP Address Manager) — OPTIONAL capability (type-asserted) ----
+// ---- AWS IPAM (IP Address Manager): OPTIONAL capability (type-asserted) ----
 //
 // IPAM is an AWS-only VPC feature exposed on the EC2 query API. Like the other
 // AWS networking specifics it is an optional capability discovered via a type

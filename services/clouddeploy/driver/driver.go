@@ -1,5 +1,5 @@
 // Package driver defines the portable interface for the Google Cloud Deploy
-// control plane (clouddeploy.googleapis.com/v1). It is control-plane only — the
+// control plane (clouddeploy.googleapis.com/v1). It is control-plane only: the
 // two location-scoped resource collections a Terraform google provider or a
 // real google.golang.org/api/clouddeploy/v1 client CRUDs are modeled:
 //
@@ -16,7 +16,7 @@
 // scope (see BUILDOUT_BACKLOG.md).
 //
 // Both resources carry a small set of identity + computed fields (id, uid,
-// createTime, updateTime, etag, and — for a pipeline — a computed condition)
+// createTime, updateTime, etag, and, for a pipeline, a computed condition)
 // plus a body of caller-supplied config sub-blocks (serialPipeline, the target
 // deployment-target oneof, executionConfigs, …) that round-trips verbatim. The
 // verbatim body is carried as Fields so deep, loosely-typed sub-blocks need not

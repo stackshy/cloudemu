@@ -4,9 +4,9 @@
 // resource tagging.
 //
 // The emulator is control-plane only: it does not ingest, store or query
-// Prometheus metrics. It models the fields clients and IaC tools read back — the
+// Prometheus metrics. It models the fields clients and IaC tools read back: the
 // computed workspace arn, workspaceId (ws-<uuid>), prometheusEndpoint, status
-// and createdAt — minted once at create and returned unchanged on every later
+// and createdAt are minted once at create and returned unchanged on every later
 // read so a Terraform plan never drifts. A workspace, a rule-groups namespace,
 // an alert-manager definition and a logging configuration are each created
 // directly in the ACTIVE state so IaC waiters that block on status do not hang.

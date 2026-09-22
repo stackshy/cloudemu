@@ -68,7 +68,7 @@ func TestEviction_BlockedByPDB(t *testing.T) {
 		t.Fatalf("status reason: got %q, want TooManyRequests", status.Reason)
 	}
 
-	// The Pod must still be there — the eviction was refused, not merely
+	// The Pod must still be there: the eviction was refused, not merely
 	// reported as refused.
 	resp = do(t, http.MethodGet, base+"/api/v1/namespaces/default/pods/web-1", nil)
 	if resp.StatusCode != http.StatusOK {

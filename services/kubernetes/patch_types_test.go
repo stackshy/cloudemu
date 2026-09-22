@@ -9,7 +9,7 @@ import (
 
 // kubectl uses strategic-merge-patch for `set`/`edit`/`label` and json-patch
 // for `patch --type=json`; client-go uses merge-patch. All must work on the
-// typed handlers (Deployment) — previously only merge-patch was accepted.
+// typed handlers (Deployment); previously only merge-patch was accepted.
 
 func patchReq(t *testing.T, url, contentType string, body []byte) *http.Response {
 	t.Helper()
@@ -48,7 +48,7 @@ func TestTypedPatch_StrategicAndJSONPatch(t *testing.T) {
 
 	depURL := base + "/apis/apps/v1/namespaces/default/deployments/web"
 
-	// strategic-merge-patch (kubectl set image) — the container list merges by
+	// strategic-merge-patch (kubectl set image): the container list merges by
 	// name, so the image changes while the existing port is preserved.
 	smp := []byte(`{"spec":{"template":{"spec":{"containers":[{"name":"web","image":"nginx:1.28"}]}}}}`)
 	resp := patchReq(t, depURL, "application/strategic-merge-patch+json", smp)
@@ -65,7 +65,7 @@ func TestTypedPatch_StrategicAndJSONPatch(t *testing.T) {
 		t.Fatalf("containerPort after strategic merge = %d, want 80 (strategic merge must not drop it)", port)
 	}
 
-	// json-patch (RFC 6902) — replace replicas.
+	// json-patch (RFC 6902): replace replicas.
 	jp := []byte(`[{"op":"replace","path":"/spec/replicas","value":3}]`)
 	resp2 := patchReq(t, depURL, "application/json-patch+json", jp)
 	resp2.Body.Close()

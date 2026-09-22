@@ -199,7 +199,7 @@ type GCPSecretPatch struct {
 
 	// Etag is the caller-supplied optimistic-concurrency precondition: when
 	// non-empty, the patch is only applied if it matches the secret's currently
-	// stored etag (real GCP's leniency — an empty Etag always skips the check).
+	// stored etag (real GCP's leniency: an empty Etag always skips the check).
 	Etag string
 }
 
@@ -207,7 +207,7 @@ type GCPSecretPatch struct {
 // version lifecycle verb or secrets.patch) that did not match the currently
 // stored resource's etag. Real Secret Manager answers 412 Precondition Failed
 // with reason "conditionNotMet", matching GCS/Compute Engine's fingerprint
-// convention elsewhere in cloudemu — which does NOT map to the canonical
+// convention elsewhere in cloudemu, which does NOT map to the canonical
 // FailedPrecondition→409 the gcprest default uses, so providers return this
 // typed error and the handler matches it with errors.As to emit the exact 412.
 type GCPSecretPreconditionError struct {
@@ -236,7 +236,7 @@ type GCPIAMPolicy struct {
 }
 
 // GCPSecrets is the GCP Secret Manager-specific surface kept off the shared
-// Secrets interface — a type-asserted optional interface — so the AWS and Azure
+// Secrets interface (a type-asserted optional interface) so the AWS and Azure
 // providers need not model version lifecycle, secret patch, or IAM semantics.
 type GCPSecrets interface {
 	// EnableSecretVersion moves a version to ENABLED. It is idempotent on an
@@ -327,8 +327,8 @@ type KVDeletedSecret struct {
 
 // KeyVaultSecrets is the Azure Key Vault-specific secret surface: per-version
 // content type and attributes (enabled/exp/nbf), update, soft-delete/recover,
-// and backup/restore. It is kept off the shared Secrets interface — a
-// type-asserted optional interface — so the AWS and GCP providers need not
+// and backup/restore. It is kept off the shared Secrets interface (a
+// type-asserted optional interface) so the AWS and GCP providers need not
 // model Key Vault semantics.
 //
 // Every method takes vault, the vault name the request is scoped to (derived

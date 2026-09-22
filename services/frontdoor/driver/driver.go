@@ -3,8 +3,8 @@
 // child resource types: afdEndpoints and originGroups.
 //
 // The modern Front Door is an Azure-only ARM "echo-class" surface. Unlike
-// Application Gateway — whose children are inline-only pieces of a single
-// whole-resource PUT — a Front Door endpoint and origin group each have their own
+// Application Gateway, whose children are inline-only pieces of a single
+// whole-resource PUT, a Front Door endpoint and origin group each have their own
 // PUT/GET/DELETE/List operation group under
 // .../profiles/{profile}/afdEndpoints/{ep} and .../profiles/{profile}/originGroups/{og}.
 // So the store is a parent profile store plus two child stores, each keyed by ARM
@@ -16,9 +16,9 @@
 // explicitly: the profile's sku, location, kind and identity are top-level (outside
 // the "properties" object the echo reaches), and the computed frontDoorId and
 // endpoint hostName are derived deterministically by the wire handler so they stay
-// stable across GETs. Everything else — a profile's originResponseTimeoutSeconds and
+// stable across GETs. Everything else (a profile's originResponseTimeoutSeconds and
 // deferred properties, an endpoint's enabledState, an origin group's
-// loadBalancingSettings/healthProbeSettings and so on — is kept verbatim as generic
+// loadBalancingSettings/healthProbeSettings and so on) is kept verbatim as generic
 // JSON so explicit values (including an explicit 0 or false) round-trip unchanged.
 // AWS and GCP have no equivalent.
 package driver

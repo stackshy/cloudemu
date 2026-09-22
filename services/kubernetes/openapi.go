@@ -13,7 +13,7 @@ import (
 // kubectl (>=1.24) validates `apply`/`create` payloads against the server's
 // OpenAPI document and PREFERS v3. For each object it looks the GVK up in the
 // v3 group document; if it isn't found kubectl falls back to fetching
-// /openapi/v2 as *protobuf* — which the emulator does not encode — and
+// /openapi/v2 as *protobuf*, which the emulator does not encode, so
 // `kubectl apply` then dies with "failed to download openapi" before ever
 // sending the object.
 //
@@ -121,7 +121,7 @@ func openAPIV3Root() map[string]any {
 }
 
 func groupV3Ref(p string) map[string]any {
-	// A static hash is fine — the document never changes for the process, and
+	// A static hash is fine: the document never changes for the process, and
 	// kubectl only uses the hash to cache-bust, not to validate.
 	return map[string]any{"serverRelativeURL": "/openapi/v3/" + p + "?hash=cloudemu"}
 }
@@ -189,7 +189,7 @@ func kindsForGroupVersion(group, version string) []string {
 	kinds := make([]string, 0, len(res))
 
 	for _, r := range res {
-		// Skip subresources (name contains '/', e.g. deployments/scale) — they
+		// Skip subresources (name contains '/', e.g. deployments/scale): they
 		// share their parent's Kind and aren't separately validated.
 		if strings.Contains(r.Name, "/") || seen[r.Kind] {
 			continue

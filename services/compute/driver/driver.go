@@ -45,7 +45,7 @@ type InstanceConfig struct {
 	// Identity is the ARM managed-identity block to attach at launch (Azure
 	// VM identity.type / identity.userAssignedIdentities), when set. Only
 	// Type and UserAssigned (the caller-supplied identity resource IDs) are
-	// meaningful on input — PrincipalID/TenantID/ClientID are provider-
+	// meaningful on input; PrincipalID/TenantID/ClientID are provider-
 	// synthesized output, ignored here. Ignored by AWS/GCP.
 	Identity *ManagedIdentity
 	// Plan is the ARM marketplace purchase plan to record on the VM at launch
@@ -71,7 +71,7 @@ type InstanceConfig struct {
 	// initializeParams, Azure storageProfile.osDisk + dataDisks). The provider
 	// materializes a real backing volume resource for each one, attached to the
 	// launched instance. Provider-neutral and additive: a caller that leaves it
-	// nil (as Azure/GCP do today) keeps the pre-existing behavior — the AWS
+	// nil (as Azure/GCP do today) keeps the pre-existing behavior: the AWS
 	// provider then synthesizes a single default root volume.
 	BlockDeviceMappings []BlockDeviceMapping
 }
@@ -153,7 +153,7 @@ type Instance struct {
 	LaunchTime     string
 	// OSType is the guest OS family ("Linux"/"Windows"), when known.
 	OSType string
-	// Priority is the provisioning priority ("Spot"/"Regular"), when known —
+	// Priority is the provisioning priority ("Spot"/"Regular"), when known;
 	// used by cost consumers to price interruptible instances.
 	Priority string
 	// LicenseType is a bring-your-own-license / hybrid-benefit marker
@@ -434,7 +434,7 @@ type VolumeConfig struct {
 	AvailabilityZone string
 	Tags             map[string]string
 	// IOPS / Throughput are the provisioned performance for io2/gp3 and Azure
-	// Premium SSD v2 / Ultra disks — cost inputs a discoverer prices on. Zero
+	// Premium SSD v2 / Ultra disks: cost inputs a discoverer prices on. Zero
 	// means unset (the volume then reports 0, omitted downstream).
 	IOPS       int
 	Throughput int
@@ -781,9 +781,9 @@ type AzureVMController interface {
 	// ARM CreateOrUpdate.
 	UpdateInstance(ctx context.Context, instanceID string, cfg InstanceConfig) error
 	// PatchInstance applies a merge-patch (ARM PATCH Update / BeginUpdate) to an
-	// existing instance: only the fields present in patch are applied — vmSize
+	// existing instance: only the fields present in patch are applied. vmSize
 	// resizes the VM, tags are MERGED into the existing tag set, and a non-nil
-	// identity replaces it — while everything omitted (priority, licenseType,
+	// identity replaces it, while everything omitted (priority, licenseType,
 	// existing tags, …) is left untouched. Unlike UpdateInstance's full cfg
 	// replace, this never blanks a field the PATCH body omitted.
 	PatchInstance(ctx context.Context, instanceID string, patch AzureVMPatch) error
@@ -799,7 +799,7 @@ type AzureVMController interface {
 type AzureVMPatch struct {
 	// VMSize, when non-empty, resizes the VM (hardwareProfile.vmSize).
 	VMSize string
-	// Tags, when non-nil, REPLACE the existing tags wholesale — real Azure's VM
+	// Tags, when non-nil, REPLACE the existing tags wholesale: real Azure's VM
 	// PATCH tags is a full replace, not a merge, despite PATCH otherwise reading
 	// as a merge-patch (a well-documented Azure Compute quirk). A nil map leaves
 	// the existing tags untouched.

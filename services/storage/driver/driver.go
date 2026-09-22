@@ -54,18 +54,18 @@ type AccountAttributes struct {
 	// back on GET / list.
 	Tags map[string]string
 	// MinimumTLSVersion is the account's minimum permitted TLS version
-	// (minimumTlsVersion — e.g. TLS1_0/TLS1_1/TLS1_2). Empty means unset; the
+	// (minimumTlsVersion, e.g. TLS1_0/TLS1_1/TLS1_2). Empty means unset; the
 	// handler renders the real-Azure default (TLS1_2) instead.
 	MinimumTLSVersion string
-	// PublicNetworkAccess gates public endpoint reachability (publicNetworkAccess
-	// — Enabled/Disabled/SecuredByPerimeter). Empty means unset; the handler
+	// PublicNetworkAccess gates public endpoint reachability (publicNetworkAccess:
+	// Enabled/Disabled/SecuredByPerimeter). Empty means unset; the handler
 	// renders the real-Azure default (Enabled).
 	PublicNetworkAccess string
 	// EnableHTTPSTrafficOnly, AllowBlobPublicAccess and AllowSharedKeyAccess are
 	// the account's security toggles (supportsHttpsTrafficOnly,
 	// allowBlobPublicAccess, allowSharedKeyAccess). They are pointers so an ARM
 	// PATCH can distinguish "field omitted" (leave as-is) from "explicitly set to
-	// false" — a distinction the value form would lose. Nil means unset; the
+	// false", a distinction the value form would lose. Nil means unset; the
 	// handler renders the real-Azure default (true / false / true respectively).
 	EnableHTTPSTrafficOnly *bool
 	AllowBlobPublicAccess  *bool
@@ -77,7 +77,7 @@ type AccountAttributes struct {
 	// ids synthesized for a system-assigned identity (empty otherwise), and
 	// UserAssignedIdentities holds the attached user-assigned identity resource
 	// IDs. Modeled here (not left to the echo overlay) because the identity
-	// block is a top-level ARM sibling of properties — the overlay only echoes
+	// block is a top-level ARM sibling of properties: the overlay only echoes
 	// unmodeled keys under properties, so a bare identity would be dropped.
 	IdentityType           string
 	IdentityPrincipalID    string
@@ -113,7 +113,7 @@ type AccountEncryptionConfig interface {
 // configured via Set/Get Blob Service Properties
 // (…/storageAccounts/{account}/blobServices/default): versioning, soft
 // delete, change feed, and CORS. Real Azure applies these once per storage
-// account, not per container — distinct from the per-bucket CORS/versioning
+// account, not per container, distinct from the per-bucket CORS/versioning
 // surface on the Bucket interface that S3/GCS also implement.
 type BlobServiceProperties struct {
 	IsVersioningEnabled bool
@@ -342,7 +342,7 @@ type AzureBlobExtensions interface {
 //
 // It is distinct from the S3-shaped VersionedBucket: Azure enables versioning
 // once at the account/blob-service level (not per bucket with a status) and does
-// not use delete markers — deleting the base blob simply retains the existing
+// not use delete markers: deleting the base blob simply retains the existing
 // versions. S3/GCS don't implement it.
 //
 // Note: version bytes are captured in memory at write time; combining an
@@ -447,7 +447,7 @@ type BlobImmutabilityPolicy struct {
 //
 // Note: real Azure blob-level immutability builds on versioning, where an
 // overwrite creates a new version and leaves the protected version intact;
-// cloudemu models the container-level WORM semantics the world-case targets —
+// cloudemu models the container-level WORM semantics the world-case targets:
 // while protected, both delete and overwrite of the blob are blocked.
 type AzureImmutableBlob interface {
 	// SetBlobImmutabilityPolicy sets (or updates) the blob's time-based
@@ -455,7 +455,7 @@ type AzureImmutableBlob interface {
 	// policy in the past is rejected. On an Unlocked policy the retain-until date
 	// may be raised or lowered and the mode may be promoted to Locked; on a
 	// Locked policy the date may only be extended and the mode can never revert
-	// to Unlocked — a disallowed change returns a FailedPrecondition error.
+	// to Unlocked; a disallowed change returns a FailedPrecondition error.
 	SetBlobImmutabilityPolicy(
 		ctx context.Context, container, blob string, policy BlobImmutabilityPolicy,
 	) (BlobImmutabilityPolicy, error)
@@ -479,7 +479,7 @@ type PageRange struct {
 }
 
 // AzurePageBlob is an OPTIONAL Azure-specific capability, discovered by type
-// assertion, that models page blobs — fixed-capacity blobs written in 512-byte
+// assertion, that models page blobs: fixed-capacity blobs written in 512-byte
 // pages at arbitrary offsets (the backing type for Azure managed disks). A page
 // blob is created empty at a declared size (all pages read as zeros); Put Page
 // writes an aligned range, Clear Page zeroes one, and Get Page Ranges reports
@@ -567,11 +567,11 @@ type ObjectInfo struct {
 	// AccessTier is the Azure blob access tier (Hot/Cool/Cold/Archive), set by
 	// Set Blob Tier. Empty when unset; non-Azure providers leave it empty.
 	AccessTier string
-	// Generation is the GCS object generation — a unique, monotonically
+	// Generation is the GCS object generation: a unique, monotonically
 	// increasing id minted on every write of the object's data. Zero for
 	// providers that don't model generations (S3/Azure).
 	Generation int64
-	// Metageneration is the GCS object metageneration — starts at 1 for each
+	// Metageneration is the GCS object metageneration: starts at 1 for each
 	// generation and increments on each metadata-only update. Zero for
 	// non-GCS providers.
 	Metageneration int64
@@ -602,12 +602,12 @@ type ObjectInfo struct {
 	// providers that don't model holds.
 	TemporaryHold  bool
 	EventBasedHold bool
-	// RetentionExpiration is the GCS retentionExpirationTime — the RFC3339 instant
+	// RetentionExpiration is the GCS retentionExpirationTime: the RFC3339 instant
 	// before which the object cannot be deleted or overwritten under the bucket's
 	// retention policy. Empty when the bucket has no retention policy (or an
 	// eventBasedHold is currently pinning the object).
 	RetentionExpiration string
-	// Deleted is the GCS timeDeleted (RFC3339) — the instant a version became
+	// Deleted is the GCS timeDeleted (RFC3339): the instant a version became
 	// noncurrent, either archived by an overwrite or a live delete on a
 	// versioning-enabled bucket. Empty for a live version, or for providers that
 	// don't model versioning/generations.
@@ -715,8 +715,8 @@ type ObjectRetention struct {
 // ObjectLockBucket is an OPTIONAL S3-specific capability (discovered by type
 // assertion, like VersionedBucket) that ENFORCES S3 Object Lock (WORM). Retention
 // (GOVERNANCE/COMPLIANCE + RetainUntilDate) and legal hold are recorded per
-// object version; while a version is protected — legal hold ON, or a retention
-// period that has not elapsed — its bytes cannot be permanently deleted or
+// object version; while a version is protected (legal hold ON, or a retention
+// period that has not elapsed) its bytes cannot be permanently deleted or
 // overwritten. A GOVERNANCE retention (but not the version's legal hold) can be
 // lifted with s3:BypassGovernanceRetention; a COMPLIANCE retention cannot be
 // shortened, removed, or bypassed by anyone until it expires. Object Lock builds
@@ -764,8 +764,8 @@ type ObjectLockBucket interface {
 
 // RawBucketConfig is an OPTIONAL capability (discovered by type assertion, like
 // VersionedBucket) a storage provider implements to persist and echo back opaque
-// bucket-configuration sub-resource documents — policy (JSON), cors, encryption,
-// lifecycle, website, and the like (XML) — byte-for-byte. The S3 handler uses it
+// bucket-configuration sub-resource documents (policy (JSON), cors, encryption,
+// lifecycle, website, and the like (XML)) byte-for-byte. The S3 handler uses it
 // to make PutBucketX/GetBucketX/DeleteBucketX round-trip; providers that don't
 // implement it fall back to the read-only "not configured" responses.
 type RawBucketConfig interface {
@@ -794,7 +794,7 @@ type CopyObjectRequest struct {
 	Src       CopySource
 	// SrcVersionID selects a specific source version ("" = current version).
 	SrcVersionID string
-	// ReplaceMetadata is true for x-amz-metadata-directive: REPLACE — the
+	// ReplaceMetadata is true for x-amz-metadata-directive: REPLACE. The
 	// destination takes Metadata and ContentType from the request instead of
 	// inheriting the source object's.
 	ReplaceMetadata bool
@@ -1216,7 +1216,7 @@ type GCSExtensions interface {
 	// *GCSPreconditionError (real GCS's 412 conditionNotMet); an empty
 	// expectedEtag is an unconditional write. The etag check and the write
 	// happen under a single lock, so concurrent setIamPolicy calls that all
-	// read the same etag can't all "win" — the lost update a separate
+	// read the same etag can't all "win": the lost update a separate
 	// BucketIAMPolicy-then-CompareAndSetBucketIAMPolicy pair would allow.
 	// policyJSON is the client's validated document (kind/resourceId already
 	// stamped by the caller, etag a placeholder); the implementation mints

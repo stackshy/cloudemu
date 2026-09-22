@@ -29,7 +29,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 }
 
 // writeStatus writes a metav1.Status response with the given code, reason,
-// and message — matching what a real apiserver returns for errors. client-go
+// and message, matching what a real apiserver returns for errors. client-go
 // decodes these as typed errors (kerrors.IsNotFound, IsAlreadyExists, etc.).
 func writeStatus(w http.ResponseWriter, code int, reason metav1.StatusReason, message string) {
 	writeJSON(w, code, &metav1.Status{
@@ -93,7 +93,7 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	// Kubernetes protobuf frames begin with the magic prefix "k8s\x00".
 	// kubectl and client-go send built-in kinds as protobuf on writes (their
 	// Accept header still allows JSON, which is why reads worked while writes
-	// arrived protobuf-framed). Decode them rather than rejecting — kubectl does
+	// arrived protobuf-framed). Decode them rather than rejecting: kubectl does
 	// NOT retry a write as JSON on 415, it surfaces the error, so a 415 here
 	// means `kubectl create/scale/apply` simply cannot write to the emulator.
 	if bytes.HasPrefix(body, protobufMagic) {

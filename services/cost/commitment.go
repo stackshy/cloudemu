@@ -129,7 +129,7 @@ type bucketMetric struct {
 // perBucketMetrics folds the line items into per-window accounting keyed by the
 // [UsageStart, UsageEnd) pair, in ascending start order for deterministic
 // output. covered is summed from the lines already tagged with a commitment
-// (CommitmentID set) — the single source of truth — so a caller that generated
+// (CommitmentID set), the single source of truth, so a caller that generated
 // the lines via LineItems sees coverage that matches those tags exactly.
 // available is the dollar commitment sampled at the bucket start.
 func perBucketMetrics(lines []LineItem, commitments []Commitment) []bucketMetric {
@@ -197,7 +197,7 @@ func availableCommitmentUSD(start, end time.Time, commitments []Commitment) floa
 //
 //	covered = min(spend, availableCommitment)
 //
-// holds by construction — the aggregate percentage never disagrees with the
+// holds by construction: the aggregate percentage never disagrees with the
 // per-line tags. A bucket with no spend contributes 0% coverage.
 func Coverage(lines []LineItem, commitments []Commitment) CoverageResult {
 	var res CoverageResult

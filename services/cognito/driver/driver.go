@@ -4,8 +4,8 @@
 //
 // This is the configuration control plane only: creating and reading the pool,
 // client, and domain resources and their settings. There is no authentication
-// data plane behind the emulator — sign-up, sign-in, token issuance, users, and
-// groups are out of scope — so a caller that only provisions Cognito resources
+// data plane behind the emulator: sign-up, sign-in, token issuance, users, and
+// groups are out of scope. A caller that only provisions Cognito resources
 // (Terraform, CloudFormation, the console's create flow) behaves as it would
 // against real Cognito, while token/user operations are deferred.
 package driver

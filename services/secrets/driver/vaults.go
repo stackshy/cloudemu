@@ -69,8 +69,8 @@ type KVVaultInfo struct {
 	Properties KVVaultProperties
 }
 
-// KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface —
-// Microsoft.KeyVault/vaults — kept off the shared Secrets interface as a
+// KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface
+// (Microsoft.KeyVault/vaults), kept off the shared Secrets interface as a
 // type-asserted optional interface, so only the Azure provider models the vault
 // resource-manager lifecycle. It is distinct from the data-plane
 // KeyVaultSecrets/KeyVaultKeys/KeyVaultCertificates surfaces, which manage the

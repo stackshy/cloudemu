@@ -18,7 +18,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// Operation values sent on the AdmissionRequest — the two this server ever
+// Operation values sent on the AdmissionRequest: the two this server ever
 // issues a write for (registryDelete has no admission call site: deletes
 // aren't in scope for this pass).
 const (
@@ -36,19 +36,19 @@ const (
 	defaultAdmissionTimeout = 5 * time.Second
 
 	// admissionDeniedStatusCode is the HTTP status used for a denial whose
-	// AdmissionResponse.status.code was left unset — matching real apiserver,
+	// AdmissionResponse.status.code was left unset, matching real apiserver,
 	// which defaults a webhook denial to 403 Forbidden.
 	admissionDeniedStatusCode = http.StatusForbidden
 )
 
 // gvr returns the GroupVersionResource a registry-backed kind is served
-// under — what a webhook's rules[] and an AdmissionRequest match against.
+// under: what a webhook's rules[] and an AdmissionRequest match against.
 func (d *resourceDef) gvr() metav1.GroupVersionResource {
 	return metav1.GroupVersionResource{Group: d.group, Version: d.version, Resource: d.plural}
 }
 
 // gvrPods and gvrDeployments are the GVRs for the two typed (non-registry)
-// write paths that run admission — core/v1 Pods and apps/v1 Deployments.
+// write paths that run admission: core/v1 Pods and apps/v1 Deployments.
 func gvrPods() metav1.GroupVersionResource {
 	return metav1.GroupVersionResource{Version: apiVersionV1, Resource: "pods"}
 }
@@ -58,7 +58,7 @@ func gvrDeployments() metav1.GroupVersionResource {
 }
 
 // webhookCall is the subset of a Mutating/ValidatingWebhook this server acts
-// on — the two webhook kinds are structurally identical here bar their Go
+// on. The two webhook kinds are structurally identical here bar their Go
 // type, so both extraction paths normalize into this.
 type webhookCall struct {
 	name          string
@@ -125,7 +125,7 @@ func webhookURL(cc admissionregv1.WebhookClientConfig) string {
 }
 
 // rawWebhook is the JSON shape shared by admissionregistration/v1's
-// MutatingWebhook and ValidatingWebhook — decoding into this one local type
+// MutatingWebhook and ValidatingWebhook. Decoding into this one local type
 // (rather than the full typed {Mutating,Validating}WebhookConfiguration)
 // lets webhookCallsFromConfig serve both kinds without duplicating the
 // extraction logic.
@@ -138,7 +138,7 @@ type rawWebhook struct {
 
 // webhookCallsFromConfig decodes the webhooks[] of one stored
 // {Mutating,Validating}WebhookConfiguration into webhookCalls this server can
-// invoke. Service-ref clientConfig is not supported — only a direct
+// invoke. Service-ref clientConfig is not supported: only a direct
 // clientConfig.url, per this phase's scope.
 func webhookCallsFromConfig(cfg *unstructured.Unstructured) []webhookCall {
 	items, found, err := unstructured.NestedSlice(cfg.Object, "webhooks")
@@ -199,9 +199,9 @@ func (s *ClusterState) matchingWebhooksLocked(plural, op string, gvr metav1.Grou
 
 // runAdmission runs every matching mutating webhook (applying its patch, if
 // any, before the next one sees the object) and then every matching
-// validating webhook against the final object. Callers hold s.mu — the
-// outbound HTTP call therefore runs with the cluster lock held, which is an
-// accepted simplification for an opt-in, deliberately non-concurrent mock.
+// validating webhook against the final object. Callers hold s.mu, so the
+// outbound HTTP call runs with the cluster lock held, which is an accepted
+// simplification for an opt-in, deliberately non-concurrent mock.
 //
 // Returns the mutated object (nil if no mutating webhook patched it) and, on
 // a denial or an unrecoverable failurePolicy=Fail error, the Status to
@@ -293,7 +293,7 @@ func deniedStatus(name string, result *metav1.Status) *metav1.Status {
 // applyAdmissionPatch applies a mutating webhook's JSONPatch (RFC 6902)
 // response to cur, returning ok=false if the response carried no patch or
 // the patch didn't apply cleanly (treated as a no-op mutation rather than a
-// hard failure — only allowed/denied is contractual).
+// hard failure; only allowed/denied is contractual).
 func applyAdmissionPatch(cur *unstructured.Unstructured, resp *admissionv1.AdmissionResponse) (*unstructured.Unstructured, bool) {
 	if resp == nil || len(resp.Patch) == 0 || resp.PatchType == nil || *resp.PatchType != admissionv1.PatchTypeJSONPatch {
 		return nil, false
@@ -324,7 +324,7 @@ func applyAdmissionPatch(cur *unstructured.Unstructured, resp *admissionv1.Admis
 
 // postAdmissionReview POSTs an AdmissionReview request for obj to wh.url and
 // decodes the response. ok=false covers every way the call didn't produce a
-// usable AdmissionResponse (no URL configured, transport error, bad JSON) —
+// usable AdmissionResponse (no URL configured, transport error, bad JSON);
 // the caller applies failurePolicy to decide what that means.
 func (s *ClusterState) postAdmissionReview(
 	wh webhookCall, op string, gvr metav1.GroupVersionResource, obj *unstructured.Unstructured,

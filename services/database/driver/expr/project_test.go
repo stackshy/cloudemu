@@ -90,7 +90,7 @@ func TestProjectMultipleListIndexesCompact(t *testing.T) {
 		"tags": []any{"a", "b", "c", "d"},
 	}
 
-	// Projected out of order — the result is ordered by source index, gaps dropped.
+	// Projected out of order; the result is ordered by source index, gaps dropped.
 	paths, err := ParseProjection("tags[2], tags[0]", nil)
 	require.NoError(t, err)
 

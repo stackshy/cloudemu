@@ -8,8 +8,8 @@
 // engine. A collection is created directly in the ACTIVE state so an IaC waiter
 // that blocks on status (Terraform's aws_opensearchserverless_collection polls
 // BatchGetCollection for ACTIVE) does not hang. The computed fields clients and
-// IaC tools read back — the collection id ([a-z0-9]{20}), the derived arn, the
-// collectionEndpoint/dashboardEndpoint, the status and the createdDate — are
+// IaC tools read back (the collection id ([a-z0-9]{20}), the derived arn, the
+// collectionEndpoint/dashboardEndpoint, the status and the createdDate) are
 // minted once at create and stored, so repeated BatchGetCollection/
 // ListCollections reads and a later UpdateCollection never drift. A policy's
 // policyVersion is minted at create and re-minted on update (monotonic in the

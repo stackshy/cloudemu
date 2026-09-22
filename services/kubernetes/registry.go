@@ -62,7 +62,7 @@ type registryStore struct {
 
 // registry maps a group/version/plural to its store. The stores map is fixed at
 // construction for built-in kinds but grows/shrinks at runtime as CRDs are
-// created/deleted, so all access is guarded by mu. (Store CONTENTS — items/rv —
+// created/deleted, so all access is guarded by mu. (Store CONTENTS, items/rv,
 // remain guarded by the owning ClusterState's mutex; mu guards only the set of
 // stores.)
 type registry struct {
@@ -115,7 +115,7 @@ func (r *registry) storeForKey(key string) *registryStore {
 	return r.stores[key]
 }
 
-// addStore materializes a store for a (CRD-defined) kind if absent. Idempotent —
+// addStore materializes a store for a (CRD-defined) kind if absent. Idempotent:
 // re-applying a CRD keeps the existing store and its objects.
 func (r *registry) addStore(d *resourceDef) {
 	r.mu.Lock()
@@ -355,7 +355,7 @@ func (s *ClusterState) registryCreate(w http.ResponseWriter, r *http.Request, st
 	obj.SetCreationTimestamp(s.now())
 	obj.SetGeneration(1)
 
-	// Admission (opt-in) is the first gate — before dry-run echoes or quota is
+	// Admission (opt-in) is the first gate, before dry-run echoes or quota is
 	// reserved, so a denied create leaks neither.
 	if handled := s.admit(w, opCreate, st.def.gvr(), obj); handled {
 		return
@@ -363,7 +363,7 @@ func (s *ClusterState) registryCreate(w http.ResponseWriter, r *http.Request, st
 
 	if isDryRun(r) {
 		// A dry-run must report the same 403 a real create would when the
-		// namespace is at its quota limit — check (without reserving) before echo.
+		// namespace is at its quota limit: check (without reserving) before echo.
 		if status := s.checkQuotaLocked(namespace, st.def.kind, st.def.plural); status != nil {
 			writeJSON(w, int(status.Code), status)
 
@@ -439,7 +439,7 @@ func (s *ClusterState) registryUpdate(w http.ResponseWriter, r *http.Request, st
 	// deletionTimestamp is server-owned: a PUT can drop a finalizer but must not
 	// resurrect a Terminating object by omitting the timestamp.
 	in.SetDeletionTimestamp(cur.GetDeletionTimestamp())
-	// Bump generation when the spec changed — controllers compare it against
+	// Bump generation when the spec changed; controllers compare it against
 	// status.observedGeneration.
 	if specChanged(cur, in) {
 		in.SetGeneration(cur.GetGeneration() + 1)
@@ -497,7 +497,7 @@ func (s *ClusterState) registryPatch(w http.ResponseWriter, r *http.Request, st 
 
 	// Snapshot server-owned metadata before the patch so an RFC-7396 null-delete
 	// (e.g. `{"metadata":{"deletionTimestamp":null}}`) cannot resurrect or
-	// re-identify the object — mirrors the PUT path's guard.
+	// re-identify the object: mirrors the PUT path's guard.
 	prevDeletion := cur.GetDeletionTimestamp()
 	prevUID := cur.GetUID()
 	prevCreation := cur.GetCreationTimestamp()
@@ -727,7 +727,7 @@ func (*ClusterState) applyUnstructuredPatch(
 	}
 
 	// JSONPatch (RFC 6902) is op-based; everything else (merge, strategic-merge,
-	// apply) is applied as an RFC 7396 merge — unstructured has no struct tags
+	// apply) is applied as an RFC 7396 merge. unstructured has no struct tags
 	// for real strategic merging, so strategic degrades to merge (documented).
 	var merged []byte
 
@@ -760,8 +760,8 @@ func (*ClusterState) applyUnstructuredPatch(
 // json.Unmarshal into a map): the unstructured scheme preserves whole-number
 // JSON as int64, whereas encoding/json yields float64. unstructured.NestedInt64
 // accepts only int64, so a float64 would make every integer field (notably
-// spec.replicas) read as 0 — a merge-patch to scale up would silently scale the
-// workload to zero.
+// spec.replicas) read as 0, and a merge-patch to scale up would silently scale
+// the workload to zero.
 func decodeUnstructured(w http.ResponseWriter, merged []byte) (*unstructured.Unstructured, bool) {
 	out := &unstructured.Unstructured{}
 	if err := out.UnmarshalJSON(merged); err != nil {
@@ -804,7 +804,7 @@ func specChanged(a, b *unstructured.Unstructured) bool {
 }
 
 // parseFieldSelector parses a comma-separated key=value field selector. Only
-// the metadata.name / metadata.namespace / status.phase fields are honored —
+// the metadata.name / metadata.namespace / status.phase fields are honored,
 // the ones real clients actually select on for the supported kinds.
 func parseFieldSelector(sel string) map[string]string {
 	if sel == "" {
@@ -829,7 +829,7 @@ const (
 	fieldMetadataNamespace = "metadata.namespace"
 	fieldStatusPhase       = "status.phase"
 	fieldSpecNodeName      = "spec.nodeName"
-	// Event field selectors — `kubectl get events --field-selector` and
+	// Event field selectors: `kubectl get events --field-selector` and
 	// controllers filtering their own Events rely on these. Without them the
 	// generic store fell closed (returned nothing) for any Event filter.
 	fieldInvolvedName      = "involvedObject.name"
@@ -851,7 +851,7 @@ func matchesFields(obj *unstructured.Unstructured, fields map[string]string) boo
 }
 
 // matchesField answers a single field-selector clause. Unknown keys fail closed
-// (match nothing) rather than silently returning everything — a data-correctness
+// (match nothing) rather than silently returning everything, a data-correctness
 // hazard for callers that expect the filter to be honored.
 func matchesField(obj *unstructured.Unstructured, key, want string) bool {
 	switch key {

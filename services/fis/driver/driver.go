@@ -6,8 +6,8 @@
 // experiment template is created synchronously with stable computed fields (id,
 // arn, creationTime and lastUpdateTime) minted once at create and stored, so
 // repeated GetExperimentTemplate and ListExperimentTemplates reads never drift.
-// StartExperiment materializes an experiment from a template — copying its
-// actions, targets, stop conditions, role and log configuration verbatim — and
+// StartExperiment materializes an experiment from a template, copying its
+// actions, targets, stop conditions, role and log configuration verbatim, and
 // the experiment advances initiating -> running -> completed on the clock, its
 // run length derived from its actions' duration parameters; StopExperiment
 // moves an initiating or running experiment to the stopped terminal state. The experiment id, arn, state, creationTime and startTime are

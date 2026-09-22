@@ -10,8 +10,8 @@
 // A distribution's DistributionConfig is a large, open-ended XML sub-tree that
 // must round-trip byte-for-byte (Terraform diffs it deeply on every plan, so a
 // single dropped field is perpetual drift). Rather than model every nested
-// field as a Go type, the config is carried verbatim as ConfigXML — the inner
-// XML of the <DistributionConfig> element — exactly as GuardDuty carries
+// field as a Go type, the config is carried verbatim as ConfigXML: the inner
+// XML of the <DistributionConfig> element, exactly as GuardDuty carries
 // open-ended feature blocks as raw JSON. The handful of scalars the emulator
 // must interpret (CallerReference for dedup, Enabled for the delete-guard,
 // Comment) are lifted out alongside it.
@@ -25,7 +25,7 @@ import (
 
 // Status values a distribution reports. The emulator has no asynchronous
 // propagation, so a distribution is Deployed the moment it is created or
-// updated — this is deliberate: aws_cloudfront_distribution blocks on a
+// updated. This is deliberate: aws_cloudfront_distribution blocks on a
 // Status=Deployed waiter, and a distribution stuck InProgress would hang the
 // apply forever.
 const (
@@ -43,27 +43,27 @@ const (
 // and HTTP statuses. They are distinct because CloudFront distinguishes an
 // If-Match ETag mismatch (PreconditionFailed, HTTP 412) from a delete of an
 // enabled distribution (DistributionNotDisabled, HTTP 409) from a
-// missing/blank If-Match header (InvalidIfMatchVersion, HTTP 400) — outcomes a
+// missing/blank If-Match header (InvalidIfMatchVersion, HTTP 400): outcomes a
 // single canonical error code cannot separate.
 var (
-	// ErrNoSuchDistribution — the distribution id does not exist (HTTP 404).
+	// ErrNoSuchDistribution means the distribution id does not exist (HTTP 404).
 	ErrNoSuchDistribution = errors.New("the specified distribution does not exist")
-	// ErrDistributionAlreadyExists — the CallerReference was already used by an
+	// ErrDistributionAlreadyExists means the CallerReference was already used by an
 	// existing distribution (HTTP 409).
 	ErrDistributionAlreadyExists = errors.New("the caller reference is associated with a distribution that already exists")
-	// ErrInvalidIfMatchVersion — the If-Match header is missing or blank (HTTP 400).
+	// ErrInvalidIfMatchVersion means the If-Match header is missing or blank (HTTP 400).
 	ErrInvalidIfMatchVersion = errors.New("the If-Match version is missing or not valid")
-	// ErrPreconditionFailed — the If-Match ETag does not match the current one (HTTP 412).
+	// ErrPreconditionFailed means the If-Match ETag does not match the current one (HTTP 412).
 	ErrPreconditionFailed = errors.New("the precondition in one or more of the request-header fields evaluated to false")
-	// ErrDistributionNotDisabled — the distribution must be disabled (Enabled=false)
+	// ErrDistributionNotDisabled means the distribution must be disabled (Enabled=false)
 	// before it can be deleted (HTTP 409).
 	ErrDistributionNotDisabled = errors.New("the distribution you are trying to delete has not been disabled")
-	// ErrNoSuchInvalidation — the invalidation id does not exist (HTTP 404).
+	// ErrNoSuchInvalidation means the invalidation id does not exist (HTTP 404).
 	ErrNoSuchInvalidation = errors.New("the specified invalidation does not exist")
-	// ErrCallerReferenceImmutable — an update changed the CallerReference, which
+	// ErrCallerReferenceImmutable means an update changed the CallerReference, which
 	// is fixed for the life of a distribution (HTTP 400, IllegalUpdate).
 	ErrCallerReferenceImmutable = errors.New("the update contains modifications that are not allowed for the given caller reference")
-	// ErrNoSuchResource — the ARN passed to a tagging operation (ListTagsForResource/
+	// ErrNoSuchResource means the ARN passed to a tagging operation (ListTagsForResource/
 	// TagResource/UntagResource) does not name an existing resource. Real
 	// CloudFront's tagging API is resource-type-agnostic, so it answers
 	// NoSuchResource rather than the distribution-specific NoSuchDistribution
@@ -148,7 +148,7 @@ type CloudFront interface {
 	DeleteDistribution(ctx context.Context, id, ifMatch string) error
 	ListDistributions(ctx context.Context) ([]Distribution, error)
 
-	// Invalidations (synchronous — every invalidation is Completed immediately).
+	// Invalidations (synchronous: every invalidation is Completed immediately).
 	CreateInvalidation(ctx context.Context, distributionID string, in *CreateInvalidationInput) (*Invalidation, error)
 	GetInvalidation(ctx context.Context, distributionID, invalidationID string) (*Invalidation, error)
 	ListInvalidations(ctx context.Context, distributionID string) ([]Invalidation, error)

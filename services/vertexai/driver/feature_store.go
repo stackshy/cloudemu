@@ -75,7 +75,7 @@ type FeaturestoreUpdate struct {
 	SetLabels       bool
 }
 
-// Featurestore is the classic Vertex AI Featurestore — a container of
+// Featurestore is the classic Vertex AI Featurestore: a container of
 // EntityTypes, distinct from the newer BigQuery-backed FeatureGroup.
 type Featurestore struct {
 	Name            string // projects/{p}/locations/{l}/featurestores/{id}

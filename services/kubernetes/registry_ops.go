@@ -8,7 +8,7 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 )
 
-// garbageCollectLocked deletes every object controlled by owner — the
+// garbageCollectLocked deletes every object controlled by owner, the
 // background-propagation cascade a real apiserver's garbage collector performs
 // when an owner is deleted. It recurses (Deployment -> ReplicaSet -> Pods) and
 // covers both registry-backed children and the typed Pod store. Callers hold
@@ -20,8 +20,8 @@ func (s *ClusterState) garbageCollectLocked(owner types.UID) {
 	// on Go's randomized iteration order; the explicit BFS queue makes the
 	// cascade order-independent. A registry child may own further registry
 	// children, so intermediate owners are enqueued as they're found.
-	// owners accumulates every UID whose direct children must be reaped —
-	// `owner` plus each collected registry object — so Pods owned by an
+	// owners accumulates every UID whose direct children must be reaped:
+	// `owner` plus each collected registry object, so Pods owned by an
 	// intermediate controller (not just the root) are garbage-collected too.
 	owners := map[types.UID]bool{owner: true}
 	queue := []types.UID{owner}
@@ -219,7 +219,7 @@ func (s *ClusterState) registryScale(w http.ResponseWriter, r *http.Request, st 
 		prev, _, _ := unstructured.NestedInt64(cur.Object, "spec", "replicas")
 		_ = unstructured.SetNestedField(cur.Object, replicas, "spec", "replicas")
 		// Only bump generation on an actual spec change, matching registryUpdate/
-		// registryPatch — an idempotent scale to the current count must not make
+		// registryPatch. An idempotent scale to the current count must not make
 		// a controller see a spurious generation != observedGeneration.
 		if replicas != prev {
 			cur.SetGeneration(cur.GetGeneration() + 1)
@@ -239,7 +239,7 @@ func (s *ClusterState) registryScale(w http.ResponseWriter, r *http.Request, st 
 }
 
 // scaleFor builds the autoscaling/v1 Scale representation of obj from its
-// spec.replicas — the shape kubectl scale and HPA read/write.
+// spec.replicas, the shape kubectl scale and HPA read/write.
 func scaleFor(obj *unstructured.Unstructured) *unstructured.Unstructured {
 	replicas, _, _ := unstructured.NestedInt64(obj.Object, "spec", "replicas")
 

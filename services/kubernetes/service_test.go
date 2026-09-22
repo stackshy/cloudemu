@@ -121,7 +121,7 @@ func TestService_ClusterIPImmutableOnUpdate(t *testing.T) {
 		t.Fatal("create did not allocate ClusterIP")
 	}
 
-	// Try to change it via PUT — should be ignored, allocated IP must survive.
+	// Try to change it via PUT: should be ignored, allocated IP must survive.
 	resp = do(t, http.MethodPut, base+"/api/v1/namespaces/default/services/stable",
 		mustJSON(t, &corev1.Service{
 			ObjectMeta: metav1.ObjectMeta{Name: "stable"},
@@ -193,7 +193,7 @@ func TestService_PatchPreservesClusterIP(t *testing.T) {
 		t.Fatalf("Port after patch: got %d, want 9090", patched.Spec.Ports[0].Port)
 	}
 
-	// Get the service back too — exercises getService happy path.
+	// Get the service back too; exercises getService happy path.
 	resp = do(t, http.MethodGet, base+"/api/v1/namespaces/default/services/patchable", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("get: got %d", resp.StatusCode)
@@ -221,7 +221,7 @@ func TestService_UpdatePreservesTypeWhenOmitted(t *testing.T) {
 			},
 		})).Body.Close()
 
-	// PUT a body that omits Type. The stored Type must survive — real
+	// PUT a body that omits Type. The stored Type must survive: real
 	// apiserver requires .spec.type after the first successful Create.
 	resp := do(t, http.MethodPut, base+"/api/v1/namespaces/default/services/lb",
 		mustJSON(t, &corev1.Service{

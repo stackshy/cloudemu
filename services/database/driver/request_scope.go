@@ -8,7 +8,7 @@ import (
 // RequestScope ties the per-item driver calls one multi-item wire request fans
 // out into (BatchWriteItem, TransactGetItems, …) back to that single request, so
 // a provider can attribute its per-request metrics to the request's own
-// operation name — once per table — instead of to each underlying item call.
+// operation name, once per table, instead of to each underlying item call.
 //
 // The wire layer opens a scope with WithRequestScope and calls the returned
 // finish func once the request has succeeded; a provider registers, per table,

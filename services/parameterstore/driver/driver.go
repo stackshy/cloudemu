@@ -8,7 +8,7 @@ import (
 )
 
 // ErrVersionNotFound is returned by GetParameter when the parameter itself
-// exists but the requested version or label does not — distinct from the
+// exists but the requested version or label does not, distinct from the
 // parameter being absent. It carries the NotFound code so generic handling
 // still treats it as not-found, while the SDK-compat layer can match it with
 // errors.Is to return AWS's distinct ParameterVersionNotFound error instead of
@@ -17,7 +17,7 @@ var ErrVersionNotFound = errors.New(errors.NotFound, "requested parameter versio
 
 // ErrTypeMismatch is returned by PutParameter when an Overwrite=true update
 // specifies a Type that differs from the parameter's existing type. Real
-// Parameter Store rejects this with HierarchyTypeMismatchException — you can't
+// Parameter Store rejects this with HierarchyTypeMismatchException: you can't
 // change a parameter from, e.g., String to SecureString. It carries the
 // InvalidArgument code so generic handling still treats it as a bad request,
 // while the SDK-compat layer matches it with errors.Is to return the distinct
@@ -28,7 +28,7 @@ var ErrTypeMismatch = errors.New(errors.InvalidArgument,
 		"You must create a new, unique parameter.")
 
 // ErrTagsWithOverwrite is returned by PutParameter when Tags are supplied
-// together with Overwrite=true. Real Parameter Store rejects that combination —
+// together with Overwrite=true. Real Parameter Store rejects that combination:
 // tags can only be set when a parameter is first created (AddTagsToResource
 // changes tags on an existing one). It carries the InvalidArgument code so the
 // SDK-compat layer surfaces it as ValidationException.
@@ -86,7 +86,7 @@ var ErrValuePatternMismatch = errors.New(errors.InvalidArgument,
 // GetParametersByPath/GetParameterHistory when encrypting or decrypting a
 // SecureString value fails because the resolved KMS key can't be used (e.g.
 // it's disabled, pending deletion, or otherwise unusable). Real Parameter
-// Store surfaces this as the distinct client error InvalidKeyId — not a 500 —
+// Store surfaces this as the distinct client error InvalidKeyId, not a 500,
 // regardless of which underlying KMS failure caused it. It carries
 // InvalidArgument so generic handling still treats it as a bad request, while
 // the SDK-compat layer matches it with errors.Is to return InvalidKeyId.
@@ -124,7 +124,7 @@ const (
 // ErrCannotRevertTier is returned by PutParameter when an Overwrite=true
 // update explicitly sets Tier to Standard on a parameter that is currently
 // Advanced. Real Parameter Store never lets an Advanced parameter revert to
-// Standard — doing so would truncate its value and drop any policies — so
+// Standard, since doing so would truncate its value and drop any policies, so
 // this is rejected with ValidationException. Omitting Tier on an Overwrite
 // update is unaffected: it retains the existing tier rather than reverting.
 var ErrCannotRevertTier = errors.New(errors.InvalidArgument,
@@ -133,7 +133,7 @@ var ErrCannotRevertTier = errors.New(errors.InvalidArgument,
 		"please remove the parameter and recreate it as a standard parameter.")
 
 // DefaultSecureStringKeyID is the KMS key Parameter Store assigns to a
-// SecureString parameter when PutParameter omits KeyId — the AWS-managed
+// SecureString parameter when PutParameter omits KeyId: the AWS-managed
 // default key alias.
 const DefaultSecureStringKeyID = "alias/aws/ssm"
 
@@ -186,7 +186,7 @@ type Parameter struct {
 	Selector string
 	// Labels, Description, Tier, LastModifiedUser, KeyID, and AllowedPattern are
 	// populated by GetParameterHistory so labeled/tiered versions round-trip.
-	// They are left empty by the value-read paths (GetParameter et al.) —
+	// They are left empty by the value-read paths (GetParameter et al.),
 	// matching real SSM, whose Parameter shape has no KeyId or AllowedPattern
 	// even though its ParameterHistory entry does.
 	Labels           []string
@@ -284,13 +284,13 @@ type CommandConfig struct {
 
 // RunCommand is an OPTIONAL capability, discovered by type assertion.
 //
-// Targets are validated — sending to an instance that does not exist is
+// Targets are validated: sending to an instance that does not exist is
 // InvalidInstanceId, as it is against the real service.
 //
 // IMPORTANT: an emulated instance has no guest operating system, so nothing
 // executes. Invocations report success and empty output. This exercises a
-// caller's send/poll orchestration — that it waits for a terminal status, reads
-// the response code, and handles failure — but it does NOT validate the script
+// caller's send/poll orchestration (that it waits for a terminal status, reads
+// the response code, and handles failure) but it does NOT validate the script
 // itself. A caller whose bootstrap script is wrong will still see success here.
 type RunCommand interface {
 	SendCommand(ctx context.Context, cfg CommandConfig) (string, error)

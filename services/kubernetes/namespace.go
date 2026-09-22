@@ -12,7 +12,7 @@ import (
 )
 
 // serveNamespaces dispatches /api/v1/namespaces[/name] requests. Namespaces
-// are cluster-scoped — route.Namespace is always empty here.
+// are cluster-scoped, so route.Namespace is always empty here.
 func (s *ClusterState) serveNamespaces(w http.ResponseWriter, r *http.Request, route *Route) {
 	if route.APIGroup != "" || route.APIVersion != apiVersionV1 {
 		writeNotFound(w, "k8s api: namespaces are only served at /api/v1")
@@ -194,7 +194,7 @@ func (s *ClusterState) updateNamespace(w http.ResponseWriter, r *http.Request, n
 	in.CreationTimestamp = cur.CreationTimestamp
 	in.ResourceVersion = s.rvForRequestLocked(r)
 	in.TypeMeta = cur.TypeMeta
-	// deletionTimestamp is server-owned — carry it forward so a finalizer-removing
+	// deletionTimestamp is server-owned: carry it forward so a finalizer-removing
 	// PUT can't resurrect a Terminating namespace.
 	in.DeletionTimestamp = cur.DeletionTimestamp
 
@@ -239,7 +239,7 @@ func (s *ClusterState) patchNamespace(w http.ResponseWriter, r *http.Request, na
 
 	patched.ResourceVersion = s.rvForRequestLocked(r)
 	// Server-owned metadata: a merge-patch nulling deletionTimestamp (RFC 7396)
-	// must not resurrect a Terminating namespace — carry it (and uid/creation)
+	// must not resurrect a Terminating namespace, so carry it (and uid/creation)
 	// forward, mirroring updateNamespace.
 	patched.DeletionTimestamp = cur.DeletionTimestamp
 	patched.UID = cur.UID
@@ -326,7 +326,7 @@ func (s *ClusterState) deleteNamespaceLocked(ns *corev1.Namespace) {
 // the named namespace, mirroring the typed cascade above (finalizer-gated:
 // finalizer-bearing objects go Terminating, the rest are removed with a DELETED
 // event). Cluster-scoped registry objects (PVs, Nodes, CRDs) carry an empty
-// namespace and never match. Callers hold s.mu — the set of stores only changes
+// namespace and never match. Callers hold s.mu, and the set of stores only changes
 // under s.mu, so ranging s.reg.stores directly is safe (see garbageCollectLocked).
 func (s *ClusterState) cascadeRegistryStoresLocked(namespace string) {
 	prefix := namespace + "/"

@@ -498,7 +498,7 @@ func TestConfigMap_MethodNotAllowed(t *testing.T) {
 
 	resp.Body.Close()
 
-	// POST on item — also not allowed
+	// POST on item: also not allowed.
 	do(t, http.MethodPost, base+"/api/v1/namespaces/default/configmaps",
 		mustJSON(t, &corev1.ConfigMap{ObjectMeta: metav1.ObjectMeta{Name: "x"}})).Body.Close()
 

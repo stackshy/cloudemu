@@ -92,7 +92,7 @@ func TestNamespace_CreateGetListDelete(t *testing.T) {
 		t.Fatal("UID should be auto-populated")
 	}
 
-	// List — should include the three implicit namespaces plus "demo".
+	// List: should include the three implicit namespaces plus "demo".
 	resp = mustDo(t, http.MethodGet, base+"/api/v1/namespaces", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("list status: got %d, want 200", resp.StatusCode)

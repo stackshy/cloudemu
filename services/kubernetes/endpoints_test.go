@@ -9,8 +9,8 @@ import (
 )
 
 // TestEndpoints_AutoCreatedOnServiceCreate verifies that creating a Service
-// automatically materialises an Endpoints object with the same name+namespace
-// — matching what the endpoints controller does in a real cluster.
+// automatically materialises an Endpoints object with the same name+namespace,
+// matching what the endpoints controller does in a real cluster.
 func TestEndpoints_AutoCreatedOnServiceCreate(t *testing.T) {
 	base, cleanup := newFixture(t)
 	t.Cleanup(cleanup)
@@ -50,7 +50,7 @@ func TestEndpoints_DeletedAlongsideService(t *testing.T) {
 			},
 		})).Body.Close()
 
-	// Sanity — endpoints visible before delete.
+	// Sanity: endpoints visible before delete.
 	resp := do(t, http.MethodGet, base+"/api/v1/namespaces/default/endpoints/tmp", nil)
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("pre-delete endpoints: got %d", resp.StatusCode)
@@ -73,7 +73,7 @@ func TestEndpoints_ReadOnly(t *testing.T) {
 	base, cleanup := newFixture(t)
 	t.Cleanup(cleanup)
 
-	// Endpoints aren't user-creatable in Wave 2 — only auto-created by
+	// Endpoints aren't user-creatable in Wave 2: only auto-created by
 	// Service. POST on the collection must 405.
 	resp := do(t, http.MethodPost, base+"/api/v1/namespaces/default/endpoints",
 		mustJSON(t, &corev1.Endpoints{ObjectMeta: metav1.ObjectMeta{Name: "manual"}}))

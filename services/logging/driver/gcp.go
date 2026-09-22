@@ -38,7 +38,7 @@ type LogBasedMetric struct {
 // LogBucket is a Cloud Logging bucket (logging.projects.locations.buckets): a
 // retention container that log entries are stored in, either directly or via a
 // sink's destination. Every project auto-provisions two special buckets in the
-// "global" location — _Default and _Required — which can never be deleted;
+// "global" location, _Default and _Required, which can never be deleted;
 // _Required additionally can never be modified at all. A bucket may be locked,
 // which is a one-way transition: once locked, its retention period can only be
 // increased (never reduced) and it cannot be deleted or unlocked. It has no
@@ -71,7 +71,7 @@ type SinkUpdate struct {
 	SetDisabled        bool
 	IncludeChildren    bool
 	SetIncludeChildren bool
-	// WriterIdentity, when non-empty, replaces the sink's writer identity — a
+	// WriterIdentity, when non-empty, replaces the sink's writer identity: a
 	// uniqueWriterIdentity or customWriterIdentity transition requested on the
 	// wire. Empty leaves the stored identity unchanged.
 	WriterIdentity string

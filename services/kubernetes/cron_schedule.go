@@ -12,7 +12,7 @@ import (
 // (minute hour day-of-month month day-of-week). It supports `*`, `*/n` steps,
 // comma lists, `a-b` ranges, and `a-b/n` / `a/n` stepped ranges. It intentionally
 // does NOT support the nonstandard extensions (`@hourly`-style macros, `L`, `W`,
-// `#`, `?`, or a seconds/year field) — callers get an error for those so an
+// `#`, `?`, or a seconds/year field): callers get an error for those so an
 // unschedulable expression fails loudly rather than silently never firing.
 
 const (

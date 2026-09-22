@@ -8,8 +8,8 @@ import (
 // serveDiscovery answers the Kubernetes API discovery endpoints.
 //
 // Without these the emulator is usable only by code that hits a resource path
-// directly (e.g. client-go's typed clients). Every tool that NEGOTIATES first —
-// kubectl and helm both do — fails at startup with:
+// directly (e.g. client-go's typed clients). Every tool that NEGOTIATES first
+// (kubectl and helm both do) fails at startup with:
 //
 //	couldn't get current server API group list: the server could not find the
 //	requested resource
@@ -63,8 +63,8 @@ func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bo
 		return true
 
 	// OpenAPI (v2 JSON/protobuf and v3) is served cluster-independently by
-	// serveOpenAPI, intercepted in APIServer.ServeHTTP before this handler —
-	// helm and kubectl both validate rendered manifests against it.
+	// serveOpenAPI, intercepted in APIServer.ServeHTTP before this handler.
+	// Helm and kubectl both validate rendered manifests against it.
 
 	// /version is not discovery proper, but kubectl and helm both probe it and
 	// some code paths refuse to proceed without a parseable server version.
@@ -80,7 +80,7 @@ func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bo
 
 	// Group-version discovery: /apis/<group>/<version>. Derived from the
 	// registry (plus the typed apps/policy groups) so every served group and
-	// its resources — including subresources — are advertised.
+	// its resources, including subresources, are advertised.
 	if res, gv, group, ok := s.groupVersionDiscovery(r.URL.Path); ok {
 		writeJSON(w, http.StatusOK, apiResourceList(group, gv, res))
 
@@ -232,7 +232,7 @@ func coreResourcesFrom(defs []*resourceDef) []apiResource {
 		apiResource{"services", "service", "Service", true, rwVerbs(), []string{"svc"}},
 		// Endpoints are managed by the emulator (auto-created per Service and torn
 		// down with it), so only the read verbs serveEndpoints implements are
-		// advertised — promising create/update/delete would have kubectl and
+		// advertised: promising create/update/delete would have kubectl and
 		// client-go issue writes that 405.
 		apiResource{"endpoints", "endpoints", "Endpoints", true, []string{"get", "list", "watch"}, []string{"ep"}},
 	)
@@ -297,7 +297,7 @@ var registryShortNames = map[string][]string{
 func policyResources() []apiResource {
 	// Only the verbs pdb.go implements. Advertising watch would have client-go
 	// reflectors open a watch that returns a list and never streams, and
-	// advertising patch would have kubectl and helm send a PATCH that 405s —
+	// advertising patch would have kubectl and helm send a PATCH that 405s;
 	// both failures land in the caller, far from the discovery document that
 	// promised them.
 	return []apiResource{

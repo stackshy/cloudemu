@@ -7,11 +7,11 @@
 // engine and never indexes documents. An index and a data source are created
 // directly in the ACTIVE state so an IaC waiter that blocks on status
 // (Terraform's aws_kendra_index / aws_kendra_data_source poll DescribeIndex /
-// DescribeDataSource for ACTIVE) does not hang — real Kendra index creation
+// DescribeDataSource for ACTIVE) does not hang: real Kendra index creation
 // takes ~30 minutes, so returning ACTIVE synchronously is what keeps the
-// emulator usable. The computed fields clients and IaC read back — the index id
-// (a 36-character UUID), the data source id, the status and the createdAt/
-// updatedAt timestamps — are minted once at create and stored, so repeated
+// emulator usable. The computed fields clients and IaC read back (the index id,
+// a 36-character UUID, the data source id, the status and the createdAt/
+// updatedAt timestamps) are minted once at create and stored, so repeated
 // Describe/List reads and a later Update never drift. Kendra's API does not
 // return an ARN; Terraform derives it from the id, so the id's stability is
 // what keeps the arn attribute drift-free.

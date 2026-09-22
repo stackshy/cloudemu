@@ -159,7 +159,7 @@ type KVRotationPolicy struct {
 // (create/import/get/list/update/soft-delete/recover/purge) plus the real
 // cryptographic operations (encrypt/decrypt/wrap/unwrap/sign/verify) performed
 // with the private key material held in the provider. It is kept off the shared
-// Secrets interface — a type-asserted optional interface — so the AWS and GCP
+// Secrets interface (a type-asserted optional interface) so the AWS and GCP
 // providers need not model Key Vault key semantics.
 //
 // Every method takes vault, the vault name the request is scoped to (derived

@@ -154,7 +154,7 @@ func TestK8sParity_EndToEnd(t *testing.T) {
 
 	resp.Body.Close()
 
-	// 2. GET deployments as Table — columns render, and the list carries a
+	// 2. GET deployments as Table: columns render, and the list carries a
 	//    non-empty resourceVersion (#871 + #872).
 	table := getTable(t, ns)
 	if table.ResourceVersion == "" {
@@ -384,7 +384,7 @@ func TestK8sParity_ProgressionOffInstantRunning(t *testing.T) {
 
 // TestK8sParity_DeleteGoesTerminatingBeforeDrain covers the opt-in progression
 // invariant that deleting a Running Pod modifies it into Terminating
-// (deletionTimestamp set, still GETtable) rather than hard-deleting it — it
+// (deletionTimestamp set, still GETtable) rather than hard-deleting it; it
 // drains only on a later Tick past the grace period.
 func TestK8sParity_DeleteGoesTerminatingBeforeDrain(t *testing.T) {
 	f, cleanup := newProgressionFixture(t)
@@ -548,7 +548,7 @@ func countWatchAddedWithin(t *testing.T, url string, d time.Duration) int {
 
 	resp, err := client.Get(url) //nolint:noctx // bounded by client.Timeout.
 	if err != nil {
-		// A timeout with no body is fine — it means nothing was streamed.
+		// A timeout with no body is fine: it means nothing was streamed.
 		return 0
 	}
 	defer resp.Body.Close()

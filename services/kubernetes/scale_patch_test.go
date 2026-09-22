@@ -11,7 +11,7 @@ import (
 // must survive the patch/merge round-trip. Regression guard: the merged bytes
 // were once decoded into a plain map[string]any, turning JSON integers into
 // float64, so unstructured.NestedInt64 failed its type assertion and replicas
-// silently became 0 — scaling *up* actually scaled the workload to zero.
+// silently became 0: scaling *up* actually scaled the workload to zero.
 func TestRegistry_MergePatchScalePreservesReplicas(t *testing.T) {
 	base, cleanup := newFixture(t)
 	t.Cleanup(cleanup)

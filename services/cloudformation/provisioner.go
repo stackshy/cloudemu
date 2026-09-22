@@ -29,7 +29,7 @@ type ProvisionedResource struct {
 }
 
 // Provisioner creates and deletes one CloudFormation resource TYPE by calling
-// the existing service driver for that type. It owns no state of its own — the
+// the existing service driver for that type. It owns no state of its own: the
 // resource lives in the backing service's store, so it is queryable through that
 // service's own SDK surface. Update is modeled as delete+create (replacement) by
 // the orchestrator, so a provisioner only implements Create and Delete.

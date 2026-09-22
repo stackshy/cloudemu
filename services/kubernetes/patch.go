@@ -29,7 +29,7 @@ const (
 // JSON-merge-patch (RFC 7396), strategic-merge-patch (real strategic merge
 // against T's struct tags, so `kubectl set image` merges the container list by
 // name rather than replacing it), JSONPatch (RFC 6902), and server-side apply
-// (treated as a merge — the mock has no field managers).
+// (treated as a merge; the mock has no field managers).
 //
 // On any wire-level failure (bad content-type, body read error, patch error,
 // or final unmarshal mismatch), the function writes a metav1.Status-shaped 400

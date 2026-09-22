@@ -1,5 +1,5 @@
 // Server-side apply, apply-create, and finalizers for the typed core kinds
-// (ConfigMap/Secret/Service/Deployment) — they must behave the way registry-
+// (ConfigMap/Secret/Service/Deployment): they must behave the way registry-
 // backed kinds already do.
 package kubernetes_test
 
@@ -139,7 +139,7 @@ func TestServerSideApplyCreate(t *testing.T) {
 	}
 
 	// Typed workload: apply-create a Deployment (the headline `kubectl apply
-	// --server-side -f deployment.yaml` path) — must create and reconcile.
+	// --server-side -f deployment.yaml` path); must create and reconcile.
 	depURL := base + "/apis/apps/v1/namespaces/default/deployments/web"
 	dr := apply(t, depURL, "kubectl", false, map[string]any{
 		"apiVersion": "apps/v1", "kind": "Deployment",
@@ -169,7 +169,7 @@ func TestServerSideApplyCreate(t *testing.T) {
 		gd.Body.Close()
 	}
 
-	// The headline of apply-create is that it preserves per-kind reconcile — the
+	// The headline of apply-create is that it preserves per-kind reconcile: the
 	// Deployment must materialize its Pods, not just store the object. Assert the
 	// child Pod count == spec.replicas so a future change to the apply-create
 	// path can't silently stop reconciling while this test stays green.
@@ -209,7 +209,7 @@ func identityOf(t *testing.T, obj map[string]any) (uid, creation string) {
 
 // TestTypedApply_PreservesServerMetadata: an apply body that carries
 // `creationTimestamp: null` (kubectl always sends it) or omits `uid` must NOT
-// blank the server-owned identity metadata. This re-GETs after the apply — the
+// blank the server-owned identity metadata. This re-GETs after the apply, the
 // exact check that catches the metadata-drop the apply path used to have. Run
 // across two typed kinds so it isn't ConfigMap-specific.
 func TestTypedApply_PreservesServerMetadata(t *testing.T) {
@@ -277,7 +277,7 @@ func TestTypedApply_PreservesServerMetadata(t *testing.T) {
 	}
 }
 
-// TestTypedApply_TwoManagerRetention: the core SSA property — two managers each
+// TestTypedApply_TwoManagerRetention: the core SSA property, two managers each
 // owning a different field both survive. alice applies data.x, bob applies
 // data.y (disjoint, so no conflict); a re-GET must show both.
 func TestTypedApply_TwoManagerRetention(t *testing.T) {
@@ -348,7 +348,7 @@ func TestTypedFinalizerGatedDelete(t *testing.T) {
 		c.Body.Close()
 	}
 
-	// DELETE must not remove it — it should go Terminating.
+	// DELETE must not remove it; it should go Terminating.
 	del := do(t, http.MethodDelete, itemURL, nil)
 	del.Body.Close()
 

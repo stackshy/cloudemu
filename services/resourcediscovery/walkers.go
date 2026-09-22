@@ -34,7 +34,7 @@ const (
 	ServiceKubernetes   = "kubernetes"
 	ServiceRelationalDB = "relationaldb"
 	// ServiceAppService buckets App Service plans (Azure serverfarms). They are
-	// not serverless — they carry a provisioned SKU/tier — so they get their own
+	// not serverless: they carry a provisioned SKU/tier, so they get their own
 	// discriminator rather than sharing ServiceServerless with Functions.
 	ServiceAppService = "appservice"
 	ServiceSecrets    = "secrets"
@@ -52,7 +52,7 @@ const (
 	ServiceVertexAI   = "aiplatform"
 	ServiceAzureML    = "machinelearningservices"
 	ServiceCognitive  = "cognitiveservices"
-	// ServiceContainerApps buckets Azure Container Apps resources — managed
+	// ServiceContainerApps buckets Azure Container Apps resources: managed
 	// environments and the container apps that run in them (Microsoft.App).
 	ServiceContainerApps = "containerapps"
 	// ServiceLoadTesting buckets Azure Load Testing resources
@@ -169,7 +169,7 @@ const (
 const TypeUserAssignedIdentity = "UserAssignedIdentity"
 
 // TypeSQLVirtualMachine is the portable type for an Azure SQL virtual machine
-// (Microsoft.SqlVirtualMachine/sqlVirtualMachines) — a management overlay on a
+// (Microsoft.SqlVirtualMachine/sqlVirtualMachines): a management overlay on a
 // paired compute VM of the same name/resource group. It sits under
 // ServiceCompute and is synthesized in the compute walker from a VM opted in via
 // the cloudemu:sqlvm tag, so it needs no stored state and no driver capability.
@@ -268,7 +268,7 @@ const TypeIoTHub = "IotHub"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs
-// carrying the tag get the overlay, so plain VMs — and every AWS/GCP VM — are
+// carrying the tag get the overlay, so plain VMs, and every AWS/GCP VM, are
 // unaffected.
 const (
 	sqlVMOptInTagKey   = "cloudemu:sqlvm"
@@ -315,7 +315,7 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 		putStr(props, "priority", inst.Priority)
 		putStr(props, "licenseType", inst.LicenseType)
 		// osType nests under storageProfile.osDisk to match the real Azure ARG
-		// VM shape (a discoverer reads it there). Only Azure VMs set OSType — the
+		// VM shape (a discoverer reads it there). Only Azure VMs set OSType; the
 		// AWS/GCP compute mocks leave it empty, so no Azure shape leaks onto them.
 		if inst.OSType != "" {
 			props["storageProfile"] = map[string]any{"osDisk": map[string]any{"osType": inst.OSType}}
@@ -342,7 +342,7 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 			// State carries the instance's run state so the cost path can bill $0
 			// for a terminated/stopped instance's compute. For Azure both PowerOff
 			// and Deallocate settle the lifecycle State to "stopped"; GCP reports a
-			// stopped instance as "terminated" — either way a non-running State
+			// stopped instance as "terminated"; either way a non-running State
 			// zeroes compute, which is what the cost surfaces want.
 			State:      inst.State,
 			Zones:      cloneStrings(inst.Zones),
@@ -371,9 +371,9 @@ func (e *Engine) walkCompute(ctx context.Context) ([]Resource, error) {
 
 // walkSQLVirtualMachines synthesizes a Microsoft.SqlVirtualMachine overlay row
 // for each Azure compute VM opted in via the cloudemu:sqlvm=true tag. The
-// overlay is a pure derived view of the paired VM — it shares the VM's name,
+// overlay is a pure derived view of the paired VM: it shares the VM's name,
 // resource group, region and tags, differing only in the provider segment of
-// its id — so it needs no stored state and no driver capability. AWS/GCP VMs
+// its id, so it needs no stored state and no driver capability. AWS/GCP VMs
 // never reach this (provider-gated), so their discovery output is unchanged.
 func (e *Engine) walkSQLVirtualMachines(instances []computedriver.Instance) []Resource {
 	if e.provider != ProviderAzure {
@@ -471,7 +471,7 @@ func (e *Engine) walkVolumes(ctx context.Context, rgByInstance map[string]string
 // AzureNetworkMetadata capability for a virtual network, network security group
 // or route table. It falls back to the engine region when the provider is not
 // Azure, the capability is absent, or no metadata was stored (a portable-API
-// creation) — which is also what every non-Azure provider gets, so their rows
+// creation), which is also what every non-Azure provider gets, so their rows
 // are unchanged. This is where the real per-resource region lives: the
 // cross-cloud VPCInfo/SecurityGroupInfo/RouteTable models carry none.
 func (e *Engine) azureNetLocation(ctx context.Context, azMeta netdriver.AzureNetworkMetadata, kind, id string) string {
@@ -725,7 +725,7 @@ func (e *Engine) walkApplicationSecurityGroups(ctx context.Context) []Resource {
 // walkNetworkInterfaces adds interfaces when the driver models them.
 //
 // They are an optional capability, so a driver without them contributes
-// nothing rather than failing the whole walk — a cloud that has no interfaces
+// nothing rather than failing the whole walk: a cloud that has no interfaces
 // has none to discover, which is not an error.
 func (e *Engine) walkNetworkInterfaces(ctx context.Context) ([]Resource, error) {
 	enisDriver, ok := e.drivers.Networking.(netdriver.NetworkInterfaces)
@@ -800,8 +800,8 @@ func (e *Engine) walkStorage(ctx context.Context) ([]Resource, error) {
 
 // applyStorageAttrs folds a bucket's optional storage-account attributes onto
 // res: SKU/kind/access-tier for cost discovery, plus (for Azure) the account's
-// real resource group and region — the cross-cloud bucket carries neither, so
-// these keep ARG / exportTemplate from reporting "default"/us-east-1. A non-nil
+// real resource group and region, since the cross-cloud bucket carries neither.
+// These keep ARG / exportTemplate from reporting "default"/us-east-1. A non-nil
 // error is load-bearing (a silent drop would lose the cost fields), so it
 // propagates. Providers without the capability leave res unchanged.
 func (e *Engine) applyStorageAttrs(ctx context.Context, res *Resource, name string) error {
@@ -873,8 +873,8 @@ func (e *Engine) walkDatabase(ctx context.Context) ([]Resource, error) {
 
 // applyDatabaseAttrs folds a table's optional account attributes onto res: kind,
 // offer type, capabilities and free-tier for cost discovery, plus (for Azure
-// Cosmos DB) the account's real resource group and region — the cross-cloud
-// table carries neither, so these keep ARG / exportTemplate from reporting
+// Cosmos DB) the account's real resource group and region, since the cross-cloud
+// table carries neither. These keep ARG / exportTemplate from reporting
 // "default"/us-east-1. A non-nil error is load-bearing (a silent drop would lose
 // the cost attributes), so it propagates. Providers without the capability leave
 // res unchanged.
@@ -929,7 +929,7 @@ func (e *Engine) walkServerless(ctx context.Context) ([]Resource, error) {
 	out := make([]Resource, 0, len(fns))
 
 	for i := range fns {
-		// FunctionInfo carries a populated ARN — use it directly rather than
+		// FunctionInfo carries a populated ARN; use it directly rather than
 		// re-deriving, so the value matches what the function's own service
 		// returned.
 		arn := fns[i].ARN
@@ -1452,9 +1452,9 @@ func (e *Engine) walkMonitoring(ctx context.Context) ([]Resource, error) {
 		}), nil
 }
 
-// walkIAM surfaces identity resources — users, roles, policies, and groups
-// (IAM / Azure managed identities & role definitions / GCP service accounts &
-// roles) — so they appear in the inventory/search APIs.
+// walkIAM surfaces identity resources (users, roles, policies, and groups;
+// IAM / Azure managed identities & role definitions / GCP service accounts &
+// roles) so they appear in the inventory/search APIs.
 func (e *Engine) walkIAM(ctx context.Context) ([]Resource, error) {
 	users, err := e.drivers.IAM.ListUsers(ctx)
 	if err != nil {

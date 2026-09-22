@@ -4,8 +4,8 @@
 // and version history) and backup selections that assign resources to a plan.
 //
 // The emulator is control-plane only: there is NO backup-job / recovery-point
-// data plane. Every computed field — the vault and plan ARNs, the plan id, a
-// per-version VersionId, the selection id and all creation timestamps — is
+// data plane. Every computed field (the vault and plan ARNs, the plan id, a
+// per-version VersionId, the selection id and all creation timestamps) is
 // minted once at create and stored, so repeated Describe/Get/List reads never
 // drift. Rule, lifecycle, copy-action and selection-condition blocks round-trip
 // verbatim. Vault Lock is modeled as a state machine: a lock set with

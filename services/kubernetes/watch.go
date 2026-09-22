@@ -37,7 +37,7 @@ func serveWatch[T any](
 // typed kind: its apiVersion/kind and the current cluster resourceVersion. When
 // initialEvents is set (a WatchList streaming-list request), the object also
 // carries the k8s.io/initial-events-end annotation that tells a client-go
-// reflector the initial state has been fully replayed — without it modern
+// reflector the initial state has been fully replayed; without it modern
 // kubectl (rollout status / get -w / wait) blocks forever.
 func typedBookmark(apiVersion, kind, rv string, initialEvents bool) *metav1.PartialObjectMetadata {
 	bm := &metav1.PartialObjectMetadata{
@@ -53,11 +53,11 @@ func typedBookmark(apiVersion, kind, rv string, initialEvents bool) *metav1.Part
 
 // watchOpts carries the per-request watch behaviors parsed from the query.
 type watchOpts struct {
-	// resume is true when the client passed resourceVersion>0 — it already has
+	// resume is true when the client passed resourceVersion>0: it already has
 	// the current state, so the initial full-snapshot replay is skipped and only
 	// subsequent events are streamed. (There is no watch-cache history, so events
-	// strictly between the client's RV and watch establishment are not backfilled
-	// — a documented emulation simplification; a client that needs a guarantee
+	// strictly between the client's RV and watch establishment are not backfilled;
+	// a documented emulation simplification. A client that needs a guarantee
 	// relists.)
 	resume bool
 	// bookmarks is true when the client passed allowWatchBookmarks=true.
@@ -111,7 +111,7 @@ func parseListSelectors(r *http.Request) (sel labels.Selector, fields map[string
 
 // metaFieldsMatch answers the metadata.name / metadata.namespace field
 // selectors an object can satisfy from its ObjectMeta alone. Any other field
-// key matches nothing — the same fail-closed convention as matchesFields.
+// key matches nothing, the same fail-closed convention as matchesFields.
 func metaFieldsMatch(name, namespace string, fields map[string]string) bool {
 	for k, v := range fields {
 		switch k {
@@ -138,7 +138,7 @@ const (
 	EventModified = "MODIFIED"
 	EventDeleted  = "DELETED"
 	// EventError carries a Status object (e.g. 410 Gone) that tells a client-go
-	// reflector to relist — used when a slow watcher overflowed its buffer.
+	// reflector to relist, used when a slow watcher overflowed its buffer.
 	EventError = "ERROR"
 	// EventBookmark carries an object holding only the latest resourceVersion, so
 	// a client that opted in (allowWatchBookmarks=true) can resume from it after a
@@ -161,7 +161,7 @@ func expiredWatchStatus() *metav1.Status {
 // watchSubscriberBuffer is the per-subscriber channel capacity. Generous so
 // a slow client can fall a few events behind without blocking the publisher;
 // if a client falls past this, the publisher drops its events rather than
-// stalling other subscribers (real apiserver disconnects slow watchers — we
+// stalling other subscribers (real apiserver disconnects slow watchers; we
 // just shed load).
 const watchSubscriberBuffer = 64
 
@@ -189,7 +189,7 @@ type subscriber struct {
 // subscriber for a given resource kind. One broadcaster per kind (Pods,
 // Services, etc.) is owned by ClusterState.
 //
-// publish never blocks the caller — it drops events on full subscriber
+// publish never blocks the caller: it drops events on full subscriber
 // channels rather than stalling other subscribers or the mutating handler.
 type broadcaster struct {
 	mu   sync.Mutex
@@ -266,7 +266,7 @@ func (b *broadcaster) publish(eventType, namespace string, obj any) {
 //
 // CALLER MUST SUBSCRIBE BEFORE TAKING THE SNAPSHOT, BOTH UNDER THE SAME
 // state.mu LOCK. That ordering is what closes the otherwise-present race
-// between snapshot-and-subscribe — without it, a mutation landing between
+// between snapshot-and-subscribe: without it, a mutation landing between
 // snapshot-release and subscribe-register would be invisible to the
 // subscriber (event published with no subscriber yet, state change not in
 // snapshot). The handler pattern is:
@@ -278,7 +278,7 @@ func (b *broadcaster) publish(eventType, namespace string, obj any) {
 //	streamWatch(r.Context(), w, sub, initial)
 //
 // Any mutation in flight while we hold RLock waits for RUnlock and then
-// publishes — the subscriber picks it up from sub.ch. Any mutation that
+// publishes; the subscriber picks it up from sub.ch. Any mutation that
 // completed before our RLock is already in the snapshot.
 //
 // streamWatch closes sub.done on return so broadcaster.publish can prune
@@ -286,7 +286,7 @@ func (b *broadcaster) publish(eventType, namespace string, obj any) {
 // keep, when non-nil, filters both the initial snapshot and streamed events to
 // the objects a client's labelSelector/fieldSelector matches. Without it a
 // selective watch (`kubectl get pods -l app=x -w`, or any informer built with a
-// selector) would receive non-matching objects — polluting reflector caches and
+// selector) would receive non-matching objects, polluting reflector caches and
 // firing spurious reconciles, which the reconcile engine amplifies.
 //
 //nolint:gocyclo // snapshot + stream loop with selector filtering; splitting further would hide the subscribe/snapshot ordering contract.
@@ -315,7 +315,7 @@ func streamWatch[T any](
 	enc := json.NewEncoder(w)
 
 	// A resuming watch (resourceVersion>0) already holds the current state, so
-	// the full ADDED replay is skipped — only subsequent events are streamed.
+	// the full ADDED replay is skipped; only subsequent events are streamed.
 	if !opts.resume {
 		for _, item := range initial {
 			if keep != nil && !keep(item) {

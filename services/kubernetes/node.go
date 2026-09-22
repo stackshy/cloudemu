@@ -13,7 +13,7 @@ import (
 
 // The emulator runs one or more synthetic Nodes (KWOK-style: node objects with a
 // Ready status and no kubelet). By default it runs a single node
-// (cloudemu-node-0) and every Pod schedules onto it — the behavior every
+// (cloudemu-node-0) and every Pod schedules onto it, the behavior every
 // single-node test relies on. With --k8s-nodes N it seeds one control-plane node
 // plus N-1 workers and routes Pod placement through a deterministic first-fit
 // scheduler (scheduleNodeLocked) that honors nodeSelector, taints/tolerations,
@@ -299,7 +299,7 @@ func (s *ClusterState) nodeInternalIPLocked(name string) string {
 // scheduleNodeLocked places pod on a node and reports whether placement
 // succeeded. An explicit spec.nodeName bypasses the scheduler (kubelet-style
 // direct assignment). With a single node, the pod is placed unconditionally
-// (the historical back-compat path — no nodeSelector/taint/request gating). With
+// (the historical back-compat path: no nodeSelector/taint/request gating). With
 // multiple nodes it runs the two-phase scheduler: feasibleNodesLocked filters
 // the name-sorted candidates by nodeSelector, taints/tolerations, request
 // feasibility, required nodeAffinity, required inter-pod (anti)affinity, and
@@ -450,7 +450,7 @@ func podRequests(pod *corev1.Pod) (cpu, mem resource.Quantity) {
 // added (or re-labeled/un-tainted) at runtime expands the schedulable set, so
 // real k8s's controllers react on Node membership: every existing DaemonSet
 // re-fans onto the new node (refanDaemonSetsLocked), and every Pod still Pending
-// — nothing fit it when it was created — is retried against the current nodes
+// (nothing fit it when it was created) is retried against the current nodes
 // and placed if one now accepts it. DaemonSets are re-fanned first so their
 // node-pinned Pods claim capacity before the Pending resweep fills the rest.
 // Seeded nodes are inserted directly and never reach this hook, so the
@@ -487,7 +487,7 @@ func (s *ClusterState) refanDaemonSetsLocked() {
 
 // nodeOnDelete runs after a Node is removed through the API. Its bound Pods can
 // no longer run there: DaemonSet Pods are node-pinned one-per-node, so the Pod
-// for the gone node is deleted (a later DaemonSet write will not recreate it —
+// for the gone node is deleted (a later DaemonSet write will not recreate it:
 // the node is gone), while every other bound Pod is rescheduled onto a remaining
 // fitting node. The node's kube-node-lease Lease is removed too. Callers hold
 // s.mu.
@@ -631,8 +631,8 @@ func (s *ClusterState) seedNodeLeaseLocked(name string) {
 	store.items[objKey("kube-node-lease", name)] = lease
 }
 
-// deleteNodeLeaseLocked removes a node's kube-node-lease Lease — the counterpart
-// to seedNodeLeaseLocked — when the node is deleted, so no orphan lease outlives
+// deleteNodeLeaseLocked removes a node's kube-node-lease Lease, the counterpart
+// to seedNodeLeaseLocked, when the node is deleted, so no orphan lease outlives
 // its node. Callers hold s.mu.
 func (s *ClusterState) deleteNodeLeaseLocked(name string) {
 	store := s.reg.getStore(apiGroupCoordination, "v1", "leases")

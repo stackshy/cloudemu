@@ -8,7 +8,7 @@
 // Read-only, compliance, and evaluation surfaces (compliance summaries,
 // discovered-resource queries, aggregate queries, SelectResourceConfig) are
 // synthesized from the emulator's own recorded state or return plausible empty
-// results — the emulator does not run a real Config recording pipeline. These
+// results, since the emulator does not run a real Config recording pipeline. These
 // synthesized behaviors are documented per method and in docs/services.md.
 package driver
 

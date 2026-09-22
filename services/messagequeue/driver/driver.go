@@ -327,8 +327,8 @@ type AzureQueueStorage interface {
 
 // AzureSessionQueue is the optional Azure Service Bus session surface, discovered
 // by type assertion on a MessageQueue backend (only the Azure Mock implements
-// it). Service Bus sessions have no real REST data plane — real SDKs drive
-// sessions over AMQP — so the receive side here is a CloudEmu REST extension that
+// it). Service Bus sessions have no real REST data plane: real SDKs drive
+// sessions over AMQP, so the receive side here is a CloudEmu REST extension that
 // lets a REST client exercise the session model; the send-side enforcement it
 // pairs with is faithful to real Azure.
 type AzureSessionQueue interface {

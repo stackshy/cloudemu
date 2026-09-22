@@ -10,7 +10,7 @@ import (
 // precedent. These resources (Transit Gateways, VPN, DHCP option sets, managed
 // prefix lists, egress-only internet gateways, endpoint services, Client VPN)
 // don't map cleanly across clouds, so they stay out of the portable Networking
-// interface — only the AWS mock implements them, and the EC2 handler serves
+// interface. Only the AWS mock implements them, and the EC2 handler serves
 // them when the driver satisfies the capability.
 
 // ---- Transit Gateway ----

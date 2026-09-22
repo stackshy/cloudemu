@@ -1,6 +1,6 @@
 // Package driver defines the portable interface for the Google Cloud Composer
 // environment control plane (composer.googleapis.com/v1). It is control-plane
-// only — managed Apache Airflow environments plus the long-running operations
+// only: managed Apache Airflow environments plus the long-running operations
 // their mutating RPCs return. No real Airflow runtime, DAG execution, GKE
 // cluster, snapshot, or user-workload surface is modeled; those are out of
 // scope.

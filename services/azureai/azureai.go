@@ -1,6 +1,6 @@
 // Package azureai provides a portable Azure AI API with cross-cutting concerns.
 // It wraps a driver.AzureAI (both ARM providers plus the data planes) with
-// recording, metrics, rate limiting, error injection, and latency simulation —
+// recording, metrics, rate limiting, error injection, and latency simulation,
 // the same middle layer every other service ships (see bedrock/bedrock.go,
 // sagemaker/sagemaker.go, vertexai/vertexai.go) so Azure AI participates in the
 // three-layer design.

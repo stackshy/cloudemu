@@ -14,7 +14,7 @@ import (
 // client-go scheme's recognizing deserializer unwraps the runtime.Unknown
 // envelope and produces the typed object; the typed handlers decode straight
 // into their object, while the registry handlers (which work in unstructured)
-// get the decoded object converted. Responses stay JSON — the callers' Accept
+// get the decoded object converted. Responses stay JSON: the callers' Accept
 // header includes application/json, so no protobuf encoder is needed.
 func decodeProtobufBody(w http.ResponseWriter, body []byte, v any) bool {
 	obj, gvk, err := clientgoscheme.Codecs.UniversalDeserializer().Decode(body, nil, typedTarget(v))
@@ -50,7 +50,7 @@ func decodeProtobufBody(w http.ResponseWriter, body []byte, v any) bool {
 }
 
 // typedTarget returns v as the in-place decode target when it is a concrete
-// typed object, or nil for unstructured — protobuf can't decode into
+// typed object, or nil for unstructured: protobuf can't decode into
 // unstructured, so we let the deserializer allocate the typed object from the
 // scheme and convert it afterwards.
 func typedTarget(v any) runtime.Object {

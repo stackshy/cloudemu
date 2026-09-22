@@ -34,7 +34,7 @@ const (
 //
 // clamped into [minReplicas, maxReplicas]. Without a usable metric (no metric
 // configured, no matching Pods, or Pods with no CPU request) it falls back to
-// clamping the current replica count into bounds — real HPA reports "unknown"
+// clamping the current replica count into bounds: real HPA reports "unknown"
 // and holds rather than scaling on missing data. Only Deployment targets are
 // actuated; other kinds are left unchanged. Runs under s.mu (called from the
 // registry create/update/patch path).
@@ -117,7 +117,7 @@ func scaleFromMetric(currentReplicas int, currentUtil, targetUtil int64) int {
 }
 
 // averageCPUUtilization returns the aggregate CPU utilization percentage across
-// pods — sum(usage)/sum(request)*100, matching how the real HPA computes a
+// pods: sum(usage)/sum(request)*100, matching how the real HPA computes a
 // Resource utilization metric. Usage comes from the metrics.k8s.io source
 // (podMetricCPUUsage per container); requests come from each container's
 // resources.requests.cpu. Reports ok=false when there are no Pods or none

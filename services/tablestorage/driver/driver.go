@@ -3,7 +3,7 @@
 // by a (PartitionKey, RowKey) pair; each entity is a flat bag of named
 // properties.
 //
-// The interface is intentionally small — it mirrors the operations the Azure
+// The interface is intentionally small: it mirrors the operations the Azure
 // Table data-plane REST API (aztables) exercises, nothing more.
 package driver
 

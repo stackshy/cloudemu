@@ -25,7 +25,7 @@ const (
 // IsPostgresFamily reports whether a real Postgres engine can back this engine
 // family. The no-Docker embedded-postgres backing serves all Postgres-wire
 // services (RDS/Aurora Postgres, Azure Flexible Server, Cloud SQL Postgres).
-// Matching is case-insensitive and prefix-based on "postgres" — providers spell
+// Matching is case-insensitive and prefix-based on "postgres": providers spell
 // the engine differently ("postgres", "POSTGRES", "Postgres") and Cloud SQL
 // uses a databaseVersion like "POSTGRES_15". Aurora Postgres ("aurora-postgresql")
 // is matched exactly since it does not share the prefix. Redshift ("redshift")
@@ -38,7 +38,7 @@ func IsPostgresFamily(engine string) bool {
 }
 
 // IsMySQLFamily reports whether a real MySQL engine can back this engine family.
-// Matching is case-insensitive and prefix-based on "mysql" — providers spell the
+// Matching is case-insensitive and prefix-based on "mysql": providers spell the
 // engine differently ("mysql", "MYSQL_8_0", "MySQL"). Aurora MySQL
 // ("aurora-mysql") is matched exactly since it does not share the prefix.
 // MariaDB, SQL Server, Postgres and an empty engine never match.
@@ -52,7 +52,7 @@ func IsMySQLFamily(engine string) bool {
 //
 // The single wired engine now receives BOTH the Postgres and the MySQL family;
 // like the port caveat, this trusts the wired engine to serve every family it is
-// handed — a mismatched single-family engine (e.g. a Postgres-only backing given
+// handed: a mismatched single-family engine (e.g. a Postgres-only backing given
 // a MySQL instance) fails loudly at connect time rather than here. Use
 // NewMultiEngine to route each family to a dedicated backing.
 func Provision(ctx context.Context, engine config.DatabaseEngine, inst *rdsdriver.Instance, cfg *rdsdriver.InstanceConfig) error {
@@ -121,7 +121,7 @@ type FamilyEngine struct {
 
 // multiEngine is a config.DatabaseEngine that dispatches each instance to the
 // first entry whose Match accepts the request engine, and remembers the choice
-// so Deprovision — which carries no engine string — routes back to the same
+// so Deprovision (which carries no engine string) routes back to the same
 // backing. It is a core type and must not import contrib.
 type multiEngine struct {
 	entries []FamilyEngine

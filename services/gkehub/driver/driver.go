@@ -1,5 +1,5 @@
 // Package driver defines the portable interface for the GKE Hub / Fleet
-// control plane (gkehub.googleapis.com/v1). It is control-plane only — the three
+// control plane (gkehub.googleapis.com/v1). It is control-plane only. The three
 // location-scoped resource collections a Terraform google provider or a real
 // google.golang.org/api/gkehub/v1 client CRUDs are modeled:
 //

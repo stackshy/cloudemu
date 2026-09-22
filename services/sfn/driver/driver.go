@@ -1,7 +1,7 @@
 // Package driver defines the interface and types for AWS Step Functions (SFN)
 // implementations. It models state machines (with their ASL definition stored
-// verbatim), executions, execution history, activities, tags, and — where the
-// SDK exposes them — state-machine versions and aliases.
+// verbatim), executions, execution history, activities, tags, and, where the
+// SDK exposes them, state-machine versions and aliases.
 //
 // The emulator interprets the Amazon States Language with a real state-graph
 // walker (see providers/aws/sfn/asl): StartExecution walks the definition from

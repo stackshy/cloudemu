@@ -55,7 +55,7 @@ type SubnetInfo struct {
 	Tags             map[string]string
 	// MapPublicIPOnLaunch reports whether instances launched into the subnet
 	// receive a public IPv4 address by default. Real EC2 defaults it off for a
-	// non-default subnet and lets ModifySubnetAttribute flip it — the only way
+	// non-default subnet and lets ModifySubnetAttribute flip it, the only way
 	// to turn a subnet public.
 	MapPublicIPOnLaunch bool
 	// AvailableIPAddressCount is the number of usable IPv4 addresses left in the
@@ -106,7 +106,7 @@ type SecurityRule struct {
 	ReferencedGroupID      string
 	ReferencedGroupOwnerID string
 	// Description is the optional free-text note attached to a rule. It is not
-	// part of a rule's identity — AWS ignores it when revoking or deduplicating.
+	// part of a rule's identity: AWS ignores it when revoking or deduplicating.
 	Description string
 	// RuleID is the service-assigned "sgr-" identifier for the rule. It is empty
 	// for rules created outside the AWS wire layer (Azure/GCP, portable API).
@@ -114,13 +114,13 @@ type SecurityRule struct {
 	// Tags are the service-assigned tags applied to the rule. They are populated
 	// only via the AWS wire layer (AuthorizeSecurityGroup* TagSpecifications /
 	// CreateTags on the sgr- id) and are nil for Azure/GCP/OCI and the portable
-	// API. Tags are not part of a rule's identity — Matches() ignores them, the
+	// API. Tags are not part of a rule's identity: Matches() ignores them, the
 	// same as RuleID and Description.
 	Tags map[string]string
 }
 
 // Matches reports whether two rules describe the same permission, ignoring the
-// service-assigned RuleID and the free-text Description — the fields AWS does
+// service-assigned RuleID and the free-text Description: the fields AWS does
 // not treat as part of a rule's identity when revoking or deduplicating.
 func (r *SecurityRule) Matches(o *SecurityRule) bool {
 	return r.Protocol == o.Protocol &&
@@ -135,8 +135,8 @@ func (r *SecurityRule) Matches(o *SecurityRule) bool {
 // Equal reports whether two rules are identical in every field except the
 // service-assigned Tags map. Tags is a map (not comparable with ==) and is not
 // part of a rule's identity, so it is excluded. Equal preserves the exact
-// full-struct equality that Azure/GCP/OCI relied on before Tags was added,
-// which — unlike Matches — also distinguishes RuleID, Description and the
+// full-struct equality that Azure/GCP/OCI relied on before Tags was added:
+// unlike Matches, it also distinguishes RuleID, Description and the
 // referenced-group owner.
 func (r *SecurityRule) Equal(o *SecurityRule) bool {
 	return r.Matches(o) &&
@@ -345,7 +345,7 @@ type ElasticIP struct {
 	SKUTier   string
 	IPVersion string
 	// ResourceGUID is the Azure-only persisted identifier ARM reports as
-	// properties.resourceGuid on a publicIPAddresses resource — stable for the
+	// properties.resourceGuid on a publicIPAddresses resource: stable for the
 	// address's lifetime, regenerated only on release + re-allocation. Empty
 	// for AWS and GCP.
 	ResourceGUID string
@@ -354,7 +354,7 @@ type ElasticIP struct {
 // AssociateAddressInput carries the target of an AssociateAddress call. Exactly
 // one of InstanceID or NetworkInterfaceID identifies the target; PrivateIP
 // optionally pins the association to a specific private address on the
-// interface. The ENI form (NetworkInterfaceID/PrivateIP) is an AWS concept —
+// interface. The ENI form (NetworkInterfaceID/PrivateIP) is an AWS concept;
 // Azure/GCP read only InstanceID.
 type AssociateAddressInput struct {
 	InstanceID         string
@@ -372,7 +372,7 @@ type RouteTableAssociation struct {
 	ID           string
 	RouteTableID string
 	SubnetID     string
-	// Main reports whether this is the VPC's main-route-table association —
+	// Main reports whether this is the VPC's main-route-table association:
 	// the implicit one EC2 creates with the VPC, carrying no subnet. Callers
 	// tearing a VPC down disassociate every non-main association and leave the
 	// main one to die with the VPC, so the distinction has to survive the
@@ -402,7 +402,7 @@ type NetworkInterface struct {
 	// PrivateIP is the primary private IPv4 address the interface holds inside
 	// its subnet, MacAddress its hardware address, and SourceDestCheck the
 	// source/destination check flag. Real EC2 auto-assigns a private IP and MAC
-	// on create and defaults SourceDestCheck to true — the flag a NAT-instance /
+	// on create and defaults SourceDestCheck to true, the flag a NAT-instance /
 	// firewall / router VM disables via ModifyNetworkInterfaceAttribute.
 	PrivateIP       string
 	MacAddress      string
@@ -448,7 +448,7 @@ type AzureNICConfig struct {
 	IPConfigs    []AzureIPConfig
 	IPForwarding bool
 	// NetworkSecurityGroupID is the ARM resource id of the NSG associated with
-	// the whole interface (properties.networkSecurityGroup) — an Azure NIC
+	// the whole interface (properties.networkSecurityGroup). An Azure NIC
 	// binds its NSG at this top level, not per ipConfiguration.
 	NetworkSecurityGroupID string
 }
@@ -597,7 +597,7 @@ type Networking interface {
 
 // VPCAttributeUpdate carries the attributes a caller wants changed. A nil
 // pointer leaves that attribute alone, matching an API that accepts one
-// attribute per call — a caller enabling DNS hostnames must not have its
+// attribute per call: a caller enabling DNS hostnames must not have its
 // DNS-support setting reset as a side effect.
 //
 // A struct rather than positional pointers so a new attribute can be added
@@ -639,7 +639,7 @@ type SubnetAttributes interface {
 }
 
 // SubnetCIDRUpdater is an OPTIONAL capability, discovered by type assertion. It
-// changes a subnet's address prefix in place — the Azure ARM
+// changes a subnet's address prefix in place: the Azure ARM
 // Subnets.CreateOrUpdate re-PUT path allows editing a subnet's addressPrefix,
 // unlike AWS where a subnet CIDR is immutable. Providers that model an
 // immutable subnet CIDR do not implement it.

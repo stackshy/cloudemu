@@ -24,7 +24,7 @@ import (
 // the transient CREATING / UPDATING states, and delete removes the cluster
 // rather than leaving it DELETING. Consequently real MSK's rule "reject a
 // mutation while the cluster is CREATING / UPDATING / DELETING" is not
-// reproduced — back-to-back updates all succeed here. CREATING/UPDATING/FAILED
+// reproduced: back-to-back updates all succeed here. CREATING/UPDATING/FAILED
 // are retained to document the real MSK state enum.
 const (
 	ClusterStateActive   = "ACTIVE"

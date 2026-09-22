@@ -10,7 +10,7 @@ import (
 // OrderResources returns the template's resource logical IDs in a deterministic
 // creation order: dependencies (via Ref / Fn::GetAtt / Fn::Sub references and
 // explicit DependsOn) come before the resources that reference them. Ties are
-// broken by logical-ID sort so the order — and the resulting event stream — is
+// broken by logical-ID sort so the order, and the resulting event stream, is
 // stable across runs. A dependency cycle is an error.
 func OrderResources(t *Template) ([]string, error) {
 	return topoSort(Dependencies(t))

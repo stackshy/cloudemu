@@ -163,7 +163,7 @@ func TestWatchList_EmitsInitialEventsEndBookmark(t *testing.T) {
 
 // TestWatch_PlainBookmarkHasNoInitialEventsEndAnnotation is the regression guard:
 // a plain `?watch=true&allowWatchBookmarks=true` (no sendInitialEvents) still gets
-// a post-sync BOOKMARK, but WITHOUT the initial-events-end annotation — so we
+// a post-sync BOOKMARK, but WITHOUT the initial-events-end annotation, so we
 // don't turn every ordinary watch into a WatchList sync.
 func TestWatch_PlainBookmarkHasNoInitialEventsEndAnnotation(t *testing.T) {
 	base, closeFn := newFixture(t)

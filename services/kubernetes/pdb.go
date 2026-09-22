@@ -14,7 +14,7 @@ const apiGroupPolicy = "policy"
 
 // servePDBs dispatches /apis/policy/v1/.../poddisruptionbudgets.
 //
-// PDBs are here because real Helm charts create them as a matter of course —
+// PDBs are here because real Helm charts create them as a matter of course:
 // a chart that renders a Deployment and a Service almost always renders a PDB
 // alongside. Without the resource, `helm install` fails at object-building
 // with "no matches for kind PodDisruptionBudget", which stops the release

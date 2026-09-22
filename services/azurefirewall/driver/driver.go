@@ -4,8 +4,8 @@
 //
 // Both are Azure-only ARM "echo-class" resources: a single PUT carries the whole
 // resource, and ARM CreateOrUpdate replaces it wholesale. The cross-cloud
-// networking models have no equivalent, so — like AzureLoadBalancers and
-// AzureApplicationGateways — the Azure provider stores the ARM body natively and
+// networking models have no equivalent, so, like AzureLoadBalancers and
+// AzureApplicationGateways, the Azure provider stores the ARM body natively and
 // exposes it through this dedicated, single-provider interface. AWS and GCP have
 // no counterpart.
 //

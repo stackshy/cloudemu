@@ -1,6 +1,6 @@
 // Package driver defines the portable interface for the Google Cloud Service
 // Directory control plane (servicedirectory.googleapis.com/v1). It is
-// control-plane only — the three nested, client-named resource collections a
+// control-plane only: the three nested, client-named resource collections a
 // Terraform google provider or a real google.golang.org/api/servicedirectory/v1
 // client CRUDs are modeled:
 //
@@ -14,11 +14,11 @@
 //
 // Every Service Directory mutation is synchronous REST: Create/Get/List/Patch/
 // Delete return the resource (or empty) directly, with no google.longrunning
-// Operation wrapper — unlike most GCP control planes. No operation registry is
+// Operation wrapper, unlike most GCP control planes. No operation registry is
 // involved.
 //
-// Each resource carries exactly one computed, output-only field — uid, a stable
-// server-assigned UUID4 — minted once at create and returned unchanged on every
+// Each resource carries exactly one computed, output-only field, uid, a stable
+// server-assigned UUID4, minted once at create and returned unchanged on every
 // read so a Terraform refresh never drifts. The resource name is the full
 // deterministic path. Every other field (labels, annotations, address, port,
 // network) is caller-supplied and round-trips verbatim.
