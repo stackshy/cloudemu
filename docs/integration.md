@@ -1,10 +1,10 @@
 # Integrating CloudEmu into Your App
 
-**Integrating CloudEmu into an existing service is one thing: an endpoint override on the client your app already builds.** Run CloudEmu in server mode, then point your running app/services at it by setting the SDK endpoint — `AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override. Your real code runs the live path end-to-end against an in-memory cloud, no mocks.
+To use CloudEmu with an existing service, you change one thing: the endpoint on the SDK client your app already builds. Run CloudEmu in server mode and set the endpoint with `AWS_ENDPOINT_URL` / `o.BaseEndpoint`, `option.WithEndpoint`, or the Azure ARM endpoint override. Your app's normal code path then runs against the in-memory cloud, with no mocks in your code.
 
-Integration means your app's **real code path** runs against CloudEmu: for integration and E2E, run the server and point your existing SDK client at it with one endpoint override, so the actual request flow is exercised end to end. In-process/library mode (bottom of this page) is for Go unit tests you write inside CloudEmu-aware code.
+Use server mode for integration and E2E tests. The in-process library mode at the bottom of this page is for Go unit tests.
 
-> Need the real path to exercise real SQL, Redis or function code rather than the in-memory backend? Back the relevant driver with a [real engine](features.md#11-real-data-plane-engines-opt-in) — the wiring is a `config.With<X>Engine` option (or the `cloudemu-server` flags), everything below stays the same.
+> If you want that path to run real SQL, Redis or function code instead of the in-memory backend, back the driver with a [real engine](features.md#11-real-data-plane-engines-opt-in). You enable it with a `config.With<X>Engine` option (or the `cloudemu-server` flags). Nothing else on this page changes.
 
 ## 1. Run the server
 
@@ -13,15 +13,15 @@ docker run --rm -p 4566:4566 -p 4568:4568 -p 4569:4569 \
   ghcr.io/stackshy/cloudemu:latest   # Apple Silicon: add --platform linux/amd64 if needed
 ```
 
-Prints the live endpoints — AWS `http://127.0.0.1:4566` (HTTP), Azure `https://127.0.0.1:4568` (HTTPS, self-signed), GCP `http://127.0.0.1:4569` (HTTP). Full flags, ports, and TLS: [standalone-server.md](standalone-server.md).
+It prints the endpoints: AWS `http://127.0.0.1:4566` (HTTP), Azure `https://127.0.0.1:4568` (HTTPS, self-signed), GCP `http://127.0.0.1:4569` (HTTP). Flags, ports and TLS are covered in [standalone-server.md](standalone-server.md).
 
 ## 2. Override the endpoint (per SDK)
 
-Copy the seam your SDK uses verbatim — this is real client wiring, not a mock.
+These snippets are ordinary client setup. Copy the one for your SDK.
 
-### AWS — `aws-sdk-go-v2`
+### AWS: `aws-sdk-go-v2`
 
-Two paths. The per-client option always works:
+There are two ways. The per-client option works on every SDK version:
 
 ```go
 client := s3.NewFromConfig(cfg, func(o *s3.Options) {
@@ -38,9 +38,9 @@ cfg, _ := config.LoadDefaultConfig(ctx)
 client := s3.NewFromConfig(cfg) // still set o.UsePathStyle=true for S3
 ```
 
-**Gotcha:** `AWS_ENDPOINT_URL` is only honored by `LoadDefaultConfig` on recent `aws-sdk-go-v2` releases (`config` v1.27+ / SDK 2023-12 or newer). On older versions the env var is ignored and requests silently go to real AWS — pin a current version, or set `o.BaseEndpoint` explicitly per client, which works on every version. For S3, remember `o.UsePathStyle = true` regardless of path.
+Watch out: `LoadDefaultConfig` only reads `AWS_ENDPOINT_URL` on recent `aws-sdk-go-v2` releases (`config` v1.27+ / SDK 2023-12 or newer). Older versions ignore the variable, and requests go to real AWS without any error. Use a current version, or set `o.BaseEndpoint` on each client. For S3, set `o.UsePathStyle = true` either way.
 
-### AWS — boto3 / Python
+### AWS: boto3 / Python
 
 ```python
 import boto3
@@ -49,9 +49,9 @@ s3 = boto3.client("s3", endpoint_url="http://127.0.0.1:4566",
                   region_name="us-east-1")
 ```
 
-The AWS CLI takes the same override as `--endpoint-url http://127.0.0.1:4566` (or `AWS_ENDPOINT_URL`). Any credentials are accepted — CloudEmu does not validate signatures.
+The AWS CLI takes the same override as `--endpoint-url http://127.0.0.1:4566` (or `AWS_ENDPOINT_URL`). Any credentials are accepted, because CloudEmu does not validate signatures.
 
-### GCP — `cloud.google.com/go`
+### GCP: `cloud.google.com/go`
 
 ```go
 client, _ := storage.NewClient(ctx,
@@ -59,11 +59,11 @@ client, _ := storage.NewClient(ctx,
 	option.WithoutAuthentication())
 ```
 
-`WithoutAuthentication()` is required — it stops the SDK from reaching out for real credentials.
+`WithoutAuthentication()` is required. Without it the SDK tries to fetch real credentials.
 
-### Azure — `azure-sdk-for-go`
+### Azure: `azure-sdk-for-go`
 
-Azure is HTTPS with a self-signed cert. Override the ARM endpoint through a `cloud.Configuration`, and either trust the cert or skip verification for local dev:
+Azure uses HTTPS with a self-signed cert. Override the ARM endpoint through a `cloud.Configuration`, and either trust the cert or skip verification for local dev:
 
 ```go
 cloudCfg := cloud.Configuration{
@@ -77,11 +77,11 @@ cloudCfg := cloud.Configuration{
 opts := &arm.ClientOptions{ClientOptions: azcore.ClientOptions{Cloud: cloudCfg}}
 ```
 
-Any `azcore.TokenCredential` works — tokens are not validated. See [standalone-server.md](standalone-server.md#trusting-the-azure-self-signed-cert-any-language) for trusting the cert per language.
+Any `azcore.TokenCredential` works, since tokens are not validated. See [standalone-server.md](standalone-server.md#trusting-the-azure-self-signed-cert-any-language) for trusting the cert per language.
 
 ## 3. Make the endpoint injectable
 
-In production the override is absent and the client hits the real cloud; in dev/CI it points at CloudEmu. An env var is the easy default — but it's your call: a config field or setting it directly works just as well. Your code doesn't change.
+In production the override is unset and the client talks to the real cloud. In dev and CI it points at CloudEmu. An environment variable is the easiest way to do this, but a config field or setting it directly works too. The rest of your code stays the same.
 
 ```go
 // Where your app builds its client:
@@ -93,11 +93,11 @@ return s3.NewFromConfig(cfg, func(o *s3.Options) {
 })
 ```
 
-Point `CLOUDEMU_ENDPOINT` (or `AWS_ENDPOINT_URL`) at the running server, and your real service exercises the in-memory backend end-to-end. Reset between runs with `curl -X POST http://127.0.0.1:4566/_cloudemu/reset`.
+Set `CLOUDEMU_ENDPOINT` (or `AWS_ENDPOINT_URL`) to the running server's address and your service will use the in-memory backend. Reset state between runs with `curl -X POST http://127.0.0.1:4566/_cloudemu/reset`.
 
-## In-process / library mode — Go unit tests only
+## In-process / library mode (Go unit tests only)
 
-Only for Go unit tests written inside CloudEmu-aware code: skip the server and run it in-process. Never import CloudEmu from production code.
+For Go unit tests you can skip the server and run CloudEmu in-process. Don't import CloudEmu from production code.
 
 ```go
 // In a _test.go file:
@@ -109,7 +109,7 @@ func startCloudEmu(t *testing.T) {
 }
 ```
 
-The endpoint knob is identical to server mode — AWS `o.BaseEndpoint`, GCP `option.WithEndpoint`, Azure `arm.ClientOptions` cloud endpoint, Databricks `Config.Host` — only the URL now comes from `httptest` instead of the running server.
+The endpoint setting is the same as in server mode (AWS `o.BaseEndpoint`, GCP `option.WithEndpoint`, Azure `arm.ClientOptions` cloud endpoint, Databricks `Config.Host`). The only difference is that the URL comes from `httptest` instead of a running server.
 
 ## Tell your AI agent (paste into your repo's `AGENTS.md`)
 
