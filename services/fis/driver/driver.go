@@ -8,9 +8,9 @@
 // repeated GetExperimentTemplate and ListExperimentTemplates reads never drift.
 // StartExperiment materializes an experiment from a template — copying its
 // actions, targets, stop conditions, role and log configuration verbatim — and
-// places it directly in the running state (there is no data plane to advance it
-// to completion); StopExperiment moves a running experiment to the stopped
-// terminal state. The experiment id, arn, state, creationTime and startTime are
+// the experiment advances initiating -> running -> completed on the clock, its
+// run length derived from its actions' duration parameters; StopExperiment
+// moves an initiating or running experiment to the stopped terminal state. The experiment id, arn, state, creationTime and startTime are
 // likewise minted once and stable across reads.
 package driver
 

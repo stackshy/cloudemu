@@ -32,6 +32,8 @@ const (
 	DefaultExecutionSettle   = 1 * time.Second // SFN RUNNING->SUCCEEDED
 	DefaultLBSettle          = 2 * time.Second // ELBv2 provisioning->active
 
+	DefaultExperimentInitiateSettle = 1 * time.Second // FIS experiment initiating->running
+
 	DefaultCacheSettle       = 2 * time.Second // ElastiCache/Redis/Memorystore creating->available
 	DefaultCacheModifySettle = 1 * time.Second // cache modifying->available
 	DefaultClusterSettle     = 3 * time.Second // Redshift/MemoryDB/Bigtable creating->available

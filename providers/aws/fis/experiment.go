@@ -8,11 +8,10 @@ import (
 )
 
 // StartExperiment materializes an experiment from a template, copying its
-// actions, targets, stop conditions, role and log configuration verbatim, and
-// places it directly in the running state. There is no data plane, so the
-// experiment stays running (a stable state) until StopExperiment moves it to the
-// stopped terminal state; id, arn, state, creationTime and startTime are minted
-// once and stable across reads.
+// actions, targets, stop conditions, role and log configuration verbatim. The
+// experiment then advances initiating -> running -> completed on the clock (see
+// lifecycle.go) until StopExperiment stops it; id, arn, creationTime and
+// startTime are minted once and stable across reads.
 func (m *Mock) StartExperiment(_ context.Context, in *driver.StartExperimentInput) (*driver.Experiment, error) {
 	if in.ExperimentTemplateID == "" {
 		return nil, validation("experimentTemplateId is required")
@@ -52,6 +51,7 @@ func (m *Mock) StartExperiment(_ context.Context, in *driver.StartExperimentInpu
 	m.experiments.Set(id, e)
 
 	out := copyExperiment(&e)
+	m.observe(&out, now)
 
 	return &out, nil
 }
@@ -79,33 +79,39 @@ func experimentActionsFromTemplate(in map[string]driver.Action, startTime time.T
 	return out
 }
 
-// StopExperiment moves a running experiment to the stopped terminal state. An
-// experiment that is already in a terminal state yields a ConflictException,
-// mirroring the real API.
+// StopExperiment stops an experiment that is still initiating or running,
+// moving it to the stopped terminal state. An experiment that already reached a
+// terminal state (completed or stopped) yields a ConflictException, mirroring
+// the real API.
 func (m *Mock) StopExperiment(_ context.Context, id string) (*driver.Experiment, error) {
-	e, ok := m.experiments.Get(id)
-	if !ok {
+	now := m.now()
+
+	var (
+		out    driver.Experiment
+		status string
+	)
+
+	found := m.experiments.Update(id, func(e driver.Experiment) driver.Experiment {
+		cur := copyExperiment(&e)
+		m.observe(&cur, now)
+		status = cur.State.Status
+
+		if isTerminal(status) {
+			return e
+		}
+
+		stop(&cur, now)
+		out = copyExperiment(&cur)
+
+		return cur
+	})
+	if !found {
 		return nil, notFound("experiment %s not found", id)
 	}
 
-	if e.State.Status != statusRunning {
-		return nil, conflict("experiment %s is in state %s and cannot be stopped", id, e.State.Status)
+	if isTerminal(status) {
+		return nil, conflict("experiment %s is in state %s and cannot be stopped", id, status)
 	}
-
-	now := m.now()
-	e.State = driver.ExperimentState{Status: statusStopped, Reason: reasonStopped}
-	e.EndTime = now
-
-	for name := range e.Actions {
-		a := e.Actions[name]
-		a.State = driver.ExperimentActionState{Status: statusStopped, Reason: reasonStopped}
-		a.EndTime = now
-		e.Actions[name] = a
-	}
-
-	m.experiments.Set(id, e)
-
-	out := copyExperiment(&e)
 
 	return &out, nil
 }
@@ -118,6 +124,7 @@ func (m *Mock) GetExperiment(_ context.Context, id string) (*driver.Experiment, 
 	}
 
 	out := copyExperiment(&e)
+	m.observe(&out, m.now())
 
 	return &out, nil
 }
@@ -127,9 +134,11 @@ func (m *Mock) ListExperiments(_ context.Context, page driver.Page) ([]*driver.E
 	stored := m.experiments.SortedValues()
 	start, end, next := paginate(len(stored), page)
 	out := make([]*driver.Experiment, 0, end-start)
+	now := m.now()
 
 	for i := start; i < end; i++ {
 		e := copyExperiment(&stored[i])
+		m.observe(&e, now)
 		out = append(out, &e)
 	}
 
