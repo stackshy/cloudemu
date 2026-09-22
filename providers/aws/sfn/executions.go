@@ -458,6 +458,10 @@ func (m *Mock) RedriveExecution(ctx context.Context, arn string) (*driver.Redriv
 		return nil, execNotRedrivable("Execution %s is not of type STANDARD and cannot be redriven", arn)
 	}
 
+	// A run that settled but was never observed publishes its own close first,
+	// so the original failure is not lost behind the redrive.
+	m.settleClose(ctx, ed, m.now())
+
 	redriven, err := m.redrive(ed)
 	if err != nil {
 		return nil, err

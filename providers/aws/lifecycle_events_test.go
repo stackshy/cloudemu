@@ -861,3 +861,39 @@ func statuses(t *testing.T, events []lifecycleEvent) []string {
 
 	return out
 }
+
+// TestStepFunctionsRedriveFirstObservationKeepsOriginalFailure pins that when a
+// redrive is the first call to observe a settled FAILED run, that run's own
+// FAILED status change is still published before the redrive's.
+func TestStepFunctionsRedriveFirstObservationKeepsOriginalFailure(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := aws.New(config.WithClock(clock), config.WithAsyncSettle())
+	ctx := context.Background()
+	drain := captureEvents(t, p,
+		`{"source":["aws.states"],"detail-type":["Step Functions Execution Status Change"]}`)
+
+	smArn, _, _, err := p.SFN.CreateStateMachine(ctx, sfndriver.CreateStateMachineInput{
+		Name:       "flaky",
+		Definition: `{"StartAt":"F","States":{"F":{"Type":"Fail","Error":"Boom"}}}`,
+		RoleArn:    "arn:aws:iam::123456789012:role/sfn",
+	})
+	if err != nil {
+		t.Fatalf("CreateStateMachine: %v", err)
+	}
+
+	exec, err := p.SFN.StartExecution(ctx, sfndriver.StartExecutionInput{StateMachineArn: smArn, Name: "run-1"})
+	if err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+
+	clock.Advance(10 * time.Minute)
+
+	if _, err = p.SFN.RedriveExecution(ctx, exec.ARN); err != nil {
+		t.Fatalf("RedriveExecution: %v", err)
+	}
+
+	want := []string{"RUNNING", "FAILED", "RUNNING", "SUCCEEDED"}
+	if got := statuses(t, drain()); len(got) != len(want) || got[1] != "FAILED" || got[3] != "SUCCEEDED" {
+		t.Fatalf("events = %v, want %v", got, want)
+	}
+}
