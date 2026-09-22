@@ -390,8 +390,23 @@ func (m *Mock) storeImage(rd *repoData, manifest *driver.ImageManifest, digest s
 	return img
 }
 
-// GetImage retrieves image details by repository and reference.
+// GetImage retrieves image details by repository and reference. It is the
+// image-pull read, so it records one RepositoryPullCount — published after m.mu
+// is released, because a CloudWatch alarm on the metric can fan out (SNS ->
+// Lambda) into code that calls back into ECR.
 func (m *Mock) GetImage(_ context.Context, repository, reference string) (*driver.ImageDetail, error) {
+	result, err := m.lookupImage(repository, reference)
+	if err != nil {
+		return nil, err
+	}
+
+	m.emitPull(repository)
+
+	return result, nil
+}
+
+// lookupImage snapshots an image's details under m.mu.
+func (m *Mock) lookupImage(repository, reference string) (*driver.ImageDetail, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -404,8 +419,6 @@ func (m *Mock) GetImage(_ context.Context, repository, reference string) (*drive
 	if img == nil {
 		return nil, errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
 	}
-
-	m.emitPull(repository)
 
 	result := img.detail
 

@@ -125,3 +125,91 @@ func TestExecutionMetricsAbortUnderSettle(t *testing.T) {
 		t.Errorf("aborted run must not record ExecutionsSucceeded, got %v", got)
 	}
 }
+
+// TestExecutionMetricsSettleNaturally pins that under AsyncSettle a run that
+// settles on its own publishes its close metrics exactly once — at the first
+// settled observation (Describe/List/History), stamped at its StopDate — and
+// that later observations never re-publish.
+func TestExecutionMetricsSettleNaturally(t *testing.T) {
+	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	m, cw := newMetricsMock(clk, config.WithAsyncSettle())
+	ctx := context.Background()
+	arn := createSM(t, m, "sm")
+
+	exec, err := m.StartExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Input: "{}"})
+	if err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+
+	// Still RUNNING: observing it publishes nothing yet.
+	if _, err = m.DescribeExecution(ctx, exec.ARN); err != nil {
+		t.Fatalf("DescribeExecution: %v", err)
+	}
+
+	if got, _ := sfnMetric(t, cw, clk, arn, "ExecutionsSucceeded"); got != 0 {
+		t.Fatalf("running execution published ExecutionsSucceeded = %v", got)
+	}
+
+	clk.Advance(10 * time.Minute)
+
+	got, err := m.DescribeExecution(ctx, exec.ARN)
+	if err != nil || got.Status != driver.ExecStatusSucceeded {
+		t.Fatalf("DescribeExecution after settle = %+v, %v", got, err)
+	}
+
+	// Further observations through every read path must not double-count.
+	if _, err = m.ListExecutions(ctx, arn, ""); err != nil {
+		t.Fatalf("ListExecutions: %v", err)
+	}
+
+	if _, err = m.GetExecutionHistory(ctx, exec.ARN, false); err != nil {
+		t.Fatalf("GetExecutionHistory: %v", err)
+	}
+
+	if _, err = m.DescribeExecution(ctx, exec.ARN); err != nil {
+		t.Fatalf("DescribeExecution: %v", err)
+	}
+
+	for name, want := range map[string]float64{"ExecutionsStarted": 1, "ExecutionsSucceeded": 1} {
+		if v, _ := sfnMetric(t, cw, clk, arn, name); v != want {
+			t.Errorf("%s = %v, want %v", name, v, want)
+		}
+	}
+
+	res, err := cw.GetMetricData(ctx, mondriver.GetMetricInput{
+		Namespace: "AWS/States", MetricName: "ExecutionTime",
+		Dimensions: map[string]string{"StateMachineArn": arn},
+		StartTime:  got.StopDate, EndTime: got.StopDate.Add(time.Second),
+		Period: 1, Stat: "SampleCount",
+	})
+	if err != nil || len(res.Values) != 1 || res.Values[0] != 1 {
+		t.Fatalf("ExecutionTime at StopDate %v = %+v (err %v), want one sample", got.StopDate, res, err)
+	}
+
+	if v := res.Unit; v != "Milliseconds" {
+		t.Errorf("ExecutionTime unit = %q", v)
+	}
+}
+
+// TestExecutionMetricsSettledListObservation pins that ListExecutions alone is
+// enough to publish a settled run's close metrics.
+func TestExecutionMetricsSettledListObservation(t *testing.T) {
+	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	m, cw := newMetricsMock(clk, config.WithAsyncSettle())
+	ctx := context.Background()
+	arn := createSM(t, m, "sm")
+
+	if _, err := m.StartExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Input: "{}"}); err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+
+	clk.Advance(10 * time.Minute)
+
+	if _, err := m.ListExecutions(ctx, arn, ""); err != nil {
+		t.Fatalf("ListExecutions: %v", err)
+	}
+
+	if v, _ := sfnMetric(t, cw, clk, arn, "ExecutionsSucceeded"); v != 1 {
+		t.Errorf("ExecutionsSucceeded = %v, want 1", v)
+	}
+}

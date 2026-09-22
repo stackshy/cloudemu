@@ -73,17 +73,20 @@ func (m *Mock) runExecution(ctx context.Context, in driver.StartExecutionInput, 
 			m.opts.SettleDuration(settle.DefaultExecutionSettle+res.WaitTotal))
 	}
 
-	if !m.executions.SetIfAbsent(arn, &execData{exec: exec, settle: window}) {
+	// A run that is already closed when first observed (sync, or AsyncSettle
+	// off) publishes its close side effects now; a settling run publishes them
+	// at its first settled observation (settleClose) or when StopExecution
+	// aborts it.
+	closed := window.Settled(now)
+
+	if !m.executions.SetIfAbsent(arn, &execData{exec: exec, settle: window, closeEmitted: closed}) {
 		return m.idempotentReuse(arn, name, smType, in.Input, async, now)
 	}
 
 	m.emitExecutionStarted(ctx, in.StateMachineArn, now)
 
-	// A run that is already closed when observed (sync, or AsyncSettle off)
-	// publishes its close metrics now; a settling run publishes them only if
-	// StopExecution aborts it.
-	if window.Settled(now) {
-		m.emitExecutionClosed(ctx, &exec, "")
+	if closed {
+		m.executionClosed(ctx, &exec, "")
 	}
 
 	out := observedExec(&exec, window, now)
@@ -206,11 +209,33 @@ func (m *Mock) StartSyncExecution(ctx context.Context, in driver.StartExecutionI
 	return m.runExecution(ctx, in, false)
 }
 
-func (m *Mock) DescribeExecution(_ context.Context, arn string) (*driver.Execution, error) {
+// settleClose publishes an execution's close side effects the first time it is
+// observed settled (its AsyncSettle window elapsed). The flag flips under ed.mu;
+// the publish runs after the lock is released, with the datapoints stamped at
+// the run's StopDate.
+func (m *Mock) settleClose(ctx context.Context, ed *execData, now time.Time) {
+	ed.mu.Lock()
+
+	if ed.closeEmitted || !ed.settle.Settled(now) {
+		ed.mu.Unlock()
+		return
+	}
+
+	ed.closeEmitted = true
+	closed := ed.exec
+
+	ed.mu.Unlock()
+
+	m.executionClosed(ctx, &closed, "")
+}
+
+func (m *Mock) DescribeExecution(ctx context.Context, arn string) (*driver.Execution, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {
 		return nil, err
 	}
+
+	m.settleClose(ctx, ed, m.now())
 
 	ed.mu.RLock()
 	defer ed.mu.RUnlock()
@@ -226,12 +251,15 @@ func (m *Mock) StopExecution(ctx context.Context, arn, errCode, cause string) (t
 		return time.Time{}, err
 	}
 
-	// The abort's close metrics are published after ed.mu is released.
+	// A run that already settled (but was not yet observed) closes first; an
+	// abort's close side effects are published after ed.mu is released.
+	m.settleClose(ctx, ed, m.now())
+
 	var aborted *driver.Execution
 
 	defer func() {
 		if aborted != nil {
-			m.emitExecutionClosed(ctx, aborted, "")
+			m.executionClosed(ctx, aborted, "")
 		}
 	}()
 
@@ -253,6 +281,7 @@ func (m *Mock) StopExecution(ctx context.Context, arn, errCode, cause string) (t
 		ed.exec.Cause = cause
 		ed.exec.History = abortHistory(ed.exec.History, now, errCode, cause)
 		ed.settle = settle.Window{}
+		ed.closeEmitted = true
 
 		snapshot := ed.exec
 		aborted = &snapshot
@@ -288,7 +317,7 @@ func abortHistory(events []driver.HistoryEvent, now time.Time, errCode, cause st
 // real Step Functions does: most recently started first (ties broken by ARN
 // for deterministic output when two executions share a start timestamp, e.g.
 // under FakeClock).
-func (m *Mock) ListExecutions(_ context.Context, stateMachineArn, statusFilter string) ([]driver.Execution, error) {
+func (m *Mock) ListExecutions(ctx context.Context, stateMachineArn, statusFilter string) ([]driver.Execution, error) {
 	if _, err := m.getSM(stateMachineArn); err != nil {
 		return nil, err
 	}
@@ -299,6 +328,8 @@ func (m *Mock) ListExecutions(_ context.Context, stateMachineArn, statusFilter s
 	now := m.now()
 
 	for _, ed := range all {
+		m.settleClose(ctx, ed, now)
+
 		ed.mu.RLock()
 		exec := observedExec(&ed.exec, ed.settle, now)
 		ed.mu.RUnlock()
@@ -330,13 +361,14 @@ func (m *Mock) ListExecutions(_ context.Context, stateMachineArn, statusFilter s
 // unelapsed), the list is truncated to the events whose virtual Timestamp has
 // elapsed — generalizing the previous "only ExecutionStarted while RUNNING"
 // rule — so the terminal event is not yet visible. Reverse order is applied last.
-func (m *Mock) GetExecutionHistory(_ context.Context, arn string, reverse bool) ([]driver.HistoryEvent, error) {
+func (m *Mock) GetExecutionHistory(ctx context.Context, arn string, reverse bool) ([]driver.HistoryEvent, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {
 		return nil, err
 	}
 
 	now := m.now()
+	m.settleClose(ctx, ed, now)
 
 	ed.mu.RLock()
 	settled := ed.settle.Settled(now)
@@ -378,11 +410,12 @@ func (m *Mock) RedriveExecution(ctx context.Context, arn string) (*driver.Redriv
 	now := m.now()
 	ed.exec.Status = driver.ExecStatusSucceeded
 	ed.exec.StopDate = now
+	ed.closeEmitted = true
 	redriven := ed.exec
 
 	ed.mu.Unlock()
 
-	m.emitExecutionClosed(ctx, &redriven, redrivenPrefix)
+	m.executionClosed(ctx, &redriven, redrivenPrefix)
 
 	return &driver.RedriveResult{RedriveDate: now}, nil
 }

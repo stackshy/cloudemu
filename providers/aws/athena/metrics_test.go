@@ -57,6 +57,10 @@ func TestQueryMetricsPublishedPerWorkGroup(t *testing.T) {
 		{"TotalExecutionTime", "DDL", "Milliseconds"},
 		{"EngineExecutionTime", "DDL", "Milliseconds"},
 		{"TotalExecutionTime", "DML", "Milliseconds"},
+		{"QueryQueueTime", "DML", "Milliseconds"},
+		{"QueryPlanningTime", "DML", "Milliseconds"},
+		{"ServicePreProcessingTime", "DML", "Milliseconds"},
+		{"ServiceProcessingTime", "DML", "Milliseconds"},
 		{"ProcessedBytes", "DML", "Bytes"},
 	} {
 		res := get(c.name, c.queryType, "primary")

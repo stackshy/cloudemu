@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	"github.com/stackshy/cloudemu/v2/server/wire"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -296,22 +297,29 @@ func (h *Handler) batchGetImage(w http.ResponseWriter, r *http.Request) {
 	found := make([]imageJSON, 0, len(req.ImageIDs))
 	failures := make([]imageFailureJSON, 0)
 
+	notFound := func(id imageIDJSON) imageFailureJSON {
+		return imageFailureJSON{ImageID: id, FailureCode: "ImageNotFound", FailureReason: "Requested image not found"}
+	}
+
 	for _, id := range req.ImageIDs {
 		detail := findImageDetail(images, id)
 		if detail == nil {
-			failures = append(failures, imageFailureJSON{
-				ImageID:       id,
-				FailureCode:   "ImageNotFound",
-				FailureReason: "Requested image not found",
-			})
-
+			failures = append(failures, notFound(id))
 			continue
 		}
 
 		// BatchGetImage is the manifest fetch of an image pull, so it goes
-		// through GetImage, which records the pull (RepositoryPullCount).
+		// through GetImage, which records the pull (RepositoryPullCount). An
+		// image deleted since the listing is a per-image ImageNotFound failure,
+		// exactly like one that never existed; only other errors fail the call.
 		if _, gerr := h.registry.GetImage(r.Context(), req.RepositoryName, detail.Digest); gerr != nil {
+			if cerrors.IsNotFound(gerr) {
+				failures = append(failures, notFound(id))
+				continue
+			}
+
 			writeErr(w, gerr)
+
 			return
 		}
 

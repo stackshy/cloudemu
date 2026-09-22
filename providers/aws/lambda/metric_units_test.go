@@ -2,6 +2,7 @@ package lambda
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -63,3 +64,54 @@ func TestLambdaDurationUnitAndThrottles(t *testing.T) {
 
 	assertEqual(t, "Count", thr.Unit)
 }
+
+// TestLambdaDurationIsMeasured pins that Duration is the handler's measured run
+// time on the configured clock (here a handler that takes 250ms of FakeClock
+// time), not a constant — for successful and failed invocations alike.
+func TestLambdaDurationIsMeasured(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"))
+	m := New(opts)
+	cw := cloudwatch.New(opts)
+	m.SetMonitoring(cw)
+
+	ctx := context.Background()
+
+	_, err := m.CreateFunction(ctx, defaultFuncConfig())
+	requireNoError(t, err)
+
+	fail := false
+
+	m.RegisterHandler("my-func", func(_ context.Context, _ []byte) ([]byte, error) {
+		fc.Advance(250 * time.Millisecond)
+
+		if fail {
+			return nil, errTestHandler
+		}
+
+		return []byte("ok"), nil
+	})
+
+	_, err = m.Invoke(ctx, driver.InvokeInput{FunctionName: "my-func", Payload: []byte("{}")})
+	requireNoError(t, err)
+
+	fail = true
+	_, err = m.Invoke(ctx, driver.InvokeInput{FunctionName: "my-func", Payload: []byte("{}")})
+	requireNoError(t, err)
+
+	for stat, want := range map[string]float64{"Maximum": 250, "Minimum": 250, "SampleCount": 2} {
+		res, qerr := cw.GetMetricData(ctx, mondriver.GetMetricInput{
+			Namespace: "AWS/Lambda", MetricName: "Duration",
+			Dimensions: map[string]string{"FunctionName": "my-func"},
+			StartTime:  fc.Now().Add(-time.Minute), EndTime: fc.Now().Add(time.Minute),
+			Period: 120, Stat: stat,
+		})
+		requireNoError(t, qerr)
+
+		if len(res.Values) != 1 || res.Values[0] != want {
+			t.Errorf("Duration %s = %v, want %v", stat, res.Values, want)
+		}
+	}
+}
+
+var errTestHandler = errors.New("handler failed")

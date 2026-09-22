@@ -186,9 +186,13 @@ type QueryExecutionStatus struct {
 
 // QueryExecutionStatistics reports the (synthetic) cost of a query execution.
 type QueryExecutionStatistics struct {
-	EngineExecutionTimeInMillis int64
-	DataScannedInBytes          int64
-	TotalExecutionTimeInMillis  int64
+	EngineExecutionTimeInMillis      int64
+	DataScannedInBytes               int64
+	TotalExecutionTimeInMillis       int64
+	QueryQueueTimeInMillis           int64
+	QueryPlanningTimeInMillis        int64
+	ServicePreProcessingTimeInMillis int64
+	ServiceProcessingTimeInMillis    int64
 }
 
 // QueryResults holds the rows a query execution produced. Emulated executions

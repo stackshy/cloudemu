@@ -185,6 +185,9 @@ const (
 	opPutItem    = "PutItem"
 	opUpdateItem = "UpdateItem"
 	opDeleteItem = "DeleteItem"
+
+	opBatchGetItem       = "BatchGetItem"
+	opTransactWriteItems = "TransactWriteItems"
 )
 
 func (m *Mock) emitMetric(metricName string, value float64, unit string, dims map[string]string) {
@@ -200,21 +203,32 @@ func (m *Mock) emitMetric(metricName string, value float64, unit string, dims ma
 
 // emitRequestLatency publishes SuccessfulRequestLatency for one successful
 // request, as real DynamoDB does: Milliseconds on {TableName, Operation}. Its
-// SampleCount is the successful-request count.
-func (m *Mock) emitRequestLatency(table, op string, start time.Time) {
-	elapsed := float64(m.opts.Clock.Since(start)) / float64(time.Millisecond)
-	m.emitMetric("SuccessfulRequestLatency", elapsed, unitMilliseconds,
-		map[string]string{"TableName": table, "Operation": op})
+// SampleCount is the successful-request count. Inside a multi-item wire request
+// (a driver.RequestScope) the sample belongs to that request: it is published
+// once per table, under the request's operation, when the request finishes.
+func (m *Mock) emitRequestLatency(ctx context.Context, table, op string, start time.Time) {
+	publish := func(operation string) {
+		elapsed := float64(m.opts.Clock.Since(start)) / float64(time.Millisecond)
+		m.emitMetric("SuccessfulRequestLatency", elapsed, unitMilliseconds,
+			map[string]string{"TableName": table, "Operation": operation})
+	}
+
+	if scope := driver.RequestScopeFrom(ctx); scope != nil {
+		scope.OnFinish(table, func() { publish(scope.Operation()) })
+		return
+	}
+
+	publish(op)
 }
 
 // emitReadMetrics publishes the per-read metrics of a GetItem/Query/Scan:
 // ConsumedReadCapacityUnits on {TableName}, SuccessfulRequestLatency, and — for
 // Query/Scan — ReturnedItemCount on {TableName, Operation}.
-func (m *Mock) emitReadMetrics(table, op string, consumed float64, returned int, start time.Time) {
+func (m *Mock) emitReadMetrics(ctx context.Context, table, op string, consumed float64, returned int, start time.Time) {
 	m.emitMetric("ConsumedReadCapacityUnits", consumed, unitCount, map[string]string{"TableName": table})
-	m.emitRequestLatency(table, op, start)
+	m.emitRequestLatency(ctx, table, op, start)
 
-	if op != opGetItem {
+	if op == opQuery || op == opScan {
 		m.emitMetric("ReturnedItemCount", float64(returned), unitCount,
 			map[string]string{"TableName": table, "Operation": op})
 	}
@@ -656,7 +670,7 @@ func (m *Mock) PutItem(ctx context.Context, table string, item map[string]any) e
 	return err
 }
 
-func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map[string]any, error) {
+func (m *Mock) GetItem(ctx context.Context, table string, key map[string]any) (map[string]any, error) {
 	start := m.opts.Clock.Now()
 
 	m.mu.RLock()
@@ -674,16 +688,20 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 	k := itemKey(td.config, key)
 	item, ok := td.items.Get(k)
 
+	// A miss is still a successful GetItem (HTTP 200, no Item), so it is metered.
 	if !ok {
+		m.emitReadMetrics(ctx, table, opGetItem, 1, 0, start)
 		return nil, cerrors.New(cerrors.NotFound, "item not found")
 	}
 
 	if m.isItemExpired(td, item) {
 		td.items.Delete(k)
+		m.emitReadMetrics(ctx, table, opGetItem, 1, 0, start)
+
 		return nil, cerrors.New(cerrors.NotFound, "item not found")
 	}
 
-	m.emitReadMetrics(table, opGetItem, 1, 1, start)
+	m.emitReadMetrics(ctx, table, opGetItem, 1, 1, start)
 
 	return maps.Clone(item), nil
 }
@@ -707,7 +725,7 @@ func (m *Mock) DeleteItem(ctx context.Context, table string, key map[string]any)
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryResult, error) {
+func (m *Mock) Query(ctx context.Context, input driver.QueryInput) (*driver.QueryResult, error) {
 	start := m.opts.Clock.Now()
 
 	m.mu.RLock()
@@ -772,7 +790,7 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		}
 	}
 
-	m.emitReadMetrics(input.Table, opQuery, float64(len(result.Items)), len(result.Items), start)
+	m.emitReadMetrics(ctx, input.Table, opQuery, float64(len(result.Items)), len(result.Items), start)
 
 	return result, nil
 }
@@ -1083,7 +1101,7 @@ func itemInSegment(key string, segment, total *int32) bool {
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryResult, error) {
+func (m *Mock) Scan(ctx context.Context, input driver.ScanInput) (*driver.QueryResult, error) {
 	start := m.opts.Clock.Now()
 
 	m.mu.RLock()
@@ -1140,7 +1158,7 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		}
 	}
 
-	m.emitReadMetrics(input.Table, opScan, float64(len(result.Items)), len(result.Items), start)
+	m.emitReadMetrics(ctx, input.Table, opScan, float64(len(result.Items)), len(result.Items), start)
 
 	return result, nil
 }
@@ -1181,7 +1199,9 @@ func (m *Mock) BatchPutItems(ctx context.Context, table string, items []map[stri
 	return nil
 }
 
-func (m *Mock) BatchGetItems(_ context.Context, table string, keys []map[string]any) ([]map[string]any, error) {
+func (m *Mock) BatchGetItems(ctx context.Context, table string, keys []map[string]any) ([]map[string]any, error) {
+	start := m.opts.Clock.Now()
+
 	m.mu.RLock()
 	td, exists := m.tables[table]
 	m.mu.RUnlock()
@@ -1203,6 +1223,8 @@ func (m *Mock) BatchGetItems(_ context.Context, table string, keys []map[string]
 			results = append(results, maps.Clone(item))
 		}
 	}
+
+	m.emitReadMetrics(ctx, table, opBatchGetItem, float64(len(keys)), len(results), start)
 
 	return results, nil
 }

@@ -61,6 +61,14 @@ func (m *Mock) emitExecutionStarted(ctx context.Context, smARN string, at time.T
 	})
 }
 
+// executionClosed is the single completion hook of an execution: it runs
+// exactly once per close (start-closed, first settled observation, abort, or
+// redrive), outside every lock. It publishes the AWS/States close metrics; the
+// execution status-change event belongs here as well.
+func (m *Mock) executionClosed(ctx context.Context, exec *driver.Execution, prefix string) {
+	m.emitExecutionClosed(ctx, exec, prefix)
+}
+
 // emitExecutionClosed publishes the close metrics of a terminal execution: its
 // Executions<Status> count and ExecutionTime (start to stop). A redriven close
 // (prefix "Redriven") also publishes ExecutionsRedriven and the matching

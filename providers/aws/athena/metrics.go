@@ -44,15 +44,20 @@ func (m *Mock) emitQueryMetrics(ctx context.Context, qe *driver.QueryExecution, 
 	}
 	now := m.now()
 
+	st := &qe.Statistics
 	data := []mondriver.MetricDatum{
-		{MetricName: "TotalExecutionTime", Value: float64(qe.Statistics.TotalExecutionTimeInMillis), Unit: unitMilliseconds},
-		{MetricName: "EngineExecutionTime", Value: float64(qe.Statistics.EngineExecutionTimeInMillis), Unit: unitMilliseconds},
+		{MetricName: "TotalExecutionTime", Value: float64(st.TotalExecutionTimeInMillis), Unit: unitMilliseconds},
+		{MetricName: "EngineExecutionTime", Value: float64(st.EngineExecutionTimeInMillis), Unit: unitMilliseconds},
+		{MetricName: "QueryQueueTime", Value: float64(st.QueryQueueTimeInMillis), Unit: unitMilliseconds},
+		{MetricName: "QueryPlanningTime", Value: float64(st.QueryPlanningTimeInMillis), Unit: unitMilliseconds},
+		{MetricName: "ServicePreProcessingTime", Value: float64(st.ServicePreProcessingTimeInMillis), Unit: unitMilliseconds},
+		{MetricName: "ServiceProcessingTime", Value: float64(st.ServiceProcessingTimeInMillis), Unit: unitMilliseconds},
 	}
 
 	// ProcessedBytes is reported for DML queries only.
 	if qe.StatementType == driver.StatementTypeDML {
 		data = append(data, mondriver.MetricDatum{
-			MetricName: "ProcessedBytes", Value: float64(qe.Statistics.DataScannedInBytes), Unit: unitBytes,
+			MetricName: "ProcessedBytes", Value: float64(st.DataScannedInBytes), Unit: unitBytes,
 		})
 	}
 

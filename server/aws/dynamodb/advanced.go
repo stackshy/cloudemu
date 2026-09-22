@@ -244,15 +244,20 @@ func (h *Handler) batchWriteItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The per-item writes belong to this one BatchWriteItem request: the scope
+	// makes the provider meter it once per table under Operation=BatchWriteItem.
+	ctx, finish := dbdriver.WithRequestScope(r.Context(), "BatchWriteItem")
+
 	for table, requests := range req.RequestItems {
 		for i := range requests {
-			if err := h.applyBatchWrite(r.Context(), table, &requests[i]); err != nil {
+			if err := h.applyBatchWrite(ctx, table, &requests[i]); err != nil {
 				writeErr(w, err)
 				return
 			}
 		}
 	}
 
+	finish()
 	wire.WriteJSON(w, map[string]any{"UnprocessedItems": map[string]any{}})
 }
 
@@ -423,13 +428,17 @@ func (h *Handler) transactGetItems(w http.ResponseWriter, r *http.Request) {
 
 	responses := make([]map[string]any, 0, len(req.TransactItems))
 
+	// The per-item gets belong to this one TransactGetItems request (metered
+	// once per table under Operation=TransactGetItems).
+	ctx, finish := dbdriver.WithRequestScope(r.Context(), "TransactGetItems")
+
 	for _, t := range req.TransactItems {
 		if t.Get == nil {
 			responses = append(responses, map[string]any{})
 			continue
 		}
 
-		entry, err := h.transactGetOne(r, t.Get.TableName, t.Get.Key,
+		entry, err := h.transactGetOne(ctx, t.Get.TableName, t.Get.Key,
 			t.Get.ProjectionExpression, t.Get.ExpressionAttributeNames)
 		if err != nil {
 			writeErr(w, err)
@@ -439,6 +448,7 @@ func (h *Handler) transactGetItems(w http.ResponseWriter, r *http.Request) {
 		responses = append(responses, entry)
 	}
 
+	finish()
 	wire.WriteJSON(w, map[string]any{"Responses": responses})
 }
 
@@ -446,18 +456,18 @@ func (h *Handler) transactGetItems(w http.ResponseWriter, r *http.Request) {
 // entry: {"Item": ...} when present, {} when the item is missing. A missing
 // table is a real error and is propagated.
 func (h *Handler) transactGetOne(
-	r *http.Request, table string, wireKey map[string]any, projection string, names map[string]string,
+	ctx context.Context, table string, wireKey map[string]any, projection string, names map[string]string,
 ) (map[string]any, error) {
 	paths, perr := expr.ParseProjection(projection, names)
 	if perr != nil {
 		return nil, perr
 	}
 
-	if _, terr := h.db.DescribeTable(r.Context(), table); terr != nil {
+	if _, terr := h.db.DescribeTable(ctx, table); terr != nil {
 		return nil, terr
 	}
 
-	item, err := h.db.GetItem(r.Context(), table, fromWireItem(wireKey))
+	item, err := h.db.GetItem(ctx, table, fromWireItem(wireKey))
 	if err != nil {
 		if cerrors.IsNotFound(err) {
 			return map[string]any{}, nil
