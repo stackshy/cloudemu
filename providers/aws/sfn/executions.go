@@ -77,6 +77,15 @@ func (m *Mock) runExecution(ctx context.Context, in driver.StartExecutionInput, 
 		return m.idempotentReuse(arn, name, smType, in.Input, async, now)
 	}
 
+	m.emitExecutionStarted(ctx, in.StateMachineArn, now)
+
+	// A run that is already closed when observed (sync, or AsyncSettle off)
+	// publishes its close metrics now; a settling run publishes them only if
+	// StopExecution aborts it.
+	if window.Settled(now) {
+		m.emitExecutionClosed(ctx, &exec, "")
+	}
+
 	out := observedExec(&exec, window, now)
 
 	return &out, nil
@@ -211,11 +220,20 @@ func (m *Mock) DescribeExecution(_ context.Context, arn string) (*driver.Executi
 	return &out, nil
 }
 
-func (m *Mock) StopExecution(_ context.Context, arn, errCode, cause string) (time.Time, error) {
+func (m *Mock) StopExecution(ctx context.Context, arn, errCode, cause string) (time.Time, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {
 		return time.Time{}, err
 	}
+
+	// The abort's close metrics are published after ed.mu is released.
+	var aborted *driver.Execution
+
+	defer func() {
+		if aborted != nil {
+			m.emitExecutionClosed(ctx, aborted, "")
+		}
+	}()
 
 	ed.mu.Lock()
 	defer ed.mu.Unlock()
@@ -235,6 +253,9 @@ func (m *Mock) StopExecution(_ context.Context, arn, errCode, cause string) (tim
 		ed.exec.Cause = cause
 		ed.exec.History = abortHistory(ed.exec.History, now, errCode, cause)
 		ed.settle = settle.Window{}
+
+		snapshot := ed.exec
+		aborted = &snapshot
 	}
 
 	return ed.exec.StopDate, nil
@@ -346,18 +367,22 @@ func (m *Mock) GetExecutionHistory(_ context.Context, arn string, reverse bool) 
 // RedriveExecution restarts a previously-completed execution. The emulator does
 // not re-run the workflow: it records a new redriveDate on the existing
 // execution and returns it. Repeated calls advance the redrive date.
-func (m *Mock) RedriveExecution(_ context.Context, arn string) (*driver.RedriveResult, error) {
+func (m *Mock) RedriveExecution(ctx context.Context, arn string) (*driver.RedriveResult, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {
 		return nil, err
 	}
 
 	ed.mu.Lock()
-	defer ed.mu.Unlock()
 
 	now := m.now()
 	ed.exec.Status = driver.ExecStatusSucceeded
 	ed.exec.StopDate = now
+	redriven := ed.exec
+
+	ed.mu.Unlock()
+
+	m.emitExecutionClosed(ctx, &redriven, redrivenPrefix)
 
 	return &driver.RedriveResult{RedriveDate: now}, nil
 }

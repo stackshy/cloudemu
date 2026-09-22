@@ -290,9 +290,20 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 	}
 
 	_ = m.monitoring.PutMetricData(ctx, []mondriver.MetricDatum{{
-		Namespace: "AWS/Lambda", MetricName: metricName, Value: value, Unit: "Count",
+		Namespace: "AWS/Lambda", MetricName: metricName, Value: value, Unit: lambdaMetricUnit(metricName),
 		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
 	}})
+}
+
+// lambdaMetricUnit returns the CloudWatch unit real Lambda publishes metricName
+// with: Duration is Milliseconds; the invocation/error/throttle/concurrency
+// metrics are Count.
+func lambdaMetricUnit(metricName string) string {
+	if metricName == "Duration" {
+		return "Milliseconds"
+	}
+
+	return "Count"
 }
 
 // New creates a new Lambda mock.
@@ -503,6 +514,10 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	// release returns the slot once this invocation completes.
 	release, err := m.reserveInvocationSlot(&fd, input.FunctionName)
 	if err != nil {
+		// A throttled invoke never runs, so it records Throttles (not
+		// Invocations), as real Lambda does.
+		m.emitMetric(ctx, "Throttles", 1, map[string]string{"FunctionName": input.FunctionName})
+
 		return nil, err
 	}
 

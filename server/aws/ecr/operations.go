@@ -308,6 +308,13 @@ func (h *Handler) batchGetImage(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
+		// BatchGetImage is the manifest fetch of an image pull, so it goes
+		// through GetImage, which records the pull (RepositoryPullCount).
+		if _, gerr := h.registry.GetImage(r.Context(), req.RepositoryName, detail.Digest); gerr != nil {
+			writeErr(w, gerr)
+			return
+		}
+
 		found = append(found, imageJSON{
 			RegistryID:             detail.RegistryID,
 			RepositoryName:         detail.Repository,

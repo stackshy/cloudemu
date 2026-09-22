@@ -98,11 +98,11 @@ func checkConditionLocked(cond driver.Condition, item map[string]any, present bo
 }
 
 // emitWriteMetrics pushes the per-write CloudWatch metrics shared by every
-// mutating operation.
-func (m *Mock) emitWriteMetrics(table string) {
-	dims := map[string]string{"TableName": table}
-	m.emitMetric("ConsumedWriteCapacityUnits", 1, dims)
-	m.emitMetric("SuccessfulRequestCount", 1, dims)
+// mutating operation: ConsumedWriteCapacityUnits on {TableName} and the
+// SuccessfulRequestLatency of op on {TableName, Operation}.
+func (m *Mock) emitWriteMetrics(table, op string, start time.Time) {
+	m.emitMetric("ConsumedWriteCapacityUnits", 1, unitCount, map[string]string{"TableName": table})
+	m.emitRequestLatency(table, op, start)
 }
 
 // PutItemConditional writes item only if cond passes, evaluating the condition
@@ -112,6 +112,8 @@ func (m *Mock) emitWriteMetrics(table string) {
 func (m *Mock) PutItemConditional(
 	ctx context.Context, table string, item map[string]any, cond driver.Condition,
 ) (map[string]any, error) {
+	start := m.opts.Clock.Now()
+
 	m.mu.Lock()
 
 	td, exists := m.tables[table]
@@ -144,7 +146,7 @@ func (m *Mock) PutItemConditional(
 	m.mu.Unlock()
 	m.flushStreamDeliveries(ctx)
 
-	m.emitWriteMetrics(table)
+	m.emitWriteMetrics(table, opPutItem, start)
 
 	return oldImage(oldItem, hadOld), nil
 }
@@ -156,6 +158,8 @@ func (m *Mock) PutItemConditional(
 func (m *Mock) DeleteItemConditional(
 	ctx context.Context, table string, key map[string]any, cond driver.Condition,
 ) (map[string]any, error) {
+	start := m.opts.Clock.Now()
+
 	m.mu.Lock()
 
 	td, exists := m.tables[table]
@@ -186,7 +190,7 @@ func (m *Mock) DeleteItemConditional(
 	m.mu.Unlock()
 	m.flushStreamDeliveries(ctx)
 
-	m.emitWriteMetrics(table)
+	m.emitWriteMetrics(table, opDeleteItem, start)
 
 	return oldImage(oldItem, hadOld), nil
 }
@@ -201,6 +205,8 @@ func (m *Mock) DeleteItemConditional(
 func (m *Mock) UpdateItemConditional(
 	ctx context.Context, input driver.UpdateItemInput, cond driver.Condition,
 ) (updated, old map[string]any, err error) {
+	start := m.opts.Clock.Now()
+
 	m.mu.Lock()
 
 	td, exists := m.tables[input.Table]
@@ -240,7 +246,7 @@ func (m *Mock) UpdateItemConditional(
 	m.mu.Unlock()
 	m.flushStreamDeliveries(ctx)
 
-	m.emitWriteMetrics(input.Table)
+	m.emitWriteMetrics(input.Table, opUpdateItem, start)
 
 	return maps.Clone(result), oldItem, nil
 }

@@ -343,6 +343,26 @@ type Mock struct {
 	subnetIPCounters map[string]int
 }
 
+// instanceMetric is one AWS/EC2 basic-monitoring instance metric and the
+// CloudWatch unit real EC2 publishes it with.
+type instanceMetric struct {
+	name string
+	unit string
+}
+
+// instanceMetrics returns the auto-emitted AWS/EC2 instance metrics in the
+// order their values are supplied. Units follow the EC2 CloudWatch reference:
+// CPUUtilization is Percent, NetworkIn/Out are Bytes, DiskRead/WriteOps are Count.
+func instanceMetrics() []instanceMetric {
+	return []instanceMetric{
+		{name: "CPUUtilization", unit: "Percent"},
+		{name: "NetworkIn", unit: "Bytes"},
+		{name: "NetworkOut", unit: "Bytes"},
+		{name: "DiskReadOps", unit: "Count"},
+		{name: "DiskWriteOps", unit: "Count"},
+	}
+}
+
 // SetMonitoring sets the monitoring backend for auto-metric generation.
 func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
@@ -358,7 +378,7 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime s
 		lt = m.opts.Clock.Now()
 	}
 
-	metrics := []string{"CPUUtilization", "NetworkIn", "NetworkOut", "DiskReadOps", "DiskWriteOps"}
+	metrics := instanceMetrics()
 	values := []float64{25.0, 1024.0, 512.0, 100.0, 50.0}
 
 	var data []mondriver.MetricDatum
@@ -366,14 +386,14 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime s
 	// Backfill the 5 datapoints going backward from launch time so they land in
 	// the recent past. Forward-dating would place them in the future, where a
 	// GetMetricStatistics query ending at "now" filters them out.
-	for i, metricName := range metrics {
+	for i, metric := range metrics {
 		for j := 0; j < 5; j++ {
 			ts := lt.Add(-time.Duration(j) * time.Minute)
 			data = append(data, mondriver.MetricDatum{
 				Namespace:  "AWS/EC2",
-				MetricName: metricName,
+				MetricName: metric.name,
 				Value:      values[i],
-				Unit:       "None",
+				Unit:       metric.unit,
 				Dimensions: map[string]string{"InstanceId": instanceID},
 				Timestamp:  ts,
 			})
@@ -388,16 +408,16 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID string, valu
 		return
 	}
 
-	metrics := []string{"CPUUtilization", "NetworkIn", "NetworkOut", "DiskReadOps", "DiskWriteOps"}
+	metrics := instanceMetrics()
 	now := m.opts.Clock.Now()
 	data := make([]mondriver.MetricDatum, len(metrics))
 
-	for i, metricName := range metrics {
+	for i, metric := range metrics {
 		data[i] = mondriver.MetricDatum{
 			Namespace:  "AWS/EC2",
-			MetricName: metricName,
+			MetricName: metric.name,
 			Value:      values[i],
-			Unit:       "None",
+			Unit:       metric.unit,
 			Dimensions: map[string]string{"InstanceId": instanceID},
 			Timestamp:  now,
 		}

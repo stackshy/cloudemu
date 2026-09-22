@@ -20,6 +20,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/settle"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	"github.com/stackshy/cloudemu/v2/services/sfn/driver"
 )
 
@@ -66,6 +67,10 @@ type Mock struct {
 	// lambdaSync is the Task->Lambda seam; nil until SetLambdaSyncInvoker wires
 	// the Lambda backend (library-only construction leaves Task echoing input).
 	lambdaSync LambdaSyncInvoker
+
+	// monitoring, when wired via SetMonitoring, receives the AWS/States
+	// execution metrics real Step Functions publishes.
+	monitoring mondriver.Monitoring
 
 	opts *config.Options
 }

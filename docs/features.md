@@ -31,9 +31,23 @@ All VM lifecycle operations also emit metrics via `emitLifecycleMetrics()`:
 
 Each lifecycle call emits 1 datapoint per metric at `Clock.Now()`. This allows alarms to detect state changes -- for example, a "low CPU" alarm fires when a VM is stopped.
 
+AWS/EC2 datapoints carry the units real EC2 publishes: `CPUUtilization` is `Percent`, `NetworkIn`/`NetworkOut` are `Bytes`, and `DiskReadOps`/`DiskWriteOps` are `Count` (visible as `Unit` on `get-metric-statistics`).
+
 ### Auto-Metrics for Other Services
 
 In addition to compute, 9 other services per provider are wired to push metrics to monitoring: Storage, Database, Serverless, Message Queue, Cache, Logging, Notification, Container Registry, and Event Bus.
+
+On AWS, these follow the real CloudWatch taxonomy (namespace, metric name, dimensions, unit). Notable examples:
+
+| Service | Namespace | Metrics | Dimensions |
+|---------|-----------|---------|------------|
+| DynamoDB | `AWS/DynamoDB` | ConsumedRead/WriteCapacityUnits (Count); SuccessfulRequestLatency (Milliseconds); ReturnedItemCount (Count, Query/Scan) | `TableName`; latency and item count on `TableName`+`Operation` |
+| Lambda | `AWS/Lambda` | Invocations, Errors, Throttles, ConcurrentExecutions (Count); Duration (Milliseconds) | `FunctionName` |
+| ECR | `AWS/ECR` | RepositoryPullCount (Count) — the only metric real ECR publishes; pushes emit nothing | `RepositoryName` |
+| Kinesis | `AWS/Kinesis` | IncomingBytes/Records, PutRecord.\*, PutRecords.\*, GetRecords.\* (Bytes/Count/Milliseconds) | `StreamName` |
+| Step Functions | `AWS/States` | ExecutionsStarted/Succeeded/Failed/Aborted/TimedOut (Count); ExecutionTime (Milliseconds) | `StateMachineArn` |
+| API Gateway | `AWS/ApiGateway` | Count, 4XXError, 5XXError (Count); Latency, IntegrationLatency (Milliseconds) | `ApiName`, and `ApiName`+`Stage` |
+| Athena | `AWS/Athena` | TotalExecutionTime, EngineExecutionTime (Milliseconds); ProcessedBytes (Bytes, DML) — only for workgroups with `PublishCloudWatchMetricsEnabled` | `QueryState`+`QueryType`+`WorkGroup` |
 
 ---
 

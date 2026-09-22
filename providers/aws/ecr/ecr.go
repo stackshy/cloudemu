@@ -74,14 +74,17 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
 }
 
-func (m *Mock) emitMetric(metricName string, value float64, dims map[string]string) {
+// emitPull records one image pull as the AWS/ECR RepositoryPullCount metric —
+// the only metric real ECR publishes (dimension RepositoryName). Real ECR has no
+// push-count metric, so pushes emit nothing.
+func (m *Mock) emitPull(repository string) {
 	if m.monitoring == nil {
 		return
 	}
 
 	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
-		Namespace: "AWS/ECR", MetricName: metricName, Value: value, Unit: "Count",
-		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
+		Namespace: "AWS/ECR", MetricName: "RepositoryPullCount", Value: 1, Unit: "Count",
+		Dimensions: map[string]string{"RepositoryName": repository}, Timestamp: m.opts.Clock.Now(),
 	}})
 }
 
@@ -352,8 +355,6 @@ func (m *Mock) PutImage(_ context.Context, manifest *driver.ImageManifest) (*dri
 		autoScan(rd, digest, manifest.Repository, m.opts.Clock.Now())
 	}
 
-	m.emitMetric("ImagePushCount", 1, map[string]string{"RepositoryName": manifest.Repository})
-
 	result := img.detail
 
 	return &result, nil
@@ -404,7 +405,7 @@ func (m *Mock) GetImage(_ context.Context, repository, reference string) (*drive
 		return nil, errors.Newf(errors.NotFound, "image %q not found in repository %q", reference, repository)
 	}
 
-	m.emitMetric("ImagePullCount", 1, map[string]string{"RepositoryName": repository})
+	m.emitPull(repository)
 
 	result := img.detail
 

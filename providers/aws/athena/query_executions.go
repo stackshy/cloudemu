@@ -11,7 +11,7 @@ import (
 // StartQueryExecution runs a query synchronously (there is no real compute
 // plane) and returns its id. Re-issuing with the same non-empty
 // ClientRequestToken returns the original id.
-func (m *Mock) StartQueryExecution(_ context.Context, in driver.StartQueryExecutionInput) (string, error) {
+func (m *Mock) StartQueryExecution(ctx context.Context, in driver.StartQueryExecutionInput) (string, error) {
 	if in.QueryString == "" {
 		return "", invalidRequest("QueryString is required")
 	}
@@ -39,6 +39,7 @@ func (m *Mock) StartQueryExecution(_ context.Context, in driver.StartQueryExecut
 
 	m.queryExecutions.Set(qe.QueryExecutionID, copyQueryExecution(qe))
 	m.recordToken(in.ClientRequestToken, qe.QueryExecutionID)
+	m.emitQueryMetrics(ctx, &qe, wg)
 
 	return qe.QueryExecutionID, nil
 }

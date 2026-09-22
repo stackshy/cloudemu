@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"strings"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/apigateway/driver"
@@ -31,36 +32,56 @@ type resolvedRoute struct {
 // an AWS_PROXY/AWS Lambda integration, invokes the target function and maps its
 // response. Data-plane failures (unknown API/stage/route, missing backend,
 // malformed function response) are returned as ordinary HTTP responses — the
-// shape real API Gateway returns — not as Go errors.
+// shape real API Gateway returns — not as Go errors. Every request to a
+// deployed stage publishes the AWS/ApiGateway request metrics.
 func (m *Mock) InvokeRoute(ctx context.Context, req *driver.ProxyRequest) (*driver.ProxyResponse, error) {
+	start := m.opts.Clock.Now()
+
+	resp, integration := m.serveRoute(ctx, req)
+
+	if apiName, ok := m.stageAPIName(req); ok {
+		m.emitRequestMetrics(ctx, apiName, req.StageName, resp.StatusCode, m.opts.Clock.Since(start), integration)
+	}
+
+	return resp, nil
+}
+
+// serveRoute produces the data-plane response for req, and the integration
+// (backend) latency when the request reached a backend, or -1 when it did not.
+func (m *Mock) serveRoute(ctx context.Context, req *driver.ProxyRequest) (*driver.ProxyResponse, time.Duration) {
+	const noIntegration = -1
+
 	route, ok := m.resolve(req)
 	if !ok {
-		return forbiddenMissingToken(), nil
+		return forbiddenMissingToken(), noIntegration
 	}
 
 	if !isLambdaProxy(route.integration.Type) {
-		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), nil
+		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), noIntegration
 	}
 
 	if m.lambda == nil {
 		// Nil-safe: no Lambda backend wired (library-only construction). A Lambda
 		// integration whose backend is unreachable is a 502 in real API Gateway.
-		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), nil
+		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), noIntegration
 	}
 
 	event, err := buildProxyEvent(req, &route, m.opts.AccountID)
 	if err != nil {
-		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), nil
+		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), noIntegration
 	}
 
 	target := extractLambdaTarget(route.integration.URI)
 
+	invokeStart := m.opts.Clock.Now()
 	out, fnErr, invErr := m.lambda.InvokeSync(ctx, target, event)
+	integration := m.opts.Clock.Since(invokeStart)
+
 	if invErr != nil || fnErr != "" {
-		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), nil
+		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), integration
 	}
 
-	return mapLambdaResponse(out), nil
+	return mapLambdaResponse(out), integration
 }
 
 // resolve locks the API, resolves the stage and route, and returns a snapshot.

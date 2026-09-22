@@ -171,15 +171,53 @@ func (m *Mock) SetStreamInvoker(i StreamEventInvoker) {
 	m.streamInvoker = i
 }
 
-func (m *Mock) emitMetric(metricName string, value float64, dims map[string]string) {
+// CloudWatch units of the AWS/DynamoDB metrics this mock publishes.
+const (
+	unitCount        = "Count"
+	unitMilliseconds = "Milliseconds"
+)
+
+// Operation dimension values of the AWS/DynamoDB request metrics.
+const (
+	opGetItem    = "GetItem"
+	opQuery      = "Query"
+	opScan       = "Scan"
+	opPutItem    = "PutItem"
+	opUpdateItem = "UpdateItem"
+	opDeleteItem = "DeleteItem"
+)
+
+func (m *Mock) emitMetric(metricName string, value float64, unit string, dims map[string]string) {
 	if m.monitoring == nil {
 		return
 	}
 
 	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
-		Namespace: "AWS/DynamoDB", MetricName: metricName, Value: value, Unit: "Count",
+		Namespace: "AWS/DynamoDB", MetricName: metricName, Value: value, Unit: unit,
 		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
 	}})
+}
+
+// emitRequestLatency publishes SuccessfulRequestLatency for one successful
+// request, as real DynamoDB does: Milliseconds on {TableName, Operation}. Its
+// SampleCount is the successful-request count.
+func (m *Mock) emitRequestLatency(table, op string, start time.Time) {
+	elapsed := float64(m.opts.Clock.Since(start)) / float64(time.Millisecond)
+	m.emitMetric("SuccessfulRequestLatency", elapsed, unitMilliseconds,
+		map[string]string{"TableName": table, "Operation": op})
+}
+
+// emitReadMetrics publishes the per-read metrics of a GetItem/Query/Scan:
+// ConsumedReadCapacityUnits on {TableName}, SuccessfulRequestLatency, and — for
+// Query/Scan — ReturnedItemCount on {TableName, Operation}.
+func (m *Mock) emitReadMetrics(table, op string, consumed float64, returned int, start time.Time) {
+	m.emitMetric("ConsumedReadCapacityUnits", consumed, unitCount, map[string]string{"TableName": table})
+	m.emitRequestLatency(table, op, start)
+
+	if op != opGetItem {
+		m.emitMetric("ReturnedItemCount", float64(returned), unitCount,
+			map[string]string{"TableName": table, "Operation": op})
+	}
 }
 
 // New creates a new DynamoDB mock.
@@ -619,6 +657,8 @@ func (m *Mock) PutItem(ctx context.Context, table string, item map[string]any) e
 }
 
 func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map[string]any, error) {
+	start := m.opts.Clock.Now()
+
 	m.mu.RLock()
 	td, exists := m.tables[table]
 	m.mu.RUnlock()
@@ -643,9 +683,7 @@ func (m *Mock) GetItem(_ context.Context, table string, key map[string]any) (map
 		return nil, cerrors.New(cerrors.NotFound, "item not found")
 	}
 
-	dims := map[string]string{"TableName": table}
-	m.emitMetric("ConsumedReadCapacityUnits", 1, dims)
-	m.emitMetric("SuccessfulRequestCount", 1, dims)
+	m.emitReadMetrics(table, opGetItem, 1, 1, start)
 
 	return maps.Clone(item), nil
 }
@@ -670,6 +708,8 @@ func (m *Mock) DeleteItem(ctx context.Context, table string, key map[string]any)
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryResult, error) {
+	start := m.opts.Clock.Now()
+
 	m.mu.RLock()
 	td, exists := m.tables[input.Table]
 	m.mu.RUnlock()
@@ -732,9 +772,7 @@ func (m *Mock) Query(_ context.Context, input driver.QueryInput) (*driver.QueryR
 		}
 	}
 
-	dims := map[string]string{"TableName": input.Table}
-	m.emitMetric("ConsumedReadCapacityUnits", float64(len(result.Items)), dims)
-	m.emitMetric("SuccessfulRequestCount", 1, dims)
+	m.emitReadMetrics(input.Table, opQuery, float64(len(result.Items)), len(result.Items), start)
 
 	return result, nil
 }
@@ -1046,6 +1084,8 @@ func itemInSegment(key string, segment, total *int32) bool {
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryResult, error) {
+	start := m.opts.Clock.Now()
+
 	m.mu.RLock()
 	td, exists := m.tables[input.Table]
 	m.mu.RUnlock()
@@ -1100,9 +1140,7 @@ func (m *Mock) Scan(_ context.Context, input driver.ScanInput) (*driver.QueryRes
 		}
 	}
 
-	dims := map[string]string{"TableName": input.Table}
-	m.emitMetric("ConsumedReadCapacityUnits", float64(len(result.Items)), dims)
-	m.emitMetric("SuccessfulRequestCount", 1, dims)
+	m.emitReadMetrics(input.Table, opScan, float64(len(result.Items)), len(result.Items), start)
 
 	return result, nil
 }
