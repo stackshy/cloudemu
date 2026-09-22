@@ -185,7 +185,7 @@ func (h *Handler) scan(w http.ResponseWriter, r *http.Request) {
 		TotalSegments:       req.TotalSegments,
 	})
 	if err != nil {
-		writeErr(w, err)
+		h.writeIndexedReadErr(r.Context(), w, err, req.TableName, req.IndexName)
 		return
 	}
 

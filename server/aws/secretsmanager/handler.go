@@ -9,6 +9,7 @@ package secretsmanager
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -130,6 +131,13 @@ func writeErr(w http.ResponseWriter, err error) {
 	msg := cerrors.Message(err)
 
 	switch {
+	case errors.Is(err, secretsdriver.ErrDecryptionFailure):
+		// A secret whose KMS key is disabled/pending deletion can't be read;
+		// real Secrets Manager answers the dedicated DecryptionFailure
+		// exception, not the generic FailedPrecondition mapping below.
+		wire.WriteJSONError(w, http.StatusBadRequest, "DecryptionFailure", msg)
+	case errors.Is(err, secretsdriver.ErrEncryptionFailure):
+		wire.WriteJSONError(w, http.StatusBadRequest, "EncryptionFailure", msg)
 	case cerrors.IsNotFound(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "ResourceNotFoundException", msg)
 	case cerrors.IsAlreadyExists(err):

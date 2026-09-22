@@ -2,6 +2,7 @@ package glue
 
 import (
 	"context"
+	"fmt"
 	"strconv"
 	"strings"
 	"sync"
@@ -500,7 +501,7 @@ func (m *Mock) DeleteSchemaVersions(
 			errs = append(errs, driver.BatchError{
 				Values:       []string{strconv.FormatInt(n, 10)},
 				ErrorCode:    driver.ExEntityNotFound,
-				ErrorMessage: entityNotFound("schema version %d not found for %s", n, schemaName).Error(),
+				ErrorMessage: fmt.Sprintf("schema version %d not found for %s", n, schemaName),
 			})
 
 			continue
