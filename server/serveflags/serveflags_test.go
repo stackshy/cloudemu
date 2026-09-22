@@ -23,7 +23,7 @@ func noEnv(string) string { return "" }
 //
 //nolint:gochecknoglobals // test fixture: the pinned common-flag name set
 var commonFlagNames = []string{
-	"account-id", "admin", "advertise-host", "aws-port", "azure-port", "azure-subscription",
+	"account-id", "admin", "advertise-host", "async-settle", "aws-port", "azure-port", "azure-subscription",
 	"endpoints-file", "enforce-auth", "gcp-grpc-port", "gcp-port", "host", "init-dir", "k8s-nodes", "k8s-port",
 	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-port",
 	"persist", "persist-interval", "persist-metadata-only", "persist-strategy", "project-id",
@@ -142,7 +142,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 		"--latency", "20ms",
 		"--tls-cert", "/c.pem", "--tls-key", "/k.pem", "--tls-host", "a", "--tls-host", "b",
 		"--endpoints-file", "/eps.json",
-		"--admin=false", "--log-requests", "--quiet", "--enforce-auth",
+		"--admin=false", "--log-requests", "--quiet", "--enforce-auth", "--async-settle",
 		"--shutdown-timeout", "3s",
 		"--persist", "--state-file", "/s.json", "--persist-metadata-only",
 		"--persist-strategy", "manual", "--persist-interval", "7s",
@@ -181,6 +181,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 	assertEqual(t, "log-requests", sk.LogRequests, true)
 	assertEqual(t, "quiet", sk.Quiet, true)
 	assertEqual(t, "enforce-auth", sk.EnforceAuth, true)
+	assertEqual(t, "async-settle", sk.AsyncSettle, true)
 	assertEqual(t, "shutdown-timeout", sk.ShutdownTimeout, 3*time.Second)
 	assertEqual(t, "persist", sk.Persist, true)
 	assertEqual(t, "state-file", sk.StateFile, "/s.json")

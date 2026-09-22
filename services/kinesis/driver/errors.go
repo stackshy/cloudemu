@@ -5,7 +5,6 @@ package driver
 const (
 	ExExpiredIterator = "ExpiredIteratorException"
 	ExInvalidArgument = "InvalidArgumentException"
-	ExValidation      = "ValidationException"
 )
 
 // APIError tags a canonical cloudemu error with the Kinesis exception name it

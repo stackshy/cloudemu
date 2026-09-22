@@ -909,12 +909,12 @@ func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 
 // StartCluster moves a paused cluster to available.
 func (m *Mock) StartCluster(_ context.Context, id string) error {
-	return m.transitionCluster(id, rdbdriver.StateStopped, rdbdriver.StateAvailable, "start")
+	return m.transitionCluster(id, rdbdriver.StateStopped, rdbdriver.StateAvailable, "start", transitionIdempotent)
 }
 
 // StopCluster moves an available cluster to paused (mapped to "stopped" in the driver).
 func (m *Mock) StopCluster(_ context.Context, id string) error {
-	return m.transitionCluster(id, rdbdriver.StateAvailable, rdbdriver.StateStopped, "stop")
+	return m.transitionCluster(id, rdbdriver.StateAvailable, rdbdriver.StateStopped, "stop", transitionIdempotent)
 }
 
 // RebootCluster cycles a cluster — emits running-value metrics and leaves it available.
@@ -951,7 +951,7 @@ const clusterStatePaused = "paused"
 // of the AWS-only optional clusterPauser surface, discovered by the wire
 // handler via type assertion.
 func (m *Mock) PauseCluster(_ context.Context, id string) (*rdbdriver.Cluster, error) {
-	if err := m.transitionCluster(id, rdbdriver.StateAvailable, clusterStatePaused, "pause"); err != nil {
+	if err := m.transitionCluster(id, rdbdriver.StateAvailable, clusterStatePaused, "pause", transitionStrict); err != nil {
 		return nil, err
 	}
 
@@ -960,7 +960,7 @@ func (m *Mock) PauseCluster(_ context.Context, id string) (*rdbdriver.Cluster, e
 
 // ResumeCluster resumes a paused cluster (paused → available).
 func (m *Mock) ResumeCluster(_ context.Context, id string) (*rdbdriver.Cluster, error) {
-	if err := m.transitionCluster(id, clusterStatePaused, rdbdriver.StateAvailable, "resume"); err != nil {
+	if err := m.transitionCluster(id, clusterStatePaused, rdbdriver.StateAvailable, "resume", transitionStrict); err != nil {
 		return nil, err
 	}
 
@@ -982,7 +982,21 @@ func (m *Mock) snapshotCluster(id string) (*rdbdriver.Cluster, error) {
 	return &out, nil
 }
 
-func (m *Mock) transitionCluster(id, from, to, verb string) error {
+// transitionMode selects how transitionCluster treats a cluster that is
+// already at the target state.
+type transitionMode int
+
+const (
+	// transitionIdempotent treats "already at target" as success (portable
+	// StartCluster/StopCluster semantics).
+	transitionIdempotent transitionMode = iota
+	// transitionStrict requires the cluster to be in the source state, as AWS
+	// does for PauseCluster (requires available) and ResumeCluster (requires
+	// paused): resuming an available cluster is an InvalidClusterState fault.
+	transitionStrict
+)
+
+func (m *Mock) transitionCluster(id, from, to, verb string, mode transitionMode) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -991,13 +1005,20 @@ func (m *Mock) transitionCluster(id, from, to, verb string) error {
 		return cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
 	}
 
-	if cluster.State == to {
-		return nil // idempotent
+	current := cluster.State
+	if mode == transitionStrict {
+		// Pause/Resume check the observed state, so a cluster still creating or
+		// modifying (AsyncSettle) is rejected like real Redshift does.
+		current = m.settleClusterState(id, cluster.State)
 	}
 
-	if cluster.State != from {
+	if current == to && mode == transitionIdempotent {
+		return nil
+	}
+
+	if current != from {
 		return cerrors.Newf(cerrors.FailedPrecondition,
-			"Redshift cluster %q is in state %q; %s requires %q", id, cluster.State, verb, from)
+			"Redshift cluster %q is in state %q; %s requires %q", id, current, verb, from)
 	}
 
 	cluster.State = to

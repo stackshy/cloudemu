@@ -4,6 +4,8 @@ package secretsmanager
 import (
 	"bytes"
 	"context"
+	stderrors "errors"
+	"fmt"
 	"sync"
 	"time"
 
@@ -117,17 +119,37 @@ func (m *Mock) encrypt(ctx context.Context, kmsKeyID string, plaintext []byte) (
 		keyRef = defaultKMSKey
 	}
 
-	return m.kmsCrypto.Encrypt(ctx, keyRef, plaintext)
+	// Only a key-state failure is EncryptionFailure; other KMS errors (e.g. an
+	// unknown key) keep their own mapping, as real Secrets Manager validates
+	// the key reference separately from sealing the value.
+	stored, err := m.kmsCrypto.Encrypt(ctx, keyRef, plaintext)
+	if err != nil && isKeyStateErr(err) {
+		return nil, fmt.Errorf("%w: %w", driver.ErrEncryptionFailure, err)
+	}
+
+	return stored, err
 }
 
 // decrypt reverses encrypt. With no KMS wired the stored bytes are already
-// plaintext.
+// plaintext. Any KMS failure here (disabled, pending deletion or deleted key)
+// is DecryptionFailure: the stored value exists but can no longer be opened.
 func (m *Mock) decrypt(ctx context.Context, stored []byte) ([]byte, error) {
 	if m.kmsCrypto == nil {
 		return stored, nil
 	}
 
-	return m.kmsCrypto.Decrypt(ctx, stored)
+	plaintext, err := m.kmsCrypto.Decrypt(ctx, stored)
+	if err != nil {
+		return nil, fmt.Errorf("%w: %w", driver.ErrDecryptionFailure, err)
+	}
+
+	return plaintext, nil
+}
+
+// isKeyStateErr reports whether a KMS error means the key exists but is in a
+// state (disabled, pending deletion) that forbids cryptographic use.
+func isKeyStateErr(err error) bool {
+	return stderrors.Is(err, kmsdriver.ErrKeyDisabled) || stderrors.Is(err, kmsdriver.ErrKeyInvalidState)
 }
 
 // decryptVersion decrypts a copied version's Value in place, so every read path

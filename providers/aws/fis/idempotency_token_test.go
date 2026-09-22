@@ -4,7 +4,10 @@ import (
 	"context"
 	"sync"
 	"testing"
+	"time"
 
+	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/providers/aws/fis"
 	"github.com/stackshy/cloudemu/v2/services/fis/driver"
 )
 
@@ -134,9 +137,37 @@ func TestStartExperimentTokenReplaysLiveState(t *testing.T) {
 	retry, err := m.StartExperiment(ctx, in)
 	requireNoError(t, err)
 
-	if retry.ID != first.ID || retry.State.Status != live.State.Status {
-		t.Fatalf("replay = %s %s, want live %s %s", retry.ID, retry.State.Status, live.ID, live.State.Status)
+	if retry.ID != first.ID || retry.State.Status != live.State.Status || retry.State.Status != "stopped" {
+		t.Fatalf("replay = %s %s, want live %s stopped", retry.ID, retry.State.Status, live.ID)
 	}
+}
+
+// TestStartExperimentTokenReplaysObservedState: the replay reports the state
+// the clock-driven lifecycle has reached (completed), not the stored
+// create-time "running".
+func TestStartExperimentTokenReplaysObservedState(t *testing.T) {
+	ctx := context.Background()
+	fc := config.NewFakeClock(lifecycleStart)
+	m := fis.New(config.NewOptions(config.WithClock(fc)))
+	tpl := chainedTemplate(t, m)
+
+	in := &driver.StartExperimentInput{ExperimentTemplateID: tpl.ID, ClientToken: "g1"}
+
+	first, err := m.StartExperiment(ctx, in)
+	requireNoError(t, err)
+	requireStatus(t, first, "running", nil)
+
+	// The chained template runs for three minutes; the token lives for five.
+	fc.Advance(4 * time.Minute)
+
+	retry, err := m.StartExperiment(ctx, in)
+	requireNoError(t, err)
+
+	if retry.ID != first.ID {
+		t.Fatalf("replay id = %s, want %s", retry.ID, first.ID)
+	}
+
+	requireStatus(t, retry, "completed", nil)
 }
 
 func TestFISClientTokenConcurrent(t *testing.T) {

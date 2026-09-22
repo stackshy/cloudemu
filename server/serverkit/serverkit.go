@@ -131,6 +131,7 @@ type Config struct {
 	LogRequests bool          // log every HTTP request
 	Quiet       bool          // suppress the startup banner
 	EnforceAuth bool          // require authentication on each request
+	AsyncSettle bool          // report transient lifecycle states for a short settle window
 
 	// VCR record/replay of the wire protocol. VCRMode is "" (off), "record", or
 	// "replay"; VCRCassette is the JSON cassette file (loaded in replay, written
@@ -392,7 +393,7 @@ func (a *App) persistBanner() persistInfo {
 	}
 }
 
-// baseOptsFor clones Config.BaseOptions and appends the latency/auth options, so
+// baseOptsFor clones Config.BaseOptions and appends the latency/auth/settle options, so
 // the caller's slice is never mutated and buildProvider's Azure copy starts from
 // a stable base.
 func baseOptsFor(cfg *Config) []config.Option {
@@ -404,6 +405,10 @@ func baseOptsFor(cfg *Config) []config.Option {
 
 	if cfg.EnforceAuth {
 		baseOpts = append(baseOpts, config.WithEnforceAuth())
+	}
+
+	if cfg.AsyncSettle {
+		baseOpts = append(baseOpts, config.WithAsyncSettle())
 	}
 
 	return baseOpts

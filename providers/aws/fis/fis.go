@@ -6,9 +6,9 @@
 // experiment template is created synchronously with stable computed fields (id,
 // arn, creationTime, lastUpdateTime) minted once at create and stored, so
 // repeated reads never drift. StartExperiment materializes an experiment from a
-// template and places it directly in the running state (there is no data plane
-// to advance it to completion); StopExperiment moves a running experiment to the
-// stopped terminal state.
+// template; it then advances initiating -> running -> completed on the clock
+// (see lifecycle.go), and StopExperiment moves an initiating or running
+// experiment to the stopped terminal state.
 package fis
 
 import (

@@ -1103,7 +1103,7 @@ func (h *Handler) query(w http.ResponseWriter, r *http.Request) {
 		ProjectionRequested: req.ProjectionExpression != "",
 	})
 	if err != nil {
-		writeErr(w, err)
+		h.writeIndexedReadErr(r.Context(), w, err, req.TableName, req.IndexName)
 		return
 	}
 
@@ -1173,6 +1173,40 @@ func writeErr(w http.ResponseWriter, err error) {
 	default:
 		wire.WriteJSONError(w, http.StatusInternalServerError, "InternalServerError", msg)
 	}
+}
+
+// writeIndexedReadErr maps a Query/Scan error. The portable driver contract
+// reports an unknown IndexName as NotFound, but real DynamoDB answers it as a
+// ValidationException (the request is malformed, not the resource missing); a
+// missing table stays ResourceNotFoundException.
+func (h *Handler) writeIndexedReadErr(ctx context.Context, w http.ResponseWriter, err error, table, index string) {
+	if index != "" && cerrors.IsNotFound(err) {
+		if cfg, derr := h.db.DescribeTable(ctx, table); derr == nil && !hasIndex(cfg, index) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException",
+				"The table does not have the specified index: "+index)
+
+			return
+		}
+	}
+
+	writeErr(w, err)
+}
+
+// hasIndex reports whether the table defines a GSI or LSI with the given name.
+func hasIndex(cfg *dbdriver.TableConfig, index string) bool {
+	for i := range cfg.GSIs {
+		if cfg.GSIs[i].Name == index {
+			return true
+		}
+	}
+
+	for i := range cfg.LSIs {
+		if cfg.LSIs[i].Name == index {
+			return true
+		}
+	}
+
+	return false
 }
 
 // errMessage returns the human-readable message for a cloudemu error without

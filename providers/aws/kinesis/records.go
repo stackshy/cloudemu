@@ -43,7 +43,7 @@ func validateBatchSize(sd *streamData, entries []driver.PutRecordsRequestEntry) 
 
 	for i := range entries {
 		if len(entries[i].Data) > limit {
-			return validationErr("record %d data of %d bytes exceeds the %d-byte limit",
+			return invalidArg("record %d data of %d bytes exceeds the %d-byte limit",
 				i, len(entries[i].Data), limit)
 		}
 
@@ -51,7 +51,7 @@ func validateBatchSize(sd *streamData, entries []driver.PutRecordsRequestEntry) 
 	}
 
 	if total > maxBatchBytes {
-		return validationErr("PutRecords batch of %d bytes exceeds the %d-byte limit", total, maxBatchBytes)
+		return invalidArg("PutRecords batch of %d bytes exceeds the %d-byte limit", total, maxBatchBytes)
 	}
 
 	return nil
@@ -125,7 +125,7 @@ func (m *Mock) PutRecord(ctx context.Context, in driver.PutRecordInput) (*driver
 
 	if limit := recordSizeLimit(sd); len(in.Data) > limit {
 		sd.mu.Unlock()
-		return nil, validationErr("record data of %d bytes exceeds the %d-byte limit", len(in.Data), limit)
+		return nil, invalidArg("record data of %d bytes exceeds the %d-byte limit", len(in.Data), limit)
 	}
 
 	shard, seq, err := m.appendRecord(sd, in.PartitionKey, in.ExplicitHashKey, in.Data)
@@ -161,7 +161,7 @@ func (m *Mock) PutRecords(
 	}
 
 	if len(entries) > maxBatchRecords {
-		return nil, 0, validationErr("a PutRecords request may contain at most %d records, got %d",
+		return nil, 0, invalidArg("a PutRecords request may contain at most %d records, got %d",
 			maxBatchRecords, len(entries))
 	}
 
