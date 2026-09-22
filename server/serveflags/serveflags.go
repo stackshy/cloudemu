@@ -86,6 +86,7 @@ type CommonConfig struct {
 	LogRequests   bool
 	Quiet         bool
 	EnforceAuth   bool
+	AsyncSettle   bool
 
 	ShutdownTimeout time.Duration
 
@@ -139,6 +140,9 @@ func RegisterCommon(fs *flag.FlagSet, c *CommonConfig, getenv func(string) strin
 	fs.BoolVar(&c.Quiet, "quiet", false, "suppress the startup banner")
 	fs.DurationVar(&c.ShutdownTimeout, "shutdown-timeout", defaultShutdownTimeout, "grace period for in-flight requests on shutdown")
 	fs.StringVar(&c.InitDir, "init-dir", "", "apply every *.json seed fixture in this directory on startup")
+	fs.BoolVar(&c.AsyncSettle, "async-settle", envBoolOr(getenv, "CLOUDEMU_ASYNC_SETTLE", false),
+		"resources report a realistic transient state (pending/creating/initiating/...) for a short settle window "+
+			"before their final state (default off = terminal state immediately; env CLOUDEMU_ASYNC_SETTLE)")
 
 	registerPersistFlags(fs, c, getenv)
 	registerK8sProgressionFlags(fs, c, getenv)
@@ -253,6 +257,7 @@ func (c *CommonConfig) ToServerkitConfig(providers []string) serverkit.Config {
 		LogRequests:            c.LogRequests,
 		Quiet:                  c.Quiet,
 		EnforceAuth:            c.EnforceAuth,
+		AsyncSettle:            c.AsyncSettle,
 		EndpointsFile:          c.EndpointsFile,
 		ShutdownTimeout:        c.ShutdownTimeout,
 		VCRMode:                c.VCRMode,
