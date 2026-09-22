@@ -58,6 +58,12 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
+		// A name deeper than 15 levels has its own code in real Parameter Store.
+		if errors.Is(err, ssmdriver.ErrHierarchyLevelLimit) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "HierarchyLevelLimitExceededException", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}

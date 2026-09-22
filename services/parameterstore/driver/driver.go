@@ -103,6 +103,14 @@ var ErrInvalidKeyID = errors.New(errors.InvalidArgument, "The query key ID isn't
 var ErrReservedNamePrefix = errors.New(errors.InvalidArgument,
 	"Parameter name: can't be prefixed with \"aws\" or \"ssm\" (case-insensitive).")
 
+// ErrHierarchyLevelLimit is returned by PutParameter when Name has more than
+// 15 path levels. Real Parameter Store reports it as
+// HierarchyLevelLimitExceededException rather than ValidationException, so
+// the SDK-compat layer matches it with errors.Is.
+var ErrHierarchyLevelLimit = errors.New(errors.InvalidArgument,
+	"A hierarchy can have a maximum of 15 levels. For more information, see "+
+		"Requirements and constraints for parameter names in the AWS Systems Manager User Guide.")
+
 // ErrValueTooLarge is returned by PutParameter when Value exceeds the size
 // limit of the parameter's tier: 4 KB for Standard, 8 KB for Advanced. Real
 // Parameter Store rejects an over-limit Standard-tier value with

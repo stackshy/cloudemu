@@ -10,6 +10,7 @@ package sqs
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -143,7 +144,7 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request) {
 
 	cfg := mqdriver.QueueConfig{
 		Name:                          req.QueueName,
-		FIFO:                          req.Attributes["FifoQueue"] == attrTrue || strings.HasSuffix(req.QueueName, ".fifo"),
+		FIFO:                          req.Attributes["FifoQueue"] == attrTrue,
 		Tags:                          req.Tags,
 		DelaySeconds:                  atoiAttr(req.Attributes, "DelaySeconds"),
 		VisibilityTimeout:             atoiAttr(req.Attributes, "VisibilityTimeout"),
@@ -334,9 +335,9 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) receiveMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QueueURL              string   `json:"QueueUrl"`
-		MaxNumberOfMessages   int      `json:"MaxNumberOfMessages"`
-		WaitTimeSeconds       int      `json:"WaitTimeSeconds"`
-		VisibilityTimeout     int      `json:"VisibilityTimeout"`
+		MaxNumberOfMessages   *int     `json:"MaxNumberOfMessages"`
+		WaitTimeSeconds       *int     `json:"WaitTimeSeconds"`
+		VisibilityTimeout     *int     `json:"VisibilityTimeout"`
 		AttributeNames        []string `json:"AttributeNames"`
 		MessageSystemAttrs    []string `json:"MessageSystemAttributeNames"`
 		MessageAttributeNames []string `json:"MessageAttributeNames"`
@@ -346,15 +347,15 @@ func (h *Handler) receiveMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.MaxNumberOfMessages == 0 {
-		req.MaxNumberOfMessages = 1
-	}
-
+	// Pointers let the provider tell an explicit 0 from an omitted field.
 	msgs, err := h.mq.ReceiveMessages(r.Context(), mqdriver.ReceiveMessageInput{
-		QueueURL:          req.QueueURL,
-		MaxMessages:       req.MaxNumberOfMessages,
-		WaitTimeSeconds:   req.WaitTimeSeconds,
-		VisibilityTimeout: req.VisibilityTimeout,
+		QueueURL:             req.QueueURL,
+		MaxMessages:          derefInt(req.MaxNumberOfMessages),
+		MaxMessagesSet:       req.MaxNumberOfMessages != nil,
+		WaitTimeSeconds:      derefInt(req.WaitTimeSeconds),
+		WaitTimeSecondsSet:   req.WaitTimeSeconds != nil,
+		VisibilityTimeout:    derefInt(req.VisibilityTimeout),
+		VisibilityTimeoutSet: req.VisibilityTimeout != nil,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -1179,9 +1180,22 @@ func (h *Handler) purgeQueue(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{})
 }
 
+// derefInt returns *p, or 0 when p is nil.
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+
+	return *p
+}
+
 // writeErr maps CloudEmu canonical errors to SQS-shaped HTTP error responses.
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, mqdriver.ErrMissingParameter):
+		wire.WriteJSONError(w, http.StatusBadRequest, "MissingParameter", cerrors.Message(err))
+	case errors.Is(err, mqdriver.ErrInvalidMessageContents):
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidMessageContents", cerrors.Message(err))
 	case cerrors.IsNotFound(err):
 		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest, errNonExistentQueue, errQueryCodeNonExistentQueue, cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):

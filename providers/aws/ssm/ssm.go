@@ -244,6 +244,15 @@ func resolveOverwriteType(existing *paramData, requested string) (string, error)
 }
 
 // Parameter tiers, matching AWS SSM Parameter Store.
+// Parameter name limits, per the PutParameter API reference.
+const (
+	maxParameterNameLength = 2048
+	maxHierarchyLevels     = 15
+	maxNamesPerBatch       = 10
+)
+
+var parameterNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_./-]+$`)
+
 const (
 	tierStandard    = "Standard"
 	tierAdvanced    = "Advanced"
@@ -298,11 +307,38 @@ func validateValueSize(tier, value string) error {
 // stripping an optional leading "/") is "aws" or "ssm" (case-insensitive).
 // Real Parameter Store reserves that namespace for AWS-published parameters
 // and rejects a customer PutParameter there with ValidationException.
+//
+// It also applies the name format rules. A name is 1 to 2048 characters of
+// [a-zA-Z0-9_.-] plus "/" as the hierarchy separator, and has at most 15
+// levels. Deeper names get their own error code.
 func validateParameterName(name string) error {
 	lower := strings.ToLower(strings.TrimPrefix(name, "/"))
 
 	if strings.HasPrefix(lower, "aws") || strings.HasPrefix(lower, "ssm") {
 		return driver.ErrReservedNamePrefix
+	}
+
+	if len(name) > maxParameterNameLength || !parameterNamePattern.MatchString(name) {
+		return errors.New(errors.InvalidArgument,
+			`Parameter name: can't be prefixed with "aws" or "ssm" (case-insensitive). `+
+				"If formed as a path, it can consist of sub-paths divided by slash symbol; "+
+				"each sub-path can be formed as a mix of letters, numbers and the following 3 symbols .-_")
+	}
+
+	if strings.Count(strings.TrimPrefix(name, "/"), "/")+1 > maxHierarchyLevels {
+		return driver.ErrHierarchyLevelLimit
+	}
+
+	return nil
+}
+
+// validateNamesBatch applies the GetParameters and DeleteParameters limit of
+// 1 to 10 names per call.
+func validateNamesBatch(names []string) error {
+	if len(names) < 1 || len(names) > maxNamesPerBatch {
+		return errors.Newf(errors.InvalidArgument,
+			"1 validation error detected: Value at 'names' failed to satisfy constraint: "+
+				"Member must have length less than or equal to %d and greater than or equal to 1", maxNamesPerBatch)
 	}
 
 	return nil
@@ -620,6 +656,10 @@ func (m *Mock) GetParameter(ctx context.Context, name string, withDecryption boo
 func (m *Mock) GetParameters(
 	ctx context.Context, names []string, withDecryption bool,
 ) ([]driver.Parameter, []string, error) {
+	if err := validateNamesBatch(names); err != nil {
+		return nil, nil, err
+	}
+
 	found := make([]driver.Parameter, 0, len(names))
 
 	var invalid []string
@@ -768,6 +808,10 @@ func (m *Mock) deleteParameter(ctx context.Context, base string) bool {
 // DeleteParameters removes multiple parameters, returning the names deleted and
 // the names that did not exist.
 func (m *Mock) DeleteParameters(ctx context.Context, names []string) (deleted, invalid []string, err error) {
+	if err := validateNamesBatch(names); err != nil {
+		return nil, nil, err
+	}
+
 	for _, name := range names {
 		base, _ := resolveSelector(name)
 		if m.deleteParameter(ctx, base) {

@@ -186,12 +186,8 @@ func (m *Mock) DeliverExternalFIFO(ctx context.Context, queueARN, body, groupID,
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateQueue(ctx context.Context, cfg driver.QueueConfig) (*driver.QueueInfo, error) {
-	if cfg.Name == "" {
-		return nil, errors.New(errors.InvalidArgument, "queue name is required")
-	}
-
-	if cfg.FIFO && !strings.HasSuffix(cfg.Name, ".fifo") {
-		return nil, errors.New(errors.InvalidArgument, "FIFO queue name must end with .fifo")
+	if err := validateQueueName(cfg.Name, cfg.FIFO); err != nil {
+		return nil, err
 	}
 
 	region := regionctx.RegionOr(ctx, m.opts.Region)
@@ -497,6 +493,11 @@ func (m *Mock) SendMessage(ctx context.Context, input driver.SendMessageInput) (
 	}
 
 	qd.mu.Lock()
+
+	if err := validateSendInput(qd.info.FIFO, &input); err != nil {
+		qd.mu.Unlock()
+		return nil, err
+	}
 
 	if qd.maxMessageSize > 0 && len(input.Body) > qd.maxMessageSize {
 		qd.mu.Unlock()
@@ -867,7 +868,11 @@ func (m *Mock) ReceiveMessages(ctx context.Context, input driver.ReceiveMessageI
 		return nil, errors.Newf(errors.NotFound, "queue %q not found", input.QueueURL)
 	}
 
-	deadline := time.Now().Add(resolveWaitDuration(qd, input.WaitTimeSeconds))
+	if err := validateReceive(input.MaxMessages, input.MaxMessagesSet, input.WaitTimeSeconds, input.VisibilityTimeout); err != nil {
+		return nil, err
+	}
+
+	deadline := time.Now().Add(resolveWaitDuration(qd, input.WaitTimeSeconds, input.WaitTimeSecondsSet))
 
 	results, err := m.pollForMessages(ctx, qd, input, deadline)
 	if err != nil {
@@ -903,10 +908,12 @@ func (m *Mock) receiveOnce(qd *queueData, input driver.ReceiveMessageInput) []dr
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
-	maxMessages := clampMaxMessages(input.MaxMessages)
+	maxMessages := defaultMaxMessages(input.MaxMessages)
 
+	// An explicit VisibilityTimeout of 0 makes the messages visible again at
+	// once. Only an omitted value falls back to the queue default.
 	visibilityTimeout := input.VisibilityTimeout
-	if visibilityTimeout == 0 {
+	if visibilityTimeout == 0 && !input.VisibilityTimeoutSet {
 		visibilityTimeout = qd.visibilityTimeout
 	}
 
@@ -936,37 +943,28 @@ func (m *Mock) emitReceiveMetrics(qd *queueData, count int) {
 	}
 }
 
-// resolveWaitDuration derives the long-poll window: the request's WaitTimeSeconds,
-// falling back to the queue's ReceiveMessageWaitTimeSeconds default when unset,
-// capped at the SQS maximum of 20 seconds.
-func resolveWaitDuration(qd *queueData, requested int) time.Duration {
+// resolveWaitDuration derives the long-poll window. The request's
+// WaitTimeSeconds wins when it was supplied, even as 0, which forces a short
+// poll. Otherwise the queue's ReceiveMessageWaitTimeSeconds applies. The
+// request value was range-checked by validateReceive.
+func resolveWaitDuration(qd *queueData, requested int, requestedSet bool) time.Duration {
 	qd.mu.Lock()
 	queueDefault := qd.receiveWaitTime
 	qd.mu.Unlock()
 
 	seconds := requested
-	if seconds <= 0 {
+	if seconds == 0 && !requestedSet {
 		seconds = queueDefault
-	}
-
-	if seconds > maxReceiveWaitSeconds {
-		seconds = maxReceiveWaitSeconds
-	}
-
-	if seconds < 0 {
-		seconds = 0
 	}
 
 	return time.Duration(seconds) * time.Second
 }
 
-func clampMaxMessages(maxMessages int) int {
-	if maxMessages <= 0 {
+// defaultMaxMessages returns 1 for an omitted MaxNumberOfMessages. Any other
+// value was already range-checked by validateReceive.
+func defaultMaxMessages(maxMessages int) int {
+	if maxMessages == 0 {
 		return 1
-	}
-
-	if maxMessages > maxReceiveMessages {
-		return maxReceiveMessages
 	}
 
 	return maxMessages
@@ -1216,7 +1214,7 @@ func (m *Mock) SendMessageBatch(
 		out, err := m.SendMessage(ctx, input)
 		if err != nil {
 			result.Failed = append(result.Failed, driver.BatchSendFailEntry{
-				ID: entry.ID, Code: "SendFailure", Message: err.Error(),
+				ID: entry.ID, Code: batchFailureCode(err), Message: errors.Message(err),
 			})
 
 			continue
@@ -1280,10 +1278,14 @@ func (m *Mock) ReceiveMessagesWithOptions(
 		return nil, errors.Newf(errors.NotFound, "queue %q not found", queue)
 	}
 
+	if err := validateReceive(opts.MaxMessages, false, opts.WaitTimeSeconds, opts.VisibilityTimeout); err != nil {
+		return nil, err
+	}
+
 	qd.mu.Lock()
 	defer qd.mu.Unlock()
 
-	maxMsgs := clampMaxMessages(opts.MaxMessages)
+	maxMsgs := defaultMaxMessages(opts.MaxMessages)
 
 	visTimeout := opts.VisibilityTimeout
 	if visTimeout == 0 {

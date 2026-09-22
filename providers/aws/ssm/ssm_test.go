@@ -3,6 +3,8 @@ package ssm_test
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -504,6 +506,82 @@ func TestPutParameterReservedNamePrefixRejected(t *testing.T) {
 		Name: "/app/aws-region", Value: "v", Type: driver.TypeString,
 	}); err != nil {
 		t.Fatalf("PutParameter(/app/aws-region): %v", err)
+	}
+}
+
+// TestPutParameterNameFormat covers the name charset, length and hierarchy
+// depth rules real Parameter Store enforces on PutParameter.
+func TestPutParameterNameFormat(t *testing.T) {
+	deep := strings.Repeat("/l", 16)
+
+	tests := []struct {
+		name     string
+		param    string
+		wantErr  bool
+		sentinel error
+	}{
+		{name: "spaces and bang", param: "invalid name with spaces!", wantErr: true},
+		{name: "colon", param: "/app/a:b", wantErr: true},
+		{name: "too long", param: "/" + strings.Repeat("a", 2048), wantErr: true},
+		{name: "16 levels", param: deep, wantErr: true, sentinel: driver.ErrHierarchyLevelLimit},
+		{name: "15 levels", param: strings.Repeat("/l", 15)},
+		{name: "all allowed symbols", param: "/App_1/db-host.name"},
+		{name: "flat name", param: "plain_name-1.x"},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			_, _, err := newMock().PutParameter(context.Background(), driver.PutConfig{
+				Name: tc.param, Value: "v", Type: driver.TypeString,
+			})
+			if !tc.wantErr {
+				if err != nil {
+					t.Fatalf("PutParameter(%q): %v", tc.param, err)
+				}
+
+				return
+			}
+
+			if !cerrors.IsInvalidArgument(err) {
+				t.Fatalf("PutParameter(%q): want InvalidArgument, got %v", tc.param, err)
+			}
+
+			if tc.sentinel != nil && !errors.Is(err, tc.sentinel) {
+				t.Fatalf("PutParameter(%q): want %v, got %v", tc.param, tc.sentinel, err)
+			}
+		})
+	}
+}
+
+// TestGetAndDeleteParametersNameCount covers the 1 to 10 names limit on both
+// batch operations.
+func TestGetAndDeleteParametersNameCount(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+
+	eleven := make([]string, 11)
+	for i := range eleven {
+		eleven[i] = fmt.Sprintf("/n/%d", i)
+	}
+
+	if _, _, err := m.GetParameters(ctx, eleven, false); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("GetParameters(11 names): want InvalidArgument, got %v", err)
+	}
+
+	if _, _, err := m.DeleteParameters(ctx, eleven); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("DeleteParameters(11 names): want InvalidArgument, got %v", err)
+	}
+
+	if _, _, err := m.GetParameters(ctx, nil, false); !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("GetParameters(no names): want InvalidArgument, got %v", err)
+	}
+
+	if _, _, err := m.GetParameters(ctx, eleven[:10], false); err != nil {
+		t.Fatalf("GetParameters(10 names): %v", err)
+	}
+
+	if _, _, err := m.DeleteParameters(ctx, eleven[:10]); err != nil {
+		t.Fatalf("DeleteParameters(10 names): %v", err)
 	}
 }
 
