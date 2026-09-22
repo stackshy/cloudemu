@@ -380,33 +380,50 @@ func (m *Mock) GetExecutionHistory(_ context.Context, arn string, reverse bool) 
 	return events, nil
 }
 
-// RedriveExecution restarts a previously-completed execution. The emulator does
-// not re-run the workflow: it records a new redriveDate on the existing
-// execution and returns it. Repeated calls advance the redrive date.
-//
-// Each redrive counts toward redriveCount, and a STANDARD execution publishes
-// the RUNNING -> SUCCEEDED status changes of the redriven run.
+// RedriveExecution restarts a FAILED, ABORTED or TIMED_OUT STANDARD execution,
+// as real Step Functions does. The emulator does not re-run the workflow: the
+// redriven run succeeds, is counted in redriveCount, stamps redriveDate, and
+// publishes its RUNNING -> SUCCEEDED status changes. A RUNNING or SUCCEEDED
+// execution, or any EXPRESS one, is rejected with ExecutionNotRedrivable.
 func (m *Mock) RedriveExecution(ctx context.Context, arn string) (*driver.RedriveResult, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {
 		return nil, err
 	}
 
-	redriven := m.redrive(ed)
+	ed.mu.RLock()
+	smArn := ed.exec.StateMachineArn
+	ed.mu.RUnlock()
 
-	if m.isStandard(redriven.StateMachineArn) {
-		m.emitExecutionStarted(ctx, &redriven, true)
+	// Real Step Functions redrives STANDARD workflows only.
+	if !m.isStandard(smArn) {
+		return nil, execNotRedrivable("Execution %s is not of type STANDARD and cannot be redriven", arn)
 	}
+
+	redriven, err := m.redrive(ed)
+	if err != nil {
+		return nil, err
+	}
+
+	m.emitExecutionStarted(ctx, &redriven, true)
 
 	return &driver.RedriveResult{RedriveDate: redriven.RedriveDate}, nil
 }
 
-// redrive is RedriveExecution's locked core; it returns the redriven record.
-func (m *Mock) redrive(ed *execData) driver.Execution {
+// redrive is RedriveExecution's locked core. It checks redrivability against
+// the execution's observed status (a still-settling run is RUNNING) and returns
+// the redriven record.
+func (m *Mock) redrive(ed *execData) (driver.Execution, error) {
 	ed.mu.Lock()
 	defer ed.mu.Unlock()
 
 	now := m.now()
+
+	observed := observedExec(&ed.exec, ed.settle, now).Status
+	if status, reason := driver.ExecutionRedriveStatus(observed); status != driver.RedriveStatusRedrivable {
+		return driver.Execution{}, execNotRedrivable("%s", reason)
+	}
+
 	ed.exec.Status = driver.ExecStatusSucceeded
 	ed.exec.StopDate = now
 	// The redriven run succeeded, so the prior failure's error/cause no longer
@@ -415,7 +432,7 @@ func (m *Mock) redrive(ed *execData) driver.Execution {
 	ed.exec.RedriveCount++
 	ed.exec.RedriveDate = now
 
-	return ed.exec
+	return ed.exec, nil
 }
 
 func (m *Mock) DescribeStateMachineForExecution(_ context.Context, executionArn string) (*driver.StateMachine, error) {

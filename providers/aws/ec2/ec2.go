@@ -1003,30 +1003,53 @@ func (m *Mock) deleteInstanceVolumes(instanceID string) {
 
 //nolint:gocritic // t is a small read-only config; copying once per call is fine.
 func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t lifecycleTransition) error {
+	changed, err := m.transitionInstancesDeferEvents(ctx, instanceIDs, &t)
+	m.emitTransitionEvents(ctx, changed, &t)
+
+	return err
+}
+
+// transitionInstancesDeferEvents applies t and emits its lifecycle metrics, but
+// returns the ids whose state changed instead of publishing their state-change
+// events, so a caller can finish side effects (volume detach, ENI release)
+// before subscribers observe the new state.
+func (m *Mock) transitionInstancesDeferEvents(
+	ctx context.Context, instanceIDs []string, t *lifecycleTransition,
+) ([]string, error) {
+	var changedIDs []string
+
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
-			return cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
+			return changedIDs, cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
 		}
 
-		changed, err := m.transitionOne(inst, id, t)
+		changed, err := m.transitionOne(inst, id, *t)
 		if err != nil {
-			return err
+			return changedIDs, err
 		}
 
 		// Managed instances are hidden from Describe; keep them out of metrics
-		// too so a hidden instance isn't observable via CloudWatch. Emitted
-		// outside inst.mu so a metrics callback can't deadlock against it.
+		// and events too so a hidden instance isn't observable. Emitted outside
+		// inst.mu so a metrics callback can't deadlock against it.
 		if changed && !isManaged(inst) {
 			m.emitLifecycleMetrics(ctx, id, t.metricValues)
-
-			if t.emitsStateEvents {
-				m.emitStateChanges(ctx, id, t.intermediateState, t.finalState)
-			}
+			changedIDs = append(changedIDs, id)
 		}
 	}
 
-	return nil
+	return changedIDs, nil
+}
+
+// emitTransitionEvents publishes t's state-change events for ids.
+func (m *Mock) emitTransitionEvents(ctx context.Context, ids []string, t *lifecycleTransition) {
+	if !t.emitsStateEvents {
+		return
+	}
+
+	for _, id := range ids {
+		m.emitStateChanges(ctx, id, t.intermediateState, t.finalState)
+	}
 }
 
 // transitionOne applies one lifecycle transition to inst under its own lock,
@@ -1091,9 +1114,17 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 		}
 	}
 
-	if err := m.transitionInstances(ctx, instanceIDs, terminateTransition); err != nil {
+	// The terminated events are published only after volumes and ENIs are
+	// released below, so a subscriber reacting to "terminated" (e.g. deleting
+	// the volume or subnet) never sees them still attached.
+	terminated, err := m.transitionInstancesDeferEvents(ctx, instanceIDs, &terminateTransition)
+	if err != nil {
+		m.emitTransitionEvents(ctx, terminated, &terminateTransition)
+
 		return err
 	}
+
+	defer m.emitTransitionEvents(ctx, terminated, &terminateTransition)
 
 	// Every attached EBS volume must be released, otherwise it stays in-use
 	// against a dead instance forever and can never be deleted (VolumeInUse).

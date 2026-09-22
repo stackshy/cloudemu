@@ -47,7 +47,7 @@ func getGlueCrawler(d *crawlerData) crawlerDataSnapshot {
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	return crawlerDataSnapshot{Crawler: d.crawler, CancelableUntil: d.cancelableUntil}
+	return crawlerDataSnapshot{Crawler: d.crawler, CancelableUntil: d.cancelableUntil, RunStartedAt: d.runStartedAt}
 }
 
 func getGlueClassifier(d *classifierData) driver.Classifier {
@@ -152,7 +152,7 @@ func buildGlueConn(v *driver.Connection) *connectionData { return &connectionDat
 func buildGlueCatalog(v *driver.Catalog) *catalogData { return &catalogData{cat: *v} }
 
 func buildGlueCrawler(v *crawlerDataSnapshot) *crawlerData {
-	return &crawlerData{crawler: v.Crawler, cancelableUntil: v.CancelableUntil}
+	return &crawlerData{crawler: v.Crawler, cancelableUntil: v.CancelableUntil, runStartedAt: v.RunStartedAt}
 }
 
 func buildGlueClassifier(v *driver.Classifier) *classifierData {

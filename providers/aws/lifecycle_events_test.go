@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"testing"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/internal/recursionguard"
@@ -352,7 +353,50 @@ func TestStepFunctionsExecutionStatusChangeEvents(t *testing.T) {
 	requireRedrive(t, running, 0, "NOT_REDRIVABLE", "Execution is RUNNING and cannot be redriven")
 	requireRedrive(t, done, 0, "NOT_REDRIVABLE", "Execution is SUCCEEDED and cannot be redriven")
 
-	// A redrive publishes the redriven run's status changes, counting it.
+	// A SUCCEEDED execution is not redrivable: no new events are published.
+	if _, err := p.SFN.RedriveExecution(ctx, exec.ARN); err == nil {
+		t.Fatal("RedriveExecution of a SUCCEEDED execution succeeded, want ExecutionNotRedrivable")
+	}
+
+	if extra := drain(); len(extra) != 0 {
+		t.Fatalf("rejected redrive published %d events", len(extra))
+	}
+}
+
+// TestStepFunctionsRedriveEvents pins the events of a redrive, starting (as a
+// real redrive must) from a FAILED STANDARD execution: FAILED is REDRIVABLE,
+// and the redriven run publishes RUNNING -> SUCCEEDED counted as redrive 1.
+func TestStepFunctionsRedriveEvents(t *testing.T) {
+	p := aws.New()
+	ctx := context.Background()
+	drain := captureEvents(t, p, `{"source":["aws.states"]}`)
+
+	smArn, _, _, err := p.SFN.CreateStateMachine(ctx, sfndriver.CreateStateMachineInput{
+		Name:       "flaky",
+		Definition: `{"StartAt":"Boom","States":{"Boom":{"Type":"Fail","Error":"Bad","Cause":"broken"}}}`,
+		RoleArn:    "arn:aws:iam::123456789012:role/sfn",
+	})
+	if err != nil {
+		t.Fatalf("CreateStateMachine: %v", err)
+	}
+
+	exec, err := p.SFN.StartExecution(ctx, sfndriver.StartExecutionInput{StateMachineArn: smArn, Name: "run-1"})
+	if err != nil {
+		t.Fatalf("StartExecution: %v", err)
+	}
+
+	first := drain()
+	if len(first) != 2 {
+		t.Fatalf("got %d events, want 2 (RUNNING, FAILED)", len(first))
+	}
+
+	failed := detailOf(t, &first[1])
+	if failed["status"] != "FAILED" || failed["error"] != "Bad" {
+		t.Fatalf("FAILED event = %v", failed)
+	}
+
+	requireRedrive(t, failed, 0, "REDRIVABLE", nil)
+
 	if _, err := p.SFN.RedriveExecution(ctx, exec.ARN); err != nil {
 		t.Fatalf("RedriveExecution: %v", err)
 	}
@@ -362,10 +406,10 @@ func TestStepFunctionsExecutionStatusChangeEvents(t *testing.T) {
 		t.Fatalf("got %d events after redrive, want 2", len(redriven))
 	}
 
-	for i := range redriven {
+	for i, want := range []string{"RUNNING", "SUCCEEDED"} {
 		d := detailOf(t, &redriven[i])
-		if d["redriveCount"] != float64(1) || d["redriveDate"] == nil {
-			t.Fatalf("redriven event %d = %v, want redriveCount 1 and a redriveDate", i, d)
+		if d["status"] != want || d["redriveCount"] != float64(1) || d["redriveDate"] == nil || d["error"] != nil {
+			t.Fatalf("redriven event %d = %v, want %s with redriveCount 1, a redriveDate, no error", i, d, want)
 		}
 	}
 }
@@ -464,6 +508,111 @@ func TestSSMParameterStoreChangeEvents(t *testing.T) {
 	}
 }
 
+// glueCrawlerSetup builds a provider on a fake clock with a crawler and a
+// capture rule for Glue events.
+func glueCrawlerSetup(t *testing.T) (*aws.Provider, *config.FakeClock, func() []lifecycleEvent) {
+	t.Helper()
+
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := aws.New(config.WithClock(clock))
+	drain := captureEvents(t, p, `{"source":["aws.glue"],"detail-type":["Glue Crawler State Change"]}`)
+
+	if err := p.Glue.CreateCrawler(context.Background(), gluedriver.Crawler{
+		Name: "crawl", Role: "arn:aws:iam::123456789012:role/glue", DatabaseName: "db",
+		Targets: map[string]any{"S3Targets": []any{map[string]any{"Path": "s3://b/data"}}},
+	}); err != nil {
+		t.Fatalf("CreateCrawler: %v", err)
+	}
+
+	return p, clock, drain
+}
+
+// crawlerStates returns the detail.state of each crawler event.
+func crawlerStates(t *testing.T, events []lifecycleEvent) []string {
+	t.Helper()
+
+	out := make([]string, 0, len(events))
+
+	for i := range events {
+		requireEnvelope(t, &events[i], "aws.glue", "Glue Crawler State Change")
+
+		d := detailOf(t, &events[i])
+		if d["crawlerName"] != "crawl" {
+			t.Fatalf("crawler event detail = %v", d)
+		}
+
+		out = append(out, d["state"].(string))
+	}
+
+	return out
+}
+
+// TestGlueCrawlerSucceededOnlyAfterCancelWindow pins that a crawl publishes
+// Started at once and Succeeded only once it can no longer be canceled.
+func TestGlueCrawlerSucceededOnlyAfterCancelWindow(t *testing.T) {
+	p, clock, drain := glueCrawlerSetup(t)
+	ctx := context.Background()
+
+	if err := p.Glue.StartCrawler(ctx, "crawl"); err != nil {
+		t.Fatalf("StartCrawler: %v", err)
+	}
+
+	if got := crawlerStates(t, drain()); len(got) != 1 || got[0] != "Started" {
+		t.Fatalf("events right after StartCrawler = %v, want [Started]", got)
+	}
+
+	clock.Advance(2 * time.Minute)
+
+	if _, err := p.Glue.GetCrawler(ctx, "crawl"); err != nil {
+		t.Fatalf("GetCrawler: %v", err)
+	}
+
+	events := drain()
+	if got := crawlerStates(t, events); len(got) != 1 || got[0] != "Succeeded" {
+		t.Fatalf("events after the window closed = %v, want [Succeeded]", got)
+	}
+
+	if d := detailOf(t, &events[0]); d["runningTime (sec)"] != "60" || d["completionDate"] == nil {
+		t.Fatalf("Succeeded detail = %v", d)
+	}
+
+	// Published exactly once.
+	if _, err := p.Glue.GetCrawler(ctx, "crawl"); err != nil {
+		t.Fatalf("GetCrawler: %v", err)
+	}
+
+	if extra := drain(); len(extra) != 0 {
+		t.Fatalf("Succeeded published again: %d events", len(extra))
+	}
+}
+
+// TestGlueCrawlerStoppedPublishesNoSucceeded pins that a crawl canceled inside
+// its window never publishes Succeeded: real Glue documents only Started,
+// Succeeded and Failed crawler events, so a canceled crawl ends at Started.
+func TestGlueCrawlerStoppedPublishesNoSucceeded(t *testing.T) {
+	p, clock, drain := glueCrawlerSetup(t)
+	ctx := context.Background()
+
+	if err := p.Glue.StartCrawler(ctx, "crawl"); err != nil {
+		t.Fatalf("StartCrawler: %v", err)
+	}
+
+	if err := p.Glue.StopCrawler(ctx, "crawl"); err != nil {
+		t.Fatalf("StopCrawler: %v", err)
+	}
+
+	clock.Advance(2 * time.Minute)
+
+	c, err := p.Glue.GetCrawler(ctx, "crawl")
+	if err != nil || c.LastCrawlStatus != gluedriver.CrawlCancelled {
+		t.Fatalf("GetCrawler = %+v (%v), want LastCrawlStatus CANCELLED", c, err)
+	}
+
+	if got := crawlerStates(t, drain()); len(got) != 1 || got[0] != "Started" {
+		t.Fatalf("events for a canceled crawl = %v, want [Started] only", got)
+	}
+}
+
 func TestGlueJobAndCrawlerStateChangeEvents(t *testing.T) {
 	p := aws.New()
 	ctx := context.Background()
@@ -493,9 +642,10 @@ func TestGlueJobAndCrawlerStateChangeEvents(t *testing.T) {
 		t.Fatalf("StartCrawler: %v", err)
 	}
 
+	// The crawl is still inside its cancel window: only Started so far.
 	events := drain()
-	if len(events) != 3 {
-		t.Fatalf("got %d events, want 3 (job SUCCEEDED, crawler Started, crawler Succeeded)", len(events))
+	if len(events) != 2 {
+		t.Fatalf("got %d events, want 2 (job SUCCEEDED, crawler Started)", len(events))
 	}
 
 	requireEnvelope(t, &events[0], "aws.glue", "Glue Job State Change")
@@ -505,13 +655,10 @@ func TestGlueJobAndCrawlerStateChangeEvents(t *testing.T) {
 		t.Fatalf("job detail = %v", d)
 	}
 
-	for i, state := range []string{"Started", "Succeeded"} {
-		ev := &events[i+1]
-		requireEnvelope(t, ev, "aws.glue", "Glue Crawler State Change")
+	requireEnvelope(t, &events[1], "aws.glue", "Glue Crawler State Change")
 
-		if d := detailOf(t, ev); d["crawlerName"] != "crawl" || d["state"] != state {
-			t.Fatalf("crawler event detail = %v, want state %s", d, state)
-		}
+	if d := detailOf(t, &events[1]); d["crawlerName"] != "crawl" || d["state"] != "Started" {
+		t.Fatalf("crawler event detail = %v, want state Started", d)
 	}
 }
 

@@ -412,25 +412,84 @@ func TestTags(t *testing.T) {
 	}
 }
 
-func TestRedriveExecution(t *testing.T) {
-	m := newMock(t)
-	ctx := context.Background()
-	arn := createSM(t, m, "redrive")
+// failDefinition is a STANDARD workflow whose only state fails, leaving a
+// redrivable FAILED execution.
+const failDefinition = `{"StartAt":"Boom","States":{"Boom":{"Type":"Fail","Error":"Bad","Cause":"broken"}}}`
 
-	exec, err := m.StartExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Name: "r1"})
+// startIn creates a state machine of the given type/definition and starts one
+// execution on it.
+func startIn(t *testing.T, m *sfn.Mock, name, smType, def string) *driver.Execution {
+	t.Helper()
+
+	ctx := context.Background()
+
+	arn, _, _, err := m.CreateStateMachine(ctx, driver.CreateStateMachineInput{
+		Name: name, Definition: def, RoleArn: "arn:aws:iam::000000000000:role/r", Type: smType,
+	})
+	if err != nil {
+		t.Fatalf("CreateStateMachine: %v", err)
+	}
+
+	exec, err := m.StartExecution(ctx, driver.StartExecutionInput{StateMachineArn: arn, Name: name + "-run"})
 	if err != nil {
 		t.Fatalf("StartExecution: %v", err)
 	}
 
-	res, err := m.RedriveExecution(ctx, exec.ARN)
-	if err != nil || res == nil {
-		t.Fatalf("RedriveExecution: %v %+v", err, res)
+	return exec
+}
+
+// requireNotRedrivable asserts RedriveExecution rejects arn with the real
+// ExecutionNotRedrivable exception.
+func requireNotRedrivable(t *testing.T, m *sfn.Mock, arn string) {
+	t.Helper()
+
+	_, err := m.RedriveExecution(context.Background(), arn)
+
+	var apiErr *driver.APIError
+	if !stderrors.As(err, &apiErr) || apiErr.Exception != driver.ExExecutionNotRedrivable {
+		t.Fatalf("RedriveExecution = %v, want ExecutionNotRedrivable", err)
 	}
+}
+
+func TestRedriveExecution(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	failed := startIn(t, m, "redrive", driver.TypeStandard, failDefinition)
+
+	res, err := m.RedriveExecution(ctx, failed.ARN)
+	if err != nil || res == nil || res.RedriveDate.IsZero() {
+		t.Fatalf("RedriveExecution of a FAILED execution: %v %+v", err, res)
+	}
+
+	got, err := m.DescribeExecution(ctx, failed.ARN)
+	if err != nil || got.Status != driver.ExecStatusSucceeded || got.RedriveCount != 1 || got.Error != "" {
+		t.Fatalf("redriven execution = %+v (%v), want SUCCEEDED, redriveCount 1, no error", got, err)
+	}
+
+	// Now SUCCEEDED, the same execution can no longer be redriven.
+	requireNotRedrivable(t, m, failed.ARN)
 
 	if _, err := m.RedriveExecution(ctx,
 		"arn:aws:states:us-east-1:000000000000:execution:sm:missing"); !errors.IsNotFound(err) {
 		t.Fatalf("redrive missing execution should be NotFound, got %v", err)
 	}
+}
+
+func TestRedriveExecutionRejectsSucceeded(t *testing.T) {
+	m := newMock(t)
+	requireNotRedrivable(t, m, startIn(t, m, "ok", driver.TypeStandard, definition).ARN)
+}
+
+func TestRedriveExecutionRejectsRunning(t *testing.T) {
+	// Under AsyncSettle a just-started execution is still observably RUNNING.
+	m := sfn.New(config.NewOptions(config.WithAsyncSettle(), config.WithClock(config.NewFakeClock(time.Unix(0, 0)))))
+	requireNotRedrivable(t, m, startIn(t, m, "busy", driver.TypeStandard, failDefinition).ARN)
+}
+
+func TestRedriveExecutionRejectsExpress(t *testing.T) {
+	m := newMock(t)
+	requireNotRedrivable(t, m, startIn(t, m, "fast", driver.TypeExpress, failDefinition).ARN)
 }
 
 func TestMapRuns(t *testing.T) {

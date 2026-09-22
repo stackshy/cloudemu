@@ -84,6 +84,29 @@ type serviceActionDetail struct {
 	CreatedAt  string `json:"createdAt"`
 }
 
+// pendingTaskEvents buffers task state changes made while a service record is
+// not yet committed (CreateService/UpdateService/DeleteService converging or
+// draining it). They are published only after the caller stores the service:
+// an event target that stops a task re-enters reconcileServiceAfterStop, which
+// must see the committed record — against the half-built or superseded one it
+// computes the wrong shortfall and over-provisions the service.
+type pendingTaskEvents struct {
+	tasks    []*driver.Task
+	versions []int
+}
+
+func (p *pendingTaskEvents) add(t *driver.Task, version int) {
+	p.tasks = append(p.tasks, t)
+	p.versions = append(p.versions, version)
+}
+
+// publish emits the buffered events in the order they happened.
+func (m *Mock) publish(ctx context.Context, p *pendingTaskEvents) {
+	for i, t := range p.tasks {
+		m.emitTaskStateChange(ctx, t, p.versions[i])
+	}
+}
+
 // SetEventPublisher wires the EventBridge default bus that task state changes
 // and service actions are published to. Safe to leave unset — no events are
 // emitted.

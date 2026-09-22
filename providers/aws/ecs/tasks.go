@@ -308,8 +308,13 @@ func (m *Mock) stampLaunch(task *driver.Task, td *driver.TaskDefinition) {
 	}
 
 	now := m.now()
-	task.StartedAt = now
-	task.Connectivity = connectivityConnected
+
+	// A task whose engine failed to start it never started: real ECS reports no
+	// startedAt and no connectivity for it, only the stop timestamps.
+	if task.StopCode != stopCodeFailedToStart {
+		task.StartedAt = now
+		task.Connectivity = connectivityConnected
+	}
 
 	if task.LastStatus == statusStopped {
 		task.StoppingAt, task.StoppedAt = now, now
@@ -542,39 +547,44 @@ func (m *Mock) networkBindingsFor(networkMode string, mappings []driver.PortMapp
 // StopTask reconciles the owning service synchronously to mirror that (see
 // reconcile below).
 func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*driver.Task, error) {
-	return m.stopTask(ctx, cluster, task, reason, true)
-}
-
-// stopTask is StopTask's implementation, parameterized on whether to reconcile
-// the task's owning service afterward. drainService (the service scheduler's
-// own drain, used by DeleteService and UpdateService's redeploy) calls this
-// with reconcile=false: it already owns and re-converges the service's whole
-// state itself, so a second, independent reconciliation here would race it —
-// relaunching a replacement for a task the service is in the middle of
-// deliberately draining.
-func (m *Mock) stopTask(ctx context.Context, cluster, task, reason string, reconcile bool) (*driver.Task, error) {
-	updated, alreadyStopped, err := m.stopTaskLocked(ctx, cluster, task, reason)
+	updated, stoppedNow, err := m.stopTaskQuiet(ctx, cluster, task, reason)
 	if err != nil {
 		return nil, err
 	}
 
-	if !alreadyStopped {
-		m.beginStopSettle(updated)
+	if stoppedNow {
 		m.emitTaskStateChange(ctx, updated, taskEventVersionStop)
-
-		if reconcile {
-			// Reconciliation may itself place a replacement task (taking
-			// placeMu via reserve), so it must run after stopTaskLocked has
-			// released placeMu below — calling it while still holding placeMu
-			// would deadlock on a non-reentrant mutex.
-			m.reconcileServiceAfterStop(ctx, updated)
-		}
+		// Reconciliation may itself place a replacement task (taking placeMu
+		// via reserve), so it must run after stopTaskLocked has released
+		// placeMu — calling it while still holding placeMu would deadlock on a
+		// non-reentrant mutex.
+		m.reconcileServiceAfterStop(ctx, updated)
 	}
 
 	out := cloneTask(updated)
 	m.overlayStatus(&out)
 
 	return &out, nil
+}
+
+// stopTaskQuiet stops a task without publishing its state change or
+// reconciling its service, reporting whether this call stopped it. drainService
+// (the scheduler's own drain, used by DeleteService and UpdateService's
+// redeploy) uses it directly: it owns and re-converges the whole service
+// itself, so a separate reconciliation would race it — relaunching a
+// replacement for a task it is deliberately draining — and it publishes the
+// STOPPED events only once the service record is committed.
+func (m *Mock) stopTaskQuiet(ctx context.Context, cluster, task, reason string) (*driver.Task, bool, error) {
+	updated, alreadyStopped, err := m.stopTaskLocked(ctx, cluster, task, reason)
+	if err != nil {
+		return nil, false, err
+	}
+
+	if !alreadyStopped {
+		m.beginStopSettle(updated)
+	}
+
+	return updated, !alreadyStopped, nil
 }
 
 // stopTaskLocked performs the placeMu-guarded core of stopTask: resolving the

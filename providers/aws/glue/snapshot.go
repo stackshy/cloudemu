@@ -62,6 +62,9 @@ type crawlerDataSnapshot struct {
 	driver.Crawler
 
 	CancelableUntil time.Time `json:"cancelableUntil,omitzero"`
+	// RunStartedAt is that run's start, carried so its still-pending
+	// Succeeded event reports the right startTime after a restore.
+	RunStartedAt time.Time `json:"runStartedAt,omitzero"`
 }
 
 // schemaDataSnapshot promotes schemaData, carrying the schema plus its version

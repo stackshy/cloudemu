@@ -2,6 +2,7 @@ package glue
 
 import (
 	"context"
+	"strconv"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/awsevents"
@@ -93,25 +94,27 @@ func (m *Mock) emitJobStateChange(ctx context.Context, jobName, runID, state str
 	})
 }
 
-// emitCrawlSettled publishes the Started and Succeeded crawler state changes
-// of a crawl that settled immediately. It must be called without the
-// crawler's lock held.
-func (m *Mock) emitCrawlSettled(ctx context.Context, name string, at time.Time) {
-	ts := at.Format(time.RFC3339)
-	started := crawlerStartedDetail{
-		AccountID: m.opts.AccountID, CrawlerName: name, StartTime: ts,
+// emitCrawlStarted publishes a crawl's Started state change. It must be called
+// without the crawler's lock held.
+func (m *Mock) emitCrawlStarted(ctx context.Context, name string, at time.Time) {
+	m.events.Emit(ctx, eventSource, eventCrawlerStateChange, crawlerStartedDetail{
+		AccountID: m.opts.AccountID, CrawlerName: name, StartTime: at.Format(time.RFC3339),
 		State: crawlerStarted, Message: "Crawler Started",
-	}
+	})
+}
 
-	m.events.Emit(ctx, eventSource, eventCrawlerStateChange, started)
-
-	succeeded := started
-	succeeded.State = crawlerSucceeded
-	succeeded.Message = "Crawler Succeeded"
-
+// emitCrawlSucceeded publishes a finished crawl's Succeeded state change, with
+// the real event's string-typed summary counters. It must be called without
+// the crawler's lock held.
+func (m *Mock) emitCrawlSucceeded(ctx context.Context, name string, started, completed time.Time) {
 	m.events.Emit(ctx, eventSource, eventCrawlerStateChange, crawlerSucceededDetail{
-		crawlerStartedDetail: succeeded, CompletionDate: ts, RunningTimeSec: zeroCount,
-		TablesCreated: zeroCount, TablesUpdated: zeroCount, TablesDeleted: zeroCount,
+		crawlerStartedDetail: crawlerStartedDetail{
+			AccountID: m.opts.AccountID, CrawlerName: name, StartTime: started.Format(time.RFC3339),
+			State: crawlerSucceeded, Message: "Crawler Succeeded",
+		},
+		CompletionDate: completed.Format(time.RFC3339),
+		RunningTimeSec: strconv.Itoa(int(completed.Sub(started).Seconds())),
+		TablesCreated:  zeroCount, TablesUpdated: zeroCount, TablesDeleted: zeroCount,
 		PartitionsCreated: zeroCount, PartitionsUpdated: zeroCount, PartitionsDeleted: zeroCount,
 		WarningMessage: "N/A",
 		CloudWatchLogLink: "https://console.aws.amazon.com/cloudwatch/home?region=" + m.opts.Region +

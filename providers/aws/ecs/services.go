@@ -121,9 +121,12 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 		return nil, err
 	}
 
-	m.convergeNewService(ctx, svc, td)
+	var events pendingTaskEvents
+
+	m.convergeNewService(ctx, svc, td, &events)
 	m.services.Set(serviceKey(cluster, svc.Name), svc)
 	m.recordTags(svc.ARN, in.Tags)
+	m.publish(ctx, &events)
 	m.emitServiceSteadyState(ctx, svc)
 
 	out := cloneService(svc)
@@ -249,13 +252,15 @@ func (m *Mock) reserveServiceName(key string, svc *driver.Service) error {
 // convergeNewService resolves the target count (DAEMON implies one task per
 // container instance), launches the tasks, and records the PRIMARY deployment
 // and the start event on the service.
-func (m *Mock) convergeNewService(ctx context.Context, svc *driver.Service, td *driver.TaskDefinition) {
+func (m *Mock) convergeNewService(
+	ctx context.Context, svc *driver.Service, td *driver.TaskDefinition, events *pendingTaskEvents,
+) {
 	cluster := clusterNameFromARN(svc.ClusterARN)
 	target := m.desiredForStrategy(cluster, svc.SchedulingStrategy, svc.DesiredCount)
 	svc.DesiredCount = target
 
 	id := m.deploymentID()
-	running, pending := m.converge(ctx, svc, td, id, target)
+	running, pending := m.converge(ctx, svc, td, id, target, events)
 	svc.RunningCount = running
 	svc.PendingCount = pending
 	svc.Deployments = []driver.Deployment{m.newDeployment(id, deploymentPrimary, svc, running, pending)}
@@ -288,9 +293,11 @@ func (m *Mock) placeableInstanceCount(cluster string) int {
 
 // converge launches target tasks for the service under the given deployment id
 // and returns the running/pending split. EC2 tasks with no fitting instance are
-// stored PENDING rather than failing (pendingOnShortfall=true).
+// stored PENDING rather than failing (pendingOnShortfall=true). Each launch is
+// buffered on events, to be published once the caller commits the service.
 func (m *Mock) converge(
 	ctx context.Context, svc *driver.Service, td *driver.TaskDefinition, deploymentID string, target int,
+	events *pendingTaskEvents,
 ) (running, pending int) {
 	spec := m.serviceTaskSpec(svc, td, deploymentID)
 
@@ -300,9 +307,7 @@ func (m *Mock) converge(
 			continue
 		}
 
-		// converge runs from CreateService/UpdateService, which hold no service
-		// lock, so the launch is published inline.
-		m.emitTaskStateChange(ctx, task, taskEventVersionLaunch)
+		events.add(task, taskEventVersionLaunch)
 
 		if task.LastStatus == statusRunning {
 			running++
@@ -335,8 +340,9 @@ func (*Mock) serviceTaskSpec(svc *driver.Service, td *driver.TaskDefinition, dep
 // drainService stops every RUNNING or PENDING task linked to the service in its
 // cluster, releasing any reserved container-instance capacity. It is used to
 // drain a superseded deployment before relaunching and to tear down tasks on
-// delete.
-func (m *Mock) drainService(ctx context.Context, svc *driver.Service) {
+// delete. Each stop is buffered on events, to be published once the caller
+// commits the service.
+func (m *Mock) drainService(ctx context.Context, svc *driver.Service, events *pendingTaskEvents) {
 	group := serviceGroup(svc.Name)
 	cluster := clusterNameFromARN(svc.ClusterARN)
 
@@ -346,10 +352,12 @@ func (m *Mock) drainService(ctx context.Context, svc *driver.Service) {
 		}
 
 		m.deregisterTaskTargets(ctx, svc, t)
-		// reconcile=false: this drain already owns and re-converges the whole
+		// No reconciliation: this drain already owns and re-converges the whole
 		// service state itself (the caller launches the replacement tasks), so
-		// StopTask's own reconciliation would race it — see stopTask.
-		_, _ = m.stopTask(ctx, cluster, t.ARN, serviceStoppedReason, false)
+		// StopTask's own reconciliation would race it — see stopTaskQuiet.
+		if stopped, stoppedNow, err := m.stopTaskQuiet(ctx, cluster, t.ARN, serviceStoppedReason); err == nil && stoppedNow {
+			events.add(stopped, taskEventVersionStop)
+		}
 	}
 }
 
@@ -587,11 +595,14 @@ func (m *Mock) UpdateService(ctx context.Context, in driver.UpdateServiceInput) 
 	countChanged := in.DesiredCount != nil && *in.DesiredCount != svc.DesiredCount
 	redeployed := in.ForceNewDeployment || tdChanged || countChanged
 
+	var events pendingTaskEvents
+
 	if redeployed {
-		m.redeployService(ctx, &updated, &in)
+		m.redeployService(ctx, &updated, &in, &events)
 	}
 
 	m.services.Set(serviceKey(cluster, updated.Name), &updated)
+	m.publish(ctx, &events)
 
 	if redeployed {
 		m.emitServiceSteadyState(ctx, &updated)
@@ -632,7 +643,9 @@ func (m *Mock) applyTaskDefChange(updated, svc *driver.Service, in *driver.Updat
 // redeployService reconciles the service to a new PRIMARY deployment: it resolves
 // the new target count, drains the existing tasks, relaunches against the current
 // task definition, demotes prior deployments to ACTIVE, and appends an event.
-func (m *Mock) redeployService(ctx context.Context, svc *driver.Service, in *driver.UpdateServiceInput) {
+func (m *Mock) redeployService(
+	ctx context.Context, svc *driver.Service, in *driver.UpdateServiceInput, events *pendingTaskEvents,
+) {
 	cluster := clusterNameFromARN(svc.ClusterARN)
 
 	requested := svc.DesiredCount
@@ -648,10 +661,10 @@ func (m *Mock) redeployService(ctx context.Context, svc *driver.Service, in *dri
 		return
 	}
 
-	m.drainService(ctx, svc)
+	m.drainService(ctx, svc, events)
 
 	id := m.deploymentID()
-	running, pending := m.converge(ctx, svc, td, id, target)
+	running, pending := m.converge(ctx, svc, td, id, target, events)
 	svc.RunningCount = running
 	svc.PendingCount = pending
 
@@ -782,10 +795,13 @@ func (m *Mock) DeleteService(ctx context.Context, cluster, service string, force
 				"update the desired count to 0 or delete with force", service)
 	}
 
+	var events pendingTaskEvents
+
 	updated := cloneService(svc)
-	m.drainService(ctx, &updated)
+	m.drainService(ctx, &updated, &events)
 	m.markServiceDeleted(&updated)
 	m.services.Set(serviceKey(want, updated.Name), &updated)
+	m.publish(ctx, &events)
 
 	out := cloneService(&updated)
 
