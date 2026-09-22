@@ -283,6 +283,16 @@ func (h *Handler) attachVolume(w http.ResponseWriter, r *http.Request) {
 	device := r.Form.Get("Device")
 
 	if err := h.compute.AttachVolume(r.Context(), volID, instID, device); err != nil {
+		// The target instance not existing is InvalidInstanceID.NotFound, not
+		// InvalidVolume.NotFound — the driver's shared NotFound code doesn't say
+		// which resource is missing, so disambiguate on its clean message text
+		// (no internal code prefix): AttachVolume's instance-lookup miss always
+		// starts with "instance ", distinct from a volume-lookup miss.
+		if cerrors.IsNotFound(err) && strings.HasPrefix(cerrors.Message(err), "instance ") {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, codeInvalidInstanceID, cerrors.Message(err))
+			return
+		}
+
 		// A volume and the instance it attaches to must share an Availability
 		// Zone; real EC2 answers InvalidVolume.ZoneMismatch for a cross-AZ attach.
 		// Matched on the driver's clean message text (no internal code prefix) —

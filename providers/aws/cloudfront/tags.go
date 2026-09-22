@@ -25,7 +25,7 @@ func (m *Mock) TagResource(_ context.Context, arn string, tags map[string]string
 
 	dist, ok := m.dists.Get(id)
 	if !ok {
-		return driver.ErrNoSuchDistribution
+		return driver.ErrNoSuchResource
 	}
 
 	merged := cloneTags(dist.Tags)
@@ -52,7 +52,7 @@ func (m *Mock) UntagResource(_ context.Context, arn string, keys []string) error
 
 	dist, ok := m.dists.Get(id)
 	if !ok {
-		return driver.ErrNoSuchDistribution
+		return driver.ErrNoSuchResource
 	}
 
 	merged := cloneTags(dist.Tags)
@@ -66,11 +66,13 @@ func (m *Mock) UntagResource(_ context.Context, arn string, keys []string) error
 	return nil
 }
 
-// distByARN resolves a distribution from its ARN.
+// distByARN resolves a distribution from its ARN for a tagging operation. The
+// tagging API is resource-type-agnostic, so a miss is NoSuchResource, not the
+// distribution-specific NoSuchDistribution.
 func (m *Mock) distByARN(arn string) (driver.Distribution, error) {
 	dist, ok := m.dists.Get(idFromARN(arn))
 	if !ok {
-		return driver.Distribution{}, driver.ErrNoSuchDistribution
+		return driver.Distribution{}, driver.ErrNoSuchResource
 	}
 
 	return dist, nil

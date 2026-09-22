@@ -63,6 +63,12 @@ var (
 	// ErrCallerReferenceImmutable — an update changed the CallerReference, which
 	// is fixed for the life of a distribution (HTTP 400, IllegalUpdate).
 	ErrCallerReferenceImmutable = errors.New("the update contains modifications that are not allowed for the given caller reference")
+	// ErrNoSuchResource — the ARN passed to a tagging operation (ListTagsForResource/
+	// TagResource/UntagResource) does not name an existing resource. Real
+	// CloudFront's tagging API is resource-type-agnostic, so it answers
+	// NoSuchResource rather than the distribution-specific NoSuchDistribution
+	// (HTTP 404).
+	ErrNoSuchResource = errors.New("the specified resource does not exist")
 )
 
 // Distribution is a CloudFront distribution: its server-assigned identity and

@@ -530,7 +530,11 @@ func TestDDBQueryEdges(t *testing.T) {
 			":v": sAttr("x"),
 		},
 	})
-	require.ErrorAs(t, err, &rnf, "Query with unknown IndexName")
+	// An unknown IndexName is a malformed request (ValidationException), not a
+	// missing resource.
+	var apiErr smithy.APIError
+	require.ErrorAs(t, err, &apiErr, "Query with unknown IndexName")
+	require.Equal(t, "ValidationException", apiErr.ErrorCode(), "Query with unknown IndexName")
 }
 
 // TestDDBScanWithFilters: AND-combined scan filters with =, <>,

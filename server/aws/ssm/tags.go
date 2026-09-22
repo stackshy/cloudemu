@@ -22,6 +22,21 @@ type ssmTag struct {
 	Value string `json:"Value"`
 }
 
+// writeTagErr maps a tagging-operation error to its SSM JSON error response. A
+// missing resource is InvalidResourceId here — distinct from writeErr's
+// ParameterNotFound, which real SSM reserves for parameter-specific reads
+// (GetParameter/DeleteParameter/…); the tagging API names its target by
+// ResourceType+ResourceId and can point at any taggable SSM resource, not only
+// a parameter.
+func writeTagErr(w http.ResponseWriter, err error) {
+	if cerrors.IsNotFound(err) {
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidResourceId", cerrors.Message(err))
+		return
+	}
+
+	writeErr(w, err)
+}
+
 func (h *Handler) addTagsToResource(w http.ResponseWriter, r *http.Request) {
 	tagger, ok := h.store.(parameterTagger)
 	if !ok {
@@ -45,7 +60,7 @@ func (h *Handler) addTagsToResource(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err := tagger.TagParameter(r.Context(), req.ResourceID, tags); err != nil {
-		writeErr(w, err)
+		writeTagErr(w, err)
 		return
 	}
 
@@ -70,7 +85,7 @@ func (h *Handler) removeTagsFromResource(w http.ResponseWriter, r *http.Request)
 	}
 
 	if err := tagger.UntagParameter(r.Context(), req.ResourceID, req.TagKeys); err != nil {
-		writeErr(w, err)
+		writeTagErr(w, err)
 		return
 	}
 
@@ -95,7 +110,7 @@ func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request) {
 
 	tags, err := tagger.ListParameterTags(r.Context(), req.ResourceID)
 	if err != nil {
-		writeErr(w, err)
+		writeTagErr(w, err)
 		return
 	}
 
