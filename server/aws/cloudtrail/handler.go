@@ -20,6 +20,9 @@ import (
 
 const targetPrefix = "CloudTrail_20131101."
 
+// qualifiedTargetPrefix is botocore's fully-qualified X-Amz-Target form.
+const qualifiedTargetPrefix = "com.amazonaws.cloudtrail.v20131101." + targetPrefix
+
 // Handler serves CloudTrail JSON-RPC requests against a CloudTrail driver.
 type Handler struct {
 	ct     ctdriver.CloudTrail
@@ -107,15 +110,30 @@ func New(d ctdriver.CloudTrail) *Handler {
 	return h
 }
 
-// Matches returns true for CloudTrail-shaped requests (X-Amz-Target of
-// "CloudTrail_20131101.<Operation>").
+// Matches returns true for CloudTrail-shaped requests. The aws-sdk-go-v2
+// client sends the short X-Amz-Target form ("CloudTrail_20131101.<Operation>"),
+// while botocore (AWS CLI/boto3) sends the fully-qualified form
+// ("com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.<Operation>") — both
+// must dispatch here.
 func (*Handler) Matches(r *http.Request) bool {
-	return strings.HasPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
+	target := r.Header.Get("X-Amz-Target")
+
+	return strings.HasPrefix(target, targetPrefix) || strings.HasPrefix(target, qualifiedTargetPrefix)
+}
+
+// operationName extracts the operation name from an X-Amz-Target header,
+// accepting both the short SDK target and botocore's fully-qualified target.
+func operationName(target string) string {
+	if op, ok := strings.CutPrefix(target, qualifiedTargetPrefix); ok {
+		return op
+	}
+
+	return strings.TrimPrefix(target, targetPrefix)
 }
 
 // ServeHTTP dispatches CloudTrail operations based on X-Amz-Target.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
+	op := operationName(r.Header.Get("X-Amz-Target"))
 
 	if fn, ok := h.routes[op]; ok {
 		fn(w, r)

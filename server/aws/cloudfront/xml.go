@@ -237,6 +237,8 @@ func codeFor(err error) errCode {
 		return errCode{http.StatusConflict, "DistributionNotDisabled"}
 	case errors.Is(err, cfdriver.ErrCallerReferenceImmutable):
 		return errCode{http.StatusBadRequest, "IllegalUpdate"}
+	case errors.Is(err, cfdriver.ErrNoSuchResource):
+		return errCode{http.StatusNotFound, "NoSuchResource"}
 	default:
 		return errCode{http.StatusInternalServerError, "InternalFailure"}
 	}

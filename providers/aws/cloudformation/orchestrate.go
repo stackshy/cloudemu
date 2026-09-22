@@ -57,7 +57,7 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 
 	resolver := m.newResolver(sd, paramValues)
 	if err := m.provision(ctx, sd, t, resolver, nil); err != nil {
-		m.rollback(ctx, sd, cfn.StatusRollbackInProgress, cfn.StatusRollbackComplete, err.Error())
+		m.rollback(ctx, sd, cfn.StatusRollbackInProgress, cfn.StatusRollbackComplete, cerrors.Message(err))
 	} else {
 		m.emitStackEvent(sd, cfn.StatusCreateComplete, "")
 	}
@@ -138,7 +138,7 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 	m.applyStackMeta(sd, in, params, newT.Description)
 
 	if rerr := m.reconcile(ctx, sd, newT, paramValues, keep, create, remove); rerr != nil {
-		m.rollbackUpdate(ctx, sd, oldT, &prior, create, remove, rerr.Error())
+		m.rollbackUpdate(ctx, sd, oldT, &prior, create, remove, cerrors.Message(rerr))
 	} else {
 		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
 	}
@@ -269,7 +269,7 @@ func (m *Mock) provisionOne(
 
 	props, err := resolveProps(resolver, rdef.Properties)
 	if err != nil {
-		m.emitResourceEvent(sd, id, "", rdef.Type, cfn.ResourceCreateFailed, err.Error())
+		m.emitResourceEvent(sd, id, "", rdef.Type, cfn.ResourceCreateFailed, cerrors.Message(err))
 		return err
 	}
 
@@ -279,7 +279,7 @@ func (m *Mock) provisionOne(
 		Region: m.region, AccountID: m.accountID,
 	})
 	if err != nil {
-		m.emitResourceEvent(sd, id, "", rdef.Type, cfn.ResourceCreateFailed, err.Error())
+		m.emitResourceEvent(sd, id, "", rdef.Type, cfn.ResourceCreateFailed, cerrors.Message(err))
 		return err
 	}
 
@@ -354,7 +354,7 @@ func (m *Mock) deleteOne(ctx context.Context, sd *stackData, id, rtype, physical
 	m.emitResourceEvent(sd, id, physicalID, rtype, cfn.ResourceDeleteInProgress, "")
 
 	if err := prov.Delete(ctx, deleteID, nil); err != nil {
-		m.emitResourceEvent(sd, id, physicalID, rtype, cfn.ResourceDeleteFailed, err.Error())
+		m.emitResourceEvent(sd, id, physicalID, rtype, cfn.ResourceDeleteFailed, cerrors.Message(err))
 		return
 	}
 

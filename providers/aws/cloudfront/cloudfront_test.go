@@ -256,8 +256,8 @@ func TestTags(t *testing.T) {
 		t.Errorf("team tag not removed: %v", tags)
 	}
 
-	if err := m.TagResource(context.Background(), "arn:aws:cloudfront::123456789012:distribution/EMISSING", nil); !errors.Is(err, driver.ErrNoSuchDistribution) {
-		t.Fatalf("missing dist err = %v, want ErrNoSuchDistribution", err)
+	if err := m.TagResource(context.Background(), "arn:aws:cloudfront::123456789012:distribution/EMISSING", nil); !errors.Is(err, driver.ErrNoSuchResource) {
+		t.Fatalf("missing dist err = %v, want ErrNoSuchResource", err)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"sync"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/glue/driver"
 )
 
@@ -247,7 +248,7 @@ func (m *Mock) BatchDeleteTable(
 	for _, n := range names {
 		if err := m.DeleteTable(context.Background(), cat, dbName, n); err != nil {
 			errs = append(errs, driver.BatchError{
-				Name: n, ErrorCode: driver.ExEntityNotFound, ErrorMessage: err.Error(),
+				Name: n, ErrorCode: driver.ExEntityNotFound, ErrorMessage: cerrors.Message(err),
 			})
 		}
 	}
