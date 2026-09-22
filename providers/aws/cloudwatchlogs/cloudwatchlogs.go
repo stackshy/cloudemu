@@ -91,8 +91,8 @@ func New(opts *config.Options) *Mock {
 
 // CreateLogGroup creates a new CloudWatch log group.
 func (m *Mock) CreateLogGroup(ctx context.Context, cfg driver.LogGroupConfig) (*driver.LogGroupInfo, error) {
-	if cfg.Name == "" {
-		return nil, errors.New(errors.InvalidArgument, "log group name is required")
+	if err := validateLogGroupName(cfg.Name); err != nil {
+		return nil, err
 	}
 
 	if m.groups.Has(cfg.Name) {
@@ -176,8 +176,8 @@ func (m *Mock) CreateLogStream(_ context.Context, logGroup, streamName string) (
 		return nil, errors.Newf(errors.NotFound, "log group %q not found", logGroup)
 	}
 
-	if streamName == "" {
-		return nil, errors.New(errors.InvalidArgument, "stream name is required")
+	if err := validateLogStreamName(streamName); err != nil {
+		return nil, err
 	}
 
 	if g.streams.Has(streamName) {
@@ -318,7 +318,15 @@ func (m *Mock) PutLogEvents(ctx context.Context, groupName, streamName string, e
 // time, and event timestamps here are caller-supplied and not tied to the
 // mock's clock, so silently dropping "future" events would reject events
 // legitimate callers routinely backdate or postdate in tests.
+//
+// It also applies the batch size limits: at most 10,000 events, each message
+// at least 1 character, and at most 1,048,576 bytes in total, where each event
+// counts as its UTF-8 message bytes plus 26.
 func validatePutLogEventsBatch(events []driver.LogEvent) error {
+	if err := validatePutLogEventsSize(events); err != nil {
+		return err
+	}
+
 	for i := 1; i < len(events); i++ {
 		if events[i].Timestamp.Before(events[i-1].Timestamp) {
 			return errors.New(errors.InvalidArgument,

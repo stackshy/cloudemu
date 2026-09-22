@@ -10,6 +10,7 @@ package sqs
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -143,7 +144,7 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request) {
 
 	cfg := mqdriver.QueueConfig{
 		Name:                          req.QueueName,
-		FIFO:                          req.Attributes["FifoQueue"] == attrTrue || strings.HasSuffix(req.QueueName, ".fifo"),
+		FIFO:                          req.Attributes["FifoQueue"] == attrTrue,
 		Tags:                          req.Tags,
 		DelaySeconds:                  atoiAttr(req.Attributes, "DelaySeconds"),
 		VisibilityTimeout:             atoiAttr(req.Attributes, "VisibilityTimeout"),
@@ -279,7 +280,7 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QueueURL          string                          `json:"QueueUrl"`
 		MessageBody       string                          `json:"MessageBody"`
-		DelaySeconds      int                             `json:"DelaySeconds"`
+		DelaySeconds      *int                            `json:"DelaySeconds"`
 		GroupID           string                          `json:"MessageGroupId"`
 		DeduplicationID   string                          `json:"MessageDeduplicationId"`
 		MessageAttributes map[string]wireMessageAttribute `json:"MessageAttributes"`
@@ -301,7 +302,8 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 	out, err := h.mq.SendMessage(r.Context(), mqdriver.SendMessageInput{
 		QueueURL:          req.QueueURL,
 		Body:              req.MessageBody,
-		DelaySeconds:      req.DelaySeconds,
+		DelaySeconds:      derefInt(req.DelaySeconds),
+		DelaySecondsSet:   req.DelaySeconds != nil,
 		GroupID:           req.GroupID,
 		DeduplicationID:   req.DeduplicationID,
 		MessageAttributes: msgAttrs,
@@ -334,9 +336,9 @@ func (h *Handler) sendMessage(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) receiveMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		QueueURL              string   `json:"QueueUrl"`
-		MaxNumberOfMessages   int      `json:"MaxNumberOfMessages"`
-		WaitTimeSeconds       int      `json:"WaitTimeSeconds"`
-		VisibilityTimeout     int      `json:"VisibilityTimeout"`
+		MaxNumberOfMessages   *int     `json:"MaxNumberOfMessages"`
+		WaitTimeSeconds       *int     `json:"WaitTimeSeconds"`
+		VisibilityTimeout     *int     `json:"VisibilityTimeout"`
 		AttributeNames        []string `json:"AttributeNames"`
 		MessageSystemAttrs    []string `json:"MessageSystemAttributeNames"`
 		MessageAttributeNames []string `json:"MessageAttributeNames"`
@@ -346,15 +348,15 @@ func (h *Handler) receiveMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.MaxNumberOfMessages == 0 {
-		req.MaxNumberOfMessages = 1
-	}
-
+	// Pointers let the provider tell an explicit 0 from an omitted field.
 	msgs, err := h.mq.ReceiveMessages(r.Context(), mqdriver.ReceiveMessageInput{
-		QueueURL:          req.QueueURL,
-		MaxMessages:       req.MaxNumberOfMessages,
-		WaitTimeSeconds:   req.WaitTimeSeconds,
-		VisibilityTimeout: req.VisibilityTimeout,
+		QueueURL:             req.QueueURL,
+		MaxMessages:          derefInt(req.MaxNumberOfMessages),
+		MaxMessagesSet:       req.MaxNumberOfMessages != nil,
+		WaitTimeSeconds:      derefInt(req.WaitTimeSeconds),
+		WaitTimeSecondsSet:   req.WaitTimeSeconds != nil,
+		VisibilityTimeout:    derefInt(req.VisibilityTimeout),
+		VisibilityTimeoutSet: req.VisibilityTimeout != nil,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -540,7 +542,7 @@ func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
 		Entries  []struct {
 			ID                     string                          `json:"Id"`
 			MessageBody            string                          `json:"MessageBody"`
-			DelaySeconds           int                             `json:"DelaySeconds"`
+			DelaySeconds           *int                            `json:"DelaySeconds"`
 			MessageGroupID         string                          `json:"MessageGroupId"`
 			MessageDeduplicationID string                          `json:"MessageDeduplicationId"`
 			MessageAttributes      map[string]wireMessageAttribute `json:"MessageAttributes"`
@@ -583,7 +585,8 @@ func (h *Handler) sendMessageBatch(w http.ResponseWriter, r *http.Request) {
 		entries = append(entries, mqdriver.BatchSendEntry{
 			ID:                req.Entries[i].ID,
 			Body:              req.Entries[i].MessageBody,
-			DelaySeconds:      req.Entries[i].DelaySeconds,
+			DelaySeconds:      derefInt(req.Entries[i].DelaySeconds),
+			DelaySecondsSet:   req.Entries[i].DelaySeconds != nil,
 			GroupID:           req.Entries[i].MessageGroupID,
 			DeduplicationID:   req.Entries[i].MessageDeduplicationID,
 			MessageAttributes: msgAttrs,
@@ -1179,9 +1182,22 @@ func (h *Handler) purgeQueue(w http.ResponseWriter, r *http.Request) {
 	wire.WriteJSON(w, map[string]any{})
 }
 
+// derefInt returns *p, or 0 when p is nil.
+func derefInt(p *int) int {
+	if p == nil {
+		return 0
+	}
+
+	return *p
+}
+
 // writeErr maps CloudEmu canonical errors to SQS-shaped HTTP error responses.
 func writeErr(w http.ResponseWriter, err error) {
 	switch {
+	case errors.Is(err, mqdriver.ErrMissingParameter), errors.Is(err, mqdriver.ErrMissingMessageGroupID):
+		wire.WriteJSONError(w, http.StatusBadRequest, "MissingParameter", cerrors.Message(err))
+	case errors.Is(err, mqdriver.ErrInvalidMessageContents):
+		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidMessageContents", cerrors.Message(err))
 	case cerrors.IsNotFound(err):
 		wire.WriteJSONErrorQueryCompat(w, http.StatusBadRequest, errNonExistentQueue, errQueryCodeNonExistentQueue, cerrors.Message(err))
 	case cerrors.IsAlreadyExists(err):

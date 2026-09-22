@@ -4,7 +4,33 @@ package driver
 import (
 	"context"
 	"time"
+
+	"github.com/stackshy/cloudemu/v2/errors"
 )
+
+// ErrMissingParameter is returned by SendMessage when the message body is
+// empty. Real SQS rejects that as MissingParameter, not InvalidParameterValue.
+// It carries InvalidArgument so generic handling still sees a bad request,
+// and the SQS wire layer matches it with errors.Is.
+//
+//nolint:revive // exact SQS MissingParameter wording, surfaced verbatim to the SDK
+var ErrMissingParameter = errors.New(errors.InvalidArgument,
+	"The request must contain the parameter MessageBody.")
+
+// ErrMissingMessageGroupID is returned by SendMessage when a FIFO queue gets a
+// message with no MessageGroupId. Real SQS reports it as MissingParameter.
+//
+//nolint:revive // exact SQS MissingParameter wording, surfaced verbatim to the SDK
+var ErrMissingMessageGroupID = errors.New(errors.InvalidArgument,
+	"The request must contain the parameter MessageGroupId.")
+
+// ErrInvalidMessageContents is returned by SendMessage when the body holds a
+// character outside the set SQS allows, or is not valid UTF-8. Real SQS
+// reports it as InvalidMessageContents. It carries InvalidArgument for the
+// same reason as ErrMissingParameter.
+var ErrInvalidMessageContents = errors.New(errors.InvalidArgument,
+	"Invalid binary character was found in the message body, the set of allowed characters is "+
+		"#x9 | #xA | #xD | #x20 to #xD7FF | #xE000 to #xFFFD | #x10000 to #x10FFFF")
 
 // MaxBatchSize is the maximum number of entries allowed in a batch operation.
 const MaxBatchSize = 10
@@ -101,9 +127,14 @@ type MessageAttributeValue struct {
 
 // SendMessageInput configures a message send operation.
 type SendMessageInput struct {
-	QueueURL        string
-	Body            string
-	DelaySeconds    int
+	QueueURL     string
+	Body         string
+	DelaySeconds int
+	// DelaySecondsSet reports that DelaySeconds was supplied explicitly, so an
+	// explicit 0 overrides the queue's default delay. The SQS wire handler
+	// sets it. The typed Go API leaves it false, where 0 means "use the
+	// queue default". Ignored by non-AWS providers.
+	DelaySecondsSet bool
 	GroupID         string // FIFO only
 	DeduplicationID string // FIFO only
 	Attributes      map[string]string
@@ -145,6 +176,16 @@ type ReceiveMessageInput struct {
 	MaxMessages       int
 	WaitTimeSeconds   int
 	VisibilityTimeout int
+
+	// The ...Set flags report that the matching field was supplied
+	// explicitly. The SQS wire handler sets them, so the AWS provider can
+	// tell an explicit 0 from an omitted value. An explicit
+	// MaxNumberOfMessages of 0 is rejected, and an explicit 0 for
+	// WaitTimeSeconds or VisibilityTimeout overrides the queue default. The
+	// typed Go API leaves them false, where 0 means "use the default".
+	MaxMessagesSet       bool
+	WaitTimeSecondsSet   bool
+	VisibilityTimeoutSet bool
 }
 
 // Message is a received message.
@@ -177,9 +218,11 @@ type Message struct {
 
 // BatchSendEntry represents a single message in a batch send.
 type BatchSendEntry struct {
-	ID                string
-	Body              string
-	DelaySeconds      int
+	ID           string
+	Body         string
+	DelaySeconds int
+	// DelaySecondsSet has the same meaning as on SendMessageInput.
+	DelaySecondsSet   bool
 	GroupID           string
 	DeduplicationID   string
 	Attributes        map[string]string

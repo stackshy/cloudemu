@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/notification/driver"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 	"github.com/stretchr/testify/assert"
@@ -788,5 +789,19 @@ func TestPublishFIFOValidation(t *testing.T) {
 
 			require.NoError(t, err)
 		})
+	}
+}
+
+func TestPublishRejectsInvalidUTF8(t *testing.T) {
+	m := newTestMock()
+	topic := createTopicHelper(m, "t")
+
+	_, err := m.Publish(context.Background(), driver.PublishInput{TopicID: topic.Name, Message: "bad\xff"})
+	if !errors.IsInvalidArgument(err) {
+		t.Fatalf("Publish with invalid UTF-8: err = %v, want InvalidArgument", err)
+	}
+
+	if _, err = m.Publish(context.Background(), driver.PublishInput{TopicID: topic.Name, Message: "ok"}); err != nil {
+		t.Fatalf("valid Publish: %v", err)
 	}
 }
