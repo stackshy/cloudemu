@@ -211,9 +211,11 @@ type wireNetworkBinding struct {
 }
 
 type wireContainer struct {
-	Name       string `json:"name,omitempty"`
-	Image      string `json:"image,omitempty"`
-	LastStatus string `json:"lastStatus,omitempty"`
+	ContainerArn string `json:"containerArn,omitempty"`
+	TaskArn      string `json:"taskArn,omitempty"`
+	Name         string `json:"name,omitempty"`
+	Image        string `json:"image,omitempty"`
+	LastStatus   string `json:"lastStatus,omitempty"`
 	// ExitCode is a pointer so a real exit 0 on a STOPPED container serializes
 	// (real ECS reports it), while a running container omits it entirely.
 	ExitCode        *int                 `json:"exitCode,omitempty"`
@@ -268,8 +270,15 @@ type wireTask struct {
 	Group                string           `json:"group,omitempty"`
 	StartedBy            string           `json:"startedBy,omitempty"`
 	CreatedAt            float64          `json:"createdAt,omitempty"`
+	StartedAt            float64          `json:"startedAt,omitempty"`
+	StoppingAt           float64          `json:"stoppingAt,omitempty"`
+	StoppedAt            float64          `json:"stoppedAt,omitempty"`
 	StoppedReason        string           `json:"stoppedReason,omitempty"`
 	StopCode             string           `json:"stopCode,omitempty"`
+	CPU                  string           `json:"cpu,omitempty"`
+	Memory               string           `json:"memory,omitempty"`
+	AvailabilityZone     string           `json:"availabilityZone,omitempty"`
+	Connectivity         string           `json:"connectivity,omitempty"`
 	Containers           []wireContainer  `json:"containers,omitempty"`
 	Attachments          []wireAttachment `json:"attachments,omitempty"`
 	Tags                 []wireTag        `json:"tags,omitempty"`
@@ -1217,6 +1226,7 @@ func taskToWire(t *driver.Task) wireTask {
 	for i := range t.Containers {
 		c := t.Containers[i]
 		wc := wireContainer{
+			ContainerArn: c.ARN, TaskArn: t.ARN,
 			Name: c.Name, Image: c.Image, LastStatus: c.LastStatus,
 			Reason: c.Reason, RuntimeID: c.RuntimeID,
 			NetworkBindings: fromNetworkBindings(c.NetworkBindings),
@@ -1243,8 +1253,15 @@ func taskToWire(t *driver.Task) wireTask {
 		Group:                t.Group,
 		StartedBy:            t.StartedBy,
 		CreatedAt:            epoch(t.CreatedAt),
+		StartedAt:            epoch(t.StartedAt),
+		StoppingAt:           epoch(t.StoppingAt),
+		StoppedAt:            epoch(t.StoppedAt),
 		StoppedReason:        t.StoppedReason,
 		StopCode:             t.StopCode,
+		CPU:                  t.CPU,
+		Memory:               t.Memory,
+		AvailabilityZone:     t.AvailabilityZone,
+		Connectivity:         t.Connectivity,
 		Containers:           containers,
 		Attachments:          fromAttachments(t.Attachments),
 		Tags:                 fromTags(t.Tags),

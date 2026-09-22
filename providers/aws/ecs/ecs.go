@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/settle"
@@ -79,6 +80,8 @@ type Mock struct {
 	logs logdriver.Logging // optional: awslogs surfacing target (CloudWatch Logs)
 
 	registrar TargetRegistrar // optional: ELBv2 target group the service scheduler registers RUNNING tasks with
+
+	events awsevents.Emitter // optional: EventBridge default bus for task state change / service action events
 
 	// portCounter draws successive dynamic host ports for bridge-mode container
 	// port mappings that leave hostPort unset.

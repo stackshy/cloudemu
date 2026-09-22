@@ -482,6 +482,7 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.EventBridge.SetLambdaInvoker(p.Lambda)
 	p.EventBridge.SetSNSPublisher(p.SNS)
 	p.EventBridge.SetStepFunctionsStarter(p.SFN)
+	wireLifecycleEvents(p)
 	// Step Functions -> Lambda: a Task state (arn:aws:states:::lambda:invoke or a
 	// bare Lambda function ARN) invokes the function synchronously through the
 	// recursion-guarded InvokeSync seam, so a Task->Lambda->StartExecution->Task
@@ -532,6 +533,23 @@ func wirePostBuildServices(o *config.Options, p *Provider) {
 	// live mocks rather than a store of its own.
 	p.CloudFormation = cloudformation.New(o)
 	p.CloudFormation.SetRegistry(cloudformationRegistry(p))
+}
+
+// wireLifecycleEvents points each service's native lifecycle events at the
+// default EventBridge bus, the way real AWS services publish them to the
+// account's default bus automatically (EC2 instance state changes, ECS task
+// state changes, Step Functions execution status changes, ...). A rule on the
+// default bus matching the real event pattern then fires in cloudemu too.
+//
+// EKS is deliberately absent: real EKS publishes no native cluster/nodegroup
+// status events to EventBridge (only CloudTrail API-call events).
+func wireLifecycleEvents(p *Provider) {
+	p.EC2.SetEventPublisher(p.EventBridge)
+	p.ECS.SetEventPublisher(p.EventBridge)
+	p.SFN.SetEventPublisher(p.EventBridge)
+	p.ECR.SetEventPublisher(p.EventBridge)
+	p.SSM.SetEventPublisher(p.EventBridge)
+	p.Glue.SetEventPublisher(p.EventBridge)
 }
 
 // awsDrivers assembles the resource-discovery driver set from the provider's

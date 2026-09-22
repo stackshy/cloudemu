@@ -224,6 +224,10 @@ func TestRunTaskEngineRunFailureStopsTask(t *testing.T) {
 	assert.Equal(t, "TaskFailedToStart", task.StopCode)
 	require.Len(t, task.Containers, 1)
 	assert.Equal(t, "image pull failed", task.Containers[0].Reason)
+	// A task that never started reports no startedAt or connectivity.
+	assert.Empty(t, task.StartedAt, "startedAt must be unset for a task that failed to start")
+	assert.Empty(t, task.Connectivity)
+	assert.NotEmpty(t, task.StoppedAt)
 }
 
 func TestStopTaskStopsEngineWorkload(t *testing.T) {

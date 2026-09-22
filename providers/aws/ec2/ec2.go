@@ -25,6 +25,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/settle"
@@ -115,6 +116,11 @@ type lifecycleTransition struct {
 	finalState        string
 	metricValues      []float64
 	errVerb           string
+	// emitsStateEvents reports whether the transition publishes
+	// "EC2 Instance State-change Notification" events for its intermediate and
+	// final states. Reboot does not: a real rebooting instance stays "running"
+	// and EC2 emits no state-change event for it.
+	emitsStateEvents bool
 	// idempotentStates are states where the operation is a no-op rather than
 	// an error. Real AWS EC2 documents StartInstances on a running instance
 	// and StopInstances on a stopped instance as idempotent — they return
@@ -132,6 +138,7 @@ var (
 		finalState:        compute.StateRunning,
 		metricValues:      runningMetricValues,
 		errVerb:           "start",
+		emitsStateEvents:  true,
 		idempotentStates:  []string{compute.StateRunning, compute.StatePending},
 	}
 	stopTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
@@ -139,6 +146,7 @@ var (
 		finalState:        compute.StateStopped,
 		metricValues:      zeroMetricValues,
 		errVerb:           "stop",
+		emitsStateEvents:  true,
 		idempotentStates:  []string{compute.StateStopped, compute.StateStopping},
 	}
 	rebootTransition = lifecycleTransition{ //nolint:gochecknoglobals // package-level config
@@ -152,6 +160,7 @@ var (
 		finalState:        compute.StateTerminated,
 		metricValues:      zeroMetricValues,
 		errVerb:           "terminate",
+		emitsStateEvents:  true,
 	}
 )
 
@@ -307,6 +316,9 @@ type Mock struct {
 	amiCounter             atomic.Int64
 	keyCounter             atomic.Int64
 	monitoring             mondriver.Monitoring
+	// events publishes instance state-change notifications to the EventBridge
+	// default bus. Inactive until wired by the provider.
+	events awsevents.Emitter
 	// subnetResolver derives an instance's VPC from its subnet at launch, so
 	// instances created with a --subnet-id carry the VPCID that connectivity
 	// analysis and VPC teardown depend on. nil until wired by the provider.
@@ -742,6 +754,15 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 		m.materializeInstanceVolumes(cfg, id)
 	}
 
+	// Publish pending -> running only once the whole batch launched, so a
+	// mid-batch rollback never leaves events for instances that don't exist.
+	// Managed instances stay unobservable, as with their metrics.
+	for _, inst := range created {
+		if !isManaged(inst) {
+			m.emitStateChanges(ctx, inst.ID, compute.StatePending, compute.StateRunning)
+		}
+	}
+
 	return results, nil
 }
 
@@ -982,26 +1003,53 @@ func (m *Mock) deleteInstanceVolumes(instanceID string) {
 
 //nolint:gocritic // t is a small read-only config; copying once per call is fine.
 func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t lifecycleTransition) error {
+	changed, err := m.transitionInstancesDeferEvents(ctx, instanceIDs, &t)
+	m.emitTransitionEvents(ctx, changed, &t)
+
+	return err
+}
+
+// transitionInstancesDeferEvents applies t and emits its lifecycle metrics, but
+// returns the ids whose state changed instead of publishing their state-change
+// events, so a caller can finish side effects (volume detach, ENI release)
+// before subscribers observe the new state.
+func (m *Mock) transitionInstancesDeferEvents(
+	ctx context.Context, instanceIDs []string, t *lifecycleTransition,
+) ([]string, error) {
+	var changedIDs []string
+
 	for _, id := range instanceIDs {
 		inst, ok := m.instances.Get(id)
 		if !ok {
-			return cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
+			return changedIDs, cerrors.Newf(cerrors.NotFound, "instance %q not found", id)
 		}
 
-		changed, err := m.transitionOne(inst, id, t)
+		changed, err := m.transitionOne(inst, id, *t)
 		if err != nil {
-			return err
+			return changedIDs, err
 		}
 
 		// Managed instances are hidden from Describe; keep them out of metrics
-		// too so a hidden instance isn't observable via CloudWatch. Emitted
-		// outside inst.mu so a metrics callback can't deadlock against it.
+		// and events too so a hidden instance isn't observable. Emitted outside
+		// inst.mu so a metrics callback can't deadlock against it.
 		if changed && !isManaged(inst) {
 			m.emitLifecycleMetrics(ctx, id, t.metricValues)
+			changedIDs = append(changedIDs, id)
 		}
 	}
 
-	return nil
+	return changedIDs, nil
+}
+
+// emitTransitionEvents publishes t's state-change events for ids.
+func (m *Mock) emitTransitionEvents(ctx context.Context, ids []string, t *lifecycleTransition) {
+	if !t.emitsStateEvents {
+		return
+	}
+
+	for _, id := range ids {
+		m.emitStateChanges(ctx, id, t.intermediateState, t.finalState)
+	}
 }
 
 // transitionOne applies one lifecycle transition to inst under its own lock,
@@ -1066,9 +1114,17 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 		}
 	}
 
-	if err := m.transitionInstances(ctx, instanceIDs, terminateTransition); err != nil {
+	// The terminated events are published only after volumes and ENIs are
+	// released below, so a subscriber reacting to "terminated" (e.g. deleting
+	// the volume or subnet) never sees them still attached.
+	terminated, err := m.transitionInstancesDeferEvents(ctx, instanceIDs, &terminateTransition)
+	if err != nil {
+		m.emitTransitionEvents(ctx, terminated, &terminateTransition)
+
 		return err
 	}
+
+	defer m.emitTransitionEvents(ctx, terminated, &terminateTransition)
 
 	// Every attached EBS volume must be released, otherwise it stays in-use
 	// against a dead instance forever and can never be deleted (VolumeInUse).

@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/glue/driver"
@@ -73,6 +74,10 @@ type Mock struct {
 	// parent's composite name (database key, or table key for partitions).
 	scopeMu    sync.Mutex
 	scopeLocks map[string]*sync.Mutex
+
+	// events publishes job-run and crawler state changes to the EventBridge
+	// default bus; inactive until wired by the provider.
+	events awsevents.Emitter
 
 	opts *config.Options
 }

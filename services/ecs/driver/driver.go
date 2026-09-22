@@ -278,6 +278,9 @@ type NetworkBinding struct {
 // RuntimeID are populated only when the task is backed by a real
 // config.ContainerEngine; they stay zero for the default synthetic tasks.
 type Container struct {
+	// ARN is the container's own ARN
+	// (arn:aws:ecs:<region>:<account>:container/<cluster>/<task-id>/<id>).
+	ARN             string
 	Name            string
 	Image           string
 	LastStatus      string
@@ -331,11 +334,24 @@ type Task struct {
 	Group                string
 	StartedBy            string
 	CreatedAt            string
-	StoppedReason        string
-	StopCode             string
-	Containers           []Container
-	Attachments          []Attachment
-	Tags                 []Tag
+	// StartedAt, StoppingAt and StoppedAt are the RFC3339 instants the task
+	// reached RUNNING, began stopping, and reached STOPPED (empty until then).
+	StartedAt     string
+	StoppingAt    string
+	StoppedAt     string
+	StoppedReason string
+	StopCode      string
+	// CPU and Memory are the task-level size (from the task definition, empty
+	// when it sets none).
+	CPU    string
+	Memory string
+	// AvailabilityZone is the zone the task was placed in.
+	AvailabilityZone string
+	// Connectivity is CONNECTED once the task is running, empty before.
+	Connectivity string
+	Containers   []Container
+	Attachments  []Attachment
+	Tags         []Tag
 }
 
 // Deployment is one rolling-update deployment of a service. In the synchronous

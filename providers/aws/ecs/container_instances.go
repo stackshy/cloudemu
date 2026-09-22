@@ -128,27 +128,45 @@ func (m *Mock) RegisterContainerInstance(
 // returns it (marked INACTIVE). Without force, an instance that still has
 // running tasks surfaces an InvalidParameterException.
 func (m *Mock) DeregisterContainerInstance(
-	_ context.Context, _, containerInstance string, force bool,
+	ctx context.Context, _, containerInstance string, force bool,
 ) (*driver.ContainerInstance, error) {
+	out, stopped, err := m.deregisterInstanceLocked(containerInstance, force)
+	if err != nil {
+		return nil, err
+	}
+
+	// The force-stopped tasks are published once placeMu is released, so an
+	// event target calling back into ECS cannot deadlock on it.
+	for _, t := range stopped {
+		m.emitTaskStateChange(ctx, t, taskEventVersionStop)
+	}
+
+	return out, nil
+}
+
+// deregisterInstanceLocked is DeregisterContainerInstance's placeMu-guarded
+// core. It returns the deregistered instance and the tasks it force-stopped.
+func (m *Mock) deregisterInstanceLocked(containerInstance string, force bool) (*driver.ContainerInstance, []*driver.Task, error) {
 	m.placeMu.Lock()
 	defer m.placeMu.Unlock()
 
 	ci, ok := m.resolveInstance(containerInstance)
 	if !ok {
-		return nil, apiErrf(errors.NotFound, excInvalidParameter,
+		return nil, nil, apiErrf(errors.NotFound, excInvalidParameter,
 			"container instance %q not found", containerInstance)
 	}
 
 	if !force && ci.RunningTasksCount > 0 {
-		return nil, apiErrf(errors.FailedPrecondition, excInvalidParameter,
+		return nil, nil, apiErrf(errors.FailedPrecondition, excInvalidParameter,
 			"container instance %q has %d running task(s); use force to deregister", ci.EC2InstanceID, ci.RunningTasksCount)
 	}
 
 	// Force-deregistering an instance with running tasks stops those tasks, as
 	// real ECS does — leaving them RUNNING on a deleted instance would strand
 	// them. The instance is removed, so its capacity need not be returned.
+	var stopped []*driver.Task
 	if force {
-		m.stopTasksOnInstance(ci.ARN)
+		stopped = m.stopTasksOnInstance(ci.ARN)
 	}
 
 	m.instances.Delete(ci.ARN)
@@ -156,7 +174,7 @@ func (m *Mock) DeregisterContainerInstance(
 	out := *ci
 	out.Status = statusInactive
 
-	return &out, nil
+	return &out, stopped, nil
 }
 
 // stopTasksOnInstance marks every non-stopped task placed on the given instance
@@ -166,7 +184,12 @@ func (m *Mock) DeregisterContainerInstance(
 // than replaces) any launch-settle window a task may still be in: without this
 // a task force-stopped mid-launch-transient would keep reporting its stale
 // PROVISIONING/PENDING lastStatus instead of the STOPPED set here.
-func (m *Mock) stopTasksOnInstance(instanceARN string) {
+//
+// It returns the stopped tasks so the caller can publish their state-change
+// events once placeMu is released.
+func (m *Mock) stopTasksOnInstance(instanceARN string) []*driver.Task {
+	var stopped []*driver.Task
+
 	for _, t := range m.tasks.SortedValues() {
 		if t.ContainerInstanceARN != instanceARN || t.LastStatus == statusStopped {
 			continue
@@ -177,6 +200,7 @@ func (m *Mock) stopTasksOnInstance(instanceARN string) {
 		updated.DesiredStatus = statusStopped
 		updated.StoppedReason = "Container instance deregistered."
 		updated.StopCode = "TerminationNotice"
+		m.stampStop(&updated)
 
 		for i := range updated.Containers {
 			updated.Containers[i].LastStatus = statusStopped
@@ -184,7 +208,12 @@ func (m *Mock) stopTasksOnInstance(instanceARN string) {
 
 		m.tasks.Set(updated.ARN, &updated)
 		m.taskSettle.Clear(updated.ARN)
+
+		out := cloneTask(&updated)
+		stopped = append(stopped, &out)
 	}
+
+	return stopped
 }
 
 // UpdateContainerInstancesState sets each resolved instance to ACTIVE or
