@@ -50,7 +50,7 @@ func WriteJSON(w http.ResponseWriter, v any) {
 // both the `__type` body member and the `X-Amzn-Errortype` HTTP header: real
 // AWS awsJson1.0/1.1 services emit the header on every error, and botocore /
 // the AWS CLI read it (preferring it over the body) to resolve the modeled
-// exception type — so omitting it leaves those clients unable to recognize the
+// exception type, so omitting it leaves those clients unable to recognize the
 // error, even though the Go SDK falls back to the body.
 func WriteJSONError(w http.ResponseWriter, status int, errType, msg string) {
 	w.Header().Set("Content-Type", "application/x-amz-json-1.0")
@@ -69,8 +69,8 @@ func WriteJSONError(w http.ResponseWriter, status int, errType, msg string) {
 // emit on every error response. Real aws-sdk-go-v2 exception types read this
 // header to override their ErrorCode() back to the original Query-protocol
 // code (e.g. "AWS.SimpleQueueService.NonExistentQueue" instead of the JSON
-// shape name "QueueDoesNotExist"); tools that still match on the legacy code
-// — including terraform-provider-aws's SQS delete/create waiters — rely on
+// shape name "QueueDoesNotExist"); tools that still match on the legacy code,
+// including terraform-provider-aws's SQS delete/create waiters, rely on
 // it, so omitting it leaves those SDK code paths unable to recognize the
 // error at all. queryCode must be "<legacy code>;Sender" or
 // "<legacy code>;Receiver", matching the header's documented format.

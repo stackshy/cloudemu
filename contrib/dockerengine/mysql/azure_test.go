@@ -19,17 +19,17 @@ import (
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
 )
 
-// TestAzureMySQLFlexE2E runs the real-user flow against Azure Database for MySQL —
+// TestAzureMySQLFlexE2E runs the real-user flow against Azure Database for MySQL
 // Flexible Server: create the server with the real Azure SDK, read its
 // fully-qualified domain name, connect with a real MySQL client using the
-// administrator credentials on the fixed port 3306, run SQL, then delete — all
+// administrator credentials on the fixed port 3306, run SQL, then delete, all
 // against CloudEmu backed by a real MySQL container (no cloud account).
 func TestAzureMySQLFlexE2E(t *testing.T) {
 	if !dtest.DockerUp() {
 		t.Skip("docker daemon not available")
 	}
 
-	// Default engine port (3306) — the port Azure MySQL clients always use, so the
+	// Default engine port (3306): the port Azure MySQL clients always use, so the
 	// FQDN alone is enough to connect.
 	eng := mysql.New(0)
 	t.Cleanup(func() { _ = eng.Close() })
@@ -52,7 +52,7 @@ func TestAzureMySQLFlexE2E(t *testing.T) {
 		pass   = "Sup3rs3cret1"
 	)
 
-	// 1. Create the server — like `az mysql flexible-server create`.
+	// 1. Create the server, like `az mysql flexible-server create`.
 	createPoller, err := client.BeginCreate(ctx, rg, server, armmysqlflexibleservers.Server{
 		Location: to.Ptr("eastus"),
 		SKU:      &armmysqlflexibleservers.SKU{Name: to.Ptr("Standard_B1ms"), Tier: to.Ptr(armmysqlflexibleservers.SKUTierBurstable)},
@@ -83,7 +83,7 @@ func TestAzureMySQLFlexE2E(t *testing.T) {
 	host := *got.Properties.FullyQualifiedDomainName
 
 	// Connect exactly as a real Azure client would: the FQDN from the SDK on
-	// MySQL Flexible Server's fixed port 3306 — no out-of-band port knowledge. The
+	// MySQL Flexible Server's fixed port 3306, no out-of-band port knowledge. The
 	// provisioned database defaults to the server name when create carries no
 	// DBName.
 	dsn := fmt.Sprintf("%s:%s@tcp(%s:3306)/%s", user, pass, host, server)
@@ -115,7 +115,7 @@ func TestAzureMySQLFlexE2E(t *testing.T) {
 
 	_ = db.Close()
 
-	// 4. Delete the server — the real database is torn down.
+	// 4. Delete the server: the real database is torn down.
 	delPoller, err := client.BeginDelete(ctx, rg, server, nil)
 	if err != nil {
 		t.Fatalf("BeginDelete: %v", err)

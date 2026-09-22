@@ -19,7 +19,7 @@ import (
 // TestCloudRunJobE2E runs the exact flow a real user runs against GCP Cloud Run
 // Jobs: create a job with the real Cloud Run Admin v2 SDK (one alpine container
 // echoing a marker), Run it, read the resulting Execution, and assert
-// succeededCount==1 — all against CloudEmu backed by a real Docker container (no
+// succeededCount==1, all against CloudEmu backed by a real Docker container (no
 // cloud account). succeededCount==1 proves the real container ran to completion
 // with exit 0.
 func TestCloudRunJobE2E(t *testing.T) {
@@ -54,7 +54,7 @@ func TestCloudRunJobE2E(t *testing.T) {
 	parent := "projects/" + project + "/locations/" + location
 	jobName := parent + "/jobs/" + jobID
 
-	// 1. Create the job — like `gcloud run jobs create`.
+	// 1. Create the job, like `gcloud run jobs create`.
 	createOp, err := svc.Projects.Locations.Jobs.Create(parent, &run.GoogleCloudRunV2Job{
 		Template: &run.GoogleCloudRunV2ExecutionTemplate{
 			TaskCount: 1,
@@ -75,7 +75,7 @@ func TestCloudRunJobE2E(t *testing.T) {
 		t.Fatalf("create op not done: %+v", createOp)
 	}
 
-	// 2. Run the job — like `gcloud run jobs execute`. This runs the real
+	// 2. Run the job, like `gcloud run jobs execute`. This runs the real
 	//    container to completion via the Docker engine.
 	runOp, err := svc.Projects.Locations.Jobs.Run(jobName, &run.GoogleCloudRunV2RunJobRequest{}).Context(ctx).Do()
 	if err != nil {
@@ -105,7 +105,7 @@ func TestCloudRunJobE2E(t *testing.T) {
 			exec.SucceededCount, exec.FailedCount)
 	}
 
-	// 3. Read the Execution back by name — it must report the same success.
+	// 3. Read the Execution back by name: it must report the same success.
 	got, err := svc.Projects.Locations.Jobs.Executions.Get(exec.Name).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("Executions.Get(%s): %v", exec.Name, err)
@@ -115,7 +115,7 @@ func TestCloudRunJobE2E(t *testing.T) {
 		t.Fatalf("Executions.Get succeededCount = %d, want 1", got.SucceededCount)
 	}
 
-	// 4. Delete the job — the real container is torn down and no leak remains.
+	// 4. Delete the job: the real container is torn down and no leak remains.
 	if _, err := svc.Projects.Locations.Jobs.Delete(jobName).Context(ctx).Do(); err != nil {
 		t.Fatalf("Jobs.Delete: %v", err)
 	}

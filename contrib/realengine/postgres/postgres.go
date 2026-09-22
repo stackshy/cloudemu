@@ -23,8 +23,8 @@ import (
 
 const (
 	// defaultPort is the standard PostgreSQL port. Azure PostgreSQL Flexible
-	// Server and GCP Cloud SQL never surface a port in their SDK responses —
-	// clients always connect on 5432 — so the engine must listen there for a
+	// Server and GCP Cloud SQL never surface a port in their SDK responses;
+	// clients always connect on 5432, so the engine must listen there for a
 	// real client to connect using only the SDK response. (AWS RDS surfaces the
 	// port explicitly and works on any port.) Only one Postgres server can bind
 	// 5432 on a host; pass an explicit port to co-host more than one.
@@ -32,7 +32,7 @@ const (
 	// adminUser is the engine's internal bootstrap superuser. It is deliberately
 	// NOT "postgres": Cloud SQL's fixed root user is "postgres", so a provisioned
 	// tenant role by that name must be free to be created (and given the caller's
-	// rootPassword) without colliding with — or overwriting the password of — the
+	// rootPassword) without colliding with, or overwriting the password of, the
 	// maintenance superuser the engine itself connects as. adminDB stays the
 	// default "postgres" maintenance database, which initdb always creates.
 	adminUser       = "cloudemu_superuser"
@@ -188,11 +188,11 @@ func ensureRole(ctx context.Context, db *sql.DB, role, password string) error {
 	// Upsert the password on every provision, not just create: providers that
 	// pin a fixed master username (e.g. Cloud SQL's "postgres") reuse one role
 	// across instances on this shared server, so the role must adopt the
-	// most-recently-provisioned instance's password — otherwise a second or a
+	// most-recently-provisioned instance's password, otherwise a second or a
 	// re-created instance's credentials, which the API told the caller to use,
 	// would silently fail to authenticate. (Concurrent instances that pin the
 	// same username therefore share one password: last writer wins. Distinct
-	// usernames — the common RDS/Azure case — are fully independent.)
+	// usernames, the common RDS/Azure case, are fully independent.)
 	//
 	// CREATE/ALTER ROLE cannot be parameterized; identifiers and the literal
 	// password are quoted/escaped via lib/pq helpers, not user-formatted SQL.

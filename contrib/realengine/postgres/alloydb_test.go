@@ -22,13 +22,13 @@ import (
 // cluster with an initial user + password using the AlloyDB Admin SDK, create a
 // PRIMARY instance, read the instance IP the SDK reports, connect a real
 // Postgres client to that IP on 5432 with the initial user, run SQL, then
-// delete — all against CloudEmu backed by a real embedded Postgres (no Docker,
+// delete, all against CloudEmu backed by a real embedded Postgres (no Docker,
 // no cloud account). The client connects using ONLY the SDK-reported IP.
 //
 // AlloyDB clients always connect on 5432 (the SDK never surfaces a port), so the
 // engine listens there. The per-instance database is named by the instance ID.
 func TestAlloyDBPostgresE2E(t *testing.T) {
-	// Default engine port (5432) — the port AlloyDB clients always use.
+	// Default engine port (5432): the port AlloyDB clients always use.
 	eng := postgres.New(0)
 	t.Cleanup(func() { _ = eng.Close() })
 
@@ -74,7 +74,7 @@ func TestAlloyDBPostgresE2E(t *testing.T) {
 		t.Fatalf("Instances.Create: %v", err)
 	}
 
-	// 3. Read the instance IP the SDK reports — the real embedded Postgres
+	// 3. Read the instance IP the SDK reports: the real embedded Postgres
 	//    address. Connect using ONLY the SDK-reported IP.
 	inst, err := svc.Projects.Locations.Clusters.Instances.Get(
 		parent + "/clusters/" + clusterID + "/instances/" + instID).Context(ctx).Do()
@@ -122,7 +122,7 @@ func TestAlloyDBPostgresE2E(t *testing.T) {
 
 	_ = db.Close()
 
-	// 5. Delete the instance — the real database is torn down.
+	// 5. Delete the instance: the real database is torn down.
 	if _, err := svc.Projects.Locations.Clusters.Instances.Delete(
 		parent + "/clusters/" + clusterID + "/instances/" + instID).Context(ctx).Do(); err != nil {
 		t.Fatalf("Instances.Delete: %v", err)

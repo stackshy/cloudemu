@@ -1,8 +1,8 @@
 // Package serveflags is the shared, dependency-light source of truth for the
 // standalone emulator's command-line flags.
 //
-// Both serve entrypoints — the lean cmd/cloudemu binary and the
-// batteries-included contrib/server (the :engines image) — register their common
+// Both serve entrypoints (the lean cmd/cloudemu binary and the
+// batteries-included contrib/server, the :engines image) register their common
 // flags from here and build the same serverkit.Config, so the ~30 flags cannot
 // drift between the two mains. The engine selectors are a single shared list
 // (EngineFlags) both sides range over.
@@ -58,7 +58,7 @@ func (s *StringList) Set(v string) error {
 }
 
 // CommonConfig is the full set of serve flags shared by both entrypoints. Only
-// the engine selectors (EngineFlags) live outside it — those are registered by
+// the engine selectors (EngineFlags) live outside it; those are registered by
 // contrib/server and stubbed by the lean binary.
 type CommonConfig struct {
 	Providers     string

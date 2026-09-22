@@ -1,5 +1,5 @@
 // Command cloudemu-server runs the CloudEmu standalone wire-protocol server with
-// real data-plane engines wired in — the batteries-included variant of
+// real data-plane engines wired in: the batteries-included variant of
 // `cloudemu serve`. The core `cloudemu` module stays dependency-free, so the
 // real engines live in contrib and are composed here in their own module.
 //
@@ -85,8 +85,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 
 // parseFlags resolves the configuration from args. The engine selectors are this
 // module's own flags (with environment fallbacks); the ~30 common flags come from
-// serveflags.RegisterCommon, and the cross-field checks from CommonConfig.Validate
-// — so this entrypoint and `cloudemu serve` build the same serverkit.Config.
+// serveflags.RegisterCommon, and the cross-field checks from CommonConfig.Validate,
+// so this entrypoint and `cloudemu serve` build the same serverkit.Config.
 func parseFlags(args []string, getenv func(string) string, out io.Writer) (appConfig, error) {
 	fs := flag.NewFlagSet("cloudemu-server", flag.ContinueOnError)
 	fs.SetOutput(out)
@@ -123,7 +123,7 @@ func parseFlags(args []string, getenv func(string) string, out io.Writer) (appCo
 	return cfg, nil
 }
 
-// registerEngineFlags registers the real-engine selectors — this module's only
+// registerEngineFlags registers the real-engine selectors, this module's only
 // flags beyond the shared common set. Their names are the single shared list
 // serveflags.EngineFlags (asserted by the engine-flag drift test), so the lean
 // binary's stub detector and this registration stay in lockstep.

@@ -124,7 +124,7 @@ func main() {
 		fmt.Printf("    - %s %s → %v (TTL: %d)\n", r.Name, r.Type, r.Values, r.TTL)
 	}
 
-	// 9. Monitoring — Push and Query Metrics
+	// 9. Monitoring: Push and Query Metrics
 	fmt.Println()
 	now := time.Now()
 	aws.CloudWatch.PutMetricData(ctx, []mondriver.MetricDatum{

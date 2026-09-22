@@ -20,7 +20,7 @@ import (
 // docs/coverage/coverage.json (providers.aws = "Lambda"). Layer and
 // concurrency ops are omitted (the wire handler does not route them), as are
 // the event-source-mapping ops (their responses encode LastModified as an
-// RFC3339 string, which the SDK cannot deserialize) — all gaps, not red cells.
+// RFC3339 string, which the SDK cannot deserialize): all gaps, not red cells.
 func TestLambdaCompat(t *testing.T) {
 	provider := cloudemu.NewAWS()
 	sess := compat.BootAWS(t, awsserver.Drivers{Lambda: provider.Lambda})

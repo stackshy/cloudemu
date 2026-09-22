@@ -173,7 +173,7 @@ func WriteCErr(w http.ResponseWriter, err error) {
 	case cerrors.IsFailedPrecondition(err):
 		WriteError(w, http.StatusConflict, "PreconditionFailed", msg)
 	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
-		// e.g. a subnet with no free private IP — ARM answers 400, not 500.
+		// e.g. a subnet with no free private IP: ARM answers 400, not 500.
 		WriteError(w, http.StatusBadRequest, "InvalidParameter", msg)
 	default:
 		WriteError(w, http.StatusInternalServerError, "InternalError", msg)

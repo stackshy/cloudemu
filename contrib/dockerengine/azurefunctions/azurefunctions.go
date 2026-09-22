@@ -29,8 +29,8 @@ const (
 	defaultAzureFunctionsImage = "mcr.microsoft.com/azure-functions/python:4-python3.11"
 	// defaultFunctionsPlatform pins the container platform. The official
 	// azure-functions images are published for linux/amd64 only (no arm64
-	// manifest), so the engine requests amd64 explicitly — a no-op on an amd64
-	// host, and emulated (Rosetta/qemu) on arm64 — so the same image runs
+	// manifest), so the engine requests amd64 explicitly (a no-op on an amd64
+	// host, emulated via Rosetta/qemu on arm64), so the same image runs
 	// everywhere. Override with WithFunctionsPlatform for a differently-built image.
 	defaultFunctionsPlatform = "linux/amd64"
 	// funcNamePrefix namespaces every container this engine creates so they are
@@ -66,7 +66,7 @@ const (
 	extractFilePerm = 0o600
 
 	// maxUnzipBytes / maxUnzipTotal / maxZipEntries cap the deployment zip to
-	// guard against zip bombs — the same limits as the sibling realengine
+	// guard against zip bombs, the same limits as the sibling realengine
 	// functions engine.
 	maxUnzipBytes = 64 << 20  // 64 MiB per entry
 	maxUnzipTotal = 256 << 20 // 256 MiB total across the archive
@@ -346,7 +346,7 @@ func publishedPort(ctx context.Context, id string) (int, error) {
 
 // waitReady polls the function's HTTP route until the host has indexed the app
 // and stops replying 404 (a probe GET with no body may make an indexed handler
-// return 500 — that still proves the route is live). It gives up after
+// return 500, which still proves the route is live). It gives up after
 // funcReadyTimeout.
 func (a *AzureFunctions) waitReady(ctx context.Context, name string, port int) error {
 	deadline := time.Now().Add(funcReadyTimeout)

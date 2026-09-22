@@ -1,7 +1,7 @@
 // Package bigtableadmin adapts the Google Cloud Bigtable Admin gRPC surface
 // (google.bigtable.admin.v2 BigtableInstanceAdmin + BigtableTableAdmin, plus
 // google.longrunning.Operations) onto the emulator's existing bigtable Admin
-// store — the same driver the REST handler (server/gcp/bigtable) delegates to.
+// store, the same driver the REST handler (server/gcp/bigtable) delegates to.
 //
 // It is a protocol adapter only: every RPC converts proto <-> driver types and
 // forwards to the store, so there is no second backend and no duplicated
@@ -33,7 +33,7 @@ import (
 
 // AdminFunc resolves the current bigtable Admin store on each call. It is a
 // function rather than a fixed reference so the gRPC servers always target the
-// live store even after a reset/restore swaps in a fresh provider — mirroring
+// live store even after a reset/restore swaps in a fresh provider, mirroring
 // how the REST path reads the current handler from its admin.Backend.
 type AdminFunc func() btdriver.Admin
 

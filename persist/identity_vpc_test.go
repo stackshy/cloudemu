@@ -14,8 +14,8 @@ import (
 // TestVPCInstanceCrossRefPreservedAcrossRestore is the point of snapshotting the
 // networking layer alongside compute: an EC2 instance launched into a VPC subnet
 // keeps its SubnetID / VPCID / security-group references after a full
-// Export→Restore into a FRESH provider, and — crucially — those references still
-// RESOLVE, because the subnet, VPC and security group themselves were captured
+// Export→Restore into a FRESH provider, and those references still RESOLVE,
+// because the subnet, VPC and security group themselves were captured
 // and restored under the SAME ids. A snapshot that carried the instance but not
 // its networking would leave a dangling reference (bug #582).
 func TestVPCInstanceCrossRefPreservedAcrossRestore(t *testing.T) {

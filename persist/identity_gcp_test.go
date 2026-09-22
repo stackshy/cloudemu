@@ -16,7 +16,7 @@ import (
 // guarantee: after a full Export→JSON→Restore into a FRESH GCP provider,
 // resource identifiers and id-string cross-references survive unchanged. In
 // particular a GCE instance keeps the SAME instance id and its security-group
-// reference — the thing the old driver-replay compute path could not do.
+// reference, the thing the old driver-replay compute path could not do.
 func TestIdentityPreservedAcrossRestoreGCP(t *testing.T) {
 	ctx := context.Background()
 
@@ -96,7 +96,7 @@ func TestIdentityPreservedAcrossRestoreGCP(t *testing.T) {
 
 	// The restored instance is still a live, transitionable resource: the state
 	// machine was re-registered, so a Stop succeeds (it would fail if only the
-	// record — not the FSM state — had been restored).
+	// record, not the FSM state, had been restored).
 	if err := dst.GCE.StopInstances(ctx, []string{wantInstanceID}); err != nil {
 		t.Fatalf("stop restored instance: %v", err)
 	}

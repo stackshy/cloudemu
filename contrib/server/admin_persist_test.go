@@ -13,7 +13,7 @@ import (
 
 // TestAdminReset boots the batteries server with the admin control plane on,
 // seeds a bucket through /_cloudemu/seed, confirms it shows up in the snapshot,
-// then POSTs /_cloudemu/reset and confirms the state is wiped — proving the
+// then POSTs /_cloudemu/reset and confirms the state is wiped, proving the
 // --admin flag threads through to serverkit's control plane.
 func TestAdminReset(t *testing.T) {
 	cfg := testConfig(t, allEnginesOff())
@@ -39,7 +39,7 @@ func TestAdminReset(t *testing.T) {
 
 // TestPersistRoundTrip creates a resource, shuts the server down so serverkit
 // writes the persistence snapshot, then boots a fresh app pointed at the same
-// state file and confirms the resource is restored on boot — proving --persist
+// state file and confirms the resource is restored on boot, proving --persist
 // and --state-file thread through.
 func TestPersistRoundTrip(t *testing.T) {
 	stateFile := filepath.Join(t.TempDir(), "state.json")
@@ -72,7 +72,7 @@ func TestPersistRoundTrip(t *testing.T) {
 }
 
 // TestInitDir writes a fixture into an init dir and confirms it is seeded on
-// boot — proving --init-dir threads through to serverkit.
+// boot, proving --init-dir threads through to serverkit.
 func TestInitDir(t *testing.T) {
 	dir := t.TempDir()
 	fixture := `{"buckets":[{"name":"seeded-bucket"}]}`

@@ -12,7 +12,7 @@ import (
 
 // noDocker is a socket probe that reports Docker as unavailable, so a
 // Docker-backed selection is forced down its degrade path regardless of the test
-// host — deterministic without requiring (or forbidding) a real docker socket.
+// host, deterministic without requiring (or forbidding) a real docker socket.
 func noDocker() bool { return false }
 
 // withDocker is the opposite probe, so a test can exercise the real-selection
@@ -133,7 +133,7 @@ func TestDegradedEngineStillBoots(t *testing.T) {
 }
 
 // TestStorageEngineWiresOption proves --storage=localfs wires a config.StorageEngine
-// into the built options and records a real MODE row — a unit-level check that
+// into the built options and records a real MODE row, a unit-level check that
 // needs no S3 SDK.
 func TestStorageEngineWiresOption(t *testing.T) {
 	sel := engineSelection{storage: storageLocalFS, storageDir: t.TempDir()}

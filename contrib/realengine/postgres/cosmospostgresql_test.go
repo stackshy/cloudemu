@@ -23,11 +23,11 @@ import (
 // the cluster with the real Azure SDK, read the coordinator node's
 // fully-qualified domain name, connect to it with a real Postgres client using
 // the fixed "citus" superuser and the administratorLoginPassword, run SQL, then
-// delete — all against CloudEmu backed by a real embedded Postgres (no Docker, no
+// delete, all against CloudEmu backed by a real embedded Postgres (no Docker, no
 // cloud account). Cosmos DB for PostgreSQL is Citus Postgres, so it reuses the
 // shared Postgres DatabaseEngine.
 func TestAzureCosmosPostgresE2E(t *testing.T) {
-	// Default engine port (5432) — the port Azure Cosmos DB for PostgreSQL clients
+	// Default engine port (5432): the port Azure Cosmos DB for PostgreSQL clients
 	// always use; the coordinator FQDN is the only connection detail the SDK
 	// surfaces.
 	eng := postgres.New(0)
@@ -55,7 +55,7 @@ func TestAzureCosmosPostgresE2E(t *testing.T) {
 
 	cc := factory.NewClustersClient()
 
-	// 1. Create the cluster — like `az cosmosdb postgres cluster create`.
+	// 1. Create the cluster, like `az cosmosdb postgres cluster create`.
 	createPoller, err := cc.BeginCreate(ctx, rg, cluster, armcosmosforpostgresql.Cluster{
 		Location: to.Ptr("eastus"),
 		Properties: &armcosmosforpostgresql.ClusterProperties{
@@ -87,7 +87,7 @@ func TestAzureCosmosPostgresE2E(t *testing.T) {
 
 	// Connect exactly as a real Cosmos DB for PostgreSQL client would: the
 	// coordinator FQDN from the SDK on the fixed port 5432, authenticating as the
-	// "citus" superuser with the administratorLoginPassword — no out-of-band port
+	// "citus" superuser with the administratorLoginPassword, no out-of-band port
 	// knowledge.
 	dsn := fmt.Sprintf("host=%s port=5432 user=%s password=%s dbname=%s sslmode=disable", host, user, pass, dbName)
 
@@ -116,7 +116,7 @@ func TestAzureCosmosPostgresE2E(t *testing.T) {
 
 	_ = db.Close()
 
-	// 4. Delete the cluster — the real database is torn down.
+	// 4. Delete the cluster: the real database is torn down.
 	delPoller, err := cc.BeginDelete(ctx, rg, cluster, nil)
 	if err != nil {
 		t.Fatalf("BeginDelete: %v", err)

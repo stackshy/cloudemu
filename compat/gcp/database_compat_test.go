@@ -131,7 +131,7 @@ const (
 // TestFirestoreListCollectionIDsScoped proves listCollectionIds is scoped to the
 // requested parent: a root call returns only the immediate top-level collection
 // ids and a per-document call returns only that document's direct subcollection
-// ids — each a single id segment, never a full nested path, and never another
+// ids, each a single id segment, never a full nested path, and never another
 // document's subcollections. Pre-fix, both returned every driver table name
 // verbatim (root yielded "cities/SF/landmarks"; a document call leaked unrelated
 // collections).

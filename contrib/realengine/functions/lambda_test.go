@@ -21,7 +21,7 @@ import (
 	awsserver "github.com/stackshy/cloudemu/v2/server/aws"
 )
 
-// pythonHandler doubles a number, echoes an env var, and passes through a list —
+// pythonHandler doubles a number, echoes an env var, and passes through a list,
 // enough that a passing test can only mean the real Python actually ran.
 const pythonHandler = `import os
 
@@ -44,7 +44,7 @@ const nodeHandler = `exports.handler = async (event) => {
 
 // TestLambdaPythonE2E runs the real-user AWS Lambda flow: create a function from
 // a real Python zip with the AWS SDK, invoke it, and confirm the response is the
-// output of the uploaded handler actually executing — all against CloudEmu
+// output of the uploaded handler actually executing, all against CloudEmu
 // backed by a real subprocess runtime (no Docker, no cloud account).
 func TestLambdaPythonE2E(t *testing.T) {
 	requireBinary(t, "python3")

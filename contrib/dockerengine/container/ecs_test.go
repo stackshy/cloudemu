@@ -23,7 +23,7 @@ import (
 
 // TestContainerECSRunTaskE2E runs the exact flow a real user runs against AWS ECS:
 // register a task definition, RunTask it on FARGATE, poll DescribeTasks until the
-// task STOPS, and read the container's logs from CloudWatch Logs — all against
+// task STOPS, and read the container's logs from CloudWatch Logs, all against
 // CloudEmu backed by a real Docker container (no cloud account). It proves the
 // real container ran to completion (its exit code reaches the wire) and its real
 // stdout was captured and surfaced through the awslogs driver.
@@ -92,7 +92,7 @@ func TestContainerECSRunTaskE2E(t *testing.T) {
 
 	tdARN := aws.ToString(reg.TaskDefinition.TaskDefinitionArn)
 
-	// 2. RunTask on FARGATE — exactly like `aws ecs run-task`.
+	// 2. RunTask on FARGATE, like `aws ecs run-task`.
 	run, err := ecsClient.RunTask(ctx, &ecs.RunTaskInput{
 		TaskDefinition: aws.String(tdARN),
 		LaunchType:     ecstypes.LaunchTypeFargate,
@@ -115,7 +115,7 @@ func TestContainerECSRunTaskE2E(t *testing.T) {
 	taskID := taskARN[strings.LastIndex(taskARN, "/")+1:]
 
 	// 3. Poll DescribeTasks until the task is STOPPED, then assert the container
-	//    exited 0 — proving the real container ran to completion and its real exit
+	//    exited 0, proving the real container ran to completion and its real exit
 	//    code reached the wire. The ECS wire type serializes exitCode with
 	//    `omitempty`, so a real exit code of 0 arrives as a nil ExitCode (ECS omits
 	//    only the zero value); a STOPPED container with a nil exitCode and no
@@ -184,7 +184,7 @@ func TestContainerECSRunTaskE2E(t *testing.T) {
 		t.Fatalf("marker %q not found in log stream %q: %+v", marker, stream, events.Events)
 	}
 
-	// 5. StopTask (cleanup) — the real container is torn down and no leak remains.
+	// 5. StopTask (cleanup): the real container is torn down and no leak remains.
 	if _, err := ecsClient.StopTask(ctx, &ecs.StopTaskInput{Task: aws.String(taskARN)}); err != nil {
 		t.Fatalf("StopTask: %v", err)
 	}

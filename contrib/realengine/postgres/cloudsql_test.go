@@ -21,11 +21,11 @@ import (
 // TestGCPCloudSQLPostgresE2E runs the real-user flow against GCP Cloud SQL for
 // PostgreSQL: create the instance with the real Cloud SQL Admin SDK (setting the
 // root password), read the reported ipAddresses[].ipAddress, connect to it with
-// a real Postgres client using the root credentials, run SQL, then delete — all
+// a real Postgres client using the root credentials, run SQL, then delete, all
 // against CloudEmu backed by a real embedded Postgres (no Docker, no cloud
 // account).
 func TestGCPCloudSQLPostgresE2E(t *testing.T) {
-	// Default engine port (5432) — the port Cloud SQL clients always use; the
+	// Default engine port (5432): the port Cloud SQL clients always use; the
 	// SDK never surfaces a port in ipAddresses.
 	eng := postgres.New(0)
 	t.Cleanup(func() { _ = eng.Close() })
@@ -53,7 +53,7 @@ func TestGCPCloudSQLPostgresE2E(t *testing.T) {
 		pass = "R00t-Passw0rd"
 	)
 
-	// 1. Create the instance — like `gcloud sql instances create`.
+	// 1. Create the instance, like `gcloud sql instances create`.
 	op, err := svc.Instances.Insert(project, &sqladmin.DatabaseInstance{
 		Name:            instance,
 		DatabaseVersion: "POSTGRES_15",
@@ -117,7 +117,7 @@ func TestGCPCloudSQLPostgresE2E(t *testing.T) {
 
 	_ = db.Close()
 
-	// 4. Delete the instance — the real database is torn down.
+	// 4. Delete the instance: the real database is torn down.
 	if _, err := svc.Instances.Delete(project, instance).Context(ctx).Do(); err != nil {
 		t.Fatalf("Instances.Delete: %v", err)
 	}

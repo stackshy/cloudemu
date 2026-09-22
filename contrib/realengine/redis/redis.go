@@ -15,7 +15,7 @@ import (
 
 // Redis is a config.CacheEngine backed by real in-process Redis servers
 // (miniredis), one per provisioned cache. Clients connect over the real Redis
-// protocol and run real commands — no Docker. Safe for concurrent use.
+// protocol and run real commands, no Docker. Safe for concurrent use.
 type Redis struct {
 	mu      sync.Mutex
 	servers map[string]*miniredis.Miniredis // cacheID -> server

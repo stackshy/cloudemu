@@ -24,7 +24,7 @@ import (
 // runs over the harness's TLS server with a fake bearer credential, pointed at
 // the emulator via a custom cloud.Configuration endpoint.
 //
-// The portable "loadbalancer" driver (Azure native LB) models many ops —
+// The portable "loadbalancer" driver (Azure native LB) models many ops:
 // listeners, rules, target groups, target registration/health. The Azure LB
 // wire handler routes only the loadBalancers resource itself
 // (CreateOrUpdate / Get / List / Delete), reflecting rules and pools inside the

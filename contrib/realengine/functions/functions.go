@@ -1,6 +1,6 @@
 // Package functions provides an opt-in real function engine that runs a
 // deployed function's uploaded code in a real language runtime (Python or Node)
-// as a child process — no Docker — backing CloudEmu's serverless functions
+// as a child process (no Docker), backing CloudEmu's serverless functions
 // (AWS Lambda, GCP Cloud Functions). Wire it in with
 // config.WithFunctionEngine(functions.New()).
 package functions
@@ -44,7 +44,7 @@ const (
 )
 
 // Subprocess is a config.FunctionEngine that runs a function's uploaded code in
-// a real language runtime (Python or Node) as a child process — no Docker. The
+// a real language runtime (Python or Node) as a child process (no Docker). The
 // deployment package is unzipped to a temp directory per function; each Invoke
 // spawns the interpreter with the event on stdin and reads the handler's return
 // value back from a result file. Safe for concurrent use.
@@ -192,7 +192,7 @@ func (fn *deployedFunc) run(ctx context.Context, event []byte) (config.FunctionR
 	res, readErr := readRunResult(resultPath)
 	if readErr != nil {
 		// No result file means the runtime itself failed (bad interpreter, crash
-		// before writing) — surface the captured logs so the cause is visible.
+		// before writing); surface the captured logs so the cause is visible.
 		return config.FunctionResult{Logs: logs.String()},
 			fmt.Errorf("runtime error: %w: %s", firstErr(runErr, readErr), strings.TrimSpace(logs.String()))
 	}
@@ -253,8 +253,8 @@ func readRunResult(path string) (runResult, error) {
 }
 
 // resolveHandler determines the source file and function name to run. Under the
-// http framework a bare (dotless) entrypoint — the Cloud Functions gen1
-// convention, e.g. "hello_http" — resolves against the runtime's default source
+// http framework a bare (dotless) entrypoint (the Cloud Functions gen1
+// convention, e.g. "hello_http") resolves against the runtime's default source
 // file (main.py / index.js). Everything else keeps the "file.function"
 // convention used by the event contract.
 func (fn *deployedFunc) resolveHandler() (file, function string, err error) {

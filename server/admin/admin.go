@@ -4,12 +4,12 @@
 // It exists for the standalone server (cmd/cloudemu): out-of-process or
 // parallel test suites share one long-lived process, so they need a way to get
 // a clean slate between tests without restarting it. A POST to
-// /_cloudemu/reset runs a caller-supplied reset — which rebuilds every provider
-// backend to empty state and swaps it in atomically — so in-flight requests
+// /_cloudemu/reset runs a caller-supplied reset, which rebuilds every provider
+// backend to empty state and swaps it in atomically, so in-flight requests
 // finish against the old state while new requests see the fresh one.
 //
 // State lifecycle only lives here; the wire handlers and the core server.Server
-// are untouched. In-process users don't need this — they just construct a fresh
+// are untouched. In-process users don't need this: they just construct a fresh
 // provider.
 package admin
 
@@ -34,7 +34,7 @@ const maxSnapshotBytes = 512 << 20 // 512 MiB
 
 // Backend is a hot-swappable http.Handler. Requests read the current handler
 // under a read lock; Swap replaces it under a write lock. A zero Backend is not
-// usable — construct with NewBackend.
+// usable; construct with NewBackend.
 type Backend struct {
 	mu sync.RWMutex
 	h  http.Handler

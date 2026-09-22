@@ -154,7 +154,7 @@ func TestWriteDriverError(t *testing.T) {
 			assert.Equal(t, tc.expectCode, body.Code)
 			// The message must be the bare driver message, never prefixed with
 			// the internal code taxonomy (e.g. "NotFound: ...") that
-			// cerrors.Error.Error() bakes in — real OCI never leaks that.
+			// cerrors.Error.Error() bakes in. Real OCI never leaks that.
 			assert.Equal(t, tc.expectMessage, body.Message)
 		})
 	}

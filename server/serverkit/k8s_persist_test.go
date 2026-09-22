@@ -108,7 +108,7 @@ func TestK8sExportParity(t *testing.T) {
 
 // TestK8sRestoreRoundTripThroughApp proves the full serverkit wiring: a snapshot
 // captured from one App's data plane, restored into a fresh App via the admin
-// restore path, reinstates the cluster under the SAME UID with its Pod intact —
+// restore path, reinstates the cluster under the SAME UID with its Pod intact,
 // so a restored kubeconfig's /k8s/<uid> endpoint still answers.
 func TestK8sRestoreRoundTripThroughApp(t *testing.T) {
 	src := newK8sPersistApp(t, filepath.Join(t.TempDir(), "src.json"))

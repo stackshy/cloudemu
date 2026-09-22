@@ -15,7 +15,7 @@ import (
 // are the built-in ones (not the host environment).
 func noEnv(string) string { return "" }
 
-// commonFlagNames is the pinned set of flag names RegisterCommon must register —
+// commonFlagNames is the pinned set of flag names RegisterCommon must register:
 // the single source of truth both serve entrypoints build from. A common flag
 // added, renamed, or dropped in only one place changes this set and fails the
 // test, so the two mains cannot drift. Update it deliberately when the shared
@@ -125,7 +125,7 @@ func TestRegisterCommonEnvFallback(t *testing.T) {
 }
 
 // TestToServerkitConfigRoundTrip parses a representative arg set and asserts the
-// resulting serverkit.Config carries every value through — ports, persistence,
+// resulting serverkit.Config carries every value through: ports, persistence,
 // TLS, k8s progression, and the identity BaseOptions.
 func TestToServerkitConfigRoundTrip(t *testing.T) {
 	var c CommonConfig

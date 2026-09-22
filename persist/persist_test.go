@@ -16,7 +16,7 @@ import (
 
 // TestExportRestoreRoundTrip is the core persistence guarantee: state exported
 // from one provider, serialized to JSON, and restored into a fresh provider is
-// intact — buckets/objects and tables/items survive a stop→start cycle.
+// intact: buckets/objects and tables/items survive a stop-start cycle.
 func TestExportRestoreRoundTrip(t *testing.T) {
 	ctx := context.Background()
 
@@ -166,7 +166,7 @@ func dataOf(o *storagedriver.Object) []byte {
 
 // TestExportMetadataOnlyOmitsBodies verifies the default (metadata-only) export
 // records object keys/metadata but drops the bytes, and that IncludeAssets keeps
-// them — the flag that keeps the snapshot file KB-sized by default. With the AWS
+// them. This is the flag that keeps the snapshot file KB-sized by default. With the AWS
 // S3 mock now snapshotting itself, the guarantee is asserted through a restore:
 // metadata-only keeps the object but empties its bytes, while IncludeAssets
 // keeps them.
@@ -228,7 +228,7 @@ func TestExportMetadataOnlyOmitsBodies(t *testing.T) {
 	}
 }
 
-// TestRestoreEmptyIsNoError confirms an empty/zero snapshot restores cleanly —
+// TestRestoreEmptyIsNoError confirms an empty/zero snapshot restores cleanly:
 // a missing state file (first ever start) must not error.
 func TestRestoreEmptyIsNoError(t *testing.T) {
 	ctx := context.Background()

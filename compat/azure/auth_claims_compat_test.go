@@ -24,8 +24,8 @@ const claimsAuthSubscriptionID = "11111111-1111-1111-1111-111111111111"
 
 // makeJWT hand-builds an unsigned (dummy-signature) three-part JWT from the
 // given claims. cloudemu validates a token's structure and claims, not its
-// signature, so a real signing key is unnecessary — this is exactly the shape a
-// real Azure token has on the wire.
+// signature, so a real signing key is unnecessary: this is the shape a real
+// Azure token has on the wire.
 func makeJWT(t *testing.T, claims map[string]any) string {
 	t.Helper()
 
@@ -130,7 +130,7 @@ func TestCompatAzureClaimsAuthEnabledValid(t *testing.T) {
 // armGet issues a raw ARM GET carrying the given Authorization header value
 // (empty means no header) and returns the response, so the negative cases can
 // assert the exact 401 shape the SDK would surface. It targets a subscription
-// path (ARM-shaped) — the request never reaches a handler when the gate rejects
+// path (ARM-shaped); the request never reaches a handler when the gate rejects
 // it.
 func armGet(t *testing.T, sess *compat.AzureSession, authHeader string) *http.Response {
 	t.Helper()
@@ -190,7 +190,7 @@ func assertInvalidToken(t *testing.T, resp *http.Response) {
 
 // TestCompatAzureClaimsAuthRejections covers every rejection path under
 // enforcement: a missing header, a malformed token, a foreign audience, a token
-// with no principal claim, and an expired token — each a 401
+// with no principal claim, and an expired token, each a 401
 // InvalidAuthenticationToken.
 func TestCompatAzureClaimsAuthRejections(t *testing.T) {
 	provider := cloudemu.NewAzure()

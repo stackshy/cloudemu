@@ -46,7 +46,7 @@ func tlsConfig(cfg *Config, addr string) (*tls.Config, error) {
 
 // selfSignedCert generates an in-memory self-signed certificate valid for the
 // given hosts (DNS names and/or IP literals). It is a convenience for local
-// development only — clients must trust it or skip verification.
+// development only; clients must trust it or skip verification.
 func selfSignedCert(hosts []string) (tls.Certificate, error) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {

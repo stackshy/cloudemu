@@ -182,8 +182,8 @@ type App struct {
 	timetravel *timetravel.Registry
 
 	// vcr records or replays the wire protocol when --vcr is set (nil when off).
-	// It wraps each provider handler outermost — inside the admin control plane
-	// (so /_cloudemu is never recorded) but outside the dirty/persist seam — so
+	// It wraps each provider handler outermost: inside the admin control plane
+	// (so /_cloudemu is never recorded) but outside the dirty/persist seam, so
 	// replay short-circuits before dirtying state and record captures the final
 	// response the real handlers produced.
 	vcr *vcr.VCR
@@ -213,13 +213,13 @@ type App struct {
 	// ExportAll, and closeProviders takes it for write before Close()ing the
 	// outgoing providers. So a rebuild/reset can never tear down a real (contrib)
 	// embedded-Postgres/redis/Docker engine mid-export. It is a distinct lock from
-	// rebuildMu — held only for the export duration, never while swapping — so the
+	// rebuildMu (held only for the export duration, never while swapping), so the
 	// two never form a cycle.
 	exportMu sync.RWMutex
 }
 
 // New builds every selected provider behind its admin backend, restores any
-// persisted state, and applies init-dir fixtures — everything up to binding the
+// persisted state, and applies init-dir fixtures: everything up to binding the
 // listeners. The returned App is ready to Serve.
 func New(cfg *Config) (*App, error) {
 	if err := normalizePersist(cfg); err != nil {
@@ -273,7 +273,7 @@ func New(cfg *Config) (*App, error) {
 		return nil, err
 	}
 
-	// reset wipes all state, so warn if it's reachable off the loopback — e.g. a
+	// reset wipes all state, so warn if it's reachable off the loopback, e.g. a
 	// shared instance bound with --host 0.0.0.0, where anyone on the network
 	// could POST /_cloudemu/reset.
 	if w := dangerWarning(cfg); w != "" {
@@ -439,7 +439,7 @@ func (a *App) applyBootState() error {
 }
 
 // Rebuild reconstructs a fresh Kubernetes server and every selected provider
-// from scratch and swaps them in atomically — this is what /_cloudemu/reset
+// from scratch and swaps them in atomically: this is what /_cloudemu/reset
 // calls to hand a test suite a clean slate without restarting the process. After
 // the swap it Close()es the providers it replaced (a no-op when no engine is
 // wired) so their real engines are freed rather than leaked.
@@ -449,7 +449,7 @@ func (a *App) Rebuild() {
 	// outgoing providers are torn down, so no request is ever routed to a
 	// half-closed engine. A request already in flight against the outgoing
 	// handler at the instant of the swap may still be mid-query when its
-	// provider's Close runs immediately after — an accepted best-effort tradeoff
+	// provider's Close runs immediately after. That's an accepted best-effort tradeoff
 	// for a local dev/test tool, consistent with the destructive-reset
 	// philosophy, not an oversight. A short drain window is a possible future
 	// refinement.
@@ -516,7 +516,7 @@ func (a *App) swapFresh() []closer {
 		freshTargets[p] = b.target
 
 		// AWS state is per region, captured under "aws"/"aws@<region>" keys from
-		// the mux at snapshot time — never as a single "aws" entry here.
+		// the mux at snapshot time, never as a single "aws" entry here.
 		if b.snap != nil {
 			freshSnapTargets[p] = b.snap
 		}
@@ -546,13 +546,13 @@ func (a *App) swapFresh() []closer {
 	}
 
 	if a.k8sBackend != nil {
-		// Wrap the data-plane handler in the dirty seam HERE — at the same point
+		// Wrap the data-plane handler in the dirty seam HERE, at the same point
 		// the four cloud providers are wrapped, BEFORE the admin Control fronts it
 		// in buildServers. Since #868 makes the Kubernetes data plane part of the
 		// persisted surface, a pure-kubectl mutation (which never touches a
 		// provider port) must mark state dirty so scheduled/on-request saves catch
-		// it. Wrapping here (not in buildServers) keeps admin/health probes — which
-		// Control answers before reaching this backend — from dirtying an idle
+		// it. Wrapping here (not in buildServers) keeps admin/health probes (which
+		// Control answers before reaching this backend) from dirtying an idle
 		// emulator.
 		a.k8sBackend.Swap(a.wrapLatency(a.wrapVCR(a.wrapDirty(wrap(k8s, "kubernetes", a.cfg.LogRequests)), "kubernetes")))
 	}
@@ -658,7 +658,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 
 // buildAWSMux constructs the AWS region-dispatch mux: a base (default-region)
 // provider owning the shared global services, plus a factory that builds a fresh
-// regional provider — sharing those globals — for any other region on first
+// regional provider (sharing those globals) for any other region on first
 // touch. Every region's wire server is wired to the SAME shared Kubernetes data
 // plane, STS session store, and cross-region cost/Resource-Explorer aggregator,
 // so global state and account-wide inventory are consistent across regions.
@@ -805,9 +805,9 @@ func (a *App) costEnginesLocked() map[string][]*resourcediscovery.Engine {
 
 // closeProviders closes each provider best-effort, cascading engine teardown. It
 // runs after the swap (or after the shutdown snapshot), never before, and never
-// aborts on an error — a failed teardown is logged, not fatal. It takes exportMu
+// aborts on an error: a failed teardown is logged, not fatal. It takes exportMu
 // for write so it blocks until any in-flight export (flusher save or admin
-// snapshot) that may still be reading these providers has finished — a real
+// snapshot) that may still be reading these providers has finished, so a real
 // engine is never torn down mid-export.
 func (a *App) closeProviders(providers []closer) {
 	a.exportMu.Lock()
@@ -871,7 +871,7 @@ func (a *App) snapshot() ([]byte, error) {
 
 // restore rebuilds to empty then loads the posted state. The load is destructive
 // (reset semantics): rebuild wipes to empty first, so a RestoreAll that fails
-// partway leaves an empty store, not a half-old/half-new mix — acceptable for a
+// partway leaves an empty store, not a half-old/half-new mix, acceptable for a
 // local emulator. The rebuild also Close()es the about-to-be-wiped providers,
 // reaping their engines.
 func (a *App) restore(body []byte) error {
@@ -1014,8 +1014,8 @@ func (a *App) Serve(ctx context.Context) error {
 
 	select {
 	case err := <-errCh:
-		// A listener failed fatally. Still tear down cleanly — stop the flusher
-		// (final save + drain) and close the providers — so the goroutine and any
+		// A listener failed fatally. Still tear down cleanly: stop the flusher
+		// (final save + drain) and close the providers, so the goroutine and any
 		// real engines aren't leaked; then surface the original serve error, not
 		// the shutdown error.
 		_ = a.shutdown(servers)
@@ -1084,7 +1084,7 @@ func (a *App) buildServers() ([]listenerServer, endpointSet, error) {
 
 		// The cert must certify the advertised host (what clients dial), plus the
 		// loopback names, plus any extra --tls-host SANs. k8s uses its own eksprov
-		// cert — the --tls-cert override applies only to the Azure listener.
+		// cert; the --tls-cert override applies only to the Azure listener.
 		k8sTLS, err := eksprov.ServingTLSConfig(k8sCertHosts(a.advertiseHost, a.cfg.TLSHosts))
 		if err != nil {
 			return nil, eps, fmt.Errorf("kubernetes data-plane TLS: %w", err)
@@ -1106,7 +1106,7 @@ func (a *App) buildServers() ([]listenerServer, endpointSet, error) {
 
 	// Optional GCP gRPC transport on its own TCP port (off unless the port is
 	// set), served beside the REST endpoints. It carries only the health and
-	// reflection services for now — the foundation the emulator-env-var gRPC
+	// reflection services for now; the foundation the emulator-env-var gRPC
 	// services (BIGTABLE_EMULATOR_HOST etc.) are layered on next.
 	if a.cfg.GCPGRPCPort != "" {
 		addr := net.JoinHostPort(a.cfg.Host, a.cfg.GCPGRPCPort)
@@ -1147,7 +1147,7 @@ func (a *App) currentBigtableAdmin() btdriver.Admin {
 
 // shutdown gracefully stops the servers, writes the persistence snapshot after
 // they are quiescent (so no in-flight request can mutate state mid-read), and
-// only then closes the live providers — engines must stay readable through the
+// only then closes the live providers: engines must stay readable through the
 // snapshot.
 func (a *App) shutdown(servers []listenerServer) error {
 	to := a.cfg.ShutdownTimeout
@@ -1225,7 +1225,7 @@ func (a *App) startK8sTicker() {
 
 				// The ticker mutates Pods from this background goroutine, bypassing
 				// the HTTP dirty seam, so mark dirty here when a Pod actually
-				// advanced a stage — otherwise a --k8s-progression save could lag
+				// advanced a stage, otherwise a --k8s-progression save could lag
 				// the live staged state. Only on real change, never on an idle tick.
 				if k8s != nil && k8s.TickAll() {
 					a.markDirty()
@@ -1236,7 +1236,7 @@ func (a *App) startK8sTicker() {
 }
 
 // stopK8sTicker stops the progression ticker and waits for it to drain.
-// Idempotent — a no-op when the ticker was never started.
+// Idempotent: a no-op when the ticker was never started.
 func (a *App) stopK8sTicker() {
 	if a.k8sTickStop == nil {
 		return
@@ -1261,9 +1261,9 @@ type listenerServer interface {
 }
 
 // httpServer adapts the existing *http.Server path to listenerServer. It carries
-// the exact bind/serve/shutdown behavior the emulator has always used — TLS
+// the exact bind/serve/shutdown behavior the emulator has always used (TLS
 // endpoints ServeTLS with the cert already in the server's TLSConfig, plain ones
-// Serve — so wrapping it here changes nothing observable.
+// Serve), so wrapping it here changes nothing observable.
 type httpServer struct {
 	label string
 	srv   *http.Server
