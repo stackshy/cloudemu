@@ -409,6 +409,9 @@ func (m *Mock) redrive(ed *execData) driver.Execution {
 	now := m.now()
 	ed.exec.Status = driver.ExecStatusSucceeded
 	ed.exec.StopDate = now
+	// The redriven run succeeded, so the prior failure's error/cause no longer
+	// describe the execution.
+	ed.exec.Error, ed.exec.Cause = "", ""
 	ed.exec.RedriveCount++
 	ed.exec.RedriveDate = now
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
@@ -27,7 +28,7 @@ type glueSnapshot struct {
 	UDFs          map[string]driver.UserDefinedFunction   `json:"udfs,omitempty"`
 	Connections   map[string]driver.Connection            `json:"connections,omitempty"`
 	Catalogs      map[string]driver.Catalog               `json:"catalogs,omitempty"`
-	Crawlers      map[string]driver.Crawler               `json:"crawlers,omitempty"`
+	Crawlers      map[string]crawlerDataSnapshot          `json:"crawlers,omitempty"`
 	Classifiers   map[string]driver.Classifier            `json:"classifiers,omitempty"`
 	Jobs          map[string]driver.Job                   `json:"jobs,omitempty"`
 	JobRuns       map[string]driver.JobRun                `json:"jobRuns,omitempty"`
@@ -51,6 +52,16 @@ type tableDataSnapshot struct {
 	Table    driver.Table          `json:"table"`
 	Versions []driver.TableVersion `json:"versions,omitempty"`
 	NextVer  int64                 `json:"nextVer,omitempty"`
+}
+
+// crawlerDataSnapshot promotes crawlerData: the crawler (embedded, so its
+// fields stay flat and a snapshot taken before cancelableUntil existed still
+// restores) plus the end of the most recent run's StopCrawler cancel window, so
+// a just-started crawl is still cancelable after a restore.
+type crawlerDataSnapshot struct {
+	driver.Crawler
+
+	CancelableUntil time.Time `json:"cancelableUntil,omitzero"`
 }
 
 // schemaDataSnapshot promotes schemaData, carrying the schema plus its version
