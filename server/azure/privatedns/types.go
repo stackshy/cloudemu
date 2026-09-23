@@ -75,7 +75,7 @@ type zoneJSON struct {
 // linkPropsJSON is the properties object of a virtualNetworkLink.
 // RegistrationEnabled is a pointer with omitempty so a request that omits it is
 // distinguishable from an explicit false; a response always sets a non-nil
-// pointer, so false is emitted (never swallowed) — the #1 Terraform drift.
+// pointer, so false is emitted (never swallowed): the #1 Terraform drift.
 type linkPropsJSON struct {
 	RegistrationEnabled     *bool        `json:"registrationEnabled,omitempty"`
 	VirtualNetwork          *subResource `json:"virtualNetwork,omitempty"`

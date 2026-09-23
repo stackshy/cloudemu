@@ -33,7 +33,7 @@ func TestSDKPostgresFlexWireErrorMapping(t *testing.T) {
 		t.Fatalf("NewServersClient: %v", err)
 	}
 
-	// 404 — server that doesn't exist.
+	// 404: server that doesn't exist.
 	if _, err := servers.Get(ctx, "rg-1", "ghost", nil); err == nil {
 		t.Error("Get missing server: expected error")
 	} else if got := statusOf(t, err); got != http.StatusNotFound {
@@ -42,7 +42,7 @@ func TestSDKPostgresFlexWireErrorMapping(t *testing.T) {
 
 	mustCreateServer(t, opts)
 
-	// 400 — firewall rule with start > end.
+	// 400: firewall rule with start > end.
 	fw, err := armpostgresqlflexibleservers.NewFirewallRulesClient(subID, fakeCred{}, opts)
 	if err != nil {
 		t.Fatalf("NewFirewallRulesClient: %v", err)

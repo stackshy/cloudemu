@@ -40,7 +40,7 @@ func (h *Handler) namespaceSKU(r *http.Request, namespace string) string {
 
 // createOrUpdateNamespace maps Namespaces.CreateOrUpdate onto the driver:
 // create when absent, otherwise apply the request's mutable fields (tags) via
-// UpdateTopic — ARM PUT semantics, so the caller's changes are never silently
+// UpdateTopic, per ARM PUT semantics, so the caller's changes are never silently
 // discarded.
 func (h *Handler) createOrUpdateNamespace(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body putBody

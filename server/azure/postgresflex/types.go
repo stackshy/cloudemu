@@ -64,8 +64,8 @@ type armStorage struct {
 // armBackup mirrors properties.backup on a PostgreSQL Flexible Server. Real
 // Azure always returns this block; backupRetentionDays defaults to 7 and
 // geoRedundantBackup is Disabled/Enabled. geoRedundantBackup is preserved by
-// the generic unmodeled-property overlay, so only the retention days — which
-// real Azure defaults and which a caller reads back — is modeled here.
+// the generic unmodeled-property overlay, so only the retention days (which
+// real Azure defaults and which a caller reads back) is modeled here.
 type armBackup struct {
 	BackupRetentionDays int `json:"backupRetentionDays,omitempty"`
 }

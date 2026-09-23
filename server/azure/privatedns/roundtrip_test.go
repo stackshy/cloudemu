@@ -23,7 +23,7 @@ const (
 
 // newServer stands up the full Azure wire server backed by a fresh in-memory
 // provider. The public DNS and VNet handlers are wired too so we prove the
-// privateDnsZones resource type is not shadowed by — and does not shadow — the
+// privateDnsZones resource type is not shadowed by, and does not shadow, the
 // public dnsZones handler on the same Microsoft.Network provider.
 func newServer(t *testing.T) *httptest.Server {
 	t.Helper()
@@ -167,7 +167,7 @@ func assertZone(t *testing.T, z map[string]any) {
 
 // TestPublicDNSStillRoutes proves a public dnsZones request is served by the
 // public DNS handler (type Microsoft.Network/dnsZones), not swallowed by the
-// private handler — the handlers are disjoint even case-insensitively.
+// private handler: the handlers are disjoint even case-insensitively.
 func TestPublicDNSStillRoutes(t *testing.T) {
 	ts := newServer(t)
 

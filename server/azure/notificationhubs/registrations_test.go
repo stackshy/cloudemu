@@ -150,8 +150,8 @@ func TestDataPlaneDeviceRegistration(t *testing.T) {
 // TestCreateRegistrationIDLocationHeader drives the CreateRegistrationIdAsync
 // flow from the real .NET SDK: POST .../registrationids/, then parse the
 // Location header. The SDK extracts the id only when the URI path is
-// /{hub}/registrationids/{id} — it checks that Location.Segments[2] equals
-// "registrationids/" (a 4-segment path) — so the server must emit that exact
+// /{hub}/registrationids/{id}: it checks that Location.Segments[2] equals
+// "registrationids/" (a 4-segment path), so the server must emit that exact
 // collection segment, not "registrations".
 func TestCreateRegistrationIDLocationHeader(t *testing.T) {
 	ts, cf := newRegServer(t)
