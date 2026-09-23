@@ -19,7 +19,7 @@ const crawlCancelWindow = time.Minute
 // most recent run's cancel window (zero when there is no cancelable run), and
 // runStartedAt the instant that run started. A non-zero cancelableUntil also
 // marks the run's "Glue Crawler State Change" Succeeded event as not yet
-// published — see flushCrawl.
+// published. See flushCrawl.
 type crawlerData struct {
 	crawler         driver.Crawler
 	cancelableUntil time.Time
@@ -265,8 +265,8 @@ func (m *Mock) settleCrawl(cd *crawlerData, name string) (time.Time, error) {
 // Stopping a crawler with no run in flight raises CrawlerNotRunningException.
 //
 // A canceled crawl publishes no further event (its pending Succeeded is
-// dropped); a run whose window already closed is settled — its Succeeded
-// published — before the stop is rejected.
+// dropped); a run whose window already closed is settled, its Succeeded
+// published, before the stop is rejected.
 func (m *Mock) StopCrawler(ctx context.Context, name string) error {
 	cd, err := m.getCrawlerData(name)
 	if err != nil {

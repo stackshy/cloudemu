@@ -27,8 +27,8 @@ func policyKey(qualifier string) string {
 // AddPermission adds a statement to a function's resource-based policy. This
 // backs Terraform's aws_lambda_permission and the grants S3/SNS/EventBridge
 // create to invoke a function. A Qualifier scopes the statement to a single
-// published version or alias — AWS stores a separate policy per qualifier. The
-// emulator stores statements without evaluating them — invocation is never
+// published version or alias. AWS stores a separate policy per qualifier. The
+// emulator stores statements without evaluating them. Invocation is never
 // actually denied.
 func (m *Mock) AddPermission(_ context.Context, functionName, qualifier string, stmt driver.PermissionStatement) error {
 	if stmt.StatementID == "" {

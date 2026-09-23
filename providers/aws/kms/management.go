@@ -172,7 +172,7 @@ func (m *Mock) EnableKeyRotation(_ context.Context, keyID string, rotationPeriod
 		// A rotatable (symmetric, AWS_KMS-origin) key still must be in a usable
 		// state: a disabled key reports DisabledException and a pending-deletion
 		// key reports KMSInvalidStateException, matching real KMS's key-state
-		// table. Real KMS silently no-ops none of these — it rejects them.
+		// table. Real KMS silently no-ops none of these. It rejects them.
 		if err := requireUsable(kd); err != nil {
 			return err
 		}

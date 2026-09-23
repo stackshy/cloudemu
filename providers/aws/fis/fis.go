@@ -2,7 +2,7 @@
 // Injection Simulator (FIS) control plane: experiment templates and the
 // experiments started from them.
 //
-// The mock is control-plane only — it does NOT inject any real faults. An
+// The mock is control-plane only. It does NOT inject any real faults. An
 // experiment template is created synchronously with stable computed fields (id,
 // arn, creationTime, lastUpdateTime) minted once at create and stored, so
 // repeated reads never drift. StartExperiment materializes an experiment from a

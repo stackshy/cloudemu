@@ -19,7 +19,7 @@ const stackResourceType = "AWS::CloudFormation::Stack"
 // CreateStack validates the template, records the stack as CREATE_IN_PROGRESS,
 // then provisions its resources in dependency order. A provisioning failure
 // rolls the stack back (deleting what was created) and leaves it
-// ROLLBACK_COMPLETE — reported through the stack status and events, not as an
+// ROLLBACK_COMPLETE, reported through the stack status and events, not as an
 // API error, mirroring CloudFormation's asynchronous create.
 func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.Stack, error) {
 	if in.StackName == "" {
@@ -101,8 +101,8 @@ type priorState struct {
 }
 
 // UpdateStack reconciles the stack to a new template: resources whose type or
-// properties are unchanged are kept (same physical id), changed ones — and any
-// resource that references a changed one — are replaced (delete + create), added
+// properties are unchanged are kept (same physical id); changed ones, and any
+// resource that references a changed one, are replaced (delete + create); added
 // ones are created, and removed ones are deleted. A failure rolls the stack back
 // to its pre-update state (deleting what the update created, restoring what it
 // deleted) and marks it UPDATE_ROLLBACK_COMPLETE.
@@ -364,7 +364,7 @@ func (m *Mock) deleteOne(ctx context.Context, sd *stackData, id, rtype, physical
 
 // diffResources classifies the update: keep (unchanged), create (added or
 // changed), remove (deleted or changed). A resource is directly changed iff its
-// type or decoded properties differ; the change then PROPAGATES — any resource
+// type or decoded properties differ; the change then PROPAGATES. Any resource
 // that references a changed one (Ref/Fn::GetAtt/Fn::Sub) is itself re-provisioned
 // so its resolved references pick up the replacement's new physical ids.
 func diffResources(oldT, newT *cfn.Template) (keep, create, remove map[string]bool, err error) {

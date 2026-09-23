@@ -21,7 +21,7 @@ type instanceStateChangeDetail struct {
 }
 
 // SetEventPublisher wires the EventBridge default bus that instance state
-// transitions are published to. Safe to leave unset — no events are emitted.
+// transitions are published to. Safe to leave unset. No events are emitted.
 func (m *Mock) SetEventPublisher(p awsevents.Publisher) {
 	m.events.SetPublisher(p)
 }

@@ -59,7 +59,7 @@ func (m *Mock) notifyObjectCreated(ctx context.Context, bkt *bucketMeta, bucket,
 // delete marker (a top-level delete, no versionId, on a versioning-Enabled or
 // -Suspended bucket) rather than permanently erasing bytes: that case fires
 // "ObjectRemoved:DeleteMarkerCreated" instead of "ObjectRemoved:Delete", the
-// same distinction real S3 draws — a permanent removal (unversioned bucket, or
+// same distinction real S3 draws: a permanent removal (unversioned bucket, or
 // an explicit ?versionId, even one that happens to target a delete marker)
 // always fires "ObjectRemoved:Delete".
 func (m *Mock) notifyObjectRemoved(ctx context.Context, bkt *bucketMeta, bucket, key, versionID string, deleteMarker bool) {

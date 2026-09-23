@@ -42,7 +42,7 @@ func validateRuleInput(cfg *driver.RuleConfig) error {
 // EventBridge accepts only the rate(...) and cron(...) forms and rejects
 // anything else with a ValidationException. Without this check a typo'd
 // expression (e.g. "every 5 minutes", a bare "rate(5 hour)", or a 5-field Unix
-// cron) would store "successfully" and then never self-trigger — a silent
+// cron) would store "successfully" and then never self-trigger, a silent
 // misconfiguration the caller never sees.
 func validateScheduleExpression(expr string) error {
 	switch {
@@ -58,7 +58,7 @@ func validateScheduleExpression(expr string) error {
 // validateRateExpression validates the body of a rate(...) expression:
 // "value unit", where value is a positive integer and unit is one of
 // minute(s)/hour(s)/day(s), with singular/plural agreement (value 1 is
-// singular, value >1 is plural) — the exact rule real EventBridge enforces.
+// singular, value >1 is plural), the exact rule real EventBridge enforces.
 func validateRateExpression(body string) error {
 	fields := strings.Fields(body)
 	if len(fields) != rateExpressionFieldCount {
@@ -93,7 +93,7 @@ func rateUnitMatchesValue(unit string, value int) bool {
 
 // validateCronExpression validates the body of a cron(...) expression, which
 // EventBridge requires to have exactly six whitespace-separated fields
-// (minutes, hours, day-of-month, month, day-of-week, year) — a standard
+// (minutes, hours, day-of-month, month, day-of-week, year), a standard
 // five-field Unix cron is rejected. Per-field value validation is not modeled.
 func validateCronExpression(body string) error {
 	if len(strings.Fields(body)) != cronExpressionFieldCount {

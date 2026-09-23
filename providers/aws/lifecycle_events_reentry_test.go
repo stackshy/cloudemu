@@ -22,7 +22,7 @@ const reentryTimeout = 10 * time.Second
 // state-change event is never published while the service's reconcile lock is
 // held. A StopTask on a service task reconciles the service and launches a
 // replacement; that replacement's RUNNING event invokes a Lambda target
-// synchronously, and the handler stops a sibling task of the same service —
+// synchronously, and the handler stops a sibling task of the same service,
 // re-entering reconciliation for the same service. Publishing under the lock
 // blocks that re-entry on the non-reentrant mutex forever.
 func TestECSTaskEventHandlerReentersSameServiceWithoutDeadlock(t *testing.T) {

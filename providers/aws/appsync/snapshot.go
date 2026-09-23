@@ -26,8 +26,8 @@ type apiSnapshot struct {
 	APIKeys  map[string]driver.APIKey     `json:"apiKeys,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// AppSync is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. AppSync is
+// control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	if m.apis.Len() == 0 {
 		return json.Marshal(appsyncSnapshot{})

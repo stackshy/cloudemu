@@ -14,7 +14,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // networkfirewallSnapshot is the full serialized state of the AWS Network
 // Firewall mock. Every memstore store holds a fully-exported *nfdriver pointer
 // type (Firewall, FirewallPolicy, RuleGroup), so each round-trips through the
-// generic memstore helper under its exact key — firewalls/policies by name, rule
+// generic memstore helper under its exact key: firewalls/policies by name, rule
 // groups by the "TYPE/name" composite key, so DescribeRuleGroup's type-qualified
 // lookup keeps working after a restore. The mu-guarded logging map (firewall
 // name -> log types) is captured beside the stores. The wired opts is
@@ -26,8 +26,8 @@ type networkfirewallSnapshot struct {
 	Logging    map[string][]nfdriver.LogDestinationConfig `json:"logging,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Network Firewall is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Network Firewall is
+// control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap networkfirewallSnapshot
 	if err := m.snapshotStores(&snap); err != nil {

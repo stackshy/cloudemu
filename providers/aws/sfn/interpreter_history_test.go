@@ -172,7 +172,7 @@ func TestInterpreterWaitFakeClock(t *testing.T) {
 }
 
 // TestInterpreterWaitInstantWithoutAsyncSettle asserts a Wait completes instantly
-// (SUCCEEDED, full history) when AsyncSettle is off — the default.
+// (SUCCEEDED, full history) when AsyncSettle is off, the default.
 func TestInterpreterWaitInstantWithoutAsyncSettle(t *testing.T) {
 	def := `{"StartAt":"W","States":{"W":{"Type":"Wait","Seconds":30,"Next":"S"},"S":{"Type":"Succeed"}}}`
 

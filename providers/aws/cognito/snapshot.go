@@ -22,8 +22,8 @@ type cognitoSnapshot struct {
 	Tags      map[string]map[string]string     `json:"tags,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Cognito holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Cognito holds no
+// bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := cognitoSnapshot{
 		UserPools: deepCopyMap(m.userPools.All(), copyUserPool),

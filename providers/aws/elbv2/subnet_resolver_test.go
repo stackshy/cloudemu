@@ -12,8 +12,8 @@ import (
 )
 
 // TestCreateLoadBalancerResolvesVPCID proves that, with the networking mock
-// wired in, a load balancer's VpcId is derived from its member subnets — as
-// real ELBv2 does — instead of being left empty.
+// wired in, a load balancer's VpcId is derived from its member subnets, as
+// real ELBv2 does, instead of being left empty.
 func TestCreateLoadBalancerResolvesVPCID(t *testing.T) {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"), config.WithAccountID("123456789012"))

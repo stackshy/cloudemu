@@ -31,8 +31,8 @@ type resolvedRoute struct {
 // InvokeRoute resolves req against the deployed stage's resource tree and, for
 // an AWS_PROXY/AWS Lambda integration, invokes the target function and maps its
 // response. Data-plane failures (unknown API/stage/route, missing backend,
-// malformed function response) are returned as ordinary HTTP responses — the
-// shape real API Gateway returns — not as Go errors. Every request to a
+// malformed function response) are returned as ordinary HTTP responses, the
+// shape real API Gateway returns, not as Go errors. Every request to a
 // deployed stage publishes the AWS/ApiGateway request metrics.
 func (m *Mock) InvokeRoute(ctx context.Context, req *driver.ProxyRequest) (*driver.ProxyResponse, error) {
 	start := m.opts.Clock.Now()

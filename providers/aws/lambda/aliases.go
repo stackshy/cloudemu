@@ -89,7 +89,7 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 		}
 	}
 
-	// All validation passed — commit the changes to the live alias.
+	// All validation passed: commit the changes to the live alias.
 	ad.alias.FunctionVersion = effectiveVersion
 
 	if cfg.Description != "" {
@@ -103,7 +103,7 @@ func (m *Mock) UpdateAlias(_ context.Context, cfg driver.AliasConfig) (*driver.A
 	ad.alias.RevisionID = newRevisionID()
 
 	// ad is the shared pointer already held in the store, so the in-place
-	// mutations above are already visible — no re-Set needed.
+	// mutations above are already visible: no re-Set needed.
 	result := ad.alias
 
 	return &result, nil
@@ -192,7 +192,7 @@ func (m *Mock) validateRoutingConfig(fd *funcData, effectiveVersion string, rc *
 		return nil
 	}
 
-	// A weighted alias cannot point to $LATEST — this restriction applies to the
+	// A weighted alias cannot point to $LATEST. This restriction applies to the
 	// alias's own FunctionVersion (the primary target) as well as every
 	// additional version. All must be published.
 	if effectiveVersion == latestVersion {

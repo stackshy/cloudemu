@@ -20,7 +20,7 @@ func mustCluster(t *testing.T, m *Mock, name string) {
 }
 
 // TestCreateNodegroupUpdateConfigDefault verifies a nodegroup created without an
-// updateConfig reports maxUnavailable=1 — the real EKS default — so Terraform's
+// updateConfig reports maxUnavailable=1 (the real EKS default), so Terraform's
 // update_config block does not drift after create.
 func TestCreateNodegroupUpdateConfigDefault(t *testing.T) {
 	m := newTestMock()

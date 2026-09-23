@@ -101,7 +101,7 @@ type execData struct {
 	// immediately. A running execution has no stop date or output yet.
 	settle settle.Window
 	// closeEmitted records that the execution's close (terminal) side effects
-	// were published — exactly once, at the first observation of the settled
+	// were published once, at the first observation of the settled
 	// run (or at start for a run that is already closed). Guarded by mu.
 	closeEmitted bool
 	mu           sync.RWMutex

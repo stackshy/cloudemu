@@ -186,7 +186,7 @@ func (m *Mock) CreateEvaluationJob(_ context.Context, cfg driver.EvaluationJobCo
 		CustomerEncryptionKeyID: cfg.CustomerEncryptionKeyID,
 		// Unlike import/copy jobs (which produce an artifact synchronously),
 		// evaluation is long-running, so it starts InProgress and stays there
-		// until StopEvaluationJob transitions it — making Stop a meaningful op.
+		// until StopEvaluationJob transitions it, which makes Stop a meaningful op.
 		Status:           driver.JobInProgress,
 		CreationTime:     now,
 		LastModifiedTime: now,

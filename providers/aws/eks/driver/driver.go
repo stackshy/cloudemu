@@ -3,7 +3,7 @@
 // Wave 1 covers the cloud-side EKS surface only: clusters, managed node
 // groups, Fargate profiles, and add-ons. The Kubernetes data plane
 // (Deployments, Pods, Services, …) is explicitly out of scope and will
-// be Wave 2 — when it lands, the cluster Endpoint and CertificateAuthority
+// be Wave 2; when it lands, the cluster Endpoint and CertificateAuthority
 // fields will point at a real in-process apiserver instead of the
 // placeholder values returned today.
 //

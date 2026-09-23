@@ -16,8 +16,8 @@ const awsManagedPolicyPrefix = "arn:aws:iam::aws:policy/"
 //
 // AWS publishes a finite, fixed set, and an ARN outside it is NoSuchEntity in
 // a real account. Honoring any well-formed ARN would accept typos and
-// invented names — the emulator would happily attach
-// AmazonEKSClusterPolicyy — so unknown names are rejected. That makes a
+// invented names. The emulator would happily attach
+// AmazonEKSClusterPolicyy, so unknown names are rejected. That makes a
 // missing entry a loud, one-line fix here rather than a silent divergence
 // from the account the caller will really run against.
 func isAWSManagedPolicyARN(arn string) bool {
@@ -35,7 +35,7 @@ func isAWSManagedPolicyARN(arn string) bool {
 //
 // Real accounts already have these, so requiring CreatePolicy first turns an
 // ordinary AttachRolePolicy into NoSuchEntity. Materializing on demand keeps
-// the catalog cheap — no policy exists until something asks for it.
+// the catalog cheap. No policy exists until something asks for it.
 func (m *Mock) ensureAWSManagedPolicy(arn string) bool {
 	if m.policies.Has(arn) {
 		return true

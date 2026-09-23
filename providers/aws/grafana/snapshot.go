@@ -18,8 +18,8 @@ type grafanaSnapshot struct {
 	Workspaces map[string]driver.Workspace `json:"workspaces,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Grafana is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Grafana is
+// control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := grafanaSnapshot{}
 

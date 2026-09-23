@@ -123,7 +123,7 @@ type lifecycleTransition struct {
 	emitsStateEvents bool
 	// idempotentStates are states where the operation is a no-op rather than
 	// an error. Real AWS EC2 documents StartInstances on a running instance
-	// and StopInstances on a stopped instance as idempotent — they return
+	// and StopInstances on a stopped instance as idempotent. They return
 	// 200 with currentState equal to previousState rather than
 	// IncorrectInstanceState.
 	idempotentStates []string
@@ -169,7 +169,7 @@ type instanceData struct {
 	// published to m.instances (State, settle, Tags, InstanceType,
 	// SecurityGroups, VPCID and the ModifyInstanceAttribute-backed flags). Any
 	// path that reads or writes those fields on a stored instance MUST hold mu
-	// for the duration — memstore only makes the map lookup atomic, not the
+	// for the duration; memstore only makes the map lookup atomic, not the
 	// pointed-to struct (see docs/architecture.md, "Concurrency & thread
 	// safety"). The exemplar is providers/aws/sqs.queueData.mu.
 	mu           sync.Mutex
@@ -342,7 +342,7 @@ type Mock struct {
 	managedResourceVisibility string
 	// clientTokens maps a RunInstances ClientToken to the instance ids it
 	// launched, so a retry with the same token returns those instances instead
-	// of double-provisioning (AWS idempotency). Permanent — an emulator needs no
+	// of double-provisioning (AWS idempotency). Permanent. An emulator needs no
 	// expiry window.
 	clientTokens map[string][]string
 	// clientTokenInflight tracks ClientTokens whose launch is still provisioning,
@@ -606,7 +606,7 @@ type clientTokenLaunch struct {
 // runInstancesIdempotent provisions at most one instance set per ClientToken.
 // The first caller reserves the token under m.mu and launches; concurrent
 // callers with the same token find the reservation and wait on its result, and
-// a later retry finds the recorded ids — so a token never provisions twice.
+// a later retry finds the recorded ids, so a token never provisions twice.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) runInstancesIdempotent(ctx context.Context, cfg driver.InstanceConfig, count int) ([]driver.Instance, error) {
@@ -790,7 +790,7 @@ func (m *Mock) launchInstances(ctx context.Context, cfg driver.InstanceConfig, c
 // just-launched instance: one per client-supplied BlockDeviceMapping (attached
 // at its device with its DeleteOnTermination), plus a synthesized default root
 // volume (/dev/sda1, 8 GiB, gp3, DeleteOnTermination=true) when the launch names
-// no boot mapping — matching real EC2, where every instance has a root volume.
+// no boot mapping, matching real EC2, where every instance has a root volume.
 //
 //nolint:gocritic // hugeParam: cfg mirrors the launchInstances signature.
 func (m *Mock) materializeInstanceVolumes(cfg driver.InstanceConfig, instanceID string) {
@@ -1160,7 +1160,7 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 	// Release each instance's primary (eth0) ENI, matching real EC2's
 	// delete-on-termination default. Until this happens the interface keeps
 	// residing in its subnet and referencing its security groups, which would
-	// (correctly) block a subsequent DeleteSubnet / DeleteSecurityGroup — but a
+	// (correctly) block a subsequent DeleteSubnet / DeleteSecurityGroup, but a
 	// terminated instance must no longer hold them.
 	for _, id := range instanceIDs {
 		m.releasePrimaryENI(ctx, id)
@@ -1169,7 +1169,7 @@ func (m *Mock) TerminateInstances(ctx context.Context, instanceIDs []string) err
 
 	// Tear down the real backing for any engine-backed instances. Every id is now
 	// Terminated (transitionInstances verified they exist), and a Terminated
-	// instance can't be terminated again — so this must be best-effort: continue
+	// instance can't be terminated again, so this must be best-effort: continue
 	// through the whole batch and aggregate errors, otherwise one instance's
 	// Deprovision failure would strand the rest with a live backing and no API
 	// path to clean it up. The cleared flag is persisted back into the store.
@@ -1794,7 +1794,7 @@ func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.Volume
 func (m *Mock) AttachVolume(_ context.Context, volumeID, instanceID, device string) error {
 	// The target instance must exist and be in a state that can take an
 	// attachment. Real EC2 rejects attaching to a pending/shutting-down/
-	// terminated instance with IncorrectInstanceState — a volume can only
+	// terminated instance with IncorrectInstanceState. A volume can only
 	// attach to a running or stopped instance.
 	inst, ok := m.instances.Get(instanceID)
 	if !ok {

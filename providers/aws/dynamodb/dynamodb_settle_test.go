@@ -56,7 +56,7 @@ func TestTableStatusUpdatingToActive(t *testing.T) {
 }
 
 // TestGSIStatusCreatingToActive verifies a GSI added via CreateIndex reports
-// CREATING until its window elapses, then ACTIVE — independent of the table.
+// CREATING until its window elapses, then ACTIVE, independent of the table.
 func TestGSIStatusCreatingToActive(t *testing.T) {
 	m, fc := newSettleMock(t)
 	ctx := context.Background()

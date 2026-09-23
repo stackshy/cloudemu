@@ -20,8 +20,8 @@ type aossSnapshot struct {
 	AccessPolicies   map[string]driver.Policy     `json:"accessPolicies,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// OpenSearch Serverless is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. OpenSearch
+// Serverless is control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := aossSnapshot{}
 

@@ -10,8 +10,8 @@ import (
 // Operation-state constants. The emulator completes every mutation immediately
 // and deterministically, so a recorded cluster operation is terminal on return.
 // Real MSK reports UPDATE_COMPLETE (not a bare "COMPLETED") for a finished
-// cluster operation, and clients — notably Terraform's aws_msk_cluster update
-// waiter — poll DescribeClusterOperation for exactly that target state.
+// cluster operation, and clients, notably Terraform's aws_msk_cluster update
+// waiter, poll DescribeClusterOperation for exactly that target state.
 const (
 	operationStateCompleted = "UPDATE_COMPLETE"
 )
@@ -89,7 +89,7 @@ func (m *Mock) recordOperation(
 // currentVersion, applies fn under the cluster write-lock, records an operation
 // of opType, and returns a copy of that operation. An empty currentVersion
 // skips the version check (matching ops like RebootBroker that take none). A
-// missing cluster returns NotFoundException — use it for update ops that model
+// missing cluster returns NotFoundException: use it for update ops that model
 // NotFoundException.
 func (m *Mock) mutateCluster(
 	arn, currentVersion, opType string, fn func(c *driver.Cluster),
@@ -98,7 +98,7 @@ func (m *Mock) mutateCluster(
 }
 
 // mutateClusterBR is mutateCluster for the update ops that do NOT model
-// NotFoundException (UpdateBrokerCount/Storage, UpdateMonitoring) — a missing
+// NotFoundException (UpdateBrokerCount/Storage, UpdateMonitoring), a missing
 // cluster is a BadRequestException there.
 func (m *Mock) mutateClusterBR(
 	arn, currentVersion, opType string, fn func(c *driver.Cluster),
@@ -150,7 +150,7 @@ func bumpVersion() string {
 // ListClusterOperations lists a cluster's operations, oldest first, paginated.
 // The v1 op does NOT model NotFoundException in the aws-sdk-go-v2 smithy model,
 // so a missing cluster is a 400 (a 404 would deserialize as an untyped generic
-// error). The v2 op DOES model it — see ListClusterOperationsV2.
+// error). The v2 op DOES model it. See ListClusterOperationsV2.
 func (m *Mock) ListClusterOperations(
 	_ context.Context, arn string, page driver.Page,
 ) (ops []driver.ClusterOperation, next string, err error) {

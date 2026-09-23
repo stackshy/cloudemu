@@ -14,7 +14,7 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // kmsSnapshot is the full serialized state of the AWS KMS mock. keys and aliases
-// hold unexported value types (with unexported fields, and — for a key — an
+// hold unexported value types (with unexported fields, and, for a key, an
 // asymmetric private key), so both are promoted to exported snapshot forms keyed
 // by their id; grants holds a fully-exported *driver.Grant and round-trips
 // through the generic memstore helper. The per-key mutex, and the in-flight
@@ -51,8 +51,8 @@ type aliasSnapshot struct {
 	Updated     time.Time `json:"updated,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// key material is always captured (a metadata-only key could not decrypt).
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Key material is
+// always captured (a metadata-only key could not decrypt).
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	keys, err := m.snapshotKeys()
 	if err != nil {

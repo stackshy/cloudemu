@@ -2,8 +2,8 @@
 // plane: FHIR data stores and their resource tags. A data store is created
 // immediately with a stable id, arn and endpoint and is ACTIVE at once; storing
 // FHIR resources and running import/export jobs are out of scope. The computed
-// fields clients and IaC read back — the data-store id, arn, endpoint, status
-// and createdAt — are minted once at create and stored, so repeated reads never
+// fields clients and IaC read back, the data-store id, arn, endpoint, status
+// and createdAt, are minted once at create and stored, so repeated reads never
 // drift. The SSE, preload and identity-provider configuration blocks round-trip
 // verbatim.
 package healthlake

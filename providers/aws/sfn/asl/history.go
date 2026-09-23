@@ -9,7 +9,7 @@ import "github.com/stackshy/cloudemu/v2/services/sfn/driver"
 //	ExecutionStarted
 //	<Type>StateEntered / <Type>StateExited   (Pass, Choice, Wait, Succeed, Task,
 //	                                           Parallel, Map)
-//	FailStateEntered                          (Fail — terminal, no exit)
+//	FailStateEntered                          (Fail, terminal, no exit)
 //	LambdaFunctionScheduled / LambdaFunctionStarted /
 //	LambdaFunctionSucceeded / LambdaFunctionFailed   (Task->Lambda sub-events)
 //	ExecutionSucceeded / ExecutionFailed / ExecutionAborted

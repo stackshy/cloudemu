@@ -175,7 +175,7 @@ func TestUpdateClusterConfigAppliesAccessConfig(t *testing.T) {
 
 // TestUpdateClusterConfigPreservesEndpointAccess verifies a logging-only update
 // (no resourcesVpcConfig in the request) does NOT reset the cluster's endpoint
-// public/private access flags — real EKS only changes the fields the request
+// public/private access flags. Real EKS only changes the fields the request
 // actually carries, so an omitted resourcesVpcConfig leaves VPC config intact.
 func TestUpdateClusterConfigPreservesEndpointAccess(t *testing.T) {
 	m := newTestMock()

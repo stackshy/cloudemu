@@ -278,7 +278,7 @@ func (m *Mock) desiredForStrategy(cluster, sched string, requested int) int {
 }
 
 // placeableInstanceCount counts the ACTIVE, agent-connected container instances
-// in the cluster — the implied DAEMON task target.
+// in the cluster, the implied DAEMON task target.
 func (m *Mock) placeableInstanceCount(cluster string) int {
 	var n int
 
@@ -354,7 +354,7 @@ func (m *Mock) drainService(ctx context.Context, svc *driver.Service, events *pe
 		m.deregisterTaskTargets(ctx, svc, t)
 		// No reconciliation: this drain already owns and re-converges the whole
 		// service state itself (the caller launches the replacement tasks), so
-		// StopTask's own reconciliation would race it — see stopTaskQuiet.
+		// StopTask's own reconciliation would race it. See stopTaskQuiet.
 		if stopped, stoppedNow, err := m.stopTaskQuiet(ctx, cluster, t.ARN, serviceStoppedReason); err == nil && stoppedNow {
 			events.add(stopped, taskEventVersionStop)
 		}
@@ -446,24 +446,24 @@ func (m *Mock) launchServiceReplacements(ctx context.Context, svc *driver.Servic
 // reconcileServiceAfterStop re-converges the stopped task's owning service (if
 // any): it recomputes the service's live running/pending counts from the task
 // store and, if short of desiredCount, launches replacement task(s) under the
-// existing PRIMARY deployment — mirroring real ECS's scheduler, which notices a
+// existing PRIMARY deployment, mirroring real ECS's scheduler, which notices a
 // service-owned task died on its next reconciliation pass, reflects the drop
 // immediately, and launches a replacement to converge back. No new deployment
 // is minted; a single dead task doesn't roll a fresh one, matching real ECS.
 //
 // A task with no owning service (Group doesn't start with "service:") is a
 // no-op, as is a service that's been deleted or is mid-delete (Status is no
-// longer ACTIVE) — DeleteService/drainService already own tearing that down.
+// longer ACTIVE). DeleteService/drainService already own tearing that down.
 //
 // The whole read-decide-launch-commit sequence below runs under the service's
 // reconcileLock key: two concurrent StopTask calls on different tasks of the
 // same service must not both read the pre-replacement counts, both compute
-// the full shortfall, and both launch replacements — that would over-provision
+// the full shortfall, and both launch replacements, which would over-provision
 // the service above desiredCount with nothing to ever scale it back down. The
 // lock is per-service (keyed by cluster+name), so unrelated services still
-// reconcile concurrently, and it is acquired here — before stopTaskLocked's
+// reconcile concurrently, and it is acquired here, before stopTaskLocked's
 // placeMu has any chance to be re-taken by a replacement launch, and before
-// m.services's own per-call lock — making it the outermost lock in this path.
+// m.services's own per-call lock, making it the outermost lock in this path.
 func (m *Mock) reconcileServiceAfterStop(ctx context.Context, task *driver.Task) {
 	name, ok := serviceNameFromGroup(task.Group)
 	if !ok {

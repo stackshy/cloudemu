@@ -30,7 +30,7 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 }
 
 // stageAPIName returns the API's name when req targets an existing API and
-// stage — the requests real API Gateway attributes metrics to.
+// stage, since those are the requests real API Gateway attributes metrics to.
 func (m *Mock) stageAPIName(req *driver.ProxyRequest) (string, bool) {
 	ad, err := m.getAPI(req.RestAPIID)
 	if err != nil {

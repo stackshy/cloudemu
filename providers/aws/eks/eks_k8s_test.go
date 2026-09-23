@@ -94,7 +94,7 @@ func TestDescribeCluster_APIWithoutBaseURLKeepsSentinel(t *testing.T) {
 	m := newTestMock()
 
 	api := kubernetes.NewAPIServer()
-	// Intentionally no SetBaseURL — withK8sEndpoint should fall back.
+	// Intentionally no SetBaseURL: withK8sEndpoint should fall back.
 	m.SetK8sAPI(api)
 
 	_, err := m.CreateCluster(context.Background(), eksdriver.ClusterConfig{

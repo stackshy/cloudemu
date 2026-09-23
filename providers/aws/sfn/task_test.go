@@ -272,8 +272,8 @@ func TestTaskLambdaHistoryEvents(t *testing.T) {
 }
 
 // TestTaskRecursionGuardTerminates is the load-bearing recursion test: a Lambda
-// seam that re-enters the FULL cycle — StartExecution on a state machine whose
-// Task invokes Lambda again — terminates at recursionguard.MaxDepth with a
+// seam that re-enters the FULL cycle (StartExecution on a state machine whose
+// Task invokes Lambda again) terminates at recursionguard.MaxDepth with a
 // bounded States.TaskFailed, never a stack overflow. It calls the REAL
 // StartExecution entry point so ctx-threading on the production path is proven,
 // and asserts the ctx depth increments across the StartExecution boundary.

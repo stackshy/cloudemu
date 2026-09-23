@@ -13,7 +13,7 @@ import (
 // CreateRuleGroupsNamespace creates a rule-groups namespace under a workspace,
 // directly in the ACTIVE state. The definition blob is stored verbatim. A
 // repeated ClientToken within the dedup window returns the live namespace
-// already created for it instead of hitting the name-conflict check — a retried
+// already created for it instead of hitting the name-conflict check. A retried
 // create resends the same Name and would otherwise conflict with itself. The
 // token is scoped to the workspace+name it was sent for and only replays while
 // that namespace still exists. A name already in use under a different (or no)

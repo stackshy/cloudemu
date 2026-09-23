@@ -14,7 +14,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // mockSnapshot is the full serialized state of the CloudFormation mock: every
 // stack keyed by name, with the provisioning bookkeeping needed to tear it down
 // or update it after a restore. The registry of provisioners is wiring, not
-// state, so it is not captured — the restored mock reuses the live one.
+// state, so it is not captured. The restored mock reuses the live one.
 type mockSnapshot struct {
 	Stacks map[string]*stackSnapshot `json:"stacks"`
 }

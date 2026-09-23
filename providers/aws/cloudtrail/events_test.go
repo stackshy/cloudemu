@@ -141,7 +141,7 @@ func TestLookupEventsPaginationStableAcrossInserts(t *testing.T) {
 		token = next
 	}
 
-	// Every original event was paged through exactly once — no duplicate, no skip.
+	// Every original event was paged through once. No duplicate, no skip.
 	for id, n := range original {
 		assert.Equal(t, 1, n, "original event %s returned %d times, want exactly once", id, n)
 	}

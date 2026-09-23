@@ -15,8 +15,8 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // memstore store holds a fully-exported mdbdriver type (Cluster, ACL, User,
 // ParameterGroup, SubnetGroup, Snapshot, MultiRegionCluster, ReservedNode), so
 // each round-trips through the generic memstore helper keyed by its resource
-// name. The mu-guarded state that lives beside the stores — the parameter-group
-// overrides, the ARN-keyed tag maps, and the append-only event log — is captured
+// name. The mu-guarded state that lives beside the stores, the parameter-group
+// overrides, the ARN-keyed tag maps, and the append-only event log, is captured
 // alongside. The wired deps (opts, monitoring) are intentionally not serialized:
 // a restore reinstates records, not the CloudWatch backend they emit into.
 type memorydbSnapshot struct {
@@ -34,8 +34,8 @@ type memorydbSnapshot struct {
 	Events         []mdbdriver.Event            `json:"events,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// MemoryDB is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. MemoryDB is
+// control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap memorydbSnapshot
 	if err := m.snapshotStores(&snap); err != nil {

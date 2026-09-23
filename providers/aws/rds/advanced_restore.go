@@ -169,8 +169,8 @@ func (m *Mock) RestoreDBInstanceToPointInTime(
 // RestoreDBClusterToPointInTime creates a new cluster cloned from a source
 // cluster's current spec (no members; caller adds instances afterward). When an
 // engine is wired in, the restored cluster's shared database is provisioned
-// (keyed by the new cluster id) so the reported endpoints — and any members
-// added later — reach a real database.
+// (keyed by the new cluster id) so the reported endpoints, and any members
+// added later, reach a real database.
 func (m *Mock) RestoreDBClusterToPointInTime(
 	ctx context.Context, input rdsdriver.RestoreClusterToPointInTimeInput,
 ) (*rdsdriver.Cluster, error) {

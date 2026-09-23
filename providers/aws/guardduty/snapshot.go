@@ -135,8 +135,8 @@ type malwareScanSnapshot struct {
 	CompletedAt  time.Time `json:"completedAt,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// GuardDuty holds resource metadata, not bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. GuardDuty holds
+// resource metadata, not bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := guarddutySnapshot{}
 

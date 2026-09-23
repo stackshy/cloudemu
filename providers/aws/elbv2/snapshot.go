@@ -16,7 +16,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // stores hold fully-exported driver value types and round-trip through the
 // generic memstore helper; the health map is promoted to an exported,
 // deterministically-ordered form because its key type (targetKey) is unexported
-// and a struct — neither of which json can serialize as a map key. The
+// and a struct, neither of which json can serialize as a map key. The
 // provisioning->active settle overlay, the wired subnet resolver, the mutexes,
 // and *config.Options are intentionally not serialized: a restored load balancer
 // reports its stored (final) state immediately.
@@ -39,8 +39,8 @@ type targetHealthSnapshot struct {
 	Health *driver.TargetHealth `json:"health,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// ELBv2 holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. ELBv2 holds no bulk
+// object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap elbSnapshot
 

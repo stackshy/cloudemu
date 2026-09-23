@@ -684,7 +684,7 @@ func TestImageTagMutability(t *testing.T) {
 			// Distinct manifest content so the two pushes content-address to
 			// distinct digests, exercising a genuine tag MOVE rather than a
 			// byte-identical re-push (which is ImageAlreadyExistsException
-			// regardless of mutability — see TestPutImageIdenticalRepush).
+			// regardless of mutability; see TestPutImageIdenticalRepush).
 			_, err = m.PutImage(ctx, &driver.ImageManifest{
 				Repository: "my-repo", Tag: "v1", SizeBytes: 100, Manifest: `{"v":1}`,
 			})

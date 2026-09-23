@@ -21,7 +21,7 @@ const (
 )
 
 // twoRegions builds a default (us-east-1) provider plus a us-west-2 regional
-// provider that shares the default's global services — the arrangement the
+// provider that shares the default's global services, the arrangement the
 // region mux creates.
 func twoRegions(t *testing.T) (east, west *awsprovider.Provider) {
 	t.Helper()
@@ -121,7 +121,7 @@ func TestS3NameReservationCrossRegion(t *testing.T) {
 }
 
 // TestS3NotificationNonDefaultRegion proves a bucket in a NON-default region
-// delivers its object events to THAT region's queue, not another region's — the
+// delivers its object events to THAT region's queue, not another region's. The
 // S3→SQS wire is same-region because both are regional services of one provider.
 func TestS3NotificationNonDefaultRegion(t *testing.T) {
 	ctx := context.Background()
@@ -169,7 +169,7 @@ func TestS3NotificationNonDefaultRegion(t *testing.T) {
 }
 
 // TestRegionalToGlobalInstanceProfile proves a regional EC2 launch in us-west-2
-// resolves an instance profile from the SHARED IAM — the one regional→global
+// resolves an instance profile from the SHARED IAM, the one regional→global
 // wire the design must preserve.
 func TestRegionalToGlobalInstanceProfile(t *testing.T) {
 	ctx := context.Background()

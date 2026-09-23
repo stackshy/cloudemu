@@ -19,8 +19,8 @@ type redshiftClusters interface {
 
 // rdsDiscovery adapts the RDS mock (plus Redshift) to the resourcediscovery
 // RelationalDatabases capability so RDS/Aurora instances, clusters, snapshots,
-// and proxies — and Redshift clusters — surface in Resource Explorer. Kept in
-// the provider package (not services/) to avoid inverting the layering — the
+// and proxies, and Redshift clusters, surface in Resource Explorer. Kept in
+// the provider package (not services/) to avoid inverting the layering. The
 // discovery engine stays free of provider imports.
 type rdsDiscovery struct {
 	m        rdsdriver.RelationalDB

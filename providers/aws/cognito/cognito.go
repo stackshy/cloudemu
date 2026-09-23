@@ -3,8 +3,8 @@
 // hosted-UI domains, plus resource tagging.
 //
 // This is the configuration control plane only. There is no authentication data
-// plane behind the emulator — sign-up, sign-in, token issuance, users, and
-// groups are out of scope — so the mock covers provisioning and reading pools,
+// plane behind the emulator (sign-up, sign-in, token issuance, users, and
+// groups are out of scope), so the mock covers provisioning and reading pools,
 // clients, and domains and their settings, which is what IaC tools (Terraform,
 // CloudFormation) and the console's create flow exercise.
 package cognito

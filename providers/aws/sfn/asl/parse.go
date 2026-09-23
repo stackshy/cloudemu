@@ -1,7 +1,7 @@
 // Package asl is a dependency-free interpreter for a practical subset of the
 // Amazon States Language (ASL). It parses a state-machine definition into typed
 // structs, validates it structurally up front, and walks the state graph from
-// StartAt following Next/End — computing the terminal status/output and a
+// StartAt following Next/End, computing the terminal status/output and a
 // per-state event history. It is driven by config.Clock so Wait timing is
 // deterministic under a FakeClock.
 //
@@ -34,7 +34,7 @@ const (
 )
 
 // pathField is a three-state ASL path field: absent, explicit JSON null, or a
-// string path. The distinction is load-bearing — e.g. ResultPath absent means
+// string path. The distinction is load-bearing, e.g. ResultPath absent means
 // "$" (replace), ResultPath:null means "discard the result, pass raw input".
 type pathField struct {
 	set  bool

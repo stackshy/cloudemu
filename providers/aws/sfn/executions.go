@@ -401,8 +401,8 @@ func (m *Mock) ListExecutions(ctx context.Context, stateMachineArn, statusFilter
 // GetExecutionHistory returns the real per-state event list the interpreter
 // produced. While an execution is still observably RUNNING (settle window
 // unelapsed), the list is truncated to the events whose virtual Timestamp has
-// elapsed — generalizing the previous "only ExecutionStarted while RUNNING"
-// rule — so the terminal event is not yet visible. Reverse order is applied last.
+// elapsed, generalizing the previous "only ExecutionStarted while RUNNING"
+// rule, so the terminal event is not yet visible. Reverse order is applied last.
 func (m *Mock) GetExecutionHistory(ctx context.Context, arn string, reverse bool) ([]driver.HistoryEvent, error) {
 	ed, err := m.getExec(arn)
 	if err != nil {

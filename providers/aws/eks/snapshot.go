@@ -16,8 +16,8 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // keys). k8sUIDs preserves each cluster's registered Kubernetes UID so a restore
 // keeps the cluster→UID mapping stable. The mutex and the wired deps (opts,
 // monitoring, subnetResolver) are not serialized; the shared *kubernetes.APIServer
-// data plane is external shared state and is intentionally not re-registered here
-// — the stored records and the UID mapping are what a restore reinstates.
+// data plane is external shared state and is intentionally not re-registered here.
+// The stored records and the UID mapping are what a restore reinstates.
 type eksSnapshot struct {
 	Clusters        json.RawMessage   `json:"clusters,omitempty"`
 	Nodegroups      json.RawMessage   `json:"nodegroups,omitempty"`
@@ -27,8 +27,8 @@ type eksSnapshot struct {
 	K8sUIDs         map[string]string `json:"k8sUids,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// EKS holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. EKS holds no bulk
+// object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap eksSnapshot
 	if err := m.snapshotStores(&snap); err != nil {

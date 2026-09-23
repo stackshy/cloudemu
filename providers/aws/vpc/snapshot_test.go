@@ -108,7 +108,7 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 }
 
 // TestSnapshotEmpty confirms a fresh mock snapshots and restores without error
-// (all stores empty) — the degenerate round-trip persist relies on.
+// (all stores empty), the degenerate round-trip persist relies on.
 func TestSnapshotEmpty(t *testing.T) {
 	ctx := context.Background()
 

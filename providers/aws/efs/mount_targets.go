@@ -176,8 +176,8 @@ const ipSegmentSize = 256
 const mtFirstHost = 4
 
 // allocateIP returns explicit if the caller supplied one. Otherwise it hands out
-// the next private IPv4 inside the subnet's CIDR — real EFS auto-assigns a free
-// address from the target subnet — falling back to a synthetic-but-unique
+// the next private IPv4 inside the subnet's CIDR (real EFS auto-assigns a free
+// address from the target subnet), falling back to a synthetic-but-unique
 // 10.0.x.y address when the subnet can't be resolved. Every call returns a
 // distinct address: a fixed default would let two mount targets (even across
 // different subnets and file systems) collide on the same private IP, which
@@ -226,8 +226,8 @@ func (m *Mock) allocateIP(explicit, subnetID string, subnet *netdriver.SubnetInf
 // nextIP hands out a globally-unique fallback address (10.0.x.y) when no subnet
 // CIDR is available to allocate an in-range address from. The counter is offset
 // by mtFirstHost so the first address is 10.0.0.4, never the 10.0.0.0 network
-// address (nor the reserved low hosts) — real EFS/EC2 never assigns those to a
-// mount target.
+// address (nor the reserved low hosts), since real EFS/EC2 never assigns those
+// to a mount target.
 func (m *Mock) nextIP() string {
 	m.ipMu.Lock()
 	n := m.ipCounters[""] + mtFirstHost
@@ -389,7 +389,7 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 
 	// Store the access point and publish it via apIndex BEFORE claiming the
 	// ClientToken, so a racing same-token loser can always resolve the winner's
-	// access point by id — there is no lookup-before-store window (the F1
+	// access point by id: there is no lookup-before-store window (the F1
 	// file-system path is safe the same way: its loser recovers by id, not by
 	// object lookup).
 	fd.mu.Lock()
@@ -412,7 +412,7 @@ func (m *Mock) CreateAccessPoint(_ context.Context, in driver.CreateAccessPointI
 	m.apIndex.Set(id, in.FileSystemID)
 
 	// ClientToken idempotency: claim the token. If another same-token call won the
-	// race, roll back this just-created access point and return the existing one —
+	// race, roll back this just-created access point and return the existing one:
 	// never a duplicate, never AccessPointNotFound.
 	if in.ClientToken != "" && !m.apTokenIndex.SetIfAbsent(in.ClientToken, id) {
 		fd.mu.Lock()

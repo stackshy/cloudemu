@@ -47,9 +47,8 @@ type shardStateSnapshot struct {
 	ClosedAt  time.Time       `json:"closedAt,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// stream records are the service's state, not bulk sidecar bodies, and are
-// always captured.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Stream records are
+// the service's state, not bulk sidecar bodies, and are always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := kinesisSnapshot{Streams: m.snapshotStreams()}
 

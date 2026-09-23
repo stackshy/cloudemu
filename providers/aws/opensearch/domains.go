@@ -126,8 +126,8 @@ func (m *Mock) CreateDomain(_ context.Context, in driver.CreateDomainInput) (*dr
 
 // defaultOptionBlocks are the option blocks real AWS OpenSearch always includes
 // in a DescribeDomain response, even when the caller omitted them at create.
-// They are materialized at create so a minimal domain round-trips like real AWS
-// — the terraform provider's read path dereferences CognitoOptions and
+// They are materialized at create so a minimal domain round-trips like real AWS,
+// the terraform provider's read path dereferences CognitoOptions and
 // EBSOptions without a nil check and panics if they are absent.
 func defaultOptionBlocks() map[string]json.RawMessage {
 	return map[string]json.RawMessage{

@@ -3,7 +3,7 @@
 // configuration, connection, VPC connector and observability configuration
 // resources a service composes.
 //
-// The mock is control-plane only — it runs no container runtime. A service is
+// The mock is control-plane only. It runs no container runtime. A service is
 // created directly into the terminal RUNNING state (App Runner's real create is
 // asynchronous), so an IaC apply completes without a provisioning wait.
 // PauseService moves RUNNING to PAUSED, ResumeService moves PAUSED back to

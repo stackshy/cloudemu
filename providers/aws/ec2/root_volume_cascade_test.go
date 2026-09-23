@@ -28,7 +28,7 @@ func rootVolumeOf(t *testing.T, m *Mock, instanceID string) string {
 // TestTerminateVsDetachVolumeNoDataLoss guards the terminate cascade's
 // delete-vs-detach decision against a TOCTOU race with a concurrent
 // DetachVolume. The invariant: if DetachVolume reports success, the volume must
-// survive terminate — a successful detach can never be silently deleted. Run
+// survive terminate. A successful detach can never be silently deleted. Run
 // under -race; a split read-then-delete would fail this in a fraction of trials.
 func TestTerminateVsDetachVolumeNoDataLoss(t *testing.T) {
 	ctx := context.Background()

@@ -27,7 +27,7 @@ type imageActionDetail struct {
 }
 
 // SetEventPublisher wires the EventBridge default bus that image push/delete
-// actions are published to. Safe to leave unset — no events are emitted.
+// actions are published to. Safe to leave unset. No events are emitted.
 func (m *Mock) SetEventPublisher(p awsevents.Publisher) {
 	m.events.SetPublisher(p)
 }

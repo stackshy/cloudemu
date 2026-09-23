@@ -88,8 +88,8 @@ func TestListRecordsOrderingDeterministic(t *testing.T) {
 }
 
 // TestGetRecordWeightedDeterministic locks that GetRecord resolves a name+type
-// with several weighted records to the same one every call — the lowest set ID
-// in sorted order — instead of a map-order-random pick (#259).
+// with several weighted records to the same one every call (the lowest set ID
+// in sorted order) instead of a map-order-random pick (#259).
 func TestGetRecordWeightedDeterministic(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

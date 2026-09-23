@@ -9,7 +9,7 @@ import (
 )
 
 // UpdateResourceTags merges tags onto a VPC-family resource that has no
-// dedicated Update*Tags method — route tables, internet gateways, NAT
+// dedicated Update*Tags method: route tables, internet gateways, NAT
 // gateways, network ACLs, DHCP option sets, peering connections, managed
 // prefix lists, and egress-only internet gateways. An unknown or missing id
 // is NotFound, so the wire layer can map it to the InvalidID.NotFound code

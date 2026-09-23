@@ -16,7 +16,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // exported form (the stored instanceData has unexported fields and a mutex that
 // json.Marshal cannot see); the driver-typed stores round-trip through the
 // generic memstore helper. In-flight settle overlays and the sync primitives are
-// intentionally not serialized — a restored instance reports its stored state
+// intentionally not serialized. A restored instance reports its stored state
 // immediately.
 type ec2Snapshot struct {
 	Instances         map[string]*instanceSnapshot `json:"instances,omitempty"`
@@ -78,8 +78,8 @@ type asgSnapshot struct {
 	Policies json.RawMessage         `json:"policies,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// EC2 holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. EC2 holds no bulk
+// object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := ec2Snapshot{Instances: m.snapshotInstances()}
 

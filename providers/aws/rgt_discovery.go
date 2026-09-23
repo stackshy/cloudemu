@@ -27,7 +27,7 @@ import (
 )
 
 // taggedDiscovery projects the provider-native services that carry their own
-// tag store — but are not reached by the portable-driver discovery walkers —
+// tag store (but are not reached by the portable-driver discovery walkers)
 // into the cross-service inventory, so their resources surface in Resource
 // Groups Tagging API GetResources with the ARN, service token, type, and live
 // tags a tagger writes. This closes the discover → tag → filter → untag loop

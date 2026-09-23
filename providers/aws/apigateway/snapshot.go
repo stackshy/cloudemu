@@ -28,8 +28,8 @@ type apiSnapshot struct {
 	Stages      map[string]*driver.Stage      `json:"stages,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// API Gateway holds only control-plane definitions, no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. API Gateway holds
+// only control-plane definitions, no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := apigatewaySnapshot{}
 

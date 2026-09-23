@@ -8,7 +8,7 @@
 // limit invariants, tagging) are fully modeled. Read-only compliance,
 // evaluation, and discovered-resource surfaces are synthesized from the
 // emulator's own recorded state (rules/evaluations/PutResourceConfig items) or
-// return plausible empty results — the emulator runs no real Config recording
+// return plausible empty results, since the emulator runs no real Config recording
 // pipeline. Each synthesized method documents this on its declaration.
 package configservice
 

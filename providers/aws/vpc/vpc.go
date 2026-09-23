@@ -497,8 +497,8 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 
 	// Real EC2 refuses the delete while user-managed dependencies remain and
 	// auto-removes the ones it created (main route table, default security
-	// group). An active peering connection does not block — it is deleted with
-	// the VPC — so it is deliberately absent from the dependency scan.
+	// group). An active peering connection does not block; it is deleted with
+	// the VPC, so it is deliberately absent from the dependency scan.
 	if dep, blocked := m.vpcDependency(id); blocked {
 		return errors.Newf(errors.FailedPrecondition,
 			"the vpc %q has dependencies and cannot be deleted (%s)", id, dep)
@@ -687,7 +687,7 @@ func (m *Mock) CreateSubnet(_ context.Context, cfg driver.SubnetConfig) (*driver
 // interface resident in the subnet (an instance's primary ENI, standalone ENIs,
 // and the ENIs NAT gateways and interface endpoints occupy). A malformed or
 // non-IPv4 CIDR yields 0. The count re-increments when those interfaces are
-// released — a terminated instance's primary ENI is deleted, freeing its address.
+// released: a terminated instance's primary ENI is deleted, freeing its address.
 func (m *Mock) subnetAvailableIPCount(subnetID, cidr string) int {
 	base := baseSubnetIPCount(cidr)
 	if base == 0 {
@@ -747,7 +747,7 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 	}
 
 	// Real EC2 refuses to delete a subnet while ANY network interface still
-	// resides in it — an unattached (available) ENI counts, not just an attached
+	// resides in it. An unattached (available) ENI counts, not just an attached
 	// one. Accepting the delete otherwise lets a broken drain pass unnoticed.
 	if eni, blocked := m.eniInSubnet(id); blocked {
 		return errors.Newf(errors.FailedPrecondition,
@@ -813,7 +813,7 @@ func validateVPCCIDR(cidr string) error {
 
 // validateInstanceTenancy normalizes and checks a VPC's requested instance
 // tenancy. An empty value defaults to "default". Real EC2 CreateVpc accepts only
-// "default" and "dedicated" — "host" and every other value are rejected with
+// "default" and "dedicated"; "host" and every other value are rejected with
 // InvalidParameterValue (the wire layer maps this InvalidArgument to that code).
 func validateInstanceTenancy(tenancy string) (string, error) {
 	switch tenancy {
@@ -899,7 +899,7 @@ func (m *Mock) ModifySubnetAttribute(_ context.Context, id string, update driver
 
 // attachedENIIn reports an interface still attached within the given VPC, and
 // within the given subnet when one is named. An interface that has been
-// detached no longer blocks anything — that is the whole point of detaching it.
+// detached no longer blocks anything. That is the whole point of detaching it.
 func (m *Mock) attachedENIIn(vpcID, subnetID string) (string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -985,8 +985,8 @@ func (m *Mock) CreateSecurityGroup(_ context.Context, cfg driver.SecurityGroupCo
 		VPCID:        cfg.VPCID,
 		IngressRules: []driver.SecurityRule{},
 		// Real EC2 seeds every new security group with an allow-all egress rule
-		// (no ingress). IaC tools rely on it — Terraform revokes this default
-		// before applying the egress blocks in the config — and the topology
+		// (no ingress). IaC tools rely on it (Terraform revokes this default
+		// before applying the egress blocks in the config), and the topology
 		// engine otherwise reports a fresh SG as denying all outbound traffic.
 		// The rule gets its own "sgr-" id so DescribeSecurityGroupRules can
 		// return and filter it the way real EC2 does.

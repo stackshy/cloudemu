@@ -33,7 +33,7 @@ const (
 	// still being attached. taskStatusDeprovisioning is its stop-side mirror:
 	// the ENI is being detached. taskStatusStopping is the EC2/EXTERNAL stop
 	// transient (statusPending already covers the EC2/EXTERNAL launch
-	// transient). All three are overlaid read-time states — see taskSettle.
+	// transient). All three are overlaid read-time states. See taskSettle.
 	taskStatusProvisioning   = "PROVISIONING"
 	taskStatusDeprovisioning = "DEPROVISIONING"
 	taskStatusStopping       = "STOPPING"
@@ -56,9 +56,9 @@ type Mock struct {
 
 	// reconcileLock serializes reconcileServiceAfterStop per service (see
 	// service_reconcile_lock.go), closing the concurrent-StopTask over-launch
-	// race. It is always the outermost lock acquired in that path — taken
+	// race. It is always the outermost lock acquired in that path, taken
 	// before placeMu (via launchServiceReplacements -> launchTask -> reserve)
-	// and before m.services's own per-call lock (via Update) — so it can never
+	// and before m.services's own per-call lock (via Update), so it can never
 	// deadlock against them.
 	reconcileLock *serviceReconcileLock
 
@@ -100,7 +100,7 @@ type ManagedInstanceLauncher interface {
 
 // SetManagedInstanceLauncher wires the EC2-backed launcher used when a container
 // instance is registered without an explicit EC2 instance id. Safe to leave
-// unset — registration then just synthesizes an id.
+// unset. Registration then synthesizes an id.
 func (m *Mock) SetManagedInstanceLauncher(l ManagedInstanceLauncher) {
 	m.launcher = l
 }
@@ -125,7 +125,7 @@ func New(opts *config.Options) *Mock {
 
 // SetLogSink wires the CloudWatch Logs target that engine-backed tasks push
 // their captured container logs into when a container's LogConfiguration uses
-// the awslogs driver. Safe to leave unset — log surfacing is then skipped.
+// the awslogs driver. Safe to leave unset. Log surfacing is then skipped.
 func (m *Mock) SetLogSink(l logdriver.Logging) {
 	m.logs = l
 }

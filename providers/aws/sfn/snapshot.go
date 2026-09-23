@@ -67,8 +67,8 @@ func buildAct(v *driver.Activity) *actData    { return &actData{act: *v} }
 func buildAlias(v *driver.Alias) *aliasData   { return &aliasData{alias: *v} }
 func buildRun(v *driver.MapRun) *mapRunData   { return &mapRunData{run: *v} }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Step Functions holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Step Functions holds
+// no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := sfnSnapshot{
 		Machines:   snapshotWrapped(m.machines, getSM),

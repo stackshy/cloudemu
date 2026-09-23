@@ -19,8 +19,8 @@ type kinesisVideoSnapshot struct {
 	Channels map[string]driver.ChannelInfo `json:"channels,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Kinesis Video is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Kinesis Video is
+// control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := kinesisVideoSnapshot{}
 

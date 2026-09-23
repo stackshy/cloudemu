@@ -145,7 +145,7 @@ func TestListShardsShardFilterTypes(t *testing.T) {
 	m := newClockMock(t, clk)
 	mergedStream(t, m, clk) // create @base, merge @base+1m, now @base+2m
 
-	// AT_TRIM_HORIZON: only shards open at the trim horizon (stream creation) —
+	// AT_TRIM_HORIZON: only shards open at the trim horizon (stream creation):
 	// the two originals, not the later child.
 	trim := listShards(t, m, &driver.ShardFilter{Type: driver.ShardFilterAtTrimHorizon})
 	if len(trim) != 2 {

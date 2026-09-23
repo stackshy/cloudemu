@@ -180,7 +180,7 @@ func TestLayerVersionDeleteDropsPermissions(t *testing.T) {
 
 // TestAddLayerVersionPermissionCOWIndependence mutates the LayerPermissionStatement
 // passed into AddLayerVersionPermission after the call returns, and independently
-// mutates the returned statement JSON string's backing bytes are not shared —
+// mutates the returned statement JSON string's backing bytes are not shared,
 // proving the stored statement is a value copy, not an alias of caller state.
 func TestAddLayerVersionPermissionCOWIndependence(t *testing.T) {
 	m := newTestMock()

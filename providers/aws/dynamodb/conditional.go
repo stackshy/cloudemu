@@ -29,7 +29,7 @@ type txIdempotencyRecord struct {
 
 // This file holds the ATOMIC conditional-write and transaction primitives. The
 // wire handler must NOT evaluate a ConditionExpression with a standalone GetItem
-// and then issue the mutation as a separate call — dropping the table lock in
+// and then issue the mutation as a separate call. Dropping the table lock in
 // between opens a TOCTOU window where two concurrent conditional writes on one
 // key both succeed. Each method here evaluates the condition and applies the
 // write under a SINGLE hold of m.mu, so no concurrent writer can interleave.
@@ -37,11 +37,11 @@ type txIdempotencyRecord struct {
 // PutItem/DeleteItem/UpdateItem delegate to these with an empty Condition, so the
 // unconditional and conditional paths share one implementation.
 
-// evalCondition parses (reusing expr.ParseCondition — no duplicated parser) and
-// evaluates a ConditionExpression against the current stored item. An empty
-// expression always passes. A missing item is evaluated against an empty item so
-// attribute_not_exists is true and attribute_exists is false, matching DynamoDB
-// create-if-absent semantics.
+// evalCondition parses (reusing expr.ParseCondition, so there is no duplicated
+// parser) and evaluates a ConditionExpression against the current stored item.
+// An empty expression always passes. A missing item is evaluated against an
+// empty item so attribute_not_exists is true and attribute_exists is false,
+// matching DynamoDB create-if-absent semantics.
 func evalCondition(cond driver.Condition, existing map[string]any) (bool, error) {
 	if strings.TrimSpace(cond.Expression) == "" {
 		return true, nil
@@ -263,9 +263,9 @@ func updateBaseImage(item map[string]any, present bool, key map[string]any) (bas
 }
 
 // TransactWrite executes an atomic TransactWriteItems: every ConditionExpression
-// is evaluated, and only if all pass are all writes applied — the whole set under
-// a single hold of m.mu, so the transaction is all-or-nothing and isolated from
-// concurrent single-item writes. On any failed condition it returns a
+// is evaluated, and only if all pass are all writes applied. The whole set runs
+// under a single hold of m.mu, so the transaction is all-or-nothing and isolated
+// from concurrent single-item writes. On any failed condition it returns a
 // *driver.TransactionCanceled naming the failed operations and writes nothing.
 func (m *Mock) TransactWrite(ctx context.Context, ops []driver.TransactOp, clientRequestToken string) error {
 	start := m.opts.Clock.Now()

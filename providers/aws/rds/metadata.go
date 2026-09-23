@@ -64,7 +64,7 @@ var orderableInstanceClasses = []string{
 }
 
 // defaultEngineVersion returns the version real RDS assigns when a caller omits
-// EngineVersion — the first (lowest) version the emulator lists for the engine.
+// EngineVersion, the first (lowest) version the emulator lists for the engine.
 // Returns "" for an unknown engine, leaving the field unset.
 func defaultEngineVersion(engine string) string {
 	versions := engineVersionCatalog[engine]
@@ -203,7 +203,7 @@ func (m *Mock) ListTagsForResource(_ context.Context, resourceARN string) (map[s
 
 // recordTags returns a copy of the tags on the record named by kind+id, and
 // whether that record exists. Group kinds (parameter/option/subnet groups) are
-// not records and always report false — their tags live in groupTags.
+// not records and always report false. Their tags live in groupTags.
 func (m *Mock) recordTags(kind, id string) (map[string]string, bool) {
 	switch kind {
 	case arnKindInstance:

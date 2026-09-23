@@ -18,7 +18,7 @@ type importData struct {
 }
 
 // StartImport records an import job. There is no real S3 source to read, so the
-// job is created COMPLETED (documented) — the local-dev analog of an
+// job is created COMPLETED (documented), the local-dev analog of an
 // instantaneous ingest with no failures.
 //
 //nolint:gocritic // in is the public input, taken by value to match the driver API.

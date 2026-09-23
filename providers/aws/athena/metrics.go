@@ -24,7 +24,7 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 }
 
 // emitQueryMetrics publishes a completed query's metrics, only when its
-// workgroup has PublishCloudWatchMetricsEnabled (the default) — real Athena
+// workgroup has PublishCloudWatchMetricsEnabled (the default). Real Athena
 // publishes nothing for a workgroup with it turned off.
 //
 //nolint:gocritic // hugeParam: wg passed by value, read-only here

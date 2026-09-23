@@ -23,8 +23,8 @@ type route53Snapshot struct {
 	TagsByID     map[string]map[string]string `json:"tagsById,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Route 53 holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Route 53 holds no
+// bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap route53Snapshot
 

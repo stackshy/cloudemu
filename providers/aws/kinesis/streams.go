@@ -338,7 +338,7 @@ func (m *Mock) UpdateShardCount(
 
 	// Close the open shards (snapshotting their ranges), build the new open shards,
 	// then link each child to the parent(s) it overlaps so draining a closed shard
-	// reports its children — otherwise a following consumer dead-ends.
+	// reports its children; otherwise a following consumer dead-ends.
 	parents := closeOpenShards(sd.shards, now, sd.nextSeq())
 	children := m.buildShards(targetCount, nextIdx, sd.nextSeq(), now)
 	linkChildren(children, parents)

@@ -22,8 +22,8 @@ type apprunnerSnapshot struct {
 	Observability map[string]driver.ObservabilityConfiguration `json:"observability,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// App Runner is control-plane only and holds no bulk assets.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. App Runner is
+// control-plane only and holds no bulk assets.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := apprunnerSnapshot{}
 

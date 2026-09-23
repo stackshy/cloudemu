@@ -12,10 +12,11 @@ import (
 // arn and creation timestamp. The group must exist; the target,
 // flexible-time-window and start/end dates are carried verbatim. A repeated
 // ClientToken within the dedup window returns the schedule already created for
-// it (as it reads now, after any update) instead of hitting the already-exists check — a retried create
-// resends the same group+name and would otherwise get a spurious
-// ConflictException instead of its original result. The token is scoped to the
-// group+name it was sent for and only replays while that schedule still exists.
+// it (as it reads now, after any update) instead of hitting the already-exists
+// check. A retried create resends the same group+name and would otherwise get
+// a spurious ConflictException instead of its original result. The token is
+// scoped to the group+name it was sent for and only replays while that
+// schedule still exists.
 func (m *Mock) CreateSchedule(ctx context.Context, in *driver.ScheduleInput) (*driver.Schedule, error) {
 	if err := validateScheduleInput(in); err != nil {
 		return nil, err

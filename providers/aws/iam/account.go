@@ -110,7 +110,7 @@ func (m *Mock) customerManagedPolicyCountLocked() int {
 }
 
 // UpdateAccountPasswordPolicy creates or replaces the account password policy
-// (IAM UpdateAccountPasswordPolicy — the single create-or-update operation).
+// (IAM UpdateAccountPasswordPolicy, the single create-or-update operation).
 func (m *Mock) UpdateAccountPasswordPolicy(_ context.Context, p driver.PasswordPolicy) error {
 	if p.MinimumPasswordLength == 0 {
 		p.MinimumPasswordLength = defaultMinimumPasswordLength

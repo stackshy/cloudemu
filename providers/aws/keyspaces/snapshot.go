@@ -24,8 +24,8 @@ type keyspacesSnapshot struct {
 	Tags      map[string]map[string]string `json:"tags,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Keyspaces holds schema metadata, not bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Keyspaces holds
+// schema metadata, not bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap keyspacesSnapshot
 

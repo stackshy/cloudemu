@@ -65,7 +65,7 @@ func (m *Mock) CreateDBInstanceReadReplica(ctx context.Context, cfg rdsdriver.Re
 
 	// A real read replica serves the SOURCE's data. When the source is backed by
 	// a real engine, point the replica at the source's reachable host:port so a
-	// client reading from the replica reaches the real database — provisioning a
+	// client reading from the replica reaches the real database. Provisioning a
 	// separate empty database would leave the replica seeing none of the source's
 	// data. A synthetic source keeps the synthetic replica endpoint.
 	region := regionctx.RegionOr(ctx, m.opts.Region)

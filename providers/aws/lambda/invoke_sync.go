@@ -11,7 +11,7 @@ import (
 
 // InvokeSync synchronously invokes the function identified by its ARN (or bare
 // name) and returns the output payload plus a functionError set when the handler
-// ran but raised (StatusCode 500 / a non-empty out.Error — the same X-Amz-
+// ran but raised (StatusCode 500 / a non-empty out.Error, the same X-Amz-
 // Function-Error semantics Invoke reports). It backs the Step Functions
 // Task->Lambda seam (sfn.LambdaSyncInvoker).
 //
@@ -21,8 +21,8 @@ import (
 // into Lambda re-enters here on the same goroutine (invoke -> handler ->
 // StartExecution -> Task -> InvokeSync -> ...). ctx carries the re-entrant
 // delivery depth (see internal/recursionguard); once it reaches
-// recursionguard.MaxDepth — matching AWS Lambda's own recursive-loop detection
-// (~16 invocations within one chain of requests) — the invocation is dropped
+// recursionguard.MaxDepth, matching AWS Lambda's own recursive-loop detection
+// (~16 invocations within one chain of requests), the invocation is dropped
 // and reported as a bounded functionError (which the Task maps to
 // States.TaskFailed) instead of recursing the process into an unrecoverable
 // stack overflow.

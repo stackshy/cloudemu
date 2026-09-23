@@ -16,7 +16,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // state that lives beside the stores: clusterCreds (unexported value type, so
 // promoted), groupTags, and rootPasswords. The in-flight settle overlays
 // (instSettle/snapSettle) and the wired deps (opts, subnetResolver, monitoring)
-// are intentionally not serialized — a restored record reports its stored state.
+// are intentionally not serialized. A restored record reports its stored state.
 type rdsSnapshot struct {
 	Instances          json.RawMessage `json:"instances,omitempty"`
 	Clusters           json.RawMessage `json:"clusters,omitempty"`
@@ -43,8 +43,8 @@ type clusterCredSnapshot struct {
 	Pass string `json:"pass,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// RDS holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. RDS holds no bulk
+// object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap rdsSnapshot
 	if err := m.snapshotStores(&snap); err != nil {

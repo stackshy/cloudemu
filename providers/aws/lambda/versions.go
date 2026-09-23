@@ -28,7 +28,7 @@ func (m *Mock) PublishVersion(_ context.Context, functionName, description strin
 	}
 
 	// AWS Lambda doesn't publish a new version if the function's configuration and
-	// code haven't changed since the last version — it returns that existing
+	// code haven't changed since the last version. It returns that existing
 	// version instead. Every configuration/code update mints a fresh $LATEST
 	// RevisionID, so a last-published version cut from the current $LATEST revision
 	// means nothing changed and no new version is created.
@@ -184,8 +184,8 @@ func removeVersionEntry(versions []*versionData, version string) []*versionData 
 	return next
 }
 
-// aliasReferencing returns the name of an alias that still references version —
-// either as its primary FunctionVersion or through a weighted RoutingConfig — or
+// aliasReferencing returns the name of an alias that still references version,
+// either as its primary FunctionVersion or through a weighted RoutingConfig, or
 // "" when no alias depends on it. AWS refuses to delete a version an alias points
 // at (ResourceConflictException).
 func aliasReferencing(fd *funcData, version string) string {

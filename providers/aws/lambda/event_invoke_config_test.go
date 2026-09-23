@@ -42,7 +42,7 @@ func (f *fakeSQS) get(arn string) []string {
 type fakeSNS struct {
 	mu   sync.Mutex
 	msgs map[string][]string
-	// onPublish, when set, is called on every publish — used to simulate an
+	// onPublish, when set, is called on every publish, used to simulate an
 	// SNS -> Lambda fan-out that re-invokes the failing function (recursion test).
 	onPublish func(ctx context.Context, arn, msg string)
 }
