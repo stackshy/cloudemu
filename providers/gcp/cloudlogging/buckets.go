@@ -187,7 +187,7 @@ func (m *Mock) UpdateBucket(_ context.Context, project, location, name string, u
 
 // applyBucketUpdate computes the new value of existing for a partial update.
 // _Required cannot be modified at all; a locked bucket's retention cannot be
-// reduced, and a locked bucket can never be unlocked — both are
+// reduced, and a locked bucket can never be unlocked; both are
 // FailedPrecondition, mirroring real Cloud Logging.
 func applyBucketUpdate(existing *driver.LogBucket, update driver.BucketUpdate, name string, now time.Time) (*driver.LogBucket, error) {
 	if existing.Name == requiredBucketID {

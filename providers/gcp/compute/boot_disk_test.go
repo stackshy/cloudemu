@@ -12,7 +12,7 @@ import (
 
 // TestRemoveInstanceAutoDeleteCascade proves RemoveInstance (GCP instances.delete)
 // deletes a disk attached with DeleteOnTermination=true (autoDelete) and detaches
-// — but keeps — one attached with DeleteOnTermination=false.
+// (but keeps) one attached with DeleteOnTermination=false.
 func TestRemoveInstanceAutoDeleteCascade(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

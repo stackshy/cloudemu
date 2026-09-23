@@ -1,7 +1,7 @@
 // Package datacatalog provides an in-memory mock of the Google Cloud Data
 // Catalog control plane (datacatalog.googleapis.com/v1). It models the nested
-// registration resources — entry groups, their entries, each entry's tags, and
-// the tag templates those tags reference — with synchronous REST CRUD (no
+// registration resources (entry groups, their entries, each entry's tags, and
+// the tag templates those tags reference) with synchronous REST CRUD (no
 // long-running operations).
 //
 // The only computed fields are resource names (minted once, stable across
@@ -9,7 +9,7 @@
 // templateDisplayName / per-field displayName+order. Deleting a parent cascades
 // to its descendants: removing an entry group removes its entries and every tag
 // beneath it; removing an entry removes its tags; force-removing a tag template
-// removes its dependent tags — matching real Data Catalog.
+// removes its dependent tags, matching real Data Catalog.
 package datacatalog
 
 import (

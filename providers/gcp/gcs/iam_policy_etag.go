@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	// iamEtagTag is the protobuf tag byte for field 1 (varint wire type) —
+	// iamEtagTag is the protobuf tag byte for field 1 (varint wire type):
 	// real GCS bucket IAM policy etags are base64 of a single-field protobuf
 	// message carrying a monotonically increasing version, e.g. "CAE=" decodes
 	// to tag 0x08 (field 1, varint) followed by the varint-encoded value 1.

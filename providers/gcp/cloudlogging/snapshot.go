@@ -43,7 +43,7 @@ type logStreamSnapshot struct {
 	Events []driver.LogEvent    `json:"events,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Cloud Logging holds no bulk object bodies beyond its log events, which are
 // always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {

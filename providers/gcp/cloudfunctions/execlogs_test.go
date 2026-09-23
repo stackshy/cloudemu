@@ -44,7 +44,7 @@ func TestInvokeSurfacesLogsToCloudLogging(t *testing.T) {
 }
 
 // TestInvokeNoLogSinkDefault verifies the default path (no sink wired) is a
-// no-op — no panic, and the invoke still succeeds.
+// no-op: no panic, and the invoke still succeeds.
 func TestInvokeNoLogSinkDefault(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()

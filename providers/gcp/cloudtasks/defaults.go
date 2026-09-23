@@ -24,7 +24,7 @@ const (
 // reported by `gcloud tasks queues describe`). This monotonic step function
 // reproduces that anchor; since the field is output-only and Terraform's google
 // provider treats max_burst_size as Computed, the exact non-default values are
-// not a drift source — only stability across a Get round-trip matters.
+// not a drift source; only stability across a Get round-trip matters.
 const (
 	burstStepLow    = 1.0
 	burstStepMid    = 10.0

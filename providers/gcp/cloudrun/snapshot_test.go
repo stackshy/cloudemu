@@ -9,7 +9,7 @@ import (
 
 // TestSnapshotRoundTripCloudRun proves a snapshot/restore round-trip preserves a
 // job and a service (with its materialized revision) under their original ids,
-// with the container image reference — the deployable "code" — intact.
+// with the container image reference (the deployable "code") intact.
 func TestSnapshotRoundTripCloudRun(t *testing.T) {
 	ctx := context.Background()
 	src := newMock(t, nil)

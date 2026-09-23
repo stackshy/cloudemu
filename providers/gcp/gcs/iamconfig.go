@@ -8,7 +8,7 @@ import (
 )
 
 // ublaLockDays is how far ahead GCS stamps a bucket's uniform bucket-level
-// access lockedTime when UBLA is enabled — the window during which it can still
+// access lockedTime when UBLA is enabled, the window during which it can still
 // be disabled before becoming permanent.
 const ublaLockDays = 90
 

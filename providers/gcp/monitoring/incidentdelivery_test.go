@@ -82,7 +82,7 @@ func TestBreachDeliversWebhookIncident(t *testing.T) {
 }
 
 // TestBreachSucceedsWhenWebhookUnreachable covers (a): an unreachable receiver
-// does not fail the breach — delivery is best-effort.
+// does not fail the breach: delivery is best-effort.
 func TestBreachSucceedsWhenWebhookUnreachable(t *testing.T) {
 	m, _ := newTestMock()
 
@@ -166,7 +166,7 @@ func TestBreachEmailChannelRecordOnly(t *testing.T) {
 // TestSetAlarmActionsResyncsChannelsPreservingState covers the patch re-sync
 // gap: after a breach delivered to channel A, replacing the alarm's actions with
 // channel B (as alertPolicies.patch does) must (1) preserve the alarm's current
-// ALARM state and its history — no CreateAlarm reset — and (2) route subsequent
+// ALARM state and its history (no CreateAlarm reset) and (2) route subsequent
 // incident deliveries to B, never again to A.
 func TestSetAlarmActionsResyncsChannelsPreservingState(t *testing.T) {
 	m, clk := newTestMock()
@@ -228,7 +228,7 @@ func TestSetAlarmActionsResyncsChannelsPreservingState(t *testing.T) {
 }
 
 // TestRecoveryDeliversClosedIncident covers open+close delivery: a breach then a
-// recovery each deliver, the second carrying a closed incident — and the state /
+// recovery each deliver, the second carrying a closed incident, and the state /
 // history transitions are unchanged (no regression).
 func TestRecoveryDeliversClosedIncident(t *testing.T) {
 	m, clk := newTestMock()

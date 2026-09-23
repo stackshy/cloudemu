@@ -168,7 +168,7 @@ func (m *Mock) transitionCA(
 
 // seedAuthority mints a certificate authority's computed fields at create: its
 // tier is inherited from the parent pool (which must exist), and its initial
-// state plus deterministic PEM material follow from its type — a self-signed CA
+// state plus deterministic PEM material follow from its type: a self-signed CA
 // lands ENABLED with a signed self certificate, a subordinate CA lands
 // AWAITING_USER_ACTIVATION with no signed certificate yet. Runs under the write
 // lock, so the parent pool read is consistent.

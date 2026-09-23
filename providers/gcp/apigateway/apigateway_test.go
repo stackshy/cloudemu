@@ -115,7 +115,7 @@ func TestDeleteAPICascadesConfigs(t *testing.T) {
 		t.Fatalf("a1 config after cascade err = %v, want NotFound", err)
 	}
 
-	// a10's config must survive — the cascade prefix is trailing-slash-bounded.
+	// a10's config must survive: the cascade prefix is trailing-slash-bounded.
 	if _, err := m.GetAPIConfig(ctx(), project, global, "a10", "c10"); err != nil {
 		t.Fatalf("a10 config wrongly cascaded: %v", err)
 	}

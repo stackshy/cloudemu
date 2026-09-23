@@ -2,9 +2,9 @@
 // Authorization (binaryauthorization.googleapis.com v1). It satisfies
 // services/binaryauthorization/driver.BinaryAuthorization so the v1 REST wire
 // handler (server/gcp/binaryauthorization) serves real
-// google.golang.org/api/binaryauthorization/v1 clients — and Terraform's google
+// google.golang.org/api/binaryauthorization/v1 clients, and Terraform's google
 // provider (google_binary_authorization_policy / google_binary_authorization_
-// attestor) — against it.
+// attestor), against it.
 //
 // This is the control plane only: the per-project Policy singleton and the
 // Attestor CRUD surface plus the attestor IAM methods. All operations are
@@ -222,7 +222,7 @@ func noteWithDelegation(in *driver.UserOwnedGrafeasNote, project string) *driver
 }
 
 // delegationEmail returns the deterministic Binary Authorization service-agent
-// email for a project — stable across reads, matching the computed field a
+// email for a project, stable across reads, matching the computed field a
 // Terraform practitioner sees.
 func delegationEmail(project string) string {
 	return "service-" + project + "@gcp-sa-binaryauthorization.iam.gserviceaccount.com"

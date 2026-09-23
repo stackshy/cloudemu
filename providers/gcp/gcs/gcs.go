@@ -268,7 +268,7 @@ func (m *Mock) DeleteBucket(_ context.Context, name string) error {
 
 // bucketHasNoncurrentVersions reports whether any archived (noncurrent) object
 // generation is still retained. Real GCS refuses to delete a bucket that holds
-// noncurrent versions — not just live objects — with a 409 not-empty.
+// noncurrent versions, not just live objects, with a 409 not-empty.
 func bucketHasNoncurrentVersions(bkt *bucketMeta) bool {
 	bkt.mu.Lock()
 	defer bkt.mu.Unlock()
@@ -333,7 +333,7 @@ func (m *Mock) putObject(
 		return nil, err
 	}
 
-	// An overwrite of a retained-or-held live object is blocked (WORM) — real GCS
+	// An overwrite of a retained-or-held live object is blocked (WORM): real GCS
 	// refuses to replace it until retention elapses and every hold is released.
 	if exists {
 		if err := objectImmutable(m, bkt, current); err != nil {
@@ -458,8 +458,8 @@ func checkMetagenerationConditions(pre driver.GCSPrecondition, metagen int64, ex
 
 // archiveVersion retains the current object generation when versioning is
 // enabled, so a versions=true listing can still surface it after an overwrite.
-// deletedAt stamps the generation's GCS timeDeleted — the instant it became
-// noncurrent — the same way real GCS reports when a version was superseded or
+// deletedAt stamps the generation's GCS timeDeleted (the instant it became
+// noncurrent), the same way real GCS reports when a version was superseded or
 // explicitly deleted.
 func archiveVersion(bkt *bucketMeta, key string, current *gcsObject, exists bool, deletedAt string) {
 	if !exists || !bkt.versioning {
@@ -574,7 +574,7 @@ func (m *Mock) deleteObject(ctx context.Context, bucket, key string, generation 
 	}
 
 	// Versioning-enabled live delete archives the current generation (it becomes
-	// noncurrent) — real GCS retains it, listable via versions=true.
+	// noncurrent): real GCS retains it, listable via versions=true.
 	if bkt.versioning {
 		now := m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
 		archiveVersion(bkt, key, current, true, now)
@@ -586,7 +586,7 @@ func (m *Mock) deleteObject(ctx context.Context, bucket, key string, generation 
 
 	bkt.objects.Delete(key)
 
-	// Best-effort byte purge — the in-memory delete already succeeded, so a
+	// Best-effort byte purge: the in-memory delete already succeeded, so a
 	// backing cleanup failure must not fail an idempotent object delete.
 	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
 
@@ -813,8 +813,8 @@ func (m *Mock) ListObjects(ctx context.Context, bucket string, opts driver.ListO
 	}, nil
 }
 
-// gcsListEntry is one item in a folded delimiter listing — either a matched
-// object or a rolled-up common prefix — carrying the lexicographic sort key.
+// gcsListEntry is one item in a folded delimiter listing (either a matched
+// object or a rolled-up common prefix) carrying the lexicographic sort key.
 type gcsListEntry struct {
 	name     string
 	isPrefix bool
@@ -844,7 +844,7 @@ func foldedListEntries(objects []driver.ObjectInfo, prefixSet map[string]struct{
 
 // splitListPage separates a folded page back into object infos and common
 // prefixes (order preserved). Object metadata is cloned only for the page
-// actually returned — cloning every match would make a paged scan O(bucket)
+// actually returned: cloning every match would make a paged scan O(bucket)
 // allocations per request.
 func splitListPage(items []gcsListEntry) (objects []driver.ObjectInfo, prefixes []string) {
 	for i := range items {
@@ -927,7 +927,7 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 }
 
 // GeneratePresignedURL generates a mock presigned URL.
-// Note: expiry is tracked in the URL but not enforced on use — this is a mock limitation.
+// Note: expiry is tracked in the URL but not enforced on use, a mock limitation.
 func (m *Mock) GeneratePresignedURL(_ context.Context, req driver.PresignedURLRequest) (*driver.PresignedURL, error) {
 	if req.Method != http.MethodGet && req.Method != http.MethodPut {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "method must be GET or PUT, got %q", req.Method)
@@ -1173,7 +1173,7 @@ func (m *Mock) ListMultipartUploads(_ context.Context, bucket string) ([]driver.
 }
 
 // SetBucketVersioning enables or disables versioning on a bucket.
-// Note: this sets the flag but does not maintain object version history — mock limitation.
+// Note: this sets the flag but does not maintain object version history, a mock limitation.
 func (m *Mock) SetBucketVersioning(_ context.Context, bucket string, enabled bool) error {
 	bkt, ok := m.buckets.Get(bucket)
 	if !ok {
@@ -1441,7 +1441,7 @@ func (m *Mock) UpdateObjectGCS(
 	next := *cur
 	next.Metageneration = cur.Metageneration + 1
 	// A metadata-only patch advances the update time but leaves the object's
-	// creation time (timeCreated) fixed — real GCS bumps only `updated`.
+	// creation time (timeCreated) fixed: real GCS bumps only `updated`.
 	next.LastModified = m.opts.Clock.Now().UTC().Format(gcsTimeFormat)
 	next.Metadata = mergeMetadata(cur.Metadata, upd.Metadata)
 
@@ -1599,7 +1599,7 @@ func collectAllVersions(bkt *bucketMeta) []*gcsObject {
 	}
 
 	// Keys whose live generation was deleted keep their noncurrent generations
-	// on a versioned bucket — real GCS still lists these under versions=true.
+	// on a versioned bucket: real GCS still lists these under versions=true.
 	for k, archived := range bkt.versions {
 		if _, live := seen[k]; live {
 			continue
@@ -1681,7 +1681,7 @@ func (m *Mock) TouchBucket(_ context.Context, bucket string) error {
 
 // CompareAndSetBucketIAMPolicy atomically checks expectedEtag against the
 // bucket's current stored IAM policy etag and, only on a match (or an empty
-// expectedEtag, an unconditional write), replaces the policy — see
+// expectedEtag, an unconditional write), replaces the policy. See
 // driver.GCSExtensions for why the check and the write must share one lock.
 func (m *Mock) CompareAndSetBucketIAMPolicy(_ context.Context, bucket, expectedEtag string, policyJSON []byte) ([]byte, error) {
 	bkt, ok := m.buckets.Get(bucket)

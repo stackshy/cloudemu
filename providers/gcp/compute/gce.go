@@ -824,7 +824,7 @@ func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.Snap
 
 // SetVolumeLabelsGCP replaces a disk's user labels: set entries are written and
 // remove keys deleted on the disk's tag map (internal cloudemu tags are left
-// untouched — the wire layer only passes user labels). GCP-specific; reached via
+// untouched; the wire layer only passes user labels). GCP-specific; reached via
 // a type assertion from the GCE wire handler for disks.setLabels.
 func (m *Mock) SetVolumeLabelsGCP(volumeID string, set map[string]string, remove []string) error {
 	return setStoreLabels(m.volumes, volumeID, func(v *driver.VolumeInfo) *map[string]string { return &v.Tags },
@@ -875,7 +875,7 @@ func setStoreLabels[T any](
 // it is unaffected. The result is always non-nil.
 func mergeTags(src, set map[string]string, remove []string) map[string]string {
 	// src and set originate from caller-supplied labels. Guard the raw source
-	// length — no runtime arithmetic on a request-derived value, so nothing for an
+	// length: no runtime arithmetic on a request-derived value, so nothing for an
 	// overflow check to flag, and the guard bounds the allocation. The map still
 	// grows to hold every key, including those from set; this only sizes the hint.
 	const maxTagCap = 10000
@@ -904,7 +904,7 @@ func mergeTags(src, set map[string]string, remove []string) map[string]string {
 
 //nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
 func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
-	// GCP images are created from a disk, snapshot, or import — not from a
+	// GCP images are created from a disk, snapshot, or import, not from a
 	// source instance. An empty InstanceID is one of those source-based paths,
 	// so only validate when a specific instance was named (the EC2-style path).
 	if cfg.InstanceID != "" {

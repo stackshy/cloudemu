@@ -12,7 +12,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // cloudidsSnapshot is the full serialized state of the Cloud IDS mock. Every
 // store holds fully-exported idsdriver value types keyed by their full GCP
-// resource name, so each round-trips through the generic memstore helper — no
+// resource name, so each round-trips through the generic memstore helper: no
 // field promotion is needed. opSeq is the operation-name counter, captured beside
 // the stores so restored operation ids do not collide with fresh ones. The wired
 // deps (m.opts) and the RWMutex are intentionally not serialized.
@@ -23,7 +23,7 @@ type cloudidsSnapshot struct {
 }
 
 // Snapshot captures every endpoint and operation as JSON. includeAssets is
-// unused — Cloud IDS admin is control-plane only and holds no bulk object bodies.
+// unused: Cloud IDS admin is control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

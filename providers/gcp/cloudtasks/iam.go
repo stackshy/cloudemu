@@ -50,7 +50,7 @@ func (m *Mock) SetIamPolicy(_ context.Context, name string, policy driver.IAMPol
 	return clonePolicy(stored), nil
 }
 
-// TestIamPermissions echoes back the requested permissions — CloudEmu does not
+// TestIamPermissions echoes back the requested permissions. CloudEmu does not
 // enforce IAM, so every requested permission is reported as granted.
 func (m *Mock) TestIamPermissions(_ context.Context, name string, permissions []string) ([]string, error) {
 	m.mu.Lock()

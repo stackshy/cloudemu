@@ -193,7 +193,7 @@ func TestRestoreBackupInPlace(t *testing.T) {
 	requireNoError(t, err)
 
 	// Restoring in place keeps the target's identity but adopts the backup's
-	// engine/version/storage — and does NOT create a new instance.
+	// engine/version/storage, and does NOT create a new instance.
 	restored, err := m.RestoreBackup(ctx, "target", "snap1")
 	requireNoError(t, err)
 	assertEqual(t, "target", restored.ID)
@@ -422,7 +422,7 @@ func TestCloudSQLReplicaAndFailoverActions(t *testing.T) {
 		t.Error("PromoteReplica on a non-replica: expected FailedPrecondition")
 	}
 
-	// Create a replica of i, then promote it — it detaches and the primary
+	// Create a replica of i, then promote it: it detaches and the primary
 	// loses it from its replica list.
 	if _, err := m.CreateInstance(ctx, rdsdriver.InstanceConfig{
 		ID: "r", Engine: "POSTGRES_15", MasterInstanceName: "i",
@@ -700,7 +700,7 @@ func TestDescribeInstancesResultDoesNotAliasStore(t *testing.T) {
 // iterating the raw memstore map (random Go iteration order) instead of a
 // sorted view. Backup runs are inserted in a non-lexicographic order so a
 // stray return to map iteration would surface intermittently rather than
-// deterministically, but the correct behavior — sorted by id — must hold on
+// deterministically, but the correct behavior (sorted by id) must hold on
 // every call.
 func TestDescribeSnapshotsOrderIsDeterministic(t *testing.T) {
 	m := newTestMock()

@@ -282,7 +282,7 @@ func lastSegment(name string) string {
 func newID(n int) string {
 	b := make([]byte, n)
 	// A read error leaves b zeroed, which still encodes to a valid (all-zero)
-	// hex id — good enough for an in-memory emulator that never returns error here.
+	// hex id, good enough for an in-memory emulator that never returns error here.
 	_, _ = rand.Read(b)
 
 	return hex.EncodeToString(b)

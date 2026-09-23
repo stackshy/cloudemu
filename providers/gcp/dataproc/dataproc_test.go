@@ -233,7 +233,7 @@ func TestUpdateClusterMaskIgnoresUnmasked(t *testing.T) {
 
 	mustCreate(t, m, "analytics", "us-central1")
 
-	// Mask only labels — a worker count in the payload must be ignored.
+	// Mask only labels: a worker count in the payload must be ignored.
 	c, _, err := m.UpdateCluster(ctx, "proj", "us-central1", "analytics", dpdriver.UpdateClusterConfig{
 		FieldMask:          []string{"labels"},
 		Labels:             map[string]string{"team": "data"},

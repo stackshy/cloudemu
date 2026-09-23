@@ -13,7 +13,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // spannerSnapshot is the full serialized state of the Spanner admin mock. Every
 // store holds a fully-exported spdriver value type keyed by its full GCP resource
 // name (projects/{p}/instances/{i}[/databases/{d}]), so each round-trips through
-// the generic memstore helper — no field promotion is needed. opSeq is the
+// the generic memstore helper: no field promotion is needed. opSeq is the
 // operation-name counter, captured beside the stores so restored operation ids do
 // not collide with fresh ones. The wired deps (m.opts) and the RWMutex are
 // intentionally not serialized.
@@ -25,7 +25,7 @@ type spannerSnapshot struct {
 }
 
 // Snapshot captures every instance, database, and operation as JSON.
-// includeAssets is unused — Spanner admin is control-plane only and holds no bulk
+// includeAssets is unused: Spanner admin is control-plane only and holds no bulk
 // object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

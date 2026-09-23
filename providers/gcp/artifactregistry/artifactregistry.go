@@ -430,7 +430,7 @@ func (m *Mock) CreateTag(_ context.Context, repository, digest, tag string) erro
 // tag must exist, and the repository must not have immutableTags enabled.
 // The provider's package/version model allows exactly one version per
 // package, so there is nothing further to persist once the wire layer has
-// confirmed the requested version resolves to that same version — but the
+// confirmed the requested version resolves to that same version. But the
 // immutableTags gate must still be evaluated under the same lock a mutation
 // would use, or a concurrent repository patch could flip the flag between the
 // wire layer's check and its response. This is a GCP-specific extension, not

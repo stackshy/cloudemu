@@ -42,7 +42,7 @@ type imageSnapshot struct {
 }
 
 // Snapshot captures every repository and its images as JSON. includeAssets is
-// unused — image records carry no bulk blob bodies.
+// unused: image records carry no bulk blob bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

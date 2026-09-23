@@ -137,7 +137,7 @@ func applyUpdate(svc *driver.Service, cfg *driver.ServiceConfig) {
 }
 
 // DeleteService removes a service, all of its revisions, and any Go handler
-// registered for it (see RegisterHandler) — otherwise a redeployed service
+// registered for it (see RegisterHandler). Otherwise a redeployed service
 // reusing the same id would silently inherit the old deployment's handler
 // instead of the documented no-handler echo stub.
 func (m *Mock) DeleteService(_ context.Context, name string) error {
@@ -198,7 +198,7 @@ func (m *Mock) GetRevision(_ context.Context, name string) (*driver.Revision, er
 
 // DeleteRevision removes a single revision of a service. Real Cloud Run
 // refuses to delete a revision that is able to receive traffic, is the only
-// revision of its service, or is the service's latest revision — deleting any
+// revision of its service, or is the service's latest revision: deleting any
 // of those would leave the service's own revision/traffic pointers dangling
 // at a revision that no longer exists. See
 // https://docs.cloud.google.com/run/docs/managing/revisions.
@@ -233,8 +233,8 @@ func (m *Mock) DeleteRevision(_ context.Context, name string) error {
 }
 
 // checkRevisionDeletable returns a FailedPrecondition error naming why id
-// cannot be deleted from svc — it is the service's only revision, its latest
-// revision, or it is currently allocated traffic — or nil when the delete may
+// cannot be deleted from svc (it is the service's only revision, its latest
+// revision, or it is currently allocated traffic), or nil when the delete may
 // proceed. siblingCount is the number of revisions svc currently has,
 // including id itself.
 func checkRevisionDeletable(svc *driver.Service, id string, siblingCount int) error {
@@ -435,7 +435,7 @@ func (m *Mock) materializeRevision(svc *driver.Service, now time.Time) *driver.R
 
 // reconcile rolls the newly materialized revision up onto svc: revision
 // pointers, URL, traffic status, terminal condition, generation echoes, and
-// etag — the observed state a real reconcile would report.
+// etag, the observed state a real reconcile would report.
 func reconcile(svc *driver.Service, rev *driver.Revision, now time.Time, region string) {
 	svc.LatestCreatedRevision = rev.Name
 	svc.LatestReadyRevision = rev.Name

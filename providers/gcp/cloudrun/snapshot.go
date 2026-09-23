@@ -11,8 +11,8 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // crSnapshot is the full serialized state of the Cloud Run mock. Every store
-// holds a fully-exported driver value type (Job, Execution, Service, Revision) —
-// or, for engineHandles, a plain []string — keyed by resource id, so each
+// holds a fully-exported driver value type (Job, Execution, Service, Revision),
+// or, for engineHandles, a plain []string, keyed by resource id, so each
 // round-trips through the generic memstore helper; no promotion is needed. The
 // container template a job/service/revision carries (its image reference and
 // command, the deployable "code") lives in those exported fields and survives
@@ -29,7 +29,7 @@ type crSnapshot struct {
 }
 
 // Snapshot captures every job, execution, service, and revision as JSON.
-// includeAssets is unused — Cloud Run holds container references, not object
+// includeAssets is unused: Cloud Run holds container references, not object
 // bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.Lock()

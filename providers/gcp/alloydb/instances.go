@@ -252,32 +252,32 @@ func (m *Mock) RebootInstance(_ context.Context, id string) error {
 	return nil
 }
 
-// StartInstance is unsupported — AlloyDB instances cannot be stopped/started.
+// StartInstance is unsupported: AlloyDB instances cannot be stopped/started.
 func (*Mock) StartInstance(_ context.Context, _ string) error {
 	return cerrors.New(cerrors.InvalidArgument, "AlloyDB does not support starting instances")
 }
 
-// StopInstance is unsupported — AlloyDB instances cannot be stopped/started.
+// StopInstance is unsupported: AlloyDB instances cannot be stopped/started.
 func (*Mock) StopInstance(_ context.Context, _ string) error {
 	return cerrors.New(cerrors.InvalidArgument, "AlloyDB does not support stopping instances")
 }
 
-// CreateSnapshot is unsupported — AlloyDB backups are cluster-scoped.
+// CreateSnapshot is unsupported: AlloyDB backups are cluster-scoped.
 func (*Mock) CreateSnapshot(_ context.Context, _ rdsdriver.SnapshotConfig) (*rdsdriver.Snapshot, error) {
 	return nil, cerrors.New(cerrors.InvalidArgument, "AlloyDB has no instance-level snapshots; use cluster backups")
 }
 
-// DescribeSnapshots returns an empty list — AlloyDB has no instance snapshots.
+// DescribeSnapshots returns an empty list: AlloyDB has no instance snapshots.
 func (*Mock) DescribeSnapshots(_ context.Context, _ []string, _ string) ([]rdsdriver.Snapshot, error) {
 	return []rdsdriver.Snapshot{}, nil
 }
 
-// DeleteSnapshot is unsupported — AlloyDB has no instance-level snapshots.
+// DeleteSnapshot is unsupported: AlloyDB has no instance-level snapshots.
 func (*Mock) DeleteSnapshot(_ context.Context, _ string) error {
 	return cerrors.New(cerrors.InvalidArgument, "AlloyDB has no instance-level snapshots; use cluster backups")
 }
 
-// RestoreInstanceFromSnapshot is unsupported — restore is cluster-scoped.
+// RestoreInstanceFromSnapshot is unsupported: restore is cluster-scoped.
 func (*Mock) RestoreInstanceFromSnapshot(
 	_ context.Context, _ rdsdriver.RestoreInstanceInput,
 ) (*rdsdriver.Instance, error) {

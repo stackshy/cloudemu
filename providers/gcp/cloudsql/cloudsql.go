@@ -2,7 +2,7 @@
 // implements relationaldb/driver.RelationalDB so the same backend serves both
 // the portable API (relationaldb.DB) and the SDK-compat HTTP layer.
 //
-// Cloud SQL has no Aurora-style cluster concept — the cluster methods on the
+// Cloud SQL has no Aurora-style cluster concept: the cluster methods on the
 // driver interface return InvalidArgument. Instances and snapshots (a.k.a.
 // "backup runs" in Cloud SQL terminology) are fully supported, as is
 // restore-from-backup.
@@ -32,11 +32,11 @@ const (
 	defaultStorage       = 10
 	defaultStorageType   = "PD_SSD"
 	defaultTier          = "db-f1-micro"
-	cpuMetricRunning     = 0.25 // GCP reports CPU as 0.0–1.0 fraction.
+	cpuMetricRunning     = 0.25 // GCP reports CPU as a fraction between 0.0 and 1.0.
 	cpuMetricStopped     = 0.0
 	connRunning          = 5.0
 	// syntheticPrivateIP is the ipAddresses[].ipAddress reported when no real
-	// database engine backs the instance — preserving the historical behavior of
+	// database engine backs the instance, preserving the historical behavior of
 	// always surfacing an IP. When an engine is wired in, dbengine.Provision
 	// overrides Endpoint with the real reachable host.
 	syntheticPrivateIP = "10.0.0.1"
@@ -167,11 +167,11 @@ func cloneStrings(s []string) []string {
 }
 
 // cloneInstance / cloneSnapshot deep-copy the slice/map fields so a returned
-// value never aliases the memstore — a caller mutating its result (or a
+// value never aliases the memstore: a caller mutating its result (or a
 // concurrent reader) can't corrupt the store or trigger a concurrent-map
 // read/write panic. Callers own the returned copy.
 //
-//nolint:gocritic // value copy is intentional — the result must not alias the store.
+//nolint:gocritic // value copy is intentional: the result must not alias the store.
 func cloneInstance(inst rdsdriver.Instance) rdsdriver.Instance {
 	inst.Tags = copyTags(inst.Tags)
 	inst.VPCSecurityGroups = cloneStrings(inst.VPCSecurityGroups)
@@ -180,7 +180,7 @@ func cloneInstance(inst rdsdriver.Instance) rdsdriver.Instance {
 	return inst
 }
 
-//nolint:gocritic // value copy is intentional — the result must not alias the store.
+//nolint:gocritic // value copy is intentional: the result must not alias the store.
 func cloneSnapshot(s rdsdriver.Snapshot) rdsdriver.Snapshot {
 	s.Tags = copyTags(s.Tags)
 
@@ -578,7 +578,7 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 
 // unlinkReplicas keeps the replica graph consistent when inst is removed: a
 // deleted replica is dropped from its master's target list, and a deleted
-// master's replicas have their source pointer cleared — so no surviving
+// master's replicas have their source pointer cleared, so no surviving
 // instance advertises a link to one that no longer exists. The caller holds the
 // write lock.
 func (m *Mock) unlinkReplicas(inst *rdsdriver.Instance) {
@@ -633,7 +633,7 @@ func (m *Mock) StartInstance(_ context.Context, id string) error {
 // StopInstance moves a runnable instance to stopped. In Cloud SQL this
 // corresponds to setting settings.activationPolicy=NEVER. Real Cloud SQL refuses
 // to stop an instance that is a read replica, or a primary that still has read
-// replicas — the guard and transition run under one lock so a replica cannot be
+// replicas: the guard and transition run under one lock so a replica cannot be
 // attached in the window between the check and the state change.
 func (m *Mock) StopInstance(_ context.Context, id string) error {
 	m.mu.Lock()
@@ -734,7 +734,7 @@ func (m *Mock) transitionInstanceLocked(id, from, to string, cpu, conns float64,
 	return nil
 }
 
-// CreateCluster is unsupported on Cloud SQL — it has no Aurora-style cluster.
+// CreateCluster is unsupported on Cloud SQL: it has no Aurora-style cluster.
 //
 //nolint:gocritic // signature matches the driver interface.
 func (*Mock) CreateCluster(_ context.Context, _ rdsdriver.ClusterConfig) (*rdsdriver.Cluster, error) {
@@ -742,7 +742,7 @@ func (*Mock) CreateCluster(_ context.Context, _ rdsdriver.ClusterConfig) (*rdsdr
 		"Cloud SQL does not support Aurora-style clusters; use replicas instead")
 }
 
-// DescribeClusters returns an empty list — Cloud SQL has no clusters.
+// DescribeClusters returns an empty list: Cloud SQL has no clusters.
 func (*Mock) DescribeClusters(_ context.Context, _ []string) ([]rdsdriver.Cluster, error) {
 	return []rdsdriver.Cluster{}, nil
 }
@@ -977,7 +977,7 @@ func (*Mock) CreateClusterSnapshot(
 	return nil, cerrors.New(cerrors.InvalidArgument, "Cloud SQL does not support cluster snapshots")
 }
 
-// DescribeClusterSnapshots returns an empty list — Cloud SQL has no clusters.
+// DescribeClusterSnapshots returns an empty list: Cloud SQL has no clusters.
 func (*Mock) DescribeClusterSnapshots(
 	_ context.Context, _ []string, _ string,
 ) ([]rdsdriver.ClusterSnapshot, error) {

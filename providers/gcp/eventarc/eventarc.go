@@ -554,7 +554,7 @@ func matchesField(value string, allowed any) bool {
 	return false
 }
 
-// UpdateEventBus replaces the mutable fields of an existing channel — ARM
+// UpdateEventBus replaces the mutable fields of an existing channel, using ARM
 // CreateOrUpdate-on-existing semantics (tags come from the request; identity
 // and CreatedAt are preserved).
 func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*driver.EventBusInfo, error) {

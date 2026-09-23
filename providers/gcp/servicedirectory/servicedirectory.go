@@ -1,7 +1,7 @@
 // Package servicedirectory provides an in-memory mock of the Google Cloud
 // Service Directory control plane (servicedirectory.googleapis.com/v1). It
-// models the three nested registration resources — namespaces, their services,
-// and each service's endpoints — with synchronous REST CRUD (no long-running
+// models the three nested registration resources (namespaces, their services,
+// and each service's endpoints) with synchronous REST CRUD (no long-running
 // operations).
 //
 // Each resource's uid is a stable server-assigned UUID4, minted once at create

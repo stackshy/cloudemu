@@ -36,7 +36,7 @@ type queueSnapshot struct {
 	DLQConfig          *driver.DeadLetterConfig `json:"dlqConfig,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Pub/Sub message bodies are the queue state, not bulk object assets.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := pubsubSnapshot{Queues: make(map[string]*queueSnapshot, m.queues.Len())}

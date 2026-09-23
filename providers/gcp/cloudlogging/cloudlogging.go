@@ -585,7 +585,7 @@ func (m *Mock) DescribeSubscriptionFilters(_ context.Context, logGroup string) (
 	return results, nil
 }
 
-// UpdateLogGroup replaces the mutable fields of an existing log group —
+// UpdateLogGroup replaces the mutable fields of an existing log group, using
 // ARM CreateOrUpdate-on-existing semantics (retention and tags come from
 // the request; identity and CreatedAt are preserved). The read-modify-write
 // runs under the store's lock (via Update) rather than mutating the stored
