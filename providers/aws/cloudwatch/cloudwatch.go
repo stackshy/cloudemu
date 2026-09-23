@@ -33,6 +33,9 @@ const (
 	stateInsufficientData = "INSUFFICIENT_DATA"
 )
 
+// reasonDataTimeFormat is the timestamp layout CloudWatch uses in stateReasonData.
+const reasonDataTimeFormat = "2006-01-02T15:04:05.000-0700"
+
 // historyStateUpdate is the HistoryItemType stamped on a recorded state change.
 const historyStateUpdate = "StateUpdate"
 
@@ -87,6 +90,7 @@ type alarmData struct {
 	TreatMissingData        string
 	State                   string
 	StateReason             string
+	StateReasonData         string
 	StateUpdatedTimestamp   time.Time
 	AlarmActions            []string
 	OKActions               []string
@@ -180,7 +184,36 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 		return
 	}
 
-	m.transitionAlarm(alarm, newState, reason, now)
+	m.transitionAlarm(alarm, newState, reason, evaluationReasonData(filtered, &params, now), now)
+}
+
+// evaluationReasonData is the stateReasonData of a metric-driven transition.
+// It is a small subset of what CloudWatch sends.
+func evaluationReasonData(datums []driver.MetricDatum, p *alarmeval.Params, now time.Time) string {
+	data := struct {
+		Version          string    `json:"version"`
+		QueryDate        string    `json:"queryDate"`
+		StartDate        string    `json:"startDate"`
+		Statistic        string    `json:"statistic"`
+		Period           int       `json:"period"`
+		RecentDatapoints []float64 `json:"recentDatapoints"`
+		Threshold        float64   `json:"threshold"`
+	}{
+		Version:          "1.0",
+		QueryDate:        now.UTC().Format(reasonDataTimeFormat),
+		StartDate:        p.WindowStart(now).UTC().Format(reasonDataTimeFormat),
+		Statistic:        p.Stat,
+		Period:           p.Period,
+		RecentDatapoints: alarmeval.RecentDatapoints(datums, p, now),
+		Threshold:        p.Threshold,
+	}
+
+	b, err := json.Marshal(data)
+	if err != nil {
+		return ""
+	}
+
+	return string(b)
 }
 
 // transitionAlarm sets an alarm's state and, only when the state actually
@@ -189,16 +222,17 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 // happen on a state change regardless of whether the change came from metric
 // evaluation or a manual SetAlarmState. An alarm invokes its actions only when
 // it changes state; it never re-fires while the state is steady.
-func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason string, now time.Time) {
+func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason, reasonData string, now time.Time) {
 	oldState := alarm.State
 
 	if oldState != newState {
-		m.appendHistory(alarm.Name, oldState, newState, reason, now)
+		m.appendHistory(alarm, newState, reason, reasonData, now)
 		alarm.StateUpdatedTimestamp = now
 	}
 
 	alarm.State = newState
 	alarm.StateReason = reason
+	alarm.StateReasonData = reasonData
 
 	if oldState != newState {
 		m.fireAlarmActions(alarm, oldState, newState, now)
@@ -206,17 +240,20 @@ func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason string, now ti
 }
 
 // appendHistory records one alarm state transition in the history log.
-func (m *Mock) appendHistory(name, oldState, newState, reason string, now time.Time) {
+// It runs before the alarm is updated, so alarm still holds the old state.
+func (m *Mock) appendHistory(alarm *alarmData, newState, reason, reasonData string, now time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.history = append(m.history, driver.AlarmHistoryEntry{
-		AlarmName:       name,
-		Timestamp:       now,
-		OldState:        oldState,
-		NewState:        newState,
-		HistoryItemType: historyStateUpdate,
-		Reason:          fmt.Sprintf("Transition from %s to %s: %s", oldState, newState, reason),
+		AlarmName:          alarm.Name,
+		Timestamp:          now,
+		OldState:           alarm.State,
+		NewState:           newState,
+		HistoryItemType:    historyStateUpdate,
+		Reason:             fmt.Sprintf("Transition from %s to %s: %s", alarm.State, newState, reason),
+		OldStateReasonData: alarm.StateReasonData,
+		NewStateReasonData: reasonData,
 	})
 }
 
@@ -644,13 +681,23 @@ func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.Alarm
 // configured for the new state (AlarmActions / OKActions /
 // InsufficientDataActions), so the documented "force ALARM to test wiring"
 // workflow delivers its notifications.
-func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) error {
+func (m *Mock) SetAlarmState(ctx context.Context, name, state, reason string) error {
+	return m.SetAlarmStateWithData(ctx, name, state, reason, "")
+}
+
+// SetAlarmStateWithData is SetAlarmState with the optional StateReasonData
+// JSON. An empty reasonData clears any data from an earlier transition.
+func (m *Mock) SetAlarmStateWithData(_ context.Context, name, state, reason, reasonData string) error {
+	if !alarmeval.ValidState(state) {
+		return errors.Newf(errors.InvalidArgument, "invalid alarm state %q: must be OK, ALARM or INSUFFICIENT_DATA", state)
+	}
+
 	a, ok := m.alarms.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "alarm %q not found", name)
 	}
 
-	m.transitionAlarm(a, state, reason, m.opts.Clock.Now())
+	m.transitionAlarm(a, state, reason, reasonData, m.opts.Clock.Now())
 
 	return nil
 }
@@ -848,6 +895,7 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 		ComparisonOperator:      a.ComparisonOperator,
 		Threshold:               a.Threshold,
 		StateReason:             a.StateReason,
+		StateReasonData:         a.StateReasonData,
 		StateUpdatedTimestamp:   a.StateUpdatedTimestamp,
 		Period:                  a.Period,
 		EvaluationPeriods:       a.EvaluationPeriods,

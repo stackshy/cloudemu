@@ -344,6 +344,7 @@ func toAlarmMemberXML(a *mondriver.AlarmInfo) alarmMemberXML {
 		Dimensions:              dimsToXML(a.Dimensions),
 		StateValue:              a.State,
 		StateReason:             a.StateReason,
+		StateReasonData:         a.StateReasonData,
 		ComparisonOperator:      a.ComparisonOperator,
 		Threshold:               a.Threshold,
 		Period:                  a.Period,
@@ -493,13 +494,30 @@ func (h *Handler) querySetAlarmActionsEnabled(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) querySetAlarmState(w http.ResponseWriter, r *http.Request) {
-	err := h.monitoring.SetAlarmState(r.Context(), r.Form.Get("AlarmName"), r.Form.Get("StateValue"), r.Form.Get("StateReason"))
-	if err != nil {
+	in := setAlarmStateInput{
+		AlarmName:       formValue(r, "AlarmName"),
+		StateValue:      formValue(r, "StateValue"),
+		StateReason:     formValue(r, "StateReason"),
+		StateReasonData: formValue(r, "StateReasonData"),
+	}
+
+	if err := h.setAlarmStateCore(r.Context(), &in); err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}
 
 	writeQueryResponse(w, "SetAlarmStateResponse", nil)
+}
+
+// formValue returns a form field, or nil when the field is absent.
+func formValue(r *http.Request, key string) *string {
+	if _, ok := r.Form[key]; !ok {
+		return nil
+	}
+
+	v := r.Form.Get(key)
+
+	return &v
 }
 
 // ---- form list helpers ----
@@ -635,6 +653,7 @@ type alarmMemberXML struct {
 	Dimensions              []dimensionXML `xml:"Dimensions>member,omitempty"`
 	StateValue              string         `xml:"StateValue"`
 	StateReason             string         `xml:"StateReason,omitempty"`
+	StateReasonData         string         `xml:"StateReasonData,omitempty"`
 	StateUpdatedTimestamp   string         `xml:"StateUpdatedTimestamp,omitempty"`
 	ComparisonOperator      string         `xml:"ComparisonOperator"`
 	Threshold               float64        `xml:"Threshold"`

@@ -92,6 +92,7 @@ type AlarmInfo struct {
 	ComparisonOperator      string
 	Threshold               float64
 	StateReason             string
+	StateReasonData         string // JSON; set by AWS CloudWatch, empty for the others
 	StateUpdatedTimestamp   time.Time
 	Period                  int
 	EvaluationPeriods       int
@@ -139,6 +140,10 @@ type AlarmHistoryEntry struct {
 	// "ConfigurationUpdate", "Action"); empty is treated as "StateUpdate".
 	HistoryItemType string
 	Reason          string
+	// OldStateReasonData and NewStateReasonData are the JSON reason data on
+	// each side of a state change. Empty when the provider does not set it.
+	OldStateReasonData string
+	NewStateReasonData string
 }
 
 // Monitoring is the interface that monitoring provider implementations must satisfy.

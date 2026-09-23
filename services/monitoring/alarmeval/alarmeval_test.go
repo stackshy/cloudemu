@@ -92,6 +92,32 @@ func TestEvaluateWindowMOfN(t *testing.T) {
 	assert.Equal(t, alarmeval.StateOK, state, "recovery to OK")
 }
 
+// TestRecentDatapoints: one value per non-empty period, oldest first.
+func TestRecentDatapoints(t *testing.T) {
+	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	p := alarmeval.Params{Period: 60, EvaluationPeriods: 3, Stat: "Sum"}
+
+	datums := []driver.MetricDatum{
+		{Value: 3, Timestamp: now},
+		{Value: 1, Timestamp: now.Add(-120 * time.Second)},
+		{Value: 1, Timestamp: now.Add(-130 * time.Second)},
+		{Value: 9, Timestamp: now.Add(-10 * time.Minute)}, // outside the window
+	}
+
+	assert.Equal(t, []float64{2, 3}, alarmeval.RecentDatapoints(datums, &p, now))
+	assert.Empty(t, alarmeval.RecentDatapoints(nil, &p, now))
+}
+
+func TestValidState(t *testing.T) {
+	for _, s := range []string{"OK", "ALARM", "INSUFFICIENT_DATA"} {
+		assert.True(t, alarmeval.ValidState(s), s)
+	}
+
+	for _, s := range []string{"", "BOGUS", "ok"} {
+		assert.False(t, alarmeval.ValidState(s), s)
+	}
+}
+
 // TestEvaluateWindowTreatMissingData checks the empty-period policies.
 func TestEvaluateWindowTreatMissingData(t *testing.T) {
 	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)

@@ -448,6 +448,10 @@ func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.Alarm
 // SetAlarmState manually sets the state of an alert policy. Like a metric-driven
 // transition, a state change records a history entry.
 func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) error {
+	if !alarmeval.ValidState(state) {
+		return cerrors.Newf(cerrors.InvalidArgument, "invalid alarm state %q: must be OK, ALARM or INSUFFICIENT_DATA", state)
+	}
+
 	a, ok := m.alarms.Get(name)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "alert policy %q not found", name)

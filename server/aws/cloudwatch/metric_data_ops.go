@@ -8,6 +8,7 @@ package cloudwatch
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"strings"
 	"time"
@@ -275,8 +276,19 @@ func historyItemType(e *mondriver.AlarmHistoryEntry) string {
 	return e.HistoryItemType
 }
 
+// alarmHistoryData builds the HistoryData JSON of a state change. Reason data
+// is already JSON, so it is embedded as an object.
 func alarmHistoryData(e *mondriver.AlarmHistoryEntry) string {
-	return `{"oldState":{"stateValue":"` + e.OldState + `"},"newState":{"stateValue":"` + e.NewState + `"}}`
+	return `{"oldState":` + historyState(e.OldState, e.OldStateReasonData) +
+		`,"newState":` + historyState(e.NewState, e.NewStateReasonData) + `}`
+}
+
+func historyState(state, reasonData string) string {
+	if reasonData == "" || !json.Valid([]byte(reasonData)) {
+		return `{"stateValue":"` + state + `"}`
+	}
+
+	return `{"stateValue":"` + state + `","stateReasonData":` + reasonData + `}`
 }
 
 type alarmNamesInput struct {
