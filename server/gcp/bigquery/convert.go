@@ -8,7 +8,7 @@ import (
 )
 
 // millisOrZero returns t as epoch-millis for a set time, or 0 (which omitempty
-// drops) for the zero time — so an unset expiry is omitted, not rendered as a
+// drops) for the zero time, so an unset expiry is omitted, not rendered as a
 // year-1 timestamp.
 func millisOrZero(t time.Time) int64Wire {
 	if t.IsZero() {

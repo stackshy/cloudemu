@@ -28,7 +28,7 @@ const (
 // served GCP REST request and writes it into Cloud Logging, so a client reading
 // the audit trail sees real API activity. It runs as the server's post-dispatch
 // observer. Read-only requests (GET) and Cloud Logging's own operations are
-// skipped — Admin Activity logs record writes/deletes/actions, and recording
+// skipped: Admin Activity logs record writes/deletes/actions, and recording
 // logging reads/writes would flood the log with its own traffic.
 func recordAuditLogEvent(logs logdriver.Logging, r *http.Request, clock config.Clock) {
 	if r.Method == http.MethodGet || r.Method == http.MethodHead {

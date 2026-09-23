@@ -46,7 +46,7 @@ func TestMatchesClaimsOnlyPolicyAndAttestors(t *testing.T) {
 
 // TestIntEnumTolerance drives updatePolicy with the enum fields encoded as their
 // protojson integers (GAPIC clients marshal enums as numbers) and confirms the
-// stored + echoed values are the canonical string names — including enums nested
+// stored + echoed values are the canonical string names, including enums nested
 // inside the opaque defaultAdmissionRule block.
 func TestIntEnumTolerance(t *testing.T) {
 	cloud := cloudemu.NewGCP()

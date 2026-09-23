@@ -120,7 +120,7 @@ func (h *Handler) patchTable(w http.ResponseWriter, r *http.Request, rt *route) 
 	}
 
 	// Without a mask, always write deletionProtection from the body (legacy
-	// behavior). With a mask, write it only when masked — so a patch of some
+	// behavior). With a mask, write it only when masked, so a patch of some
 	// other field (e.g. changeStreamConfig) leaves deletionProtection intact
 	// instead of silently resetting it to false.
 	dp := in.DeletionProtection

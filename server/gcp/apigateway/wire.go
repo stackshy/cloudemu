@@ -25,7 +25,7 @@ const (
 // name/createTime/updateTime are re-injected from the stored resource on every
 // read; state, serviceConfigId, and defaultHostname are minted once at create
 // (see computed.go) and thereafter round-trip as stable stored passthrough
-// values, so they are NOT listed here — a create body legitimately never carries
+// values, so they are not listed here: a create body legitimately never carries
 // them, and stripping the seeded copies would drop them from every read.
 //
 //nolint:gochecknoglobals // immutable lookup set

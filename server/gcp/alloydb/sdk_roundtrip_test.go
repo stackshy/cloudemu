@@ -187,7 +187,7 @@ func TestSDKAlloyDBWireErrorMapping(t *testing.T) {
 	svc := newSDKClient(t)
 	ctx := context.Background()
 
-	// 404 — missing cluster.
+	// 404: missing cluster.
 	_, err := svc.Projects.Locations.Clusters.Get(parent() + "/clusters/ghost").Context(ctx).Do()
 	assertStatus(t, err, 404)
 
@@ -371,7 +371,7 @@ func TestSDKAlloyDBUserPatchAndGuards(t *testing.T) {
 		t.Error("patched user has empty name")
 	}
 
-	// 400 — READ_POOL instance without a node count.
+	// 400: READ_POOL instance without a node count.
 	_, err = svc.Projects.Locations.Clusters.Instances.Create(parent()+"/clusters/c1", &alloydb.Instance{
 		InstanceType: "READ_POOL",
 	}).InstanceId("bad").Context(ctx).Do()

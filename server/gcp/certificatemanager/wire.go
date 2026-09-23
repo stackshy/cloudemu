@@ -16,7 +16,7 @@ const maxBodyBytes = 8 << 20
 // outputKeys are the computed / output-only body keys CloudEmu populates itself.
 // They are stripped from an incoming request body so a caller cannot pin them,
 // and re-injected from the stored resource on every read. A dnsAuthorization's
-// dnsResourceRecord is deliberately absent — it is minted once from the domain
+// dnsResourceRecord is deliberately absent. It is minted once from the domain
 // at create (see seedDNSAuthorization) and thereafter round-trips as a stable
 // stored passthrough value.
 //

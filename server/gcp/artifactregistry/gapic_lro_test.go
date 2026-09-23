@@ -16,7 +16,7 @@ import (
 // TestGAPICCreateRepositoryWait is the review's #3 check: the finding targeted
 // the GAPIC apiv1 client's LRO .Wait(), which the raw google.golang.org/api
 // REST client never exercised. This drives the real apiv1 REST client end to
-// end — CreateRepository(...).Wait() must resolve (not 404, and not a decode
+// end: CreateRepository(...).Wait() must resolve (not 404, and not a decode
 // error from a missing response @type) and return the created repository.
 func TestGAPICCreateRepositoryWait(t *testing.T) {
 	cloud := cloudemu.NewGCP()

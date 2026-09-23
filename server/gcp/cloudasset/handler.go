@@ -19,7 +19,7 @@ import (
 // Path prefix shared by every Cloud Asset operation.
 const apiPrefix = "/v1/"
 
-// Custom-method names that may appear after a colon in the URL — e.g.,
+// Custom-method names that may appear after a colon in the URL, e.g.,
 // /v1/projects/X:searchAllResources.
 const (
 	methodSearchAllResources    = "searchAllResources"
@@ -28,7 +28,7 @@ const (
 	methodBatchGetAssetsHistory = "batchGetAssetsHistory"
 )
 
-// Body size cap for any JSON request — matches the firestore handler.
+// Body size cap for any JSON request; matches the firestore handler.
 const maxBodyBytes = 5 << 20
 
 // Custom-method dispatch table. Immutable; declared as a package-level
@@ -103,7 +103,7 @@ func (*Handler) Matches(r *http.Request) bool {
 		}
 	}
 
-	// /v1/{parent}/operations/cloudemu-export-... — claim only operation
+	// /v1/{parent}/operations/cloudemu-export-...: claim only operation
 	// names this package creates; other handlers (compute, networks)
 	// serve their own /operations/ paths.
 	if strings.Contains(p, "/operations/"+operationNamePrefix) {
@@ -145,14 +145,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// /v1/{parent}/operations/cloudemu-export-... — the result of an
+	// /v1/{parent}/operations/cloudemu-export-...: the result of an
 	// earlier exportAssets call. Cached in h.operations.
 	if before, id, ok := segmentBeforeLast(p, "/operations/"); ok && strings.HasPrefix(id, operationNamePrefix) {
 		h.getOperation(w, r, stripAPIPrefix(before)+"/operations/"+id)
 		return
 	}
 
-	// /v1/{parent}/feeds/{id} — derive the canonical feed name without /v1/.
+	// /v1/{parent}/feeds/{id}: derive the canonical feed name without /v1/.
 	if before, id, ok := segmentBeforeLast(p, "/feeds/"); ok {
 		if strings.ContainsRune(id, '/') {
 			writeError(w, http.StatusNotFound, "NOT_FOUND",
@@ -300,7 +300,7 @@ func matchesAssetTypes(assetType any, filter []string) bool {
 // ----- searchAllIamPolicies -----
 
 func (*Handler) searchAllIamPolicies(w http.ResponseWriter, _ *http.Request, _ string) {
-	// IAM policy walking is out of scope for Phase 4 — the engine doesn't
+	// IAM policy walking is out of scope for Phase 4. The engine doesn't
 	// expose iam driver state. Return empty so callers can probe the API
 	// without erroring out.
 	writeJSON(w, http.StatusOK, map[string]any{"results": []any{}})
@@ -353,7 +353,7 @@ func (h *Handler) buildAndCacheExportOperation(
 }
 
 // completedExportOperation builds the synchronous LRO response shape.
-// Real Cloud Asset is async — it returns an operation name that the
+// Real Cloud Asset is async. It returns an operation name that the
 // caller polls via Operations.Get. The mock returns done=true with the
 // asset list inline so most callers (which call .Do() and check Done)
 // work without polling, AND caches the response under name so callers
@@ -1000,7 +1000,7 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeError emits a googleapi-shaped error. The status code (e.g.
 // ALREADY_EXISTS) is also prefixed onto the message so callers using
 // substring matching against the SDK's error.Error() string can still
-// recognize it — the googleapi error helper surfaces message, not status.
+// recognize it. The googleapi error helper surfaces message, not status.
 func writeError(w http.ResponseWriter, status int, code, msg string) {
 	combined := code + ": " + msg
 	writeJSON(w, status, map[string]any{
