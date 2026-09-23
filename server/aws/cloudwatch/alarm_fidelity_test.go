@@ -335,6 +335,9 @@ func TestSDKDescribeAlarmHistoryOrderingAndFilters(t *testing.T) {
 		EvaluationPeriods:  aws.Int32(1),
 		Period:             aws.Int32(60),
 		Statistic:          cwtypes.StatisticSum,
+		// This test is about ordering. Without "ignore" the read below would
+		// add a no-data revert, because SetAlarmState is temporary on AWS.
+		TreatMissingData: aws.String("ignore"),
 	}); err != nil {
 		t.Fatalf("PutMetricAlarm: %v", err)
 	}

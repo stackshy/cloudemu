@@ -3,8 +3,6 @@ package cloudwatch
 
 import (
 	"context"
-	"encoding/json"
-	"fmt"
 	"sort"
 	"strings"
 	"sync"
@@ -55,6 +53,9 @@ type metricKey struct {
 
 // Mock is an in-memory mock implementation of the AWS CloudWatch service.
 type Mock struct {
+	// alarmMu guards every alarm field and is taken before mu. SNS actions are
+	// published only after both are released.
+	alarmMu         sync.Mutex
 	mu              sync.RWMutex
 	metrics         map[metricKey][]driver.MetricDatum
 	alarms          *memstore.Store[*alarmData]
@@ -99,6 +100,11 @@ type alarmData struct {
 	ActionsEnabled          bool
 	AlarmArn                string
 	Tags                    map[string]string
+	// StateTransitionedTimestamp is when State last changed.
+	StateTransitionedTimestamp time.Time
+	// LastEvaluatedAt is when the alarm was last evaluated or had its state
+	// set. The next lazy evaluation is due one EvaluationInterval later.
+	LastEvaluatedAt time.Time
 }
 
 // New creates a new CloudWatch mock with the given configuration options.
@@ -130,233 +136,16 @@ func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error
 	}
 	m.mu.Unlock()
 
-	// Evaluate alarms for each unique namespace/metric pair that was updated.
+	// New data re-evaluates the alarms on each updated metric right away.
 	seen := make(map[metricKey]bool)
 
 	for i := range data {
-		mk := metricKey{Namespace: data[i].Namespace, MetricName: data[i].MetricName}
-		if !seen[mk] {
-			seen[mk] = true
-
-			m.evaluateAlarms(data[i].Namespace, data[i].MetricName)
-		}
+		seen[metricKey{Namespace: data[i].Namespace, MetricName: data[i].MetricName}] = true
 	}
+
+	m.evaluateMetricAlarms(seen)
 
 	return nil
-}
-
-func (m *Mock) evaluateAlarms(namespace, metricName string) {
-	allAlarms := m.alarms.All()
-
-	for _, alarm := range allAlarms {
-		if alarm.Namespace != namespace || alarm.MetricName != metricName {
-			continue
-		}
-
-		m.evaluateSingleAlarm(alarm, namespace, metricName)
-	}
-}
-
-// alarmParams projects an alarm's thresholds onto the shared evaluator's Params.
-func alarmParams(alarm *alarmData) alarmeval.Params {
-	return alarmeval.Params{
-		Period:             alarm.Period,
-		EvaluationPeriods:  alarm.EvaluationPeriods,
-		DatapointsToAlarm:  alarm.DatapointsToAlarm,
-		Stat:               alarm.Stat,
-		ComparisonOperator: alarm.ComparisonOperator,
-		Threshold:          alarm.Threshold,
-		TreatMissingData:   alarm.TreatMissingData,
-	}
-}
-
-func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName string) {
-	now := m.opts.Clock.Now()
-	params := alarmParams(alarm)
-
-	// Data stored under another unit is not seen, so an alarm with the wrong
-	// unit stays in INSUFFICIENT_DATA like on AWS.
-	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, alarm.Unit, params.WindowStart(now), now)
-	if len(filtered) == 0 {
-		return
-	}
-
-	newState, reason, ok := alarmeval.EvaluateWindow(filtered, &params, now)
-	if !ok {
-		return
-	}
-
-	m.transitionAlarm(alarm, newState, reason, evaluationReasonData(filtered, &params, now), now)
-}
-
-// evaluationReasonData is the stateReasonData of a metric-driven transition.
-// It is a small subset of what CloudWatch sends.
-func evaluationReasonData(datums []driver.MetricDatum, p *alarmeval.Params, now time.Time) string {
-	data := struct {
-		Version          string    `json:"version"`
-		QueryDate        string    `json:"queryDate"`
-		StartDate        string    `json:"startDate"`
-		Statistic        string    `json:"statistic"`
-		Period           int       `json:"period"`
-		RecentDatapoints []float64 `json:"recentDatapoints"`
-		Threshold        float64   `json:"threshold"`
-	}{
-		Version:          "1.0",
-		QueryDate:        now.UTC().Format(reasonDataTimeFormat),
-		StartDate:        p.WindowStart(now).UTC().Format(reasonDataTimeFormat),
-		Statistic:        p.Stat,
-		Period:           p.Period,
-		RecentDatapoints: alarmeval.RecentDatapoints(datums, p, now),
-		Threshold:        p.Threshold,
-	}
-
-	b, err := json.Marshal(data)
-	if err != nil {
-		return ""
-	}
-
-	return string(b)
-}
-
-// transitionAlarm sets an alarm's state and, only when the state actually
-// changes, records a history entry and fires the new state's actions. This
-// matches CloudWatch, where both the history entry and the action invocation
-// happen on a state change regardless of whether the change came from metric
-// evaluation or a manual SetAlarmState. An alarm invokes its actions only when
-// it changes state; it never re-fires while the state is steady.
-func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason, reasonData string, now time.Time) {
-	oldState := alarm.State
-
-	if oldState != newState {
-		m.appendHistory(alarm, newState, reason, reasonData, now)
-		alarm.StateUpdatedTimestamp = now
-	}
-
-	alarm.State = newState
-	alarm.StateReason = reason
-	alarm.StateReasonData = reasonData
-
-	if oldState != newState {
-		m.fireAlarmActions(alarm, oldState, newState, now)
-	}
-}
-
-// appendHistory records one alarm state transition in the history log.
-// It runs before the alarm is updated, so alarm still holds the old state.
-func (m *Mock) appendHistory(alarm *alarmData, newState, reason, reasonData string, now time.Time) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	m.history = append(m.history, driver.AlarmHistoryEntry{
-		AlarmName:          alarm.Name,
-		Timestamp:          now,
-		OldState:           alarm.State,
-		NewState:           newState,
-		HistoryItemType:    historyStateUpdate,
-		Reason:             fmt.Sprintf("Transition from %s to %s: %s", alarm.State, newState, reason),
-		OldStateReasonData: alarm.StateReasonData,
-		NewStateReasonData: reasonData,
-	})
-}
-
-// fireAlarmActions delivers an alarm's state-change actions. Only SNS-topic
-// action ARNs are published (via the wired publisher); the notification carries
-// the alarm's new state so subscribers can react. It is a no-op when no
-// publisher is wired or the alarm has actions disabled.
-//
-// The stateInsufficientData branch below is wired for completeness (and to
-// keep the switch exhaustive over the alarm state enum) but is currently
-// unreachable: evaluateSingleAlarm only ever assigns stateAlarm or stateOK,
-// since alarm evaluation here is event-driven off incoming PutMetricData
-// calls. Real CloudWatch instead transitions an alarm to INSUFFICIENT_DATA
-// on a background timer when expected datapoints stop arriving, a
-// timer-driven behavior this mock does not simulate.
-func (m *Mock) fireAlarmActions(a *alarmData, oldState, newState string, now time.Time) {
-	if m.sns == nil || !a.ActionsEnabled {
-		return
-	}
-
-	var actions []string
-
-	switch newState {
-	case stateAlarm:
-		actions = a.AlarmActions
-	case stateOK:
-		actions = a.OKActions
-	case stateInsufficientData:
-		actions = a.InsufficientDataActions
-	}
-
-	if len(actions) == 0 {
-		return
-	}
-
-	message := m.alarmNotification(a, oldState, newState, now)
-
-	for _, arn := range actions {
-		if strings.HasPrefix(arn, snsTopicARNPrefix) {
-			_ = m.sns.PublishExternal(context.Background(), arn, message)
-		}
-	}
-}
-
-// alarmNotification renders the JSON body CloudWatch publishes to an SNS topic
-// on a state change. It mirrors the real notification's key fields so a
-// subscriber (e.g. an SQS queue) receives a recognizable alarm payload.
-func (m *Mock) alarmNotification(a *alarmData, oldState, newState string, now time.Time) string {
-	payload := map[string]any{
-		"AlarmName":        a.Name,
-		"AlarmDescription": a.AlarmDescription,
-		"AWSAccountId":     m.opts.AccountID,
-		"Region":           m.opts.Region,
-		"NewStateValue":    newState,
-		"NewStateReason":   a.StateReason,
-		"OldStateValue":    oldState,
-		"StateChangeTime":  now.UTC().Format(time.RFC3339),
-		"Trigger": map[string]any{
-			"MetricName":         a.MetricName,
-			"Namespace":          a.Namespace,
-			"Statistic":          a.Stat,
-			"ComparisonOperator": a.ComparisonOperator,
-			"Threshold":          a.Threshold,
-			"Period":             a.Period,
-			"EvaluationPeriods":  a.EvaluationPeriods,
-		},
-	}
-
-	body, err := json.Marshal(payload)
-	if err != nil {
-		return ""
-	}
-
-	return string(body)
-}
-
-func (m *Mock) collectFilteredDatums(
-	namespace, metricName string, dims map[string]string, unit string, windowStart, now time.Time,
-) []driver.MetricDatum {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
-
-	key := metricKey{Namespace: namespace, MetricName: metricName}
-	dataPoints := m.metrics[key]
-
-	var filtered []driver.MetricDatum
-
-	for i := range dataPoints {
-		d := &dataPoints[i]
-		if d.Timestamp.Before(windowStart) || d.Timestamp.After(now) {
-			continue
-		}
-
-		if !alarmeval.MatchDimensions(d.Dimensions, dims) || !alarmeval.MatchUnit(d.Unit, unit) {
-			continue
-		}
-
-		filtered = append(filtered, *d)
-	}
-
-	return filtered
 }
 
 // GetMetricData retrieves metric data for the given query, filtering by time range and
@@ -606,136 +395,6 @@ func copyDims(dims map[string]string) map[string]string {
 	return out
 }
 
-// CreateAlarm creates or updates an alarm with the given configuration.
-//
-//nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
-	if cfg.Name == "" {
-		return errors.Newf(errors.InvalidArgument, "alarm name is required")
-	}
-
-	dims := make(map[string]string, len(cfg.Dimensions))
-	for k, v := range cfg.Dimensions {
-		dims[k] = v
-	}
-
-	actionsEnabled := true
-	if cfg.ActionsEnabled != nil {
-		actionsEnabled = *cfg.ActionsEnabled
-	}
-
-	// When PutMetricAlarm updates an existing alarm, its state is left unchanged and
-	// tags supplied in this operation are ignored (real AWS API_PutMetricAlarm semantics).
-	// The rest of the configuration is completely overwritten.
-	state := stateInsufficientData
-	stateReason := ""
-	stateUpdated := m.opts.Clock.Now()
-
-	tags := make(map[string]string, len(cfg.Tags))
-	for k, v := range cfg.Tags {
-		tags[k] = v
-	}
-
-	if existing, ok := m.alarms.Get(cfg.Name); ok {
-		state = existing.State
-		stateReason = existing.StateReason
-		stateUpdated = existing.StateUpdatedTimestamp
-		tags = existing.Tags
-	}
-
-	alarm := &alarmData{
-		Name:                    cfg.Name,
-		Namespace:               cfg.Namespace,
-		MetricName:              cfg.MetricName,
-		Dimensions:              dims,
-		ComparisonOperator:      cfg.ComparisonOperator,
-		Threshold:               cfg.Threshold,
-		Period:                  cfg.Period,
-		EvaluationPeriods:       cfg.EvaluationPeriods,
-		DatapointsToAlarm:       cfg.DatapointsToAlarm,
-		Stat:                    cfg.Stat,
-		ExtendedStatistic:       cfg.ExtendedStatistic,
-		Unit:                    cfg.Unit,
-		TreatMissingData:        cfg.TreatMissingData,
-		State:                   state,
-		StateReason:             stateReason,
-		StateUpdatedTimestamp:   stateUpdated,
-		AlarmActions:            append([]string{}, cfg.AlarmActions...),
-		OKActions:               append([]string{}, cfg.OKActions...),
-		InsufficientDataActions: append([]string{}, cfg.InsufficientDataActions...),
-		AlarmDescription:        cfg.AlarmDescription,
-		ActionsEnabled:          actionsEnabled,
-		AlarmArn:                idgen.AWSARN("cloudwatch", m.opts.Region, m.opts.AccountID, "alarm:"+cfg.Name),
-		Tags:                    tags,
-	}
-
-	m.alarms.Set(cfg.Name, alarm)
-
-	return nil
-}
-
-// DeleteAlarm deletes the alarm with the given name.
-func (m *Mock) DeleteAlarm(_ context.Context, name string) error {
-	if !m.alarms.Delete(name) {
-		return errors.Newf(errors.NotFound, "alarm %q not found", name)
-	}
-
-	return nil
-}
-
-// DescribeAlarms returns alarms matching the given names, or all alarms if names is empty.
-func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.AlarmInfo, error) {
-	if len(names) == 0 {
-		all := m.alarms.All()
-		result := make([]driver.AlarmInfo, 0, len(all))
-
-		for _, a := range all {
-			result = append(result, toAlarmInfo(a))
-		}
-
-		return result, nil
-	}
-
-	result := make([]driver.AlarmInfo, 0, len(names))
-
-	for _, name := range names {
-		a, ok := m.alarms.Get(name)
-		if !ok {
-			continue
-		}
-
-		result = append(result, toAlarmInfo(a))
-	}
-
-	return result, nil
-}
-
-// SetAlarmState manually sets the state of an alarm. Like a metric-driven
-// transition, a state change records a history entry and invokes the actions
-// configured for the new state (AlarmActions / OKActions /
-// InsufficientDataActions), so the documented "force ALARM to test wiring"
-// workflow delivers its notifications.
-func (m *Mock) SetAlarmState(ctx context.Context, name, state, reason string) error {
-	return m.SetAlarmStateWithData(ctx, name, state, reason, "")
-}
-
-// SetAlarmStateWithData is SetAlarmState with the optional StateReasonData
-// JSON. An empty reasonData clears any data from an earlier transition.
-func (m *Mock) SetAlarmStateWithData(_ context.Context, name, state, reason, reasonData string) error {
-	if !alarmeval.ValidState(state) {
-		return errors.Newf(errors.InvalidArgument, "invalid alarm state %q: must be OK, ALARM or INSUFFICIENT_DATA", state)
-	}
-
-	a, ok := m.alarms.Get(name)
-	if !ok {
-		return errors.Newf(errors.NotFound, "alarm %q not found", name)
-	}
-
-	m.transitionAlarm(a, state, reason, reasonData, m.opts.Clock.Now())
-
-	return nil
-}
-
 // CreateNotificationChannel creates a new notification channel and returns its info.
 func (m *Mock) CreateNotificationChannel(
 	_ context.Context, cfg driver.NotificationChannelConfig,
@@ -796,8 +455,10 @@ func (m *Mock) ListNotificationChannels(_ context.Context) ([]driver.Notificatio
 // GetAlarmHistory returns an alarm's history entries newest-first (CloudWatch's
 // default TimestampDescending order). When limit > 0 it keeps the newest limit
 // entries. Passing limit <= 0 returns the full history so a caller can apply its
-// own filters before truncating.
+// own filters before truncating. Alarms that are due are evaluated first.
 func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) ([]driver.AlarmHistoryEntry, error) {
+	m.evaluateDue(m.opts.Clock.Now())
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -819,8 +480,8 @@ func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) (
 // SetAlarmActionsEnabled toggles ActionsEnabled for the named alarms. It backs
 // the AWS-local EnableAlarmActions / DisableAlarmActions wire operations.
 func (m *Mock) SetAlarmActionsEnabled(_ context.Context, names []string, enabled bool) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
 
 	for _, name := range names {
 		a, ok := m.alarms.Get(name)
@@ -863,8 +524,8 @@ func (m *Mock) alarmTagsOf(name string, ensure bool) (map[string]string, bool) {
 // AddAlarmTags merges tags onto the named alarm (metric or composite), backing
 // TagResource.
 func (m *Mock) AddAlarmTags(_ context.Context, alarmName string, tags map[string]string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
 
 	target, ok := m.alarmTagsOf(alarmName, true)
 	if !ok {
@@ -881,8 +542,8 @@ func (m *Mock) AddAlarmTags(_ context.Context, alarmName string, tags map[string
 // RemoveAlarmTags deletes the given tag keys from the named alarm (metric or
 // composite), backing UntagResource.
 func (m *Mock) RemoveAlarmTags(_ context.Context, alarmName string, keys []string) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
 
 	target, ok := m.alarmTagsOf(alarmName, false)
 	if !ok {
@@ -899,8 +560,8 @@ func (m *Mock) RemoveAlarmTags(_ context.Context, alarmName string, keys []strin
 // AlarmTags returns a copy of the named alarm's tags (metric or composite),
 // backing ListTagsForResource.
 func (m *Mock) AlarmTags(_ context.Context, alarmName string) (map[string]string, error) {
-	m.mu.RLock()
-	defer m.mu.RUnlock()
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
 
 	target, ok := m.alarmTagsOf(alarmName, false)
 	if !ok {
@@ -922,29 +583,30 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 	}
 
 	return driver.AlarmInfo{
-		Name:                    a.Name,
-		Namespace:               a.Namespace,
-		MetricName:              a.MetricName,
-		State:                   a.State,
-		ComparisonOperator:      a.ComparisonOperator,
-		Threshold:               a.Threshold,
-		StateReason:             a.StateReason,
-		StateReasonData:         a.StateReasonData,
-		StateUpdatedTimestamp:   a.StateUpdatedTimestamp,
-		Period:                  a.Period,
-		EvaluationPeriods:       a.EvaluationPeriods,
-		DatapointsToAlarm:       a.DatapointsToAlarm,
-		Statistic:               a.Stat,
-		ExtendedStatistic:       a.ExtendedStatistic,
-		Unit:                    a.Unit,
-		TreatMissingData:        a.TreatMissingData,
-		ActionsEnabled:          a.ActionsEnabled,
-		AlarmActions:            append([]string{}, a.AlarmActions...),
-		OKActions:               append([]string{}, a.OKActions...),
-		InsufficientDataActions: append([]string{}, a.InsufficientDataActions...),
-		AlarmDescription:        a.AlarmDescription,
-		AlarmArn:                a.AlarmArn,
-		Dimensions:              dims,
-		Tags:                    tags,
+		Name:                       a.Name,
+		Namespace:                  a.Namespace,
+		MetricName:                 a.MetricName,
+		State:                      a.State,
+		ComparisonOperator:         a.ComparisonOperator,
+		Threshold:                  a.Threshold,
+		StateReason:                a.StateReason,
+		StateReasonData:            a.StateReasonData,
+		StateUpdatedTimestamp:      a.StateUpdatedTimestamp,
+		StateTransitionedTimestamp: a.StateTransitionedTimestamp,
+		Period:                     a.Period,
+		EvaluationPeriods:          a.EvaluationPeriods,
+		DatapointsToAlarm:          a.DatapointsToAlarm,
+		Statistic:                  a.Stat,
+		ExtendedStatistic:          a.ExtendedStatistic,
+		Unit:                       a.Unit,
+		TreatMissingData:           a.TreatMissingData,
+		ActionsEnabled:             a.ActionsEnabled,
+		AlarmActions:               append([]string{}, a.AlarmActions...),
+		OKActions:                  append([]string{}, a.OKActions...),
+		InsufficientDataActions:    append([]string{}, a.InsufficientDataActions...),
+		AlarmDescription:           a.AlarmDescription,
+		AlarmArn:                   a.AlarmArn,
+		Dimensions:                 dims,
+		Tags:                       tags,
 	}
 }
