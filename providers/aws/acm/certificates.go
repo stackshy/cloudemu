@@ -14,7 +14,7 @@ import (
 // RequestCertificate issues a new Amazon-managed certificate. It generates a
 // real self-signed X.509 cert and, since the emulator can't perform real
 // domain validation, auto-issues it (status ISSUED) so it is immediately
-// usable — the local-dev analog of a validated public cert. A repeated
+// usable, the local-dev analog of a validated public cert. A repeated
 // IdempotencyToken within its one-hour lifetime returns the certificate already
 // issued for it, as long as that certificate still exists.
 //
@@ -324,7 +324,7 @@ func (m *Mock) GetCertificate(_ context.Context, arn string) (certPEM, chainPEM 
 	defer cd.mu.RUnlock()
 
 	// While the certificate is still observably PENDING_VALIDATION, its material
-	// is not yet retrievable — real ACM answers RequestInProgressException.
+	// is not yet retrievable. Real ACM answers RequestInProgressException.
 	if !cd.settle.Settled(m.now()) {
 		return "", "", errors.Newf(errors.FailedPrecondition,
 			"certificate %q is pending validation and has no issued material yet", arn)

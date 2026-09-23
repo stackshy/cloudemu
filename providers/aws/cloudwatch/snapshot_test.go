@@ -9,7 +9,7 @@ import (
 )
 
 // TestSnapshotRestoreRoundTrip proves the CloudWatch mock serializes its entire
-// state — metric buffer, alarms, and dashboards — and restores it into a fresh
+// state (metric buffer, alarms, and dashboards) and restores it into a fresh
 // mock identity-preservingly.
 func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	ctx := context.Background()

@@ -231,8 +231,8 @@ func (m *Mock) newBackupID() string {
 // deepCopyTableConfig returns a copy of cfg whose slice fields (Attributes,
 // GSIs, LSIs and each index's NonKeyAttributes) are fresh, so a backup or a
 // restored table shares no schema state with the live table. Without it, an
-// in-place slice mutation on the source table — e.g. DeleteIndex's append-shift
-// of GSIs — would corrupt the backup and every table restored from it.
+// in-place slice mutation on the source table (e.g. DeleteIndex's append-shift
+// of GSIs) would corrupt the backup and every table restored from it.
 func deepCopyTableConfig(cfg *driver.TableConfig) driver.TableConfig {
 	out := *cfg
 	out.Attributes = append([]driver.AttributeDef(nil), cfg.Attributes...)

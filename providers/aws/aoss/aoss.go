@@ -43,7 +43,7 @@ const collectionIDBytes = 10
 
 // policyVersionBytes is the number of random bytes base64-encoded into a policy
 // version token. Sixteen bytes render to a 24-character token, within the
-// documented 20–36 length and base64 pattern.
+// documented 20-36 length and base64 pattern.
 const policyVersionBytes = 16
 
 // Mock is an in-memory implementation of the OpenSearch Serverless control plane.

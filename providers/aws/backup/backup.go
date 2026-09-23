@@ -2,7 +2,7 @@
 // backup vaults (with access policy, event notifications and Vault Lock),
 // backup plans (with rule bodies and version history) and backup selections.
 //
-// The mock is control-plane only — there is NO backup-job / recovery-point data
+// The mock is control-plane only. There is NO backup-job / recovery-point data
 // plane. Computed fields (vault and plan ARNs, plan id, per-version VersionId,
 // selection id and creation timestamps) are minted once at create and stored,
 // so repeated reads never drift. Rule, lifecycle, copy-action and

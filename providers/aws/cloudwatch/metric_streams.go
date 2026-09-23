@@ -4,7 +4,7 @@ package cloudwatch
 // GetMetricStream, ListMetricStreams, DeleteMetricStream, StartMetricStreams,
 // StopMetricStreams, and their tags), backing the aws_cloudwatch_metric_stream
 // Terraform resource. The store is an AWS-local optional capability so the
-// shared Monitoring interface — and the Azure/GCP providers — stay unchanged.
+// shared Monitoring interface, and the Azure/GCP providers, stay unchanged.
 
 import (
 	"context"
@@ -52,7 +52,7 @@ type storedMetricStream struct {
 // PutMetricStream creates or updates a metric stream. Creating a new stream
 // starts it in the "running" state (real CloudWatch semantics); updating an
 // existing one leaves its State unchanged. Tags are applied only when the
-// stream is being created — an update's Tags are ignored, matching the real
+// stream is being created. An update's Tags are ignored, matching the real
 // PutMetricStream API (use TagResource/UntagResource to retag an existing
 // stream). It returns the stream's ARN.
 //

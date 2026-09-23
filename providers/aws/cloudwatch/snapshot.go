@@ -16,7 +16,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // composite-alarm, dashboard, metric-stream, and notification-channel stores
 // hold value types whose fields are all exported, so they round-trip through
 // the generic memstore helper. The metric buffer is keyed by a struct
-// (metricKey) — which json cannot serialize as a map key — so it is promoted
+// (metricKey), which json cannot serialize as a map key, so it is promoted
 // to a deterministically-ordered slice. The alarm-history slice is captured
 // in order. The mutex, the wired SNS
 // action publisher, and *config.Options are intentionally not captured.
@@ -38,8 +38,8 @@ type metricEntrySnapshot struct {
 	Data []driver.MetricDatum `json:"data,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// CloudWatch holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. CloudWatch holds no
+// bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap cwSnapshot
 

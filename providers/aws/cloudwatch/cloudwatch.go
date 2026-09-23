@@ -183,8 +183,8 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 	m.transitionAlarm(alarm, newState, reason, now)
 }
 
-// transitionAlarm sets an alarm's state and — only when the state actually
-// changes — records a history entry and fires the new state's actions. This
+// transitionAlarm sets an alarm's state and, only when the state actually
+// changes, records a history entry and fires the new state's actions. This
 // matches CloudWatch, where both the history entry and the action invocation
 // happen on a state change regardless of whether the change came from metric
 // evaluation or a manual SetAlarmState. An alarm invokes its actions only when
@@ -230,7 +230,7 @@ func (m *Mock) appendHistory(name, oldState, newState, reason string, now time.T
 // unreachable: evaluateSingleAlarm only ever assigns stateAlarm or stateOK,
 // since alarm evaluation here is event-driven off incoming PutMetricData
 // calls. Real CloudWatch instead transitions an alarm to INSUFFICIENT_DATA
-// on a background timer when expected datapoints stop arriving — a
+// on a background timer when expected datapoints stop arriving, a
 // timer-driven behavior this mock does not simulate.
 func (m *Mock) fireAlarmActions(a *alarmData, oldState, newState string, now time.Time) {
 	if m.sns == nil || !a.ActionsEnabled {

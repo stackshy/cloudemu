@@ -78,7 +78,7 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 	m.monitoring = mon
 }
 
-// emitPull records one image pull as the AWS/ECR RepositoryPullCount metric —
+// emitPull records one image pull as the AWS/ECR RepositoryPullCount metric,
 // the only metric real ECR publishes (dimension RepositoryName). Real ECR has no
 // push-count metric, so pushes emit nothing.
 func (m *Mock) emitPull(repository string) {
@@ -408,7 +408,7 @@ func (m *Mock) storeImage(rd *repoData, manifest *driver.ImageManifest, digest s
 }
 
 // GetImage retrieves image details by repository and reference. It is the
-// image-pull read, so it records one RepositoryPullCount — published after m.mu
+// image-pull read, so it records one RepositoryPullCount, published after m.mu
 // is released, because a CloudWatch alarm on the metric can fan out (SNS ->
 // Lambda) into code that calls back into ECR.
 func (m *Mock) GetImage(_ context.Context, repository, reference string) (*driver.ImageDetail, error) {
@@ -630,7 +630,7 @@ func (m *Mock) EvaluateLifecyclePolicy(_ context.Context, repository string) ([]
 
 // PreviewLifecyclePolicy evaluates a lifecycle policy against the
 // repository's current images and returns full per-image detail (digest,
-// tags, push time, and the priority of the rule that matched) — the data
+// tags, push time, and the priority of the rule that matched), the data
 // ECR's GetLifecyclePolicyPreview needs. When override is non-nil it is
 // evaluated instead of (without replacing) the repository's stored policy,
 // matching StartLifecyclePolicyPreview's optional lifecyclePolicyText
@@ -638,7 +638,7 @@ func (m *Mock) EvaluateLifecyclePolicy(_ context.Context, repository string) ([]
 //
 // AWS-specific: StartLifecyclePolicyPreview/GetLifecyclePolicyPreview have no
 // equivalent in Azure ACR or GCP Artifact Registry, so this is not part of the
-// shared ContainerRegistry driver interface — the ECR wire handler reaches it
+// shared ContainerRegistry driver interface. The ECR wire handler reaches it
 // via type assertion, the same pattern used for PutImageTagMutability and
 // PutImageScanningConfiguration above.
 func (m *Mock) PreviewLifecyclePolicy(
@@ -739,9 +739,9 @@ func findImage(rd *repoData, reference string) *imageData {
 //
 // Real ECR distinguishes two cases when a tag is already in use:
 //   - the tag already points at this EXACT digest (a byte-identical re-push,
-//     or a redundant re-tag) — this is ImageAlreadyExistsException regardless
+//     or a redundant re-tag): this is ImageAlreadyExistsException regardless
 //     of the repository's tag mutability setting, since nothing would change.
-//   - the tag points at a DIFFERENT digest — this only fails, with
+//   - the tag points at a DIFFERENT digest: this only fails, with
 //     ImageTagAlreadyExistsException, on an IMMUTABLE repository; a MUTABLE
 //     repository allows the tag to move.
 func checkTagMutability(rd *repoData, tag, digest string) error {
@@ -853,7 +853,7 @@ func generateScanResult(repository, digest string, now time.Time) *driver.ScanRe
 // and returns full detail for every image an "expire" action would remove.
 // Once an image matches a rule it is excluded from the pool considered by
 // lower-priority rules, matching real ECR: each image is expired by at most
-// one rule — the one with the lowest rulePriority that matches it — so a
+// one rule (the one with the lowest rulePriority that matches it), so a
 // broad low-priority rule never re-claims an image a narrower high-priority
 // rule already spared or expired.
 func previewRules(rd *repoData, policy *driver.LifecyclePolicy, now time.Time) []driver.LifecyclePreviewResult {
@@ -941,7 +941,7 @@ func matchesTagRule(img *imageData, rule *driver.LifecycleRule) bool {
 // rule's tag selection: real ECR's selection.tagPatternList (glob patterns)
 // and selection.tagPrefixList (literal prefixes) are matched against ANY tag
 // on the image, and an image matches the rule if it satisfies ANY entry in
-// EITHER list — using only the first entry of either list, as an earlier
+// EITHER list. Using only the first entry of either list, as an earlier
 // version of this function did, would silently ignore the remaining
 // prefixes/patterns a caller configured. TagPattern is the legacy single-glob
 // field still used by Azure ACR/GCP Artifact Registry, kept as a fallback for

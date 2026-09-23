@@ -66,8 +66,8 @@ type dashboardSnapshot struct {
 	Dashboard driver.Dashboard `json:"dashboard"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// CloudTrail holds resource metadata and a bounded event log, not object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. CloudTrail holds
+// resource metadata and a bounded event log, not object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := cloudtrailSnapshot{}
 

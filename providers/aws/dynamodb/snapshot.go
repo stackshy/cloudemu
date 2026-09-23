@@ -50,7 +50,7 @@ type ciSnapshot struct {
 	LastUpdateUnix float64 `json:"lastUpdateUnix,omitempty"`
 }
 
-// Snapshot captures every table's full state as JSON. includeAssets is unused —
+// Snapshot captures every table's full state as JSON. includeAssets is unused.
 // DynamoDB items are the resource, so they are always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

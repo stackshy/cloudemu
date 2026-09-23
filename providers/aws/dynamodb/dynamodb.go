@@ -87,7 +87,7 @@ type tableData struct {
 // ACTIVE; a GSI reports CREATING while it back-fills. The overlay is a read-time
 // window (see internal/settle) gated behind config.Options.AsyncSettle: with the
 // default (off) SettleDuration returns 0, the window is inactive and every read
-// reports ACTIVE immediately — byte-for-byte the historical behavior.
+// reports ACTIVE immediately, byte-for-byte the historical behavior.
 const (
 	statusActive   = "ACTIVE"
 	statusCreating = "CREATING"
@@ -222,8 +222,8 @@ func (m *Mock) emitRequestLatency(ctx context.Context, table, op string, start t
 }
 
 // emitReadMetrics publishes the per-read metrics of a GetItem/Query/Scan:
-// ConsumedReadCapacityUnits on {TableName}, SuccessfulRequestLatency, and — for
-// Query/Scan — ReturnedItemCount on {TableName, Operation}.
+// ConsumedReadCapacityUnits on {TableName}, SuccessfulRequestLatency, and, for
+// Query/Scan, ReturnedItemCount on {TableName, Operation}.
 func (m *Mock) emitReadMetrics(ctx context.Context, table, op string, consumed float64, returned int, start time.Time) {
 	m.emitMetric("ConsumedReadCapacityUnits", consumed, unitCount, map[string]string{"TableName": table})
 	m.emitRequestLatency(ctx, table, op, start)
@@ -283,8 +283,8 @@ func validateItemKeys(cfg driver.TableConfig, item map[string]any) error {
 
 // validateIndexKeyTypes checks every GSI/LSI key attribute present in item
 // against its declared AttributeDefinition type. Unlike the table's own
-// primary key, an index key attribute is optional on an item — an item that
-// omits it simply doesn't appear in that index — but AWS still rejects a type
+// primary key, an index key attribute is optional on an item (an item that
+// omits it doesn't appear in that index), but AWS still rejects a type
 // mismatch on one that IS present with a ValidationException naming the index.
 func validateIndexKeyTypes(cfg driver.TableConfig, item map[string]any) error {
 	for _, gsi := range cfg.GSIs {
@@ -368,7 +368,7 @@ func validateItemSize(item map[string]any) error {
 }
 
 // itemSizeBytes approximates the on-the-wire byte size DynamoDB attributes to an
-// item — the sum of each attribute's name length and value size. It backs both
+// item, the sum of each attribute's name length and value size. It backs both
 // the 400 KB item-ceiling check and a backup's reported SizeBytes.
 func itemSizeBytes(item map[string]any) int {
 	total := 0
@@ -450,9 +450,9 @@ func collectionSize(val any) int {
 	}
 }
 
-// validateKeySchema enforces that a standalone Key parameter — GetItem,
-// DeleteItem, UpdateItem, BatchGetItem, TransactGetItems/TransactWriteItems —
-// names exactly the table's key schema attributes (the partition key, and the
+// validateKeySchema enforces that a standalone Key parameter (GetItem,
+// DeleteItem, UpdateItem, BatchGetItem, TransactGetItems/TransactWriteItems)
+// names the table's key schema attributes (the partition key, and the
 // sort key when the table has one): no fewer, no more, each with a non-empty
 // value of the declared type. Real DynamoDB collapses a missing or an
 // unrecognized key attribute into one ValidationException; the wire layer
@@ -761,7 +761,7 @@ func (m *Mock) Query(ctx context.Context, input driver.QueryInput) (*driver.Quer
 	if input.IndexName != "" {
 		keyFields = append(keyFields, pkField, skField)
 	}
-	// Page the key-matched items FIRST — AWS reads up to Limit items and only
+	// Page the key-matched items FIRST. AWS reads up to Limit items and only
 	// then applies the FilterExpression. The returned page is the evaluated
 	// window, and PageOrdered's LastEvaluatedKey already points at the last
 	// evaluated item, present whenever more key-matched items remain (even if
@@ -822,13 +822,13 @@ func resolveKeyFields(td *tableData, indexName string) (pkField, skField string,
 // indexProjection returns the attribute set a secondary-index query/scan may
 // surface, and whether that set must be enforced. A GSI always enforces its
 // projection: a query on a GSI cannot fetch base-table attributes that are not
-// projected — KEYS_ONLY exposes only the table and index key attributes,
+// projected: KEYS_ONLY exposes only the table and index key attributes,
 // INCLUDE adds the named non-key attributes, ALL passes everything through.
 //
 // An LSI is different (per the LSI developer guide): it can transparently fetch
 // non-projected attributes from the base table. When the caller supplied a
-// ProjectionExpression (projectionRequested), the full base item — which
-// CloudEmu already holds in memory — is returned untouched so the wire layer can
+// ProjectionExpression (projectionRequested), the full base item (which
+// CloudEmu already holds in memory) is returned untouched so the wire layer can
 // select any attribute, matching AWS's functional result (CloudEmu does not
 // model the extra throughput cost). With no projection an index query defaults
 // to ALL_PROJECTED_ATTRIBUTES, so an LSI is still trimmed to its projected set.
@@ -941,7 +941,7 @@ func (m *Mock) keyMatchedItems(
 
 // applyFilter applies the FilterExpression (or legacy Filters) to an
 // already-paged result in place: it trims Items to those that pass and updates
-// Count. ScannedCount and LastEvaluatedKey are left untouched — AWS filters
+// Count. ScannedCount and LastEvaluatedKey are left untouched. AWS filters
 // after reading a page, so a fully filtered-out page still reports the items it
 // evaluated and a continuation key. A nil node with no legacy filters is a
 // no-op (Count then equals ScannedCount, as AWS documents for unfiltered
@@ -1085,7 +1085,7 @@ func resolveScanIndexPK(td *tableData, indexName string) (string, error) {
 
 // itemInSegment reports whether an item belongs to a parallel scan's Segment,
 // hashing its primary key stably (FNV-1a) so every item maps to exactly one of
-// the TotalSegments shards — making the union of all shards cover the table
+// the TotalSegments shards, which makes the union of all shards cover the table
 // exactly once. A nil total (ordinary scan) always matches.
 func itemInSegment(key string, segment, total *int32) bool {
 	if total == nil {
@@ -1122,7 +1122,7 @@ func (m *Mock) Scan(ctx context.Context, input driver.ScanInput) (*driver.QueryR
 	}
 
 	// A scan on a secondary index only visits items carrying that index's
-	// partition key (a sparse index), so resolve it up front — this also
+	// partition key (a sparse index), so resolve it up front. This also
 	// validates the index exists.
 	idxPK, err := resolveScanIndexPK(td, input.IndexName)
 	if err != nil {
@@ -1136,7 +1136,7 @@ func (m *Mock) Scan(ctx context.Context, input driver.ScanInput) (*driver.QueryR
 		limit = 100
 	}
 
-	// Page FIRST, then filter — AWS reads up to Limit items and applies the
+	// Page FIRST, then filter. AWS reads up to Limit items and applies the
 	// FilterExpression to that evaluated window (see Query for the full note).
 	result, err := driver.PageOrdered(candidates,
 		td.config.PartitionKey, td.config.SortKey,
@@ -1873,7 +1873,7 @@ func (m *Mock) SyncAttributeDefinitions(_ context.Context, table string, defs []
 }
 
 // referencedAttributes returns the set of attribute names the table key schema
-// and every current secondary index key schema reference — the attributes a
+// and every current secondary index key schema reference, the attributes a
 // real table's AttributeDefinitions must contain, no more and no less.
 func referencedAttributes(cfg *driver.TableConfig) map[string]struct{} {
 	ref := make(map[string]struct{})

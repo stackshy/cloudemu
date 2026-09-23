@@ -6,7 +6,7 @@ import (
 )
 
 // invalidRequest builds an InvalidRequestException-tagged error (bad input or a
-// duplicate create — Athena reports both as InvalidRequestException).
+// duplicate create; Athena reports both as InvalidRequestException).
 func invalidRequest(format string, args ...any) error {
 	return &driver.APIError{Exception: driver.ExInvalidRequest, Err: errors.Newf(errors.InvalidArgument, format, args...)}
 }

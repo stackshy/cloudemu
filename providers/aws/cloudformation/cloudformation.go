@@ -1,7 +1,7 @@
 // Package cloudformation is the AWS CloudFormation stack-store mock: it owns the
 // stack lifecycle state and orchestrates provisioning by driving a registry of
 // Provisioners (one per resource type) that call the existing AWS service
-// drivers — S3, DynamoDB, SQS, SNS, Lambda, IAM, Secrets Manager, SSM. It holds
+// drivers: S3, DynamoDB, SQS, SNS, Lambda, IAM, Secrets Manager, SSM. It holds
 // no copy of those resources; a stack's resources live in their own service
 // backends and are queryable through those services' own SDK surfaces.
 package cloudformation

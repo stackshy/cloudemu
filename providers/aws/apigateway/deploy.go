@@ -9,8 +9,8 @@ import (
 )
 
 // CreateDeployment snapshots the API and, when a StageName is supplied,
-// creates (or re-points) that stage to the new deployment — the one-shot deploy
-// the real CreateDeployment performs.
+// creates (or re-points) that stage to the new deployment. That's the one-shot
+// deploy the real CreateDeployment performs.
 func (m *Mock) CreateDeployment(
 	_ context.Context, restAPIID string, in driver.CreateDeploymentInput,
 ) (*driver.Deployment, error) {

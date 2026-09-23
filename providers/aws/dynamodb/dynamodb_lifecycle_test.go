@@ -6,7 +6,7 @@
 // a few divergences from real DynamoDB that are called out inline.
 //
 // NOTE on "conditional writes": the portable driver API has no
-// ConditionExpression concept at all — PutItem is a blind upsert and there is
+// ConditionExpression concept at all. PutItem is a blind upsert and there is
 // no ConditionalCheckFailedException path. The closest conditional-write
 // analogs at this layer are CreateTable/CreateIndex duplicate-name rejection
 // (AlreadyExists) and UpdateItem-on-missing-item (NotFound), which are
@@ -73,7 +73,7 @@ func TestLifecycle(t *testing.T) {
 			t.Fatalf("DescribeTable mismatch: %+v", desc)
 		}
 
-		// DescribeTable returns a copy — mutating it must not leak back.
+		// DescribeTable returns a copy. Mutating it must not leak back.
 		desc.PartitionKey = "hacked"
 		desc2, err := m.DescribeTable(ctx, "orders")
 		e2eRequireNoErr(t, err)
@@ -139,7 +139,7 @@ func TestLifecycle(t *testing.T) {
 				"pk": "user#1", "sk": fmt.Sprintf("order#%03d", i), "total": float64(i),
 			}))
 		}
-		// Different partition — must not be returned.
+		// Different partition: must not be returned.
 		e2eRequireNoErr(t, m.PutItem(ctx, "orders", map[string]any{"pk": "user#2", "sk": "order#001"}))
 
 		res, err := m.Query(ctx, driver.QueryInput{
@@ -247,7 +247,7 @@ func TestLifecycle(t *testing.T) {
 		}
 
 		// Failure analog: a duplicate table create is a typed "condition failed"
-		// path. (UpdateItem of a missing item is NOT an error — real DynamoDB
+		// path. (UpdateItem of a missing item is NOT an error; real DynamoDB
 		// UpdateItem upserts.)
 		e2eRequireCode(t, m.CreateTable(ctx, cfg), cerrors.AlreadyExists)
 
@@ -271,7 +271,7 @@ func TestLifecycle(t *testing.T) {
 		got, err := m.BatchGetItems(ctx, "orders", []map[string]any{
 			{"pk": "batch#1", "sk": "b#1"},
 			{"pk": "batch#1", "sk": "b#3"},
-			{"pk": "batch#1", "sk": "b#999"}, // missing — silently skipped
+			{"pk": "batch#1", "sk": "b#999"}, // missing item; silently skipped
 		})
 		e2eRequireNoErr(t, err)
 
@@ -860,7 +860,7 @@ func TestNumericSortAndKeyCollision(t *testing.T) {
 		})
 		e2eRequireNoErr(t, err)
 
-		if res.Count != 3 { // 5, 10, 25 — numeric compare, not lexicographic
+		if res.Count != 3 { // 5, 10, 25 compared numerically, not lexicographically
 			t.Fatalf("score > 2 Count = %d, want 3: %+v", res.Count, res.Items)
 		}
 

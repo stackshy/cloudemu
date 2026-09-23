@@ -22,8 +22,8 @@ type batchSnapshot struct {
 	JobDefMaxRev json.RawMessage `json:"jobDefMaxRev,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Batch holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Batch holds no bulk
+// object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap batchSnapshot
 

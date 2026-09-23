@@ -12,7 +12,7 @@ type Networking interface {
 	ReleaseInstanceNetworkInterfaces(ctx context.Context, instanceID string) error
 	// DisassociateInstanceAddresses clears the association of any elastic IP
 	// bound to the instance on terminate, leaving the address allocated but
-	// unassociated — matching real EC2, which disassociates (does not release)
+	// unassociated, matching real EC2, which disassociates (does not release)
 	// an instance's EIPs when it is terminated.
 	DisassociateInstanceAddresses(ctx context.Context, instanceID string) error
 	// SetPrimaryNetworkInterfaceSourceDestCheck mirrors

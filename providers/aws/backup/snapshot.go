@@ -20,8 +20,8 @@ type backupSnapshot struct {
 	Selections map[string]driver.Selection `json:"selections,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// AWS Backup is control-plane only and holds no bulk assets.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. AWS Backup is
+// control-plane only and holds no bulk assets.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := backupSnapshot{}
 

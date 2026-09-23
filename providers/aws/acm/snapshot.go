@@ -16,7 +16,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // field (invisible to json.Marshal), so it is promoted to an exported form keyed
 // by certificate ARN. The account-level configuration (cfgMu-guarded) is
 // captured beside it. The per-cert settle window (a read-time PENDING_VALIDATION
-// overlay) and the wired opts are intentionally not serialized — a restored
+// overlay) and the wired opts are intentionally not serialized. A restored
 // certificate reports its stored (final) state.
 type acmSnapshot struct {
 	Certs     map[string]*certSnapshot    `json:"certs,omitempty"`
@@ -29,8 +29,8 @@ type certSnapshot struct {
 	Cert driver.Certificate `json:"cert"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// ACM holds certificate material, not bulk object bodies, and it is always kept.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. ACM holds
+// certificate material, not bulk object bodies, and it is always kept.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := acmSnapshot{}
 

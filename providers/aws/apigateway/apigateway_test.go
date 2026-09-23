@@ -351,7 +351,7 @@ func TestInvokeRouteUnknownStageForbidden(t *testing.T) {
 }
 
 func TestInvokeRouteNilLambdaIsBadGateway(t *testing.T) {
-	m := newMock(t) // no SetLambdaInvoker — nil-safe fallback
+	m := newMock(t) // no SetLambdaInvoker set; falls back safely
 
 	apiID, _, _ := deployProxyAPI(t, m, "hello", "GET", lambdaURI)
 
@@ -411,7 +411,7 @@ func TestCreateResourceRejectsSecondVariableSibling(t *testing.T) {
 
 // TestDeleteMethodAndIntegration proves DeleteIntegration clears just the
 // integration (the method survives), and a subsequent DeleteMethod removes the
-// method entirely — the lifecycle a Terraform destroy of
+// method entirely. That's the lifecycle a Terraform destroy of
 // aws_api_gateway_integration then aws_api_gateway_method drives.
 func TestDeleteMethodAndIntegration(t *testing.T) {
 	m := newMock(t)

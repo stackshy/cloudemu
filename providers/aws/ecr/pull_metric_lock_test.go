@@ -10,7 +10,7 @@ import (
 )
 
 // reentrantMonitoring forwards to a real CloudWatch mock but, on every
-// PutMetricData, first calls back into the ECR mock — the shape of an alarm
+// PutMetricData, first calls back into the ECR mock, the shape of an alarm
 // action (SNS -> Lambda) that reads the registry while the metric is recorded.
 type reentrantMonitoring struct {
 	mondriver.Monitoring

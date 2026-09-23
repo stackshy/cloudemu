@@ -74,7 +74,7 @@ func (m *Mock) GetResources(_ context.Context, restAPIID string) ([]driver.Resou
 		out = append(out, copyResource(r))
 	}
 
-	// Deterministic order (root "/" first, then tree order) — the backing map
+	// Deterministic order (root "/" first, then tree order). The backing map
 	// iterates randomly, which would make GetResources non-deterministic.
 	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 
@@ -172,8 +172,8 @@ func findByPath(resources map[string]*driver.Resource, path string) *driver.Reso
 	return nil
 }
 
-// isPathParam reports whether a pathPart is a variable segment — a "{param}"
-// placeholder or a "{proxy+}" greedy segment — rather than a literal.
+// isPathParam reports whether a pathPart is a variable segment: a "{param}"
+// placeholder or a "{proxy+}" greedy segment, rather than a literal.
 func isPathParam(pathPart string) bool {
 	return strings.HasPrefix(pathPart, "{") && strings.HasSuffix(pathPart, "}")
 }
