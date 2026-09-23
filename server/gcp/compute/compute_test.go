@@ -280,7 +280,7 @@ func TestOperationWaitReturnsDone(t *testing.T) {
 	}
 
 	// gcloud and the typed google clients confirm every mutation with
-	// zoneOperations.wait — a POST to <operation>/wait that blocks until the
+	// zoneOperations.wait, a POST to <operation>/wait that blocks until the
 	// operation is DONE and returns it. Without this the CLI reports a failure
 	// even though the mutation applied.
 	resp, err := ts.Client().Post(selfLink+"/wait", "application/json", http.NoBody)
@@ -325,7 +325,7 @@ func TestOperationWaitUnknownIs404(t *testing.T) {
 func TestRejectsNonComputePaths(t *testing.T) {
 	ts := newGCPTestServer(t)
 
-	// Storage path — handler should not claim it; server returns 501.
+	// Storage path: handler should not claim it; server returns 501.
 	resp, err := ts.Client().Get(ts.URL + "/storage/v1/b/my-bucket")
 	if err != nil {
 		t.Fatal(err)

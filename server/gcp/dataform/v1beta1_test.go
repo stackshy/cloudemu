@@ -74,8 +74,8 @@ func doOK(t *testing.T, ts *httptest.Server, method, path string, body any, out 
 const collPath = "/v1beta1/projects/p/locations/us-central1/repositories"
 
 // TestRepositoryLifecycleOnV1Beta1Path drives the full CRUD lifecycle over the
-// /v1beta1/ prefix — the base path the stable google provider uses since
-// Dataform ships a v1beta1 API only — and asserts the rich nested blocks round
+// /v1beta1/ prefix (the base path the stable google provider uses since
+// Dataform ships a v1beta1 API only) and asserts the rich nested blocks round
 // trip verbatim and name/createTime are stable, so a Terraform refresh sees no
 // drift.
 func TestRepositoryLifecycleOnV1Beta1Path(t *testing.T) {

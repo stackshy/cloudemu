@@ -60,7 +60,7 @@ func decodeEnvironment(w http.ResponseWriter, r *http.Request) (composer.Environ
 	return typed, raw, true
 }
 
-// createEnvironment handles POST .../environments — Create. The environmentId is
+// createEnvironment handles POST .../environments: Create. The environmentId is
 // the trailing segment of the body's environment.name (Composer has no id query
 // param); the operation completes inline, so a done=true Operation carrying the
 // new environment is returned.
@@ -94,7 +94,7 @@ func (h *Handler) createEnvironment(w http.ResponseWriter, r *http.Request, rt r
 	h.writeEnvOperation(w, op, env)
 }
 
-// getEnvironment handles GET .../environments/{e} — Get.
+// getEnvironment handles GET .../environments/{e}: Get.
 func (h *Handler) getEnvironment(w http.ResponseWriter, r *http.Request, rt route) {
 	env, err := h.db.GetEnvironment(r.Context(), rt.project, rt.location, rt.name)
 	if err != nil {
@@ -105,7 +105,7 @@ func (h *Handler) getEnvironment(w http.ResponseWriter, r *http.Request, rt rout
 	writeEnvironment(w, env)
 }
 
-// listEnvironments handles GET .../environments — List, scoped to the request's
+// listEnvironments handles GET .../environments: List, scoped to the request's
 // project+location and ordered by resource name.
 func (h *Handler) listEnvironments(w http.ResponseWriter, r *http.Request, rt route) {
 	envs, err := h.db.ListEnvironments(r.Context(), rt.project, rt.location)
@@ -129,7 +129,7 @@ func (h *Handler) listEnvironments(w http.ResponseWriter, r *http.Request, rt ro
 	gcprest.WriteJSON(w, http.StatusOK, map[string]any{"environments": items})
 }
 
-// patchEnvironment handles PATCH .../environments/{e}?updateMask=... — Update.
+// patchEnvironment handles PATCH .../environments/{e}?updateMask=...: Update.
 // Only the masked fields mutate; a field outside the mask is left untouched.
 func (h *Handler) patchEnvironment(w http.ResponseWriter, r *http.Request, rt route) {
 	typed, raw, ok := decodeEnvironment(w, r)
@@ -149,7 +149,7 @@ func (h *Handler) patchEnvironment(w http.ResponseWriter, r *http.Request, rt ro
 	h.writeEnvOperation(w, op, env)
 }
 
-// deleteEnvironment handles DELETE .../environments/{e} — Delete. The operation
+// deleteEnvironment handles DELETE .../environments/{e}: Delete. The operation
 // completes inline, so a done=true Operation with no response is returned.
 func (h *Handler) deleteEnvironment(w http.ResponseWriter, r *http.Request, rt route) {
 	op, err := h.db.DeleteEnvironment(r.Context(), rt.project, rt.location, rt.name)
