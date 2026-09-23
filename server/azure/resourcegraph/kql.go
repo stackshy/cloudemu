@@ -147,7 +147,7 @@ const (
 	portableIoTHub       = "iothub"
 )
 
-// parsedKQL is the result of KQL parsing — an engine Query plus the limit
+// parsedKQL is the result of KQL parsing: an engine Query plus the limit
 // extracted from `| limit N` / `| take N` (0 means no caller-specified limit).
 //
 // ForceEmpty is set when the parser detects a contradiction in chained
@@ -160,7 +160,7 @@ type parsedKQL struct {
 	Limit      int
 	ForceEmpty bool
 
-	// internal tracking — used by applyType / addTag to detect conflicts.
+	// internal tracking, used by applyType / addTag to detect conflicts.
 	typeSet     bool
 	tagFirstVal map[string]string
 }
@@ -172,7 +172,7 @@ type parsedKQL struct {
 var (
 	// type == 'X' / type =~ 'X' / type == "X".
 	reWhereType = regexp.MustCompile(`(?i)^\s*type\s*(==|=~)\s*['"]([^'"]+)['"]\s*$`)
-	// type in ('a','b') / type in~ ('a', "b") — case-insensitive in-list.
+	// type in ('a','b') / type in~ ('a', "b"): case-insensitive in-list.
 	reWhereTypeIn = regexp.MustCompile(`(?i)^\s*type\s+in~?\s*\(([^)]*)\)\s*$`)
 	// a single quoted item inside an in-list.
 	reQuotedItem = regexp.MustCompile(`['"]([^'"]+)['"]`)
@@ -190,7 +190,7 @@ var (
 
 // parseKQL splits the query on `|` and applies each clause to a Query under
 // construction. Always returns a valid parsedKQL; unrecognized clauses
-// (project, summarize, join, …) are silently ignored — the stub favors
+// (project, summarize, join, …) are silently ignored: the stub favors
 // returning some result over a 400 on syntax we don't model yet.
 func parseKQL(query string) parsedKQL {
 	out := parsedKQL{}
@@ -230,7 +230,7 @@ func applyClause(out *parsedKQL, clause string) {
 }
 
 // applyWhere routes a single "where" predicate to the matching field on the
-// engine Query. Unknown predicates are tolerated and left untouched — see
+// engine Query. Unknown predicates are tolerated and left untouched: see
 // parseKQL's package-level comment for the rationale.
 func applyWhere(out *parsedKQL, body string) {
 	if m := reWhereType.FindStringSubmatch(body); m != nil {
@@ -254,7 +254,7 @@ func applyWhere(out *parsedKQL, body string) {
 	if m := reWhereRG.FindStringSubmatch(body); m != nil {
 		// The engine does not track resource groups; every Azure resource
 		// is bucketed under a single "default" group. Filtering by RG is
-		// therefore a no-op here — documented limitation; revisit if the
+		// therefore a no-op here (documented limitation); revisit if the
 		// engine grows real RG awareness.
 		_ = m
 		return
@@ -278,8 +278,8 @@ func applyWhere(out *parsedKQL, body string) {
 
 // applyType maps an Azure type string to portable Service + Type. Lower-case
 // before matching since Azure types are case-insensitive in KQL. A second
-// type clause is treated as an AND contradiction — real KQL would yield
-// zero rows because a resource cannot have two types — so ForceEmpty is
+// type clause is treated as an AND contradiction: real KQL would yield
+// zero rows because a resource cannot have two types. So ForceEmpty is
 // flipped and later short-circuits the handler.
 func applyType(out *parsedKQL, azureType string) {
 	if out.typeSet {
@@ -291,7 +291,7 @@ func applyType(out *parsedKQL, azureType string) {
 
 	svc, typ := mapAzureType(strings.ToLower(azureType))
 	if svc == "" && typ == "" {
-		// Unmapped type — match none, not all. Without this the empty Query
+		// Unmapped type: match none, not all. Without this the empty Query
 		// would fall through to "no filter" and return the whole inventory.
 		out.ForceEmpty = true
 
@@ -307,7 +307,7 @@ func applyType(out *parsedKQL, azureType string) {
 	}
 }
 
-// applyTypeList handles `where type in~ ('a', 'b')` — an any-of set of types.
+// applyTypeList handles `where type in~ ('a', 'b')`: an any-of set of types.
 // Each Azure type maps to a portable (service, type) pair; the services and
 // types are unioned into the engine Query as any-of filters. Like applyType,
 // a second type clause AND-ed on top is a contradiction and flips ForceEmpty.

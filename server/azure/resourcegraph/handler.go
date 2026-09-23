@@ -35,7 +35,7 @@ type Handler struct {
 // validated against the request's subscriptions list (a request whose
 // subscriptions field is set but does not include this ID returns an empty
 // result rather than an error). If subscriptionID is empty, the engine's
-// own AccountID is used — that's the same value the engine was built with
+// own AccountID is used: that's the same value the engine was built with
 // when it constructed Azure-shaped resource IDs, so the two stay aligned
 // without callers having to pass the ID twice.
 func New(engine *resourcediscovery.Engine, subscriptionID string) *Handler {
@@ -96,7 +96,7 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 	// The emulator serves a single estate, and the management plane accepts any
 	// subscription a client uses (it echoes it straight back into the resource
 	// id). So Resource Graph is subscription-transparent: it never rejects a
-	// requested subscription — it reports the estate under whichever one the
+	// requested subscription; it reports the estate under whichever one the
 	// caller scoped to, so "create under sub X" then "discover under sub X"
 	// stays consistent for every service.
 	subscription := h.effectiveSubscription(req.Subscriptions)
@@ -104,7 +104,7 @@ func (h *Handler) queryResources(w http.ResponseWriter, r *http.Request) {
 	parsed := parseKQL(req.Query)
 
 	// Contradiction in chained where-clauses (e.g. two type filters AND-ed
-	// together) — short-circuit before hitting the engine. See parsedKQL.
+	// together): short-circuit before hitting the engine. See parsedKQL.
 	if parsed.ForceEmpty {
 		azurearm.WriteJSON(w, http.StatusOK, emptyResponse())
 		return
@@ -269,7 +269,7 @@ func decodeSkipToken(token string) (int, bool) {
 // The fixed columns (id, name, type, location, resourceGroup, subscriptionId,
 // tags) are always present; the resource-shape columns (sku, properties,
 // managedBy, kind, zones) are emitted from the Resource's generic attribute
-// slots only when set — the same rendering for every resource type, with no
+// slots only when set: the same rendering for every resource type, with no
 // per-type branching. id is the ARM resource ID and resourceGroup is derived
 // from it (real Resource Graph consumers parse both).
 func resourceToWire(r *resourcediscovery.Resource, subscription string) map[string]any {
@@ -426,7 +426,7 @@ func rewriteSubscription(arn, sub string) string {
 	return prefix + sub
 }
 
-// portableToAzureTypeMap is the inverse of mapAzureType's mapping — the engine's
+// portableToAzureTypeMap is the inverse of mapAzureType's mapping: the engine's
 // (service, type) pair back to the dotted Azure type string a real ARG response
 // carries. A map lookup rather than a switch keeps gocyclo under the gate as the
 // pairs grow.
@@ -508,8 +508,8 @@ func portableToAzureType(service, typ string) string {
 // AzureType translates an engine Resource's (Service, Type) into the ARM type
 // string a real Azure client expects (e.g. "compute"/"Instance" ->
 // "microsoft.compute/virtualmachines"). Exported so other Azure handlers that
-// render resourcediscovery.Resource rows into Azure-shaped output — e.g. the
-// resource-groups exportTemplate — use the same naming Resource Graph does,
+// render resourcediscovery.Resource rows into Azure-shaped output, e.g. the
+// resource-groups exportTemplate, use the same naming Resource Graph does,
 // rather than a second, possibly-diverging mapping.
 func AzureType(service, typ string) string {
 	return portableToAzureType(service, typ)

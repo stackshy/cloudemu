@@ -20,7 +20,7 @@ func TestManagedIdentityTypeMapping(t *testing.T) {
 		t.Errorf("portableToAzureType(iam,UserAssignedIdentity) = %q, want %q", got, armIdentity)
 	}
 
-	// AAD users no longer collide with the managed-identity type — they fall back
+	// AAD users no longer collide with the managed-identity type: they fall back
 	// to their own lowercased label.
 	if got := portableToAzureType("iam", "User"); got == armIdentity {
 		t.Errorf("iam/User still maps to %q — collision not resolved", armIdentity)
