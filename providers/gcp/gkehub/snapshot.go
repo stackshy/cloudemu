@@ -12,7 +12,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // gkehubSnapshot is the full serialized state of the GKE Hub mock. All four
 // stores hold fully-exported gdriver value types keyed by their full GCP
-// resource name, so each round-trips through the generic memstore helper — no
+// resource name, so each round-trips through the generic memstore helper: no
 // field promotion is needed. opSeq is the operation-name counter, captured
 // beside the stores so restored operation ids do not collide with fresh ones.
 // The wired deps (m.opts) and the RWMutex are intentionally not serialized.
@@ -25,7 +25,7 @@ type gkehubSnapshot struct {
 }
 
 // Snapshot captures every membership, feature, fleet, and operation as JSON.
-// includeAssets is unused — GKE Hub admin is control-plane only and holds no
+// includeAssets is unused: GKE Hub admin is control-plane only and holds no
 // bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

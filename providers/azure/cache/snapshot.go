@@ -27,8 +27,8 @@ type cacheDataSnapshot struct {
 	Items json.RawMessage  `json:"items,omitempty"`
 }
 
-// Snapshot captures every cache instance's state as JSON. includeAssets is unused
-// — the cached items are the resource, so they are always captured.
+// Snapshot captures every cache instance's state as JSON. includeAssets is unused:
+// the cached items are the resource, so they are always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := cacheSnapshot{Caches: make(map[string]*cacheDataSnapshot, m.caches.Len())}
 

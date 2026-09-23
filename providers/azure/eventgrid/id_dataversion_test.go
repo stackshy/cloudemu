@@ -10,7 +10,7 @@ import (
 )
 
 // TestPutEventsPreservesPublisherID locks the fix: a publisher-supplied event id
-// must survive end-to-end — carried onto the delivered payload and recorded in
+// must survive end-to-end, carried onto the delivered payload and recorded in
 // event history unchanged (subscribers dedup on it).
 func TestPutEventsPreservesPublisherID(t *testing.T) {
 	receiver := newWebhookReceiver(t)

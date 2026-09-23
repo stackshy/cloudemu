@@ -82,7 +82,7 @@ type keyVersionSnapshot struct {
 }
 
 // Snapshot captures every vault's secrets and keys as JSON. includeAssets is
-// unused — a secret or key without its material cannot be restored usefully, so
+// unused: a secret or key without its material cannot be restored usefully, so
 // it is always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := keyvaultSnapshot{Vaults: make(map[string]*vaultSnapshot, m.vaults.Len())}

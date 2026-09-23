@@ -152,7 +152,7 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 }
 
 // transitionAlarm sets an alert policy's state and, only on a state change,
-// records a history entry — mirroring CloudWatch, where the history entry happens
+// records a history entry, mirroring CloudWatch, where the history entry happens
 // on a state change whether it came from metric evaluation or a manual
 // SetAlarmState. On an incident open (ALARM) or close (OK) transition it also
 // delivers the incident to the policy's referenced notification channels

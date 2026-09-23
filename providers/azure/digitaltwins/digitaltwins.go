@@ -1,5 +1,5 @@
 // Package digitaltwins provides an in-memory mock of Azure Digital Twins
-// (Microsoft.DigitalTwins/digitalTwinsInstances) — the ARM control plane only.
+// (Microsoft.DigitalTwins/digitalTwinsInstances), the ARM control plane only.
 // It manages the instance lifecycle (create/update/get/delete/list); the data
 // plane (twin graph, models, DTDL, event routes, queries) is out of scope.
 //
@@ -13,7 +13,7 @@
 //     ids, captured by callers to grant RBAC role assignments.
 //
 // Every computed field is derived deterministically from the resource identity,
-// so the same resource always reports the same values — across gets, patches and
+// so the same resource always reports the same values, across gets, patches and
 // a snapshot/restore.
 package digitaltwins
 
@@ -43,7 +43,7 @@ const (
 	// emits "<name>.api.<region>.digitaltwins.azure.net".
 	hostNameSuffix = "digitaltwins.azure.net"
 	// defaultRegion is the fallback hostName region segment when a resource has no
-	// location (never in practice — location is required).
+	// location (never in practice: location is required).
 	defaultRegion = "eastus"
 	// publicNetworkAccessEnabled is the default public-network-access value real
 	// Azure reports when the client sends none.

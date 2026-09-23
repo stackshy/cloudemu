@@ -7,9 +7,9 @@ import (
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
-// TestSnapshotRoundTripAlloyDB proves the mock serializes its entire state —
+// TestSnapshotRoundTripAlloyDB proves the mock serializes its entire state,
 // portable stores plus the AlloyDB-native side-stores (clusterExtra/
-// instanceExtra/initialPasswords) — and restores it into a fresh mock
+// instanceExtra/initialPasswords), and restores it into a fresh mock
 // identity-preservingly: re-snapshotting yields byte-identical JSON and the
 // seeded cluster and instance come back under their original ids.
 func TestSnapshotRoundTripAlloyDB(t *testing.T) {

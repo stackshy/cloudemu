@@ -16,7 +16,7 @@ const (
 
 // Invoke executes the named service against req. When a Go handler was
 // registered for the service via RegisterHandler it runs; otherwise Invoke
-// returns a canned/echo stub response — 200 echoing req.Body back when the
+// returns a canned/echo stub response: 200 echoing req.Body back when the
 // caller sent one, or a short greeting naming the service when the request
 // carried no body. This mirrors the no-handler echo stub the Cloud Functions
 // and Lambda mocks return, since CloudEmu has no runtime for the container

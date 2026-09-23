@@ -25,7 +25,7 @@ type secretSnapshot struct {
 	IAM        *driver.GCPIAMPolicy   `json:"iam,omitempty"`
 }
 
-// Snapshot captures every secret's full state as JSON. includeAssets is unused —
+// Snapshot captures every secret's full state as JSON. includeAssets is unused:
 // a secret without its value cannot be restored usefully, so values are always
 // captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {

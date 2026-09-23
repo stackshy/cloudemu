@@ -116,7 +116,7 @@ func adjustGroupState(group *driver.ContainerGroup, policy string, statuses []co
 	}
 }
 
-// forceRunning reports the group and its containers as continuously Running — the
+// forceRunning reports the group and its containers as continuously Running, the
 // state ACI keeps an Always-restart group in, since its container is restarted
 // forever and never reaches a terminal state.
 func forceRunning(group *driver.ContainerGroup) {

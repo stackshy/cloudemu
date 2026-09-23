@@ -81,7 +81,7 @@ func TestCreateOrUpdateAppliesMutableFields(t *testing.T) {
 	first, err := m.CreateWorkspace(ctx, validConfig())
 	requireNoError(t, err)
 
-	// PUT again with changed tags + SKU — ARM create-or-update must apply them.
+	// PUT again with changed tags + SKU: ARM create-or-update must apply them.
 	cfg := validConfig()
 	cfg.SKUName = "premium"
 	cfg.Tags = map[string]string{"env": "prod"}

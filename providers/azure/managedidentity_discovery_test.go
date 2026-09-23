@@ -11,7 +11,7 @@ import (
 // A user-assigned managed identity created through the mock must surface in the
 // cross-service inventory under ServiceIAM / TypeUserAssignedIdentity, so it is
 // visible to Resource Graph and `az resource list`. This is the #611 ARG-triple
-// wiring — and the collision resolution (it is NOT an AAD user).
+// wiring, and the collision resolution (it is NOT an AAD user).
 func TestResourceDiscoverySurfacesManagedIdentity(t *testing.T) {
 	ctx := context.Background()
 	p := New()

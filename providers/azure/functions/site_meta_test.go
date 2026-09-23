@@ -182,7 +182,7 @@ func TestGetSiteMetaScoped(t *testing.T) {
 }
 
 // TestGetSiteMetaResourceGroupCaseInsensitive verifies that a GET with a
-// differently-cased resource group resolves the site — ARM resource-group
+// differently-cased resource group resolves the site: ARM resource-group
 // names are case-insensitive.
 func TestGetSiteMetaResourceGroupCaseInsensitive(t *testing.T) {
 	m := newMetaMock()
@@ -261,7 +261,7 @@ func TestGetFunctionScopedAndDeleteFunctionScoped(t *testing.T) {
 		t.Fatalf("delete from wrong rg = %v, want NotFound", err)
 	}
 
-	// The function must still exist — a delete against the wrong resource
+	// The function must still exist: a delete against the wrong resource
 	// group must not have removed it.
 	if _, err := m.GetFunctionScoped(ctx, "sub1", "rgA", "app1"); err != nil {
 		t.Fatalf("function removed by wrong-rg delete: %v", err)

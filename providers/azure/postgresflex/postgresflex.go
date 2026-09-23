@@ -1,10 +1,10 @@
 // Package postgresflex provides an in-memory mock of Microsoft.DBforPostgreSQL
-// (Azure Database for PostgreSQL — Flexible Server). It implements
+// (Azure Database for PostgreSQL, Flexible Server). It implements
 // relationaldb/driver.RelationalDB so the same backend serves both the
 // portable API (relationaldb.DB) and the SDK-compat HTTP layer.
 //
 // Postgres Flex has a flat resource model: each flexible server is a
-// standalone managed Postgres instance — there is no Aurora-style cluster
+// standalone managed Postgres instance, there is no Aurora-style cluster
 // concept. The driver's Cluster*/ClusterSnapshot* methods therefore return
 // InvalidArgument. Snapshots are exposed via the portable API only; there is
 // no ARM endpoint for them in the MVP.
@@ -558,7 +558,7 @@ func (m *Mock) transitionInstance(id, from, to string, cpu, conns float64, verb 
 	return nil
 }
 
-// CreateCluster is unsupported on Postgres Flex — there is no cluster concept.
+// CreateCluster is unsupported on Postgres Flex: there is no cluster concept.
 //
 //nolint:gocritic // signature matches the driver interface.
 func (*Mock) CreateCluster(_ context.Context, _ rdsdriver.ClusterConfig) (*rdsdriver.Cluster, error) {
@@ -566,7 +566,7 @@ func (*Mock) CreateCluster(_ context.Context, _ rdsdriver.ClusterConfig) (*rdsdr
 		"Postgres Flex has no cluster concept; create flexible servers individually")
 }
 
-// DescribeClusters returns an empty list — Postgres Flex has no clusters.
+// DescribeClusters returns an empty list: Postgres Flex has no clusters.
 func (*Mock) DescribeClusters(_ context.Context, _ []string) ([]rdsdriver.Cluster, error) {
 	return []rdsdriver.Cluster{}, nil
 }
@@ -752,7 +752,7 @@ func (*Mock) CreateClusterSnapshot(
 	return nil, cerrors.New(cerrors.InvalidArgument, "Postgres Flex has no cluster concept")
 }
 
-// DescribeClusterSnapshots returns an empty list — Postgres Flex has no clusters.
+// DescribeClusterSnapshots returns an empty list: Postgres Flex has no clusters.
 func (*Mock) DescribeClusterSnapshots(
 	_ context.Context, _ []string, _ string,
 ) ([]rdsdriver.ClusterSnapshot, error) {

@@ -43,7 +43,7 @@ type ruleSnapshot struct {
 	Targets json.RawMessage `json:"targets,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Event Grid holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	buses, err := snapshotBuses(m.buses)

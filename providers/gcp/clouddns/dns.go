@@ -72,7 +72,7 @@ func cloneNetworks(in []driver.VisibilityNetwork) []driver.VisibilityNetwork {
 }
 
 // mergeDNSSEC returns the incoming DNSSEC config (cloned) when a patch carries
-// one, else preserves the existing value — so a patch that omits it is a no-op.
+// one, else preserves the existing value, so a patch that omits it is a no-op.
 func mergeDNSSEC(existing, incoming *driver.DNSSECConfig) *driver.DNSSECConfig {
 	if incoming == nil {
 		return existing
@@ -351,7 +351,7 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 
 	// SortedValues gives a stable order keyed by zoneID:name:type[:setID];
 	// filter to this zone in that order so ListRecords is deterministic
-	// (map iteration order must never reach the wire — #259).
+	// (map iteration order must never reach the wire, see #259).
 	all := m.records.SortedValues()
 
 	records := make([]driver.RecordInfo, 0, len(all))
@@ -395,7 +395,7 @@ func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 	}
 
 	// Update replaces the value only if the key still exists, all under the
-	// store's lock — a Get-then-Set pair could let a concurrent DeleteRecord
+	// store's lock: a Get-then-Set pair could let a concurrent DeleteRecord
 	// land in between, silently resurrecting a record the caller just deleted.
 	if !m.records.Update(key, func(driver.RecordInfo) driver.RecordInfo { return rec }) {
 		return nil, cerrors.Newf(cerrors.NotFound, "resource record set %q of type %q not found in zone %q", cfg.Name, cfg.Type, cfg.ZoneID)

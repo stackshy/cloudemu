@@ -15,8 +15,8 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // monitorSnapshot is the full serialized state of the Azure Monitor mock. The
 // alarm, channel, and action-group stores hold value types whose fields are all
 // exported, so they round-trip through the generic memstore helper. The metric
-// buffer is keyed by a struct (metricKey) — which json cannot serialize as a map
-// key — so it is promoted to a deterministically-ordered slice. The alarm-history
+// buffer is keyed by a struct (metricKey), which json cannot serialize as a map
+// key, so it is promoted to a deterministically-ordered slice. The alarm-history
 // and action-group-delivery logs are captured in order. The mutex, the wired
 // webhook deliverer, and *config.Options are intentionally not captured.
 type monitorSnapshot struct {
@@ -36,7 +36,7 @@ type metricEntrySnapshot struct {
 	Data []driver.MetricDatum `json:"data,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Azure Monitor holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap monitorSnapshot

@@ -25,7 +25,7 @@ func defaultChangeableAttrs() changeableAttrs {
 	return changeableAttrs{deleteEnabled: true, writeEnabled: true, listEnabled: true, readEnabled: true}
 }
 
-// merge applies the non-nil fields of upd onto a, leaving the rest unchanged —
+// merge applies the non-nil fields of upd onto a, leaving the rest unchanged:
 // the semantics of ACR's partial-update PATCH body.
 func (a changeableAttrs) merge(upd driver.AzureChangeableAttributes) changeableAttrs {
 	if upd.DeleteEnabled != nil {

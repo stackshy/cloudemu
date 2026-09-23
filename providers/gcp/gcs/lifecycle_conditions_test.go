@@ -86,7 +86,7 @@ func TestLifecycleRawRoundTrip(t *testing.T) {
 }
 
 // TestEvaluateLifecycleRichConditions checks the live-object evaluator honors
-// createdBefore, matchesStorageClass, prefix/suffix and isLive — not just age —
+// createdBefore, matchesStorageClass, prefix/suffix and isLive, not just age,
 // and never over-deletes on unevaluable (customTime) conditions.
 func TestEvaluateLifecycleRichConditions(t *testing.T) {
 	ctx := context.Background()

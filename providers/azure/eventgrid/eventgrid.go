@@ -41,7 +41,7 @@ type ruleData struct {
 	rule    driver.Rule
 	targets *memstore.Store[driver.Target]
 	// filter and dest are parsed from rule.Description (the raw ARM
-	// EventSubscription properties JSON) — Event Grid's subscription filter
+	// EventSubscription properties JSON): Event Grid's subscription filter
 	// and destination shapes have no equivalent in the portable eventbus
 	// driver, so PutRule derives them here for PutEvents to apply/deliver to.
 	filter subscriptionFilter
@@ -75,8 +75,8 @@ type Mock struct {
 	buses *memstore.Store[*busData]
 	// systemBuses backs system-topic delivery. It is a store distinct from
 	// buses (user-facing custom topics) so a system topic's delivery bus and a
-	// custom topic can share a name — e.g. the fixed storage-account name a Blob
-	// Storage system topic keys on — without either clobbering or leaking into
+	// custom topic can share a name (e.g. the fixed storage-account name a Blob
+	// Storage system topic keys on) without either clobbering or leaking into
 	// the other. The custom-topic CRUD paths (Create/Update/Delete/ListEventBus,
 	// PutRule) never touch it; it is managed only through the SystemDelivery*
 	// methods and consulted by PutEvents for system-topic-sourced events.
@@ -152,7 +152,7 @@ func New(opts *config.Options) *Mock {
 // the given name exists (no-op when it already does, or the name is empty). The
 // wire handler calls this when a system topic is created so the source
 // producer's PutEvents has a bus to match. The bus lives in systemBuses, so it
-// never appears on — nor is clobbered by — the custom-topic surface.
+// never appears on, nor is clobbered by, the custom-topic surface.
 func (m *Mock) EnsureSystemDeliveryBus(name string) {
 	if name == "" || m.systemBuses.Has(name) {
 		return
@@ -167,7 +167,7 @@ func (m *Mock) EnsureSystemDeliveryBus(name string) {
 
 // PutSystemDeliveryRule registers (or replaces) a system-topic subscription as a
 // delivery rule on its isolated bus, carrying the raw ARM EventSubscription
-// properties (destination + filter) verbatim — mirroring PutRule for custom
+// properties (destination + filter) verbatim, mirroring PutRule for custom
 // topics, but against systemBuses. Returns NotFound when the delivery bus was
 // never provisioned.
 func (m *Mock) PutSystemDeliveryRule(busName, ruleName, properties string) error {
@@ -676,7 +676,7 @@ func matchesField(value string, allowed any) bool {
 	return false
 }
 
-// UpdateEventBus replaces the mutable fields of an existing topic — ARM
+// UpdateEventBus replaces the mutable fields of an existing topic, using ARM
 // CreateOrUpdate-on-existing semantics (tags come from the request; identity
 // and CreatedAt are preserved).
 func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*driver.EventBusInfo, error) {

@@ -78,7 +78,7 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 
 // SetLogSink wires the Cloud Logging target that Invoke writes each
 // invocation's execution log lines (and any captured stdout/stderr) into.
-// Safe to leave unset — invocation-log surfacing is then skipped.
+// Safe to leave unset: invocation-log surfacing is then skipped.
 func (m *Mock) SetLogSink(l logdriver.Logging) {
 	m.logs = l
 }
@@ -116,7 +116,7 @@ func New(opts *config.Options) *Mock {
 func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*driver.FunctionInfo, error) {
 	// Fast-path check: avoids the deploy call for the common (non-racing)
 	// duplicate-name case, but does not by itself prevent two concurrent
-	// creates of the same name both passing — that guard is the SetIfAbsent
+	// creates of the same name both passing. That guard is the SetIfAbsent
 	// below, which is the atomic compare-and-set under the store lock.
 	if _, ok := m.funcs.Get(cfg.Name); ok {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "function %s already exists", cfg.Name)
@@ -155,7 +155,7 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 	// Deploy/Remove are keyed by name only (no per-create handle), so if two
 	// concurrent creates both deployed first and then raced SetIfAbsent, the
 	// losing racer's "cleanup" Remove(name) would tear down whatever is
-	// currently registered under that name — which can be the WINNER's
+	// currently registered under that name, which can be the WINNER's
 	// deployment, leaving it engineBacked but with no live deployment behind
 	// it. Reserving the name first guarantees only the actual owner of the
 	// name ever calls Deploy/Remove for it, so a losing racer touches no
@@ -266,7 +266,7 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 	// DeleteFunction (Get+Delete) can't be interleaved between our read and this
 	// write: either the delete lands first and this reports NotFound (below),
 	// leaving the entry gone, or this write lands first and the delete then
-	// removes it cleanly — never a stale resurrection of a deleted entry.
+	// removes it cleanly, never a stale resurrection of a deleted entry.
 	ok = m.funcs.Update(name, func(cur funcData) funcData {
 		cur.info = info
 		if deployed {
@@ -311,7 +311,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	if h == nil {
 		// The emulator can't execute uploaded function code, so with no Go
 		// handler registered we return a successful stub echoing the request
-		// payload rather than a FunctionError — mirroring the AWS Lambda
+		// payload rather than a FunctionError, mirroring the AWS Lambda
 		// provider so identical cross-provider tests behave the same.
 		noHandlerDims := map[string]string{"function_name": input.FunctionName}
 		m.emitMetric(ctx, "function/execution_count", 1, noHandlerDims)

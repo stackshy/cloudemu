@@ -1,5 +1,5 @@
 // Package purview provides an in-memory mock of Microsoft Purview
-// (Microsoft.Purview/accounts) — the ARM control plane only. It manages the
+// (Microsoft.Purview/accounts), the ARM control plane only. It manages the
 // Purview account lifecycle (create/update/get/delete/list/listKeys); the data
 // plane (the purview.azure.com Atlas catalog, scan and guardian APIs) is out of
 // scope.
@@ -18,7 +18,7 @@
 //   - identity.principalId / identity.tenantId for a system-assigned identity.
 //
 // Every computed field is derived deterministically from the resource identity,
-// so the same resource always reports the same values — across gets, patches and
+// so the same resource always reports the same values, across gets, patches and
 // a snapshot/restore.
 package purview
 

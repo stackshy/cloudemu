@@ -470,8 +470,8 @@ func (m *Mock) CloneInstance(ctx context.Context, sourceID, destID string) (*rds
 	clone.ARN = idgen.GCPID(m.opts.ProjectID, "instances", destID)
 	// The clone gets its OWN connection name; Endpoint keeps carrying the
 	// reachable IP (inherited from the source's shared engine, then overridden
-	// below when engine-backed). Writing the connection name into Endpoint — as
-	// this did before ConnectionName existed — corrupts both SDK fields.
+	// below when engine-backed). Writing the connection name into Endpoint (as
+	// this did before ConnectionName existed) corrupts both SDK fields.
 	clone.ConnectionName = instanceConnectionName(m.opts.ProjectID, src.AvailabilityZone, destID)
 	clone.Endpoint = src.Endpoint
 	clone.State = rdsdriver.StateAvailable
@@ -487,13 +487,13 @@ func (m *Mock) CloneInstance(ctx context.Context, sourceID, destID string) (*rds
 	clone.DBName = destID
 
 	// Back the clone with its OWN real database when an engine is configured,
-	// reusing the source's credentials — otherwise the clone reports a reachable
+	// reusing the source's credentials: otherwise the clone reports a reachable
 	// IP but has no database to connect to.
 	//
 	// The clone's physical database is named after the clone (destID), NOT the
 	// source's DBName: the shared engine resolves the request DBName to a single
 	// physical database, so reusing src.DBName would make the clone alias the
-	// source — writes would corrupt the source and dropping the clone would DROP
+	// source: writes would corrupt the source and dropping the clone would DROP
 	// the source's database. In the emulator a clone is therefore schema-isolated:
 	// an independent, empty-schema database, not a byte-for-byte data copy of the
 	// source (a real embedded-postgres data copy is out of scope).

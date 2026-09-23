@@ -77,7 +77,7 @@ func (m *Mock) DeleteAzureNSGMetadata(_ context.Context, id string) {
 
 // UpsertAzureNSGRule creates or replaces a single custom security rule by
 // name via an atomic read-modify-write on the stored metadata, leaving every
-// sibling rule untouched — the SecurityRules sub-resource CRUD's mutation.
+// sibling rule untouched. This is the SecurityRules sub-resource CRUD's mutation.
 //
 //nolint:gocritic,dupl // hugeParam: fixed interface sig; dupl: parallels UpsertAzureRoute's COW clone-one-subresource shape by design.
 func (m *Mock) UpsertAzureNSGRule(_ context.Context, id string, rule driver.AzureNSGRule) (driver.AzureNSGMetadata, error) {
@@ -175,7 +175,7 @@ func (m *Mock) DeleteAzureRouteTableMetadata(_ context.Context, id string) {
 
 // UpsertAzureRoute creates or replaces a single route by name via an atomic
 // read-modify-write on the stored route-table metadata, leaving every sibling
-// route (and the table's other fields) untouched — the routes sub-resource
+// route (and the table's other fields) untouched. This is the routes sub-resource
 // CRUD's mutation.
 //
 //nolint:dupl // parallels UpsertAzureNSGRule: the same COW clone-and-mutate-one-subresource shape over a distinct metadata type by design.
@@ -279,8 +279,8 @@ func cloneVNetMeta(meta driver.AzureVNetMetadata) driver.AzureVNetMetadata {
 	return out
 }
 
-// cloneNSGMeta deep-copies the rule slice — and each rule's application-security-group
-// reference slices — so stored and returned values never alias a caller's slice.
+// cloneNSGMeta deep-copies the rule slice, and each rule's application-security-group
+// reference slices, so stored and returned values never alias a caller's slice.
 func cloneNSGMeta(meta driver.AzureNSGMetadata) driver.AzureNSGMetadata {
 	out := driver.AzureNSGMetadata{Location: meta.Location, ResourceGUID: meta.ResourceGUID}
 

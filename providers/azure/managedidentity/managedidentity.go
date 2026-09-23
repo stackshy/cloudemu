@@ -2,7 +2,7 @@
 // Managed Identities (Microsoft.ManagedIdentity/userAssignedIdentities).
 //
 // A user-assigned identity is a standalone Azure resource that carries three
-// stable, service-minted identifiers — clientId, principalId and tenantId. The
+// stable, service-minted identifiers: clientId, principalId and tenantId. The
 // principalId in particular is captured by callers to grant the identity RBAC
 // role assignments, so it MUST stay stable for the lifetime of the identity: it
 // is minted once at create time, persisted, and never regenerated on a read.

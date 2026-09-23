@@ -1,5 +1,5 @@
 // Package devcenter provides an in-memory mock of Azure Dev Center
-// (Microsoft.DevCenter/devcenters) — the ARM control plane only. It manages the
+// (Microsoft.DevCenter/devcenters), the ARM control plane only. It manages the
 // dev center resource lifecycle (create/update/get/delete/list); the data plane
 // (the devcenter.azure.com developer API: projects, pools, catalogs, dev boxes,
 // environments) is out of scope.
@@ -13,7 +13,7 @@
 //   - identity.principalId / identity.tenantId for a system-assigned identity.
 //
 // Every computed field is derived deterministically from the resource identity,
-// so the same resource always reports the same values — across gets, patches and
+// so the same resource always reports the same values, across gets, patches and
 // a snapshot/restore.
 package devcenter
 
@@ -282,7 +282,7 @@ func uriFor(name, location string) string {
 
 // regionCode normalizes an ARM location into the host label real Azure uses in
 // the URI (lowercased, whitespace removed). The exact value only has to be
-// stable — Terraform reads the URI back verbatim.
+// stable: Terraform reads the URI back verbatim.
 func regionCode(location string) string {
 	if location == "" {
 		return "global"

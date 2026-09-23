@@ -82,7 +82,7 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 
 // SetLogSink wires the Log Analytics target that Invoke writes each
 // invocation's execution log lines (and any captured stdout/stderr) into.
-// Safe to leave unset — invocation-log surfacing is then skipped.
+// Safe to leave unset: invocation-log surfacing is then skipped.
 func (m *Mock) SetLogSink(l logdriver.Logging) {
 	m.logs = l
 }
@@ -259,7 +259,7 @@ func (m *Mock) Invoke(ctx context.Context, input driver.InvokeInput) (*driver.In
 	if h == nil {
 		// The emulator can't execute uploaded function code, so with no Go
 		// handler registered we return a successful stub echoing the request
-		// payload rather than a FunctionError — mirroring the AWS Lambda
+		// payload rather than a FunctionError, mirroring the AWS Lambda
 		// provider so identical cross-provider tests behave the same.
 		m.emitMetric(input.FunctionName, map[string]float64{
 			"FunctionExecutionCount": 1, "FunctionExecutionUnits": 1,

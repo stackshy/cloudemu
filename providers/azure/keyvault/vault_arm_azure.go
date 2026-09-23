@@ -52,9 +52,9 @@ const defaultSoftDeleteRetentionDays = 90
 // enableSoftDelete is special: Microsoft mandates soft-delete on every new
 // vault and, once on, it can never be turned off ("When creating a new key
 // vault, soft-delete is on by default. Once soft-delete is enabled on a key
-// vault, it can't be disabled." — Key Vault soft-delete overview; VaultProperties:
+// vault, it can't be disabled." Key Vault soft-delete overview; VaultProperties:
 // "Once set to true, it cannot be reverted to false."). So it is forced true
-// unconditionally here — an explicit false on create is overridden, and a
+// unconditionally here: an explicit false on create is overridden, and a
 // PATCH/PUT can never revert a true vault to false (both paths funnel through
 // CreateOrUpdateVault → this helper).
 func applyVaultPropertyDefaults(p *driver.KVVaultProperties) {

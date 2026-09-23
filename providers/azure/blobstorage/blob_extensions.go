@@ -70,7 +70,7 @@ func (m *Mock) StageBlock(_ context.Context, container, blob, blockID string, da
 
 // CommitBlockList assembles a block blob from the given block entries. Each
 // entry is resolved against its source list (Committed/Uncommitted/Latest), so
-// a commit can re-reference blocks already committed on the blob — the "append
+// a commit can re-reference blocks already committed on the blob, the "append
 // by re-committing existing blocks plus a new one" pattern.
 func (m *Mock) CommitBlockList(
 	ctx context.Context, container, blob string, blocks []driver.BlockListEntry,
@@ -370,7 +370,7 @@ func (m *Mock) CreateAppendBlob(
 	}
 
 	// Immutable storage (WORM): re-creating an append blob over a protected key
-	// would replace its content with empty — block it. A fresh key passes.
+	// would replace its content with empty: block it. A fresh key passes.
 	if err := m.enforceImmutable(ctr, blob); err != nil {
 		return nil, err
 	}
@@ -682,7 +682,7 @@ func (m *Mock) RenewLease(_ context.Context, container, blob, leaseID string) (*
 	}
 
 	// A lease that has merely expired (not released) can still be renewed with
-	// its old id, but only if the blob hasn't changed since — otherwise someone
+	// its old id, but only if the blob hasn't changed since: otherwise someone
 	// else has taken and released the blob in between.
 	if state == leaseStateExpired && obj.leaseModTimeAtAcquire != obj.LastModified {
 		return nil, leaseManagementError("LeaseIdMismatchWithLeaseOperation",

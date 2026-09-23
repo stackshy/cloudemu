@@ -13,7 +13,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // sqlSnapshot is the full serialized state of the Azure SQL mock. Every store
 // holds a fully-exported rdsdriver value, so each round-trips through the
 // generic memstore helper keyed by its resource id (server name, "server/db",
-// snapshot id, …) — cross-references survive because the keys are preserved. The
+// snapshot id, …), cross-references survive because the keys are preserved. The
 // mutex and the wired options/monitoring are intentionally not serialized.
 type sqlSnapshot struct {
 	Clusters         json.RawMessage `json:"clusters,omitempty"`
@@ -30,7 +30,7 @@ type sqlSnapshot struct {
 	TDE              json.RawMessage `json:"tde,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Azure SQL holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap sqlSnapshot

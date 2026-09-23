@@ -100,7 +100,7 @@ func TestMissingIDAndLocation(t *testing.T) {
 // TestRevisionBumpOnSourceChange is the drift-critical behavior: a Patch that
 // changes sourceContents (or serviceAccount) mints a new revisionId and
 // revisionCreateTime, while a Patch that touches only labels/description leaves
-// them stable — matching real GCP and keeping a Terraform plan clean.
+// them stable, matching real GCP and keeping a Terraform plan clean.
 func TestRevisionBumpOnSourceChange(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()

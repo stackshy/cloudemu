@@ -19,7 +19,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // function name; layers is promoted likewise for its nested version store. The
 // mappings/plans/sites stores hold fully-exported types and round-trip through
 // the generic memstore helper. The live in-process handler funcs (funcData.handler
-// and the handlers registry) and the wired opts/monitoring are NOT serialized —
+// and the handlers registry) and the wired opts/monitoring are NOT serialized:
 // they are re-registered by the host process. On restore a function's handler is
 // re-linked from the handlers registry if one is present.
 type functionsSnapshot struct {
@@ -32,7 +32,7 @@ type functionsSnapshot struct {
 
 // funcSnapshot mirrors funcData. The mock does not retain raw deployment-package
 // bytes (they are deployed to the external FunctionEngine and discarded); what
-// survives is the code IDENTITY — CodeSHA256 on info and each version's config —
+// survives is the code IDENTITY (CodeSHA256 on info and each version's config)
 // plus the aliases, captured by name.
 type funcSnapshot struct {
 	Info         driver.FunctionInfo       `json:"info"`
@@ -58,7 +58,7 @@ type layerSnapshot struct {
 	NextVer  int             `json:"nextVer,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // each published version's config (the code identity) is always captured so
 // republished functions survive a restore.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {

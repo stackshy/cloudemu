@@ -227,7 +227,7 @@ func TestListDeterministicAndScoped(t *testing.T) {
 		t.Fatalf("ListFactories len = %d, want 3", len(all))
 	}
 
-	// Ordered by ID (deterministic — no list drift).
+	// Ordered by ID (deterministic: no list drift).
 	for i := 1; i < len(all); i++ {
 		if all[i-1].ID > all[i].ID {
 			t.Errorf("ListFactories not sorted by ID: %q > %q", all[i-1].ID, all[i].ID)

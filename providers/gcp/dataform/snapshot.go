@@ -12,14 +12,14 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // dataformSnapshot is the full serialized state of the Dataform mock. The store
 // holds fully-exported driver value types keyed by their full GCP resource name,
-// so it round-trips through the generic memstore helper — no field promotion is
+// so it round-trips through the generic memstore helper: no field promotion is
 // needed. The wired deps (m.opts) and the RWMutex are intentionally not
 // serialized.
 type dataformSnapshot struct {
 	Repositories json.RawMessage `json:"repositories,omitempty"`
 }
 
-// Snapshot captures every repository as JSON. includeAssets is unused — Dataform
+// Snapshot captures every repository as JSON. includeAssets is unused: Dataform
 // is control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

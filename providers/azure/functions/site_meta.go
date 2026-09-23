@@ -231,7 +231,7 @@ func (m *Mock) UpsertSiteMeta(_ context.Context, in SiteMeta) (*SiteMeta, error)
 }
 
 // SiteMetaPatch carries only the fields a PATCH (WebApps_Update) request
-// supplied. A nil field is left as stored — this is what distinguishes PATCH's
+// supplied. A nil field is left as stored. This is what distinguishes PATCH's
 // partial-update semantics from PUT's full replace: real Azure preserves any
 // property the PATCH body omits.
 type SiteMetaPatch struct {
@@ -372,7 +372,7 @@ func (m *Mock) GetSiteMeta(_ context.Context, subscription, resourceGroup, name 
 
 // DeleteSiteMeta removes the site metadata, scoped to the given subscription
 // and resource group (see GetSiteMeta). A site that exists under a different
-// scope is left untouched — a DELETE against the wrong resourceGroups segment
+// scope is left untouched: a DELETE against the wrong resourceGroups segment
 // must not delete another resource group's site. A site that doesn't exist at
 // all is also left untouched (ignored) so this can trail a portable
 // DeleteFunction without racing.
@@ -392,7 +392,7 @@ func (m *Mock) DeleteSiteMeta(_ context.Context, subscription, resourceGroup, na
 
 // UpdateAppSettings replaces a site's app settings only, preserving every
 // other stored field. This is the ARM contract for PUT .../config/appsettings
-// ("Replaces the application settings of an app" — not the whole site), and
+// ("Replaces the application settings of an app", not the whole site), and
 // is scoped exactly like GetSiteMeta/DeleteSiteMeta.
 func (m *Mock) UpdateAppSettings(
 	_ context.Context, subscription, resourceGroup, name string, settings map[string]string,
@@ -414,7 +414,7 @@ func (m *Mock) UpdateAppSettings(
 // GetFunctionScoped returns the function only when it belongs to the given
 // subscription and resource group. The underlying portable function record
 // (m.funcs, driver.Serverless) is keyed by name alone across every resource
-// group — matching real Azure's globally-unique Web App names — so scope is
+// group (matching real Azure's globally-unique Web App names), so scope is
 // enforced here via the site metadata before ever touching that store,
 // closing the gap where an ARM GET against the wrong resourceGroups segment
 // would otherwise return another resource group's site.
@@ -484,7 +484,7 @@ func (m *Mock) ListSiteMeta(_ context.Context, subscription, resourceGroup strin
 // this also updates an existing function). It reports created=true only when the
 // function is new. A newly-created function gets a generated default key; an
 // overwrite preserves the existing function's keys (unless the request supplies
-// its own), so a re-PUT with no keys — the shape the wire handler sends — never
+// its own), so a re-PUT with no keys (the shape the wire handler sends) never
 // silently rotates the caller's function key.
 func (m *Mock) CreateSiteFunction(_ context.Context, site string, fn SiteFunction) (*SiteFunction, bool, error) {
 	m.sitesMu.Lock()

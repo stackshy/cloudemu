@@ -145,7 +145,7 @@ type Provider struct {
 	Region    string
 	// Clock is the time source this provider was created with, exposed so a
 	// standalone server can drive time-stamped observers (e.g. the Cloud Audit
-	// Log recorder) off the same clock — deterministic under a FakeClock.
+	// Log recorder) off the same clock, deterministic under a FakeClock.
 	Clock config.Clock
 
 	// engineClosers holds any wired real engines that implement io.Closer, so
@@ -265,7 +265,7 @@ func New(opts ...config.Option) *Provider {
 
 // Close tears down any real engines wired into the provider via
 // config.With<X>Engine, stopping the Docker containers or subprocesses they
-// own. It is a no-op when no engine is wired — the in-memory default — and is
+// own. It is a no-op when no engine is wired (the in-memory default), and is
 // safe to call more than once, since engine Close is idempotent.
 func (p *Provider) Close() error {
 	var errs []error
@@ -283,7 +283,7 @@ func (p *Provider) Close() error {
 // preserving snapshotting, keyed by a stable lowercased field-name service key
 // (e.g. "gcs", "firestore", "compute"). persist iterates this map, so the
 // persisted surface automatically tracks whichever services implement
-// snapshot.Snapshottable — no hand-kept registry to drift.
+// snapshot.Snapshottable: no hand-kept registry to drift.
 func (p *Provider) SnapshotServices() map[string]snapshot.Snapshottable {
 	return snapshot.Discover(p)
 }

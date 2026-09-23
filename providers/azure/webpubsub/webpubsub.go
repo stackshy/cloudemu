@@ -1,5 +1,5 @@
 // Package webpubsub provides an in-memory mock of Azure Web PubSub Service
-// (Microsoft.SignalRService/webPubSub) — the ARM control plane only. It manages
+// (Microsoft.SignalRService/webPubSub), the ARM control plane only. It manages
 // the webPubSub resource lifecycle (create/update/get/delete/list) and the
 // listKeys action; the data plane (a running Web PubSub hub, negotiate,
 // websocket traffic) is out of scope.
@@ -10,7 +10,7 @@
 // MUST stay stable for the lifetime of the resource so infrastructure-as-code
 // tools (Terraform's azurerm_web_pubsub) see no drift on re-plan:
 //   - hostName: "<name>.webpubsub.azure.com", deterministic from the name.
-//     (Note the ".webpubsub.azure.com" suffix — SignalR uses
+//     (Note the ".webpubsub.azure.com" suffix; SignalR uses
 //     ".service.signalr.net".)
 //   - externalIP / publicPort / serverPort: the resource's network coordinates.
 //   - provisioningState: "Succeeded" once provisioning completes.
@@ -19,7 +19,7 @@
 //   - sku.tier / sku.size, derived from the sku name (Standard_S1 -> Standard/S1).
 //
 // Every computed field is derived deterministically from the resource identity,
-// so the same resource always reports the same values — across gets, patches,
+// so the same resource always reports the same values, across gets, patches,
 // listKeys and a snapshot/restore.
 package webpubsub
 

@@ -181,7 +181,7 @@ func (m *Mock) DeleteInstance(_ context.Context, project, location, id string) (
 
 // RestartInstance runs an ACTIVE instance through RESTARTING back to ACTIVE. A
 // restart of a non-ACTIVE instance is rejected with FAILED_PRECONDITION; of a
-// missing instance, NOT_FOUND — matching the real API's state machine.
+// missing instance, NOT_FOUND, matching the real API's state machine.
 func (m *Mock) RestartInstance(_ context.Context, project, location, id string) (
 	*dfdriver.Resource, *dfdriver.Operation, error,
 ) {

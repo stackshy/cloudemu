@@ -90,7 +90,7 @@ func TestKubeconfig_APIWithoutBaseURLKeepsSentinel(t *testing.T) {
 	m := newTestMock()
 
 	api := kubernetes.NewAPIServer()
-	// Intentionally no SetBaseURL — Kubeconfig should fall back.
+	// Intentionally no SetBaseURL: Kubeconfig should fall back.
 	m.SetK8sAPI(api)
 
 	if _, err := m.CreateOrUpdateCluster(context.Background(), ClusterInput{
@@ -158,7 +158,7 @@ func TestCreateOrUpdate_DoesNotReRegister(t *testing.T) {
 		}
 	}
 
-	// Re-PUTs should not allocate new UIDs — ARM PUT is idempotent and the
+	// Re-PUTs should not allocate new UIDs: ARM PUT is idempotent and the
 	// data-plane identity must stay stable across re-PUTs.
 	uid := m.k8sUIDs[clusterKey("rg-1", "c1")]
 	if uid == "" {

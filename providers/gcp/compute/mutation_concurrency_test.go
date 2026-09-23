@@ -15,7 +15,7 @@ import (
 // must stay clean under `go test -race`: the mutators are copy-on-write inside
 // memstore.Store.Update, so a reader holding a previous record pointer never
 // observes an in-place map mutation. The pre-fix Get-then-naked-mutate tripped
-// Go's concurrent map access — an unrecoverable process crash.
+// Go's concurrent map access, an unrecoverable process crash.
 func TestGCPMutatorsConcurrentWithReads(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

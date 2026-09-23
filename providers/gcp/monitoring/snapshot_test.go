@@ -11,7 +11,7 @@ import (
 )
 
 // TestSnapshotRestoreRoundTrip proves the Cloud Monitoring mock serializes its
-// entire state — metric buffer and alarms — and restores it into a fresh mock
+// entire state, metric buffer and alarms, and restores it into a fresh mock
 // identity-preservingly.
 func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	ctx := context.Background()

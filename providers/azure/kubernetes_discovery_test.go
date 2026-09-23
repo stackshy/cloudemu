@@ -11,7 +11,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
-// A real AKS managed cluster and agent pool must appear in Resource Graph —
+// A real AKS managed cluster and agent pool must appear in Resource Graph: this
 // exercises the aksDiscovery adapter end to end.
 func TestResourceDiscoverySurfacesAKS(t *testing.T) {
 	ctx := context.Background()
@@ -61,7 +61,7 @@ func TestResourceDiscoverySurfacesAKS(t *testing.T) {
 }
 
 // Two clusters with the same name in different resource groups must get
-// distinct canonical ARNs — each embedding its own resource group, not the
+// distinct canonical ARNs, each embedding its own resource group, not the
 // discovery default. The AKS mock keys on rg+name, so this is a real case.
 func TestResourceDiscoveryAKSSameNameDistinctARNs(t *testing.T) {
 	ctx := context.Background()

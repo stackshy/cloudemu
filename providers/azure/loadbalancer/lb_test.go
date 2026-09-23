@@ -666,7 +666,7 @@ func TestUpsertAzureLBNatRuleConcurrent(t *testing.T) {
 
 // TestDeleteAzureLBBackendPoolInUseByRule proves the standalone backend-pool
 // DELETE rejects a pool still referenced by a load balancing rule instead of
-// silently leaving the rule pointing at a pool that no longer exists — the
+// silently leaving the rule pointing at a pool that no longer exists. The
 // whole-LB PUT path rejects this via validateAzureLB, but a standalone DELETE
 // bypasses that validation entirely, so the driver itself must guard it.
 func TestDeleteAzureLBBackendPoolInUseByRule(t *testing.T) {

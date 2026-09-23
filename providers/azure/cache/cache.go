@@ -27,7 +27,7 @@ const defaultRedisSSLPort = 6380
 // that reads them back (or an SDK caller dereferencing the pointer) sees the
 // same values it would against the real service rather than a null.
 const (
-	// defaultEnableNonSSLPort is the enableNonSslPort default (false — the
+	// defaultEnableNonSSLPort is the enableNonSslPort default (false: the
 	// non-SSL 6379 port is disabled unless explicitly enabled).
 	defaultEnableNonSSLPort = false
 	// defaultPublicNetworkAccess is the publicNetworkAccess default (Enabled).
@@ -224,7 +224,7 @@ func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.Cache
 	return caches, nil
 }
 
-// UpdateCache replaces the mutable fields of an existing cache — ARM
+// UpdateCache replaces the mutable fields of an existing cache, using ARM
 // CreateOrUpdate-on-existing semantics (node type and tags come from the
 // request; identity, endpoint, and CreatedAt are preserved).
 func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {
@@ -245,7 +245,7 @@ func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.C
 
 	// The ARM SKU is atomic: a request carries name+family+capacity together. A
 	// wire update records the family whenever it supplies a SKU, so treat family
-	// presence as "a SKU was supplied" and apply the capacity alongside it —
+	// presence as "a SKU was supplied" and apply the capacity alongside it,
 	// including capacity 0, so a scale down to the Basic/Standard C0 tier is not
 	// silently dropped. A family-less update (no SKU supplied) leaves both fields
 	// unchanged.

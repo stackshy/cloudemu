@@ -43,7 +43,7 @@ func (m *Mock) CreatePeeringConnection(_ context.Context, cfg driver.PeeringConf
 }
 
 // createPeering is CreatePeeringConnection without the lock, so a caller
-// already holding m.mu — connecting a pair of local peering gateways — can
+// already holding m.mu (connecting a pair of local peering gateways) can
 // reach it without re-entering. The peering OCID carries OCI's local peering
 // gateway type segment, which is what a route rule points at.
 func (m *Mock) createPeering(cfg driver.PeeringConfig, status string) (*peeringData, error) {

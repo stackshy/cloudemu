@@ -12,7 +12,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // binaryAuthorizationSnapshot is the full serialized state of the Binary
 // Authorization mock. Both stores hold fully-exported driver value types (a
-// Policy per project, an Attestor — including any stored IAM policy — per full
+// Policy per project, an Attestor, including any stored IAM policy, per full
 // resource name), so they round-trip through the generic memstore helper
 // unchanged; the mutex and wired options are intentionally not serialized.
 type binaryAuthorizationSnapshot struct {
@@ -20,7 +20,7 @@ type binaryAuthorizationSnapshot struct {
 	Attestors json.RawMessage `json:"attestors,omitempty"`
 }
 
-// Snapshot captures every policy and attestor as JSON. includeAssets is unused —
+// Snapshot captures every policy and attestor as JSON. includeAssets is unused:
 // Binary Authorization holds no object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.Lock()

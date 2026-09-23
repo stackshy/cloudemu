@@ -173,7 +173,7 @@ func (m *Mock) UpdateDataCenter(
 		return nil, cerrors.Newf(cerrors.NotFound, "datacenter %q not found in cluster %q", name, cluster)
 	}
 
-	// A 0 node count means "unchanged" — consistent with create, where 0 means
+	// A 0 node count means "unchanged", consistent with create, where 0 means
 	// "use the default" rather than a real zero-node datacenter.
 	if patch.NodeCount != nil && *patch.NodeCount > 0 {
 		if err := validateNodeCount(*patch.NodeCount); err != nil {

@@ -12,8 +12,8 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // vpcSnapshot is the full serialized state of the GCP VPC mock. Every memstore
 // store is dumped keyed by its resource id (a GCP self-link) so cross-references
-// — a subnet's VPCID, a GCE instance's SubnetID/network refs held in the compute
-// mock — still resolve after a restore. Every stored value type is fully
+// (a subnet's VPCID, a GCE instance's SubnetID/network refs held in the compute
+// mock) still resolve after a restore. Every stored value type is fully
 // exported, so all stores round-trip through the generic memstore helper. The
 // wired *config.Options is intentionally not serialized.
 type vpcSnapshot struct {
@@ -31,7 +31,7 @@ type vpcSnapshot struct {
 	Endpoints      json.RawMessage `json:"endpoints,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // VPC holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap vpcSnapshot
@@ -75,7 +75,7 @@ func (m *Mock) snapshotStores(snap *vpcSnapshot) error {
 }
 
 // Restore rebuilds the mock's state under the original identities: every
-// resource id (and the id-string cross-references a GCE instance holds — subnet
+// resource id (and the id-string cross-references a GCE instance holds, subnet
 // self-links, network refs) is preserved, so a restored instance's networking
 // refs still resolve.
 func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {

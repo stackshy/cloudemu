@@ -148,7 +148,7 @@ func TestLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, 2, res.Count) // 2026-002, 2026-010
 
-	// Update (SET + REMOVE) on an existing document — the "condition succeeds" path.
+	// Update (SET + REMOVE) on an existing document, the "condition succeeds" path.
 	updated, err := db.UpdateItem(ctx, driver.UpdateItemInput{
 		Table: coll,
 		Key:   map[string]any{"customerId": "cust-1", "orderId": "2026-002"},
@@ -209,7 +209,7 @@ func TestLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, fetched, 2)
 
-	// Delete item, verify gone, delete again (idempotent — no error).
+	// Delete item, verify gone, delete again (idempotent, no error).
 	key := map[string]any{"customerId": "cust-2", "orderId": "2026-003"}
 	require.NoError(t, db.DeleteItem(ctx, coll, key))
 
@@ -526,7 +526,7 @@ func TestTTLWithFakeClock(t *testing.T) {
 	// Advance past s1/s4 expiry but not s2.
 	clk.Advance(2 * time.Minute)
 
-	// BatchGetItems does NOT check TTL (survey) — expired-but-not-reaped
+	// BatchGetItems does NOT check TTL (survey): expired-but-not-reaped
 	// items are still returned. Do this before GetItem lazily deletes s1.
 	batch, err := db.BatchGetItems(ctx, coll, []map[string]any{{"sid": "s1"}})
 	require.NoError(t, err)
@@ -570,7 +570,7 @@ func TestTTLWithFakeClock(t *testing.T) {
 	assert.Equal(t, "carol", got["user"])
 
 	// Disabling TTL makes remaining expired values visible again (lazy reaping
-	// only happens while enabled) — s3 stays, and a freshly written expired
+	// only happens while enabled): s3 stays, and a freshly written expired
 	// item is readable with TTL off.
 	require.NoError(t, db.UpdateTTL(ctx, coll, driver.TTLConfig{Enabled: false, AttributeName: "expiresAt"}))
 	require.NoError(t, db.PutItem(ctx, coll, map[string]any{
@@ -810,7 +810,7 @@ func TestLabels(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]string{"env": "prod", "team": "core", "owner": "nitin"}, tags)
 
-	// Returned map is a copy — mutating it must not affect stored labels.
+	// Returned map is a copy: mutating it must not affect stored labels.
 	tags["env"] = "mutated"
 	tags2, err := db.ListTagsOfResource(ctx, coll)
 	require.NoError(t, err)

@@ -55,8 +55,8 @@ func createSharedNIC(t *testing.T, net *vnet.Mock, name string) {
 }
 
 // assertNICReleased asserts the NIC is no longer attached to any VM: its
-// back-reference is cleared, it can be deleted (not "in use"), and — before
-// deletion — it can be re-attached to a fresh instance.
+// back-reference is cleared, it can be deleted (not "in use"), and, before
+// deletion, it can be re-attached to a fresh instance.
 func assertNICReleased(ctx context.Context, t *testing.T, m *Mock, net *vnet.Mock, name string) {
 	t.Helper()
 
@@ -111,7 +111,7 @@ func TestRunInstancesRollbackReleasesNICsOnAttachFailure(t *testing.T) {
 }
 
 // failOnNthProvision is a ComputeEngine that provisions successfully until the
-// nth call, which it fails — driving the pre-existing engine-provision rollback
+// nth call, which it fails, driving the pre-existing engine-provision rollback
 // path in RunInstances (distinct from the attachNICs path).
 type failOnNthProvision struct {
 	failAt int

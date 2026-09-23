@@ -1,5 +1,5 @@
 // Package signalr provides an in-memory mock of Azure SignalR Service
-// (Microsoft.SignalRService/signalR) — the ARM control plane only. It manages
+// (Microsoft.SignalRService/signalR), the ARM control plane only. It manages
 // the signalR resource lifecycle (create/update/get/delete/list) and the
 // listKeys action; the data plane (a running SignalR hub, negotiate, websocket
 // traffic) is out of scope.
@@ -15,7 +15,7 @@
 //   - sku.tier / sku.size, derived from the sku name (Standard_S1 -> Standard/S1).
 //
 // Every computed field is derived deterministically from the resource identity,
-// so the same resource always reports the same values — across gets, patches,
+// so the same resource always reports the same values, across gets, patches,
 // listKeys and a snapshot/restore.
 package signalr
 

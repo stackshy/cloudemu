@@ -215,12 +215,12 @@ func hasPrefix(s, prefix string) bool {
 	return len(s) >= len(prefix) && s[:len(prefix)] == prefix
 }
 
-// StartCluster is unsupported — AlloyDB clusters cannot be stopped or started.
+// StartCluster is unsupported: AlloyDB clusters cannot be stopped or started.
 func (*Mock) StartCluster(_ context.Context, _ string) error {
 	return cerrors.New(cerrors.InvalidArgument, "AlloyDB does not support starting clusters")
 }
 
-// StopCluster is unsupported — AlloyDB clusters cannot be stopped or started.
+// StopCluster is unsupported: AlloyDB clusters cannot be stopped or started.
 func (*Mock) StopCluster(_ context.Context, _ string) error {
 	return cerrors.New(cerrors.InvalidArgument, "AlloyDB does not support stopping clusters")
 }

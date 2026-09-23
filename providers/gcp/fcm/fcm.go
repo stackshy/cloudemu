@@ -150,7 +150,7 @@ func (m *Mock) ListTopics(_ context.Context, filter scope.Scope) ([]driver.Topic
 	return topics, nil
 }
 
-// UpdateTopic replaces the mutable fields of an existing topic — ARM
+// UpdateTopic replaces the mutable fields of an existing topic, using ARM
 // CreateOrUpdate-on-existing semantics (display name and tags come from the
 // request; identity is preserved).
 func (m *Mock) UpdateTopic(_ context.Context, cfg driver.TopicConfig) (*driver.TopicInfo, error) {

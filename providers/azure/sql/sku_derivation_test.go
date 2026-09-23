@@ -8,8 +8,8 @@ import (
 )
 
 // TestCreateDatabaseDerivesTierFromSKUName verifies a create that supplies only
-// the service-objective (SKU) name stores the tier real Azure derives from it —
-// a DTU S0 is Standard (not the old hardcoded GeneralPurpose) — and fills the
+// the service-objective (SKU) name stores the tier real Azure derives from it:
+// a DTU S0 is Standard (not the old hardcoded GeneralPurpose), and fills the
 // vCore capacity encoded in the name.
 func TestCreateDatabaseDerivesTierFromSKUName(t *testing.T) {
 	tests := []struct {

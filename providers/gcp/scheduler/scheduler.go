@@ -1,8 +1,8 @@
 // Package scheduler provides an in-memory backend for GCP Cloud Scheduler
 // (cloudscheduler.googleapis.com v1). It satisfies services/scheduler/driver.
 // Scheduler so the Cloud Scheduler v1 REST wire handler (server/gcp/scheduler)
-// serves real google.golang.org/api/cloudscheduler/v1 clients — and Terraform's
-// google provider — against it.
+// serves real google.golang.org/api/cloudscheduler/v1 clients, and Terraform's
+// google provider, against it.
 //
 // This is the job control plane only: create/get/list/patch/delete plus the
 // pause/resume/run verbs. Firing a job (HTTP delivery, Pub/Sub publish, App
@@ -35,8 +35,8 @@ const (
 )
 
 // System headers Cloud Scheduler injects on the request it dispatches. Real
-// Cloud Scheduler always returns these on an HTTP/App Engine target (clients —
-// notably Terraform's google provider — assume the headers map is present and
+// Cloud Scheduler always returns these on an HTTP/App Engine target (clients,
+// notably Terraform's google provider, assume the headers map is present and
 // filter these out), so the backend stores and echoes them too.
 const (
 	headerUserAgent   = "User-Agent"
