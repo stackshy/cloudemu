@@ -9,7 +9,7 @@ import (
 )
 
 // TestSDKACRGetManifestContent drives the real azcontainerregistry SDK's
-// GetManifest, which issues GET /v2/{name}/manifests/{reference} — a
+// GetManifest, which issues GET /v2/{name}/manifests/{reference}, a
 // different URL family from the /acr/v1/{name}/_manifests/{digest}
 // changeableAttributes path exercised elsewhere. It must return the raw
 // manifest document preserved from PutImage, not fall through to an
@@ -91,7 +91,7 @@ func TestSDKACRGetManifestContentNotFound(t *testing.T) {
 
 // TestSDKACRDeleteManifestContent drives the real SDK's DeleteManifest
 // (DELETE /v2/{name}/manifests/{digest}) and verifies the manifest is
-// actually removed — not just that the call returns success (the SDK treats
+// actually removed, not just that the call returns success (the SDK treats
 // both 202 and 404 as success, so a wrong-handler 404 would previously mask
 // this divergence).
 func TestSDKACRDeleteManifestContent(t *testing.T) {

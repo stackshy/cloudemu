@@ -11,7 +11,7 @@ import (
 // arrives in one body and fully REPLACES the stored state, matching ARM's
 // CreateOrUpdate semantics. BastionHosts.CreateOrUpdate is an LRO; returning the
 // fully-provisioned body (provisioningState=Succeeded) completes the poller on
-// the first response — 201 on create, 200 on update.
+// the first response: 201 on create, 200 on update.
 func (h *Handler) createOrUpdateBastionHost(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body bastionHostJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -44,7 +44,7 @@ func (h *Handler) getBastionHost(w http.ResponseWriter, r *http.Request, rp *azu
 	azurearm.WriteJSON(w, http.StatusOK, toBastionHostJSON(rp, stored))
 }
 
-// updateBastionHostTags handles PATCH .../bastionHosts/{name} —
+// updateBastionHostTags handles PATCH .../bastionHosts/{name}:
 // BastionHosts.UpdateTags. Real armnetwork UpdateTags REPLACES the tag collection
 // wholesale (an omitted existing key is dropped); every other property is left
 // untouched. A request with tags entirely omitted (nil map) is a no-op.

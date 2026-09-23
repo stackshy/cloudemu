@@ -48,7 +48,7 @@ func doSAS(t *testing.T, e *blobEnv, method, url, body string) *http.Response {
 
 // TestSDKReadOnlySASCannotDeleteOrOverwrite checks that a read-only SAS
 // (sp=r) authorizes a read but is rejected (403 AuthorizationPermissionMismatch)
-// for delete and overwrite — the whole point of least-privilege SAS scoping.
+// for delete and overwrite: the whole point of least-privilege SAS scoping.
 func TestSDKReadOnlySASCannotDeleteOrOverwrite(t *testing.T) {
 	e := newBlobEnv(t)
 	ctx := context.Background()

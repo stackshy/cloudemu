@@ -6,29 +6,29 @@
 //
 // Wave 1 coverage (control plane only):
 //
-//	PUT    .../providers/Microsoft.ContainerService/managedClusters/{name}                                         — Create or update cluster
-//	GET    .../providers/Microsoft.ContainerService/managedClusters/{name}                                         — Get cluster
-//	PATCH  .../providers/Microsoft.ContainerService/managedClusters/{name}                                         — Update tags
-//	DELETE .../providers/Microsoft.ContainerService/managedClusters/{name}                                         — Delete cluster (cascade)
-//	GET    .../providers/Microsoft.ContainerService/managedClusters                                                — List in resource group
-//	GET    /subscriptions/{s}/providers/Microsoft.ContainerService/managedClusters                                 — List in subscription
-//	PUT    .../managedClusters/{name}/agentPools/{pool}                                                            — Create or update pool
-//	GET    .../managedClusters/{name}/agentPools/{pool}                                                            — Get pool
-//	DELETE .../managedClusters/{name}/agentPools/{pool}                                                            — Delete pool
-//	GET    .../managedClusters/{name}/agentPools                                                                   — List pools
-//	PUT    .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              — Upsert maintenance cfg
-//	GET    .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              — Get maintenance cfg
-//	DELETE .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              — Delete maintenance cfg
-//	GET    .../managedClusters/{name}/maintenanceConfigurations                                                    — List maintenance cfgs
-//	POST   .../managedClusters/{name}/listClusterAdminCredential                                                   — Stub kubeconfig
-//	POST   .../managedClusters/{name}/listClusterUserCredential                                                    — Stub kubeconfig
-//	POST   .../managedClusters/{name}/listClusterMonitoringUserCredential                                          — Stub kubeconfig
-//	POST   .../managedClusters/{name}/rotateClusterCertificates                                                    — Cert rotation no-op
-//	POST   .../managedClusters/{name}/start                                                                        — Start cluster
-//	POST   .../managedClusters/{name}/stop                                                                         — Stop cluster
+//	PUT    .../providers/Microsoft.ContainerService/managedClusters/{name}                                         : Create or update cluster
+//	GET    .../providers/Microsoft.ContainerService/managedClusters/{name}                                         : Get cluster
+//	PATCH  .../providers/Microsoft.ContainerService/managedClusters/{name}                                         : Update tags
+//	DELETE .../providers/Microsoft.ContainerService/managedClusters/{name}                                         : Delete cluster (cascade)
+//	GET    .../providers/Microsoft.ContainerService/managedClusters                                                : List in resource group
+//	GET    /subscriptions/{s}/providers/Microsoft.ContainerService/managedClusters                                 : List in subscription
+//	PUT    .../managedClusters/{name}/agentPools/{pool}                                                            : Create or update pool
+//	GET    .../managedClusters/{name}/agentPools/{pool}                                                            : Get pool
+//	DELETE .../managedClusters/{name}/agentPools/{pool}                                                            : Delete pool
+//	GET    .../managedClusters/{name}/agentPools                                                                   : List pools
+//	PUT    .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              : Upsert maintenance cfg
+//	GET    .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              : Get maintenance cfg
+//	DELETE .../managedClusters/{name}/maintenanceConfigurations/{cfg}                                              : Delete maintenance cfg
+//	GET    .../managedClusters/{name}/maintenanceConfigurations                                                    : List maintenance cfgs
+//	POST   .../managedClusters/{name}/listClusterAdminCredential                                                   : Stub kubeconfig
+//	POST   .../managedClusters/{name}/listClusterUserCredential                                                    : Stub kubeconfig
+//	POST   .../managedClusters/{name}/listClusterMonitoringUserCredential                                          : Stub kubeconfig
+//	POST   .../managedClusters/{name}/rotateClusterCertificates                                                    : Cert rotation no-op
+//	POST   .../managedClusters/{name}/start                                                                        : Start cluster
+//	POST   .../managedClusters/{name}/stop                                                                         : Stop cluster
 //
 // The Kubernetes data plane (Deployments / Services / Pods) is intentionally
-// NOT served — that lands in Wave 2. The kubeconfig blobs we return point
+// NOT served: that lands in Wave 2. The kubeconfig blobs we return point
 // at https://AKS-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local so a caller that
 // tries to talk Kubernetes immediately fails with a clear sentinel.
 //

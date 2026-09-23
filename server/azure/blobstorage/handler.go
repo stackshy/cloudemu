@@ -5,15 +5,15 @@
 //
 // Supported operations (parity with AWS S3):
 //
-//	GET    /?comp=list                                  — list containers
-//	PUT    /{container}?restype=container               — create container
-//	DELETE /{container}?restype=container               — delete container
-//	GET    /{container}?restype=container&comp=list     — list blobs
-//	PUT    /{container}/{blob}                          — put blob (BlockBlob)
-//	PUT    /{container}/{blob} (x-ms-copy-source)       — copy blob
-//	GET    /{container}/{blob}                          — get blob
-//	HEAD   /{container}/{blob}                          — head blob
-//	DELETE /{container}/{blob}                          — delete blob
+//	GET    /?comp=list                                  : list containers
+//	PUT    /{container}?restype=container               : create container
+//	DELETE /{container}?restype=container               : delete container
+//	GET    /{container}?restype=container&comp=list     : list blobs
+//	PUT    /{container}/{blob}                          : put blob (BlockBlob)
+//	PUT    /{container}/{blob} (x-ms-copy-source)       : copy blob
+//	GET    /{container}/{blob}                          : get blob
+//	HEAD   /{container}/{blob}                          : head blob
+//	DELETE /{container}/{blob}                          : delete blob
 //
 // When account-level versioning is enabled, every blob write mints a new
 // version (x-ms-version-id); versions are readable/deletable via ?versionid= and
@@ -393,7 +393,7 @@ func (h *Handler) containerCreatedAt(r *http.Request, container string) (string,
 }
 
 // containerETag derives a stable per-container ETag from the container's
-// name and creation time — unique even for containers created within the
+// name and creation time; unique even for containers created within the
 // same clock second (which is every container under a pinned fake clock).
 func containerETag(name, createdAt string) string {
 	sum := crc32.ChecksumIEEE([]byte(name + "|" + createdAt))
@@ -727,7 +727,7 @@ func (h *Handler) putBlob(w http.ResponseWriter, r *http.Request, container, blo
 	}
 
 	// The driver's ETag is the hex sha256 of the body; if a concurrent
-	// delete races the read-back, fall back to computing it — a successful
+	// delete races the read-back, fall back to computing it: a successful
 	// PUT must never answer 404.
 	etag := fmt.Sprintf("%x", sha256.Sum256(data))
 	lastModified := ""
@@ -957,7 +957,7 @@ func (h *Handler) getBlob(w http.ResponseWriter, r *http.Request, container, blo
 // Content with a Content-Range header and only the requested slice; a
 // syntactically invalid or unsatisfiable range returns 416 with
 // Content-Range: bytes * /total, matching Azure. (x-ms-range-get-content-md5 is
-// not honored — cloudemu does not compute the per-range MD5.)
+// not honored: cloudemu does not compute the per-range MD5.)
 func serveBlobContent(w http.ResponseWriter, r *http.Request, info *storagedriver.ObjectInfo, data []byte) {
 	total := int64(len(data))
 
@@ -1293,7 +1293,7 @@ func (h *Handler) deleteBlob(w http.ResponseWriter, r *http.Request, container, 
 
 // deleteBlobVersion serves DELETE /{container}/{blob}?versionid=… permanently
 // removing one version. Deleting the base blob itself (no versionid) leaves the
-// existing versions intact — that path runs through the normal deleteBlob flow.
+// existing versions intact; that path runs through the normal deleteBlob flow.
 func (h *Handler) deleteBlobVersion(w http.ResponseWriter, r *http.Request, container, blob, versionID string) {
 	ext, ok := h.bucket.(storagedriver.AzureVersionedBlob)
 	if !ok {
@@ -1423,7 +1423,7 @@ func httpDate(s string) string {
 }
 
 // writeXML writes an XML response body. Every wire operation that returns an
-// XML document (list/get) does so with 200 OK on success — a write that needs
+// XML document (list/get) does so with 200 OK on success; a write that needs
 // a different success status (201/202) sets headers and writes its own body.
 func writeXML(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", contentTypeXML)

@@ -25,9 +25,9 @@ const bearerChallengeHeader = `Bearer authorization_uri="https://login.microsoft
 // newAuthGate builds the Azure claims-based authentication pre-dispatch hook.
 //
 // cloudemu cannot verify a real Azure token's signature (it does not hold Azure
-// AD's private key), so the gate validates the token's STRUCTURE and CLAIMS —
-// well-formed three-part JWT, an accepted Azure audience, an un-expired "exp"
-// and a principal claim — and NOT the signature. On success it attaches the
+// AD's private key), so the gate validates the token's STRUCTURE and CLAIMS
+// (well-formed three-part JWT, an accepted Azure audience, an un-expired "exp"
+// and a principal claim) and NOT the signature. On success it attaches the
 // resolved principal to the request context; on failure it writes a 401 and
 // stops dispatch. It only reads the Authorization header, so the request body is
 // left untouched for the downstream handler.

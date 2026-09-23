@@ -5,8 +5,8 @@
 // properties, and delete repositories against the shared containerregistry
 // driver.
 //
-// ACR has no "create repository" data-plane call — repositories appear when an
-// image is pushed — so this handler is list/get/delete oriented. ACR uses
+// ACR has no "create repository" data-plane call. Repositories appear when an
+// image is pushed, so this handler is list/get/delete oriented. ACR uses
 // challenge-based bearer auth (see auth.go): the mock accepts any credential,
 // but it completes the 401/oauth2 round trip for real, because
 // azcontainerregistry's Client always probes with the request body stripped
@@ -14,24 +14,24 @@
 //
 // Coverage:
 //
-//	GET    /acr/v1/_catalog                    — list repositories
-//	GET    /acr/v1/{name}                      — repository properties
-//	PATCH  /acr/v1/{name}                      — update repository changeableAttributes
-//	DELETE /acr/v1/{name}                      — delete repository
-//	GET    /acr/v1/{name}/_tags                — list tags
-//	GET    /acr/v1/{name}/_tags/{tag}          — tag properties
-//	PATCH  /acr/v1/{name}/_tags/{tag}          — update tag changeableAttributes
-//	DELETE /acr/v1/{name}/_tags/{tag}          — untag
-//	GET    /acr/v1/{name}/_manifests           — list manifests
-//	GET    /acr/v1/{name}/_manifests/{digest}  — manifest properties
-//	PATCH  /acr/v1/{name}/_manifests/{digest}  — update manifest changeableAttributes
-//	GET    /v2/{name}/manifests/{reference}    — manifest content (azcontainerregistry's
+//	GET    /acr/v1/_catalog                    : list repositories
+//	GET    /acr/v1/{name}                      : repository properties
+//	PATCH  /acr/v1/{name}                      : update repository changeableAttributes
+//	DELETE /acr/v1/{name}                      : delete repository
+//	GET    /acr/v1/{name}/_tags                : list tags
+//	GET    /acr/v1/{name}/_tags/{tag}          : tag properties
+//	PATCH  /acr/v1/{name}/_tags/{tag}          : update tag changeableAttributes
+//	DELETE /acr/v1/{name}/_tags/{tag}          : untag
+//	GET    /acr/v1/{name}/_manifests           : list manifests
+//	GET    /acr/v1/{name}/_manifests/{digest}  : manifest properties
+//	PATCH  /acr/v1/{name}/_manifests/{digest}  : update manifest changeableAttributes
+//	GET    /v2/{name}/manifests/{reference}    : manifest content (azcontainerregistry's
 //	                                              GetManifest hits this OCI-distribution path,
-//	                                              not /acr/v1 — see dataplane_manifest.go)
-//	DELETE /v2/{name}/manifests/{reference}    — delete manifest (azcontainerregistry's
+//	                                              not /acr/v1; see dataplane_manifest.go)
+//	DELETE /v2/{name}/manifests/{reference}    : delete manifest (azcontainerregistry's
 //	                                              DeleteManifest; same path family)
-//	POST   /oauth2/exchange                    — AAD token -> ACR refresh token
-//	POST   /oauth2/token                       — ACR refresh token -> ACR access token
+//	POST   /oauth2/exchange                    : AAD token -> ACR refresh token
+//	POST   /oauth2/token                       : ACR refresh token -> ACR access token
 //
 // The changeableAttributes lock (deleteEnabled/writeEnabled/listEnabled) is
 // enforced against mutations and listings; readEnabled is stored and reported

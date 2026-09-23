@@ -13,7 +13,7 @@ import (
 // List) must return pools in the same order across repeated reads with no
 // intervening writes. ListAgentPools built its result from a Go map without
 // sorting, so consecutive real armcontainerservice Get calls against the
-// unchanged cluster observed the pools reordered on almost every poll — a
+// unchanged cluster observed the pools reordered on almost every poll. A
 // caller diffing successive reads (e.g. Terraform comparing state) would see
 // spurious drift that isn't a real state change.
 func TestSDKAKSAgentPoolProfilesOrderIsStable(t *testing.T) {

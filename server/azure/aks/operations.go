@@ -189,7 +189,7 @@ func writeIdempotentDelete(w http.ResponseWriter, err error) {
 // postClusterAction is the shared body for start/stop. Both are long-running
 // actions whose SDK response type carries no fields, so a 202 +
 // Azure-AsyncOperation header pointing at a synthetic status endpoint is
-// enough for the poller to terminate once it observes Succeeded — no final
+// enough for the poller to terminate once it observes Succeeded: no final
 // GET or resource body is required.
 func postClusterAction(
 	w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath,
@@ -228,7 +228,7 @@ func asyncStatusURL(r *http.Request, subscription, opID string) string {
 
 // operationStatus answers the LRO poll start/stop point at. The backend is
 // synchronous, so by the time the SDK polls, the action has already
-// completed — every poll reports Succeeded.
+// completed; every poll reports Succeeded.
 func (*Handler) operationStatus(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w)

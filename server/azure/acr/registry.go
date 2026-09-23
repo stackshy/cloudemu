@@ -190,7 +190,7 @@ func (h *ARMHandler) deleteRegistry(w http.ResponseWriter, r *http.Request, rp *
 
 // writeDeleteStatus renders an idempotent ARM DELETE result: 200 OK when the
 // resource existed and was removed, 204 No Content when it was already absent.
-// ARM DELETE is idempotent — the ACR swagger documents 204 "does not exist in
+// ARM DELETE is idempotent: the ACR swagger documents 204 "does not exist in
 // the subscription" for a missing registry/webhook/replication.
 func writeDeleteStatus(w http.ResponseWriter, err error) {
 	switch {

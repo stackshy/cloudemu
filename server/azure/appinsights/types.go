@@ -26,7 +26,7 @@ const (
 
 	// computedKeyCount is how many computed properties toResponse injects
 	// (ApplicationId, AppId, InstrumentationKey, ConnectionString,
-	// provisioningState, CreationDate, TenantId) — used only to size the response
+	// provisioningState, CreationDate, TenantId), used only to size the response
 	// map so it does not grow while they are added.
 	computedKeyCount = 7
 )

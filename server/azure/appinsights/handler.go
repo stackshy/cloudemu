@@ -7,7 +7,7 @@
 // computes once at create and returns verbatim on every read (the REST contract
 // forbids specifying a different value on a PUT). This handler generates them
 // deterministically and stores them once, so they are stable across repeated
-// GETs — the property that keeps a Terraform plan drift-free. ConnectionString is
+// GETs: the property that keeps a Terraform plan drift-free. ConnectionString is
 // derived from the stored key, region and app id. kind is a top-level field the
 // generic property-echo overlay cannot reach, so it is modeled explicitly here.
 //

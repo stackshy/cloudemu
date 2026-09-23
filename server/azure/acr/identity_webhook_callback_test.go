@@ -146,7 +146,7 @@ func combinedIdentityRegistry(t *testing.T, client *armcontainerregistry.Registr
 
 // TestSDKACRWebhookCallbackConfig is B2+B3: a plain Webhooks_Get must NOT expose
 // serviceUri or customHeaders (an Authorization bearer header among them), while
-// getCallbackConfig — the only supported read path — returns both.
+// getCallbackConfig, the only supported read path, returns both.
 func TestSDKACRWebhookCallbackConfig(t *testing.T) {
 	ts := newACRARMServer(t)
 	cf := armFactoryFor(t, ts)

@@ -140,7 +140,7 @@ import (
 // any request that no registered handler matches.
 //
 // VirtualMachines / Disks / Snapshots / Images all delegate to the same
-// compute driver — the driver's Volume*/Snapshot*/Image* methods back the
+// compute driver: the driver's Volume*/Snapshot*/Image* methods back the
 // corresponding resources.
 type Drivers struct {
 	VirtualMachines computedriver.Compute
@@ -202,8 +202,8 @@ type Drivers struct {
 	// HealthcareApis serves Microsoft.HealthcareApis/workspaces plus its nested
 	// fhirservices and dicomservices child resources.
 	HealthcareApis healthcareapissrv.Store
-	// MongoCluster serves Microsoft.DocumentDB/mongoClusters — Cosmos DB for
-	// MongoDB (vCore) — plus its listConnectionStrings action.
+	// MongoCluster serves Microsoft.DocumentDB/mongoClusters (Cosmos DB for
+	// MongoDB, vCore), plus its listConnectionStrings action.
 	MongoCluster mongoclustersrv.Store
 	// Batch serves Microsoft.Batch/batchAccounts plus its nested pools child
 	// resource and the account-key / pool-resize actions.
@@ -219,7 +219,7 @@ type Drivers struct {
 	// IoTHub serves Microsoft.Devices/IotHubs plus its listkeys /
 	// getKeysForKeyName actions and the nested event-hub consumer groups.
 	IoTHub iothubsrv.Store
-	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines —
+	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines:
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
 	// ContainerApps serves Microsoft.App managedEnvironments and containerApps.
@@ -255,8 +255,8 @@ type Drivers struct {
 	// frontdoor driver.
 	FrontDoor fddriver.AzureFrontDoorProfiles
 	// PrivateDNS serves the Azure Private DNS
-	// (Microsoft.Network/privateDnsZones) ARM API — private zones,
-	// virtualNetworkLinks and record sets — against the privatedns driver.
+	// (Microsoft.Network/privateDnsZones) ARM API (private zones,
+	// virtualNetworkLinks and record sets) against the privatedns driver.
 	PrivateDNS pddriver.PrivateDNS
 	// EventGrid serves the Azure Event Grid (Microsoft.EventGrid/topics) ARM API
 	// against the eventbus driver, mapping topics to event buses.
@@ -305,7 +305,7 @@ type Drivers struct {
 	// exactly as before.
 	//
 	// Because cloudemu does not hold Azure AD's signing key, the token SIGNATURE
-	// is NOT verified — only its structure and claims are. This is a documented
+	// is NOT verified; only its structure and claims are. This is a documented
 	// limitation, distinct from AWS SigV4 where the shared secret lets the
 	// emulator verify signatures. This gate is authentication only; RBAC
 	// authorization is a follow-up.
@@ -321,7 +321,7 @@ const defaultTenantID = "11111111-1111-1111-1111-111111111111"
 //
 //	/subscriptions/{sub}/resourceGroups/{rg}/providers/{provider}/{type}/...
 //
-// so handlers can register independently — virtualMachines doesn't conflict
+// so handlers can register independently; virtualMachines doesn't conflict
 // with future blob storage or networking handlers.
 //
 // New returns an http.Handler speaking the Azure ARM JSON wire protocol for
@@ -354,7 +354,7 @@ func New(d Drivers) http.Handler {
 	// Resource-provider registration (Microsoft.Resources "providers" surface):
 	// the bare /subscriptions/{sub}/providers list, a single-namespace get, and
 	// the register / unregister actions CLIs and IaC tools call at startup. It
-	// has no driver — the emulator holds registration state in memory. Registered
+	// has no driver: the emulator holds registration state in memory. Registered
 	// early so its strict path match wins; its Matches never claims the deeper
 	// /providers/{namespace}/{resourceType}/... paths owned by the service
 	// handlers, so it does not shadow them.
@@ -363,9 +363,9 @@ func New(d Drivers) http.Handler {
 	// AAD bootstrap endpoints so an unmodified Terraform azurerm provider (and
 	// other SDKs resolving a custom cloud via ARM_METADATA_HOSTNAME) can discover
 	// the ARM + login endpoints and obtain a bearer token before any ARM call.
-	// Both live outside /subscriptions/ — an exact /metadata/endpoints match and a
+	// Both live outside /subscriptions/: an exact /metadata/endpoints match and a
 	// /{tenant}/oauth2/...token suffix match, disjoint from every ARM and blob
-	// data-plane path — so they are registered here, ahead of the permissive blob
+	// data-plane path. So they are registered here, ahead of the permissive blob
 	// fallback, and shadow nothing.
 	srv.Register(aad.NewMetadata())
 	srv.Register(aad.NewToken(tenantID))
@@ -377,8 +377,8 @@ func New(d Drivers) http.Handler {
 	// own handler (whose azurearm.ParsePath match ignores the trailing locks
 	// segment), so the locks handler must register BEFORE the per-resource-type
 	// handlers to win first-match dispatch. Its Matches is a scope-agnostic
-	// substring test on /providers/microsoft.authorization/locks — a path no
-	// resource handler produces — so registering it early shadows nothing. Locks
+	// substring test on /providers/microsoft.authorization/locks, a path no
+	// resource handler produces, so registering it early shadows nothing. Locks
 	// are a pure management-plane concept with no backing driver, so the handler
 	// is always registered (like subscriptions/tenants). This same instance
 	// backs the always-on enforcement gate wired via SetPreDispatch below.
@@ -697,7 +697,7 @@ func New(d Drivers) http.Handler {
 	if d.Monitor != nil {
 		srv.Register(monitor.NewMetricsHandler(d.Monitor))
 		srv.Register(monitor.NewDiagnosticSettingsHandler())
-		// Activity Log read API — registered only when the monitoring backend
+		// Activity Log read API, registered only when the monitoring backend
 		// supports the recorder capability, so its suffix match wins over any
 		// resource handler for .../eventtypes/management/values.
 		if alh := monitor.NewActivityLogHandler(d.Monitor); alh != nil {
@@ -724,7 +724,7 @@ func New(d Drivers) http.Handler {
 		srv.Register(sshpublickeys.New(d.SSHPublicKeys))
 	}
 
-	// Cosmos DB matches on /dbs/* paths — register before the catch-all
+	// Cosmos DB matches on /dbs/* paths; register before the catch-all
 	// blob handler.
 	if d.CosmosDB != nil {
 		cosmosDataPlane := cosmosdb.New(d.CosmosDB)
@@ -745,7 +745,7 @@ func New(d Drivers) http.Handler {
 		srv.Register(cosmosdb.NewMongoARM(cosmosDataPlane))
 		// Cosmos-account ARM control plane (Microsoft.DocumentDB/databaseAccounts).
 		// Claims only the /providers/Microsoft.DocumentDB/databaseAccounts/
-		// management path — disjoint from the /dbs data plane above and from
+		// management path, disjoint from the /dbs data plane above and from
 		// managedcassandra (cassandraClusters), so order is unconstrained. Account
 		// DELETE is delegated to the data-plane handler so the account is torn
 		// down fully (tables, attributes and data-plane bookkeeping).
@@ -816,15 +816,15 @@ func New(d Drivers) http.Handler {
 		srv.Register(frontDoorHandler)
 	}
 
-	// Private DNS claims Microsoft.Network/privateDnsZones — disjoint from the
+	// Private DNS claims Microsoft.Network/privateDnsZones, disjoint from the
 	// public DNS handler's dnsZones even case-insensitively, and from every other
-	// Microsoft.Network handler — so registration order relative to them is
+	// Microsoft.Network handler, so registration order relative to them is
 	// unconstrained. Registered before the BlobStorage fallback.
 	if privateDNS != nil {
 		srv.Register(privateDNS)
 	}
 
-	// Event Grid claims Microsoft.EventGrid/topics — a distinct ARM provider
+	// Event Grid claims Microsoft.EventGrid/topics: a distinct ARM provider
 	// name from every other Azure handler, so registration order is
 	// unconstrained. Registered before the BlobStorage fallback.
 	if d.EventGrid != nil {
@@ -834,21 +834,21 @@ func New(d Drivers) http.Handler {
 		srv.Register(eventgridsrv.NewPublishHandler(d.EventGrid))
 	}
 
-	// Log Analytics matches on Microsoft.OperationalInsights/workspaces — a
+	// Log Analytics matches on Microsoft.OperationalInsights/workspaces: a
 	// distinct ARM provider name from every other Azure handler, so registration
 	// order is unconstrained. Registered before the BlobStorage fallback.
 	if d.LogAnalytics != nil {
 		srv.Register(loganalyticssrv.New(d.LogAnalytics))
 	}
 
-	// Azure Cache for Redis matches on the Microsoft.Cache ARM provider — a
+	// Azure Cache for Redis matches on the Microsoft.Cache ARM provider: a
 	// unique provider name among Azure handlers, so registration order is
 	// unconstrained. Registered before the BlobStorage fallback.
 	if d.Cache != nil {
 		srv.Register(cachesrv.New(d.Cache))
 	}
 
-	// Notification Hubs matches on the Microsoft.NotificationHubs provider — a
+	// Notification Hubs matches on the Microsoft.NotificationHubs provider: a
 	// distinct ARM provider name from every other Azure handler, so
 	// registration order is unconstrained. Registered before the BlobStorage
 	// fallback.
@@ -873,7 +873,7 @@ func New(d Drivers) http.Handler {
 	}
 
 	// Event Hubs claims Microsoft.EventHub/namespaces (and their eventhubs,
-	// consumergroups and authorizationRules) — a distinct ARM provider name from
+	// consumergroups and authorizationRules): a distinct ARM provider name from
 	// every other Azure handler, so registration order is unconstrained. It is a
 	// self-contained control-plane handler with no backing driver (its state is
 	// namespace-scoped ARM containers, like locks/tags), so it is always
@@ -881,7 +881,7 @@ func New(d Drivers) http.Handler {
 	srv.Register(eventhubsrv.New())
 
 	// Kusto (Azure Data Explorer) claims Microsoft.Kusto/clusters (and their
-	// databases) — a distinct ARM provider name from every other Azure handler,
+	// databases): a distinct ARM provider name from every other Azure handler,
 	// so registration order is unconstrained. It is a self-contained control-plane
 	// handler with no backing driver (its state is cluster-scoped ARM containers,
 	// like Event Hubs), so it is always registered.
@@ -896,7 +896,7 @@ func New(d Drivers) http.Handler {
 	srv.Register(kustosrv.NewDataPlane())
 
 	// Synapse claims Microsoft.Synapse/workspaces (and their sqlPools,
-	// bigDataPools and integrationRuntimes) — a distinct ARM provider name from
+	// bigDataPools and integrationRuntimes): a distinct ARM provider name from
 	// every other Azure handler, so registration order is unconstrained. Like
 	// Event Hubs it is a self-contained control-plane handler with no backing
 	// driver (its state is workspace-scoped ARM containers), so it is always
@@ -911,7 +911,7 @@ func New(d Drivers) http.Handler {
 	// joined to the resource-group purge cascade.
 	srv.Register(appInsightsHandler)
 
-	// Microsoft.Sql provider — distinct ARM provider name from compute and
+	// Microsoft.Sql provider: distinct ARM provider name from compute and
 	// network so registration order is unconstrained.
 	if d.SQL != nil {
 		srv.Register(sql.New(d.SQL))
@@ -923,20 +923,20 @@ func New(d Drivers) http.Handler {
 		srv.Register(postgresflex.New(d.PostgresFlex))
 	}
 
-	// MySQL Flex matches on Microsoft.DBforMySQL provider — distinct from
+	// MySQL Flex matches on Microsoft.DBforMySQL provider: distinct from
 	// Postgres Flex and SQL, so registration order is unconstrained.
 	if d.MySQLFlex != nil {
 		srv.Register(mysqlflex.New(d.MySQLFlex))
 	}
 
-	// AKS matches on Microsoft.ContainerService provider — distinct ARM
+	// AKS matches on Microsoft.ContainerService provider: distinct ARM
 	// provider name from compute / network / database, so registration order
 	// is unconstrained.
 	if d.AKS != nil {
 		srv.Register(aksserver.New(d.AKS))
 	}
 
-	// Databricks matches on Microsoft.Databricks/workspaces — a distinct ARM
+	// Databricks matches on Microsoft.Databricks/workspaces: a distinct ARM
 	// provider name, so registration order is unconstrained.
 	if d.Databricks != nil {
 		srv.Register(databricks.New(d.Databricks))
@@ -944,7 +944,7 @@ func New(d Drivers) http.Handler {
 
 	registerDatabricksDataPlane(srv, &d)
 
-	// Data Factory matches on Microsoft.DataFactory/factories — a distinct ARM
+	// Data Factory matches on Microsoft.DataFactory/factories: a distinct ARM
 	// provider namespace, so registration order is unconstrained. Must precede the
 	// BlobStorage fallback so a factory request is not swallowed as a blob call.
 	// Created above and joined to the resource-group purge cascade.
@@ -952,26 +952,26 @@ func New(d Drivers) http.Handler {
 		srv.Register(dataFactoryHandler)
 	}
 
-	// Cognitive Services matches on Microsoft.CognitiveServices/accounts — a
+	// Cognitive Services matches on Microsoft.CognitiveServices/accounts: a
 	// distinct ARM provider name, so registration order is unconstrained.
 	if d.CognitiveServices != nil {
 		srv.Register(azureaiserver.NewCognitiveServices(d.CognitiveServices))
 	}
 
-	// Azure ML matches on Microsoft.MachineLearningServices — a distinct ARM
+	// Azure ML matches on Microsoft.MachineLearningServices: a distinct ARM
 	// provider name, so registration order is unconstrained.
 	if d.MachineLearning != nil {
 		srv.Register(azureaiserver.NewMachineLearning(d.MachineLearning))
 	}
 
 	// Azure AI data plane (Azure OpenAI inference + Assistants, AML scoring).
-	// Matches on /openai/ and /score — disjoint from the ARM /subscriptions/
+	// Matches on /openai/ and /score, disjoint from the ARM /subscriptions/
 	// prefix, so registration order is unconstrained.
 	if d.AzureAIDataPlane != nil {
 		srv.Register(azureaiserver.NewDataPlane(d.AzureAIDataPlane))
 	}
 
-	// Azure AI Search — ARM control plane on Microsoft.Search, plus the
+	// Azure AI Search: ARM control plane on Microsoft.Search, plus the
 	// host/path-routed search data plane (/indexes, /indexers, …).
 	if d.SearchControl != nil {
 		srv.Register(azuresearchserver.NewControl(d.SearchControl))
@@ -985,13 +985,13 @@ func New(d Drivers) http.Handler {
 		srv.Register(vmHandler)
 	}
 
-	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from every
+	// Kubernetes data-plane API. Matches /k8s/{uid}/..., disjoint from every
 	// other Azure path. Registered before the BlobStorage fallback.
 	if d.K8sAPI != nil {
 		srv.Register(d.K8sAPI)
 	}
 
-	// Resource Graph matches /providers/Microsoft.ResourceGraph/... —
+	// Resource Graph matches /providers/Microsoft.ResourceGraph/...,
 	// distinct from any service-scoped ARM URL, so registration order is
 	// unconstrained relative to the resource handlers above.
 	if d.ResourceDiscovery != nil {
@@ -999,19 +999,19 @@ func New(d Drivers) http.Handler {
 		// Generic Microsoft.Resources listing (az resource list) at subscription
 		// and resource-group scope, backed by the same discovery engine. Gate the
 		// RG-scoped variant on group existence so a nonexistent group returns the
-		// real 404 ResourceGroupNotFound (the central RG gate cannot see this path
-		// — it has no /providers/ segment).
+		// real 404 ResourceGroupNotFound (the central RG gate cannot see this path;
+		// it has no /providers/ segment).
 		resourcesHandler := resourcegraph.NewResources(d.ResourceDiscovery, d.SubscriptionID)
 		resourcesHandler.SetResourceGroupChecker(rgHandler.Exists)
 		srv.Register(resourcesHandler)
 		// Cost Management query matches any scope ending in
-		// /providers/Microsoft.CostManagement/query — a distinct ARM provider
+		// /providers/Microsoft.CostManagement/query: a distinct ARM provider
 		// name from every other handler, so registration order is unconstrained.
 		// Backed by the same discovery engine, priced through services/cost.
 		srv.Register(costmanagement.New(d.ResourceDiscovery))
 	}
 
-	// Managed identities claim Microsoft.ManagedIdentity/userAssignedIdentities —
+	// Managed identities claim Microsoft.ManagedIdentity/userAssignedIdentities:
 	// a distinct ARM provider name from every other Azure handler, so
 	// registration order is unconstrained. Registered before the BlobStorage
 	// fallback.
@@ -1067,61 +1067,61 @@ func New(d Drivers) http.Handler {
 		srv.Register(appConfigHandler)
 	}
 
-	// Redis Enterprise claims Microsoft.Cache/redisEnterprise — a distinct resource
+	// Redis Enterprise claims Microsoft.Cache/redisEnterprise: a distinct resource
 	// type from the standard Azure Cache for Redis (Microsoft.Cache/redis), so
 	// registration order relative to it is unconstrained.
 	if redisEnterpriseHandler != nil {
 		srv.Register(redisEnterpriseHandler)
 	}
 
-	// Health Data Services claims Microsoft.HealthcareApis/workspaces — a distinct
+	// Health Data Services claims Microsoft.HealthcareApis/workspaces: a distinct
 	// provider namespace, so registration order relative to other services is
 	// unconstrained.
 	if healthcareApisHandler != nil {
 		srv.Register(healthcareApisHandler)
 	}
 
-	// Mongo clusters claim Microsoft.DocumentDB/mongoClusters — a distinct resource
+	// Mongo clusters claim Microsoft.DocumentDB/mongoClusters: a distinct resource
 	// type from the Cosmos DB core (Microsoft.DocumentDB/databaseAccounts), so
 	// registration order relative to it is unconstrained.
 	if mongoClusterHandler != nil {
 		srv.Register(mongoClusterHandler)
 	}
 
-	// Batch claims Microsoft.Batch/batchAccounts — a distinct ARM provider name
+	// Batch claims Microsoft.Batch/batchAccounts: a distinct ARM provider name
 	// from every other Azure handler, so registration order is unconstrained.
 	if batchHandler != nil {
 		srv.Register(batchHandler)
 	}
 
-	// Stream Analytics claims Microsoft.StreamAnalytics/streamingjobs — a distinct
+	// Stream Analytics claims Microsoft.StreamAnalytics/streamingjobs: a distinct
 	// ARM provider name from every other Azure handler, so registration order is
 	// unconstrained.
 	if streamAnalyticsHandler != nil {
 		srv.Register(streamAnalyticsHandler)
 	}
 
-	// Recovery Services claims Microsoft.RecoveryServices/vaults — a distinct ARM
+	// Recovery Services claims Microsoft.RecoveryServices/vaults: a distinct ARM
 	// provider name from every other Azure handler, so registration order is
 	// unconstrained.
 	if recoveryServicesHandler != nil {
 		srv.Register(recoveryServicesHandler)
 	}
 
-	// IoT Hub claims Microsoft.Devices/IotHubs — a distinct ARM provider name from
+	// IoT Hub claims Microsoft.Devices/IotHubs: a distinct ARM provider name from
 	// every other Azure handler, so registration order is unconstrained.
 	if iotHubHandler != nil {
 		srv.Register(iotHubHandler)
 	}
 
-	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines —
+	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines:
 	// a distinct ARM provider name from every other Azure handler, so registration
 	// order is unconstrained. Registered before the BlobStorage fallback.
 	if sqlVMHandler != nil {
 		srv.Register(sqlVMHandler)
 	}
 
-	// Container Apps claim Microsoft.App/{managedEnvironments,containerApps} — a
+	// Container Apps claim Microsoft.App/{managedEnvironments,containerApps}: a
 	// distinct ARM provider name from every other Azure handler, so registration
 	// order is unconstrained. Registered before the BlobStorage fallback.
 	if containerAppsHandler != nil {
@@ -1129,12 +1129,12 @@ func New(d Drivers) http.Handler {
 	}
 
 	// IAM matches /providers/Microsoft.Authorization/role{Definitions,Assignments}
-	// at any scope — distinct from every other ARM provider name, so
+	// at any scope, distinct from every other ARM provider name, so
 	// registration order is unconstrained.
 	//
 	// The Drivers.IAM field stays typed as the shared iamdriver.IAM (rather
 	// than iam.Driver) so the docs/coverage generator's registration check
-	// — which recognizes only services/<name>/driver package types — still
+	// (which recognizes only services/<name>/driver package types) still
 	// links this field to the "iam" service. The handler additionally needs
 	// the Azure-only RoleAssignment surface (see iam.Driver): every real
 	// driver behind this field is *azureiam.Mock (providers/azure/iam),
@@ -1150,7 +1150,7 @@ func New(d Drivers) http.Handler {
 		srv.Register(iam.New(drv))
 	}
 
-	// ACR data-plane catalog API matches /acr/v1/… — disjoint from ARM and
+	// ACR data-plane catalog API matches /acr/v1/…, disjoint from ARM, and
 	// must register before the permissive BlobStorage fallback below.
 	if d.ACR != nil {
 		srv.Register(acr.New(d.ACR))
@@ -1170,7 +1170,7 @@ func New(d Drivers) http.Handler {
 		srv.Register(containerinstancessrv.New(d.ContainerInstances))
 	}
 
-	// Key Vault secrets data-plane API matches /secrets/… — disjoint from ARM
+	// Key Vault secrets data-plane API matches /secrets/…, disjoint from ARM
 	// and from the Databricks secrets API (/api/{ver}/secrets), and must
 	// register before the permissive BlobStorage fallback below.
 	if d.KeyVault != nil {
@@ -1183,15 +1183,15 @@ func New(d Drivers) http.Handler {
 		if vaults, ok := d.KeyVault.(secretsdriver.KeyVaultVaults); ok {
 			srv.Register(keyvaultsrv.NewVaultARM(vaults))
 		}
-		// Keys data-plane matches /keys and /deletedkeys — disjoint from the
+		// Keys data-plane matches /keys and /deletedkeys, disjoint from the
 		// /secrets surface above and from ARM. Registered only when the backend
 		// implements the KeyVaultKeys surface.
 		if _, ok := d.KeyVault.(secretsdriver.KeyVaultKeys); ok {
 			srv.Register(keyvaultsrv.NewKeys(d.KeyVault))
 		}
 		// Certificates data-plane matches /certificates and /deletedcertificates.
-		// Registering here — before the permissive Table/Blob storage fallbacks
-		// below — is the routing fix: without it certificate requests fall
+		// Registering here, before the permissive Table/Blob storage fallbacks
+		// below, is the routing fix: without it certificate requests fall
 		// through to storage and return an odata error instead of a Key Vault
 		// response. Registered only when the backend implements the surface.
 		if _, ok := d.KeyVault.(secretsdriver.KeyVaultCertificates); ok {
@@ -1200,7 +1200,7 @@ func New(d Drivers) http.Handler {
 	}
 
 	// Table Storage matches the OData table surface (/Tables, /Tables('name'),
-	// /{table}(…) entity predicates, and POST /{table} inserts) — path shapes
+	// /{table}(…) entity predicates, and POST /{table} inserts): path shapes
 	// that contain parentheses or a bare JSON POST, disjoint from Blob's
 	// container/blob paths and Queue's /messages surface. Registered before the
 	// permissive Blob fallback.
