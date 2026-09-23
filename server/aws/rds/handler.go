@@ -161,7 +161,40 @@ func (*Handler) Matches(r *http.Request) bool {
 		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == "rds"
 	}
 
+	// ElastiCache and Redshift use the same event verbs on this wire. Pass on a
+	// request signed for another service, or one naming another API version.
+	// Unsigned requests with no Version still match.
+	if _, shared := rdsSharedEventActions[action]; shared {
+		return ownsSharedRequest(r)
+	}
+
 	return true
+}
+
+// rdsSharedEventActions are the event verbs RDS shares with ElastiCache and
+// Redshift on the query wire.
+var rdsSharedEventActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	"CreateEventSubscription":    {},
+	"DeleteEventSubscription":    {},
+	"DescribeEventCategories":    {},
+	"DescribeEventSubscriptions": {},
+	"DescribeEvents":             {},
+	"ModifyEventSubscription":    {},
+}
+
+// apiVersion is the RDS query API version. DocDB and Neptune use it too.
+const apiVersion = "2014-10-31"
+
+// ownsSharedRequest reports whether a shared-verb request is meant for RDS.
+// DocDB and Neptune sign with "rds", so they still match.
+func ownsSharedRequest(r *http.Request) bool {
+	if svc := awsquery.CredentialScopeService(r.Header.Get("Authorization")); svc != "" && svc != "rds" {
+		return false
+	}
+
+	v := r.Form.Get("Version")
+
+	return v == "" || v == apiVersion
 }
 
 // rdsAmbiguousTagActions are the tag verbs RDS shares with other

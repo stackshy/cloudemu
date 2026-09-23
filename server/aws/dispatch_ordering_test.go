@@ -152,3 +152,36 @@ func TestRESTHandlersWinBeforeS3(t *testing.T) {
 		})
 	}
 }
+
+// TestDescribeEventsRoutedByCredentialScope covers DescribeEvents, a verb RDS,
+// ElastiCache and Redshift all use. RDS registers first, so each call must reach
+// the service its SigV4 scope names. The xmlns shows which one answered.
+func TestDescribeEventsRoutedByCredentialScope(t *testing.T) {
+	ts := fullAWSServer(t)
+
+	cases := []struct {
+		service   string
+		version   string
+		wantXmlns string
+	}{
+		{"rds", "2014-10-31", `xmlns="http://rds.amazonaws.com/doc/2014-10-31/"`},
+		{"elasticache", "2015-02-02", `xmlns="http://elasticache.amazonaws.com/doc/2015-02-02/"`},
+		{"redshift", "2012-12-01", `xmlns="http://redshift.amazonaws.com/doc/2012-12-01/"`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.service, func(t *testing.T) {
+			status, resp := doRequest(t, ts, http.MethodPost, "/",
+				"Action=DescribeEvents&Version="+tc.version,
+				map[string]string{
+					"Content-Type": formContentType,
+					"Authorization": "AWS4-HMAC-SHA256 Credential=AKID/20260101/us-east-1/" + tc.service +
+						"/aws4_request, SignedHeaders=host, Signature=x",
+				})
+
+			assert.Equalf(t, http.StatusOK, status, "body=%s", resp)
+			assert.Containsf(t, resp, "DescribeEventsResponse", "got: %s", resp)
+			assert.Containsf(t, resp, tc.wantXmlns, "%s DescribeEvents answered by the wrong service: %s", tc.service, resp)
+		})
+	}
+}

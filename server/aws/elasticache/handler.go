@@ -9,9 +9,9 @@
 // handler's Matches predicate parses the form body once and only claims
 // requests whose Action is one of the known ElastiCache operations. The EC2
 // handler is the catch-all for all other query-protocol actions, so this
-// handler MUST register before EC2. Its action set (CreateCacheCluster, …) is
-// disjoint from RDS (CreateDBInstance, …), Redshift (CreateCluster, …), IAM
-// (CreateUser, …), and EC2 (RunInstances, …), so no shadowing occurs.
+// handler MUST register before EC2. Verbs shared with other services (tags,
+// snapshots, DescribeEvents) are claimed only when the request is meant for
+// ElastiCache.
 //
 // Only the cluster/instance control plane is mapped here — the real ElastiCache
 // SDK manages cache clusters, not the Redis data plane. The driver's Redis
@@ -67,6 +67,7 @@ var elastiCacheActions = map[string]struct{}{ //nolint:gochecknoglobals // stati
 	"DescribeSnapshots":            {},
 	"CopySnapshot":                 {},
 	"DeleteSnapshot":               {},
+	actionDescribeEvents:           {},
 }
 
 // sharedTagActions are the generic tag verbs ElastiCache shares with other
@@ -148,7 +149,25 @@ func (*Handler) Matches(r *http.Request) bool {
 		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == scopeElastiCache
 	}
 
+	// DescribeEvents is also an RDS and Redshift verb. Pass on a request signed
+	// for another service, or one naming another API version.
+	if action == actionDescribeEvents {
+		return ownsSharedRequest(r)
+	}
+
 	return true
+}
+
+// ownsSharedRequest reports whether a shared-verb request is meant for
+// ElastiCache. Unsigned requests with no Version still match.
+func ownsSharedRequest(r *http.Request) bool {
+	if svc := awsquery.CredentialScopeService(r.Header.Get("Authorization")); svc != "" && svc != scopeElastiCache {
+		return false
+	}
+
+	v := r.Form.Get("Version")
+
+	return v == "" || v == apiVersion
 }
 
 // ServeHTTP dispatches on Action. The form has already been parsed by Matches.
@@ -212,6 +231,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.copySnapshot(w, r)
 	case "DeleteSnapshot":
 		h.deleteSnapshot(w, r)
+	case actionDescribeEvents:
+		h.describeEvents(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown ElastiCache action: "+r.Form.Get("Action"))
