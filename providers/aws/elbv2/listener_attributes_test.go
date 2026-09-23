@@ -16,7 +16,10 @@ func mkListenerOfType(t *testing.T, m *Mock, lbType string) string {
 	lb, err := m.CreateLoadBalancer(ctx, driver.LBConfig{Name: "attr-lb-" + lbType, Type: lbType})
 	requireNoError(t, err)
 
-	li, err := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: "TCP", Port: 80})
+	// Each type takes its own protocol. A Gateway Load Balancer listener has none.
+	protocol := map[string]string{"network": "TCP", "application": "HTTP"}[lbType]
+
+	li, err := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: protocol, Port: 80})
 	requireNoError(t, err)
 
 	return li.ARN

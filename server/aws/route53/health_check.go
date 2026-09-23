@@ -32,6 +32,22 @@ type healthCheckConfigXML struct {
 	FullyQualifiedDomainName string `xml:"FullyQualifiedDomainName,omitempty"`
 	RequestInterval          int    `xml:"RequestInterval,omitempty"`
 	FailureThreshold         int    `xml:"FailureThreshold,omitempty"`
+	SearchString             string `xml:"SearchString,omitempty"`
+	Inverted                 *bool  `xml:"Inverted,omitempty"`
+	HealthThreshold          *int   `xml:"HealthThreshold,omitempty"`
+	// ChildHealthChecks is a pointer so an empty list still writes the element.
+	ChildHealthChecks            *childHealthChecksXML `xml:"ChildHealthChecks,omitempty"`
+	AlarmIdentifier              *alarmIdentifierXML   `xml:"AlarmIdentifier,omitempty"`
+	InsufficientDataHealthStatus string                `xml:"InsufficientDataHealthStatus,omitempty"`
+}
+
+type childHealthChecksXML struct {
+	IDs []string `xml:"ChildHealthCheck"`
+}
+
+type alarmIdentifierXML struct {
+	Region string `xml:"Region"`
+	Name   string `xml:"Name"`
 }
 
 type healthCheckXML struct {
@@ -78,6 +94,13 @@ type updateHealthCheckRequest struct {
 	ResourcePath             string   `xml:"ResourcePath"`
 	FullyQualifiedDomainName string   `xml:"FullyQualifiedDomainName"`
 	FailureThreshold         int      `xml:"FailureThreshold"`
+
+	SearchString                 string                `xml:"SearchString"`
+	Inverted                     *bool                 `xml:"Inverted"`
+	HealthThreshold              *int                  `xml:"HealthThreshold"`
+	ChildHealthChecks            *childHealthChecksXML `xml:"ChildHealthChecks"`
+	AlarmIdentifier              *alarmIdentifierXML   `xml:"AlarmIdentifier"`
+	InsufficientDataHealthStatus string                `xml:"InsufficientDataHealthStatus"`
 }
 
 type updateHealthCheckResponse struct {
@@ -208,6 +231,13 @@ func (h *Handler) updateHealthCheck(w http.ResponseWriter, r *http.Request, id s
 		Path:             firstNonEmpty(req.ResourcePath, existing.Path),
 		IntervalSeconds:  existing.IntervalSeconds,
 		FailureThreshold: valueOr(req.FailureThreshold, existing.FailureThreshold),
+
+		SearchString:                 req.SearchString,
+		Inverted:                     req.Inverted,
+		HealthThreshold:              req.HealthThreshold,
+		ChildHealthChecks:            req.ChildHealthChecks.ids(),
+		AlarmIdentifier:              req.AlarmIdentifier.toDriver(),
+		InsufficientDataHealthStatus: req.InsufficientDataHealthStatus,
 	}
 
 	info, err := h.dns.UpdateHealthCheck(r.Context(), id, cfg)
@@ -239,6 +269,52 @@ func toHealthCheckConfig(x *healthCheckConfigXML) dnsdriver.HealthCheckConfig {
 		Path:             x.ResourcePath,
 		IntervalSeconds:  x.RequestInterval,
 		FailureThreshold: x.FailureThreshold,
+
+		SearchString:                 x.SearchString,
+		Inverted:                     x.Inverted,
+		HealthThreshold:              x.HealthThreshold,
+		ChildHealthChecks:            x.ChildHealthChecks.ids(),
+		AlarmIdentifier:              x.AlarmIdentifier.toDriver(),
+		InsufficientDataHealthStatus: x.InsufficientDataHealthStatus,
+	}
+}
+
+// ids returns the child check IDs. A missing element gives nil, which means
+// "unchanged" on update. A present but empty element gives an empty list.
+func (c *childHealthChecksXML) ids() []string {
+	if c == nil {
+		return nil
+	}
+
+	return append([]string{}, c.IDs...)
+}
+
+func (a *alarmIdentifierXML) toDriver() *dnsdriver.HealthCheckAlarm {
+	if a == nil {
+		return nil
+	}
+
+	return &dnsdriver.HealthCheckAlarm{Region: a.Region, Name: a.Name}
+}
+
+// setRoute53Fields writes the Route 53 only fields into a response config.
+// Each type returns only the fields that apply to it, as real Route 53 does.
+func setRoute53Fields(cfg *healthCheckConfigXML, info *dnsdriver.HealthCheckInfo) {
+	inverted := info.Inverted
+	cfg.Inverted = &inverted
+	cfg.SearchString = info.SearchString
+
+	switch info.Protocol {
+	case "CALCULATED":
+		threshold := info.HealthThreshold
+		cfg.HealthThreshold = &threshold
+		cfg.ChildHealthChecks = &childHealthChecksXML{IDs: info.ChildHealthChecks}
+	case "CLOUDWATCH_METRIC":
+		if info.AlarmIdentifier != nil {
+			cfg.AlarmIdentifier = &alarmIdentifierXML{Region: info.AlarmIdentifier.Region, Name: info.AlarmIdentifier.Name}
+		}
+
+		cfg.InsufficientDataHealthStatus = info.InsufficientDataHealthStatus
 	}
 }
 
@@ -256,6 +332,8 @@ func toHealthCheckXML(info *dnsdriver.HealthCheckInfo) healthCheckXML {
 	} else {
 		cfg.FullyQualifiedDomainName = info.Endpoint
 	}
+
+	setRoute53Fields(&cfg, info)
 
 	return healthCheckXML{ID: info.ID, HealthCheckConfig: cfg, HealthCheckVersion: healthCheckVersion}
 }
