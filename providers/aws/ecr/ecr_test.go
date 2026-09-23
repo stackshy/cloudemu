@@ -2,6 +2,7 @@ package ecr
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"strings"
 	"sync"
@@ -1180,6 +1181,11 @@ func pushManifest(t *testing.T, m *Mock, repo, tag, digest, manifest string) *dr
 	return detail
 }
 
+// manifestDigest is the sha256 digest ECR computes for a manifest.
+func manifestDigest(manifest string) string {
+	return fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(manifest)))
+}
+
 func findByDigest(images []driver.ImageDetail, digest string) *driver.ImageDetail {
 	for i := range images {
 		if images[i].Digest == digest {
@@ -1226,7 +1232,7 @@ func TestPutImageExplicitDigestAccumulatesTags(t *testing.T) {
 	ctx := context.Background()
 	createTestRepo(t, m, "repo")
 
-	const digest = "sha256:1111111111111111111111111111111111111111111111111111111111111111"
+	digest := manifestDigest(`{"a":1}`)
 	first := pushManifest(t, m, "repo", "v1", digest, `{"a":1}`)
 	assert.ElementsMatch(t, []string{"v1"}, first.Tags)
 
@@ -1247,7 +1253,7 @@ func TestDeleteImageByTagUntagsOnly(t *testing.T) {
 	ctx := context.Background()
 	createTestRepo(t, m, "repo")
 
-	const digest = "sha256:2222222222222222222222222222222222222222222222222222222222222222"
+	digest := manifestDigest(`{"b":1}`)
 	pushManifest(t, m, "repo", "v1", digest, `{"b":1}`)
 	pushManifest(t, m, "repo", "v2", digest, `{"b":1}`)
 
@@ -1271,7 +1277,7 @@ func TestDeleteImageByDigestRemovesManifest(t *testing.T) {
 	ctx := context.Background()
 	createTestRepo(t, m, "repo")
 
-	const digest = "sha256:3333333333333333333333333333333333333333333333333333333333333333"
+	digest := manifestDigest(`{"c":1}`)
 	pushManifest(t, m, "repo", "v1", digest, `{"c":1}`)
 	pushManifest(t, m, "repo", "v2", digest, `{"c":1}`)
 

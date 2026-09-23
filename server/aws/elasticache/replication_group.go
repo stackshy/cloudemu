@@ -103,7 +103,7 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	nodes, err := parseNodeCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
+	nodes, err := parsePositiveCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -172,7 +172,7 @@ func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	nodes, err := parseNodeCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
+	nodes, err := parsePositiveCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -308,6 +308,21 @@ func parseNodeCount(field, raw string) (int, error) {
 	if err != nil {
 		return 0, cerrors.Newf(cerrors.InvalidArgument,
 			"%s must be a number, got %q", field, raw)
+	}
+
+	return n, nil
+}
+
+// parsePositiveCount is parseNodeCount for fields that must be at least 1 when
+// sent. An explicit 0 is an error, not a request for the default.
+func parsePositiveCount(field, raw string) (int, error) {
+	n, err := parseNodeCount(field, raw)
+	if err != nil {
+		return 0, err
+	}
+
+	if raw != "" && n < 1 {
+		return 0, cerrors.Newf(cerrors.InvalidArgument, "%s must be at least 1, got %d", field, n)
 	}
 
 	return n, nil

@@ -134,7 +134,7 @@ func defaultParameterIndex(family string) map[string]Parameter {
 // "engine-default" (only unmodified defaults). A missing group reports
 // CacheParameterGroupNotFound.
 func (m *Mock) DescribeCacheParameters(_ context.Context, name, source string) ([]Parameter, error) {
-	pg, ok := m.parameterGroups.Get(name)
+	pg, ok := m.lookupParameterGroup(name)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "cache parameter group %q not found", name)
 	}
@@ -182,6 +182,10 @@ func matchesParameterSource(filter, paramSource string) bool {
 // and be modifiable; otherwise InvalidParameterValue is returned and no override
 // is applied. A missing group reports CacheParameterGroupNotFound.
 func (m *Mock) ModifyCacheParameterGroup(_ context.Context, name string, updates []ParameterUpdate) error {
+	if err := rejectDefaultGroupChange(name); err != nil {
+		return err
+	}
+
 	pg, ok := m.parameterGroups.Get(name)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "cache parameter group %q not found", name)
@@ -218,6 +222,10 @@ func (m *Mock) ModifyCacheParameterGroup(_ context.Context, name string, updates
 // parameters are reset (each must be a known parameter for the family). A
 // missing group reports CacheParameterGroupNotFound.
 func (m *Mock) ResetCacheParameterGroup(_ context.Context, name string, resetAll bool, names []string) error {
+	if err := rejectDefaultGroupChange(name); err != nil {
+		return err
+	}
+
 	pg, ok := m.parameterGroups.Get(name)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "cache parameter group %q not found", name)

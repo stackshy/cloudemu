@@ -43,6 +43,14 @@ func (m *Mock) CreateReplicationGroup(
 		engine = defaultEngine
 	}
 
+	if err := validateEngine(engine, true); err != nil {
+		return nil, err
+	}
+
+	if err := validateReplicationNodeCount(cfg.NumCacheNodes); err != nil {
+		return nil, err
+	}
+
 	nodeType := cfg.NodeType
 	if nodeType == "" {
 		nodeType = defaultNodeType
@@ -221,6 +229,10 @@ func (m *Mock) ModifyReplicationGroup(
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound,
 			"ReplicationGroupNotFoundFault: replication group %q not found", id)
+	}
+
+	if err := validateReplicationNodeCount(numCacheNodes); err != nil {
+		return nil, err
 	}
 
 	if numCacheNodes > 0 {

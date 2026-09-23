@@ -216,15 +216,15 @@ func TestWrapContainerRegistryBaseline(t *testing.T) {
 	r, _ := newChaosContainerRegistry(t)
 	ctx := context.Background()
 
-	_, _ = r.CreateRepository(ctx, regdriver.RepositoryConfig{Name: "b"})
-	_, _ = r.GetRepository(ctx, "b")
+	_, _ = r.CreateRepository(ctx, regdriver.RepositoryConfig{Name: "bb"})
+	_, _ = r.GetRepository(ctx, "bb")
 	_, _ = r.ListRepositories(ctx)
-	m := &regdriver.ImageManifest{Repository: "b", Tag: "v1", Digest: "sha256:abc", SizeBytes: 100}
+	m := &regdriver.ImageManifest{Repository: "bb", Tag: "v1", Digest: "sha256:abc", SizeBytes: 100}
 	_, _ = r.PutImage(ctx, m)
-	_, _ = r.GetImage(ctx, "b", "v1")
-	_, _ = r.ListImages(ctx, "b")
-	_ = r.DeleteImage(ctx, "b", "v1")
-	_ = r.DeleteRepository(ctx, "b", false)
+	_, _ = r.GetImage(ctx, "bb", "v1")
+	_, _ = r.ListImages(ctx, "bb")
+	_ = r.DeleteImage(ctx, "bb", "v1")
+	_ = r.DeleteRepository(ctx, "bb", false)
 }
 
 func TestWrapEventBusBaseline(t *testing.T) {

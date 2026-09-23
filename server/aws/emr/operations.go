@@ -9,7 +9,10 @@ import (
 // runJobFlow handles RunJobFlow: create a cluster (JobFlow) and return its id + ARN.
 func (h *Handler) runJobFlow(w http.ResponseWriter, r *http.Request) {
 	dispatch(h, w, r, func(h *Handler, _ context.Context, in *runJobFlowInput) (any, error) {
-		c := h.store.runJobFlow(in)
+		c, err := h.store.runJobFlow(in)
+		if err != nil {
+			return nil, err
+		}
 
 		return runJobFlowOutput{JobFlowID: c.id, ClusterArn: c.arn}, nil
 	})

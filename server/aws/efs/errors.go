@@ -78,6 +78,10 @@ func exceptionFor(kind string, err error) (status int, errType string) {
 
 		return http.StatusConflict, "FileSystemAlreadyExists"
 	case cerrors.IsInvalidArgument(err):
+		if kind == driver.KindAvailabilityZone {
+			return http.StatusBadRequest, "AvailabilityZonesMismatch"
+		}
+
 		return http.StatusBadRequest, "BadRequest"
 	case cerrors.IsFailedPrecondition(err):
 		return http.StatusConflict, "FileSystemInUse"

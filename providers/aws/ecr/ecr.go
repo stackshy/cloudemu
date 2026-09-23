@@ -104,8 +104,8 @@ func New(opts *config.Options) *Mock {
 
 // CreateRepository creates a new ECR repository.
 func (m *Mock) CreateRepository(ctx context.Context, cfg driver.RepositoryConfig) (*driver.Repository, error) {
-	if cfg.Name == "" {
-		return nil, errors.New(errors.InvalidArgument, "repository name is required")
+	if err := validateRepositoryName(cfg.Name); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -358,7 +358,10 @@ func (m *Mock) putImage(manifest *driver.ImageManifest) (*driver.ImageDetail, er
 		return nil, errors.Newf(errors.NotFound, "repository %q not found", manifest.Repository)
 	}
 
-	digest := resolveDigest(manifest)
+	digest, err := resolveDigest(manifest)
+	if err != nil {
+		return nil, err
+	}
 
 	if err := checkTagMutability(rd, manifest.Tag, digest); err != nil {
 		return nil, err
@@ -787,14 +790,21 @@ func digestForTag(rd *repoData, tag string) string {
 // imageDigest it is respected; otherwise the digest is content-addressed as the
 // full sha256 of the manifest bytes, so identical manifest content yields the
 // same 64-hex digest regardless of tag or push time (matching real ECR).
-func resolveDigest(manifest *driver.ImageManifest) string {
-	if manifest.Digest != "" {
-		return manifest.Digest
+// When both a manifest and a digest are sent, the digest must match the
+// manifest's sha256.
+func resolveDigest(manifest *driver.ImageManifest) (string, error) {
+	hash := fmt.Sprintf("sha256:%x", sha256.Sum256([]byte(manifest.Manifest)))
+
+	if manifest.Digest == "" {
+		return hash, nil
 	}
 
-	hash := sha256.Sum256([]byte(manifest.Manifest))
+	if manifest.Manifest != "" && manifest.Digest != hash {
+		return "", apiErrInvalidf(excImageDigestDoesNotMatch,
+			"The image digest %s does not match the digest %s calculated for the manifest", manifest.Digest, hash)
+	}
 
-	return fmt.Sprintf("sha256:%x", hash)
+	return manifest.Digest, nil
 }
 
 // updateTagIndex removes a tag from any existing image and adds it to the target digest.

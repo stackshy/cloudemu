@@ -166,8 +166,12 @@ func isTerminal(state string) bool {
 }
 
 // runJobFlow creates a cluster in WAITING and returns it. Steps carried in the
-// request execute instantly.
-func (s *store) runJobFlow(in *runJobFlowInput) *cluster {
+// request execute instantly. Bad input is rejected before an id is used.
+func (s *store) runJobFlow(in *runJobFlowInput) (*cluster, error) {
+	if err := validateRunJobFlow(in); err != nil {
+		return nil, err
+	}
+
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -212,7 +216,7 @@ func (s *store) runJobFlow(in *runJobFlowInput) *cluster {
 	s.clusters[id] = c
 	s.order = append(s.order, id)
 
-	return c
+	return c, nil
 }
 
 // applyInstances copies the EC2/instance shape of a RunJobFlow request onto c.

@@ -18,6 +18,7 @@ const (
 	excRegistryPolicyNotFound   = "RegistryPolicyNotFoundException"
 	excPullThroughRuleNotFound  = "PullThroughCacheRuleNotFoundException"
 	excPullThroughRuleExists    = "PullThroughCacheRuleAlreadyExistsException"
+	excImageDigestDoesNotMatch  = "ImageDigestDoesNotMatchException"
 )
 
 // apiError pairs a canonical cloudemu error with the precise ECR exception name
@@ -52,4 +53,10 @@ func apiErrf(exception, format string, args ...any) error {
 // mapping would otherwise collapse to RepositoryAlreadyExistsException.
 func apiErrExistsf(exception, format string, args ...any) error {
 	return &apiError{err: errors.Newf(errors.AlreadyExists, format, args...), exception: exception}
+}
+
+// apiErrInvalidf builds an InvalidArgument apiError for ECR exceptions that the
+// generic mapping would turn into InvalidParameterException.
+func apiErrInvalidf(exception, format string, args ...any) error {
+	return &apiError{err: errors.Newf(errors.InvalidArgument, format, args...), exception: exception}
 }

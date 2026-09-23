@@ -110,7 +110,7 @@ func (m *Mock) CreateCacheParameterGroup(_ context.Context, name, family, descri
 		return nil, cerrors.New(cerrors.InvalidArgument, "CacheParameterGroupName is required")
 	}
 
-	if m.parameterGroups.Has(name) {
+	if _, exists := m.lookupParameterGroup(name); exists {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "cache parameter group %q already exists", name)
 	}
 
@@ -129,7 +129,7 @@ func (m *Mock) DescribeCacheParameterGroups(_ context.Context, names []string) (
 	out := make([]ParameterGroup, 0, len(names))
 
 	for _, name := range names {
-		pg, ok := m.parameterGroups.Get(name)
+		pg, ok := m.lookupParameterGroup(name)
 		if !ok {
 			return nil, cerrors.Newf(cerrors.NotFound, "cache parameter group %q not found", name)
 		}
@@ -141,7 +141,19 @@ func (m *Mock) DescribeCacheParameterGroups(_ context.Context, names []string) (
 }
 
 // DeleteCacheParameterGroup removes an ElastiCache cache parameter group.
+// Real ElastiCache refuses to delete a default group or one a cluster still uses.
 func (m *Mock) DeleteCacheParameterGroup(_ context.Context, name string) error {
+	if err := rejectDefaultGroupChange(name); err != nil {
+		return err
+	}
+
+	for _, cd := range m.caches.All() {
+		if cd.info.ParameterGroupName == name {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"InvalidCacheParameterGroupState: cache parameter group %q is in use by %q", name, cd.info.Name)
+		}
+	}
+
 	if !m.parameterGroups.Delete(name) {
 		return cerrors.Newf(cerrors.NotFound, "cache parameter group %q not found", name)
 	}

@@ -13,6 +13,7 @@ package emr
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -105,7 +106,11 @@ func dispatch[Req any](
 func writeErr(w http.ResponseWriter, err error) {
 	msg := cerrors.Message(err)
 
+	var verr *validationError
+
 	switch {
+	case errors.As(err, &verr):
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", verr.msg)
 	case cerrors.IsInvalidArgument(err), cerrors.IsFailedPrecondition(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidRequestException", msg)
 	default:
