@@ -181,6 +181,24 @@ func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) (stat
 	return StateOK, "Threshold not crossed", true
 }
 
+// RecentDatapoints returns the statistic of each non-empty period in the
+// evaluation window, oldest first. CloudWatch reports these in the
+// stateReasonData of a metric-driven transition.
+func RecentDatapoints(datums []driver.MetricDatum, p *Params, now time.Time) []float64 {
+	periodDur, evalPeriods, _ := p.normalize()
+	buckets := bucketByPeriod(datums, now, periodDur, evalPeriods)
+
+	out := make([]float64, 0, len(buckets))
+
+	for i := len(buckets) - 1; i >= 0; i-- {
+		if buckets[i] != nil {
+			out = append(out, buckets[i].stat(p.Stat))
+		}
+	}
+
+	return out
+}
+
 // bucketByPeriod groups datums into evalPeriods accumulators indexed by age,
 // where bucket 0 covers the most recent period. A nil bucket had no data.
 func bucketByPeriod(datums []driver.MetricDatum, now time.Time, periodDur time.Duration, evalPeriods int) []*statAgg {

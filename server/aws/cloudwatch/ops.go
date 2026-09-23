@@ -301,6 +301,7 @@ type metricAlarmCBR struct {
 	Dimensions              []dimensionCBR `cbor:"Dimensions,omitempty"`
 	StateValue              string         `cbor:"StateValue"`
 	StateReason             string         `cbor:"StateReason,omitempty"`
+	StateReasonData         string         `cbor:"StateReasonData,omitempty"`
 	StateUpdatedTimestamp   *time.Time     `cbor:"StateUpdatedTimestamp,omitempty"`
 	ComparisonOperator      string         `cbor:"ComparisonOperator"`
 	Threshold               float64        `cbor:"Threshold"`
@@ -430,6 +431,7 @@ func toMetricAlarmCBR(a *mondriver.AlarmInfo) metricAlarmCBR {
 		Dimensions:              dimsToCBR(a.Dimensions),
 		StateValue:              a.State,
 		StateReason:             a.StateReason,
+		StateReasonData:         a.StateReasonData,
 		ComparisonOperator:      a.ComparisonOperator,
 		Threshold:               a.Threshold,
 		Period:                  a.Period,

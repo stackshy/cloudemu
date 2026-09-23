@@ -29,11 +29,26 @@ type setAlarmStateInput struct {
 	StateReasonData *string `cbor:"StateReasonData"`
 }
 
+// alarmStateReasonDataSetter is the AWS-local capability that stores
+// StateReasonData with the new state.
+type alarmStateReasonDataSetter interface {
+	SetAlarmStateWithData(ctx context.Context, name, state, reason, reasonData string) error
+}
+
 // setAlarmStateCore validates the request and then sets the state. A rejected
 // request never reaches the driver, so the stored state stays as it was.
 func (h *Handler) setAlarmStateCore(ctx context.Context, in *setAlarmStateInput) error {
 	if err := validateSetAlarmState(in); err != nil {
 		return err
+	}
+
+	if setter, ok := h.monitoring.(alarmStateReasonDataSetter); ok {
+		var data string
+		if in.StateReasonData != nil {
+			data = *in.StateReasonData
+		}
+
+		return setter.SetAlarmStateWithData(ctx, *in.AlarmName, *in.StateValue, *in.StateReason, data)
 	}
 
 	return h.monitoring.SetAlarmState(ctx, *in.AlarmName, *in.StateValue, *in.StateReason)

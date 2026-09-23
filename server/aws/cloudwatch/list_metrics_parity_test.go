@@ -47,6 +47,10 @@ type cwWire struct {
 	tokenCode func(t *testing.T, op, token string) string
 	// setAlarmState returns the HTTP status and the error code ("" on success).
 	setAlarmState func(t *testing.T, in *awscw.SetAlarmStateInput) (int, string)
+	// reasonData returns the alarm's StateReasonData from DescribeAlarms.
+	reasonData func(t *testing.T, name string) string
+	// historyData returns the HistoryData of each alarm history item.
+	historyData func(t *testing.T, name string) []string
 }
 
 type cwProtocol struct {
@@ -186,6 +190,26 @@ func newCBORWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 			}
 			return re.HTTPStatusCode(), sdkErrCode(t, err)
 		},
+		reasonData: func(t *testing.T, name string) string {
+			t.Helper()
+			out, err := c.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{AlarmNames: []string{name}})
+			if err != nil || len(out.MetricAlarms) != 1 {
+				t.Fatalf("DescribeAlarms: %v %+v", err, out)
+			}
+			return aws.ToString(out.MetricAlarms[0].StateReasonData)
+		},
+		historyData: func(t *testing.T, name string) []string {
+			t.Helper()
+			out, err := c.DescribeAlarmHistory(ctx, &awscw.DescribeAlarmHistoryInput{AlarmName: aws.String(name)})
+			if err != nil {
+				t.Fatalf("DescribeAlarmHistory: %v", err)
+			}
+			data := make([]string, 0, len(out.AlarmHistoryItems))
+			for _, item := range out.AlarmHistoryItems {
+				data = append(data, aws.ToString(item.HistoryData))
+			}
+			return data
+		},
 	}
 }
 
@@ -316,6 +340,29 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 			setIfSet(form, "StateReason", in.StateReason)
 			setIfSet(form, "StateReasonData", in.StateReasonData)
 			return postStatus(t, form, nil)
+		},
+		reasonData: func(t *testing.T, name string) string {
+			t.Helper()
+			var x struct {
+				Data []string `xml:"DescribeAlarmsResult>MetricAlarms>member>StateReasonData"`
+				Name []string `xml:"DescribeAlarmsResult>MetricAlarms>member>AlarmName"`
+			}
+			post(t, url.Values{"Action": {"DescribeAlarms"}, "AlarmNames.member.1": {name}}, &x)
+			if len(x.Name) != 1 {
+				t.Fatalf("DescribeAlarms: got %d alarms", len(x.Name))
+			}
+			if len(x.Data) == 0 {
+				return ""
+			}
+			return x.Data[0]
+		},
+		historyData: func(t *testing.T, name string) []string {
+			t.Helper()
+			var x struct {
+				Data []string `xml:"DescribeAlarmHistoryResult>AlarmHistoryItems>member>HistoryData"`
+			}
+			post(t, url.Values{"Action": {"DescribeAlarmHistory"}, "AlarmName": {name}}, &x)
+			return x.Data
 		},
 	}
 }

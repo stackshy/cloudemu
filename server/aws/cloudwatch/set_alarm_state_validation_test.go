@@ -111,6 +111,50 @@ func TestSetAlarmStateValidation(t *testing.T) {
 	}
 }
 
+// TestSetAlarmStateReasonData: StateReasonData is stored, returned by
+// DescribeAlarms and carried into the history on both protocols. A later call
+// without it clears it.
+func TestSetAlarmStateReasonData(t *testing.T) {
+	const data = `{"k":1}`
+
+	for _, p := range cwProtocols() {
+		t.Run(p.name, func(t *testing.T) {
+			w := p.build(t, nil)
+			w.putAlarm(t, &awscw.PutMetricAlarmInput{
+				AlarmName: aws.String("a1"), Namespace: aws.String("ns"), MetricName: aws.String("m"),
+				ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold, EvaluationPeriods: aws.Int32(1),
+				Period: aws.Int32(60), Threshold: aws.Float64(1), Statistic: cwtypes.StatisticSum,
+			})
+
+			if status, code := w.setAlarmState(t, &awscw.SetAlarmStateInput{
+				AlarmName: aws.String("a1"), StateValue: cwtypes.StateValueAlarm,
+				StateReason: aws.String("test"), StateReasonData: aws.String(data),
+			}); status != http.StatusOK {
+				t.Fatalf("SetAlarmState: status %d code %s", status, code)
+			}
+
+			if got := w.reasonData(t, "a1"); got != data {
+				t.Fatalf("StateReasonData = %q, want %q", got, data)
+			}
+
+			history := w.historyData(t, "a1")
+			if len(history) == 0 || !strings.Contains(history[0], `"newState":{"stateValue":"ALARM","stateReasonData":{"k":1}}`) {
+				t.Fatalf("HistoryData = %q", history)
+			}
+
+			if status, code := w.setAlarmState(t, &awscw.SetAlarmStateInput{
+				AlarmName: aws.String("a1"), StateValue: cwtypes.StateValueOk, StateReason: aws.String("clear"),
+			}); status != http.StatusOK {
+				t.Fatalf("SetAlarmState: status %d code %s", status, code)
+			}
+
+			if got := w.reasonData(t, "a1"); got != "" {
+				t.Fatalf("StateReasonData after a call without it = %q, want empty", got)
+			}
+		})
+	}
+}
+
 // TestQuerySetAlarmStateMissingReason: StateReason is required. The SDK checks
 // this on the client, so only a raw query request can leave it out.
 func TestQuerySetAlarmStateMissingReason(t *testing.T) {

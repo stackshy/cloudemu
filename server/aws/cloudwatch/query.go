@@ -344,6 +344,7 @@ func toAlarmMemberXML(a *mondriver.AlarmInfo) alarmMemberXML {
 		Dimensions:              dimsToXML(a.Dimensions),
 		StateValue:              a.State,
 		StateReason:             a.StateReason,
+		StateReasonData:         a.StateReasonData,
 		ComparisonOperator:      a.ComparisonOperator,
 		Threshold:               a.Threshold,
 		Period:                  a.Period,
@@ -652,6 +653,7 @@ type alarmMemberXML struct {
 	Dimensions              []dimensionXML `xml:"Dimensions>member,omitempty"`
 	StateValue              string         `xml:"StateValue"`
 	StateReason             string         `xml:"StateReason,omitempty"`
+	StateReasonData         string         `xml:"StateReasonData,omitempty"`
 	StateUpdatedTimestamp   string         `xml:"StateUpdatedTimestamp,omitempty"`
 	ComparisonOperator      string         `xml:"ComparisonOperator"`
 	Threshold               float64        `xml:"Threshold"`
