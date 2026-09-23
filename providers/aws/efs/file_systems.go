@@ -33,9 +33,8 @@ func (m *Mock) CreateFileSystem(_ context.Context, in driver.CreateFileSystemInp
 		tput = driver.ThroughputBursting
 	}
 
-	if tput == driver.ThroughputProvisioned && in.ProvisionedThroughputInMibps <= 0 {
-		return nil, errors.New(errors.InvalidArgument,
-			"ProvisionedThroughputInMibps is required when ThroughputMode is provisioned")
+	if err := validateFileSystemModes(perf, tput, in.ProvisionedThroughputInMibps, in.AvailabilityZoneName); err != nil {
+		return nil, err
 	}
 
 	id := "fs-" + idgen.GenerateID("")
@@ -179,6 +178,10 @@ func (m *Mock) UpdateFileSystem(_ context.Context, in driver.UpdateFileSystemInp
 
 	fd.mu.Lock()
 	defer fd.mu.Unlock()
+
+	if err := validateUpdate(&fd.fs, in); err != nil {
+		return nil, err
+	}
 
 	if in.ThroughputMode != "" {
 		fd.fs.ThroughputMode = in.ThroughputMode

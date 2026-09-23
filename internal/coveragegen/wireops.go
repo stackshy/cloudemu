@@ -45,9 +45,10 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 	"aws/emr": {
 		"AddInstanceGroups", "AddJobFlowSteps", "AddTags", "CancelSteps",
 		"CreateSecurityConfiguration", "DeleteSecurityConfiguration", "DescribeCluster",
-		"DescribeSecurityConfiguration", "DescribeStep", "ListBootstrapActions",
-		"ListClusters", "ListInstanceGroups", "ListInstances", "ListSecurityConfigurations",
-		"ListSteps", "ModifyInstanceGroups", "RemoveTags", "RunJobFlow",
+		"DescribeSecurityConfiguration", "DescribeStep", "GetAutoTerminationPolicy",
+		"ListBootstrapActions", "ListClusters", "ListInstanceGroups", "ListInstances",
+		"ListSecurityConfigurations", "ListSteps", "ModifyInstanceGroups",
+		"PutAutoTerminationPolicy", "RemoveAutoTerminationPolicy", "RemoveTags", "RunJobFlow",
 		"TerminateJobFlows",
 	},
 	"aws/savingsplans": {

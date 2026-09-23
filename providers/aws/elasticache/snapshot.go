@@ -75,7 +75,7 @@ func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedri
 		snap.Engine = cd.info.Engine
 		snap.EngineVersion = cd.info.EngineVersion
 		snap.NodeType = cd.info.NodeType
-		snap.ParameterGroupName = paramGroupName(cd.info.Engine)
+		snap.ParameterGroupName = clusterParameterGroup(&cd.info)
 		snap.ARN = m.snapshotARN(arnRegion(cd.info.ARN, fallbackRegion), snap.Name)
 
 		if cd.info.NumCacheNodes > 0 {
@@ -92,7 +92,11 @@ func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedri
 		snap.Engine = rg.Engine
 		snap.EngineVersion = rg.EngineVersion
 		snap.NodeType = rg.NodeType
-		snap.ParameterGroupName = paramGroupName(rg.Engine)
+		snap.ParameterGroupName = DefaultParameterGroupName(rg.Engine, rg.EngineVersion)
+
+		if rg.ParameterGroupName != "" {
+			snap.ParameterGroupName = rg.ParameterGroupName
+		}
 		snap.ARN = m.snapshotARN(arnRegion(rg.ARN, fallbackRegion), snap.Name)
 
 		if rg.PrimaryPort != 0 {
@@ -120,14 +124,14 @@ func checkSnapshotSupported(engine, nodeType string) error {
 	return nil
 }
 
-// paramGroupName derives the default cache parameter group name for an engine,
-// e.g. "default.redis". Empty for an unspecified engine.
-func paramGroupName(engine string) string {
-	if engine == "" {
-		return ""
+// clusterParameterGroup returns the group a cluster uses: its own, or the
+// engine default.
+func clusterParameterGroup(info *cachedriver.CacheInfo) string {
+	if info.ParameterGroupName != "" {
+		return info.ParameterGroupName
 	}
 
-	return "default." + engine
+	return DefaultParameterGroupName(info.Engine, info.EngineVersion)
 }
 
 // CopySnapshot deep-copies an existing snapshot to a new name. Real ElastiCache

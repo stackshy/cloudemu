@@ -93,6 +93,10 @@ const (
 // must have exactly 1 (a larger count is InvalidParameterValue, not silently
 // accepted).
 func validateNodeCount(engine string, numNodes int) error {
+	if numNodes < 1 {
+		return errors.New(errors.InvalidArgument, "NumCacheNodes must be at least 1")
+	}
+
 	if engine == engineMemcached {
 		if numNodes > maxMemcachedNodes {
 			return errors.Newf(errors.InvalidArgument,
@@ -110,11 +114,11 @@ func validateNodeCount(engine string, numNodes int) error {
 	return nil
 }
 
-// normalizeNodeCount defaults an unset node count to 1 and validates it against
-// the engine's limits.
+// normalizeNodeCount defaults an unset (zero) node count to 1 and validates it
+// against the engine's limits. The wire layer rejects an explicit 0.
 func normalizeNodeCount(engine string, requested int) (int, error) {
 	n := requested
-	if n < 1 {
+	if n == 0 {
 		n = 1
 	}
 
@@ -302,6 +306,10 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 		engine = defaultEngine
 	}
 
+	if err := validateEngine(engine, false); err != nil {
+		return nil, err
+	}
+
 	nodeType := cfg.NodeType
 	if nodeType == "" {
 		nodeType = defaultNodeType
@@ -318,6 +326,10 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 	}
 
 	if err := m.requireSubnetGroup(cfg.SubnetGroupName); err != nil {
+		return nil, err
+	}
+
+	if err := m.requireParameterGroup(cfg.ParameterGroupName); err != nil {
 		return nil, err
 	}
 
@@ -381,7 +393,7 @@ func (m *Mock) ModifyCache(_ context.Context, cfg driver.ModifyCacheConfig) (*dr
 		return nil, errors.Newf(errors.NotFound, "cache %q not found", cfg.Name)
 	}
 
-	if cfg.NumCacheNodes > 0 {
+	if cfg.NumCacheNodes != 0 {
 		if err := validateNodeCount(cd.info.Engine, cfg.NumCacheNodes); err != nil {
 			return nil, err
 		}
@@ -522,6 +534,7 @@ func (m *Mock) memberCacheInfo(rg *driver.ReplicationGroup, memberID string) dri
 		ARN:                     m.cacheARN(region, memberID),
 		NumCacheNodes:           1,
 		SubnetGroupName:         rg.SubnetGroupName,
+		ParameterGroupName:      rg.ParameterGroupName,
 		ReplicationGroupID:      rg.ID,
 		AutoMinorVersionUpgrade: true,
 	}

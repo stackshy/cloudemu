@@ -1,6 +1,7 @@
 package elasticache
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"strconv"
@@ -103,7 +104,7 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	nodes, err := parseNodeCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
+	nodes, err := parsePositiveCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -118,6 +119,7 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 		NumCacheNodes:            nodes,
 		SubnetGroupName:          r.Form.Get("CacheSubnetGroupName"),
 		SecurityGroupIDs:         awsquery.ListStrings(r.Form, "SecurityGroupIds.SecurityGroupId"),
+		ParameterGroupName:       r.Form.Get("CacheParameterGroupName"),
 		AutomaticFailoverEnabled: r.Form.Get("AutomaticFailoverEnabled") == formTrue,
 		SnapshotName:             r.Form.Get("SnapshotName"),
 		SnapshotArns:             awsquery.ListStrings(r.Form, "SnapshotArns.SnapshotArn"),
@@ -165,6 +167,29 @@ func (h *Handler) describeReplicationGroups(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// rgParameterGroupModifier is the AWS-only call that changes a replication
+// group's parameter group. The portable driver doesn't carry it.
+type rgParameterGroupModifier interface {
+	ModifyReplicationGroupParameterGroup(ctx context.Context, id, name string) (*cachedriver.ReplicationGroup, error)
+}
+
+// modifyRGParameterGroup applies a CacheParameterGroupName change. It writes
+// the error and returns false when the change fails.
+func (h *Handler) modifyRGParameterGroup(w http.ResponseWriter, r *http.Request, id, name string) bool {
+	mod, ok := h.cache.(rgParameterGroupModifier)
+	if !ok {
+		writeUnsupported(w, "replication group parameter groups")
+		return false
+	}
+
+	if _, err := mod.ModifyReplicationGroupParameterGroup(r.Context(), id, name); err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	return true
+}
+
 func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.replicationGroups()
 	if !ok {
@@ -172,13 +197,21 @@ func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	nodes, err := parseNodeCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
+	nodes, err := parsePositiveCount("NumCacheClusters", r.Form.Get("NumCacheClusters"))
 	if err != nil {
 		writeErr(w, err)
 		return
 	}
 
-	rg, err := store.ModifyReplicationGroup(r.Context(), r.Form.Get("ReplicationGroupId"), nodes)
+	id := r.Form.Get("ReplicationGroupId")
+
+	if pg := r.Form.Get("CacheParameterGroupName"); pg != "" {
+		if !h.modifyRGParameterGroup(w, r, id, pg) {
+			return
+		}
+	}
+
+	rg, err := store.ModifyReplicationGroup(r.Context(), id, nodes)
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -308,6 +341,21 @@ func parseNodeCount(field, raw string) (int, error) {
 	if err != nil {
 		return 0, cerrors.Newf(cerrors.InvalidArgument,
 			"%s must be a number, got %q", field, raw)
+	}
+
+	return n, nil
+}
+
+// parsePositiveCount is parseNodeCount for fields that must be at least 1 when
+// sent. An explicit 0 is an error, not a request for the default.
+func parsePositiveCount(field, raw string) (int, error) {
+	n, err := parseNodeCount(field, raw)
+	if err != nil {
+		return 0, err
+	}
+
+	if raw != "" && n < 1 {
+		return 0, cerrors.Newf(cerrors.InvalidArgument, "%s must be at least 1, got %d", field, n)
 	}
 
 	return n, nil

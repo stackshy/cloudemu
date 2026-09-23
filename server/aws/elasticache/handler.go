@@ -270,6 +270,8 @@ func failedPreconditionCode(err error) string {
 		return "CacheSubnetGroupInUse"
 	case strings.Contains(msg, "SnapshotFeatureNotSupportedFault"):
 		return "SnapshotFeatureNotSupportedFault"
+	case strings.Contains(msg, "InvalidCacheParameterGroupState"):
+		return "InvalidCacheParameterGroupState"
 	default:
 		return "InvalidCacheClusterState"
 	}

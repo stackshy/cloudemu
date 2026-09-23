@@ -13,6 +13,7 @@ package emr
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -49,6 +50,10 @@ func New(accountID, region string, clock config.Clock) *Handler {
 		"ListBootstrapActions": h.listBootstrapActions,
 		"AddTags":              h.addTagsHandler,
 		"RemoveTags":           h.removeTagsHandler,
+
+		"GetAutoTerminationPolicy":    h.getAutoTerminationPolicy,
+		"PutAutoTerminationPolicy":    h.putAutoTerminationPolicy,
+		"RemoveAutoTerminationPolicy": h.removeAutoTerminationPolicy,
 
 		"CreateSecurityConfiguration":   h.createSecurityConfiguration,
 		"DescribeSecurityConfiguration": h.describeSecurityConfiguration,
@@ -105,7 +110,11 @@ func dispatch[Req any](
 func writeErr(w http.ResponseWriter, err error) {
 	msg := cerrors.Message(err)
 
+	var verr *validationError
+
 	switch {
+	case errors.As(err, &verr):
+		wire.WriteJSONError(w, http.StatusBadRequest, "ValidationException", verr.msg)
 	case cerrors.IsInvalidArgument(err), cerrors.IsFailedPrecondition(err):
 		wire.WriteJSONError(w, http.StatusBadRequest, "InvalidRequestException", msg)
 	default:

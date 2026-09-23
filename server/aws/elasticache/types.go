@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 
+	ecprovider "github.com/stackshy/cloudemu/v2/providers/aws/elasticache"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
 
@@ -225,23 +226,6 @@ func toSnapshotXML(s *cachedriver.Snapshot) snapshotXML {
 	}
 }
 
-// defaultParamGroupName derives the default cache parameter group name AWS
-// assigns to a cluster, e.g. "default.redis7" or "default.memcached1.6". For
-// redis the family is engine + major version; for memcached it is major.minor.
-func defaultParamGroupName(engine, version string) string {
-	family := engine
-
-	parts := strings.Split(version, ".")
-	switch {
-	case engine == "memcached" && len(parts) >= 2:
-		family = engine + parts[0] + "." + parts[1]
-	case len(parts) >= 1 && parts[0] != "":
-		family = engine + parts[0]
-	}
-
-	return "default." + family
-}
-
 // fallbackRegion is used when a cluster's ARN is missing or malformed and its
 // region cannot be read; it is the AWS default region.
 const fallbackRegion = "us-east-1"
@@ -319,7 +303,7 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 		// otherwise report the engine family's default (default.<family>).
 		paramGroup := info.ParameterGroupName
 		if paramGroup == "" {
-			paramGroup = defaultParamGroupName(info.Engine, info.EngineVersion)
+			paramGroup = ecprovider.DefaultParameterGroupName(info.Engine, info.EngineVersion)
 		}
 
 		out.CacheParameterGroup = &cacheParameterGroupStatusXML{
