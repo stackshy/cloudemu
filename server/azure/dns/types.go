@@ -225,8 +225,8 @@ func privateFromZoneType(zt string) bool {
 // toZoneJSON converts a driver zone into its ARM element for the given path
 // scope. Azure DNS zones are always "global" location.
 func toZoneJSON(rp *azurearm.ResourcePath, info *dnsdriver.ZoneInfo) zoneJSON {
-	// Build the id from the zone's own group, not the request path's — which is
-	// empty on a subscription-scoped list — so the id carries its true
+	// Build the id from the zone's own group, not the request path's (which is
+	// empty on a subscription-scoped list), so the id carries its true
 	// resourceGroups/{rg} segment.
 	rg := info.Scope.ResourceGroup
 	if rg == "" {
@@ -559,7 +559,7 @@ func isApexProtectedRecord(name, recordType string) bool {
 // resolveZoneID maps the SDK-facing zone name to the driver's internal zone id
 // by scanning the zone list, scoped to the request's subscription and resource
 // group. Scoping matters because the same zone name can exist in more than one
-// resource group — a name-only scan could resolve to a zone in a different
+// resource group: a name-only scan could resolve to a zone in a different
 // group. Returns a NotFound error if no such zone exists in this scope.
 func (h *Handler) resolveZoneID(ctx context.Context, rp *azurearm.ResourcePath) (string, error) {
 	filter := scope.Scope{Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup}

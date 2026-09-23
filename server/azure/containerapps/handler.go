@@ -4,9 +4,9 @@
 // hit this handler the same way they hit management.azure.com.
 //
 // The SDK's create/delete are Begin* pollers. This handler answers them
-// synchronously — a create returns 201/200 with a body whose provisioningState
+// synchronously: a create returns 201/200 with a body whose provisioningState
 // is already "Succeeded" and no Azure-AsyncOperation/Location header, and a
-// delete returns 200/204 — so the poller terminates on its first poll and never
+// delete returns 200/204. So the poller terminates on its first poll and never
 // hangs. This mirrors the Event Hubs and Service Bus control-plane handlers.
 package containerapps
 

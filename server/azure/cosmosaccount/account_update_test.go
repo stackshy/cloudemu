@@ -1,10 +1,10 @@
 // Real-user e2e regression test: PATCH .../databaseAccounts/{name}
-// (DatabaseAccountsClient.BeginUpdate) was not routed at all — the handler's
+// (DatabaseAccountsClient.BeginUpdate) was not routed at all: the handler's
 // ServeHTTP only handled PUT/GET/DELETE, so any real armcosmos client calling
 // Update (the path Terraform's azurerm_cosmosdb_account takes to change tags
 // or consistency without a full re-create) got a 405. These tests drive the
 // real armcosmos BeginUpdate LRO end-to-end and pin down the fix: PATCH is a
-// non-destructive partial update — only submitted fields change, tags are a
+// non-destructive partial update: only submitted fields change, tags are a
 // full replace (not a merge) when present, and immutable fields (kind) are
 // left untouched.
 package cosmosaccount_test
@@ -118,7 +118,7 @@ func TestSDKDatabaseAccountUpdateMissing(t *testing.T) {
 	client := newDatabaseAccountsClient(t)
 
 	// The emulator answers the initial PATCH synchronously (200/404, no async
-	// 202), so BeginUpdate's own initial request — not a later poll — is where
+	// 202), so BeginUpdate's own initial request, not a later poll, is where
 	// the 404 surfaces.
 	_, err := client.BeginUpdate(ctx, "rg-1", "does-not-exist", armcosmos.DatabaseAccountUpdateParameters{
 		Tags: map[string]*string{"env": to.Ptr("prod")},

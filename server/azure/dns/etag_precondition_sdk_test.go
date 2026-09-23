@@ -163,7 +163,7 @@ func TestSDKAzureDNSDeleteRecordSetIfMatch(t *testing.T) {
 }
 
 // TestSDKAzureDNSCreateOrUpdateIfNoneMatchNewRecord asserts If-None-Match:"*"
-// succeeds — as a plain create — the first time a record set is written, only
+// succeeds (as a plain create) the first time a record set is written, only
 // failing once one already exists at that name+type.
 func TestSDKAzureDNSCreateOrUpdateIfNoneMatchNewRecord(t *testing.T) {
 	zones, records := newDNSClients(t)

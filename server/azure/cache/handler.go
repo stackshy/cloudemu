@@ -5,21 +5,21 @@
 // management.azure.com, driving the shared cache driver's cluster control
 // plane (CreateOrUpdate/Get/List/Delete).
 //
-// Matches claims ONLY the Microsoft.Cache ARM provider — a distinct provider
-// name from every other Azure handler (compute, network, DBforMySQL, …) — so
+// Matches claims ONLY the Microsoft.Cache ARM provider: a distinct provider
+// name from every other Azure handler (compute, network, DBforMySQL, …), so
 // registration order relative to them is unconstrained. It must register before
 // the permissive BlobStorage fallback.
 //
 // Coverage:
 //
-//	PUT    .../providers/Microsoft.Cache/redis/{name}   — Redis.BeginCreate (LRO, completes inline)
-//	PATCH  .../providers/Microsoft.Cache/redis/{name}   — Redis.Update
-//	GET    .../providers/Microsoft.Cache/redis/{name}   — Redis.Get
-//	DELETE .../providers/Microsoft.Cache/redis/{name}   — Redis.BeginDelete (LRO, completes inline)
-//	GET    .../providers/Microsoft.Cache/redis          — Redis.ListByResourceGroup
-//	GET    .../subscriptions/{sub}/providers/Microsoft.Cache/redis — Redis.ListBySubscription
+//	PUT    .../providers/Microsoft.Cache/redis/{name}   : Redis.BeginCreate (LRO, completes inline)
+//	PATCH  .../providers/Microsoft.Cache/redis/{name}   : Redis.Update
+//	GET    .../providers/Microsoft.Cache/redis/{name}   : Redis.Get
+//	DELETE .../providers/Microsoft.Cache/redis/{name}   : Redis.BeginDelete (LRO, completes inline)
+//	GET    .../providers/Microsoft.Cache/redis          : Redis.ListByResourceGroup
+//	GET    .../subscriptions/{sub}/providers/Microsoft.Cache/redis : Redis.ListBySubscription
 //
-// Only the cluster/instance control plane is mapped — the real Azure Cache SDK
+// Only the cluster/instance control plane is mapped: the real Azure Cache SDK
 // manages Redis caches, not the Redis data plane. The driver's data-plane
 // methods (Set/Get/Incr/…) have no cloud-SDK surface and are out of scope.
 package cache

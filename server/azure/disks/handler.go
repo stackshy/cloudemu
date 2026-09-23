@@ -3,10 +3,10 @@
 //
 // Supported operations:
 //
-//	PUT    .../disks/{name}  — CreateOrUpdate (returns 202 + Azure-AsyncOperation)
-//	GET    .../disks/{name}  — Get
-//	GET    .../disks         — List in resource group
-//	DELETE .../disks/{name}  — Delete (returns 202 + Azure-AsyncOperation)
+//	PUT    .../disks/{name}  : CreateOrUpdate (returns 202 + Azure-AsyncOperation)
+//	GET    .../disks/{name}  : Get
+//	GET    .../disks         : List in resource group
+//	DELETE .../disks/{name}  : Delete (returns 202 + Azure-AsyncOperation)
 package disks
 
 import (
@@ -264,9 +264,9 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		Tags:             mergeDiskTags(req.Tags, rp.ResourceName, rp.ResourceGroup, createOption, sourceID),
 	}
 
-	// ARM CreateOrUpdate is idempotent: an existing disk is updated in place —
+	// ARM CreateOrUpdate is idempotent: an existing disk is updated in place,
 	// preserving its ID (and derived uniqueId), timeCreated, and any live
-	// attachment — rather than delete+recreate, which would leave a duplicate
+	// attachment, rather than delete+recreate, which would leave a duplicate
 	// phantom volume when the disk is attached (DeleteVolume rejects an attached
 	// disk) and churn the uniqueId/timeCreated on every re-PUT.
 	if existing, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); err == nil {

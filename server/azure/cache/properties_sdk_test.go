@@ -76,7 +76,7 @@ func TestSDKAzureCachePorts(t *testing.T) {
 }
 
 // TestSDKAzureCacheGetWrongResourceGroup confirms a cache created in one
-// resource group does not resolve under a different group in the request path —
+// resource group does not resolve under a different group in the request path:
 // real ARM answers 404 because the returned id would contradict the path.
 func TestSDKAzureCacheGetWrongResourceGroup(t *testing.T) {
 	client := newRedisClient(t)
@@ -93,9 +93,9 @@ func TestSDKAzureCacheGetWrongResourceGroup(t *testing.T) {
 }
 
 // TestSDKAzureCacheRedisPropertiesRoundTrip verifies the top-level Redis
-// properties that azurerm_redis_cache sets — redisConfiguration (typed and
-// passthrough keys), enableNonSslPort, minimumTlsVersion, publicNetworkAccess,
-// and redisVersion — are echoed back on Get instead of being dropped, which
+// properties that azurerm_redis_cache sets (redisConfiguration, typed and
+// passthrough keys, enableNonSslPort, minimumTlsVersion, publicNetworkAccess,
+// and redisVersion) are echoed back on Get instead of being dropped, which
 // would otherwise cause a perpetual Terraform diff.
 func TestSDKAzureCacheRedisPropertiesRoundTrip(t *testing.T) {
 	client := newRedisClient(t)
@@ -159,7 +159,7 @@ func TestSDKAzureCacheRedisPropertiesRoundTrip(t *testing.T) {
 
 // TestSDKAzureCacheOmittedPropertiesDefaults verifies a create that omits
 // enableNonSslPort and publicNetworkAccess reads back the Azure defaults
-// (enableNonSslPort=false, publicNetworkAccess=Enabled) rather than a null —
+// (enableNonSslPort=false, publicNetworkAccess=Enabled) rather than a null;
 // real Azure persists and returns these on every cache, so an SDK caller that
 // dereferences the pointer must not hit a nil.
 func TestSDKAzureCacheOmittedPropertiesDefaults(t *testing.T) {
@@ -212,7 +212,7 @@ func assertRedisConfig(t *testing.T, cfg *armredis.CommonPropertiesRedisConfigur
 
 // TestSDKAzureCacheScaleUpdatePreservesProperties verifies a partial PATCH that
 // only scales capacity does NOT wipe the previously-set redisConfiguration and
-// enableNonSslPort — the nil-mask discipline in UpdateCache.
+// enableNonSslPort: the nil-mask discipline in UpdateCache.
 func TestSDKAzureCacheScaleUpdatePreservesProperties(t *testing.T) {
 	client := newRedisClient(t)
 	ctx := context.Background()

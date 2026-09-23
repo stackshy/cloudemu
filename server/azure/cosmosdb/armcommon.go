@@ -3,8 +3,8 @@ package cosmosdb
 // Shared ARM (Microsoft.DocumentDB) control-plane logic used by both the SQL-API
 // handler (sqlarm.go) and the Mongo-API handler (mongoarm.go). A Cosmos database
 // and its provisioned throughput are one shared backend entity regardless of the
-// account's API kind — the account's databases set and the offers map back both
-// planes — so the database plane, the throughput plane, and the request-routing
+// account's API kind: the account's databases set and the offers map back both
+// planes. So the database plane, the throughput plane, and the request-routing
 // and child-resource skeletons are written once here and parameterized per API
 // by armAPISpec plus a few callbacks. Only the child resource itself (a SQL
 // container vs a Mongo collection) has an API-specific shape (partition key +
@@ -144,7 +144,7 @@ func armCreateOrUpdateDatabase(
 
 	h.registerDatabase(rp.ResourceName, db)
 
-	// Shared (database-level) throughput, keyed by the database's dbNS — the same
+	// Shared (database-level) throughput, keyed by the database's dbNS: the same
 	// key the data plane's offer lookup derives, so it round-trips there too.
 	if st, ok := offerFromOptions(body.Properties.Options); ok {
 		h.setOffer(dbNS(rp.ResourceName, db), st)

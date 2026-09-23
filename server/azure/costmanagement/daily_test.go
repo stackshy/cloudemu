@@ -23,7 +23,7 @@ import (
 // TestQueryUsage_DailyBucketsPerDay proves a Daily MonthToDate query returns one
 // row per day in the month-to-date period (not a single monthly row stamped
 // today), each carrying a pro-rated per-day cost, and that the per-day costs sum
-// to approximately the monthly figure the same estate reports — the AWS Cost
+// to approximately the monthly figure the same estate reports, the AWS Cost
 // Explorer convention.
 func TestQueryUsage_DailyBucketsPerDay(t *testing.T) {
 	client := newCostClient(t)
@@ -88,7 +88,7 @@ func TestQueryUsage_DailyBucketsPerDay(t *testing.T) {
 
 // TestQueryUsage_DailyCustomTimeframe proves a Daily query over a Custom
 // timeframe with explicit from/to dates buckets one pro-rated row per day across
-// exactly that window — a deterministic check with no dependence on the wall
+// exactly that window: a deterministic check with no dependence on the wall
 // clock (unlike MonthToDate).
 func TestQueryUsage_DailyCustomTimeframe(t *testing.T) {
 	client := newCostClient(t)

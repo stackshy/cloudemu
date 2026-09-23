@@ -12,14 +12,14 @@
 //
 // Coverage:
 //
-//	PUT    .../databaseAccounts/{name}                        — create/update
-//	GET    .../databaseAccounts/{name}                        — get
-//	DELETE .../databaseAccounts/{name}                        — delete
-//	GET    .../databaseAccounts                               — list (byRG/subscription)
-//	POST   .../databaseAccounts/{name}/listKeys              — read-write + read-only keys
-//	POST   .../databaseAccounts/{name}/readonlykeys         — read-only keys
-//	POST   .../databaseAccounts/{name}/listConnectionStrings — connection strings
-//	POST   .../databaseAccounts/{name}/regenerateKey        — rotate a key
+//	PUT    .../databaseAccounts/{name}                        : create/update
+//	GET    .../databaseAccounts/{name}                        : get
+//	DELETE .../databaseAccounts/{name}                        : delete
+//	GET    .../databaseAccounts                               : list (byRG/subscription)
+//	POST   .../databaseAccounts/{name}/listKeys              : read-write + read-only keys
+//	POST   .../databaseAccounts/{name}/readonlykeys         : read-only keys
+//	POST   .../databaseAccounts/{name}/listConnectionStrings : connection strings
+//	POST   .../databaseAccounts/{name}/regenerateKey        : rotate a key
 //
 // Create is a long-running operation in real Azure; the emulator completes it
 // synchronously by returning 200 with the resource body inline so the SDK's LRO
@@ -61,7 +61,7 @@ type attrBackend interface {
 	// this driver.
 	AccountTables() []string
 	// UpdateTableAttributes atomically applies fn to a table's stored
-	// attributes, backing PATCH (partial update — only the submitted fields
+	// attributes, backing PATCH (partial update: only the submitted fields
 	// change) without a racy read-then-write pair.
 	UpdateTableAttributes(
 		ctx context.Context, table string, fn func(dbdriver.AccountAttributes) dbdriver.AccountAttributes,
@@ -258,10 +258,10 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp *azurearm.Resou
 
 // update serves PATCH .../databaseAccounts/{name} (DatabaseAccountsClient.
 // BeginUpdate), a non-destructive partial update: only the fields present in
-// the request body change — tags (full replace, matching how every other PATCH
+// the request body change: tags (full replace, matching how every other PATCH
 // handler in this codebase treats tags), consistencyPolicy, locations,
 // capabilities, enableMultipleWriteLocations, enableAutomaticFailover and
-// publicNetworkAccess — everything else, including
+// publicNetworkAccess. Everything else, including
 // kind (which real Azure's DatabaseAccountUpdateParameters has no field for;
 // it is immutable after creation), is preserved. The mutation runs through
 // attrBackend's atomic UpdateTableAttributes rather than a read-then-write
@@ -387,7 +387,7 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azur
 	//
 	// Delete is a long-running op in real Azure; complete it synchronously with
 	// an empty 204 so the SDK's poller terminates (armcosmos BeginDelete accepts
-	// only 202/204 — a 200 fails its client-side response validation).
+	// only 202/204; a 200 fails its client-side response validation).
 	if h.purger != nil {
 		h.purger.PurgeAccount(r.Context(), rp.ResourceName)
 		w.WriteHeader(http.StatusNoContent)
@@ -472,8 +472,8 @@ func renderAccount(subscription, base, name string, attrs dbdriver.AccountAttrib
 // renderConsistencyPolicy echoes the stored consistency policy, defaulting to
 // Cosmos's Session level when none was submitted (matching real Azure, which
 // always returns a consistencyPolicy). Real Azure also always returns the
-// staleness bounds — meaningful only for BoundedStaleness, but present on every
-// account as the 5s/100-op defaults — so they are surfaced unconditionally, each
+// staleness bounds (meaningful only for BoundedStaleness, but present on every
+// account as the 5s/100-op defaults), so they are surfaced unconditionally, each
 // falling back to its Azure default when the account carries none. Emitting them
 // for every level is what makes an armcosmos GET read back the same bounds real
 // Azure returns instead of a zero value.
@@ -527,7 +527,7 @@ func toAccountLocations(locs []armLocation) []dbdriver.AccountLocation {
 }
 
 // sortedLocations returns locs ordered by ascending failover priority
-// (priority 0 — the write region — first), matching how Azure orders every
+// (priority 0, the write region, first), matching how Azure orders every
 // location array it returns.
 func sortedLocations(locs []dbdriver.AccountLocation) []dbdriver.AccountLocation {
 	out := make([]dbdriver.AccountLocation, len(locs))
@@ -538,7 +538,7 @@ func sortedLocations(locs []dbdriver.AccountLocation) []dbdriver.AccountLocation
 }
 
 // toArmLocations renders every declared region as an armLocation entry,
-// ordered by failover priority — the shape shared by properties.locations
+// ordered by failover priority: the shape shared by properties.locations
 // and properties.readLocations (every region is readable). Every region's
 // endpoint points at the same emulator host (which serves all regions), so the
 // per-region DocumentEndpoint resolves rather than pointing at a public-DNS

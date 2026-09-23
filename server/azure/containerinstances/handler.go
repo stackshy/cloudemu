@@ -8,11 +8,11 @@
 //
 // Coverage:
 //
-//	PUT    .../providers/Microsoft.ContainerInstance/containerGroups/{name}   — ContainerGroups.BeginCreateOrUpdate (LRO, completes inline)
-//	GET    .../providers/Microsoft.ContainerInstance/containerGroups/{name}   — ContainerGroups.Get
-//	DELETE .../providers/Microsoft.ContainerInstance/containerGroups/{name}   — ContainerGroups.BeginDelete (LRO, completes inline)
-//	GET    .../providers/Microsoft.ContainerInstance/containerGroups          — ContainerGroups.ListByResourceGroup / List
-//	GET    .../containerGroups/{cg}/containers/{c}/logs                        — Containers.ListLogs
+//	PUT    .../providers/Microsoft.ContainerInstance/containerGroups/{name}   : ContainerGroups.BeginCreateOrUpdate (LRO, completes inline)
+//	GET    .../providers/Microsoft.ContainerInstance/containerGroups/{name}   : ContainerGroups.Get
+//	DELETE .../providers/Microsoft.ContainerInstance/containerGroups/{name}   : ContainerGroups.BeginDelete (LRO, completes inline)
+//	GET    .../providers/Microsoft.ContainerInstance/containerGroups          : ContainerGroups.ListByResourceGroup / List
+//	GET    .../containerGroups/{cg}/containers/{c}/logs                        : Containers.ListLogs
 package containerinstances
 
 import (

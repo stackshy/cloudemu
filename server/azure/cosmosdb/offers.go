@@ -25,7 +25,7 @@ func containerRID(coll string) string {
 // recordOffer captures the throughput a container was created with. Real Cosmos
 // only materializes a dedicated offer when throughput is provisioned on the
 // container; a container created without it (shared/serverless) has no offer,
-// so ReadThroughput 404s — which the empty-store path reproduces.
+// so ReadThroughput 404s, which the empty-store path reproduces.
 func (h *Handler) recordOffer(coll string, r *http.Request) {
 	st, ok := parseOfferHeaders(r)
 	if !ok {
@@ -47,7 +47,7 @@ func (h *Handler) deleteOffer(coll string) {
 // container's qualified table name, or a database's dbNS), under the same
 // containerRID-derived key the data plane and the SDK's /offers lookup use. This
 // is how the ARM control plane's throughput write becomes visible to the data
-// plane and vice versa — both planes share the one offers map.
+// plane and vice versa: both planes share the one offers map.
 func (h *Handler) setOffer(key string, st offerState) {
 	h.offerMu.Lock()
 	h.offers[containerRID(key)] = st

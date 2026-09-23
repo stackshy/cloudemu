@@ -23,7 +23,7 @@ const metadataPath = "/.well-known/databricks-config"
 const stubWorkspaceID = "0"
 
 // hostTypeWorkspace is the wire value for a workspace host. The SDK normalizes
-// it (lower-cased) to config.WorkspaceHost — it does not accept the
+// it (lower-cased) to config.WorkspaceHost; it does not accept the
 // "WORKSPACE_HOST" enum spelling on the wire.
 const hostTypeWorkspace = "workspace"
 

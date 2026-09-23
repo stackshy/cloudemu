@@ -43,7 +43,7 @@ type envRespProps struct {
 }
 
 // listEnvelope is the ARM {value:[...]} collection response, generic over the
-// resource type it carries. nextLink is omitted — the emulator returns a single
+// resource type it carries. nextLink is omitted: the emulator returns a single
 // page.
 type listEnvelope[R any] struct {
 	Value    []R    `json:"value"`

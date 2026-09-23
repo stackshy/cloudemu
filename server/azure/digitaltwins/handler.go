@@ -63,7 +63,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A collection URL (no resource name) is a list — by resource group when the
+	// A collection URL (no resource name) is a list: by resource group when the
 	// path carried one, otherwise by subscription.
 	if rp.ResourceName == "" {
 		h.list(w, r, &rp)

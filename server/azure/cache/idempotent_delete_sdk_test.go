@@ -15,7 +15,7 @@ const (
 )
 
 // TestSDKAzureCacheDeleteMissingIsIdempotent confirms deleting a cache name
-// that was never created succeeds (real ARM DELETE is idempotent — a missing
+// that was never created succeeds (real ARM DELETE is idempotent: a missing
 // resource is a no-op success, not an error), matching every other Azure
 // handler in this codebase.
 func TestSDKAzureCacheDeleteMissingIsIdempotent(t *testing.T) {
@@ -34,7 +34,7 @@ func TestSDKAzureCacheDeleteMissingIsIdempotent(t *testing.T) {
 
 // TestSDKAzureCacheUpdateMissingIs404 confirms PATCH (Redis.Update) on a name
 // that was never created fails with 404 rather than silently creating the
-// cache — real Azure's Update requires the resource to already exist.
+// cache: real Azure's Update requires the resource to already exist.
 func TestSDKAzureCacheUpdateMissingIs404(t *testing.T) {
 	client := newRedisClient(t)
 	ctx := context.Background()
@@ -55,7 +55,7 @@ func TestSDKAzureCacheUpdateMissingIs404(t *testing.T) {
 
 // TestSDKAzureCacheDeleteWrongResourceGroupIsNoop confirms a DELETE issued
 // against a URL naming a DIFFERENT resource group than the one a cache was
-// actually created in leaves that cache untouched — it must not be reachable,
+// actually created in leaves that cache untouched; it must not be reachable,
 // let alone deletable, via a resource group it doesn't belong to.
 func TestSDKAzureCacheDeleteWrongResourceGroupIsNoop(t *testing.T) {
 	client, ts := newRedisClientAndServer(t)
@@ -85,7 +85,7 @@ func TestSDKAzureCacheDeleteWrongResourceGroupIsNoop(t *testing.T) {
 
 // TestSDKAzureCacheUpdateWrongResourceGroupNotFound confirms a PATCH issued
 // against a URL naming a DIFFERENT resource group than the one a cache
-// actually belongs to is a 404 — it must not silently re-parent (steal) the
+// actually belongs to is a 404; it must not silently re-parent (steal) the
 // cache into the URL's resource group.
 func TestSDKAzureCacheUpdateWrongResourceGroupNotFound(t *testing.T) {
 	client, ts := newRedisClientAndServer(t)
@@ -119,7 +119,7 @@ func TestSDKAzureCacheUpdateWrongResourceGroupNotFound(t *testing.T) {
 
 // TestSDKAzureCachePutWrongResourceGroupConflict confirms a PUT (BeginCreate)
 // for a name already taken by a DIFFERENT resource group's cache is rejected
-// as a conflict — Redis cache names are globally unique (they get a public DNS
+// as a conflict: Redis cache names are globally unique (they get a public DNS
 // hostname), so this scope cannot "adopt" another group's cache by re-PUTting
 // its name.
 func TestSDKAzureCachePutWrongResourceGroupConflict(t *testing.T) {

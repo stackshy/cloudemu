@@ -10,7 +10,7 @@ package cosmosdb
 // ARMHandler shares the data-plane Handler's state: databases live in the same
 // databases set, containers are the same driver tables (keyed by qualify), and
 // throughput lives in the same offers map. A database or container created here
-// is therefore immediately visible to the data plane and vice versa — there are
+// is therefore immediately visible to the data plane and vice versa; there are
 // not two disjoint models. The API-agnostic database and throughput planes live
 // in armcommon.go and are shared with the Mongo-API control plane (mongoarm.go);
 // only the SQL container shape (partition key + TTL/unique keys) is here.
@@ -278,7 +278,7 @@ func (a *ARMHandler) createOrUpdateContainer(
 		cfg.SortKey = idAttr
 	}
 
-	// Create-or-update: an existing container (AlreadyExists) is not an error —
+	// Create-or-update: an existing container (AlreadyExists) is not an error;
 	// re-apply its attrs and throughput. The partition key is immutable, so the
 	// existing table config is kept.
 	if err := a.h.db.CreateTable(r.Context(), cfg); err != nil && !cerrors.IsAlreadyExists(err) {

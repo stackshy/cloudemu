@@ -29,8 +29,8 @@ type containerAttrs struct {
 
 // attrsStore tracks containerAttrs plus the per-item TTL bookkeeping needed to
 // honor it (expiry is computed at write time from the container's default and
-// any item-level "ttl" override, since the wire layer — unlike the generic
-// driver — has no absolute-timestamp TTL attribute to reuse: Cosmos TTL is
+// any item-level "ttl" override, since the wire layer (unlike the generic
+// driver) has no absolute-timestamp TTL attribute to reuse: Cosmos TTL is
 // seconds-since-last-write, not an absolute epoch).
 type attrsStore struct {
 	mu    sync.RWMutex

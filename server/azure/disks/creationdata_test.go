@@ -210,7 +210,7 @@ func TestDiskCreateOrUpdateIdempotent(t *testing.T) {
 
 // TestDiskCreateOrUpdateCrossRGIsolation verifies that PUTting a disk with a
 // name that already exists in ANOTHER resource group does not delete/hijack the
-// original — in ARM {subscription,resourceGroup,name} is the resource identity.
+// original: in ARM {subscription,resourceGroup,name} is the resource identity.
 func TestDiskCreateOrUpdateCrossRGIsolation(t *testing.T) {
 	ts := newDisksServer(t)
 	ensureRG(t, ts, "sub-1", "rg-2")

@@ -35,7 +35,7 @@ func (h *Handler) createOrUpdateZone(w http.ResponseWriter, r *http.Request, rp 
 	// CreateOrUpdate is upsert. Try to update a zone that already exists in
 	// THIS scope; only create when none does. Matching by scope (not just
 	// name) means a same-named zone in another resource group is never
-	// hijacked — it stays a distinct zone.
+	// hijacked; it stays a distinct zone.
 	if info, uerr := h.dns.UpdateZone(r.Context(), cfg); uerr == nil {
 		azurearm.WriteJSON(w, http.StatusOK, toZoneJSON(rp, info))
 		return
@@ -184,7 +184,7 @@ func (h *Handler) createOrUpdateRecordSet(w http.ResponseWriter, r *http.Request
 		if cerrors.IsFailedPrecondition(err) {
 			// A record-set ETag precondition (If-Match/If-None-Match) failure is
 			// HTTP 412, not the 409 azurearm.WriteCErr maps FailedPrecondition to
-			// for other ARM resources — real Azure DNS, and the armdns SDK's
+			// for other ARM resources: real Azure DNS, and the armdns SDK's
 			// poller, expect 412 specifically for a stale/mismatched etag.
 			azurearm.WriteError(w, http.StatusPreconditionFailed, "PreconditionFailed", cerrors.Message(err))
 			return
@@ -276,7 +276,7 @@ func (h *Handler) patchZone(w http.ResponseWriter, r *http.Request, rp *azurearm
 }
 
 // patchRecordSet backs RecordSets.Update: a PATCH that merges the supplied
-// fields (TTL, the record data for its type, and — for SOA — the editable timing
+// fields (TTL, the record data for its type, and, for SOA, the editable timing
 // fields) over the existing record set, preserving any field the caller omitted
 // rather than nil-masking it. Metadata and other unmodeled properties are merged
 // by the server's overlay middleware. Returns 200.
@@ -317,8 +317,8 @@ func (h *Handler) patchRecordSet(w http.ResponseWriter, r *http.Request, rp *azu
 	if recordType == recTypeSOA {
 		// SOA host (and email) are system-managed: recordValues yields [host,
 		// email], so a timing-only PATCH that omits them would blindly overwrite
-		// the stored values with empties and lose the host. Merge instead —
-		// preserve the existing host/email unless the PATCH supplies new ones —
+		// the stored values with empties and lose the host. Merge instead:
+		// preserve the existing host/email unless the PATCH supplies new ones,
 		// while the timing fields keep merging via the SOA carrier.
 		cfg.Values = mergeSOAValues(existing.Values, body.Properties)
 		cfg.SOA = mergeSOAConfig(existing.SOA, soaConfigFromProps(body.Properties))

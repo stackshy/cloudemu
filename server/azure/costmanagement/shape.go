@@ -172,7 +172,7 @@ func groupedRows(costCols, groupNames []string, lines []cost.Line, dateVal any, 
 
 // buildRow lays out one row: the cost value repeated for each cost column, the
 // grouping dimension values, the date value (if the query is granular), and the
-// currency last — matching buildColumns.
+// currency last, matching buildColumns.
 func buildRow(costCols []string, total, dateVal any, hasDate bool, dims []string) []any {
 	row := make([]any, 0, len(costCols)+len(dims)+trailingSlots)
 
@@ -243,7 +243,7 @@ func groupingNames(def *queryDefinition) []string {
 // granularityColumn returns the date column for a granularity and whether the
 // query is granular at all. Daily buckets carry a numeric yyyymmdd UsageDate (as
 // real Cost Management does); Monthly carries a BillingMonth timestamp.
-// "None"/absent granularity has no date column — a single aggregate over the
+// "None"/absent granularity has no date column: a single aggregate over the
 // period.
 func granularityColumn(gran string) (column, bool) {
 	switch gran {
