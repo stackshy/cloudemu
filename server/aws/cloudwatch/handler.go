@@ -246,7 +246,8 @@ func writeDriverErr(w http.ResponseWriter, err error) {
 
 	switch {
 	case cerrors.IsNotFound(err):
-		writeCBORError(w, http.StatusBadRequest, "ResourceNotFound", err.Error())
+		// ResourceNotFound is a 404 in the CloudWatch API model.
+		writeCBORError(w, http.StatusNotFound, "ResourceNotFound", err.Error())
 	case cerrors.IsAlreadyExists(err):
 		writeCBORError(w, http.StatusBadRequest, "ResourceAlreadyExists", err.Error())
 	case cerrors.IsInvalidArgument(err):

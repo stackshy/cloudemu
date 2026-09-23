@@ -13,9 +13,20 @@ import (
 
 // Alarm states, matching the CloudWatch StateValue enum.
 const (
-	StateAlarm = "ALARM"
-	StateOK    = "OK"
+	StateAlarm            = "ALARM"
+	StateOK               = "OK"
+	StateInsufficientData = "INSUFFICIENT_DATA"
 )
+
+// ValidState reports whether s is one of the three alarm states.
+func ValidState(s string) bool {
+	switch s {
+	case StateAlarm, StateOK, StateInsufficientData:
+		return true
+	default:
+		return false
+	}
+}
 
 // defaultPeriodSeconds is the period assumed when an alarm omits one.
 const defaultPeriodSeconds = 60

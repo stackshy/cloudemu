@@ -645,6 +645,10 @@ func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.Alarm
 // InsufficientDataActions), so the documented "force ALARM to test wiring"
 // workflow delivers its notifications.
 func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) error {
+	if !alarmeval.ValidState(state) {
+		return errors.Newf(errors.InvalidArgument, "invalid alarm state %q: must be OK, ALARM or INSUFFICIENT_DATA", state)
+	}
+
 	a, ok := m.alarms.Get(name)
 	if !ok {
 		return errors.Newf(errors.NotFound, "alarm %q not found", name)

@@ -3,6 +3,7 @@ package cloudwatch_test
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awshttp "github.com/aws/aws-sdk-go-v2/aws/transport/http"
 	awsconfig "github.com/aws/aws-sdk-go-v2/config"
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awscw "github.com/aws/aws-sdk-go-v2/service/cloudwatch"
@@ -43,6 +45,8 @@ type cwWire struct {
 
 	// tokenCode calls a paged list op with only a NextToken.
 	tokenCode func(t *testing.T, op, token string) string
+	// setAlarmState returns the HTTP status and the error code ("" on success).
+	setAlarmState func(t *testing.T, in *awscw.SetAlarmStateInput) (int, string)
 }
 
 type cwProtocol struct {
@@ -170,6 +174,18 @@ func newCBORWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 
 			return sdkErrCode(t, err)
 		},
+		setAlarmState: func(t *testing.T, in *awscw.SetAlarmStateInput) (int, string) {
+			t.Helper()
+			_, err := c.SetAlarmState(ctx, in)
+			if err == nil {
+				return http.StatusOK, ""
+			}
+			var re *awshttp.ResponseError
+			if !errors.As(err, &re) {
+				t.Fatalf("SetAlarmState: not a response error: %v", err)
+			}
+			return re.HTTPStatusCode(), sdkErrCode(t, err)
+		},
 	}
 }
 
@@ -178,8 +194,8 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 
 	p, ts := newWireServer(t, ipam)
 
-	// postCode returns the error code, or "" after decoding a 200 into out.
-	postCode := func(t *testing.T, form url.Values, out any) string {
+	// postStatus returns the status and the error code, or "" after decoding a 200 into out.
+	postStatus := func(t *testing.T, form url.Values, out any) (int, string) {
 		t.Helper()
 
 		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/", strings.NewReader(form.Encode()))
@@ -203,7 +219,7 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 				t.Fatalf("%s: status %d body %s", form.Get("Action"), resp.StatusCode, body)
 			}
 
-			return e.Code
+			return resp.StatusCode, e.Code
 		}
 
 		if out != nil {
@@ -212,7 +228,14 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 			}
 		}
 
-		return ""
+		return http.StatusOK, ""
+	}
+
+	// postCode returns the error code, or "" after decoding a 200 into out.
+	postCode := func(t *testing.T, form url.Values, out any) string {
+		t.Helper()
+		_, code := postStatus(t, form, out)
+		return code
 	}
 
 	post := func(t *testing.T, form url.Values, out any) {
@@ -284,6 +307,15 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 			t.Helper()
 
 			return postCode(t, url.Values{"Action": {op}, "NextToken": {token}}, nil)
+		},
+		setAlarmState: func(t *testing.T, in *awscw.SetAlarmStateInput) (int, string) {
+			t.Helper()
+			form := url.Values{"Action": {"SetAlarmState"}}
+			setIfSet(form, "AlarmName", in.AlarmName)
+			form.Set("StateValue", string(in.StateValue))
+			setIfSet(form, "StateReason", in.StateReason)
+			setIfSet(form, "StateReasonData", in.StateReasonData)
+			return postStatus(t, form, nil)
 		},
 	}
 }
