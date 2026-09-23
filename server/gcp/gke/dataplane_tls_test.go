@@ -23,7 +23,7 @@ import (
 // TestSDKGKEDataPlane_TLSValidatesAdvertisedCA is the connect-parity proof for
 // GKE: the data plane is served over HTTPS with the shared k8spki certificate,
 // and client-go validates the endpoint against the CA the cluster advertises in
-// masterAuth.clusterCaCertificate — no skip-verify. Before the CA fix GKE
+// masterAuth.clusterCaCertificate, no skip-verify. Before the CA fix GKE
 // advertised an unparseable dummy blob and this handshake failed.
 func TestSDKGKEDataPlane_TLSValidatesAdvertisedCA(t *testing.T) {
 	cloud := cloudemu.NewGCP()

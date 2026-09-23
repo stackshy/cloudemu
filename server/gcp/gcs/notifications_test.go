@@ -333,7 +333,7 @@ func TestNotificationPrefixFilter(t *testing.T) {
 }
 
 // TestNotificationInvokesFunction covers (d): the end-to-end
-// GCS -> Pub/Sub -> Cloud Function chain — an object upload invokes a function
+// GCS -> Pub/Sub -> Cloud Function chain. An object upload invokes a function
 // event-triggered on the notification topic.
 func TestNotificationInvokesFunction(t *testing.T) {
 	e := newNotifEnv(t)

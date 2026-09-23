@@ -52,7 +52,7 @@ func (h *Handler) SetPublisher(p TopicPublisher) {
 
 // FunctionInvoker delivers a GCS object-change event directly to every gen2
 // Cloud Function whose Cloud Storage eventTrigger is bound to (bucket,
-// eventType) — the Eventarc-backed delivery a real gen2 storage trigger uses.
+// eventType), the Eventarc-backed delivery a real gen2 storage trigger uses.
 // resource is the storage#object resource JSON (an objectResource, marshaled
 // by the caller since the type is unexported). The Cloud Functions handler
 // implements it; the GCS handler calls it best-effort so a slow or missing
@@ -75,8 +75,8 @@ func (h *Handler) SetFunctionInvoker(fi FunctionInvoker) {
 // in-process (InvokeForObjectEvent -> Handler.Invoke), so the ctx depth rides
 // the goroutine for that hop; but a function that writes back to its own
 // trigger bucket does so as a fresh network call into this very handler, a
-// hop the in-process ctx can't cross. Reading the depth off the header — the
-// same bridge Event Grid webhook delivery uses — keeps a self-referential
+// hop the in-process ctx can't cross. Reading the depth off the header (the
+// same bridge Event Grid webhook delivery uses) keeps a self-referential
 // write -> invoke -> write chain counting toward recursionguard.MaxDepth
 // instead of resetting to zero (and recursing unbounded) each hop.
 func withDeliveryDepth(r *http.Request) context.Context {
@@ -108,7 +108,7 @@ type notificationsListResponse struct {
 	Items []notificationResource `json:"items"`
 }
 
-// notificationCollection serves /b/{bucket}/notificationConfigs — POST inserts
+// notificationCollection serves /b/{bucket}/notificationConfigs: POST inserts
 // a config, GET lists them.
 func (h *Handler) notificationCollection(w http.ResponseWriter, r *http.Request, bucket string) {
 	if h.ext == nil {
@@ -131,7 +131,7 @@ func (h *Handler) notificationCollection(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-// notificationResourceOp serves /b/{bucket}/notificationConfigs/{id} — GET
+// notificationResourceOp serves /b/{bucket}/notificationConfigs/{id}: GET
 // fetches a config, DELETE removes it.
 func (h *Handler) notificationResourceOp(w http.ResponseWriter, r *http.Request, bucket, id string) {
 	if h.ext == nil {

@@ -33,7 +33,7 @@ type createServiceAccountRequest struct {
 // patchServiceAccountRequest is the PATCH body for ServiceAccounts.Patch.
 // The SDK wraps the resource in this envelope and adds an updateMask telling
 // the server which fields to touch. We ignore the mask (emulator always
-// full-replaces) but must decode the wrapper to find the resource at all —
+// full-replaces) but must decode the wrapper to find the resource at all:
 // the wrapper field is mandatory.
 type patchServiceAccountRequest struct {
 	ServiceAccount serviceAccount `json:"serviceAccount"`

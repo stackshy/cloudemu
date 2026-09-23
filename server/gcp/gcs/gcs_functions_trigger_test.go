@@ -180,7 +180,7 @@ func waitForCount(timeout time.Duration, want int, check func() int) int {
 // test: a gen2 function with a Cloud Storage eventTrigger (finalized, bound to
 // a specific bucket via eventFilters) fires when an object is uploaded to
 // that bucket, with the CloudEvent shape a real Eventarc-backed trigger
-// delivers — data is the storage#object resource, never the object bytes.
+// delivers. Data is the storage#object resource, never the object bytes.
 func TestGCSObjectFinalizeInvokesGen2StorageTrigger(t *testing.T) {
 	e := newFnTriggerEnv(t)
 	b := e.createBucket(t, "b-fin-trigger")

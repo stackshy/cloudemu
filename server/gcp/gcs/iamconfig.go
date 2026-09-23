@@ -7,8 +7,8 @@ import "context"
 const defaultPublicAccessPrevention = "inherited"
 
 // iamConfigStore is the optional capability that persists a bucket's
-// iamConfiguration — Uniform Bucket-Level Access (with its lockedTime) and
-// Public Access Prevention — so a Buckets.patch of these round-trips on GET
+// iamConfiguration (Uniform Bucket-Level Access, with its lockedTime, and
+// Public Access Prevention), so a Buckets.patch of these round-trips on GET
 // instead of reading back a hardcoded default.
 type iamConfigStore interface {
 	SetBucketIAMConfigGCS(ctx context.Context, bucket string, ublaEnabled *bool, publicAccessPrevention string) error

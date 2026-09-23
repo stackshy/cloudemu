@@ -6,21 +6,21 @@
 //
 // Coverage (backup-plan + restore-plan control plane):
 //
-//	POST   /v1/…/backupPlans?backupPlanId=            — CreateBackupPlan (LRO)
-//	GET    /v1/…/backupPlans                          — ListBackupPlans
-//	GET    /v1/…/backupPlans/{id}                     — GetBackupPlan
-//	PATCH  /v1/…/backupPlans/{id}?updateMask=         — PatchBackupPlan (LRO)
-//	DELETE /v1/…/backupPlans/{id}                     — DeleteBackupPlan (LRO)
-//	POST   /v1/…/restorePlans?restorePlanId=          — CreateRestorePlan (LRO)
-//	…                                                  — Get/List/Patch/Delete (as above)
-//	GET    /v1/…/operations/{op}                      — Operations.Get (shared poller)
+//	POST   /v1/…/backupPlans?backupPlanId=            : CreateBackupPlan (LRO)
+//	GET    /v1/…/backupPlans                          : ListBackupPlans
+//	GET    /v1/…/backupPlans/{id}                     : GetBackupPlan
+//	PATCH  /v1/…/backupPlans/{id}?updateMask=         : PatchBackupPlan (LRO)
+//	DELETE /v1/…/backupPlans/{id}                     : DeleteBackupPlan (LRO)
+//	POST   /v1/…/restorePlans?restorePlanId=          : CreateRestorePlan (LRO)
+//	…                                                  : Get/List/Patch/Delete (as above)
+//	GET    /v1/…/operations/{op}                      : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting resource embedded in `response`, so an SDK or Terraform LRO wait
 // terminates on the first poll instead of hanging.
 //
 // Location-scoped operations: Backup for GKE's operations live under
-// /v1/projects/{p}/locations/{l}/operations — the SAME space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server (no registry)
 // serves its own polls. The backupPlans/restorePlans resource-type guard keeps

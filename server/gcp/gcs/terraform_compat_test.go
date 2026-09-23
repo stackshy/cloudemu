@@ -37,7 +37,7 @@ func newRawServer(t *testing.T) (string, *http.Client) {
 // carries no name, with the object name supplied only via the ?name= query
 // parameter. Per the GCS Objects: insert contract the query parameter "Overrides
 // the object metadata's name value, if any" and is "Not required if the request
-// body contains object metadata that includes a name value" — so the name may
+// body contains object metadata that includes a name value". So the name may
 // come from the query alone. cloudemu previously rejected this with
 // "metadata.name required", breaking every Terraform object upload.
 func TestMultipartUploadNameFromQueryParam(t *testing.T) {
@@ -109,7 +109,7 @@ func TestMultipartUploadNameFromQueryParam(t *testing.T) {
 // TestAnywhereCachesListReturnsEmpty covers the Buckets anywhereCaches: list
 // endpoint the Terraform google provider calls before force_destroy. cloudemu
 // does not model Anywhere Cache instances, but the endpoint must answer 200 with
-// an empty list (a bucket with no caches) — not a 404. When it errored, the
+// an empty list (a bucket with no caches), not a 404. When it errored, the
 // provider aborted its object cleanup and failed the bucket delete with 409
 // "not empty". Both the SDK's trailing-slash URL and the bare path are checked.
 func TestAnywhereCachesListReturnsEmpty(t *testing.T) {

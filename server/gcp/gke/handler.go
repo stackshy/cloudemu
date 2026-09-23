@@ -34,7 +34,7 @@
 //
 // All mutating endpoints return Operation envelopes with status=DONE so SDK
 // pollers terminate on the first response. Cluster.Endpoint and
-// MasterAuth.ClusterCaCertificate carry stub values — see provider/gcp/gke
+// MasterAuth.ClusterCaCertificate carry stub values: see provider/gcp/gke
 // for the Wave-2 deferral note.
 //
 // The /v1/projects/{p}/locations/{l}/ prefix is shared with Cloud Functions
@@ -104,7 +104,7 @@ func (h *Handler) Matches(r *http.Request) bool {
 	case resourceClusters, resourceServerConfig:
 		return true
 	case resourceOperations:
-		// A named operation — a GET poll or a :cancel — is claimed only when
+		// A named operation (a GET poll or a :cancel) is claimed only when
 		// this GKE mock actually recorded it, so a foreign-service operation
 		// (artifactregistry, eventarc, memorystore, …) falls through to the
 		// shared LRO handler instead of being falsely 404'd or canceled here.

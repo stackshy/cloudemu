@@ -251,7 +251,7 @@ func TestSDKGCPIAMListReflectsDisabled(t *testing.T) {
 
 // TestSDKGCPIAMKeyDisableEnable guards SA-key lifecycle depth: Keys.Disable
 // sets disabled=true (with a disableReason) on Get and List, and Keys.Enable
-// clears it again — mirroring projects.serviceAccounts.keys.disable/enable.
+// clears it again, mirroring projects.serviceAccounts.keys.disable/enable.
 func TestSDKGCPIAMKeyDisableEnable(t *testing.T) {
 	svc := newSDKService(t)
 	ctx := context.Background()

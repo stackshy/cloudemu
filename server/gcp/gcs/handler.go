@@ -5,18 +5,18 @@
 //
 // Supported operations (parity with AWS S3):
 //
-//	POST   /storage/v1/b?project={p}                    — create bucket
-//	GET    /storage/v1/b?project={p}                    — list buckets
-//	GET    /storage/v1/b/{bucket}                       — get bucket
-//	DELETE /storage/v1/b/{bucket}                       — delete bucket
-//	POST   /upload/storage/v1/b/{bucket}/o?uploadType=media&name={obj}  — upload object
-//	POST   /upload/storage/v1/b/{bucket}/o?uploadType=resumable         — resumable upload
-//	GET    /storage/v1/b/{bucket}/o                     — list objects
-//	GET    /storage/v1/b/{bucket}/o/{obj}               — get object metadata
-//	GET    /storage/v1/b/{bucket}/o/{obj}?alt=media     — download object (honors Range)
-//	DELETE /storage/v1/b/{bucket}/o/{obj}               — delete object
-//	POST   /storage/v1/b/{bucket}/o/{obj}/rewriteTo/b/{dst}/o/{dstObj}  — copy
-//	POST   /storage/v1/b/{srcBucket}/o/{srcObj}/copyTo/b/{dst}/o/{dstObj}  — legacy copy
+//	POST   /storage/v1/b?project={p}                    : create bucket
+//	GET    /storage/v1/b?project={p}                    : list buckets
+//	GET    /storage/v1/b/{bucket}                       : get bucket
+//	DELETE /storage/v1/b/{bucket}                       : delete bucket
+//	POST   /upload/storage/v1/b/{bucket}/o?uploadType=media&name={obj}  : upload object
+//	POST   /upload/storage/v1/b/{bucket}/o?uploadType=resumable         : resumable upload
+//	GET    /storage/v1/b/{bucket}/o                     : list objects
+//	GET    /storage/v1/b/{bucket}/o/{obj}               : get object metadata
+//	GET    /storage/v1/b/{bucket}/o/{obj}?alt=media     : download object (honors Range)
+//	DELETE /storage/v1/b/{bucket}/o/{obj}               : delete object
+//	POST   /storage/v1/b/{bucket}/o/{obj}/rewriteTo/b/{dst}/o/{dstObj}  : copy
+//	POST   /storage/v1/b/{srcBucket}/o/{srcObj}/copyTo/b/{dst}/o/{dstObj}  : legacy copy
 package gcs
 
 import (
@@ -130,7 +130,7 @@ type Handler struct {
 	publisher TopicPublisher
 
 	// functionInvoker delivers an object-change event directly to every gen2
-	// Cloud Function whose Cloud Storage eventTrigger is bound to the bucket —
+	// Cloud Function whose Cloud Storage eventTrigger is bound to the bucket,
 	// the Eventarc-backed delivery a real gen2 storage trigger uses, independent
 	// of the legacy notificationConfig -> Pub/Sub -> function chain publisher
 	// drives above. Nil (the default) makes gen2 storage-trigger delivery a
@@ -189,7 +189,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	// Direct media URLs are /{bucket}/{object}. Two or more path segments
-	// suffices — but NOT when the first segment is a reserved API prefix
+	// suffices, but not when the first segment is a reserved API prefix
 	// (v1, v2, sql, compute, …): those are other services' endpoints that no
 	// earlier handler claimed, and swallowing them here yields a misleading
 	// "bucket \"v1\" not found" instead of a clean not-implemented/not-found.
@@ -212,13 +212,13 @@ func isReservedAPIPrefix(seg string) bool {
 		return true
 	}
 
-	// A whole-segment API version token (v1, v3, v1beta4, v2beta) — but NOT a
+	// A whole-segment API version token (v1, v3, v1beta4, v2beta), but not a
 	// bucket that merely starts that way (e.g. "v2-assets", "v1data").
 	return isVersionToken(seg)
 }
 
 // isVersionToken reports whether seg is exactly an API version like v1, v3,
-// v1beta4, v2beta — "v" + digits, optionally a beta/alpha qualifier, nothing
+// v1beta4, v2beta: "v" + digits, optionally a beta/alpha qualifier, nothing
 // else. A hyphen or other suffix (a real bucket name) is not a version.
 func isVersionToken(seg string) bool {
 	if len(seg) < 2 || seg[0] != 'v' || seg[1] < '0' || seg[1] > '9' {
@@ -244,7 +244,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Direct media URLs (/{bucket}/{object}) — used by NewRangeReader for
+	// Direct media URLs (/{bucket}/{object}), used by NewRangeReader for
 	// downloads bypassing the JSON API.
 	if !strings.HasPrefix(r.URL.Path, jsonAPIPrefix) {
 		h.directMedia(w, r)
@@ -422,7 +422,7 @@ func (h *Handler) getBucket(w http.ResponseWriter, r *http.Request, name string)
 
 // bucketView builds the bucket JSON with its configured versioning, labels,
 // location, storage class, lifecycle, IAM config, and metageneration/etag/
-// updated reflected — real GCS returns these, and the driver stores them so a
+// updated reflected. Real GCS returns these, and the driver stores them so a
 // read must surface them instead of a hardcoded US/STANDARD default.
 func (h *Handler) bucketView(r *http.Request, name, created string) bucketResource {
 	location, storageClass, metageneration, updated := h.resolveBucketAttrs(r, name, created)
@@ -505,7 +505,7 @@ func (h *Handler) resolveBucketAttrs(
 // versioningView renders the bucket's versioning sub-resource, or nil when it
 // should be omitted. Real GCS omits versioning entirely for a bucket that has
 // never had it configured, but returns {enabled:false} once it has been
-// disabled — so a Terraform `versioning { enabled = false }` block does not
+// disabled. So a Terraform `versioning { enabled = false }` block does not
 // perpetually diff. The GCSExtensions capability tracks the "ever set" bit; the
 // fallback path (no capability) can only emit when versioning is enabled.
 func (h *Handler) versioningView(ctx context.Context, name string) *bucketVersioning {
@@ -582,7 +582,7 @@ func (h *Handler) patchBucket(w http.ResponseWriter, r *http.Request, name strin
 // value is set/overwritten, a key mapped to JSON null is removed, and keys not
 // present in the patch are left untouched. The labels field is decoded from the
 // raw body separately (map[string]*string) so a null value is distinguishable
-// from an empty string — the SDK/Terraform delete a label by sending null.
+// from an empty string. The SDK/Terraform delete a label by sending null.
 func (h *Handler) applyLabelPatch(ctx context.Context, name string, raw []byte) error {
 	var patch struct {
 		Labels map[string]*string `json:"labels"`
@@ -750,7 +750,7 @@ func (h *Handler) deleteBucket(w http.ResponseWriter, r *http.Request, name stri
 }
 
 // listAnywhereCaches serves GET /b/{bucket}/anywhereCaches. cloudemu does not
-// model Anywhere Cache instances, so it always reports an empty list — the
+// model Anywhere Cache instances, so it always reports an empty list, the
 // correct response for a bucket that has no caches, and enough for the Terraform
 // google provider's force_destroy path (which lists caches before deleting a
 // bucket's objects and aborts that cleanup if the call errors) to proceed.
@@ -768,7 +768,7 @@ func (h *Handler) listAnywhereCaches(w http.ResponseWriter, r *http.Request, nam
 	writeJSON(w, http.StatusOK, anywhereCachesListResponse{Kind: "storage#anywhereCaches"})
 }
 
-// bucketIAM serves /b/{bucket}/iam — GET returns the bucket's IAM policy (a
+// bucketIAM serves /b/{bucket}/iam: GET returns the bucket's IAM policy (a
 // default empty policy when none was set), PUT/POST replaces it.
 func (h *Handler) bucketIAM(w http.ResponseWriter, r *http.Request, name string) {
 	if !h.bucketExists(r, name) {
@@ -839,8 +839,8 @@ func (h *Handler) setBucketIAM(w http.ResponseWriter, r *http.Request, name stri
 }
 
 // stampIAMPolicy overwrites kind/resourceId/etag on the client-supplied
-// policy document — real GCS always sets these itself, ignoring whatever the
-// client sent — while leaving every other field untouched.
+// policy document. Real GCS always sets these itself, ignoring whatever the
+// client sent, while leaving every other field untouched.
 func stampIAMPolicy(raw []byte, bucket, etag string) ([]byte, error) {
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
@@ -858,7 +858,7 @@ func stampIAMPolicy(raw []byte, bucket, etag string) ([]byte, error) {
 	return json.Marshal(doc)
 }
 
-// testIAMPermissions serves /b/{bucket}/iam/testPermissions — the mock grants
+// testIAMPermissions serves /b/{bucket}/iam/testPermissions: the mock grants
 // every requested permission back.
 func (h *Handler) testIAMPermissions(w http.ResponseWriter, r *http.Request, name string) {
 	if !h.bucketExists(r, name) {
@@ -901,7 +901,7 @@ func writeRawJSON(w http.ResponseWriter, raw []byte) {
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.WriteHeader(http.StatusOK)
 	// raw is an IAM policy document validated as JSON before storage and served
-	// as application/json, not HTML — no XSS surface.
+	// as application/json, not HTML: no XSS surface.
 	_, _ = w.Write(raw)
 }
 
@@ -923,7 +923,7 @@ func (h *Handler) upload(w http.ResponseWriter, r *http.Request) {
 
 	// A resumable session's chunk uploads come back to this upload URL carrying
 	// the upload_id issued at session init (the SDK sends them as POSTs with a
-	// Content-Range) — route those to the chunk handler before dispatching on
+	// Content-Range). Route those to the chunk handler before dispatching on
 	// uploadType (which the client echoes as "resumable").
 	if uploadID := q.Get("upload_id"); uploadID != "" {
 		h.uploadResumableChunk(w, r, uploadID)
@@ -1056,7 +1056,7 @@ func (h *Handler) uploadResumableChunk(w http.ResponseWriter, r *http.Request, s
 
 // appendChunk appends a contiguous chunk's bytes and reports the resulting
 // buffered length. contiguous is false when a bytes-carrying chunk begins past
-// the current buffer length (a gap) — nothing is appended in that case. A
+// the current buffer length (a gap). Nothing is appended in that case. A
 // status-probe (no bytes) or an already-buffered replay no-ops but stays
 // contiguous.
 func (s *resumableSession) appendChunk(start int64, data []byte) (buffered int64, contiguous bool) {
@@ -1246,7 +1246,7 @@ func parseGeneration(q url.Values) *int64 {
 
 // evalReadPrecondition evaluates the conditional-read preconditions against the
 // object being returned. It reports the HTTP status the response must be
-// short-circuited with — 412 for a failed Match, 304 for a satisfied NotMatch —
+// short-circuited with (412 for a failed Match, 304 for a satisfied NotMatch)
 // and false when the read should proceed. This mirrors real GCS's conditional
 // GET semantics.
 func evalReadPrecondition(pre storagedriver.GCSPrecondition, gen, metagen int64) (int, bool) {
@@ -1439,7 +1439,7 @@ func (h *Handler) listObjects(w http.ResponseWriter, r *http.Request, bucket str
 	}
 
 	// versions=true lists every generation (current + archived), not just the
-	// live objects — real GCS retains prior generations on a versioned bucket.
+	// live objects. Real GCS retains prior generations on a versioned bucket.
 	listFn := h.bucket.ListObjects
 	if q.Get("versions") == "true" && h.ext != nil {
 		listFn = h.ext.ListObjectGenerations
@@ -1501,7 +1501,7 @@ func (h *Handler) objectOp(w http.ResponseWriter, r *http.Request, bucket, objAn
 	}
 }
 
-// updateObject handles PATCH/PUT /b/{bucket}/o/{obj} — an Objects: patch/update
+// updateObject handles PATCH/PUT /b/{bucket}/o/{obj}, an Objects: patch/update
 // that mutates system properties and/or custom metadata without touching data.
 func (h *Handler) updateObject(w http.ResponseWriter, r *http.Request, bucket, key string) {
 	if h.ext == nil {
@@ -1532,7 +1532,7 @@ func (h *Handler) updateObject(w http.ResponseWriter, r *http.Request, bucket, k
 	writeJSON(w, http.StatusOK, toObjectResource(info, bucket, r))
 }
 
-// composeObject handles POST /b/{bucket}/o/{dst}/compose — concatenating the
+// composeObject handles POST /b/{bucket}/o/{dst}/compose, concatenating the
 // named source objects' bytes into the destination.
 func (h *Handler) composeObject(w http.ResponseWriter, r *http.Request, bucket, dstKey string) {
 	if r.Method != http.MethodPost {
@@ -1633,7 +1633,7 @@ func (h *Handler) downloadObject(w http.ResponseWriter, r *http.Request, bucket,
 
 // writeRangedObject serves an alt=media download carrying a Range header: 206
 // with a Content-Range slice when satisfiable, 416 when out of bounds, and a
-// full 200 body when the header is unparseable — matching real GCS.
+// full 200 body when the header is unparseable, matching real GCS.
 func (*Handler) writeRangedObject(w http.ResponseWriter, obj *storagedriver.Object, header string) {
 	total := int64(len(obj.Data))
 	start, end, outcome := parseByteRange(header, total)
