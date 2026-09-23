@@ -11,7 +11,7 @@ import (
 
 // TestSnapshotRestoreRoundTripAllStores seeds every identity store, snapshots,
 // restores into a fresh mock and asserts each piece of state comes back under
-// its original OCID — a missed store would be silent data loss. The
+// its original OCID. A missed store would be silent data loss. The
 // user->group membership cross-reference and the policy version history (an
 // unexported field that needs promotion) are both exercised.
 func TestSnapshotRestoreRoundTripAllStores(t *testing.T) {

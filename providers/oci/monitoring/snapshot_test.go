@@ -12,7 +12,7 @@ import (
 
 // TestSnapshotRestoreRoundTrip seeds metric series, a fired alarm (with state
 // history) and a notification channel, snapshots, restores into a fresh mock and
-// asserts each store's state comes back — including the alarm's history and the
+// asserts each store's state comes back, including the alarm's history and the
 // series' samples, both promoted from unexported fields.
 func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	src, now := newMock(t)
