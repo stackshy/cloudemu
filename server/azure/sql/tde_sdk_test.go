@@ -140,7 +140,7 @@ func TestSDKAzureSQLTDESurvivesDatabaseUpdate(t *testing.T) {
 		t.Fatalf("BeginUpdate PollUntilDone: %v", err)
 	}
 
-	// TDE must still be Disabled — not silently reset to Enabled.
+	// TDE must still be Disabled: not silently reset to Enabled.
 	got, err := tde.Get(ctx, "rg-1", "srv1", "appdb", armsql.TransparentDataEncryptionNameCurrent, nil)
 	if err != nil {
 		t.Fatalf("Get after PATCH: %v", err)

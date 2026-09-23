@@ -30,14 +30,14 @@ func TestSDKAzureSQLWireErrorMapping(t *testing.T) {
 	cf := newFactory(t)
 	ctx := context.Background()
 
-	// 404 — server that doesn't exist.
+	// 404: server that doesn't exist.
 	if _, err := cf.NewServersClient().Get(ctx, "rg-1", "ghost", nil); err == nil {
 		t.Error("Get missing server: expected error")
 	} else if got := statusOf(t, err); got != http.StatusNotFound {
 		t.Errorf("Get missing server: status %d, want 404", got)
 	}
 
-	// 404 — database on a server that doesn't exist.
+	// 404: database on a server that doesn't exist.
 	if _, err := cf.NewDatabasesClient().Get(ctx, "rg-1", "ghost", "db", nil); err == nil {
 		t.Error("Get database on missing server: expected error")
 	} else if got := statusOf(t, err); got != http.StatusNotFound {
@@ -46,7 +46,7 @@ func TestSDKAzureSQLWireErrorMapping(t *testing.T) {
 
 	mustCreateSQLServer(t, cf)
 
-	// 400 — firewall rule with start > end.
+	// 400: firewall rule with start > end.
 	fw := cf.NewFirewallRulesClient()
 
 	_, err := fw.CreateOrUpdate(ctx, "rg-1", "srv1", "bad", armsql.FirewallRule{

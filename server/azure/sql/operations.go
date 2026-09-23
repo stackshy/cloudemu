@@ -143,7 +143,7 @@ func (h *Handler) listServers(w http.ResponseWriter, r *http.Request, rp *azurea
 		}
 
 		// Render the id from the server's own group, not the request path's
-		// (empty on a subscription-scoped list) — so the id carries its true
+		// (empty on a subscription-scoped list), so the id carries its true
 		// resourceGroups/{rg} segment.
 		rg := clusters[i].Scope.ResourceGroup
 		if rg == "" {
@@ -272,7 +272,7 @@ func (h *Handler) putDatabase(w http.ResponseWriter, r *http.Request, rp *azurea
 // create/replace can raise: a missing parent server (real Azure answers 404
 // ParentResourceNotFound for a child under an absent parent) vs an existing
 // server whose referenced elastic pool doesn't exist (real Azure answers 400
-// TargetElasticPoolDoesNotExist — see
+// TargetElasticPoolDoesNotExist, see
 // https://learn.microsoft.com/en-us/rest/api/sql/databases/create-or-update).
 func (h *Handler) writeDatabaseNotFound(
 	ctx context.Context, w http.ResponseWriter, server string, cfg *rdsdriver.DatabaseConfig, err error,
@@ -329,7 +329,7 @@ func mergeDatabaseSKUAndProps(merged *rdsdriver.Database, cfg *rdsdriver.Databas
 // mergeDatabaseFields overlays the non-empty fields of cfg (and body's
 // pointer-only properties) onto existing, leaving fields the request omitted
 // untouched. Split out of replaceDatabase to keep that function's
-// cyclomatic complexity down — this is pure field merging, no I/O.
+// cyclomatic complexity down: this is pure field merging, no I/O.
 func mergeDatabaseFields(existing *rdsdriver.Database, body *armDatabase, cfg *rdsdriver.DatabaseConfig) rdsdriver.Database {
 	merged := *existing
 

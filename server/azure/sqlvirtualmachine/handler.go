@@ -6,7 +6,7 @@
 // Create/update/delete are long-running operations in real Azure, but every
 // mutating response carries the resource inline with a terminal
 // provisioningState of "Succeeded", so an SDK LRO poller completes on the first
-// response — no operationStatuses plumbing to wire.
+// response: no operationStatuses plumbing to wire.
 //
 // The sqlVirtualMachineGroups and availabilityGroupListeners resources (the
 // WSFC / Always-On availability-group surface) are out of scope for this
@@ -73,7 +73,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A collection URL (no resource name) is a list — by resource group when the
+	// A collection URL (no resource name) is a list: by resource group when the
 	// path carried one, otherwise by subscription.
 	if rp.ResourceName == "" {
 		h.list(w, r, &rp)

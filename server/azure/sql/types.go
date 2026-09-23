@@ -65,7 +65,7 @@ type armDatabaseProps struct {
 	CurrentBackupStorageRedundancy   string  `json:"currentBackupStorageRedundancy,omitempty"`
 	ZoneRedundant                    *bool   `json:"zoneRedundant,omitempty"`
 	// ElasticPoolID is a pointer (not a plain string) so a PATCH can distinguish
-	// an omitted field from an explicit "" — real Azure SQL removes a database
+	// an omitted field from an explicit "": real Azure SQL removes a database
 	// from its elastic pool when elasticPoolId is set to "" in the request body,
 	// which must not be conflated with the field being absent (leave unchanged).
 	ElasticPoolID *string `json:"elasticPoolId,omitempty"`
@@ -147,7 +147,7 @@ func toARMDatabase(db *rdsdriver.Database, rp *azurearm.ResourcePath, status str
 // databaseSKU builds the ARM sku object for a database. The stored tier and
 // capacity are name-authoritative (set on create/update by the provider); the
 // hardware family (Gen5, Fsv2, …) is not stored, so it is derived from the sku
-// name here — real Azure reports family for vCore databases and omits it for the
+// name here: real Azure reports family for vCore databases and omits it for the
 // DTU model.
 func databaseSKU(db *rdsdriver.Database) *armSKU {
 	_, family, _ := rdsdriver.ParseAzureSQLSKU(db.SKUName)
