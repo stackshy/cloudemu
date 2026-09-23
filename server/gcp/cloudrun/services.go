@@ -35,7 +35,7 @@ type serviceResource struct {
 	Etag                  string                `json:"etag,omitempty"`
 }
 
-// revisionTemplate is Service.template — the spec each new revision is cut from.
+// revisionTemplate is Service.template: the spec each new revision is cut from.
 type revisionTemplate struct {
 	Revision             string            `json:"revision,omitempty"`
 	Labels               map[string]string `json:"labels,omitempty"`
@@ -224,7 +224,7 @@ func (h *Handler) listServices(w http.ResponseWriter, r *http.Request, p *crPath
 	writeJSON(w, http.StatusOK, listServicesResponse{Services: items, NextPageToken: next})
 }
 
-// deleteService inlines the deleted service in the LRO response — real Cloud
+// deleteService inlines the deleted service in the LRO response. Real Cloud
 // Run's Services.Delete returns the removed Service, and the GAPIC
 // DeleteServiceOperation.Wait unmarshals the operation response into a Service,
 // erroring on an empty payload.

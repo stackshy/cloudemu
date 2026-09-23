@@ -2,7 +2,7 @@ package cloudsql
 
 import "net/http"
 
-// Cloud SQL exposes two static reference catalogs — machine tiers and database
+// Cloud SQL exposes two static reference catalogs: machine tiers and database
 // flags. Real Cloud SQL returns hundreds of region-specific entries; the mock
 // serves a small representative set so SDK clients that enumerate them get a
 // well-formed, non-empty response.

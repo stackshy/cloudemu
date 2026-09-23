@@ -204,7 +204,7 @@ func (h *Handler) listZones(w http.ResponseWriter, r *http.Request, rt route) {
 }
 
 // patchZone serves managedZones.patch/update. Cloud DNS returns an Operation
-// (not the zone) from both; the zone's mutable fields — description and labels —
+// (not the zone) from both; the zone's mutable fields (description and labels)
 // are applied via the driver, preserving the reserved tags that carry dnsName
 // and creationTime.
 func (h *Handler) patchZone(w http.ResponseWriter, r *http.Request, rt route) {
@@ -358,7 +358,7 @@ func (h *Handler) createChange(w http.ResponseWriter, r *http.Request, rt route)
 
 	// Hold applyMu across validation and apply so a concurrent changes.create
 	// (or managedZones.delete) on the same zone cannot invalidate a decision
-	// this call already made — the dns driver has no multi-key transaction
+	// this call already made. The dns driver has no multi-key transaction
 	// primitive, so this lock is what makes the batch's all-or-nothing
 	// semantics hold under concurrency, not just single-threaded.
 	h.applyMu.Lock()
@@ -373,7 +373,7 @@ func (h *Handler) createChange(w http.ResponseWriter, r *http.Request, rt route)
 	// A batch that names the same (name,type) twice within its own additions or
 	// deletions can never apply cleanly: the driver has no multi-key primitive,
 	// so the first occurrence would land (mutating the zone) before the second
-	// fails — a half-applied "atomic" change. Reject such a batch outright,
+	// fails, a half-applied "atomic" change. Reject such a batch outright,
 	// before any check that reads store state, so nothing is ever mutated.
 	if name, rtype, dup := duplicateRRSet(req.Deletions); dup {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid",
@@ -389,9 +389,9 @@ func (h *Handler) createChange(w http.ResponseWriter, r *http.Request, rt route)
 
 	dnsName := apexDNSName(info)
 
-	// Cloud DNS applies a change atomically: validate the whole batch up front —
-	// deletions resolve and don't strip the apex, additions don't collide, and no
-	// name is left with a CNAME beside another type — before any mutation, so a
+	// Cloud DNS applies a change atomically: validate the whole batch up front
+	// (deletions resolve and don't strip the apex, additions don't collide, and no
+	// name is left with a CNAME beside another type) before any mutation, so a
 	// bad batch fails cleanly without half-applying.
 	if !h.checkDeletions(w, r, id, dnsName, &req) ||
 		!h.checkAdditions(w, r, id, dnsName, &req) ||
@@ -440,7 +440,7 @@ func (h *Handler) checkDeletions(w http.ResponseWriter, r *http.Request, id, dns
 		}
 
 		// Cloud DNS requires a deletion to name the record set exactly as it
-		// currently stands — same TTL and same rrdatas (order-independent). A
+		// currently stands: same TTL and same rrdatas (order-independent). A
 		// mismatch is rejected 412 conditionNotMet and nothing is deleted.
 		if !rrsetDeletionMatches(rec, d) {
 			gcprest.WriteError(w, http.StatusPreconditionFailed, "conditionNotMet",
@@ -481,7 +481,7 @@ func rrsetDeletionMatches(rec *dnsdriver.RecordInfo, d *resourceRecordSetJSON) b
 // checkAdditions validates that no addition collides with an existing record
 // set. The canonical "update a record set" change deletes the old rrset and adds
 // a new one with the SAME name+type in one batch; such an addition is not a real
-// conflict — it replaces a record this same change removes — so exempt additions
+// conflict (it replaces a record this same change removes), so exempt additions
 // whose (name,type) also appears in the deletions.
 func (h *Handler) checkAdditions(w http.ResponseWriter, r *http.Request, id, dnsName string, req *changeJSON) bool {
 	deleting := make(map[string]bool, len(req.Deletions))
@@ -494,7 +494,7 @@ func (h *Handler) checkAdditions(w http.ResponseWriter, r *http.Request, id, dns
 
 		// Validate every addition's shape before any mutation applies. The driver
 		// has no batch primitive, so a malformed addition caught only at apply
-		// time would land after the deletions — reject it up front so the batch
+		// time would land after the deletions. Reject it up front so the batch
 		// fails cleanly and the zone is left untouched.
 		if a.Name == "" || a.Type == "" || len(a.Rrdatas) == 0 || a.TTL < 0 {
 			gcprest.WriteError(w, http.StatusBadRequest, "invalid",
@@ -526,15 +526,15 @@ func (h *Handler) checkAdditions(w http.ResponseWriter, r *http.Request, id, dns
 
 // isWithinZone reports whether name is the zone's own DNS name or a subdomain
 // of it, matched on label boundaries (not a raw string suffix) so an unrelated
-// domain that merely ends with the same letters — e.g. "evilexample.com."
-// against zone dnsName "example.com." — is correctly rejected.
+// domain that merely ends with the same letters (e.g. "evilexample.com."
+// against zone dnsName "example.com.") is correctly rejected.
 func isWithinZone(name, dnsName string) bool {
 	return name == dnsName || strings.HasSuffix(name, "."+dnsName)
 }
 
 // duplicateRRSet returns the name and type of the first (name,type) pair that
 // appears more than once in sets, so a caller can reject a batch whose
-// additions or deletions name the same record set twice — applying such a
+// additions or deletions name the same record set twice: applying such a
 // batch would half-succeed, since the driver has no way to apply two writes to
 // the same key as a single operation.
 func duplicateRRSet(sets []resourceRecordSetJSON) (name, rtype string, dup bool) {
@@ -639,7 +639,7 @@ func cnameConflict(byName map[string]map[string]bool) (string, bool) {
 
 // recordChange assigns the change its per-zone id (its index in the zone's
 // change log) and appends it, so changes are numbered sequentially per zone
-// starting at "0" — independent of managed-zone operation ids.
+// starting at "0", independent of managed-zone operation ids.
 func (h *Handler) recordChange(zoneID string, change *changeJSON) {
 	h.mu.Lock()
 	defer h.mu.Unlock()

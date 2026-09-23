@@ -10,7 +10,7 @@ import (
 )
 
 // pubsubCloudEventType is the CloudEvent type Eventarc stamps on a gen2 Cloud
-// Function's Pub/Sub trigger delivery — the same value real GCP requires on
+// Function's Pub/Sub trigger delivery, the same value real GCP requires on
 // EventTrigger.EventType for a Pub/Sub-triggered gen2 function.
 const pubsubCloudEventType = "google.cloud.pubsub.topic.v1.messagePublished"
 
@@ -32,7 +32,7 @@ type pubsubMessageEvent struct {
 // (specversion/type/source/id/time) wrapping the Pub/Sub MessagePublishedData
 // payload ({message, subscription}). Real Eventarc delivers binary-mode
 // CloudEvents (ce-* as HTTP headers, the bare data as the request body), but
-// driver.InvokeInput carries a payload only — no headers — so structured mode,
+// driver.InvokeInput carries a payload only (no headers), so structured mode,
 // the whole envelope as one JSON body, is the closest self-contained
 // equivalent the emulator's invoke contract can deliver.
 type gen2PubsubEvent struct {
@@ -58,7 +58,7 @@ type gen2PubsubEventData struct {
 // legacy Pub/Sub {data, attributes, messageId, publishTime} shape); gen2
 // functions whose eventTrigger.pubsubTopic is the topic get the CloudEvent
 // envelope a real Eventarc-backed trigger delivers (see gen2PubsubEvent).
-// Best-effort — a missing or failing function is swallowed so a publish never
+// Best-effort: a missing or failing function is swallowed so a publish never
 // fails. It implements the pubsub handler's FunctionInvoker.
 //
 // ctx carries the re-entrant delivery depth (internal/recursionguard): a

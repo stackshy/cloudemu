@@ -84,7 +84,7 @@ func TestSDKZonesScopedByProject(t *testing.T) {
 // TestUpdateZoneProviderLevel exercises the driver's UpdateZone directly, since
 // Cloud DNS zone create is not an upsert and the wire has no update path. It
 // must match an existing zone by name, apply tags and scope, and return the
-// updated copy — NotFound when the zone is absent.
+// updated copy, or NotFound when the zone is absent.
 func TestUpdateZoneProviderLevel(t *testing.T) {
 	ctx := context.Background()
 

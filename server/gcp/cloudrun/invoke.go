@@ -18,7 +18,7 @@ import (
 // Run services are addressed by a host of the form
 // https://{service}-{hash}.{region}.run.app (see services.go's serviceURI),
 // not by the /v2/projects/... Admin API path every other operation in this
-// package uses, so invoke traffic routes on the Host header instead — the
+// package uses, so invoke traffic routes on the Host header instead, the
 // same approach the AWS Lambda Function URL handler uses for its own
 // generated *.lambda-url.* hosts.
 const serviceHostMarker = ".run.app"
@@ -42,7 +42,7 @@ func requestHost(host string) string {
 
 // serveServiceInvoke handles a request addressed to a deployed service's
 // generated host, resolving the service and running it through the CloudRun
-// driver's Invoke choke point (a registered Go handler, or the echo stub —
+// driver's Invoke choke point (a registered Go handler, or the echo stub;
 // see providers/gcp/cloudrun/invoke.go).
 //
 // ctx carries the re-entrant delivery depth (internal/recursionguard): a
@@ -108,7 +108,7 @@ func inboundDepth(r *http.Request) int {
 }
 
 // resolveServiceByHost finds the stored service whose generated URL host
-// matches host, or a NotFound error when none does — the shape a real Cloud
+// matches host, or a NotFound error when none does, the shape a real Cloud
 // Run host that addresses no deployed service would 404 as.
 func (h *Handler) resolveServiceByHost(r *http.Request, host string) (*driver.Service, error) {
 	svcs, err := h.cr.ListServices(r.Context())
@@ -136,7 +136,7 @@ func uriHost(uri string) string {
 }
 
 // writeInvokeResponse writes a driver.InvokeResponse to w verbatim: status
-// (defaulting to 200), headers, and body — a real HTTP passthrough rather
+// (defaulting to 200), headers, and body, a real HTTP passthrough rather
 // than the JSON envelope every other Cloud Run Admin API response uses.
 func writeInvokeResponse(w http.ResponseWriter, resp *driver.InvokeResponse) {
 	for k, vals := range resp.Headers {

@@ -109,7 +109,7 @@ func policyEtag(resource string, n int) string {
 // serveTestIamPermissions answers functions/{name}:testIamPermissions (v1). Real
 // GCP returns the subset of the requested permissions the caller holds; CloudEmu
 // does not enforce IAM (any credential is an owner), so it echoes back the full
-// requested set — the answer callers use to gate optional UI, and which
+// requested set, the answer callers use to gate optional UI, and which
 // Terraform's data.google_iam_policy tooling round-trips.
 func (h *Handler) serveTestIamPermissions(w http.ResponseWriter, r *http.Request, p functionPath) {
 	if r.Method != http.MethodPost {

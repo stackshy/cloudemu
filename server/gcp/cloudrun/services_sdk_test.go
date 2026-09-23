@@ -45,7 +45,7 @@ func sdkService() *run.GoogleCloudRunV2Service {
 }
 
 // TestSDKServiceCreateGetListDelete covers the [BLOCKER] finding: the Services
-// surface exists — create reconciles to a URL + ready revision + traffic, and
+// surface exists: create reconciles to a URL + ready revision + traffic, and
 // Get/List/Delete work.
 func TestSDKServiceCreateGetListDelete(t *testing.T) {
 	svc := newRun(t, nil)
@@ -223,7 +223,7 @@ func TestSDKServiceRevisions(t *testing.T) {
 }
 
 // TestSDKServiceEnvOrderStable covers BUG1: container env is an ordered list, so
-// [A,B,C] round-trips in declaration order — stably across repeated GETs — rather
+// [A,B,C] round-trips in declaration order (stably across repeated GETs) rather
 // than being re-shuffled through a map (which caused a perpetual Terraform diff).
 func TestSDKServiceEnvOrderStable(t *testing.T) {
 	svc := newRun(t, nil)
@@ -351,7 +351,7 @@ func TestSDKServicesListPagination(t *testing.T) {
 // TestSDKErrorMessagesHaveNoCodePrefix covers a real-user e2e finding: a
 // NotFound/AlreadyExists error's wire message must be the plain human text,
 // never cloudemu's internal code-name ("NotFound: ", "AlreadyExists: ")
-// baked in — no real Cloud Run response ever leaks that internal taxonomy.
+// baked in, no real Cloud Run response ever leaks that internal taxonomy.
 func TestSDKErrorMessagesHaveNoCodePrefix(t *testing.T) {
 	svc := newRun(t, nil)
 	ctx := context.Background()
@@ -387,7 +387,7 @@ func TestSDKErrorMessagesHaveNoCodePrefix(t *testing.T) {
 // TestSDKRevisionDeleteBlockedWhileServingOrLatest covers a real-user e2e
 // finding: real Cloud Run refuses to delete a revision that is able to
 // receive traffic, is the only revision of its service, or is the service's
-// latest revision — deleting any of those would leave the service's own
+// latest revision. Deleting any of those would leave the service's own
 // latestReadyRevision/latestCreatedRevision/trafficStatuses pointers dangling
 // at a revision GetRevision then 404s on. See
 // https://docs.cloud.google.com/run/docs/managing/revisions.
@@ -404,7 +404,7 @@ func TestSDKRevisionDeleteBlockedWhileServingOrLatest(t *testing.T) {
 	decodeOpResponse(t, op, &created)
 
 	// The sole revision: it is the only revision, the latest revision, AND
-	// serving 100% of traffic — any one of those alone must block the delete.
+	// serving 100% of traffic. Any one of those alone must block the delete.
 	_, err = svc.Projects.Locations.Services.Revisions.Delete(created.LatestReadyRevision).Context(ctx).Do()
 
 	var gerr *googleapi.Error

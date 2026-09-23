@@ -17,7 +17,7 @@ const maxBodyBytes = 8 << 20
 // stripped from an incoming request body so a caller cannot pin them. name,
 // createTime, and updateTime are re-injected from the stored endpoint on every
 // read (see toResourceJSON). state, endpointForwardingRule, and endpointIp are
-// stripped on the way in but NOT re-injected here — they are seeded once at
+// stripped on the way in but not re-injected here. They are seeded once at
 // create (see seedEndpoint) and thereafter round-trip as stable stored
 // passthrough values, so a caller (or a GAPIC client marshaling an output-only
 // field) can never override the deterministic value.
@@ -83,7 +83,7 @@ func decodeBody(w http.ResponseWriter, r *http.Request) (fields map[string]json.
 // endpointIp) with the computed name/createTime/updateTime output fields.
 func toResourceJSON(r *idsdriver.Resource) (json.RawMessage, error) {
 	// r.Fields is populated from the request body. Guard the raw field count
-	// against a cap that leaves headroom for the injected computed fields — there
+	// against a cap that leaves headroom for the injected computed fields. There
 	// is no runtime arithmetic on the request-derived value, so nothing for an
 	// overflow check to flag, and the guard bounds the allocation. The map still
 	// grows to hold every entry; this only sizes the initial hint.

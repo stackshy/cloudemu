@@ -47,7 +47,7 @@ func newInvokeFixture(t *testing.T) invokeFixture {
 }
 
 // createService deploys serviceID via the real run/v2 SDK and returns its
-// reconciled, generated *.run.app URI — exactly what a real caller would read
+// reconciled, generated *.run.app URI, exactly what a real caller would read
 // off the Create response to learn where to invoke the service.
 func (f invokeFixture) createService(t *testing.T, serviceID string) string {
 	t.Helper()
@@ -71,7 +71,7 @@ func (f invokeFixture) createService(t *testing.T, serviceID string) string {
 // doInvoke issues method/body against the service's generated URL: it dials
 // this fixture's real httptest server address (there is no real DNS for a
 // *.run.app host) while setting the Host header to the service URL's host, so
-// the wire server's Host-based routing resolves it — mirroring how a real
+// the wire server's Host-based routing resolves it, mirroring how a real
 // client (curl --resolve, a hosts-file override) would reach a locally run
 // emulator at a cloud-shaped URL. It takes no *testing.T so it is also safe to
 // call from a registered handler running on a server goroutine (t.Fatalf may

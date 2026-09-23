@@ -107,7 +107,7 @@ func TestSDKCloudDNSDeleteExactMatch(t *testing.T) {
 	seedZoneWithRecord(t, svc, ctx, "ok-zone", "ok.example.com.",
 		&dns.ResourceRecordSet{Name: name, Type: "A", Ttl: 300, Rrdatas: []string{"192.0.2.1", "192.0.2.2"}})
 
-	// rrdatas listed in a different order still match — order-independent.
+	// rrdatas listed in a different order still match: order-independent.
 	if _, err := svc.Changes.Create(testProject, "ok-zone", &dns.Change{
 		Deletions: []*dns.ResourceRecordSet{
 			{Name: name, Type: "A", Ttl: 300, Rrdatas: []string{"192.0.2.2", "192.0.2.1"}},
@@ -123,7 +123,7 @@ func TestSDKCloudDNSDeleteExactMatch(t *testing.T) {
 
 // TestSDKCloudDNSMalformedAdditionRejectedBeforeApply asserts a batch with a
 // malformed addition (no rrdatas) is rejected up front so its paired deletion
-// never lands — the zone is left unchanged.
+// never lands. The zone is left unchanged.
 func TestSDKCloudDNSMalformedAdditionRejectedBeforeApply(t *testing.T) {
 	svc := newDNSService(t)
 	ctx := context.Background()

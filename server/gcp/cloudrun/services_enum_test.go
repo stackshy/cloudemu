@@ -71,8 +71,8 @@ func TestCreateServiceAcceptsNumericEnums(t *testing.T) {
 }
 
 // TestUpdateServiceAcceptsNumericEnums proves the full-object round-trip the
-// GAPIC client performs on UpdateService — which re-sends every field it read,
-// including output-only enums (terminalCondition.state, trafficStatuses.type) —
+// GAPIC client performs on UpdateService, which re-sends every field it read,
+// including output-only enums (terminalCondition.state, trafficStatuses.type),
 // decodes without a 400.
 func TestUpdateServiceAcceptsNumericEnums(t *testing.T) {
 	srv := newServer(t, nil)
@@ -145,7 +145,7 @@ func TestDeleteServiceReturnsDeletedResource(t *testing.T) {
 }
 
 // TestSuccessConditionOmitsReason proves a successful terminalCondition carries
-// no reason — real Cloud Run leaves reason unset on CONDITION_SUCCEEDED (reason
+// no reason. Real Cloud Run leaves reason unset on CONDITION_SUCCEEDED (reason
 // is a typed enum, and no value names "Ready").
 func TestSuccessConditionOmitsReason(t *testing.T) {
 	srv := newServer(t, nil)

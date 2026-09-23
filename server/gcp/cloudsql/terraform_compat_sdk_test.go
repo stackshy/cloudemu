@@ -37,8 +37,8 @@ func newTestServer(t *testing.T) (baseURL string, svc *sqladmin.Service) {
 }
 
 // Finding: the handler only served /v1/projects/, so gcloud and the Terraform
-// google provider — which hit /sql/v1beta4/projects/ and, for the generated
-// database/user resources, the version-less /projects/ prefix — got a 501 and
+// google provider, which hit /sql/v1beta4/projects/ and, for the generated
+// database/user resources, the version-less /projects/ prefix, got a 501 and
 // could never create an instance. All three prefixes must be served.
 func TestCloudSQLServesAllRESTPrefixes(t *testing.T) {
 	baseURL, svc := newTestServer(t)

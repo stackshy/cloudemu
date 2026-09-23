@@ -52,7 +52,7 @@ func requireAPIError(t *testing.T, err error, code int, want string) {
 
 // TestSDKCloudSQLDeletePrimaryWithReplicaBlocked drives the real sqladmin SDK:
 // deleting a primary that still has a read replica is rejected, and only
-// succeeds once the replica is removed first — matching real Cloud SQL, which
+// succeeds once the replica is removed first, matching real Cloud SQL, which
 // refuses to orphan replicas.
 func TestSDKCloudSQLDeletePrimaryWithReplicaBlocked(t *testing.T) {
 	svc, project := newSDKClient(t)

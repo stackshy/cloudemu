@@ -4,26 +4,26 @@
 // end-to-end against the shared logging driver.
 //
 // GCP Cloud Logging has no explicit "create log group" call: a log springs into
-// existence on the first entries:write. This handler mirrors that — a write to
+// existence on the first entries:write. This handler mirrors that: a write to
 // logName "projects/{p}/logs/{logid}" lazily creates the driver log group named
 // {logid} plus a default log stream, then appends the events. entries:list maps
 // onto GetLogEvents, honoring a `logName=` filter to scope the query.
 //
 // Driver -> wire mapping:
 //
-//	POST   /v2/entries:write                                  — WriteLogEntries -> (lazy CreateLogGroup) + PutLogEvents
-//	POST   /v2/entries:list                                   — ListLogEntries  -> GetLogEvents
-//	GET    /v2/projects/{p}/logs                               — ListLogs        -> ListLogGroups
-//	DELETE /v2/projects/{p}/logs/{logid}                       — DeleteLog       -> DeleteLogGroup
-//	POST   /v2/projects/{p}/locations/{l}/buckets              — CreateBucket    -> GCPLogging.CreateBucket
-//	GET    /v2/projects/{p}/locations/{l}/buckets              — ListBuckets     -> GCPLogging.ListBuckets
-//	GET    /v2/projects/{p}/locations/{l}/buckets/{b}          — GetBucket       -> GCPLogging.GetBucket
-//	PATCH  /v2/projects/{p}/locations/{l}/buckets/{b}          — UpdateBucket    -> GCPLogging.UpdateBucket
-//	DELETE /v2/projects/{p}/locations/{l}/buckets/{b}          — DeleteBucket    -> GCPLogging.DeleteBucket
+//	POST   /v2/entries:write                                  : WriteLogEntries -> (lazy CreateLogGroup) + PutLogEvents
+//	POST   /v2/entries:list                                   : ListLogEntries  -> GetLogEvents
+//	GET    /v2/projects/{p}/logs                               : ListLogs        -> ListLogGroups
+//	DELETE /v2/projects/{p}/logs/{logid}                       : DeleteLog       -> DeleteLogGroup
+//	POST   /v2/projects/{p}/locations/{l}/buckets              : CreateBucket    -> GCPLogging.CreateBucket
+//	GET    /v2/projects/{p}/locations/{l}/buckets              : ListBuckets     -> GCPLogging.ListBuckets
+//	GET    /v2/projects/{p}/locations/{l}/buckets/{b}          : GetBucket       -> GCPLogging.GetBucket
+//	PATCH  /v2/projects/{p}/locations/{l}/buckets/{b}          : UpdateBucket    -> GCPLogging.UpdateBucket
+//	DELETE /v2/projects/{p}/locations/{l}/buckets/{b}          : DeleteBucket    -> GCPLogging.DeleteBucket
 //
 // Export sinks (projects.sinks), log-based metrics (projects.metrics), and log
-// buckets (projects.locations.buckets) — GCP resource surfaces with no
-// cross-provider equivalent — are served through the optional
+// buckets (projects.locations.buckets), GCP resource surfaces with no
+// cross-provider equivalent, are served through the optional
 // driver.GCPLogging interface, which the GCP backend implements.
 //
 // The /v2/ URL space is disjoint from the /v1/projects/ family (Firestore, IAM,
@@ -66,7 +66,7 @@ func New(l logdriver.Logging) *Handler {
 	return &Handler{logs: l}
 }
 
-// Matches claims /v2/entries:{write,list} and /v2/projects/{p}/logs[...] paths —
+// Matches claims /v2/entries:{write,list} and /v2/projects/{p}/logs[...] paths,
 // the logging.googleapis.com v2 URL space, disjoint from the /v1/projects/
 // family and from /compute/v1/ and /dns/v1/. Registered before the GCS
 // fallback.
@@ -93,7 +93,7 @@ func collectionPath(p, collection string) string {
 		return ""
 	}
 
-	// A collection URL is projects/{p}/{collection}[/{tail}...] — at least the
+	// A collection URL is projects/{p}/{collection}[/{tail}...]; at least the
 	// three leading segments must be present.
 	const collectionSegments = 3
 
@@ -117,7 +117,7 @@ func bucketsPath(p string) (project, location, tail string, ok bool) {
 		return "", "", "", false
 	}
 
-	// projects/{p}/locations/{l}/buckets[/{tail}...] — at least the five
+	// projects/{p}/locations/{l}/buckets[/{tail}...]; at least the five
 	// leading segments must be present.
 	const bucketsSegments = 5
 
