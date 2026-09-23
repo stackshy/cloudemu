@@ -12,8 +12,8 @@ import (
 )
 
 // TestSDKSiteConfigTrioRoundTrip pins the site_config knobs Terraform's
-// azurerm_linux_web_app compares on every plan — always_on, ftps_state and
-// minimum_tls_version — round-tripping through GetConfiguration (config/web)
+// azurerm_linux_web_app compares on every plan (always_on, ftps_state and
+// minimum_tls_version) round-tripping through GetConfiguration (config/web)
 // and the site resource, not just the generic property echo. An explicit
 // always_on=false (required on Basic/Free tiers) must survive distinctly from
 // "unset", or the provider sees perpetual drift.

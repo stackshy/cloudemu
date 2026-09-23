@@ -62,7 +62,7 @@ type siteConfig struct {
 	NetFrameworkVersion string `json:"netFrameworkVersion,omitempty"`
 	// AlwaysOn keeps the app's process warm. It is a *bool so an explicit
 	// false (required on Basic/Free/Consumption tiers, and what azurerm sends
-	// for those) round-trips distinctly from "unset" (nil, field omitted) —
+	// for those) round-trips distinctly from "unset" (nil, field omitted):
 	// real Azure returns an explicit boolean here, and Terraform's
 	// azurerm_linux_web_app compares site_config.always_on against it.
 	AlwaysOn *bool `json:"alwaysOn,omitempty"`
@@ -116,7 +116,7 @@ type createSiteConfig struct {
 
 // patchSiteRequest captures a PATCH (WebApps_Update / SitePatchResource) body.
 // Every field is a pointer (or a nil-able map/slice) so an omitted field is
-// distinguishable from one explicitly set to its zero value — PATCH must apply
+// distinguishable from one explicitly set to its zero value: PATCH must apply
 // only the fields the caller supplied and leave the rest as stored.
 type patchSiteRequest struct {
 	Kind       *string              `json:"kind"`
@@ -137,7 +137,7 @@ type patchSiteConfig struct {
 	LinuxFxVersion *string `json:"linuxFxVersion"`
 	// AlwaysOn/FtpsState/MinTLSVersion are pointers so an omitted field (nil)
 	// preserves the stored value while an explicit one (including alwaysOn=false)
-	// replaces it — PATCH partial-update semantics.
+	// replaces it: PATCH partial-update semantics.
 	AlwaysOn      *bool   `json:"alwaysOn"`
 	FtpsState     *string `json:"ftpsState"`
 	MinTLSVersion *string `json:"minTlsVersion"`
@@ -148,7 +148,7 @@ type patchSiteConfig struct {
 
 // serverFarmResource is the ARM JSON shape for Microsoft.Web/serverfarms (App
 // Service plans) returned to the SDK. The SKU carries the pricing tier a plan
-// bills on — the fields an armappservice PlansClient reads back.
+// bills on: the fields an armappservice PlansClient reads back.
 type serverFarmResource struct {
 	ID         string               `json:"id"`
 	Name       string               `json:"name"`

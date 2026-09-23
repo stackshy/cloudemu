@@ -18,7 +18,7 @@ func TestSDKSitePatchPartialUpdate(t *testing.T) {
 		Location: to.Ptr("eastus"),
 		Properties: &armappservice.SiteProperties{
 			// ClientAffinityEnabled is not modeled by the handler, so it survives
-			// only through the unmodeled-property overlay — the PATCH must not drop it.
+			// only through the unmodeled-property overlay; the PATCH must not drop it.
 			ClientAffinityEnabled: to.Ptr(true),
 			SiteConfig: &armappservice.SiteConfig{
 				LinuxFxVersion: to.Ptr("Python|3.11"),

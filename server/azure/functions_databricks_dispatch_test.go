@@ -2,7 +2,7 @@
 // the shared standalone listener. NewFromProvider mounts the Functions invoke
 // handler AND the Databricks workspace data plane on one server; both are
 // reached under /api/. The Functions invoke matcher used to claim ANY /api/
-// path, so — registering before Databricks — it swallowed every Databricks
+// path, so, registering before Databricks, it swallowed every Databricks
 // data-plane call (/api/2.1/clusters/create, /api/2.0/jobs/...), making the
 // whole Databricks data plane unreachable through `cloudemu serve`.
 //

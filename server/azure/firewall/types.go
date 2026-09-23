@@ -3,8 +3,8 @@ package firewall
 // Azure ARM JSON wire structures for Microsoft.Network/azureFirewalls and
 // Microsoft.Network/firewallPolicies. Only the subset needed to model the shells
 // (location, zones, tags) plus the explicitly-modeled nested pieces is typed; the
-// remaining properties are carried as generic JSON so their values — including
-// explicit booleans and cross-resource {id} references — round-trip verbatim.
+// remaining properties are carried as generic JSON so their values (including
+// explicit booleans and cross-resource {id} references) round-trip verbatim.
 
 const (
 	providerName = "Microsoft.Network"

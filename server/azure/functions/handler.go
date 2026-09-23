@@ -5,13 +5,13 @@
 //
 // MVP coverage:
 //
-//	PUT    .../sites/{name}        — CreateOrUpdate
-//	GET    .../sites/{name}        — Get
-//	GET    .../sites               — List in resource group / subscription
-//	DELETE .../sites/{name}        — Delete
-//	PUT    .../serverfarms/{name}  — CreateOrUpdate App Service plan
-//	GET    .../serverfarms/{name}  — Get App Service plan
-//	POST   /api/{name}             — Synchronous invoke (non-ARM, mirrors how
+//	PUT    .../sites/{name}        : CreateOrUpdate
+//	GET    .../sites/{name}        : Get
+//	GET    .../sites               : List in resource group / subscription
+//	DELETE .../sites/{name}        : Delete
+//	PUT    .../serverfarms/{name}  : CreateOrUpdate App Service plan
+//	GET    .../serverfarms/{name}  : Get App Service plan
+//	POST   /api/{name}             : Synchronous invoke (non-ARM, mirrors how
 //	                               real Function Apps are hit at
 //	                               <app>.azurewebsites.net/api/<name>)
 //
@@ -93,8 +93,8 @@ type azureFunctionApps interface {
 
 // azureScopedSites optionally scopes a site's get/delete to the (subscription,
 // resourceGroup) it was created under. The underlying portable function record
-// (sdrv.Serverless) is keyed by name alone across every resource group —
-// matching real Azure's globally-unique Web App names — so without this, an
+// (sdrv.Serverless) is keyed by name alone across every resource group,
+// matching real Azure's globally-unique Web App names, so without this, an
 // ARM GET/DELETE against the wrong resourceGroups segment would return or
 // remove another resource group's site. Only the Azure provider Mock
 // (*azfunctions.Mock) satisfies it; other backends fall back to the unscoped
@@ -149,7 +149,7 @@ func (*Handler) Matches(r *http.Request) bool {
 // other Azure data planes served under /api/ version themselves numerically
 // (e.g. Databricks /api/2.1/clusters/create, /api/2.0/jobs/...). Excluding a
 // numeric-version first segment keeps this matcher from swallowing those data
-// planes, which — being registered after Functions — lose the first-match race
+// planes, which, being registered after Functions, lose the first-match race
 // and become unreachable through `cloudemu serve`.
 func isInvokeRequest(r *http.Request) bool {
 	if !strings.HasPrefix(r.URL.Path, invokePathPrefix) {
@@ -169,7 +169,7 @@ func isInvokeRequest(r *http.Request) bool {
 }
 
 // looksLikeAPIVersion reports whether seg is a REST API version token such as
-// "2.0" or "2.1" — the shape a versioned data-plane API puts right after /api/.
+// "2.0" or "2.1": the shape a versioned data-plane API puts right after /api/.
 // A token qualifies only if it is made up solely of digits and dots and carries
 // at least one digit, so it never collides with a real function name (which
 // starts with a letter).
@@ -344,7 +344,7 @@ func (h *Handler) upsertSiteMeta(
 	return meta
 }
 
-// patch serves PATCH .../sites/{name} — WebApps_Update (`az functionapp update`,
+// patch serves PATCH .../sites/{name} (WebApps_Update, `az functionapp update`,
 // `az functionapp identity assign`, SDK .Update()). Unlike PUT, PATCH is a
 // partial update: only the fields the body carries are applied; everything else
 // is left as stored. The site must already exist (404 otherwise).
@@ -631,7 +631,7 @@ func (h *Handler) zipDeploy(w http.ResponseWriter, r *http.Request, rp azurearm.
 }
 
 // servePlanSitesSubResource is the SubResource value of
-// GET .../serverfarms/{name}/sites — Plans.ListWebApps.
+// GET .../serverfarms/{name}/sites (Plans.ListWebApps).
 const servePlanSitesSubResource = "sites"
 
 // servePlan routes Microsoft.Web/serverfarms (App Service plan) requests. Only
@@ -678,8 +678,8 @@ func (h *Handler) servePlan(w http.ResponseWriter, r *http.Request, rp azurearm.
 	}
 }
 
-// listPlans serves the serverfarms collection GET — Plans.List /
-// ListByResourceGroup. rp.ResourceGroup empty means the whole subscription;
+// listPlans serves the serverfarms collection GET (Plans.List /
+// ListByResourceGroup). rp.ResourceGroup empty means the whole subscription;
 // each row's scope is built from the plan's own stored resource group so a
 // subscription-wide list never emits an empty resourceGroups segment.
 //
@@ -737,7 +737,7 @@ func createPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath
 	azurearm.WriteJSON(w, http.StatusOK, toServerFarmResource(rp, plan))
 }
 
-// deletePlan serves DELETE .../serverfarms/{name} — Plans.Delete. Real Azure
+// deletePlan serves DELETE .../serverfarms/{name} (Plans.Delete). Real Azure
 // answers 200 or 204 on success; this mock always answers 200, matching the
 // site DELETE above.
 //
@@ -751,7 +751,7 @@ func deletePlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath
 	w.WriteHeader(http.StatusOK)
 }
 
-// listPlanWebApps serves GET .../serverfarms/{name}/sites — Plans.ListWebApps.
+// listPlanWebApps serves GET .../serverfarms/{name}/sites (Plans.ListWebApps).
 // It joins on the site's stored ServerFarmID (set at site create/update time
 // from properties.serverFarmId) rather than keeping a reverse index on the
 // plan, so the plan and its apps can never drift out of sync.
@@ -772,7 +772,7 @@ func (h *Handler) listPlanWebApps(w http.ResponseWriter, r *http.Request, rp azu
 	planID := azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, serverFarmsType, rp.ResourceName)
 
 	// A site's plan can live in a different resource group than the site
-	// itself, so every site in the subscription is a candidate — not just
+	// itself, so every site in the subscription is a candidate, not just
 	// this resource group's.
 	metas, err := siteStore.ListSiteMeta(r.Context(), rp.Subscription, "")
 	if err != nil {
@@ -886,7 +886,7 @@ func (h *Handler) serveInvoke(w http.ResponseWriter, r *http.Request) {
 }
 
 // upsertFunction creates the function on first call and updates it on subsequent
-// calls — ARM PUT is idempotent and SDKs use it for both.
+// calls: ARM PUT is idempotent and SDKs use it for both.
 //
 //nolint:gocritic // cfg is the canonical request payload; copying once per PUT is fine.
 func upsertFunction(r *http.Request, fn sdrv.Serverless, cfg sdrv.FunctionConfig) (*sdrv.FunctionInfo, error) {
@@ -905,8 +905,8 @@ func upsertFunction(r *http.Request, fn sdrv.Serverless, cfg sdrv.FunctionConfig
 // toSiteResource renders the ARM site resource. meta carries the Azure-only
 // fields (region, provisioning state, plan flags); it is nil for backends
 // without the site surface, in which case the region defaults and the plan flags
-// are zero. App-setting values are never echoed here — real Azure returns them
-// only via the config/appsettings/list POST — so a plain GET does not leak
+// are zero. App-setting values are never echoed here: real Azure returns them
+// only via the config/appsettings/list POST, so a plain GET does not leak
 // secrets.
 //
 //nolint:gocritic // rp is request-scoped.
@@ -966,7 +966,7 @@ func toSiteResource(rp azurearm.ResourcePath, info *sdrv.FunctionInfo, meta *azf
 			DefaultHostName:   hostName,
 			// AppSettings is deliberately emitted (as null) so the server's
 			// unmodeled-property echo treats it as owned and never reflects the
-			// request's app settings — including secret values — back onto a plain
+			// request's app settings (including secret values) back onto a plain
 			// GET. The values are read only via config/appsettings/list.
 			SiteConfig: siteConfig{
 				LinuxFxVersion: info.Runtime,
