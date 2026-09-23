@@ -289,14 +289,13 @@ type errorXML struct {
 }
 
 // invalidChangeBatchResponse is the body real Route 53 sends for a rejected
-// change batch. The Go SDK reads Messages only from this root element. The
-// Error child is extra, so SDKs that only read <Error><Code> still see the
-// InvalidChangeBatch code.
+// change batch: an InvalidChangeBatch root with Messages and no Error element.
+// The Go SDK maps it to InvalidChangeBatch; botocore shows an empty code for
+// it, as it does against real Route 53.
 type invalidChangeBatchResponse struct {
 	XMLName  xml.Name `xml:"InvalidChangeBatch"`
 	Xmlns    string   `xml:"xmlns,attr"`
 	Messages []string `xml:"Messages>Message"`
-	Error    errorXML `xml:"Error"`
 }
 
 // trimZonePrefix strips the "/hostedzone/" prefix real Route 53 wraps zone ids

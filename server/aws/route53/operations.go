@@ -866,7 +866,6 @@ func writeInvalidChangeBatch(w http.ResponseWriter, msg string) {
 	wire.WriteXML(w, http.StatusBadRequest, invalidChangeBatchResponse{
 		Xmlns:    xmlns,
 		Messages: []string{msg},
-		Error:    errorXML{Code: "InvalidChangeBatch", Message: msg},
 	})
 }
 
