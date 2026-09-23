@@ -11,7 +11,7 @@ import (
 // DicomService is a stored Microsoft.HealthcareApis/workspaces/dicomservices child
 // resource. It is keyed under its parent workspace; deleting the workspace
 // cascades to it. Its authenticationConfiguration (authority, audiences) and
-// serviceUrl are read-only computed fields real Azure mints — they are stamped
+// serviceUrl are read-only computed fields real Azure mints: they are stamped
 // once at create and stay byte-stable across reads.
 type DicomService struct {
 	Subscription  string            `json:"subscription"`
@@ -51,7 +51,7 @@ type DicomInput struct {
 }
 
 // CreateOrUpdateDicom creates a new DICOM service or updates an existing one under
-// its parent workspace. The parent workspace must exist — otherwise it returns a
+// its parent workspace. The parent workspace must exist: otherwise it returns a
 // NotFound error (the wire layer maps it to ParentResourceNotFound). The computed
 // etag, provisioningState, serviceUrl, authentication defaults and identity ids are
 // minted once at create and preserved across updates. It returns the stored

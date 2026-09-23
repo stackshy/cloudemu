@@ -1,5 +1,5 @@
 // Package managedlustre provides an in-memory mock of Azure Managed Lustre
-// (Microsoft.StorageCache/amlFilesystems) — the ARM control plane only. It
+// (Microsoft.StorageCache/amlFilesystems), the ARM control plane only. It
 // manages the amlFilesystems resource lifecycle (create/update/get/delete/list)
 // and the archive/cancelArchive HSM actions; the Lustre data plane (a mounted
 // file system, HSM hydration to blob storage) is out of scope.
@@ -7,11 +7,11 @@
 // An amlFilesystem carries a set of computed, service-minted fields that MUST
 // stay stable for the lifetime of the resource so infrastructure-as-code tools
 // (Terraform's azurerm_managed_lustre_file_system) see no drift on re-plan:
-//   - clientInfo.mgsAddress: a deterministic IPv4, derived once from the name —
+//   - clientInfo.mgsAddress: a deterministic IPv4, derived once from the name;
 //     this is Terraform's exported `mgs_address` and the drift-critical field.
 //   - clientInfo.lustreVersion / mountCommand: deterministic from mgsAddress.
 //   - provisioningState: "Succeeded" once provisioning completes.
-//   - health: {state:"Available"} — a healthy, ready file system.
+//   - health: {state:"Available"}, a healthy, ready file system.
 //   - throughputProvisionedMBps: storageCapacityTiB * the per-TiB throughput
 //     encoded in the sku name (AMLFS-Durable-Premium-250 -> 250 MB/s per TiB).
 //   - identity principal/client ids: minted once via idgen.SyntheticGUID off a

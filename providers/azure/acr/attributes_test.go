@@ -321,7 +321,7 @@ func TestManifestAttributesPreservedAcrossRepush(t *testing.T) {
 // DeleteRepository/ListRepositories/ListImages must read those same fields
 // under the same lock, or -race flags an unsynchronized read racing the
 // concurrent write. It intentionally tolerates NotFound/FailedPrecondition
-// errors from the racing calls — the only thing under test is the absence of
+// errors from the racing calls: the only thing under test is the absence of
 // a data race, not any particular interleaving's outcome.
 func TestConcurrentAttributeUpdatesRaceWithReads(t *testing.T) {
 	const (

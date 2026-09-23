@@ -50,7 +50,7 @@ type blobObject struct {
 	// BlobType is "BlockBlob" (default, empty) or "AppendBlob".
 	BlobType string
 	// VersionID is this blob's version identifier when account-level versioning
-	// is enabled — a timestamp id minted on the write that produced it. Empty on
+	// is enabled, a timestamp id minted on the write that produced it. Empty on
 	// an account that never had versioning enabled. On a live (base) blob it is
 	// the current version's id; on a copy held in the container's versions store
 	// it identifies that historical version.
@@ -297,7 +297,7 @@ func (m *Mock) BucketAttributes(_ context.Context, bucket string) (driver.Accoun
 }
 
 // UpdateBucketAttributes atomically applies fn to a container's stored
-// attributes (Azure storage-account PATCH — AccountsClient.Update), seeding
+// attributes (Azure storage-account PATCH, AccountsClient.Update), seeding
 // the real-Azure baseline (Standard_LRS/StorageV2/Hot) first if none was set
 // yet. Routed through memstore's Update rather than a Get-then-Set pair so a
 // concurrent PATCH/create never loses an update.
@@ -318,7 +318,7 @@ func (m *Mock) UpdateBucketAttributes(
 
 // SetBlobServiceProperties implements the storage BlobServiceConfig optional
 // capability (…/blobServices/default PUT), replacing any previously stored
-// properties for the account wholesale — matching real Azure's Set Blob
+// properties for the account wholesale, matching real Azure's Set Blob
 // Service Properties, which takes a complete properties document each call.
 func (m *Mock) SetBlobServiceProperties(_ context.Context, account string, props driver.BlobServiceProperties) error {
 	m.blobServiceProps.Set(account, props)
@@ -328,7 +328,7 @@ func (m *Mock) SetBlobServiceProperties(_ context.Context, account string, props
 
 // BlobServiceProperties implements the storage BlobServiceConfig optional
 // capability (…/blobServices/default GET), returning the zero value (all
-// features disabled) for an account that never had properties set — matching
+// features disabled) for an account that never had properties set, matching
 // real Azure's defaults for a freshly created account.
 func (m *Mock) BlobServiceProperties(_ context.Context, account string) (driver.BlobServiceProperties, error) {
 	props, _ := m.blobServiceProps.Get(account)
@@ -602,7 +602,7 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 
 	ctr.objects.Delete(key)
 
-	// Best-effort byte purge — the in-memory delete already succeeded, so a
+	// Best-effort byte purge: the in-memory delete already succeeded, so a
 	// backing cleanup failure must not fail an idempotent object delete.
 	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key})
 
@@ -629,8 +629,8 @@ func (m *Mock) HeadObject(_ context.Context, bucket, key string) (*driver.Object
 	return &info, nil
 }
 
-// listEntry is one item in the merged list stream — either a blob or a
-// delimiter-rolled-up common prefix — so both count toward maxresults and
+// listEntry is one item in the merged list stream (either a blob or a
+// delimiter-rolled-up common prefix) so both count toward maxresults and
 // paginate together (matching real Azure's List Blobs).
 type listEntry struct {
 	name     string
@@ -823,7 +823,7 @@ func (m *Mock) copyBlobInternal(
 }
 
 // GeneratePresignedURL generates a mock presigned URL.
-// Note: expiry is tracked in the URL but not enforced on use — this is a mock limitation.
+// Note: expiry is tracked in the URL but not enforced on use, a mock limitation.
 func (m *Mock) GeneratePresignedURL(_ context.Context, req driver.PresignedURLRequest) (*driver.PresignedURL, error) {
 	if req.Method != http.MethodGet && req.Method != http.MethodPut {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "method must be GET or PUT, got %q", req.Method)
@@ -1131,7 +1131,7 @@ func (m *Mock) ListMultipartUploads(_ context.Context, bucket string) ([]driver.
 }
 
 // SetBucketVersioning enables or disables versioning on a bucket.
-// Note: this sets the flag but does not maintain object version history — mock limitation.
+// Note: this sets the flag but does not maintain object version history, a mock limitation.
 func (m *Mock) SetBucketVersioning(_ context.Context, bucket string, enabled bool) error {
 	ctr, ok := m.containers.Get(bucket)
 	if !ok {

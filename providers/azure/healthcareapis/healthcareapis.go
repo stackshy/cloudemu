@@ -1,5 +1,5 @@
 // Package healthcareapis provides an in-memory mock of Azure Health Data Services
-// (Microsoft.HealthcareApis) — the ARM control plane only. It manages the
+// (Microsoft.HealthcareApis), the ARM control plane only. It manages the
 // workspaces lifecycle plus the nested workspaces/{workspace}/fhirservices and
 // workspaces/{workspace}/dicomservices child resources (create/update/get/delete/
 // list). The FHIR/DICOM data planes (the running FHIR/DICOM REST endpoints), IoT
@@ -11,10 +11,10 @@
 // azurerm_healthcare_dicom_service) see no drift on re-plan:
 //   - workspace provisioningState ("Succeeded") and publicNetworkAccess.
 //   - child etag, minted once at create and stable across every get/patch.
-//   - child identity principalId / tenantId — minted once for a system-assigned
+//   - child identity principalId / tenantId, minted once for a system-assigned
 //     identity and stable (top-level identity ids that an echo cannot reach, so
 //     they are modeled deterministically like the databricks precedent).
-//   - fhir authenticationConfiguration authority / audience — the audience default
+//   - fhir authenticationConfiguration authority / audience, the audience default
 //     is the deterministic service host
 //     ("https://<workspace>-<name>.fhir.azurehealthcareapis.com"), minted once and
 //     byte-stable across reads (real ARM FhirService exposes no serviceUrl field;
@@ -23,7 +23,7 @@
 //     and its read-only authenticationConfiguration authority / audiences.
 //
 // Every computed field is derived deterministically from the resource identity,
-// so the same resource always reports the same values — across gets, patches and
+// so the same resource always reports the same values, across gets, patches and
 // a snapshot/restore. No clock or randomness is read on a get.
 package healthcareapis
 
@@ -372,7 +372,7 @@ func createChild[T any](
 }
 
 // listChildren returns every stored child whose key carries prefix, deep-copied via
-// clone and sorted by the name accessor. The parent workspace must exist —
+// clone and sorted by the name accessor. The parent workspace must exist:
 // otherwise it returns a NotFound error (the wire layer maps it to
 // ParentResourceNotFound), mirroring real ARM, which 404s a list under a
 // nonexistent parent rather than returning an empty set. It takes the read lock.

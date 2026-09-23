@@ -7,8 +7,8 @@
 // container app runs one revision's worth of containers behind an optional
 // ingress. Both are Azure-only ARM resources with no cross-cloud portable
 // driver, so their state lives here on a provider mock, exactly like Azure
-// user-assigned managed identities. The values a discoverer prices on — a
-// container's cpu/memory and the app's scale.minReplicas — are preserved
+// user-assigned managed identities. The values a discoverer prices on, a
+// container's cpu/memory and the app's scale.minReplicas, are preserved
 // verbatim from create so they survive a create -> discover round trip.
 package containerapps
 
@@ -133,7 +133,7 @@ type UserAssignedIdentity struct {
 
 // ContainerApp is a stored container app. Fqdn and LatestRevisionName are minted
 // once at create and preserved across updates. Revisions is the app's revision
-// history — a new entry is materialized every time the template changes.
+// history: a new entry is materialized every time the template changes.
 // IdentityType/PrincipalID/TenantID/UserAssignedIdentities carry the app's
 // managed-identity block, synthesized on write so a create -> read round trip
 // matches real Azure.

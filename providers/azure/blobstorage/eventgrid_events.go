@@ -58,7 +58,7 @@ type blobEventFacts struct {
 }
 
 // storageAccountID builds the ARM resource id of the storage account the blob
-// data plane models — the "topic" real Azure stamps on a Blob Storage event
+// data plane models, the "topic" real Azure stamps on a Blob Storage event
 // (its source resource), distinct from the Event Grid topic the subscription
 // hangs off. The resource group comes from the account's ARM attributes when it
 // was created through the storage-account ARM surface, else a stable default.

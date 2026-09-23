@@ -20,7 +20,7 @@ type miSnapshot struct {
 	TenantID   string          `json:"tenantId,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // managed identities hold no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

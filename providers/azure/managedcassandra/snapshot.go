@@ -20,7 +20,7 @@ type mcSnapshot struct {
 	DataCenters json.RawMessage `json:"dataCenters,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // Managed Cassandra holds resource metadata, not bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap mcSnapshot

@@ -6,7 +6,7 @@
 // virtualMachineResourceId points at the compute VM, and its own lifecycle
 // (registration with the SQL IaaS Agent extension, license type, storage /
 // patching / backup configuration) is tracked independently of the VM. The two
-// are distinct resources — deleting the SQL virtual machine deregisters SQL
+// are distinct resources: deleting the SQL virtual machine deregisters SQL
 // management but never touches the underlying compute VM.
 //
 // This mock owns only the SQL-virtual-machine records; the paired compute VM

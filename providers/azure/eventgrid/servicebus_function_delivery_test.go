@@ -217,7 +217,7 @@ func TestPutEventsResourceDestinationHonorsFilter(t *testing.T) {
 }
 
 // TestPutEventsResourceDestinationNilPeerNoPanic is test (e): with no peer wired,
-// ServiceBus/Function destinations are skipped gracefully — no panic, publish
+// ServiceBus/Function destinations are skipped gracefully: no panic, publish
 // still succeeds.
 func TestPutEventsResourceDestinationNilPeerNoPanic(t *testing.T) {
 	ctx := context.Background()

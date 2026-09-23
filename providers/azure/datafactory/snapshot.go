@@ -19,7 +19,7 @@ type dfSnapshot struct {
 	Factories json.RawMessage `json:"factories,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // the factory mock holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	f, err := m.factories.Snapshot()

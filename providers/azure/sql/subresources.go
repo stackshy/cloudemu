@@ -349,7 +349,7 @@ func (m *Mock) ListElasticPools(_ context.Context, server string) ([]rdsdriver.E
 
 // DeleteElasticPool removes an elastic pool. Like real Azure it refuses to
 // delete a non-empty pool (real Azure answers 400 ElasticPoolNotEmpty:
-// learn.microsoft.com/rest/api/sql/elastic-pools/delete — "Request to delete
+// learn.microsoft.com/rest/api/sql/elastic-pools/delete: "Request to delete
 // an elastic pool that is not empty"; this codebase maps FailedPrecondition to
 // 409 for every driver, so the mock follows that convention here too).
 // Membership is checked against both the Databases capability (the store the

@@ -142,7 +142,7 @@ func (m *Mock) DeleteNetworkInterface(_ context.Context, resourceGroup, name str
 }
 
 // AttachNetworkInterface associates the NIC identified by (resourceGroup,
-// name) with vmID, the ARM resource id of the owning VM — the driver-layer
+// name) with vmID, the ARM resource id of the owning VM, the driver-layer
 // hook the VM lifecycle uses to keep properties.virtualMachine in sync with
 // networkProfile.networkInterfaces. Matching real Azure, a NIC attaches to
 // only one VM at a time: attaching it to a second, different VM is rejected.
@@ -175,7 +175,7 @@ func (m *Mock) AttachNetworkInterface(_ context.Context, resourceGroup, name, vm
 
 // DetachNetworkInterface clears the NIC's virtualMachine back-reference, but
 // only when it currently points at vmID. Detaching a NIC that is unattached,
-// already deleted, or attached to a different VM is a no-op — a stale or
+// already deleted, or attached to a different VM is a no-op: a stale or
 // duplicate detach must not disturb a real, current attachment.
 func (m *Mock) DetachNetworkInterface(_ context.Context, resourceGroup, name, vmID string) error {
 	m.nicMu.Lock()
@@ -266,7 +266,7 @@ func (m *Mock) resolveIPConfigs(configs []driver.AzureIPConfig, selfKey string) 
 
 // enforcePrimary applies Azure's primary-ipConfiguration invariant to configs
 // in place. A NIC with a single ipConfiguration always has it as primary,
-// regardless of what the caller submitted — real Azure forces this rather
+// regardless of what the caller submitted: real Azure forces this rather
 // than erroring or leaving it non-primary ("Each network interface is
 // assigned one primary IP configuration": Microsoft Learn, Configure IP
 // addresses for an Azure network interface). With more than one

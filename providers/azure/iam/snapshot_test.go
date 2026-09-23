@@ -11,7 +11,7 @@ import (
 
 // TestSnapshotRestoreRoundTripAllStores populates every IAM store and every
 // attachment/membership map, snapshots, restores into a fresh mock, and asserts
-// each piece of state round-trips under its original identity — a missed store
+// each piece of state round-trips under its original identity. A missed store
 // would be silent data loss.
 func TestSnapshotRestoreRoundTripAllStores(t *testing.T) {
 	ctx := context.Background()

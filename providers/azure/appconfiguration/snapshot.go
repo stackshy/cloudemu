@@ -12,7 +12,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // Snapshot captures every configuration store keyed by its (lowercased) resource
 // id. The estate tenant id is deterministic (minted from a fixed seed in New),
-// so it needs no persistence. includeAssets is unused — configuration stores
+// so it needs no persistence. includeAssets is unused: configuration stores
 // hold no bulk object bodies (the key-value data plane is out of scope).
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()

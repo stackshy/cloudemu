@@ -408,7 +408,7 @@ func TestActivateDeactivateRestartRevision(t *testing.T) {
 }
 
 // TestSingleModeActivateKeepsOneActive proves that in single-revision mode
-// activating a superseded revision makes it THE sole active revision — the state
+// activating a superseded revision makes it THE sole active revision: the state
 // never has two active revisions, which real Azure cannot produce.
 func TestSingleModeActivateKeepsOneActive(t *testing.T) {
 	m := newMock()

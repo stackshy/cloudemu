@@ -173,7 +173,7 @@ func TestOnFailurePolicySucceedsWithoutRestart(t *testing.T) {
 
 func TestAlwaysPolicyStaysRunning(t *testing.T) {
 	// Even though the container has already exited, an Always group is reported
-	// Running — ACI keeps restarting it, so it never reaches a terminal state.
+	// Running: ACI keeps restarting it, so it never reaches a terminal state.
 	eng := &recordingEngine{
 		handle:   "h1",
 		statuses: []config.ContainerStatus{{Name: "app", State: "exited", ExitCode: 0}},

@@ -10,7 +10,7 @@ import (
 
 // RoleAssignmentConfig is the input to CreateRoleAssignment: an Azure RBAC
 // (principal, roleDefinition, scope) binding. It has no AWS-shaped equivalent,
-// so it lives on the concrete Mock rather than the driver.IAM interface — the
+// so it lives on the concrete Mock rather than the driver.IAM interface: the
 // Azure wire server (server/azure/iam) calls these methods directly.
 type RoleAssignmentConfig struct {
 	ID               string // the assignment GUID (the ARM {id} path segment)

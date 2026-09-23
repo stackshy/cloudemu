@@ -26,7 +26,7 @@ func newAsyncMock() (*Mock, *config.FakeClock) {
 
 // TestAsyncSettleCreateModify pins the AsyncSettle transitions: a server reports
 // creating (→ wire Starting) then available (→ Ready) on create, modifying (→
-// wire Updating) then available on modify — all driven by the FakeClock. A stop
+// wire Updating) then available on modify, all driven by the FakeClock. A stop
 // transition clears any pending create window.
 func TestAsyncSettleCreateModify(t *testing.T) {
 	m, fc := newAsyncMock()

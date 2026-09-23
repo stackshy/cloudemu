@@ -37,8 +37,8 @@ type logStreamSnapshot struct {
 	Events []driver.LogEvent    `json:"events,omitempty"`
 }
 
-// Snapshot captures every workspace's full state as JSON. includeAssets is unused
-// — the log events are the resource, so they are always captured.
+// Snapshot captures every workspace's full state as JSON. includeAssets is unused:
+// the log events are the resource, so they are always captured.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := logAnalyticsSnapshot{Groups: make(map[string]*logGroupSnapshot, m.groups.Len())}
 

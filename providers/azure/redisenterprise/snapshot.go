@@ -19,7 +19,7 @@ type snapshotState struct {
 }
 
 // Snapshot captures every redisEnterprise cluster and database. includeAssets is
-// unused — these resources hold no bulk object bodies.
+// unused: these resources hold no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

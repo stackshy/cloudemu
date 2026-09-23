@@ -63,7 +63,7 @@ type lifecycleTransition struct {
 	powerState string
 	// idempotentPowerStates are the Azure PowerState values the instance may
 	// already be in for which this action is a true no-op. Real Azure
-	// documents Start/PowerOff/Deallocate as always succeeding (200/202) —
+	// documents Start/PowerOff/Deallocate as always succeeding (200/202):
 	// no state-conflict error is documented for calling them on a VM already
 	// at (or past) the target power level (MS Learn: rest/api/compute/
 	// virtual-machines/start, .../deallocate). Nil for actions (Reboot,
@@ -558,8 +558,8 @@ func (m *Mock) detachNICs(ctx context.Context, inst *instanceData) error {
 // are attached (setting their properties.virtualMachine back-reference); NICs
 // inst still holds but that are no longer desired are detached (clearing it, so
 // they return to Unattached and can be deleted); NICs in both are left as-is
-// (attach is idempotent on the same VM). New NICs are attached first — with
-// rollback of just those on failure — before any detach runs, so a failed
+// (attach is idempotent on the same VM). New NICs are attached first, with
+// rollback of just those on failure, before any detach runs, so a failed
 // attach (e.g. a NIC already attached to another VM) leaves the VM's existing
 // attachments untouched. inst.NICRefs is then set to the desired set, whose
 // first entry stays the primary NIC. A no-op when no NICAttacher is wired.
@@ -597,7 +597,7 @@ func nicRefSet(refs []driver.AzureNICRef) map[driver.AzureNICRef]bool {
 
 // attachNewNICs attaches every desired NIC not already present in current
 // (deduping repeats within desired), rolling back only the NICs it attached
-// during this call if one fails — so a failed attach leaves the VM's existing
+// during this call if one fails, so a failed attach leaves the VM's existing
 // attachments untouched.
 func (m *Mock) attachNewNICs(
 	ctx context.Context, vmID string, current map[driver.AzureNICRef]bool, desired []driver.AzureNICRef,
@@ -681,7 +681,7 @@ func (m *Mock) transitionInstances(ctx context.Context, instanceIDs []string, t 
 
 		// The lifecycle state machine is already settled at this action's
 		// target state (e.g. Start on an already-running VM, or PowerOff
-		// after Deallocate — both settle at compute.StateStopped). Walking
+		// after Deallocate, both settle at compute.StateStopped). Walking
 		// the FSM again would hit an illegal same-state edge, but real Azure
 		// treats the action as idempotent, so short-circuit instead of
 		// erroring.
@@ -838,7 +838,7 @@ func applyMutableConfig(inst *instanceData, cfg driver.InstanceConfig, instanceI
 // PatchInstance applies an ARM PATCH Update (BeginUpdate) to an existing
 // instance. Only the fields the request supplied are applied: a non-empty
 // VMSize resizes the VM, a non-nil Identity replaces the identity block, and a
-// non-nil Tags map REPLACES the existing tags wholesale — real Azure's PATCH
+// non-nil Tags map REPLACES the existing tags wholesale: real Azure's PATCH
 // tags is a full replace, not a merge, despite PATCH otherwise reading as a
 // merge-patch (this is a well-documented Azure Compute quirk; see the sibling
 // SQL-VM UpdateTags). The internal ARM-name tag is preserved across the
@@ -878,7 +878,7 @@ func (m *Mock) PatchInstance(_ context.Context, instanceID string, patch driver.
 // GeneralizeInstance marks an instance as generalized (Azure Generalize
 // action), a precondition for capturing it into a reusable image. Real Azure
 // requires the VM to be stopped or deallocated first: generalizing a running VM
-// is rejected. It is otherwise idempotent — generalizing an already-generalized
+// is rejected. It is otherwise idempotent: generalizing an already-generalized
 // (and still stopped/deallocated) VM succeeds.
 func (m *Mock) GeneralizeInstance(_ context.Context, instanceID string) error {
 	inst, ok := m.instances.Get(instanceID)
@@ -984,7 +984,7 @@ func (m *Mock) cascadeTerminatedVolumes(instanceIDs []string) {
 }
 
 // GetConsoleOutput returns the console output the configured compute engine
-// captured for the instance's boot script — the boot-diagnostics serial log
+// captured for the instance's boot script, the boot-diagnostics serial log
 // analog. It returns a nil slice when the instance is not engine-backed (no
 // real backing produced console output).
 func (m *Mock) GetConsoleOutput(ctx context.Context, instanceID string) ([]byte, error) {
@@ -1141,8 +1141,8 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 
 // UpdateVolume mutates an existing managed disk in place (ARM Disks
 // CreateOrUpdate on a disk that already exists). It preserves the volume's ID,
-// CreatedAt, and current attachment (State/AttachedTo/Device) — so the derived
-// uniqueId and timeCreated stay stable and an attached disk is not duplicated —
+// CreatedAt, and current attachment (State/AttachedTo/Device), so the derived
+// uniqueId and timeCreated stay stable and an attached disk is not duplicated,
 // while updating the mutable cost fields from cfg. A non-zero Size, non-empty
 // VolumeType/Tier are applied; IOPS/Throughput and Tags are replaced from cfg
 // (PUT is a full resource replacement).
@@ -1465,7 +1465,7 @@ func (m *Mock) CreateKeyPair(_ context.Context, cfg driver.KeyPairConfig) (*driv
 // GenerateKeyPair generates a fresh RSA key pair server-side for an existing
 // sshPublicKey resource (Azure generateKeyPair action). It stores the generated
 // public key on the resource and returns both the public key (OpenSSH
-// authorized_keys form) and the private key (PEM PKCS#1) — the one time the
+// authorized_keys form) and the private key (PEM PKCS#1), the one time the
 // private key is disclosed.
 func (m *Mock) GenerateKeyPair(_ context.Context, name string) (*driver.KeyPairInfo, error) {
 	kp, ok := m.keyPairs.Get(name)

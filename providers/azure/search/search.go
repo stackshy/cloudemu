@@ -1,5 +1,5 @@
 // Package search provides an in-memory mock of Azure AI Search
-// (Microsoft.Search/searchServices) — the ARM control plane (service lifecycle,
+// (Microsoft.Search/searchServices), the ARM control plane (service lifecycle,
 // admin/query keys, private links) and the search data plane (indexes,
 // documents, indexers, data sources, skillsets, synonym maps, aliases).
 package search

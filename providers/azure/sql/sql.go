@@ -15,7 +15,7 @@
 //     snapshots). Cluster-snapshot methods return
 //     InvalidArgument.
 //
-// Lifecycle: Azure SQL databases are "always on" — there is no native
+// Lifecycle: Azure SQL databases are "always on": there is no native
 // start/stop API. The mock still tracks state transitions so portable-API
 // users can drive Start/Stop and observe deterministic behavior; the
 // transitions don't affect the ARM-visible state.
@@ -186,11 +186,11 @@ func copyTags(src map[string]string) map[string]string {
 }
 
 // cloneInstance / cloneCluster / cloneSnapshot deep-copy the slice/map fields so
-// a returned value never aliases the memstore — a caller mutating its result
+// a returned value never aliases the memstore: a caller mutating its result
 // (or a concurrent reader) can't corrupt the store or trigger a concurrent-map
 // read/write panic. Callers own the returned copy.
 //
-//nolint:gocritic // value copy is intentional — the result must not alias the store.
+//nolint:gocritic // value copy is intentional: the result must not alias the store.
 func cloneInstance(inst rdsdriver.Instance) rdsdriver.Instance {
 	inst.Tags = copyTags(inst.Tags)
 	inst.VPCSecurityGroups = cloneStrings(inst.VPCSecurityGroups)
@@ -199,7 +199,7 @@ func cloneInstance(inst rdsdriver.Instance) rdsdriver.Instance {
 	return inst
 }
 
-//nolint:gocritic // value copy is intentional — the result must not alias the store.
+//nolint:gocritic // value copy is intentional: the result must not alias the store.
 func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
 	c.Tags = copyTags(c.Tags)
 	c.VPCSecurityGroups = cloneStrings(c.VPCSecurityGroups)
@@ -208,7 +208,7 @@ func cloneCluster(c rdsdriver.Cluster) rdsdriver.Cluster {
 	return c
 }
 
-//nolint:gocritic // value copy is intentional — the result must not alias the store.
+//nolint:gocritic // value copy is intentional: the result must not alias the store.
 func cloneSnapshot(s rdsdriver.Snapshot) rdsdriver.Snapshot {
 	s.Tags = copyTags(s.Tags)
 
@@ -834,7 +834,7 @@ func (*Mock) CreateClusterSnapshot(
 		"Azure SQL does not support server-level snapshots; backups are per-database")
 }
 
-// DescribeClusterSnapshots returns an empty list — Azure SQL has none.
+// DescribeClusterSnapshots returns an empty list: Azure SQL has none.
 func (*Mock) DescribeClusterSnapshots(
 	_ context.Context, _ []string, _ string,
 ) ([]rdsdriver.ClusterSnapshot, error) {

@@ -69,7 +69,7 @@ func childKey(sub, rg, job, kind, name string) string {
 }
 
 // CreateOrUpdateChild creates or updates a transformation/input/output/function
-// under its parent job. The parent job must exist — otherwise it returns a
+// under its parent job. The parent job must exist: otherwise it returns a
 // NotFound error (the wire layer maps it to ParentResourceNotFound). The etag is
 // minted once at create and preserved across updates. It returns the stored
 // child and whether it was newly created.

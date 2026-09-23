@@ -139,7 +139,7 @@ func (m *Mock) UpsertAzureLBBackendPool(_ context.Context, rg, name, poolName st
 // DeleteAzureLBBackendPool removes a single backend pool by name, leaving
 // every other child untouched. Returns FailedPrecondition (ARM
 // InUseDeleteCannotProceed, surfaced as 409) if a load balancing rule or
-// outbound rule on the same load balancer still references the pool — a
+// outbound rule on the same load balancer still references the pool: a
 // standalone child DELETE bypasses the whole-LB reference validation a
 // full-replace PUT goes through (validateAzureLB), so this is the only guard
 // stopping a rule from being left pointing at a pool that no longer exists.

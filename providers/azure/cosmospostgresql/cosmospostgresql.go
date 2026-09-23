@@ -33,7 +33,7 @@ const (
 
 	// citusRole is Cosmos DB for PostgreSQL's fixed coordinator superuser
 	// ("citus"), also used as the default database name a client connects to.
-	// enginePostgres is the family handed to the shared Postgres DatabaseEngine —
+	// enginePostgres is the family handed to the shared Postgres DatabaseEngine:
 	// Cosmos DB for PostgreSQL is Citus Postgres, so it reuses that backing.
 	citusRole      = "citus"
 	enginePostgres = "postgres"
@@ -246,7 +246,7 @@ func (m *Mock) storeCluster(cfg *cpgdriver.CreateClusterConfig) (cpgdriver.Clust
 
 	if isUpdate {
 		// Preserve service-computed fields, and treat the replica source as
-		// immutable — a re-PUT must not re-point (or corrupt) the replica graph.
+		// immutable: a re-PUT must not re-point (or corrupt) the replica graph.
 		c.State = existing.State
 		c.ReadReplicas = cloneStrings(existing.ReadReplicas)
 		c.SourceResourceID = existing.SourceResourceID
@@ -265,7 +265,7 @@ func (m *Mock) storeCluster(cfg *cpgdriver.CreateClusterConfig) (cpgdriver.Clust
 // cluster when a DatabaseEngine is wired in, then records the reachable
 // coordinator host so node() surfaces it as the coordinator FQDN. The engine
 // work runs without the store lock held. It is a no-op without an engine, on an
-// update (the endpoint is already backed), or for a read replica — a replica is
+// update (the endpoint is already backed), or for a read replica, a replica is
 // not engine-backed in the emulator (no duplicate real database is provisioned),
 // so its coordinator FQDN stays synthetic. On failure the just-created cluster is
 // rolled back.
@@ -324,7 +324,7 @@ func validateSizing(cfg *cpgdriver.CreateClusterConfig) error {
 }
 
 // ensureNameAvailableLocked rejects a create whose name is already used by any
-// cluster in the subscription (Cosmos-PG names are globally unique — they form
+// cluster in the subscription (Cosmos-PG names are globally unique: they form
 // the coordinator FQDN). The caller holds the lock.
 func (m *Mock) ensureNameAvailableLocked(name string) error {
 	all := m.clusters.SortedValues()
@@ -466,7 +466,7 @@ func (m *Mock) UpdateCluster(_ context.Context, rg, name string, patch cpgdriver
 }
 
 func applyClusterPatch(c *cpgdriver.Cluster, patch *cpgdriver.ClusterPatch) error {
-	// A PATCH must re-validate the same bounds as create — otherwise a negative
+	// A PATCH must re-validate the same bounds as create: otherwise a negative
 	// or huge nodeCount is stored and later crashes node derivation.
 	if err := validatePatchSizing(patch); err != nil {
 		return err
@@ -570,7 +570,7 @@ func (m *Mock) DeleteCluster(ctx context.Context, rg, name string) error {
 
 	// Engine wired: tear down the real coordinator database WITHOUT holding the
 	// provider lock (it is a real container/process teardown), then remove the
-	// row under a re-acquired lock — mirroring the create path and the RDS
+	// row under a re-acquired lock, mirroring the create path and the RDS
 	// reserve→provision→finalize pattern so a delete never stalls concurrent reads.
 	inst := rdsdriver.Instance{ID: name, Engine: enginePostgres}
 	if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {

@@ -333,7 +333,7 @@ func (m *Mock) SetConfiguration(
 	return &out, nil
 }
 
-// GetConfiguration returns a server parameter — the user override if one was
+// GetConfiguration returns a server parameter, the user override if one was
 // set, otherwise the catalog default for a known parameter (real Azure returns
 // the system default for an unset-but-valid parameter). Unknown parameters 404.
 func (m *Mock) GetConfiguration(_ context.Context, server, name string) (*rdsdriver.Configuration, error) {

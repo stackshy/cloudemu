@@ -33,15 +33,15 @@ func (m *Mock) SetFunctionTriggerSink(sink CosmosFunctionTriggerSink) {
 // dispatchFunctionTrigger forwards a just-written document to any Azure
 // Function bound to its (database, container) by a cosmosDBTrigger binding.
 // It is a no-op when no sink is wired, or when table carries no
-// database/container identity to match against (see cosmosDatabaseContainer)
-// — the generic driver.Database interface this mock implements has a flat
+// database/container identity to match against (see cosmosDatabaseContainer):
+// the generic driver.Database interface this mock implements has a flat
 // table namespace, so a table created without going through the Cosmos SQL
 // data-plane wire handler's account/database/container encoding
 // (server/azure/cosmosdb's qualify) has no (database, container) pair to
 // address.
 //
-// Called with no store lock held — PutItem/UpdateItem/BatchPutItems snapshot
-// item(s) and release m.mu before calling this — so a function invoked by
+// Called with no store lock held (PutItem/UpdateItem/BatchPutItems snapshot
+// item(s) and release m.mu before calling this) so a function invoked by
 // the trigger may itself write back into Cosmos DB without deadlocking. item
 // must already be a snapshot the caller owns exclusively; this method does
 // not clone it again.
@@ -76,8 +76,8 @@ func (m *Mock) dispatchFunctionTrigger(ctx context.Context, table string, item m
 // ("{account}/{database}/{container}", with the account segment omitted for
 // the default account). Cosmos account, database and container identifiers
 // cannot contain "/", so the decoding is unambiguous. A table name with fewer
-// than two segments — e.g. one created directly through the flat
-// driver.Database API rather than the Cosmos SQL wire layer — carries no
+// than two segments (e.g. one created directly through the flat
+// driver.Database API rather than the Cosmos SQL wire layer) carries no
 // database identity and returns ok=false.
 func cosmosDatabaseContainer(table string) (database, container string, ok bool) {
 	idx := strings.LastIndexByte(table, '/')

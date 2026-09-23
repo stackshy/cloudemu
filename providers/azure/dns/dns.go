@@ -30,8 +30,8 @@ type Mock struct {
 
 	// recordsMu serializes the read-check-mint-write sequence every
 	// record-set-mutating method performs, so a concurrent write can never
-	// observe a stale existence/etag check and then land its own write past it
-	// — the classic TOCTOU a bare memstore Get followed by a separate Set/Delete
+	// observe a stale existence/etag check and then land its own write past it,
+	// the classic TOCTOU a bare memstore Get followed by a separate Set/Delete
 	// call would allow. It is a plain package-level mutex rather than a
 	// per-record lock: DNS record-set write volume is low, and a single lock
 	// keeps the CreateOrUpdate atomicity (existence + If-Match/If-None-Match
@@ -166,7 +166,7 @@ func (m *Mock) ListZones(_ context.Context, filter scope.Scope) ([]driver.ZoneIn
 }
 
 // UpdateZone applies the mutable fields (tags, scope) of an existing zone,
-// matching it by name — ARM CreateOrUpdate-on-existing semantics. Identity
+// matching it by name, using ARM CreateOrUpdate-on-existing semantics. Identity
 // and record count are preserved.
 func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
 	for _, z := range m.zones.SortedValues() {
@@ -250,7 +250,7 @@ func (m *Mock) validateRecordCfg(cfg *driver.RecordConfig) error {
 
 // buildRecordInfo copies cfg's mutable fields into a fresh RecordInfo and
 // mints it a new ETag distinct from whatever the key previously held, so every
-// successful write — create or update — changes the record set's etag the way
+// successful write (create or update) changes the record set's etag the way
 // real Azure DNS does.
 func (m *Mock) buildRecordInfo(cfg *driver.RecordConfig, key string) driver.RecordInfo {
 	values := make([]string, len(cfg.Values))
@@ -273,7 +273,7 @@ func (m *Mock) buildRecordInfo(cfg *driver.RecordConfig, key string) driver.Reco
 // would violate Azure's CNAME coexistence rule: a CNAME cannot share a name
 // with any other record set, and no other record set can share a name with a
 // CNAME. Both orders are checked. A same-type match (e.g. a second CNAME) is
-// not a coexistence conflict here — it is handled as AlreadyExists.
+// not a coexistence conflict here: it is handled as AlreadyExists.
 func (m *Mock) hasCNAMEConflict(zoneID, name, recordType string) bool {
 	newIsCNAME := strings.EqualFold(recordType, cnameType)
 	existing := m.records.SortedValues()
@@ -405,7 +405,7 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 
 	// SortedValues gives a stable order keyed by zoneID:name:type[:setID];
 	// filter to this zone in that order so ListRecords is deterministic
-	// (map iteration order must never reach the wire — #259).
+	// (map iteration order must never reach the wire, see #259).
 	all := m.records.SortedValues()
 
 	records := make([]driver.RecordInfo, 0, len(all))
@@ -443,7 +443,7 @@ func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 }
 
 // wildcardETag is the If-None-Match value Azure DNS (and HTTP conditional
-// requests generally) uses to mean "any representation" — i.e. "succeed only
+// requests generally) uses to mean "any representation", i.e. "succeed only
 // if no record set currently exists at this key".
 const wildcardETag = "*"
 
@@ -453,16 +453,16 @@ const wildcardETag = "*"
 // makes the call create-only, rejecting it with FailedPrecondition if a record
 // set already exists at the key; a non-empty ifMatch makes it a conditional
 // update, rejecting it with FailedPrecondition if the record set is missing or
-// its current ETag does not equal ifMatch. It is Azure-specific — If-Match/
+// its current ETag does not equal ifMatch. It is Azure-specific: If-Match/
 // If-None-Match preconditions are an ARM wire concept with no AWS Route 53 or
-// GCP Cloud DNS equivalent — so it lives outside the shared driver.DNS
+// GCP Cloud DNS equivalent, so it lives outside the shared driver.DNS
 // interface rather than as a new interface method those providers would also
 // have to implement.
 //
 // The whole read-check-mint-write sequence runs under recordsMu, the same lock
 // CreateRecord/UpdateRecord/DeleteRecord take, so a concurrent write against the
-// same key can never slip between this call's precondition check and its store
-// — the exact TOCTOU class a separate Get followed by a Create-or-Update call
+// same key can never slip between this call's precondition check and its store,
+// the exact TOCTOU class a separate Get followed by a Create-or-Update call
 // would allow.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.

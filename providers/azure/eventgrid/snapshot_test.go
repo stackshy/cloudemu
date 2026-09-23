@@ -11,7 +11,7 @@ import (
 )
 
 // TestSnapshotRestoreRoundTrip proves the Event Grid mock serializes its entire
-// state — topics, subscriptions (rules), and targets — and restores it into a
+// state, topics, subscriptions (rules), and targets, and restores it into a
 // fresh mock identity-preservingly, re-deriving each rule's filter/destination.
 func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	ctx := context.Background()

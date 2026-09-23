@@ -10,7 +10,7 @@ import (
 
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // SQL virtual machines hold no bulk object bodies. Record is fully exported and
 // round-trips through the generic memstore helper.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {

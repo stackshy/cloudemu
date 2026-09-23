@@ -61,7 +61,7 @@ func (m *Mock) seedDefaultConsumerGroup(sub, rg, hub string) {
 }
 
 // CreateOrUpdateConsumerGroup creates a consumer group under a hub. The parent
-// hub must exist — otherwise it returns a NotFound error (the wire layer maps it
+// hub must exist: otherwise it returns a NotFound error (the wire layer maps it
 // to ParentResourceNotFound). The etag is minted once at create and preserved.
 // It returns the stored consumer group and whether it was newly created.
 func (m *Mock) CreateOrUpdateConsumerGroup(
@@ -118,7 +118,7 @@ func (m *Mock) DeleteConsumerGroup(_ context.Context, sub, rg, hub, name string)
 }
 
 // ListConsumerGroups returns every consumer group under a hub, sorted by name.
-// The parent hub must exist — otherwise it returns a NotFound error.
+// The parent hub must exist: otherwise it returns a NotFound error.
 func (m *Mock) ListConsumerGroups(_ context.Context, sub, rg, hub string) ([]ConsumerGroup, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

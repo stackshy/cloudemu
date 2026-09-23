@@ -157,8 +157,8 @@ func withDatabaseDefaults(cfg *rdsdriver.DatabaseConfig) {
 
 // deriveDatabaseSKU fills the tier and vCore capacity implied by the database's
 // service-objective (SKU) name, so a create/update that supplies only the name
-// (e.g. azurerm's sku_name) stores — and therefore reads back and reports to
-// Resource Graph — the tier real Azure derives from it. The name is
+// (e.g. azurerm's sku_name) stores, and therefore reads back and reports to
+// Resource Graph, the tier real Azure derives from it. The name is
 // authoritative: "S0" is Standard, not the old hardcoded GeneralPurpose. An
 // unrecognized name (e.g. an elastic-pool sku) derives nothing and leaves the
 // caller's values intact.
@@ -177,7 +177,7 @@ func deriveDatabaseSKU(cfg *rdsdriver.DatabaseConfig) {
 // applyCopySource resolves the copy/restore source database named by
 // cfg.SourceDatabaseID and seeds cfg with the source's properties that the
 // request left unset (collation, charset, SKU). The result is an independent,
-// standalone database — the source's elastic-pool membership is not inherited.
+// standalone database: the source's elastic-pool membership is not inherited.
 // The caller holds m.mu, so the source read is on the already-locked store.
 func (m *Mock) applyCopySource(cfg *rdsdriver.DatabaseConfig) error {
 	if cfg.SourceDatabaseID == "" {

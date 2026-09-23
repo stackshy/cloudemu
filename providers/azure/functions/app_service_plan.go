@@ -9,13 +9,13 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 )
 
-// AppServicePlan is an Azure App Service plan (Microsoft.Web/serverfarms) — the
+// AppServicePlan is an Azure App Service plan (Microsoft.Web/serverfarms), the
 // resource that carries the pricing tier an App Service or Function App bills
 // on. Only the cost-relevant SKU is modeled.
 type AppServicePlan struct {
 	Name string
 	// Subscription and ResourceGroup scope the plan's storage key
-	// (planKey) — unlike a Web App name, an App Service plan name is only
+	// (planKey): unlike a Web App name, an App Service plan name is only
 	// required to be unique within a resource group, so two different
 	// resource groups (even in the same subscription) can each have a plan
 	// named e.g. "default".
@@ -163,7 +163,7 @@ func (m *Mock) GetAppServicePlan(_ context.Context, subscription, resourceGroup,
 // DeleteAppServicePlan removes one App Service plan scoped to the given
 // subscription and resource group, or NotFound. A plan that still has a Web App
 // assigned to it (any site whose ServerFarmID targets the plan's ARM id) cannot
-// be deleted — real Azure answers 409 Conflict ("Server farm ... cannot be
+// be deleted: real Azure answers 409 Conflict ("Server farm ... cannot be
 // deleted because it has web app(s) assigned to it"), so the delete is rejected
 // with FailedPrecondition (mapped to 409 by the wire layer) rather than
 // silently leaving every site pointing at a plan that no longer exists.
@@ -185,7 +185,7 @@ func (m *Mock) DeleteAppServicePlan(_ context.Context, subscription, resourceGro
 // planAssignedSite returns the name of a site still assigned to the named plan
 // (its ServerFarmID equal to the plan's ARM id), or "" when none reference it.
 // A site's plan may live in a different resource group than the site, so every
-// site in the subscription is a candidate — the join mirrors listPlanWebApps.
+// site in the subscription is a candidate, the join mirrors listPlanWebApps.
 func (m *Mock) planAssignedSite(subscription, resourceGroup, name string) string {
 	planID := idgen.AzureID(subscription, resourceGroup, "Microsoft.Web", "serverfarms", name)
 

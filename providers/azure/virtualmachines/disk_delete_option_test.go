@@ -13,7 +13,7 @@ import (
 )
 
 // attachDiskWithDeleteOption creates a managed disk, attaches it to instanceID
-// at device, and records its deleteOption (deleteOnTermination) — the sequence
+// at device, and records its deleteOption (deleteOnTermination), the sequence
 // the Azure VM wire handler runs when materializing an OS/data disk.
 func attachDiskWithDeleteOption(
 	ctx context.Context, t *testing.T, m *Mock, instanceID, device string, deleteOnTermination bool,
@@ -69,7 +69,7 @@ func TestTerminateDeleteOptionCascade(t *testing.T) {
 // under -race: for many VMs each holding a DeleteOnTermination=true disk, one
 // goroutine terminates the VM while another concurrently detaches its disk. Every
 // mutation goes through the store lock, so there is no data race, and the outcome
-// is always consistent — a disk that survives (detach won the race) is Unattached,
+// is always consistent: a disk that survives (detach won the race) is Unattached,
 // never left half-mutated.
 func TestConcurrentTerminateAndDetachNoRace(t *testing.T) {
 	ctx := context.Background()

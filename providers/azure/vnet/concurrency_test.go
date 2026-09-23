@@ -116,8 +116,8 @@ func TestConcurrentSubnetMutationAndRead(t *testing.T) {
 // TestConcurrentAssociateVsRelease drives the atomic in-use guards: concurrent
 // AssociateAddress / DisassociateAddress / ReleaseAddress on the same public IP
 // plus DescribeAddresses readers. The guard invariant is that an associated IP
-// is never released out from under its association — ReleaseAddress must return
-// FailedPrecondition while the IP is bound — and that the check-and-act never
+// is never released out from under its association: ReleaseAddress must return
+// FailedPrecondition while the IP is bound, and that the check-and-act never
 // tears under -race. A clean run with a consistent final read proves it.
 func TestConcurrentAssociateVsRelease(t *testing.T) {
 	t.Parallel()
@@ -184,7 +184,7 @@ func TestConcurrentAssociateVsRelease(t *testing.T) {
 
 	wg.Wait()
 
-	// Every IP must still exist and be readable — none released while bound.
+	// Every IP must still exist and be readable: none released while bound.
 	addrs, err := m.DescribeAddresses(ctx, nil)
 	require.NoError(t, err)
 	require.Len(t, addrs, workers)

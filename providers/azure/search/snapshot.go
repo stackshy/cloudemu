@@ -13,7 +13,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // searchSnapshot is the full serialized state of the Azure AI Search mock. Every
 // store holds a fully-exported driver value type (or the documents store's
 // map[string]any) keyed by service[/index]/name, so each round-trips through the
-// generic memstore helper — no promotion is needed. Seq is the monotonic etag
+// generic memstore helper: no promotion is needed. Seq is the monotonic etag
 // counter, captured so restored resources keep issuing fresh (non-colliding)
 // etags. The wired deps (m.opts, m.monitoring) are intentionally not serialized.
 type searchSnapshot struct {
@@ -62,7 +62,7 @@ func (m *Mock) storeDumps(snap *searchSnapshot) []struct {
 }
 
 // Snapshot captures every service and its data-plane resources as JSON.
-// includeAssets is unused — documents are always captured (they are the data
+// includeAssets is unused: documents are always captured (they are the data
 // plane's payload, not a separable bulk asset).
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap searchSnapshot

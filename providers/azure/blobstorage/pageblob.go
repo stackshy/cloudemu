@@ -19,7 +19,7 @@ const (
 	pageSize = 512
 	// maxPageBlobBytes is Azure's documented page-blob ceiling (8 TiB). A caller
 	// controls the requested size via x-ms-blob-content-length, so bound it before
-	// allocating the backing buffer — a valid page blob stays far under this.
+	// allocating the backing buffer: a valid page blob stays far under this.
 	maxPageBlobBytes int64 = 8 << 40
 )
 
@@ -37,7 +37,7 @@ func (m *Mock) CreatePageBlob(
 	}
 
 	// Immutable storage (WORM): re-creating a page blob over a protected key
-	// would replace its content with zero bytes — block it. A fresh key passes.
+	// would replace its content with zero bytes: block it. A fresh key passes.
 	if err := m.enforceImmutable(ctr, blob); err != nil {
 		return nil, err
 	}

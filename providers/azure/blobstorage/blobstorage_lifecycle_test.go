@@ -1,4 +1,4 @@
-// e2e_suite_storage_test.go — suite cell STORAGE/azure/portable.
+// e2e_suite_storage_test.go: suite cell STORAGE/azure/portable.
 //
 // Real-user-journey  tests that exercise the Azure Blob Storage mock
 // through the portable driver.Bucket API directly.
@@ -345,7 +345,7 @@ func TestPagination(t *testing.T) {
 }
 
 // TestDelimiterRollup verifies survey behavior: common prefixes
-// are rolled up but NOT paginated — the full prefix set is always returned.
+// are rolled up but NOT paginated: the full prefix set is always returned.
 func TestDelimiterRollup(t *testing.T) {
 	ctx := context.Background()
 	m, _ := newMock()
@@ -646,7 +646,7 @@ func TestVersioning(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, enabled)
 
-	// flag only — overwriting an object keeps exactly one copy (no history)
+	// flag only: overwriting an object keeps exactly one copy (no history)
 	require.NoError(t, m.PutObject(ctx, bucket, "k", []byte("v1"), "text/plain", nil))
 	require.NoError(t, m.PutObject(ctx, bucket, "k", []byte("v2"), "text/plain", nil))
 
@@ -938,14 +938,14 @@ func TestDataIsolation(t *testing.T) {
 	buf := []byte("original")
 	require.NoError(t, m.PutObject(ctx, bucket, "k", buf, "text/plain", nil))
 
-	// mutate the caller's buffer after Put — stored copy must be unaffected
+	// mutate the caller's buffer after Put: stored copy must be unaffected
 	copy(buf, "XXXXXXXX")
 
 	got, err := m.GetObject(ctx, bucket, "k")
 	require.NoError(t, err)
 	assert.Equal(t, []byte("original"), got.Data, "PutObject stores a defensive copy of data")
 
-	// mutate the returned buffer — stored copy must be unaffected
+	// mutate the returned buffer: stored copy must be unaffected
 	copy(got.Data, "YYYYYYYY")
 
 	got2, err := m.GetObject(ctx, bucket, "k")

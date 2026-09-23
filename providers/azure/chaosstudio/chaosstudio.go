@@ -1,8 +1,8 @@
 // Package chaosstudio provides an in-memory mock of Azure Chaos Studio
-// (Microsoft.Chaos/experiments) — the ARM control plane only. It manages the
+// (Microsoft.Chaos/experiments), the ARM control plane only. It manages the
 // experiment resource lifecycle (create/update/get/delete/list); no faults are
-// ever injected (Chaos Studio's data plane — starting/canceling executions and
-// the targets/capabilities resources nested under other resources — is out of
+// ever injected (Chaos Studio's data plane, starting/canceling executions and
+// the targets/capabilities resources nested under other resources, is out of
 // scope). This package is unrelated to CloudEmu's features/chaos fault-injection
 // engine; it emulates the Azure Chaos Studio ARM product surface.
 //
@@ -15,7 +15,7 @@
 // The rich selectors and steps configuration is carried verbatim as raw JSON, so
 // the deeply-nested branch/action blocks round-trip byte-for-byte and cannot
 // drift. Every computed field is derived deterministically from the resource
-// identity, so the same resource always reports the same values — across gets,
+// identity, so the same resource always reports the same values, across gets,
 // updates and a snapshot/restore.
 package chaosstudio
 

@@ -97,7 +97,7 @@ type registryDataSnapshot struct {
 	Password2 string               `json:"password2,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused:
 // ACR stores image metadata/layers, not bulk blobs.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := acrSnapshot{
