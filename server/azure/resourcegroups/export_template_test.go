@@ -1,7 +1,7 @@
 // Regression test for exportTemplate actually enumerating a resource group's
 // members: https://learn.microsoft.com/en-us/rest/api/resources/resource-groups/export-template
 // documents a "resources" array of type/apiVersion/name/location/properties
-// entries in the returned template — before this fix the handler always
+// entries in the returned template: before this fix the handler always
 // returned an empty array regardless of what the group held.
 
 package resourcegroups_test
@@ -77,7 +77,7 @@ func TestExportTemplateEnumeratesGroupResources(t *testing.T) {
 	assert.NotEmpty(t, entry["apiVersion"])
 
 	// A group export scoped to a name that isn't the VM's own group stays
-	// empty — exportTemplate must not leak resources across groups.
+	// empty: exportTemplate must not leak resources across groups.
 	_, err = rgClient.CreateOrUpdate(ctx, "otherrg", armresources.ResourceGroup{
 		Location: to.Ptr("eastus"),
 	}, nil)

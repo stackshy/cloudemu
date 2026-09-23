@@ -105,7 +105,7 @@ func TestSDKNamespaceTagsAndScopedListing(t *testing.T) {
 		t.Fatalf("rg-b list = %v, want [ns-b]", gotB)
 	}
 
-	// Get from the wrong resource group must 404 — ns-a lives in rg-a.
+	// Get from the wrong resource group must 404: ns-a lives in rg-a.
 	if _, err := c.Get(ctx, "rg-b", "ns-a", nil); err == nil {
 		t.Fatal("Get ns-a via rg-b returned nil error, want NotFound")
 	}

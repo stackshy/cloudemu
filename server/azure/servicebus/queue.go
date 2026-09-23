@@ -24,9 +24,9 @@ func (h *Handler) serveQueue(w http.ResponseWriter, r *http.Request, sp sbPath) 
 		return
 	}
 
-	// Anything beyond "queues/{name}" — e.g. a queue-scoped authorizationRules
+	// Anything beyond "queues/{name}" (e.g. a queue-scoped authorizationRules
 	// sub-resource, which real Service Bus exposes but this handler does not
-	// model — must be rejected explicitly. Falling through to the queue's own
+	// model) must be rejected explicitly. Falling through to the queue's own
 	// CRUD handlers below would otherwise treat the nested path as an
 	// operation on the queue itself: a PUT would silently reset the queue's
 	// properties to the sub-resource's request body, a GET would echo the
