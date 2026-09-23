@@ -15,6 +15,11 @@ func newTestMock() *Mock {
 	return New(opts)
 }
 
+// testCerts is a single default certificate for HTTPS and TLS listeners.
+//
+//nolint:gochecknoglobals // shared read-only test fixture.
+var testCerts = []driver.Certificate{{CertificateArn: "arn:aws:acm:us-east-1:123456789012:certificate/test", IsDefault: true}}
+
 func createTestLB(m *Mock) *driver.LBInfo {
 	info, _ := m.CreateLoadBalancer(context.Background(), driver.LBConfig{
 		Name:    "my-lb",
@@ -217,7 +222,9 @@ func TestDeleteListenerCascadesRules(t *testing.T) {
 	lb := createTestLB(m)
 
 	victim, _ := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: "HTTP", Port: 80})
-	survivor, _ := m.CreateListener(ctx, driver.ListenerConfig{LBARN: lb.ARN, Protocol: "HTTPS", Port: 443})
+	survivor, _ := m.CreateListener(ctx, driver.ListenerConfig{
+		LBARN: lb.ARN, Protocol: "HTTPS", Port: 443, Certificates: testCerts,
+	})
 
 	_, _ = m.CreateRule(ctx, driver.RuleConfig{ListenerARN: victim.ARN, Priority: 10})
 	_, _ = m.CreateRule(ctx, driver.RuleConfig{ListenerARN: victim.ARN, Priority: 20})
@@ -244,7 +251,7 @@ func TestDescribeListeners(t *testing.T) {
 		LBARN: lb.ARN, Protocol: "HTTP", Port: 80,
 	})
 	_, _ = m.CreateListener(ctx, driver.ListenerConfig{
-		LBARN: lb.ARN, Protocol: "HTTPS", Port: 443,
+		LBARN: lb.ARN, Protocol: "HTTPS", Port: 443, Certificates: testCerts,
 	})
 
 	t.Run("success", func(t *testing.T) {
@@ -812,7 +819,7 @@ func TestModifyListener(t *testing.T) {
 
 	t.Run("modify protocol", func(t *testing.T) {
 		err := m.ModifyListener(ctx, driver.ModifyListenerInput{
-			ListenerARN: li.ARN, Protocol: "HTTPS",
+			ListenerARN: li.ARN, Protocol: "HTTPS", Certificates: testCerts,
 		})
 		requireNoError(t, err)
 

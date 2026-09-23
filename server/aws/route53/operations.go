@@ -368,6 +368,14 @@ func validateRecordSet(rr *resourceRecordSetXML, apex string) error {
 		return cerrors.New(cerrors.InvalidArgument, "record set name and type are required")
 	}
 
+	if err := validateRecordType(rr.Type); err != nil {
+		return err
+	}
+
+	if err := validateRecordShape(rr); err != nil {
+		return err
+	}
+
 	// A CNAME is not permitted at the zone apex — the apex must carry the SOA and
 	// NS records, so it can only use an A/AAAA or an ALIAS. Real Route 53 rejects
 	// an apex CNAME as an InvalidChangeBatch (FailedPrecondition maps to that).
@@ -386,7 +394,7 @@ func validateRecordSet(rr *resourceRecordSetXML, apex string) error {
 			"record set %q %s: SetIdentifier is required for weighted routing", rr.Name, rr.Type)
 	}
 
-	return nil
+	return validateRecordValues(rr)
 }
 
 // sameDNSName reports whether two DNS names are equal, case- and
@@ -836,6 +844,32 @@ func writeError(w http.ResponseWriter, status int, code, msg string) {
 	})
 }
 
+// invalidDomainNamePrefix marks a zone name the provider rejected. It must
+// match the prefix the Route 53 provider puts on that error.
+const invalidDomainNamePrefix = "InvalidDomainName: "
+
+// writeInvalidArgument writes a 400 InvalidInput, or InvalidDomainName when the
+// provider rejected a zone name.
+func writeInvalidArgument(w http.ResponseWriter, err error) {
+	msg := cerrors.Message(err)
+	if rest, ok := strings.CutPrefix(msg, invalidDomainNamePrefix); ok {
+		writeError(w, http.StatusBadRequest, "InvalidDomainName", rest)
+		return
+	}
+
+	writeError(w, http.StatusBadRequest, "InvalidInput", msg)
+}
+
+// writeInvalidChangeBatch writes a 400 InvalidChangeBatch in the shape real
+// Route 53 uses, with the reason in Messages.
+func writeInvalidChangeBatch(w http.ResponseWriter, msg string) {
+	wire.WriteXML(w, http.StatusBadRequest, invalidChangeBatchResponse{
+		Xmlns:    xmlns,
+		Messages: []string{msg},
+		Error:    errorXML{Code: "InvalidChangeBatch", Message: msg},
+	})
+}
+
 // writeErr maps a canonical cloudemu error to a Route 53 XML error response.
 // It is for zone-level operations (Get/Delete/CreateHostedZone), where a
 // missing or duplicate resource is the zone itself.
@@ -846,9 +880,9 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsAlreadyExists(err):
 		writeError(w, http.StatusConflict, "HostedZoneAlreadyExists", cleanMsg(err))
 	case cerrors.IsInvalidArgument(err):
-		writeError(w, http.StatusBadRequest, "InvalidInput", cleanMsg(err))
+		writeInvalidArgument(w, err)
 	case cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusBadRequest, "InvalidChangeBatch", cleanMsg(err))
+		writeInvalidChangeBatch(w, cleanMsg(err))
 	default:
 		writeError(w, http.StatusInternalServerError, "InternalError", cleanMsg(err))
 	}
@@ -861,7 +895,7 @@ func writeErr(w http.ResponseWriter, err error) {
 func writeChangeErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err), cerrors.IsAlreadyExists(err), cerrors.IsFailedPrecondition(err):
-		writeError(w, http.StatusBadRequest, "InvalidChangeBatch", cleanMsg(err))
+		writeInvalidChangeBatch(w, cleanMsg(err))
 	case cerrors.IsInvalidArgument(err):
 		writeError(w, http.StatusBadRequest, "InvalidInput", cleanMsg(err))
 	default:

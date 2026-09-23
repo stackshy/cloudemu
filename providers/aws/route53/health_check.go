@@ -13,14 +13,15 @@ const (
 	defaultFailureThreshold = 3
 	statusHealthy           = "HEALTHY"
 	statusUnhealthy         = "UNHEALTHY"
+	healthCheckTCP          = "TCP"
 )
 
 // CreateHealthCheck creates a new Route 53 health check.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateHealthCheck(_ context.Context, cfg driver.HealthCheckConfig) (*driver.HealthCheckInfo, error) {
-	if cfg.Endpoint == "" {
-		return nil, errors.New(errors.InvalidArgument, "endpoint is required")
+	if err := validateHealthCheckConfig(&cfg); err != nil {
+		return nil, err
 	}
 
 	id := idgen.GenerateID("hc-")
@@ -57,6 +58,35 @@ func (m *Mock) CreateHealthCheck(_ context.Context, cfg driver.HealthCheckConfig
 	result := hc
 
 	return &result, nil
+}
+
+// validateHealthCheckConfig applies the per-type endpoint rules. CALCULATED,
+// CLOUDWATCH_METRIC and RECOVERY_CONTROL checks watch other resources, so they
+// take no endpoint or port. Every other type needs an endpoint, and TCP also
+// needs a port.
+func validateHealthCheckConfig(cfg *driver.HealthCheckConfig) error {
+	switch cfg.Protocol {
+	case "CALCULATED", "CLOUDWATCH_METRIC", "RECOVERY_CONTROL":
+		if cfg.Endpoint != "" || cfg.Port != 0 {
+			return errors.Newf(errors.InvalidArgument,
+				"IPAddress, FullyQualifiedDomainName and Port are not allowed for %s health checks", cfg.Protocol)
+		}
+
+		return nil
+	case "", "HTTP", "HTTPS", "HTTP_STR_MATCH", "HTTPS_STR_MATCH", healthCheckTCP:
+	default:
+		return errors.Newf(errors.InvalidArgument, "invalid health check type %q", cfg.Protocol)
+	}
+
+	if cfg.Endpoint == "" {
+		return errors.New(errors.InvalidArgument, "endpoint is required")
+	}
+
+	if cfg.Protocol == healthCheckTCP && cfg.Port == 0 {
+		return errors.New(errors.InvalidArgument, "Port is required for TCP health checks")
+	}
+
+	return nil
 }
 
 // DeleteHealthCheck deletes a Route 53 health check by ID.

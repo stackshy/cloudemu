@@ -152,6 +152,10 @@ func (m *Mock) CreateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 		return nil, errors.New(errors.InvalidArgument, "zone name is required")
 	}
 
+	if err := validateZoneName(cfg.Name); err != nil {
+		return nil, err
+	}
+
 	m.createMu.Lock()
 	defer m.createMu.Unlock()
 

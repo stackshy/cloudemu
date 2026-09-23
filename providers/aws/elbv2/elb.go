@@ -334,6 +334,10 @@ func (m *Mock) CreateTargetGroup(_ context.Context, cfg driver.TargetGroupConfig
 		return nil, errors.New(errors.InvalidArgument, "target group name is required")
 	}
 
+	if err := validateTargetGroupProtocol(cfg.Protocol, cfg.TargetType); err != nil {
+		return nil, err
+	}
+
 	// Real ELBv2 rejects a second target group with the same name in the
 	// account/region with DuplicateTargetGroupName.
 	for _, existing := range m.tgs.All() {
@@ -717,6 +721,10 @@ func (m *Mock) CreateListener(_ context.Context, cfg driver.ListenerConfig) (*dr
 		return nil, errors.Newf(errors.NotFound, "load balancer %q not found", cfg.LBARN)
 	}
 
+	if err := validateNewListener(lb.Type, cfg.Protocol, len(cfg.Certificates)); err != nil {
+		return nil, err
+	}
+
 	// Any forward default action must reference a target group that exists;
 	// real ELBv2 rejects a bogus TargetGroupArn with TargetGroupNotFound.
 	if err := m.validateForwardActions(cfg.DefaultActions); err != nil {
@@ -994,6 +1002,11 @@ func (m *Mock) ModifyListener(_ context.Context, input driver.ModifyListenerInpu
 
 	if len(input.Certificates) > 0 {
 		li.Certificates = cloneCertificates(input.Certificates)
+	}
+
+	// Check the merged listener, so a switch to HTTPS without a certificate fails.
+	if err := validateModifiedListener(m.lbType(li.LBARN), &li, len(input.Certificates)); err != nil {
+		return err
 	}
 
 	m.listeners.Set(input.ListenerARN, li)
