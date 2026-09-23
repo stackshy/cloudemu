@@ -836,7 +836,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(cloudasset.New(d.ResourceDiscovery, d.ProjectID))
 	}
 
-	// IAM matches /v1/projects/{p}/{serviceAccounts|roles}[/…], its
+	// IAM matches /v1/projects/{p}/{serviceAccounts|roles}[/…]; its
 	// resource-type guard is disjoint from Firestore (which serves
 	// /v1/projects/{p}/databases/…) and from CloudFunctions / PubSub /
 	// CloudSQL / GKE / CloudAsset, so registration order is unconstrained
@@ -931,7 +931,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(msH)
 	}
 
-	// Cloud Scheduler matches /v1/projects/{p}/locations/{l}/jobs[/…], its jobs
+	// Cloud Scheduler matches /v1/projects/{p}/locations/{l}/jobs[/…]; its jobs
 	// resource-type guard is disjoint from Memorystore (instances|operations),
 	// Eventarc (triggers), GKE (clusters), and the rest of the /v1/projects/
 	// family; Cloud Run's jobs are under the /v2/ prefix. All eight methods are
@@ -940,7 +940,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(schedulersrv.New(d.Scheduler))
 	}
 
-	// Cloud Tasks matches /v2/projects/{p}/locations/{l}/queues[/…], its queues
+	// Cloud Tasks matches /v2/projects/{p}/locations/{l}/queues[/…]; its queues
 	// resource-type guard on the /v2/ prefix keeps it disjoint from Cloud Run
 	// (jobs|services, also /v2/) and from the entire /v1/projects/ family
 	// (including Firestore's permissive prefix), so registration order is
@@ -950,7 +950,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	// Binary Authorization matches /v1/projects/{p}/policy and
-	// /v1/projects/{p}/attestors[/…], its policy|attestors resource-type guard
+	// /v1/projects/{p}/attestors[/…]; its policy|attestors resource-type guard
 	// keeps it disjoint from every other /v1/projects/ handler, and it never
 	// claims operations. All ten methods are synchronous (no LRO). Registered
 	// before Firestore's permissive /v1/projects/ prefix.
