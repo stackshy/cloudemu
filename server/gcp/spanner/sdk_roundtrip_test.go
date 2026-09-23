@@ -54,7 +54,7 @@ func TestSDKSpannerInstanceAndDatabaseRoundTrip(t *testing.T) {
 	spSvc, _ := newServer(t)
 	parent := "projects/" + project
 
-	// Create instance (LRO) — num_nodes=1.
+	// Create instance (LRO): num_nodes=1.
 	op, err := spSvc.Projects.Instances.Create(parent, &sp.CreateInstanceRequest{
 		InstanceId: "orders",
 		Instance: &sp.Instance{
@@ -72,7 +72,7 @@ func TestSDKSpannerInstanceAndDatabaseRoundTrip(t *testing.T) {
 		t.Fatalf("create operation not done: %+v", op)
 	}
 
-	// Get instance — full name, config, displayName, derived nodeCount+PU, READY.
+	// Get instance: full name, config, displayName, derived nodeCount+PU, READY.
 	name := parent + "/instances/orders"
 
 	inst, err := spSvc.Projects.Instances.Get(name).Do()
@@ -92,7 +92,7 @@ func TestSDKSpannerInstanceAndDatabaseRoundTrip(t *testing.T) {
 		t.Fatalf("state/labels: state=%q labels=%v", inst.State, inst.Labels)
 	}
 
-	// Patch instance (LRO, fieldMask) — scale to 2 nodes.
+	// Patch instance (LRO, fieldMask): scale to 2 nodes.
 	pop, err := spSvc.Projects.Instances.Patch(name, &sp.UpdateInstanceRequest{
 		FieldMask: "nodeCount",
 		Instance:  &sp.Instance{Name: name, NodeCount: 2},
@@ -126,7 +126,7 @@ func TestSDKSpannerInstanceAndDatabaseRoundTrip(t *testing.T) {
 		t.Fatalf("database: state=%q dialect=%q", db.State, db.DatabaseDialect)
 	}
 
-	// updateDdl (LRO) — add a table.
+	// updateDdl (LRO): add a table.
 	uop, err := spSvc.Projects.Instances.Databases.UpdateDdl(dbName, &sp.UpdateDatabaseDdlRequest{
 		Statements: []string{"CREATE TABLE t2 (id INT64) PRIMARY KEY(id)"},
 	}).Do()
@@ -166,7 +166,7 @@ func TestSDKSpannerInstanceAndDatabaseRoundTrip(t *testing.T) {
 func TestCloudSQLCoexistence(t *testing.T) {
 	spSvc, sqlSvc := newServer(t)
 
-	// Cloud SQL insert — body has no instanceId/instance, so Spanner declines the
+	// Cloud SQL insert: body has no instanceId/instance, so Spanner declines the
 	// POST and it falls through to Cloud SQL.
 	if _, err := sqlSvc.Instances.Insert(project, &sqladmin.DatabaseInstance{
 		Name:            "sql-orders",

@@ -92,7 +92,7 @@ func TestGen2InvokeThroughDriver(t *testing.T) {
 		t.Fatalf("Create (gen2): %v", err)
 	}
 
-	// Invoke through the gen2 invoke path — the function is now in the driver, so
+	// Invoke through the gen2 invoke path. The function is now in the driver, so
 	// the echo stub returns the request payload just like a gen1 :call.
 	payload := `{"hello":"world"}`
 
@@ -193,7 +193,7 @@ func TestSDKGen2ConcurrentPatchDelete(t *testing.T) {
 	const iterations = 25
 
 	for i := 0; i < iterations; i++ {
-		// Create must succeed every iteration — the previous iteration must have
+		// Create must succeed every iteration. The previous iteration must have
 		// left no zombie driver entry poisoning the name.
 		if _, err := svc2.Projects.Locations.Functions.Create(parent, &cloudfunctions2.Function{
 			BuildConfig: &cloudfunctions2.BuildConfig{Runtime: "go121", EntryPoint: "Hello"},
@@ -205,7 +205,7 @@ func TestSDKGen2ConcurrentPatchDelete(t *testing.T) {
 
 		wg.Add(2)
 
-		// Patch: may succeed or 404 depending on the interleaving — both are valid,
+		// Patch: may succeed or 404 depending on the interleaving. Both are valid,
 		// so its error is not asserted.
 		go func() {
 			defer wg.Done()

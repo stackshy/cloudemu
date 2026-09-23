@@ -6,22 +6,22 @@
 // Coverage (all mutating endpoints return Operation envelopes with done=true so
 // SDK callers observe a terminal operation immediately):
 //
-//	POST   /v1/projects/{p}/locations/{l}/clusters?clusterId={c}            — CreateCluster
-//	POST   /v1/projects/{p}/locations/{l}/clusters:createsecondary?clusterId={c} — CreateSecondary
-//	GET    /v1/projects/{p}/locations/{l}/clusters                          — ListClusters
-//	GET    /v1/projects/{p}/locations/{l}/clusters/{c}                      — GetCluster
-//	PATCH  /v1/projects/{p}/locations/{l}/clusters/{c}                      — UpdateCluster
-//	DELETE /v1/projects/{p}/locations/{l}/clusters/{c}                      — DeleteCluster
-//	POST   /v1/projects/{p}/locations/{l}/clusters/{c}:promote              — PromoteCluster
-//	POST   /v1/projects/{p}/locations/{l}/clusters/{c}/instances?instanceId={i} — CreateInstance
-//	GET    …/clusters/{c}/instances[/{i}]                                   — List/Get instance
-//	PATCH  …/clusters/{c}/instances/{i}                                     — UpdateInstance
-//	DELETE …/clusters/{c}/instances/{i}                                     — DeleteInstance
-//	POST   …/clusters/{c}/instances/{i}:failover|:restart                   — instance actions
-//	POST   …/clusters/{c}/users?userId={u}, GET/DELETE …/users[/{u}]        — users
-//	POST   /v1/projects/{p}/locations/{l}/backups?backupId={b}              — CreateBackup
-//	GET/DELETE /v1/projects/{p}/locations/{l}/backups[/{b}]                 — Get/List/Delete backup
-//	GET    /v1/projects/{p}/locations/{l}/operations/{op}                   — poll (always done)
+//	POST   /v1/projects/{p}/locations/{l}/clusters?clusterId={c}            : CreateCluster
+//	POST   /v1/projects/{p}/locations/{l}/clusters:createsecondary?clusterId={c} : CreateSecondary
+//	GET    /v1/projects/{p}/locations/{l}/clusters                          : ListClusters
+//	GET    /v1/projects/{p}/locations/{l}/clusters/{c}                      : GetCluster
+//	PATCH  /v1/projects/{p}/locations/{l}/clusters/{c}                      : UpdateCluster
+//	DELETE /v1/projects/{p}/locations/{l}/clusters/{c}                      : DeleteCluster
+//	POST   /v1/projects/{p}/locations/{l}/clusters/{c}:promote              : PromoteCluster
+//	POST   /v1/projects/{p}/locations/{l}/clusters/{c}/instances?instanceId={i} : CreateInstance
+//	GET    …/clusters/{c}/instances[/{i}]                                   : List/Get instance
+//	PATCH  …/clusters/{c}/instances/{i}                                     : UpdateInstance
+//	DELETE …/clusters/{c}/instances/{i}                                     : DeleteInstance
+//	POST   …/clusters/{c}/instances/{i}:failover|:restart                   : instance actions
+//	POST   …/clusters/{c}/users?userId={u}, GET/DELETE …/users[/{u}]        : users
+//	POST   /v1/projects/{p}/locations/{l}/backups?backupId={b}              : CreateBackup
+//	GET/DELETE /v1/projects/{p}/locations/{l}/backups[/{b}]                 : Get/List/Delete backup
+//	GET    /v1/projects/{p}/locations/{l}/operations/{op}                   : poll (always done)
 //
 // The /v1/projects/ prefix is shared; Matches narrows to
 // .../locations/{l}/{clusters|backups|operations} so Vertex AI, Cloud SQL,
@@ -87,7 +87,7 @@ func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
 // an assembled server h.ops is the same *lro.Registry the shared poller
 // consults, and that poller is registered ahead of this handler, so it always
 // wins first-match-wins routing for every verb (GET/cancel/DELETE) on every
-// operation name, known or not — this handler never needs to (and, per this
+// operation name, known or not. This handler never needs to (and, per this
 // guard, no longer does) answer for operations it didn't create.
 func (h *Handler) Matches(r *http.Request) bool {
 	if !strings.HasPrefix(r.URL.Path, pathPrefix) {

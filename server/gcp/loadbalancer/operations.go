@@ -74,8 +74,8 @@ func (h *Handler) insertBackendService(w http.ResponseWriter, r *http.Request, r
 
 // patchBackendService applies compute.backendServices.patch/update: it merges
 // the request's non-empty fields onto the existing backend service and returns
-// a DONE Operation. Without it, Terraform's google_compute_backend_service —
-// which patches on every change — leaves the resource read-only after create.
+// a DONE Operation. Without it, Terraform's google_compute_backend_service,
+// which patches on every change, leaves the resource read-only after create.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) patchBackendService(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
@@ -208,7 +208,7 @@ func (h *Handler) instanceGroupMembers(ctx context.Context, group string) []stri
 // name). A ".../zones/{z}/instanceGroups/{n}" reference maps to the zonal
 // instanceGroups collection scoped by zone; ".../regions/{r}/instanceGroups/{n}"
 // to regionInstanceGroups scoped by region. The segment immediately before the
-// name must literally be "instanceGroups" — a NEG self-link
+// name must literally be "instanceGroups": a NEG self-link
 // (".../zones/{z}/networkEndpointGroups/{n}", the standard backends[].group for
 // Cloud Run/Functions behind an HTTPS LB) also carries a zones/regions scope
 // segment but must NOT be misclassified as an instance group. Any other shape

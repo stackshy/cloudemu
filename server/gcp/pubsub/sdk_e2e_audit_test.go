@@ -110,7 +110,7 @@ func TestSDKPubSubErrorMessagesOmitCodePrefix(t *testing.T) {
 
 // assertNoCodePrefix fails if msg contains one of cloudemu's internal
 // canonical error-code names followed by a colon (the shape err.Error()
-// produces via cerrors.Error, as opposed to cerrors.Message(err)) — whether
+// produces via cerrors.Error, as opposed to cerrors.Message(err)): whether
 // that leak is at the very start of the message or embedded after a
 // handler-added prefix like "invalid filter: ".
 func assertNoCodePrefix(t *testing.T, msg string) {
@@ -126,7 +126,7 @@ func assertNoCodePrefix(t *testing.T, msg string) {
 // TestSDKPubSubOrderingKeyBlocksSameKeyRedelivery guards enableMessageOrdering:
 // while an earlier message with a given ordering key is outstanding
 // (delivered, not yet acked), a later message sharing that key must not be
-// delivered — real Pub/Sub holds it back to preserve per-key ordering. A
+// delivered. Real Pub/Sub holds it back to preserve per-key ordering. A
 // message with a different key (or no key) is unaffected.
 func TestSDKPubSubOrderingKeyBlocksSameKeyRedelivery(t *testing.T) {
 	svc := newSDKService(t)
@@ -183,7 +183,7 @@ func TestSDKPubSubOrderingKeyBlocksSameKeyRedelivery(t *testing.T) {
 }
 
 // TestSDKPubSubOrderingKeyIgnoredWithoutEnableMessageOrdering guards that
-// ordering-key gating only applies when enableMessageOrdering is set — a
+// ordering-key gating only applies when enableMessageOrdering is set. A
 // subscription without it delivers same-key messages normally (both at once),
 // matching real Pub/Sub, which ignores ordering keys unless the subscription
 // opts in.

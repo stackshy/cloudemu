@@ -204,8 +204,8 @@ type Drivers struct {
 	GKEHub gkehubdriver.GKEHub
 	// DataFusion serves the datafusion.googleapis.com v1 instance control plane
 	// against the datafusion driver. Its paths live under /v1/projects/{p}/
-	// locations/{l}/instances[/{i}[:restart]] — the same grammar Memorystore and
-	// Filestore share — so the handler's Matches claims only genuinely-Data-Fusion
+	// locations/{l}/instances[/{i}[:restart]], the same grammar Memorystore and
+	// Filestore share, so the handler's Matches claims only genuinely-Data-Fusion
 	// traffic (a create body with a `type`, the :restart verb, or an item/list it
 	// owns), letting Redis/Filestore requests fall through. Its location-scoped
 	// operation polls are owned by the shared LRO poller.
@@ -303,7 +303,7 @@ type Drivers struct {
 	// live under /{v}/projects/{p}/locations/{l}/{apis|gateways}[/…]; the handler's
 	// Matches narrows on those resource segments, so it is disjoint from every
 	// other /v1/projects/ handler. The google-beta provider polls operations at
-	// its /v1beta/ base path — a space the shared LRO poller does not own — so the
+	// its /v1beta/ base path, a space the shared LRO poller does not own. So the
 	// handler serves its own /v1beta/ operation polls and yields the /v1/ ones to
 	// the shared poller.
 	APIGateway       agdriver.APIGateway
@@ -372,7 +372,7 @@ type Drivers struct {
 func New(d Drivers) *server.Server {
 	// AlloyDB and GKE claim the same /v1/projects/{p}/locations/{l}/clusters
 	// paths, so enabling both would silently shadow one. Fail fast rather than
-	// route ambiguously — use DriversFromWithAlloyDB to enable AlloyDB in place
+	// route ambiguously. Use DriversFromWithAlloyDB to enable AlloyDB in place
 	// of GKE.
 	if d.AlloyDB != nil && d.GKE != nil {
 		panic("gcp server: AlloyDB and GKE share REST paths and cannot both be enabled; " +
@@ -385,7 +385,7 @@ func New(d Drivers) *server.Server {
 	// operation shape (operationType/targetLink/selfLink/zone/timestamps) for
 	// its OWN operations. Its Matches claims a named operation poll only when
 	// the op was recorded by the GKE mock, so foreign location operations still
-	// fall through to lro below — no shadowing.
+	// fall through to lro below, no shadowing.
 	if d.GKE != nil {
 		gkeH := gke.New(d.GKE)
 		// Wire the compute-side MIG registrar (the GCE Mock) so node-pool
@@ -439,7 +439,7 @@ func New(d Drivers) *server.Server {
 
 	// Cloud Load Balancing shares the /compute/v1/projects/… URL space with the
 	// compute and networks handlers above but claims a disjoint set of resource
-	// types — backendServices / forwardingRules — whereas compute claims
+	// types (backendServices / forwardingRules), whereas compute claims
 	// instances / operations / disks / snapshots / images and networks claims
 	// networks / subnetworks / firewalls. gcprest.ParsePath keys dispatch on the
 	// resource-type segment, so first-match-wins routing is unambiguous and
@@ -517,7 +517,7 @@ func New(d Drivers) *server.Server {
 		// Monitoring -> PubSub: an alert-policy breach publishes the incident to
 		// each pubsub notification channel's topic. Topic fanout is wire-only, so
 		// the publisher is wired here (not providers/gcp/gcp.go) as an adapter over
-		// the PubSub handler — the same layer #803 wired the function-invoker at.
+		// the PubSub handler, the same layer #803 wired the function-invoker at.
 		if setter, ok := d.Monitoring.(interface {
 			SetPubSubPublisher(gcpmon.PubSubPublisher)
 		}); ok {
@@ -533,7 +533,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(bigtableserver.New(d.Bigtable))
 	}
 
-	// BigQuery matches /bigquery/v2/projects/{p}/datasets[...] — its own
+	// BigQuery matches /bigquery/v2/projects/{p}/datasets[...], its own
 	// /bigquery/v2/ URL space, disjoint from the /v1/projects/ family,
 	// /compute/v1/, and /dns/v1/, so registration order relative to every other
 	// handler is unconstrained.
@@ -620,8 +620,8 @@ func New(d Drivers) *server.Server {
 	// PrivateCA matches /v1/projects/{p}/locations/{l}/{caPools|certificateTemplates|
 	// operations}[/…], including the certificateAuthorities and certificates
 	// collections nested under a caPool. Its resource-segment guard is disjoint from
-	// every other /v1/projects/ handler — notably certificatemanager, whose
-	// certificates live at the location level, not nested under a caPool — so
+	// every other /v1/projects/ handler, notably certificatemanager, whose
+	// certificates live at the location level, not nested under a caPool, so
 	// registration order among them is unconstrained; registered before Firestore's
 	// permissive prefix. Its location-scoped operation polls are owned by the shared
 	// LRO poller, which the handler's Matches yields to.
@@ -711,9 +711,9 @@ func New(d Drivers) *server.Server {
 	// Data Fusion (datafusion.googleapis.com) shares the EXACT same instances path
 	// grammar as Secure Source Manager (below), Memorystore, and Filestore. It
 	// registers BEFORE all of them so its narrow Matches wins: it claims only
-	// genuinely-Data-Fusion traffic — a create body carrying a `type`
+	// genuinely-Data-Fusion traffic: a create body carrying a `type`
 	// (BASIC/ENTERPRISE/DEVELOPER, which the sibling instance bodies lack), the
-	// Data-Fusion-only :restart verb, or an item/list it owns — letting Secure
+	// Data-Fusion-only :restart verb, or an item/list it owns, letting Secure
 	// Source Manager / Redis / Filestore requests fall through. Its location-
 	// scoped operation polls are owned by the shared LRO poller, which the
 	// handler's Matches yields to.
@@ -727,9 +727,9 @@ func New(d Drivers) *server.Server {
 	// repositories}[/…]. Both collections collide on the identical path with
 	// greedy fall-through services registered AFTER it (instances with Filestore/
 	// Memorystore, repositories with Artifact Registry), so its Matches claims
-	// each only for genuinely-Secure-Source-Manager traffic — a create body with
+	// each only for genuinely-Secure-Source-Manager traffic: a create body with
 	// no Filestore/Redis signal / carrying the required repository `instance`
-	// reference, and item/list only for resources it owns — letting the sibling
+	// reference, and item/list only for resources it owns, letting the sibling
 	// services' requests fall through. This is the same content/ownership pattern
 	// Filestore uses; being registered first is therefore safe. Its
 	// location-scoped operation polls are owned by the shared LRO poller, which
@@ -769,7 +769,7 @@ func New(d Drivers) *server.Server {
 	// ServiceDirectory matches /v1/projects/{p}/locations/{l}/namespaces[/…]. Its
 	// namespaces resource-segment guard is disjoint from every other
 	// /v1/projects/ handler, so registration order among them is unconstrained;
-	// registered before Firestore's permissive prefix. CRUD is synchronous REST —
+	// registered before Firestore's permissive prefix. CRUD is synchronous REST:
 	// no operation registry is wired.
 	if d.ServiceDirectory != nil {
 		srv.Register(servicedirectorysrv.New(d.ServiceDirectory))
@@ -779,7 +779,7 @@ func New(d Drivers) *server.Server {
 	// [/…]. Its entryGroups/tagTemplates resource-segment guard is disjoint from
 	// every other /v1/projects/ handler, so registration order among them is
 	// unconstrained; registered before Firestore's permissive prefix. CRUD is
-	// synchronous REST — no operation registry is wired.
+	// synchronous REST: no operation registry is wired.
 	if d.DataCatalog != nil {
 		srv.Register(datacatalogsrv.New(d.DataCatalog))
 	}
@@ -788,7 +788,7 @@ func New(d Drivers) *server.Server {
 	// repositories resource-segment guard is disjoint from every other
 	// /v1beta1/projects/ handler, so registration order among them is
 	// unconstrained; registered before Firestore's permissive prefix. CRUD is
-	// synchronous REST — no operation registry is wired.
+	// synchronous REST: no operation registry is wired.
 	if d.Dataform != nil {
 		srv.Register(dataformsrv.New(d.Dataform))
 	}
@@ -808,7 +808,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	// AlloyDB matches /v1/projects/{p}/locations/{l}/{clusters|backups|
-	// operations}/... — the cluster/operations paths are identical to GKE's, so
+	// operations}/.... The cluster/operations paths are identical to GKE's, so
 	// the two are mutually exclusive on one server. Registered before GKE so an
 	// AlloyDB-configured server (GKE nil) works; DriversFrom leaves AlloyDB nil.
 	if d.AlloyDB != nil {
@@ -836,7 +836,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(cloudasset.New(d.ResourceDiscovery, d.ProjectID))
 	}
 
-	// IAM matches /v1/projects/{p}/{serviceAccounts|roles}[/…] — its
+	// IAM matches /v1/projects/{p}/{serviceAccounts|roles}[/…]; its
 	// resource-type guard is disjoint from Firestore (which serves
 	// /v1/projects/{p}/databases/…) and from CloudFunctions / PubSub /
 	// CloudSQL / GKE / CloudAsset, so registration order is unconstrained
@@ -846,8 +846,8 @@ func New(d Drivers) *server.Server {
 		srv.Register(iam.New(d.IAM))
 	}
 
-	// Artifact Registry matches /v1/projects/{p}/locations/{l}/repositories[/…]
-	// — disjoint from IAM (serviceAccounts|roles) and Cloud Asset. Registered
+	// Artifact Registry matches /v1/projects/{p}/locations/{l}/repositories[/…],
+	// disjoint from IAM (serviceAccounts|roles) and Cloud Asset. Registered
 	// among the /v1/projects/ family, before Firestore's catch-all.
 	if d.ArtifactRegistry != nil {
 		arH := artifactregistry.New(d.ArtifactRegistry)
@@ -855,14 +855,14 @@ func New(d Drivers) *server.Server {
 		srv.Register(arH)
 	}
 
-	// Secret Manager matches /v1/projects/{p}/secrets[/…] — disjoint from IAM
+	// Secret Manager matches /v1/projects/{p}/secrets[/…], disjoint from IAM
 	// (serviceAccounts|roles), Artifact Registry (locations/…), and the rest
 	// of the /v1/projects/ family. Registered before Firestore's catch-all.
 	if d.SecretManager != nil {
 		srv.Register(secretmanagersrv.New(d.SecretManager))
 	}
 
-	// Eventarc matches /v1/projects/{p}/locations/{l}/triggers[/…] — a
+	// Eventarc matches /v1/projects/{p}/locations/{l}/triggers[/…], a
 	// resource-type guard disjoint from IAM, Artifact Registry, Secret Manager,
 	// GKE, and the rest of the /v1/projects/ family. Registered before
 	// Firestore's catch-all.
@@ -886,7 +886,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(eaH)
 	}
 
-	// Cloud DNS matches /dns/v1/projects/{p}/managedZones[...] — a distinct
+	// Cloud DNS matches /dns/v1/projects/{p}/managedZones[...], a distinct
 	// URL space from the /v1/projects/ family, so registration order is
 	// unconstrained relative to Firestore and the rest. Registered before the
 	// GCS fallback for consistency with the other handlers.
@@ -894,21 +894,21 @@ func New(d Drivers) *server.Server {
 		srv.Register(clouddns.New(d.CloudDNS))
 	}
 
-	// Cloud Logging matches /v2/entries:{write,list} and /v2/projects/{p}/logs
-	// — the logging.googleapis.com v2 URL space, disjoint from the /v1/projects/
+	// Cloud Logging matches /v2/entries:{write,list} and /v2/projects/{p}/logs,
+	// the logging.googleapis.com v2 URL space, disjoint from the /v1/projects/
 	// family, /compute/v1/, and /dns/v1/, so registration order relative to them
 	// is unconstrained. Registered before the GCS fallback for consistency.
 	if d.CloudLogging != nil {
 		srv.Register(cloudloggingsrv.New(d.CloudLogging))
 	}
 
-	// Filestore (file.googleapis.com) shares the EXACT same path grammar as
-	// Memorystore — /v1/projects/{p}/locations/{l}/instances[/{i}] — on a
+	// Filestore (file.googleapis.com) shares the exact same path grammar as
+	// Memorystore (/v1/projects/{p}/locations/{l}/instances[/{i}]) on a
 	// different real host, and a custom-endpoint client sends the emulator's own
 	// Host, so the two cannot be told apart by URL or Host. Filestore registers
 	// BEFORE Memorystore and its Matches claims only genuinely-Filestore traffic
 	// (a create body carrying fileShares/networks, or an item/list this store
-	// owns), letting every Memorystore request fall through — the Spanner/Cloud
+	// owns), letting every Memorystore request fall through, the Spanner/Cloud
 	// SQL content+ownership pattern. It has no portable driver (the emulator
 	// models no NFS data plane); like Cloud KMS the handler owns its own store,
 	// so it is always registered. d.Clock (may be nil) makes createTime
@@ -918,8 +918,8 @@ func New(d Drivers) *server.Server {
 	filestoreH.SetOperationRegistry(opsReg)
 	srv.Register(filestoreH)
 
-	// Memorystore matches /v1/projects/{p}/locations/{l}/{instances|operations}
-	// — its resource-type guard is disjoint from GKE (clusters), Cloud Functions
+	// Memorystore matches /v1/projects/{p}/locations/{l}/{instances|operations},
+	// its resource-type guard is disjoint from GKE (clusters), Cloud Functions
 	// (functions), Vertex AI, and the rest of the /v1/projects/ family, so
 	// registration order among them is unconstrained. Registered before
 	// Firestore's permissive /v1/projects/ prefix so its paths aren't swallowed.
@@ -931,7 +931,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(msH)
 	}
 
-	// Cloud Scheduler matches /v1/projects/{p}/locations/{l}/jobs[/…] — its jobs
+	// Cloud Scheduler matches /v1/projects/{p}/locations/{l}/jobs[/…]; its jobs
 	// resource-type guard is disjoint from Memorystore (instances|operations),
 	// Eventarc (triggers), GKE (clusters), and the rest of the /v1/projects/
 	// family; Cloud Run's jobs are under the /v2/ prefix. All eight methods are
@@ -940,7 +940,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(schedulersrv.New(d.Scheduler))
 	}
 
-	// Cloud Tasks matches /v2/projects/{p}/locations/{l}/queues[/…] — its queues
+	// Cloud Tasks matches /v2/projects/{p}/locations/{l}/queues[/…]; its queues
 	// resource-type guard on the /v2/ prefix keeps it disjoint from Cloud Run
 	// (jobs|services, also /v2/) and from the entire /v1/projects/ family
 	// (including Firestore's permissive prefix), so registration order is
@@ -950,7 +950,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	// Binary Authorization matches /v1/projects/{p}/policy and
-	// /v1/projects/{p}/attestors[/…] — its policy|attestors resource-type guard
+	// /v1/projects/{p}/attestors[/…]; its policy|attestors resource-type guard
 	// keeps it disjoint from every other /v1/projects/ handler, and it never
 	// claims operations. All ten methods are synchronous (no LRO). Registered
 	// before Firestore's permissive /v1/projects/ prefix.
@@ -958,7 +958,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(binauthzsrv.New(d.BinaryAuthorization))
 	}
 
-	// FCM matches /v1/projects/{p}/messages:send — disjoint from every other
+	// FCM matches /v1/projects/{p}/messages:send, disjoint from every other
 	// /v1/projects/ handler (none use the messages:send suffix). Registered
 	// before Firestore's permissive /v1/projects/ prefix match.
 	if d.FCM != nil {
@@ -967,7 +967,7 @@ func New(d Drivers) *server.Server {
 
 	// Cloud Billing (cloudbilling.googleapis.com) + Budget API
 	// (billingbudgets.googleapis.com) share the /v1/billingAccounts URL space and
-	// have no driver — the control plane is a self-contained store seeded with a
+	// have no driver. The control plane is a self-contained store seeded with a
 	// default account and catalog, so the handler is always registered (like
 	// servicenetworking). Its /v1/projects/{p}/billingInfo route overlaps the
 	// /v1/projects/ family, so it registers before Firestore; the billingInfo-
@@ -988,7 +988,7 @@ func New(d Drivers) *server.Server {
 	// /v1/projects/ handler (Memorystore's instances, GKE's clusters, Cloud
 	// Functions' functions, Eventarc's triggers, Scheduler's jobs, Vertex AI,
 	// Artifact Registry's repositories), so registration order among them is
-	// unconstrained. It has no portable driver — the control-plane state is a
+	// unconstrained. It has no portable driver. The control-plane state is a
 	// self-contained store (like Cloud Billing and project IAM above) so the
 	// handler is always registered; it must precede Firestore's permissive
 	// /v1/projects/ prefix. d.Clock (may be nil) makes create/destroy timestamps
@@ -1011,7 +1011,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(monitoring.New(d.Monitoring))
 	}
 
-	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from every
+	// Kubernetes data-plane API. Matches /k8s/{uid}/..., disjoint from every
 	// other GCP path. Registered before the GCS fallback.
 	if d.K8sAPI != nil {
 		srv.Register(d.K8sAPI)
@@ -1027,7 +1027,7 @@ func New(d Drivers) *server.Server {
 		}
 
 		// GCS -> Cloud Functions: an object finalize/delete also invokes any gen2
-		// function whose storage eventTrigger is bound directly to the bucket —
+		// function whose storage eventTrigger is bound directly to the bucket,
 		// the Eventarc-backed delivery a real gen2 storage trigger uses, separate
 		// from (and requiring no) notificationConfig/topic.
 		if cfHandler != nil {

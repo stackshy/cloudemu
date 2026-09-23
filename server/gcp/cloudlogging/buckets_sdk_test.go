@@ -236,7 +236,7 @@ func TestSDKBucketsSpecialBuckets(t *testing.T) {
 	}
 }
 
-// assertConflict fails t unless err is a googleapi.Error with a 409 status —
+// assertConflict fails t unless err is a googleapi.Error with a 409 status,
 // the mapping for both AlreadyExists and FailedPrecondition (see gcprest.WriteCErr).
 func assertConflict(t *testing.T, op string, err error) {
 	t.Helper()

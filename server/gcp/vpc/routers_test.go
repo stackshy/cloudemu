@@ -170,7 +170,7 @@ func TestSDKRouterNatPartialPatchPreservesBgp(t *testing.T) {
 
 // TestSDKRouterNatPatchReplacesNatList proves the nats field is replaced
 // wholesale by a patch rather than merged element-wise: a router created with
-// two NATs, patched to a single NAT, must end with exactly that one — so a NAT
+// two NATs, patched to a single NAT, must end with exactly that one, so a NAT
 // can be removed. This guards the shallow per-field merge against a future
 // refactor that appended or key-merged the repeated field.
 func TestSDKRouterNatPatchReplacesNatList(t *testing.T) {

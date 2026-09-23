@@ -1,4 +1,4 @@
-// Package gcs_test — suite cell STORAGE / gcp / sdk-compat.
+// Package gcs_test: suite cell STORAGE / gcp / sdk-compat.
 //
 // Real cloud.google.com/go/storage SDK journeys for bucket-level IAM
 // (Buckets: setIamPolicy/getIamPolicy) against the emulator's GCP HTTP
@@ -61,7 +61,7 @@ func TestGCSBucketIAMPolicyRoundTrips(t *testing.T) {
 		t.Fatalf("SetPolicy: %v", err)
 	}
 
-	// getIamPolicy must reflect the binding — this is the persistence bug:
+	// getIamPolicy must reflect the binding. This is the persistence bug:
 	// without it, the bindings set above would come back empty.
 	after, err := bkt.IAM().Policy(ctx)
 	if err != nil {
@@ -149,7 +149,7 @@ func TestGCSBucketIAMPolicyStaleEtagRejected(t *testing.T) {
 		t.Fatalf("expected 412 Precondition Failed, got %d: %v", gErr.Code, gErr)
 	}
 
-	// The winning writer's binding must be intact — the stale write must not
+	// The winning writer's binding must be intact. The stale write must not
 	// have partially applied.
 	final, err := bkt.IAM().Policy(ctx)
 	if err != nil {

@@ -10,7 +10,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
-// Routes are custom static routes on a VPC network — the record that sends a
+// Routes are custom static routes on a VPC network, the record that sends a
 // destination range to a next hop (gateway, IP, or instance). A caller
 // building a network with an internet or NAT route creates one here, so
 // without the collection the network step stops before egress works.
@@ -187,8 +187,8 @@ func (h *Handler) deleteRoute(w http.ResponseWriter, r *http.Request, rp gcprest
 
 // enrichRoute stamps the server-assigned fields (kind, id, selfLink,
 // creationTimestamp) onto a route while preserving the caller's routing spec
-// (destRange, priority). It also normalizes the reference fields — network and
-// the global next-hop references — to fully-qualified self-link URLs, matching
+// (destRange, priority). It also normalizes the reference fields (network and
+// the global next-hop references) to fully-qualified self-link URLs, matching
 // real GCP's read shape so a caller (Terraform google_compute_route) that sends
 // a relative "global/networks/default" doesn't read back a value that never
 // stops diffing against the API's absolute self-link. Without this a Get returns

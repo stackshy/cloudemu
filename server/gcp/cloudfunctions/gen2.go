@@ -75,12 +75,12 @@ type gen2ServiceConfig struct {
 	MaxInstanceRequestConcurrency int `json:"maxInstanceRequestConcurrency,omitempty"`
 	// AllTrafficOnLatestRevision reports whether 100% of traffic routes to the newest
 	// revision. Real gen2 defaults it to true, and terraform's
-	// service_config.all_traffic_on_latest_revision defaults to true too — so omitting
+	// service_config.all_traffic_on_latest_revision defaults to true too. Omitting
 	// it from the response makes terraform read false and diff true->false on every
 	// plan (perpetual drift). But false is a legitimate explicit value (GCF then honors
 	// the underlying Cloud Run service's existing traffic split), so it is modeled as a
 	// pointer: nil (unset) defaults to true, while an explicit true or false round-trips
-	// unchanged. It is not omitempty — after defaulting the pointer is always non-nil,
+	// unchanged. It is not omitempty. After defaulting, the pointer is always non-nil,
 	// so the field always serializes as a real bool (never null).
 	AllTrafficOnLatestRevision *bool `json:"allTrafficOnLatestRevision"`
 }
@@ -97,8 +97,8 @@ type gen2EventTrigger struct {
 
 // gen2EventFilter is one eventTrigger.eventFilters entry: a non-Pub/Sub gen2
 // trigger (e.g. Cloud Storage) binds to a specific source resource by
-// filtering on a CloudEvent attribute — a storage trigger filters on
-// attribute "bucket" — rather than the pubsubTopic field Pub/Sub triggers use.
+// filtering on a CloudEvent attribute (a storage trigger filters on
+// attribute "bucket") rather than the pubsubTopic field Pub/Sub triggers use.
 type gen2EventFilter struct {
 	Attribute string `json:"attribute,omitempty"`
 	Operator  string `json:"operator,omitempty"`
@@ -138,7 +138,7 @@ func (p v2Path) fullName() string {
 
 // matchesV2 reports whether path is a v2 Cloud Functions URL this handler owns.
 // It claims the functions collection/resource unconditionally, but only claims
-// an operation poll whose id carries the gen2OpPrefix — Cloud Run also matches
+// an operation poll whose id carries the gen2OpPrefix. Cloud Run also matches
 // /v2/projects/{p}/locations/{l}/operations/... and is registered after this
 // handler, so the prefix keeps the two disjoint.
 func matchesV2(path string) bool {
@@ -507,7 +507,7 @@ func (h *Handler) generateUploadURLV2(w http.ResponseWriter, r *http.Request, p 
 // generateDownloadURLV2 serves v2 functions:generateDownloadUrl on a named
 // function: it returns a URL from which the function's deployed source can be
 // downloaded. The function must exist (404 otherwise). gen2 source is only
-// staged (not executed) in the emulator, so the URL is synthetic — enough for
+// staged (not executed) in the emulator, so the URL is synthetic, enough for
 // the SDK/gcloud call to succeed and read back a downloadUrl.
 func (h *Handler) generateDownloadURLV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 	if r.Method != http.MethodPost {
@@ -661,7 +661,7 @@ func applyServiceConfigDefaults(sc *gen2ServiceConfig, p v2Path) {
 	}
 
 	// Real gen2 defaults allTrafficOnLatestRevision to true, so an unset (nil)
-	// value reconciles to true. An explicit client value — true OR false — is
+	// value reconciles to true. An explicit client value (true or false) is
 	// preserved: false is legitimate (GCF then honors the underlying Cloud Run
 	// service's existing traffic split), and clobbering it to true would
 	// reintroduce perpetual terraform drift for that config.
@@ -705,7 +705,7 @@ func resourceAsResponseV2(fn *gen2Function) map[string]any {
 // state with the stored function. Readers clone under the lock and then marshal
 // the copy after releasing it, so a concurrent patchV2 (which mutates the stored
 // serviceConfig in place and reassigns nested pointers) can never be observed
-// mid-write. A shallow struct copy is not enough — it still aliases the nested
+// mid-write. A shallow struct copy is not enough: it still aliases the nested
 // pointers and maps.
 func cloneGen2(fn *gen2Function) *gen2Function {
 	if fn == nil {

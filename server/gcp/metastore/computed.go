@@ -11,11 +11,11 @@ import (
 // the client omits them, plus the output-only values a freshly-created service
 // reports. The Terraform google provider marks port (and the output-only
 // endpointUri/state/uid/artifactGcsUri) Computed, so it sends nothing and reads
-// them back from the API — if the emulator did not fill them, a refresh would
+// them back from the API: if the emulator did not fill them, a refresh would
 // diff forever (the classic defaulted-field drift point, same lesson as
 // Serverless VPC Access). databaseType and releaseChannel are Optional, not
 // Computed, in the provider, which supplies its own schema defaults (MYSQL,
-// STABLE) and always sends them — the emulator fills the same values for a raw
+// STABLE) and always sends them. The emulator fills the same values for a raw
 // SDK/gcloud caller that omits them, so both paths converge.
 //
 // telemetryConfig and hiveMetastoreConfig are deliberately NOT seeded. The
@@ -39,7 +39,7 @@ const (
 
 // seedService injects the output-only fields a metastore service carries and
 // fills the Computed top-level server defaults so a GET reports them stably
-// across refreshes — the classic Dataproc Metastore drift point. A
+// across refreshes, the classic Dataproc Metastore drift point. A
 // caller-supplied value is always left untouched; only an absent field is
 // defaulted. The output-only identity fields (state, stateMessage, uid,
 // endpointUri, artifactGcsUri) are minted here once and stored; port,

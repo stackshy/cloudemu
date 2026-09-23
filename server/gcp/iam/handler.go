@@ -5,22 +5,22 @@
 //
 // MVP coverage (v1 REST):
 //
-//	POST   /v1/projects/{p}/serviceAccounts                                       — Create SA
-//	GET    /v1/projects/{p}/serviceAccounts/{email}                               — Get SA
-//	GET    /v1/projects/{p}/serviceAccounts                                       — List SAs
-//	DELETE /v1/projects/{p}/serviceAccounts/{email}                               — Delete SA
-//	PATCH  /v1/projects/{p}/serviceAccounts/{email}                               — Update SA
-//	POST   /v1/projects/{p}/serviceAccounts/{email}/keys                          — Create key
-//	GET    /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}                  — Get key
-//	GET    /v1/projects/{p}/serviceAccounts/{email}/keys                          — List keys
-//	DELETE /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}                  — Delete key
-//	POST   /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}:disable          — Disable key
-//	POST   /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}:enable           — Enable key
-//	POST   /v1/projects/{p}/roles                                                 — Create role
-//	GET    /v1/projects/{p}/roles/{roleId}                                        — Get role
-//	GET    /v1/projects/{p}/roles                                                 — List roles
-//	DELETE /v1/projects/{p}/roles/{roleId}                                        — Delete role
-//	PATCH  /v1/projects/{p}/roles/{roleId}                                        — Update role
+//	POST   /v1/projects/{p}/serviceAccounts                                       : Create SA
+//	GET    /v1/projects/{p}/serviceAccounts/{email}                               : Get SA
+//	GET    /v1/projects/{p}/serviceAccounts                                       : List SAs
+//	DELETE /v1/projects/{p}/serviceAccounts/{email}                               : Delete SA
+//	PATCH  /v1/projects/{p}/serviceAccounts/{email}                               : Update SA
+//	POST   /v1/projects/{p}/serviceAccounts/{email}/keys                          : Create key
+//	GET    /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}                  : Get key
+//	GET    /v1/projects/{p}/serviceAccounts/{email}/keys                          : List keys
+//	DELETE /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}                  : Delete key
+//	POST   /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}:disable          : Disable key
+//	POST   /v1/projects/{p}/serviceAccounts/{email}/keys/{keyId}:enable           : Enable key
+//	POST   /v1/projects/{p}/roles                                                 : Create role
+//	GET    /v1/projects/{p}/roles/{roleId}                                        : Get role
+//	GET    /v1/projects/{p}/roles                                                 : List roles
+//	DELETE /v1/projects/{p}/roles/{roleId}                                        : Delete role
+//	PATCH  /v1/projects/{p}/roles/{roleId}                                        : Update role
 //
 // All state lives in the shared iamdriver.IAM:
 //
@@ -31,7 +31,7 @@
 //     AccessKeyID == key id).
 //
 // Resource-level IAM policy bindings (getIamPolicy / setIamPolicy on
-// projects, buckets, etc.) are out of scope — those live on individual
+// projects, buckets, etc.) are out of scope, those live on individual
 // resources, not on iam.googleapis.com itself.
 package iam
 
@@ -101,7 +101,7 @@ func New(drv iamdriver.IAM) *Handler {
 
 // Matches returns true for any /v1/projects/{p}/{serviceAccounts|roles}[/…]
 // path. The catch-all match is safe because the GCP server registers more
-// specific handlers (compute, networks, gcs, …) ahead of this one — there's
+// specific handlers (compute, networks, gcs, …) ahead of this one. There's
 // no other IAM handler in the GCP namespace that this would shadow.
 func (*Handler) Matches(r *http.Request) bool {
 	if !strings.HasPrefix(r.URL.Path, pathPrefix) {

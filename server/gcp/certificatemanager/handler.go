@@ -8,23 +8,23 @@
 //
 // Coverage (certificate + certificate-map + dns-authorization control plane):
 //
-//	POST   /v1/…/certificates?certificateId=            — CreateCertificate (LRO)
-//	GET    /v1/…/certificates                           — ListCertificates
-//	GET    /v1/…/certificates/{id}                      — GetCertificate
-//	PATCH  /v1/…/certificates/{id}?updateMask=          — PatchCertificate (LRO)
-//	DELETE /v1/…/certificates/{id}                      — DeleteCertificate (LRO)
-//	POST   /v1/…/certificateMaps?certificateMapId=      — CreateCertificateMap (LRO)
-//	…                                                    — Get/List/Patch/Delete (as above)
-//	POST   /v1/…/dnsAuthorizations?dnsAuthorizationId=  — CreateDNSAuthorization (LRO)
-//	…                                                    — Get/List/Patch/Delete (as above)
-//	GET    /v1/…/operations/{op}                        — Operations.Get (shared poller)
+//	POST   /v1/…/certificates?certificateId=            : CreateCertificate (LRO)
+//	GET    /v1/…/certificates                           : ListCertificates
+//	GET    /v1/…/certificates/{id}                      : GetCertificate
+//	PATCH  /v1/…/certificates/{id}?updateMask=          : PatchCertificate (LRO)
+//	DELETE /v1/…/certificates/{id}                      : DeleteCertificate (LRO)
+//	POST   /v1/…/certificateMaps?certificateMapId=      : CreateCertificateMap (LRO)
+//	…                                                    : Get/List/Patch/Delete (as above)
+//	POST   /v1/…/dnsAuthorizations?dnsAuthorizationId=  : CreateDNSAuthorization (LRO)
+//	…                                                    : Get/List/Patch/Delete (as above)
+//	GET    /v1/…/operations/{op}                        : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting resource embedded in `response`, so an SDK or Terraform LRO wait
 // terminates on the first poll instead of hanging.
 //
 // Location-scoped operations: Certificate Manager's operations live under
-// /v1/projects/{p}/locations/{l}/operations — the SAME space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server (no registry)
 // serves its own polls. The certificates/certificateMaps/dnsAuthorizations

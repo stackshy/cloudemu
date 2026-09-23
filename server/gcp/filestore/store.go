@@ -120,8 +120,8 @@ func (m *instanceModel) clone() *instanceModel {
 }
 
 // store is the in-memory Filestore control-plane backing state. Filestore has
-// no portable driver in cloudemu (the emulator models no NFS data plane), so —
-// like Cloud KMS, project IAM and Cloud Billing — the handler owns its state
+// no portable driver in cloudemu (the emulator models no NFS data plane), so,
+// like Cloud KMS, project IAM and Cloud Billing, the handler owns its state
 // here, keyed by full instance resource name.
 type store struct {
 	mu        sync.RWMutex

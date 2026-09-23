@@ -6,7 +6,7 @@ package loadbalancer
 
 // --- backend services (→ driver target groups) ---
 
-// backend is one entry of a backend service's backends[] — the instance-group
+// backend is one entry of a backend service's backends[], the instance-group
 // or NEG reference plus its balancing knobs. google_compute_backend_service
 // sends this on every apply, so it must round-trip.
 type backend struct {

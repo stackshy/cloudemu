@@ -17,7 +17,7 @@ import (
 )
 
 // TestGCSBucketCORSRoundTrip proves a bucket's cors[] configuration set at
-// create is read back, and that a patch replaces it — real GCS persists the
+// create is read back, and that a patch replaces it. Real GCS persists the
 // cors field (google_storage_bucket's cors block), which was previously
 // accepted-and-dropped by the wire layer.
 func TestGCSBucketCORSRoundTrip(t *testing.T) {
@@ -104,7 +104,7 @@ func TestGCSBucketLocationUppercased(t *testing.T) {
 }
 
 // TestGCSBucketLabelMergePatch proves a Buckets.patch merges labels rather than
-// replacing them, and that a label mapped to null is deleted — the semantics the
+// replacing them, and that a label mapped to null is deleted: the semantics the
 // SDK/Terraform rely on (SetLabel/DeleteLabel send only the changed keys, with a
 // deleted key encoded as JSON null).
 func TestGCSBucketLabelMergePatch(t *testing.T) {
@@ -146,8 +146,8 @@ func TestGCSBucketLabelMergePatch(t *testing.T) {
 // depends on: a bucket that never configured versioning omits the versioning
 // field entirely, while a bucket whose versioning was explicitly disabled
 // returns {"enabled":false}. At the SDK level both read as VersioningEnabled ==
-// false, so the presence/absence of the field — which drives whether a
-// `versioning { enabled = false }` block perpetually diffs — is asserted on the
+// false, so the presence/absence of the field, which drives whether a
+// `versioning { enabled = false }` block perpetually diffs, is asserted on the
 // raw JSON.
 func TestGCSBucketVersioningDisabledWireField(t *testing.T) {
 	cloudP := cloudemu.NewGCP()

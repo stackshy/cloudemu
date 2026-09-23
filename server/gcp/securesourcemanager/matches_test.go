@@ -100,9 +100,9 @@ func TestMatchesInstancesDisambiguation(t *testing.T) {
 	}
 }
 
-// TestMatchesRepositoriesDisambiguation verifies the repositories collection —
+// TestMatchesRepositoriesDisambiguation verifies the repositories collection,
 // shared on the identical /v1/ path with Artifact Registry (the greedy
-// fall-through) — is claimed only for genuinely-Secure-Source-Manager traffic:
+// fall-through), is claimed only for genuinely-Secure-Source-Manager traffic:
 // a create carrying the required `instance` reference, and item/LIST only for a
 // repository this store owns.
 func TestMatchesRepositoriesDisambiguation(t *testing.T) {

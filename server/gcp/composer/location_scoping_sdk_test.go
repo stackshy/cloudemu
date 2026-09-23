@@ -8,7 +8,7 @@ import (
 )
 
 // TestSDKComposerLocationScoping verifies an environment created in one location
-// is not resolvable under a different location or project — environment names
+// is not resolvable under a different location or project. Environment names
 // are unique per (project, location), so a cross-location Get/Delete 404s.
 func TestSDKComposerLocationScoping(t *testing.T) {
 	svc, project := newSDKClient(t)

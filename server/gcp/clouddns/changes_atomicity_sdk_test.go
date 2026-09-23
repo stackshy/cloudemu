@@ -10,7 +10,7 @@ import (
 // TestSDKChangesCreateDuplicateDeletionRejectedAtomically guards a real-user
 // e2e finding: a batch naming the same (name,type) twice in its deletions
 // used to fail with a 404 on the SECOND occurrence, but only after the FIRST
-// occurrence had already deleted the record — a half-applied "atomic" change.
+// occurrence had already deleted the record, a half-applied "atomic" change.
 // Cloud DNS's changes.create is documented as all-or-nothing, so such a batch
 // must be rejected up front, before any mutation, leaving the record intact.
 func TestSDKChangesCreateDuplicateDeletionRejectedAtomically(t *testing.T) {

@@ -180,7 +180,7 @@ func doErrBody(t *testing.T, method, url string, body any) (int, map[string]any)
 
 // TestPredictNoDeployedModels: :predict on an endpoint with no deployed models
 // is a 400 FAILED_PRECONDITION, not a 200 echo. The body must carry the
-// canonical google.rpc.Code NAME in the top-level status field — a regression
+// canonical google.rpc.Code NAME in the top-level status field, a regression
 // guard for the shared gcprest codec dropping a canonical uppercase reason.
 func TestPredictNoDeployedModels(t *testing.T) {
 	url := newServer(t)

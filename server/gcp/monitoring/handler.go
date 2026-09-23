@@ -4,10 +4,10 @@
 //
 // Supported collections under /v3/projects/{p}/:
 //
-//	alertPolicies         — create/get/list/patch/delete
-//	timeSeries            — list (read metric points) / create (ingest points)
-//	metricDescriptors     — list/get/create
-//	notificationChannels  — create/list/get/delete
+//	alertPolicies         : create/get/list/patch/delete
+//	timeSeries            : list (read metric points) / create (ingest points)
+//	metricDescriptors     : list/get/create
+//	notificationChannels  : create/list/get/delete
 package monitoring
 
 import (

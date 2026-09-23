@@ -8,8 +8,8 @@ package gcp_test
 // each of those greedily answered `{"done":true}` for ANY operation id
 // regardless of whether it created it. Real GCP 404s an operation name that
 // doesn't exist, on every verb. These tests drive the FULL assembled server
-// (as `cloudemu serve` does) so the actual dispatch order — not just the lro
-// package in isolation — is what's under test.
+// (as `cloudemu serve` does) so the actual dispatch order, not just the lro
+// package in isolation, is what's under test.
 
 import (
 	"encoding/json"
@@ -71,7 +71,7 @@ func opName(t *testing.T, body string) string {
 // TestFullServerRealOperationsStillResolveAfterFix guards the fix's main
 // regression risk: closing the fake-success hole must not break polling a
 // REAL operation. artifactregistry and memorystore are a representative
-// subset of the four operations-minting handlers — they share the identical
+// subset of the four operations-minting handlers. They share the identical
 // doneOperation -> h.ops.Register mechanism eventarc and alloydb use (see
 // server/gcp/{eventarc,alloydb} which the standalone Matches-gating tests in
 // each package cover directly).
@@ -102,7 +102,7 @@ func TestFullServerRealOperationsStillResolveAfterFix(t *testing.T) {
 	}
 
 	// memorystore: create and poll (done). Only Get is exercised on this one
-	// (cancel/delete already proven end to end above via artifactregistry —
+	// (cancel/delete already proven end to end above via artifactregistry;
 	// the shared lro handler applies identically to every registered name).
 	_, msBody := do(t, ts, http.MethodPost,
 		"/v1/projects/demo/locations/us/instances?instanceId=cache1", `{}`)

@@ -17,7 +17,7 @@ const (
 	// endpointForwardingRule. The real API returns a fully-qualified compute
 	// forwarding-rule URL; CloudEmu mints a deterministic one from the endpoint
 	// identity so it is byte-identical on every read (a computed output-only
-	// attribute Terraform stores — the classic Cloud IDS drift point).
+	// attribute Terraform stores, the classic Cloud IDS drift point).
 	forwardingRuleHost   = "https://www.googleapis.com/compute/v1/"
 	forwardingRuleSuffix = "-fwd"
 
@@ -32,7 +32,7 @@ const (
 )
 
 // seedEndpoint injects the output-only fields an endpoint carries so a GET
-// reports them stably across refreshes — the classic Cloud IDS drift point. The
+// reports them stably across refreshes, the classic Cloud IDS drift point. The
 // incoming body has already had these keys stripped (see outputKeys), so they are
 // always minted here: state is READY (so Terraform reconciles clean),
 // endpointForwardingRule is a deterministic compute forwarding-rule URL, and

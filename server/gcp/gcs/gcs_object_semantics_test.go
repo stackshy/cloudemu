@@ -34,7 +34,7 @@ func assertPreconditionFailed(t *testing.T, err error, when string) {
 
 // TestGCSObjectInsertPreconditions proves ifGenerationMatch is honored: a
 // create-if-absent (DoesNotExist) succeeds once but 412s over an existing
-// object, and GenerationMatch to a non-existent generation 412s — the behaviors
+// object, and GenerationMatch to a non-existent generation 412s: the behaviors
 // distributed locks and create-if-absent rely on.
 func TestGCSObjectInsertPreconditions(t *testing.T) {
 	ctx, client := newStorageClient(t)
@@ -92,7 +92,7 @@ func TestGCSObjectGenerationMinted(t *testing.T) {
 	}
 }
 
-// TestGCSObjectChecksums proves Attrs returns both md5Hash and crc32c — the
+// TestGCSObjectChecksums proves Attrs returns both md5Hash and crc32c, the
 // crc32c the Go client uses for download integrity.
 func TestGCSObjectChecksums(t *testing.T) {
 	ctx, client := newStorageClient(t)
@@ -214,7 +214,7 @@ func TestGCSObjectVersionsList(t *testing.T) {
 }
 
 // TestGCSObjectDeletePrecondition proves a delete with a mismatched
-// ifGenerationMatch is rejected 412 and leaves the object untouched — the
+// ifGenerationMatch is rejected 412 and leaves the object untouched: the
 // optimistic-concurrency delete real GCS enforces.
 func TestGCSObjectDeletePrecondition(t *testing.T) {
 	ctx, client := newStorageClient(t)
@@ -232,7 +232,7 @@ func TestGCSObjectDeletePrecondition(t *testing.T) {
 
 // TestGCSVersionedDeleteRetainsGenerations proves a live delete on a
 // versioning-enabled bucket archives the current generation (it becomes
-// noncurrent) rather than dropping it — so a Versions=true list still returns
+// noncurrent) rather than dropping it. So a Versions=true list still returns
 // every prior generation after the live object is gone.
 func TestGCSVersionedDeleteRetainsGenerations(t *testing.T) {
 	ctx, client := newStorageClient(t)
@@ -249,7 +249,7 @@ func TestGCSVersionedDeleteRetainsGenerations(t *testing.T) {
 		t.Fatalf("delete live object: %v", err)
 	}
 
-	// Live read must now 404 — the object has no current generation.
+	// Live read must now 404. The object has no current generation.
 	if _, err := bkt.Object("k").Attrs(ctx); !errors.Is(err, storage.ErrObjectNotExist) {
 		t.Errorf("live Attrs after delete = %v, want ErrObjectNotExist", err)
 	}
@@ -271,8 +271,8 @@ func TestGCSVersionedDeleteRetainsGenerations(t *testing.T) {
 		if a.Name == "k" {
 			gens = append(gens, a.Generation)
 
-			// Every noncurrent generation — the one superseded by the
-			// overwrite and the one archived by the live delete — must carry
+			// Every noncurrent generation, the one superseded by the
+			// overwrite and the one archived by the live delete, must carry
 			// a timeDeleted the way real GCS stamps the instant a version
 			// became noncurrent (google-cloud-go decodes it into Deleted).
 			if a.Deleted.IsZero() {
@@ -331,7 +331,7 @@ func TestGCSInsertSystemProperties(t *testing.T) {
 }
 
 // TestGCSGenerationAddressedRead proves ?generation reads the addressed
-// revision's bytes, not the current ones — a versioned bucket keeps prior
+// revision's bytes, not the current ones. A versioned bucket keeps prior
 // generations readable by id.
 func TestGCSGenerationAddressedRead(t *testing.T) {
 	ctx, client := newStorageClient(t)

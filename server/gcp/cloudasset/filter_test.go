@@ -116,8 +116,8 @@ func TestParseFilter_ForceEmpty(t *testing.T) {
 
 // TestParseFilter_ServiceAssetTypeAgreement verifies that compatible
 // service + assetType pairs are NOT flagged. compute.googleapis.com
-// covers both portable compute and networking — Instance + Network +
-// Subnetwork + Firewall all belong to that service.
+// covers both portable compute and networking: Instance, Network,
+// Subnetwork, and Firewall all belong to that service.
 func TestParseFilter_ServiceAssetTypeAgreement(t *testing.T) {
 	tests := []struct {
 		name string

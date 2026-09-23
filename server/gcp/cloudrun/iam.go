@@ -106,7 +106,7 @@ func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, key strin
 }
 
 // testIamPermissions echoes back the requested permissions as held. CloudEmu
-// does not enforce IAM, so the caller is treated as fully authorized — the
+// does not enforce IAM, so the caller is treated as fully authorized: the
 // subset returned is the full set requested, matching what a permitted
 // principal sees on real GCP.
 func testIamPermissions(w http.ResponseWriter, r *http.Request) {

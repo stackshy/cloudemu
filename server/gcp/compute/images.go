@@ -77,7 +77,7 @@ func (h *Handler) insertImage(w http.ResponseWriter, r *http.Request, rp gcprest
 		return
 	}
 
-	// GCP images are created from a disk, snapshot, or import — never from a
+	// GCP images are created from a disk, snapshot, or import, never from a
 	// source instance (that is EC2's model). Pass an empty InstanceID so the
 	// driver takes the source-based path; record the source in the description
 	// so a read reflects what it was built from.

@@ -149,7 +149,7 @@ func TestSDKPubSubSubscriptionMetadata(t *testing.T) {
 	}
 
 	// Second subscription so List order is observable. Created after billing-sub
-	// but sorts before it — proving List sorts by name rather than echoing
+	// but sorts before it, proving List sorts by name rather than echoing
 	// insertion or map-iteration order.
 	if _, err := svc.Projects.Subscriptions.Create("projects/demo/subscriptions/analytics-sub",
 		&pubsubv1.Subscription{Topic: "projects/demo/topics/events"}).Context(ctx).Do(); err != nil {

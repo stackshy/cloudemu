@@ -67,7 +67,7 @@ func (h *Handler) createPolicy(w http.ResponseWriter, r *http.Request, project s
 	}
 
 	// Real Cloud Monitoring assigns an opaque numeric id, not one derived from
-	// displayName — two policies sharing a displayName must not collapse.
+	// displayName. Two policies sharing a displayName must not collapse.
 	id := strconv.FormatUint(h.seq.Add(1), 10)
 
 	// The driver alarm is only an existence marker; the full policy shape lives
@@ -174,7 +174,7 @@ func policyIDLess(a, b string) bool {
 // which covers displayName/combiner/enabled/conditions/labels/channels.
 func (h *Handler) patchPolicy(w http.ResponseWriter, r *http.Request, project, name string) {
 	// Decode with a pointer Enabled so an omitted "enabled" is distinguishable
-	// from an explicit false — a partial PATCH must leave it unchanged, not
+	// from an explicit false. A partial PATCH must leave it unchanged, not
 	// silently disable the policy (real GCP applies only the updateMask paths).
 	var body struct {
 		DisplayName          string            `json:"displayName"`
@@ -221,7 +221,7 @@ func (h *Handler) patchPolicy(w http.ResponseWriter, r *http.Request, project, n
 	// A provided notificationChannels list replaces the policy's channels and is
 	// re-synced onto the backing alarm below. Presence (non-nil) mirrors GCP
 	// patch semantics and the rest of this handler's field-scoped updates: an
-	// unrelated patch that omits the field leaves channels — and delivery —
+	// unrelated patch that omits the field leaves channels, and delivery,
 	// untouched.
 	channelsProvided := body.NotificationChannels != nil
 	if channelsProvided {

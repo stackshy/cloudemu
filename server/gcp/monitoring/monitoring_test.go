@@ -67,7 +67,7 @@ func TestMonitoringAlertPolicyCRUD(t *testing.T) {
 	}
 
 	// Real Cloud Monitoring addresses a policy by its opaque numeric id, not by
-	// displayName — extract the id assigned on create.
+	// displayName. Extract the id assigned on create.
 	id := canonical[strings.LastIndex(canonical, "/")+1:]
 
 	// List
@@ -169,7 +169,7 @@ func TestMonitoringAlertPolicySemantics(t *testing.T) {
 		t.Errorf("conditions=%v want 1", got["conditions"])
 	}
 
-	// PATCH updates the combiner but OMITS enabled — a partial patch must NOT
+	// PATCH updates the combiner but omits enabled. A partial patch must not
 	// silently disable the policy (regression guard for the omitted-field bug).
 	patch := bytes.NewBufferString(`{"combiner": "OR"}`)
 	patchReq, _ := http.NewRequest(http.MethodPatch, ts.URL+collURL+"/"+id, patch)
@@ -285,7 +285,7 @@ func TestMonitoringErrorMessagesOmitCodePrefix(t *testing.T) {
 
 // assertMonitoringErrorHasNoCodePrefix decodes a Cloud Monitoring error
 // envelope and fails if its message contains one of cloudemu's internal
-// canonical error-code names followed by a colon — the shape err.Error()
+// canonical error-code names followed by a colon, the shape err.Error()
 // produces for a *cerrors.Error, as opposed to cerrors.Message(err).
 func assertMonitoringErrorHasNoCodePrefix(t *testing.T, body io.Reader) {
 	t.Helper()

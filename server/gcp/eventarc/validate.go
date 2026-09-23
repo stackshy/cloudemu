@@ -12,9 +12,9 @@ import (
 // eventTypeAuditLogWritten is the one Eventarc direct-event type this mock
 // special-cases: a Cloud Audit Log trigger must additionally carry
 // "serviceName" and "methodName" filters pinning it to one API method. Real
-// Eventarc's event-type catalog is otherwise open-ended — Pub/Sub, Storage,
+// Eventarc's event-type catalog is otherwise open-ended: Pub/Sub, Storage,
 // Firestore, Firebase, and (for channels) arbitrary third-party-provider
-// strings with no fixed Google list — so validateEventFilters does not gate
+// strings with no fixed Google list. So validateEventFilters does not gate
 // acceptance on the "type" value beyond requiring one be present.
 const eventTypeAuditLogWritten = "google.cloud.audit.log.v1.written"
 
@@ -27,7 +27,7 @@ const (
 
 // validateEventFilters checks a trigger's eventFilters against Eventarc's own
 // admission-time rules: a required "type" filter (real Eventarc always
-// requires one), and — for the audit-log event type — required "serviceName"
+// requires one), and, for the audit-log event type, required "serviceName"
 // and "methodName" filters pinning the trigger to one API method (real
 // Eventarc refuses to create an unscoped audit-log trigger). The "type"
 // value itself is not checked against a catalog: Eventarc's event-type space
@@ -85,7 +85,7 @@ type CloudRunResolver interface {
 // Cloud Function, mirroring Eventarc's own admission-time validation that a
 // trigger can't route to a resource the caller can't demonstrate exists.
 // Workflow destinations aren't modeled (no workflows driver in CloudEmu), so
-// they pass unchecked, and a resolver left unwired (nil — the standalone
+// they pass unchecked, and a resolver left unwired (nil, the standalone
 // package server may not have the peer service) skips its half of the check
 // gracefully rather than failing closed.
 func (h *Handler) validateDestination(ctx context.Context, dest *destinationJSON) error {
@@ -115,7 +115,7 @@ func (h *Handler) validateDestination(ctx context.Context, dest *destinationJSON
 
 // lastSegment returns the trailing path segment of a resource name (or the
 // input itself when it has no "/"). Mirrors providers/gcp/eventarc's helper
-// of the same name — the two packages can't share it (provider must not
+// of the same name. The two packages can't share it (provider must not
 // import server).
 func lastSegment(name string) string {
 	trimmed := strings.TrimRight(name, "/")

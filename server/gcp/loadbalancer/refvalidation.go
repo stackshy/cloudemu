@@ -82,7 +82,7 @@ func collectRefs(v any, fields map[string]bool, out *[]namedRef) {
 // nested pathMatchers[].defaultService / pathRules[].service, names a backend
 // service that does not exist in the same scope. The same fields can also
 // legitimately name a backendBuckets/{name} self-link (standard CDN/static-
-// content routing, e.g. google_compute_backend_bucket.self_link) — backend
+// content routing, e.g. google_compute_backend_bucket.self_link). Backend
 // buckets have no driver model here, so any ref that doesn't resolve to the
 // backendServices collection is left unvalidated rather than falsely rejected,
 // mirroring targetCollectionFor's allowlist for forwarding-rule targets.
@@ -111,7 +111,7 @@ func (h *Handler) validateURLMapServiceRefs(ctx context.Context, rp gcprest.Reso
 }
 
 // isBackendServiceRef reports whether ref names the backendServices
-// collection — either a bare name (no path separators, the common case for a
+// collection: either a bare name (no path separators, the common case for a
 // same-scope reference) or a self-link/relative path containing
 // "/backendServices/". Anything else (e.g. a backendBuckets self-link) is left
 // unvalidated.

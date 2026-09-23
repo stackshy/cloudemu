@@ -97,7 +97,7 @@ func TestSDKArtifactRegistryOperationAndFormat(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Poll the operation the create returned — this hits the /operations/{op}
+	// Poll the operation the create returned. This hits the /operations/{op}
 	// route that previously 404'd.
 	polled, err := svc.Projects.Locations.Operations.Get(op.Name).Context(ctx).Do()
 	if err != nil {
@@ -131,7 +131,7 @@ func TestSDKArtifactRegistryDockerImages(t *testing.T) {
 		t.Fatalf("Create: %v", err)
 	}
 
-	// Artifact Registry has no REST "push image" call — images arrive via
+	// Artifact Registry has no REST "push image" call. Images arrive via
 	// docker push. Seed one through the driver to simulate that.
 	if _, err := reg.PutImage(ctx, &crdriver.ImageManifest{
 		Repository: "imgs",

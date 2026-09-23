@@ -163,8 +163,8 @@ func pushEndpoint(raw json.RawMessage) string {
 
 // PublishToTopic records one message on a topic's log and runs the same
 // cross-service fan-out (push subscriptions + event-triggered Cloud Functions)
-// as the REST publish path. It is the in-process entrypoint other producers —
-// notably GCS object-change notifications — use to emit into Pub/Sub. It is
+// as the REST publish path. It is the in-process entrypoint other producers,
+// notably GCS object-change notifications, use to emit into Pub/Sub. It is
 // best-effort: a topic that was never created still records the message so a
 // later pull sees it, and a nil data payload is delivered as an empty body.
 func (h *Handler) PublishToTopic(ctx context.Context, project, topicShort string, data []byte, attributes map[string]string) {

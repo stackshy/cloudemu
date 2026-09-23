@@ -102,7 +102,7 @@ func (h *Handler) usedIPsInSubnet(ctx context.Context, subnetRef string) map[str
 // allocateFromCIDR returns the lowest free IPv4 host address in cidr, skipping
 // the reserved low addresses and the broadcast address and any address already
 // in use. It returns "" for a non-IPv4 CIDR, a range too small to host a VM, or
-// an exhausted range — leaving the caller to fall back to the provider.
+// an exhausted range, leaving the caller to fall back to the provider.
 func allocateFromCIDR(cidr string, used map[string]bool) string {
 	_, ipnet, err := net.ParseCIDR(cidr)
 	if err != nil {

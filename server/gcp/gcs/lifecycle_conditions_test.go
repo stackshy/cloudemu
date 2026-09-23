@@ -1,4 +1,4 @@
-// Package gcp_test — suite cell STORAGE / gcp / sdk-compat lifecycle conditions.
+// Package gcp_test: suite cell STORAGE / gcp / sdk-compat lifecycle conditions.
 //
 // Drives the real cloud.google.com/go/storage SDK against the emulator to
 // prove the full GCS lifecycle rule condition set (numNewerVersions, isLive,

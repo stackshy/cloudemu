@@ -3,9 +3,9 @@ package cloudrun
 import "encoding/json"
 
 // The Cloud Run v2 GAPIC REST client (cloud.google.com/go/run/apiv2) marshals
-// request bodies with protojson's UseEnumNumbers option, so every enum field —
-// ingress, launchStage, executionEnvironment, vpcAccess.egress, traffic.type,
-// condition.state — arrives on the wire as its integer value rather than its
+// request bodies with protojson's UseEnumNumbers option, so every enum field
+// (ingress, launchStage, executionEnvironment, vpcAccess.egress, traffic.type,
+// condition.state) arrives on the wire as its integer value rather than its
 // canonical name. Real Cloud Run's protojson-based server accepts both forms;
 // string clients (Terraform's google provider, gcloud) send the names. To match
 // the server for every client, normalizeEnumNumbers rewrites any integer enum
@@ -55,8 +55,8 @@ func walkEnums(v any) {
 
 // enumName maps a (field, integer) pair to the canonical enum name, returning
 // ok=false when the field is not a known Cloud Run enum (so the value is left
-// untouched). Each table is indexed by the enum's proto integer value — index 0
-// is the UNSPECIFIED default and is never emitted, so it maps to no name — and
+// untouched). Each table is indexed by the enum's proto integer value (index 0
+// is the UNSPECIFIED default and is never emitted, so it maps to no name) and
 // mirrors google.cloud.run.v2 / google.api.LaunchStage exactly.
 func enumName(field string, n int) (string, bool) {
 	switch field {

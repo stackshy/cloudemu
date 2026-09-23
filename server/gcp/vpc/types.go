@@ -12,7 +12,7 @@ type networkRoutingConfig struct {
 
 // defaultFwPolicyOrder is GCP's default networkFirewallPolicyEnforcementOrder
 // for a new network. networks.get always returns this field, so the emulator
-// must too — else Terraform's google_compute_network (which defaults the
+// must too, else Terraform's google_compute_network (which defaults the
 // attribute to this value) shows a perpetual diff wanting to set it.
 const defaultFwPolicyOrder = "AFTER_CLASSIC_FIREWALL"
 

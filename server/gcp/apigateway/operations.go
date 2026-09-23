@@ -215,10 +215,10 @@ func (h *Handler) deleteResource(w http.ResponseWriter, r *http.Request, rt *rou
 }
 
 // serveOperation resolves a (done) long-running operation poll. The google-beta
-// provider polls at its /v1beta/ base path — a space the shared LRO poller does
-// not own — so this handler always answers it; a standalone /v1/ package server
-// (no shared registry) is answered here too. The operation resource name is the
-// request path without the version prefix.
+// provider polls at its /v1beta/ base path, a space the shared LRO poller does
+// not own. This handler therefore always answers it; a standalone /v1/ package
+// server (no shared registry) is answered here too. The operation resource name
+// is the request path without the version prefix.
 func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request, rt *route) {
 	if r.Method != http.MethodGet {
 		writeMethodNotAllowed(w)

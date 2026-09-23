@@ -10,7 +10,7 @@ package loadbalancer
 // same opaque GCPComputeResourceStore path as healthChecks/urlMaps/targetPools:
 // the decoded insert body round-trips verbatim, with server identity layered on
 // read. On top of plain CRUD they add the L7 action verbs a real user calls to
-// wire the chain — setUrlMap / setSslCertificates on a proxy, and
+// wire the chain: setUrlMap / setSslCertificates on a proxy, and
 // addInstances / removeInstances / listInstances on an instance group.
 
 import (

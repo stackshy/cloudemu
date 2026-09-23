@@ -27,7 +27,7 @@ func decodeJob(w http.ResponseWriter, r *http.Request, job *jobJSON) bool {
 	}
 
 	if len(body) == 0 {
-		return true // empty body ({} equivalent) — leaves job zero-valued
+		return true // empty body ({} equivalent), leaves job zero-valued
 	}
 
 	if err := json.Unmarshal(normalizeEnumNumbers(body), job); err != nil {
@@ -69,7 +69,7 @@ func methodOK(m string) bool {
 	return m == "" || validMethods[m]
 }
 
-// boolToInt returns 1 for true, 0 for false — used to count the set targets in
+// boolToInt returns 1 for true, 0 for false, used to count the set targets in
 // the oneof.
 func boolToInt(b bool) int {
 	if b {

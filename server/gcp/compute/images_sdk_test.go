@@ -34,7 +34,7 @@ func newImagesSDKClient(t *testing.T, ts *httptest.Server) *gcpcompute.ImagesCli
 }
 
 // TestSDKImageSourceDiskFields proves images.get reflects sourceDisk, family,
-// and diskSizeGb (resolved from the source disk) plus a creationTimestamp —
+// and diskSizeGb (resolved from the source disk) plus a creationTimestamp,
 // all previously dropped.
 func TestSDKImageSourceDiskFields(t *testing.T) {
 	cloudP := cloudemu.NewGCP()

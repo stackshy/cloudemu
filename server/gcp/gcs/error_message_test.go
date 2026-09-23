@@ -66,7 +66,7 @@ func TestGCSErrorMessagesOmitCodePrefix(t *testing.T) {
 
 // assertGCSErrorHasNoCodePrefix decodes a GCS JSON error envelope and fails if
 // its message contains one of cloudemu's internal canonical error-code names
-// followed by a colon — the shape err.Error() produces for a *cerrors.Error,
+// followed by a colon, the shape err.Error() produces for a *cerrors.Error,
 // as opposed to cerrors.Message(err).
 func assertGCSErrorHasNoCodePrefix(t *testing.T, resp *http.Response) {
 	t.Helper()

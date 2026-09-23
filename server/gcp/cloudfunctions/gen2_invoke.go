@@ -12,7 +12,7 @@ import (
 
 // gen2 functions live in the wire handler's h.gen2 map as a rich v2 resource
 // (buildConfig/serviceConfig/eventTrigger), but they are ALSO registered in the
-// shared serverless driver keyed by their short name — exactly like gen1 — so
+// shared serverless driver keyed by their short name, exactly like gen1, so
 // the invoke data plane resolves them: the v2 :call action and event delivery
 // (Pub/Sub / Eventarc) both funnel through h.fn.Invoke and return the same
 // invoke result model as gen1 (canned echo by default, or the real
@@ -114,7 +114,7 @@ func (h *Handler) registerGen2Driver(ctx context.Context, name string, fn *gen2F
 // missing driver entry: createV2 always registers one, so a live gen2 function
 // always has a driver entry, and the only way UpdateFunction sees NotFound is a
 // delete that raced this patch (patchV2 releases h.mu before this call). In that
-// case the correct real-GCP response is a 404 — resurrecting the driver entry
+// case the correct real-GCP response is a 404. Resurrecting the driver entry
 // here would leave a zombie with no h.gen2 map entry, permanently poisoning the
 // name (future create ALREADY_EXISTS; :call/GET 404). So the NotFound is
 // propagated unchanged for patchV2 to surface.

@@ -13,7 +13,7 @@
 // are tolerated and ignored (matches Cloud Asset's permissive behavior
 // for unknown fields). Contradictory terms (two distinct services in the
 // same query, or two values for the same label) flip ForceEmpty so the
-// handler short-circuits to an empty result — a single resource cannot
+// handler short-circuits to an empty result. A single resource cannot
 // belong to two services or hold two values for one label, so the real
 // API would also return zero rows.
 package cloudasset
@@ -32,7 +32,7 @@ const (
 	gcpServiceCloudFunctions = "cloudfunctions.googleapis.com"
 )
 
-// Fully-qualified GCP asset type strings — used in both directions
+// Fully-qualified GCP asset type strings, used in both directions
 // (parsing assetType filters AND emitting type in response rows).
 const (
 	atComputeInstance = "compute.googleapis.com/Instance"
@@ -88,7 +88,7 @@ const (
 	portableVertexAI     = "aiplatform"
 )
 
-// parsedFilter is the result of filter parsing — an engine Query plus
+// parsedFilter is the result of filter parsing: an engine Query plus
 // any caller-detected contradictions.
 type parsedFilter struct {
 	Query      resourcediscovery.Query
@@ -152,7 +152,7 @@ func applyService(out *parsedFilter, service string) {
 
 	// Cross-clause contradiction: if an earlier assetType: pinned a
 	// narrower service set, a service: clause that doesn't overlap means
-	// "this resource must belong to two different services" — impossible,
+	// "this resource must belong to two different services", impossible,
 	// so flag ForceEmpty.
 	if out.typeSet && len(out.Query.Services) > 0 && !servicesIntersect(out.Query.Services, newServices) {
 		out.ForceEmpty = true
@@ -174,7 +174,7 @@ func applyAssetType(out *parsedFilter, assetType string) {
 	if svc != "" {
 		newServices := []string{svc}
 
-		// Cross-clause contradiction: same idea as applyService — if a
+		// Cross-clause contradiction: same idea as applyService. If a
 		// service: clause already narrowed Services and the new assetType
 		// belongs to a different service, no resource can satisfy both.
 		if out.serviceSet && len(out.Query.Services) > 0 && !servicesIntersect(out.Query.Services, newServices) {
@@ -228,7 +228,7 @@ func addLabel(out *parsedFilter, key, value string) {
 
 // gcpServiceToPortable maps a GCP service name (storage.googleapis.com)
 // to the portable service identifier. compute.googleapis.com is special:
-// it spans both portable "compute" and "networking" — the caller uses
+// it spans both portable "compute" and "networking". The caller uses
 // expandPortableService to get the right Services set.
 func gcpServiceToPortable(service string) string {
 	switch service {
@@ -335,7 +335,7 @@ func mapGCPAssetType(assetType string) (service, typ string) {
 	return p.service, p.typ
 }
 
-// portableToGCPAssetType is the inverse — turns the engine's (service,
+// portableToGCPAssetType is the inverse: it turns the engine's (service,
 // type) pair into the canonical GCP assetType string the API emits.
 func portableToGCPAssetType(service, typ string) string {
 	if at, ok := portableToGCPAssetTypeMap[service+"/"+typ]; ok {

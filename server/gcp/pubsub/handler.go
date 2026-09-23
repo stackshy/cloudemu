@@ -359,7 +359,7 @@ func (h *Handler) publish(w http.ResponseWriter, r *http.Request, project, name 
 	h.mu.Unlock()
 
 	// Fan out to push endpoints and event-triggered functions outside the lock,
-	// best-effort — a slow or failing target never fails the publish.
+	// best-effort: a slow or failing target never fails the publish.
 	h.dispatchPublished(r.Context(), project, name, delivery, pushSubs)
 
 	writeJSON(w, http.StatusOK, out)
@@ -525,7 +525,7 @@ func encodeData(raw string) string {
 	return base64.StdEncoding.EncodeToString([]byte(raw))
 }
 
-// decodeData tolerates unencoded payloads — some test clients send raw JSON.
+// decodeData tolerates unencoded payloads: some test clients send raw JSON.
 func decodeData(data string) string {
 	if b, err := base64.StdEncoding.DecodeString(data); err == nil {
 		return string(b)
@@ -562,9 +562,9 @@ func writeError(w http.ResponseWriter, status int, reason, msg string) {
 }
 
 // writeErr maps a CloudEmu canonical error to the matching GCP HTTP status and
-// reason. The wire message is cerrors.Message(err) — the error's human-readable
+// reason. The wire message is cerrors.Message(err): the error's human-readable
 // text without the canonical code prefix (e.g. "topic x not found", not
-// "NotFound: topic x not found") — matching every other cloud's wire handlers,
+// "NotFound: topic x not found"), matching every other cloud's wire handlers,
 // which never leak the internal error-taxonomy name into the message an SDK
 // surfaces to the caller.
 func writeErr(w http.ResponseWriter, err error) {

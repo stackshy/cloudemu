@@ -176,7 +176,7 @@ func TestSDKSubnetworkExpandIpCidrRange(t *testing.T) {
 		t.Errorf("ipCidrRange=%s want 10.0.0.0/20 (not widened)", got.GetIpCidrRange())
 	}
 
-	// A subset must be rejected — expandIpCidrRange only grows the range.
+	// A subset must be rejected. expandIpCidrRange only grows the range.
 	_, err = subClient.ExpandIpCidrRange(ctx, &computepb.ExpandIpCidrRangeSubnetworkRequest{
 		Project: testProject, Region: testRegion, Subnetwork: "sub-exp",
 		SubnetworksExpandIpCidrRangeRequestResource: &computepb.SubnetworksExpandIpCidrRangeRequest{

@@ -27,7 +27,7 @@ func decodeQueue(w http.ResponseWriter, r *http.Request, q *queueJSON) bool {
 	}
 
 	if len(body) == 0 {
-		return true // empty body ({} equivalent) — leaves queue zero-valued
+		return true // empty body ({} equivalent), leaves queue zero-valued
 	}
 
 	if err := json.Unmarshal(normalizeEnumNumbers(body), q); err != nil {
@@ -45,7 +45,7 @@ func (h *Handler) createQueue(w http.ResponseWriter, r *http.Request, rt route) 
 	}
 
 	// The queue id is the trailing segment of the name supplied in the body
-	// (Cloud Tasks create takes the full resource name in the body — there is no
+	// (Cloud Tasks create takes the full resource name in the body; there is no
 	// queueId query param).
 	id := lastSegment(body.Name)
 	if id == "" {

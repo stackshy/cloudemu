@@ -73,8 +73,8 @@ func TestSDKCloudSQLSettingsRoundTrip(t *testing.T) {
 
 // TestSDKCloudSQLUnmodeledSettingsRoundTrip reproduces the Terraform
 // perpetual-drift bug where settings sub-fields the wire layer does not model
-// explicitly — maintenanceWindow, insightsConfig, locationPreference and the
-// scalar connectorEnforcement — were silently dropped on Insert, so every
+// explicitly (maintenanceWindow, insightsConfig, locationPreference and the
+// scalar connectorEnforcement) were silently dropped on Insert, so every
 // `terraform plan` after apply proposed re-adding them. They must all survive
 // the Insert->Get round-trip, and a Patch of one must be reflected on the
 // following Get.

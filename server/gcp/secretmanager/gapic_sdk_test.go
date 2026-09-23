@@ -38,7 +38,7 @@ func newGAPIC(t *testing.T) *gapic.Client {
 
 // TestGAPICLifecycle drives a full secret lifecycle through the idiomatic
 // cloud.google.com/go/secretmanager/apiv1 GAPIC REST client (protojson wire
-// codec, oneof replication, int64-as-string crc32c) — the client most real Go
+// codec, oneof replication, int64-as-string crc32c), the client most real Go
 // users reach for, distinct from the google.golang.org/api discovery client the
 // other tests use. cloudemu serves REST only, so NewRESTClient is used; the
 // default NewClient (gRPC) cannot reach it.
@@ -229,7 +229,7 @@ func TestGAPICEdgeCases(t *testing.T) {
 		t.Fatalf("DisableSecretVersion: %v", err)
 	}
 	// Access on a disabled version fails. Real Secret Manager returns
-	// FAILED_PRECONDITION, which over REST transport is HTTP 400 — the GAPIC
+	// FAILED_PRECONDITION, which over REST transport is HTTP 400, the GAPIC
 	// REST client (via gax-go apierror) maps any HTTP 400 to InvalidArgument
 	// regardless of the body's canonical status string, so a real user on the
 	// REST client observes InvalidArgument here too (a gRPC-transport user would

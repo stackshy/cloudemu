@@ -76,7 +76,7 @@ type txnState struct {
 
 // transactionRegistry tracks the documents read within each open transaction
 // so commit can detect a conflicting write that landed after the read and
-// abort — without this, concurrent read-modify-write transactions (e.g. two
+// abort. Without this, concurrent read-modify-write transactions (e.g. two
 // clients both incrementing a counter) silently lose updates instead of one
 // being retried, since the in-memory store otherwise applies every commit's
 // writes unconditionally.
@@ -108,8 +108,8 @@ func (tr *transactionRegistry) begin(id string) {
 
 // recordRead notes that docName was observed (existed, updateTime) within
 // transaction id. A blank id is a no-op (the read was not transactional). An id
-// the registry has not seen — e.g. its begin() entry was swept, or a
-// non-SDK caller skipped beginTransaction — gets a read-set lazily created so
+// the registry has not seen (e.g. its begin() entry was swept, or a
+// non-SDK caller skipped beginTransaction) gets a read-set lazily created so
 // commit can still validate what it reads.
 func (tr *transactionRegistry) recordRead(id, docName string, existed bool, updateTime time.Time) {
 	if id == "" {
@@ -151,8 +151,8 @@ func (tr *transactionRegistry) reads(id string) map[string]txnRead {
 	return out
 }
 
-// end discards id's read-set. Called once a transaction resolves — commit
-// (successful or aborted) or rollback — so the registry never grows past the
+// end discards id's read-set. Called once a transaction resolves, commit
+// (successful or aborted) or rollback, so the registry never grows past the
 // set of currently in-flight transactions (plus stragglers up to txnTTL).
 func (tr *transactionRegistry) end(id string) {
 	if id == "" {
@@ -193,7 +193,7 @@ type listCollectionIDsResponse struct {
 // are created lazily on first write and modeled as driver tables keyed by their
 // full parent path, so the ids returned must be scoped to the request's parent:
 // the root call returns only immediate top-level collections and a per-document
-// call returns only that document's direct subcollections — each a single id
+// call returns only that document's direct subcollections, each a single id
 // segment, never a full nested path. base is the resource path before the
 // ":listCollectionIds" action. The body (pageSize/pageToken) is optional; an
 // absent body lists all matching ids.

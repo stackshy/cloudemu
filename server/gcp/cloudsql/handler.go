@@ -5,19 +5,19 @@
 //
 // MVP coverage:
 //
-//	POST   /v1/projects/{p}/instances                            — Insert
-//	GET    /v1/projects/{p}/instances                            — List
-//	GET    /v1/projects/{p}/instances/{i}                        — Get
-//	PATCH  /v1/projects/{p}/instances/{i}                        — Patch
-//	PUT    /v1/projects/{p}/instances/{i}                        — Update
-//	DELETE /v1/projects/{p}/instances/{i}                        — Delete
-//	POST   /v1/projects/{p}/instances/{i}/restart                — Restart
-//	POST   /v1/projects/{p}/instances/{i}/restoreBackup          — Restore from backup
-//	POST   /v1/projects/{p}/instances/{i}/backupRuns             — Create backup run
-//	GET    /v1/projects/{p}/instances/{i}/backupRuns             — List backup runs
-//	GET    /v1/projects/{p}/instances/{i}/backupRuns/{id}        — Get backup run
-//	DELETE /v1/projects/{p}/instances/{i}/backupRuns/{id}        — Delete backup run
-//	GET    /v1/projects/{p}/operations/{op}                      — Poll operation (recorded record, 404 if unknown)
+//	POST   /v1/projects/{p}/instances                            : Insert
+//	GET    /v1/projects/{p}/instances                            : List
+//	GET    /v1/projects/{p}/instances/{i}                        : Get
+//	PATCH  /v1/projects/{p}/instances/{i}                        : Patch
+//	PUT    /v1/projects/{p}/instances/{i}                        : Update
+//	DELETE /v1/projects/{p}/instances/{i}                        : Delete
+//	POST   /v1/projects/{p}/instances/{i}/restart                : Restart
+//	POST   /v1/projects/{p}/instances/{i}/restoreBackup          : Restore from backup
+//	POST   /v1/projects/{p}/instances/{i}/backupRuns             : Create backup run
+//	GET    /v1/projects/{p}/instances/{i}/backupRuns             : List backup runs
+//	GET    /v1/projects/{p}/instances/{i}/backupRuns/{id}        : Get backup run
+//	DELETE /v1/projects/{p}/instances/{i}/backupRuns/{id}        : Delete backup run
+//	GET    /v1/projects/{p}/operations/{op}                      : Poll operation (recorded record, 404 if unknown)
 //
 // All mutating endpoints return Operation envelopes with status=DONE so SDK
 // pollers terminate on the first response. Start/Stop are emulated via
@@ -25,7 +25,7 @@
 //
 // The /v1/projects/ prefix is shared with Cloud Functions, Pub/Sub, and
 // Firestore. Matches narrows by the third path segment so dispatch stays
-// unambiguous: it only claims "instances" or "operations" — anything else
+// unambiguous: it only claims "instances" or "operations"; anything else
 // (locations, topics, subscriptions, databases) falls through.
 package cloudsql
 
@@ -48,7 +48,7 @@ const (
 	// pathPrefixBeta / pathFlagsBeta are the sql/v1beta4 REST paths. The Go
 	// sqladmin/v1 client hits /v1/projects/..., but gcloud and the Terraform
 	// google provider (via the embedded sqladmin client) hit
-	// /sql/v1beta4/projects/... — real Cloud SQL serves both surfaces, so the
+	// /sql/v1beta4/projects/.... Real Cloud SQL serves both surfaces, so the
 	// handler must accept either prefix or every gcloud/Terraform request gets a
 	// 501 and google_sql_database_instance can never be created.
 	pathPrefixBeta = "/sql/v1beta4/projects/"
@@ -92,14 +92,14 @@ type Handler struct {
 
 	// mu guards ops and opSeq. Mutating endpoints complete inline (status=DONE)
 	// and record the resulting Operation here so a later Operations.Get returns
-	// the real CREATE/UPDATE/DELETE record — pointing at the affected resource —
+	// the real CREATE/UPDATE/DELETE record, pointing at the affected resource,
 	// rather than a synthetic stand-in.
 	mu  sync.RWMutex
 	ops map[string]operation
 	// opSeq makes every recorded operation name unique. Several call sites build
 	// their base name from a fixed action tag or an instance/resource id (e.g.
 	// "patch-{instance}", or the globally-shared "insert-db"/"clone"/"promote"),
-	// so two calls of the same kind — even against different instances — would
+	// so two calls of the same kind, even against different instances, would
 	// otherwise collide on the same map key and silently overwrite each other's
 	// Operation record. Real Cloud SQL always hands back a distinct operation
 	// name per call.
@@ -405,7 +405,7 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *sqlP
 	writeJSON(w, http.StatusOK, op)
 }
 
-// listOperations serves GET /v1/projects/{p}/operations — the operations.list
+// listOperations serves GET /v1/projects/{p}/operations, the operations.list
 // verb. Real Cloud SQL scopes the collection to the project and, when an
 // "instance" query parameter is given, to that instance's operations only,
 // returned in reverse-chronological order.
@@ -450,8 +450,8 @@ func (h *Handler) listOperations(w http.ResponseWriter, r *http.Request, p *sqlP
 }
 
 // operationInstance extracts the instance name an operation's targetLink
-// refers to — e.g. ".../instances/foo" or ".../instances/foo/backupRuns/123"
-// both yield "foo" — or "" when the operation doesn't target an
+// refers to (e.g. ".../instances/foo" or ".../instances/foo/backupRuns/123"
+// both yield "foo"), or "" when the operation doesn't target an
 // instance-scoped resource.
 func operationInstance(op *operation) string {
 	prefix := selfLinkBase + op.TargetProject + "/instances/"

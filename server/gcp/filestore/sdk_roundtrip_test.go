@@ -186,7 +186,7 @@ func TestSDKFilestoreOperationPollReturnsInstance(t *testing.T) {
 		t.Fatalf("polled operation not done: %+v", polled)
 	}
 
-	// The polled response must decode into an Instance — a base64 string would
+	// The polled response must decode into an Instance. A base64 string would
 	// fail here (json: cannot unmarshal string into ...Instance).
 	var inst file.Instance
 	if err := json.Unmarshal(polled.Response, &inst); err != nil {

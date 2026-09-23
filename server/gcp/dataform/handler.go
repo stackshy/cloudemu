@@ -1,18 +1,18 @@
 // Package dataform implements the Google Cloud Dataform control plane
 // (dataform.googleapis.com) as a server.Handler on the /v1beta1/ version prefix.
-// Dataform ships a v1beta1 API only — there is no /v1/ — so both the
+// Dataform ships a v1beta1 API only (there is no /v1/), so both the
 // hashicorp/google-beta provider's google_dataform_repository resource (the
 // resource lives only in google-beta) and a real
 // google.golang.org/api/dataform/v1beta1 client target /v1beta1/ unchanged.
 //
-// Coverage (region-scoped repository control plane only, synchronous REST — no
+// Coverage (region-scoped repository control plane only, synchronous REST, no
 // LRO):
 //
-//	POST   /v1beta1/…/repositories?repositoryId=        — CreateRepository
-//	GET    /v1beta1/…/repositories                      — ListRepositories
-//	GET    /v1beta1/…/repositories/{repo}               — GetRepository
-//	PATCH  /v1beta1/…/repositories/{repo}?updateMask=   — PatchRepository
-//	DELETE /v1beta1/…/repositories/{repo}?force=        — DeleteRepository
+//	POST   /v1beta1/…/repositories?repositoryId=        : CreateRepository
+//	GET    /v1beta1/…/repositories                      : ListRepositories
+//	GET    /v1beta1/…/repositories/{repo}               : GetRepository
+//	PATCH  /v1beta1/…/repositories/{repo}?updateMask=   : PatchRepository
+//	DELETE /v1beta1/…/repositories/{repo}?force=        : DeleteRepository
 //
 // Every RPC returns the resource (or an empty object for delete) directly with
 // no google.longrunning.Operation wrapper. The repositories resource-segment

@@ -6,18 +6,18 @@
 //
 // Coverage (instance + database control plane only):
 //
-//	POST   /v1/projects/{p}/instances                             — CreateInstance (LRO)
-//	GET    /v1/projects/{p}/instances                             — ListInstances
-//	GET    /v1/projects/{p}/instances/{i}                         — GetInstance
-//	PATCH  /v1/projects/{p}/instances/{i}                         — UpdateInstance (LRO, body fieldMask)
-//	DELETE /v1/projects/{p}/instances/{i}                         — DeleteInstance (sync)
-//	POST   /v1/projects/{p}/instances/{i}/databases              — CreateDatabase (LRO)
-//	GET    /v1/projects/{p}/instances/{i}/databases              — ListDatabases
-//	GET    /v1/projects/{p}/instances/{i}/databases/{d}          — GetDatabase
-//	DELETE /v1/projects/{p}/instances/{i}/databases/{d}          — DropDatabase (sync)
-//	GET    /v1/projects/{p}/instances/{i}/databases/{d}/ddl      — GetDatabaseDdl
-//	PATCH  /v1/projects/{p}/instances/{i}/databases/{d}/ddl      — UpdateDatabaseDdl (LRO)
-//	GET    .../instances/{i}[/databases/{d}]/operations/{op}     — poll (always done)
+//	POST   /v1/projects/{p}/instances                             : CreateInstance (LRO)
+//	GET    /v1/projects/{p}/instances                             : ListInstances
+//	GET    /v1/projects/{p}/instances/{i}                         : GetInstance
+//	PATCH  /v1/projects/{p}/instances/{i}                         : UpdateInstance (LRO, body fieldMask)
+//	DELETE /v1/projects/{p}/instances/{i}                         : DeleteInstance (sync)
+//	POST   /v1/projects/{p}/instances/{i}/databases              : CreateDatabase (LRO)
+//	GET    /v1/projects/{p}/instances/{i}/databases              : ListDatabases
+//	GET    /v1/projects/{p}/instances/{i}/databases/{d}          : GetDatabase
+//	DELETE /v1/projects/{p}/instances/{i}/databases/{d}          : DropDatabase (sync)
+//	GET    /v1/projects/{p}/instances/{i}/databases/{d}/ddl      : GetDatabaseDdl
+//	PATCH  /v1/projects/{p}/instances/{i}/databases/{d}/ddl      : UpdateDatabaseDdl (LRO)
+//	GET    .../instances/{i}[/databases/{d}]/operations/{op}     : poll (always done)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting resource in `response`, and a created resource is READY
@@ -26,12 +26,12 @@
 //
 // Path collision with Cloud SQL: Spanner shares the /v1/projects/{p}/instances
 // URL space with Cloud SQL (both real services live on the same collapsed host).
-// Matches keeps the two disjoint by content, not URL alone — a create POST is
+// Matches keeps the two disjoint by content, not URL alone. A create POST is
 // claimed only when its body carries the Spanner CreateInstanceRequest shape
 // ({instanceId, instance}); an item/sub-resource request is claimed only when
 // this Spanner store owns the instance (the state-aware pattern GKE uses for its
 // operations). The one path that cannot be told apart by content is the bare
-// GET /v1/projects/{p}/instances list, which Spanner claims — Cloud SQL's
+// GET /v1/projects/{p}/instances list, which Spanner claims. Cloud SQL's
 // Terraform/gcloud traffic uses the /sql/v1beta4 and bare /projects prefixes and
 // is unaffected; only a raw sqladmin/v1 SDK client's ListInstances is superseded
 // on a server that also runs Spanner.
@@ -103,7 +103,7 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	// Collection: /v1/projects/{p}/instances — list is Spanner's; a create POST
+	// Collection: /v1/projects/{p}/instances: list is Spanner's; a create POST
 	// is Spanner's only when the body carries the CreateInstanceRequest shape.
 	if len(parts) == idxResource+1 {
 		switch r.Method {
@@ -196,7 +196,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // The completed operation re-embeds the affected resource in `response` (fetched
 // live from the store), because clients such as the Terraform google provider
 // re-poll the operation by name after create and read that response to populate
-// the resource — a done operation with an empty response makes them fail with
+// the resource. A done operation with an empty response makes them fail with
 // "`resource` not set in operation response".
 func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
@@ -217,7 +217,7 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
 
 // operationResponse re-fetches the resource an operation acted on so a poll can
 // replay it. The operation name is ".../operations/{op}"; the segment before
-// "/operations/" is the resource name — a database when it contains
+// "/operations/" is the resource name: a database when it contains
 // "/databases/", otherwise an instance. A resource already deleted yields nil.
 func (h *Handler) operationResponse(r *http.Request, opName string) any {
 	idx := strings.Index(opName, "/"+segOperations+"/")

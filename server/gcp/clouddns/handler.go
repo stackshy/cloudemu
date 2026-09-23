@@ -10,12 +10,12 @@
 //
 // Coverage (v1 REST):
 //
-//	POST   /dns/v1/projects/{p}/managedZones                        — Create zone
-//	GET    /dns/v1/projects/{p}/managedZones/{z}                    — Get zone
-//	GET    /dns/v1/projects/{p}/managedZones                        — List zones
-//	DELETE /dns/v1/projects/{p}/managedZones/{z}                    — Delete zone
-//	POST   /dns/v1/projects/{p}/managedZones/{z}/changes           — Apply record additions/deletions
-//	GET    /dns/v1/projects/{p}/managedZones/{z}/rrsets            — List record sets
+//	POST   /dns/v1/projects/{p}/managedZones                        : Create zone
+//	GET    /dns/v1/projects/{p}/managedZones/{z}                    : Get zone
+//	GET    /dns/v1/projects/{p}/managedZones                        : List zones
+//	DELETE /dns/v1/projects/{p}/managedZones/{z}                    : Delete zone
+//	POST   /dns/v1/projects/{p}/managedZones/{z}/changes           : Apply record additions/deletions
+//	GET    /dns/v1/projects/{p}/managedZones/{z}/rrsets            : List record sets
 package clouddns
 
 import (
@@ -61,7 +61,7 @@ type Handler struct {
 	// managedZones.delete's empty-check-then-delete span, both against
 	// concurrent callers and against each other. The dns driver has no
 	// multi-key transaction primitive, so Changes.create's atomic
-	// all-or-nothing semantics — and delete's refusal on a non-empty zone —
+	// all-or-nothing semantics, and delete's refusal on a non-empty zone,
 	// only hold if no other wire-layer mutation can land in the window between
 	// a handler's validation read and its apply. Distinct from mu, which only
 	// guards the change-log slice: holding this lock across a call that
@@ -117,7 +117,7 @@ func parseRoute(urlPath string) (route, bool) {
 	}
 }
 
-// Matches claims /dns/v1/projects/{p}/managedZones[...] paths — a distinct URL
+// Matches claims /dns/v1/projects/{p}/managedZones[...] paths, a distinct URL
 // space from the /v1/projects/ family (Firestore, IAM, Secret Manager, …), so
 // registration order relative to them is unconstrained. Registered before the
 // GCS fallback for consistency with the other GCP handlers.

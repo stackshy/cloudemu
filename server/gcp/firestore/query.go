@@ -58,7 +58,7 @@ func fieldFilterNode(ff *fieldFilter) (expr.Node, error) {
 }
 
 // notEqualNode matches documents whose field is present, non-null, and not
-// equal to the value — Firestore excludes absent and null fields from a !=
+// equal to the value. Firestore excludes absent and null fields from a !=
 // filter (a bare negation would wrongly include them), mirroring notInNode.
 func notEqualNode(path *expr.PathOperand, val *expr.ValueOperand) expr.Node {
 	presentAndNotNull := &expr.Comparison{Op: "<>", Left: path, Right: &expr.ValueOperand{Value: nil}}
@@ -90,7 +90,7 @@ func listFilterNode(ff *fieldFilter) (expr.Node, error) {
 }
 
 // notInNode matches documents whose field is present, non-null, and not equal
-// to any member — Firestore excludes absent and null fields from not-in (a bare
+// to any member. Firestore excludes absent and null fields from not-in (a bare
 // negation would wrongly include them).
 func notInNode(path *expr.PathOperand, members []any) expr.Node {
 	presentAndNotNull := &expr.Comparison{Op: "<>", Left: path, Right: &expr.ValueOperand{Value: nil}}

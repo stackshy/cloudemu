@@ -11,7 +11,7 @@ import (
 
 // TestCreateRepositoryFormatRequired guards the real-user divergence that a
 // create with a missing, FORMAT_UNSPECIFIED, or unknown format must fail with
-// INVALID_ARGUMENT (HTTP 400) — real Artifact Registry requires a concrete,
+// INVALID_ARGUMENT (HTTP 400): real Artifact Registry requires a concrete,
 // valid format, which is also immutable. The handler previously defaulted a
 // missing format to DOCKER and stored an unknown format verbatim, silently
 // masking the client error and diverging from GCP.

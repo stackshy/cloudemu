@@ -21,7 +21,7 @@ const reservedIPBase = "10.128.0.0"
 // Addresses are reserved IP ranges. Private services access uses a global one
 // to carve out the block a managed service is peered into, so a caller
 // reserves it while building a network and releases it while tearing one
-// down — which is where its absence stops the work.
+// down, which is where its absence stops the work.
 //
 // Like routers, these are held in the handler rather than the networking
 // driver: a reserved range with a purpose and prefix length is specific to
@@ -92,7 +92,7 @@ func (s *addressStore) list(project, scope string) []json.RawMessage {
 }
 
 // allByScope returns every stored address for a project grouped by the scope
-// ("global" or a region name) it was reserved in — the grouping aggregatedList
+// ("global" or a region name) it was reserved in. The grouping aggregatedList
 // projects into per-scope buckets.
 func (s *addressStore) allByScope(project string) map[string][]json.RawMessage {
 	s.mu.RLock()
@@ -207,8 +207,8 @@ func (h *Handler) insertAddress(w http.ResponseWriter, r *http.Request, rp gcpre
 }
 
 // enrichAddress fills the server-assigned fields real GCP stamps on a reserved
-// address — kind, id, status=RESERVED, an allocated IP, selfLink, region and
-// creationTimestamp — while preserving everything the caller sent (purpose,
+// address: kind, id, status=RESERVED, an allocated IP, selfLink, region and
+// creationTimestamp, while preserving everything the caller sent (purpose,
 // prefixLength, addressType, …). Without this a Get reads back all-empty.
 //
 //nolint:gocritic // rp is a request-scoped value

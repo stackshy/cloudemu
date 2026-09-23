@@ -34,7 +34,7 @@ var errRepositoryNoInstance = errors.New("repository must set the instance it is
 // validateRepository enforces the repository's required `instance` reference:
 // the full resource name of the instance hosting it must be present, matching
 // the real API (a 400 otherwise). The referenced instance is NOT checked for
-// existence — Terraform may pass a project-number-normalized name that would not
+// existence. Terraform may pass a project-number-normalized name that would not
 // match a project-id-keyed store, and a false 404 would break an apply that
 // creates the instance and repository in the same plan (see BUILDOUT_BACKLOG.md).
 func validateRepository(fields map[string]json.RawMessage) error {

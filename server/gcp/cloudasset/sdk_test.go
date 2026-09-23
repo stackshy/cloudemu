@@ -81,7 +81,7 @@ func TestSDKCloudAsset(t *testing.T) {
 	t.Run("searchAllResources filters by label", func(t *testing.T) {
 		out, err := client.V1.SearchAllResources(scope).Query("labels.env:prod").Do()
 		require.NoError(t, err)
-		// audit-logs bucket + events table + VPC — 3 prod resources.
+		// audit-logs bucket, events table, and VPC: 3 prod resources.
 		assert.Len(t, out.Results, 3)
 	})
 
@@ -454,7 +454,7 @@ func TestSDKCloudAsset_BugFixes(t *testing.T) {
 	})
 
 	t.Run("Bug 2: Operations.Get returns cached export result", func(t *testing.T) {
-		// Trigger an export — caches the operation under its name.
+		// Trigger an export; caches the operation under its name.
 		op, err := client.V1.ExportAssets(scope, &cloudasset.ExportAssetsRequest{}).Do()
 		require.NoError(t, err)
 		require.NotEmpty(t, op.Name, "operation must have a non-empty name to be pollable")
@@ -483,7 +483,7 @@ func TestSDKCloudAsset_BugFixes(t *testing.T) {
 }
 
 // TestSDKCloudAsset_BatchGetAssetsHistory fills the coverage gap from the
-// review — the endpoint was implemented but not exercised by any test.
+// review: the endpoint was implemented but not exercised by any test.
 func TestSDKCloudAsset_BatchGetAssetsHistory(t *testing.T) {
 	ctx := context.Background()
 	cloudP := cloudemu.NewGCP()

@@ -55,7 +55,7 @@ func TestSDKCloudFunctionsErrorMessagesOmitCodePrefix(t *testing.T) {
 }
 
 // assertNoCodePrefix fails if msg contains one of cloudemu's internal
-// canonical error-code names followed by a colon — the shape err.Error()
+// canonical error-code names followed by a colon, the shape err.Error()
 // produces for a *cerrors.Error, as opposed to cerrors.Message(err).
 func assertNoCodePrefix(t *testing.T, msg string) {
 	t.Helper()

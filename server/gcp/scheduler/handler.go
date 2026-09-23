@@ -1,24 +1,24 @@
 // Package scheduler implements the cloudscheduler.googleapis.com v1 REST API as
-// a server.Handler. Real google.golang.org/api/cloudscheduler/v1 clients — and
-// Terraform's google provider (google_cloud_scheduler_job) — pointed at this
+// a server.Handler. Real google.golang.org/api/cloudscheduler/v1 clients, and
+// Terraform's google provider (google_cloud_scheduler_job), pointed at this
 // server CRUD jobs and drive the pause/resume/run verbs end-to-end against the
 // shared scheduler driver.
 //
-// Coverage (v1 REST), all SYNCHRONOUS (the Job, or Empty for delete, is
-// returned directly — Cloud Scheduler has no long-running operations):
+// Coverage (v1 REST), all synchronous (the Job, or Empty for delete, is
+// returned directly: Cloud Scheduler has no long-running operations):
 //
-//	POST   /v1/projects/{p}/locations/{l}/jobs?jobId={id}   — Create job
-//	GET    /v1/projects/{p}/locations/{l}/jobs/{job}         — Get job
-//	GET    /v1/projects/{p}/locations/{l}/jobs               — List jobs (paged)
-//	PATCH  /v1/projects/{p}/locations/{l}/jobs/{job}?updateMask=… — Patch job
-//	DELETE /v1/projects/{p}/locations/{l}/jobs/{job}         — Delete job
-//	POST   /v1/projects/{p}/locations/{l}/jobs/{job}:pause   — Pause job
-//	POST   /v1/projects/{p}/locations/{l}/jobs/{job}:resume  — Resume job
-//	POST   /v1/projects/{p}/locations/{l}/jobs/{job}:run     — Run job
+//	POST   /v1/projects/{p}/locations/{l}/jobs?jobId={id}   : Create job
+//	GET    /v1/projects/{p}/locations/{l}/jobs/{job}         : Get job
+//	GET    /v1/projects/{p}/locations/{l}/jobs               : List jobs (paged)
+//	PATCH  /v1/projects/{p}/locations/{l}/jobs/{job}?updateMask=… : Patch job
+//	DELETE /v1/projects/{p}/locations/{l}/jobs/{job}         : Delete job
+//	POST   /v1/projects/{p}/locations/{l}/jobs/{job}:pause   : Pause job
+//	POST   /v1/projects/{p}/locations/{l}/jobs/{job}:resume  : Resume job
+//	POST   /v1/projects/{p}/locations/{l}/jobs/{job}:run     : Run job
 //
 // This is the control plane only. A job's schedule and target (HTTP, Pub/Sub, or
 // App Engine, including OAuth/OIDC token config) round-trip verbatim, but firing
-// a job — HTTP delivery, Pub/Sub publish, App Engine routing, token minting — is
+// a job (HTTP delivery, Pub/Sub publish, App Engine routing, token minting) is
 // out of scope and never happens.
 package scheduler
 

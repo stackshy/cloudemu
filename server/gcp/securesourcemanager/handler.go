@@ -8,14 +8,14 @@
 //
 // Coverage (instance + repository control plane):
 //
-//	POST   /v1/…/instances?instanceId=       — CreateInstance (LRO)
-//	GET    /v1/…/instances                    — ListInstances
-//	GET    /v1/…/instances/{id}               — GetInstance
-//	PATCH  /v1/…/instances/{id}?updateMask=   — PatchInstance (LRO)
-//	DELETE /v1/…/instances/{id}               — DeleteInstance (LRO)
-//	POST   /v1/…/repositories?repositoryId=   — CreateRepository (LRO)
-//	…                                          — Get/List/Patch/Delete (as above)
-//	GET    /v1/…/operations/{op}              — Operations.Get (shared poller)
+//	POST   /v1/…/instances?instanceId=       : CreateInstance (LRO)
+//	GET    /v1/…/instances                    : ListInstances
+//	GET    /v1/…/instances/{id}               : GetInstance
+//	PATCH  /v1/…/instances/{id}?updateMask=   : PatchInstance (LRO)
+//	DELETE /v1/…/instances/{id}               : DeleteInstance (LRO)
+//	POST   /v1/…/repositories?repositoryId=   : CreateRepository (LRO)
+//	…                                          : Get/List/Patch/Delete (as above)
+//	GET    /v1/…/operations/{op}              : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting resource embedded in `response` as an Any typed
@@ -24,7 +24,7 @@
 // hanging.
 //
 // Location-scoped operations: Secure Source Manager's operations live under
-// /v1/projects/{p}/locations/{l}/operations — the SAME space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server (no registry)
 // serves its own polls.
@@ -36,7 +36,7 @@
 // a client pointed at it via a custom endpoint sends the emulator's own host,
 // not the API host, so the services CANNOT be told apart by URL or Host alone.
 // They are disambiguated by content and ownership, the pattern Filestore already
-// uses to coexist with Memorystore — the greedy fall-through service claims
+// uses to coexist with Memorystore: the greedy fall-through service claims
 // everything not claimed by a selective handler registered ahead of it:
 //
 //   - /instances collides with Filestore (file.googleapis.com) and Memorystore
@@ -201,7 +201,7 @@ func knownResource(seg string) bool {
 // shared LRO registry (a standalone package server); in an assembled server the
 // shared poller owns them. Both instances (shared with Filestore/Memorystore)
 // and repositories (shared with Artifact Registry) are claimed selectively by
-// content (create) and ownership (item/list) — see the package doc.
+// content (create) and ownership (item/list): see the package doc.
 func (h *Handler) Matches(r *http.Request) bool {
 	rt, ok := parseRoute(r.URL.Path)
 	if !ok {
@@ -254,7 +254,7 @@ func (h *Handler) ownsAnyRepositoryIn(ctx context.Context, project, location str
 }
 
 // bodyHasInstanceRef reports whether a POST /repositories body carries a
-// non-empty `instance` reference — the field every Secure Source Manager
+// non-empty `instance` reference: the field every Secure Source Manager
 // repository create must set and that an Artifact Registry repository create
 // (which carries a `format` instead) never does. The body is read and restored
 // so a fall-through to Artifact Registry still sees the full request.

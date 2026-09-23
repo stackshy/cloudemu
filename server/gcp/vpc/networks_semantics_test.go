@@ -156,7 +156,7 @@ func TestSDKNetworkDeleteInUse(t *testing.T) {
 
 // TestSDKNetworkDeleteBlockedByFirewall verifies the provider-layer guard, now
 // authoritative for every caller, also blocks a network delete over the wire
-// while a firewall rule still references the network — real GCP answers
+// while a firewall rule still references the network. Real GCP answers
 // resourceInUseByAnotherResource. Deleting the firewall unblocks the network.
 func TestSDKNetworkDeleteBlockedByFirewall(t *testing.T) {
 	ts := newGCPNetServer(t)

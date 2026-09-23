@@ -104,7 +104,7 @@ type networkInterface struct {
 	AccessConfigs []accessConfig `json:"accessConfigs,omitempty"`
 }
 
-// accessConfig models compute#accessConfig — the external-IP mapping on a
+// accessConfig models compute#accessConfig, the external-IP mapping on a
 // network interface. A ONE_TO_ONE_NAT config carries the instance's public IP:
 // when natIP names a reserved compute#address that address flips RESERVED->IN_USE
 // while the instance holds it; when natIP is omitted GCP assigns an ephemeral
@@ -209,7 +209,7 @@ type setMachineTypeRequest struct {
 }
 
 // serialPortOutput is the outbound shape for
-// GET .../instances/{name}/serialPort — the response of
+// GET .../instances/{name}/serialPort, the response of
 // instances.getSerialPortOutput
 // (https://cloud.google.com/compute/docs/reference/rest/v1/instances/getSerialPortOutput).
 type serialPortOutput struct {

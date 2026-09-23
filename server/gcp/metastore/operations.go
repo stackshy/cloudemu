@@ -20,7 +20,7 @@ const (
 // falling back to the trailing segment of the body name. The seed hook mints the
 // output-only fields (endpointUri, state, stateMessage, artifactGcsUri, uid) and
 // fills the top-level server defaults (port, databaseType, releaseChannel, tier)
-// so a later GET is stable — the classic Dataproc Metastore drift point. The
+// so a later GET is stable, the classic Dataproc Metastore drift point. The
 // operation completes inline.
 func (h *Handler) createService(w http.ResponseWriter, r *http.Request, rt route) {
 	fields, bodyName, ok := decodeBody(w, r)

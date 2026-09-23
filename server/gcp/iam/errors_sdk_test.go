@@ -42,7 +42,7 @@ func TestSDKGCPIAMRoleNotFoundIsTyped(t *testing.T) {
 }
 
 // assertNoCodePrefix fails if msg contains one of cloudemu's internal
-// canonical error-code names followed by a colon — the shape err.Error()
+// canonical error-code names followed by a colon, the shape err.Error()
 // produces for a *cerrors.Error, as opposed to cerrors.Message(err). Real IAM
 // never prefixes its error messages with an internal error-taxonomy name.
 func assertNoCodePrefix(t *testing.T, msg string) {
@@ -204,7 +204,7 @@ func TestSDKGCPIAMPatchActuallyReplaces(t *testing.T) {
 
 // TestSDKGCPIAMPatchPreservesProjectThroughWildcard verifies that a PATCH
 // using the projects/- wildcard URL preserves the SA's original project
-// rather than moving the SA into a "-" project bucket — which would then
+// rather than moving the SA into a "-" project bucket, which would then
 // vanish from list under the real project.
 func TestSDKGCPIAMPatchPreservesProjectThroughWildcard(t *testing.T) {
 	svc := newSDKService(t)
@@ -234,7 +234,7 @@ func TestSDKGCPIAMPatchPreservesProjectThroughWildcard(t *testing.T) {
 	}
 
 	// The SA must still surface under the real project after a wildcard
-	// patch — proving updateServiceAccount preserved the stored project.
+	// patch, proving updateServiceAccount preserved the stored project.
 	list, err := svc.Projects.ServiceAccounts.List(parent).Context(ctx).Do()
 	if err != nil {
 		t.Fatalf("List: %v", err)
