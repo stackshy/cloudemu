@@ -91,7 +91,7 @@ func createSDKVMWithNIC(
 // a NIC must set that NIC's properties.virtualMachine.id, a second VM cannot
 // attach an already-attached NIC, and deleting the owning VM clears the
 // back-reference again (real Azure's InUseNetworkInterfaceCannotBeDeleted /
-// attach semantics — see MS Learn "Add or remove network interfaces": a NIC
+// attach semantics; see MS Learn "Add or remove network interfaces": a NIC
 // belongs to exactly one VM at a time).
 func TestSDKCreateVMSetsNICBackReference(t *testing.T) {
 	// AccountID matches the "sub-1" subscription the SDK clients below address,

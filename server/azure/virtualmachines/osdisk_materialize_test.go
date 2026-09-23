@@ -13,7 +13,7 @@ import (
 // declares an osDisk materializes a real Microsoft.Compute/disks resource: a
 // real azure-sdk-for-go DisksClient can Get the OS disk, and it reports the
 // requested size, createOption, SKU, Attached state, and a managedBy pointing
-// back at the VM — the disks API returned nothing for a VM's OS disk before.
+// back at the VM: the disks API returned nothing for a VM's OS disk before.
 func TestSDKVMOSDiskMaterialized(t *testing.T) {
 	vmClient, diskClient := newDataDiskTestServer(t)
 	ctx := context.Background()

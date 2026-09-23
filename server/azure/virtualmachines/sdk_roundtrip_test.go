@@ -257,7 +257,7 @@ func TestSDKVMRecordsLocationAndResourceGroup(t *testing.T) {
 	}
 
 	// The ARM read path (GET) must report the created region, not the "eastus"
-	// default — this is what an `az vm show` / armcompute Get client reads.
+	// default: this is what an `az vm show` / armcompute Get client reads.
 	got, err := client.Get(ctx, "rg-prod", "vm-loc", nil)
 	if err != nil {
 		t.Fatalf("Get: %v", err)

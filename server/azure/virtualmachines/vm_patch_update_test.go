@@ -15,10 +15,10 @@ import (
 
 // TestSDKVMPatchUpdateAppliesVMSizeAndReplacesTags is the regression test for
 // the PATCH Update fix: a real armcompute BeginUpdate that supplies
-// hardwareProfile.vmSize (a resize) and a tags map must take effect — Get shows
+// hardwareProfile.vmSize (a resize) and a tags map must take effect: Get shows
 // the new size and the new tag set. Unlike a generic RFC 7386 merge-patch, real
 // Azure Compute's PATCH tags is a full replace: a tag set at create and omitted
-// from the PATCH body does NOT survive (this is a well-documented Azure quirk —
+// from the PATCH body does NOT survive (this is a well-documented Azure quirk;
 // see providers/azure/sqlvirtualmachine's UpdateTags for the sibling case).
 // Before the underlying fix update() only reconciled data disks and silently
 // dropped vmSize/tags entirely.
