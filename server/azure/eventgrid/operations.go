@@ -11,7 +11,7 @@ import (
 
 // createOrUpdateTopic maps Topics.CreateOrUpdate onto the eventbus driver:
 // create when absent, otherwise apply the request's mutable fields (tags) via
-// UpdateEventBus — ARM PUT semantics, so the caller's changes are never
+// UpdateEventBus, per ARM PUT semantics, so the caller's changes are never
 // silently discarded.
 func (h *Handler) createOrUpdateTopic(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body topicJSON
@@ -54,7 +54,7 @@ func (h *Handler) createOrUpdateTopic(w http.ResponseWriter, r *http.Request, rp
 // inputSchemaFromBody reads the caller's requested InputSchema off a Topics
 // CreateOrUpdate request body. CreateEventBus falls back to the real default
 // (EventGridSchema) when this is empty; UpdateEventBus never sets it, so an
-// update request's value is intentionally ignored — Event Grid does not allow
+// update request's value is intentionally ignored: Event Grid does not allow
 // changing a topic's input schema after creation.
 func inputSchemaFromBody(body *topicJSON) string {
 	if body.Properties == nil {
@@ -86,14 +86,14 @@ type topicUpdateJSON struct {
 }
 
 // updateTopic maps Topics.Update (PATCH) onto UpdateEventBus for the mutable
-// publicNetworkAccess, and — separately — onto the eventBusTagWriter
+// publicNetworkAccess, and, separately, onto the eventBusTagWriter
 // capability for tags: a resource-level tag PATCH replaces the tag set
 // wholesale (matching real Azure and every other resource's Update in this
-// codebase — e.g. cosmosaccount, images), a caller who omits tags entirely
+// codebase, e.g. cosmosaccount, images), a caller who omits tags entirely
 // leaves the existing set untouched, and a caller who supplies an explicit
 // empty tags object wipes it. Tags are routed around UpdateEventBus's
 // cfg.Tags != nil gate on purpose: tagsFromPtr collapses an empty-but-present
-// map to nil, which that gate cannot tell apart from "tags omitted" — so
+// map to nil, which that gate cannot tell apart from "tags omitted", so
 // funneling the wipe through cfg.Tags would silently no-op it (the bug this
 // fixes). body.Tags being non-nil (checked before tagsFromPtr) is what
 // distinguishes present-and-empty from absent. Returns the updated topic
@@ -139,7 +139,7 @@ func updatePublicNetworkAccess(body *topicUpdateJSON) string {
 
 // replaceTagsIfPresent implements Azure's resource-level tag PATCH semantics:
 // when the caller's body includes a tags key at all (even an empty object),
-// the new set REPLACES current wholesale — a tag omitted from the body is
+// the new set REPLACES current wholesale: a tag omitted from the body is
 // dropped, not preserved. When the caller omits tags entirely (nil), current
 // is left untouched. This matches the convention already established
 // elsewhere in this codebase (cosmosaccount, images, storageaccount, ...).

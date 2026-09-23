@@ -39,8 +39,8 @@ const (
 	// slice partitionIDs allocates. Basic/Standard tiers are already validated
 	// against maxPartitionCount above; Premium/Dedicated tiers are left
 	// unbounded by that business-rule check (real Azure allows up to 1024
-	// partitions on a Dedicated cluster), so this constant — well above any real
-	// tier's ceiling — is the only bound protecting the allocation itself from a
+	// partitions on a Dedicated cluster), so this constant, well above any real
+	// tier's ceiling, is the only bound protecting the allocation itself from a
 	// pathological partitionCount.
 	maxAllocablePartitions = 1024
 	minRetentionDays       = 1

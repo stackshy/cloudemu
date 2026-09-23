@@ -159,7 +159,7 @@ func (h *Handler) serveDomains(w http.ResponseWriter, r *http.Request, rp *azure
 	case subActionRegenerateKey:
 		h.regenerateDomainKey(w, r, rp)
 	case typeTopics:
-		// domains/{domain}/topics[/{topicName}] — DomainTopics, a distinct
+		// domains/{domain}/topics[/{topicName}]: DomainTopics, a distinct
 		// sub-resource from the top-level Microsoft.EventGrid/topics
 		// collection sharing the same "topics" path segment.
 		h.serveDomainTopics(w, r, rp)

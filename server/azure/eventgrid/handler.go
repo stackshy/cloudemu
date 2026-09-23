@@ -15,17 +15,17 @@
 //
 // Coverage:
 //
-//	PUT/GET/DELETE .../topics/{t}                           — Topics CRUD (LRO, completes inline)
-//	PATCH          .../topics/{t}                           — Topics.Update (replace tags + mutable properties)
-//	GET            .../topics                               — Topics.ListBySubscription / ListByResourceGroup
-//	POST           .../topics/{t}/listKeys                  — Topics.ListSharedAccessKeys
-//	POST           .../topics/{t}/regenerateKey            — Topics.RegenerateKey
-//	PUT/GET/DELETE .../topics/{t}/eventSubscriptions/{s}    — TopicEventSubscriptions CRUD
-//	GET            .../topics/{t}/eventSubscriptions        — TopicEventSubscriptions.List
-//	PUT/GET/DELETE .../domains/{d}/topics/{t}               — DomainTopics CRUD
-//	GET            .../domains/{d}/topics                   — DomainTopics.ListByDomain
-//	PUT/GET/DELETE {scope}/.../eventSubscriptions/{s}      — EventSubscriptions CRUD (subscription/RG/resource scope)
-//	GET            {scope}/.../eventSubscriptions          — EventSubscriptions List (ByResource / Global{BySub,ByRG})
+//	PUT/GET/DELETE .../topics/{t}                           : Topics CRUD (LRO, completes inline)
+//	PATCH          .../topics/{t}                           : Topics.Update (replace tags + mutable properties)
+//	GET            .../topics                               : Topics.ListBySubscription / ListByResourceGroup
+//	POST           .../topics/{t}/listKeys                  : Topics.ListSharedAccessKeys
+//	POST           .../topics/{t}/regenerateKey            : Topics.RegenerateKey
+//	PUT/GET/DELETE .../topics/{t}/eventSubscriptions/{s}    : TopicEventSubscriptions CRUD
+//	GET            .../topics/{t}/eventSubscriptions        : TopicEventSubscriptions.List
+//	PUT/GET/DELETE .../domains/{d}/topics/{t}               : DomainTopics CRUD
+//	GET            .../domains/{d}/topics                   : DomainTopics.ListByDomain
+//	PUT/GET/DELETE {scope}/.../eventSubscriptions/{s}      : EventSubscriptions CRUD (subscription/RG/resource scope)
+//	GET            {scope}/.../eventSubscriptions          : EventSubscriptions List (ByResource / Global{BySub,ByRG})
 package eventgrid
 
 import (
@@ -47,8 +47,8 @@ const (
 // subscriptions) are backed by the eventbus driver. System topics and domains
 // are Event-Grid-only ARM resources with no generic driver equivalent (a system
 // topic wraps an external Azure event source; a domain groups topics and holds
-// its own access keys), so — mirroring the Cosmos /offers precedent in this
-// codebase — the wire handler owns their state in memory.
+// its own access keys), so, mirroring the Cosmos /offers precedent in this
+// codebase, the wire handler owns their state in memory.
 type Handler struct {
 	bus ebdriver.EventBus
 	// sysDelivery is the optional system-topic delivery capability of bus (the
@@ -66,8 +66,8 @@ type Handler struct {
 	domains      map[string]*domainRecord
 	// scopedSubs holds event subscriptions created as extension resources on a
 	// non-topic scope (subscription, resource group, or an arbitrary resource).
-	// These have no eventbus-driver topic to hang off, so — like systemTopics
-	// and domains — the wire handler owns their state. Keyed by scope+name.
+	// These have no eventbus-driver topic to hang off, so, like systemTopics
+	// and domains, the wire handler owns their state. Keyed by scope+name.
 	scopedSubs map[string]*scopedSubRecord
 	// topicKeyGens holds the per-topic shared-access-key generation counters.
 	// A topic's keys are derived deterministically from its name plus a

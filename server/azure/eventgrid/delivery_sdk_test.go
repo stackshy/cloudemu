@@ -90,7 +90,7 @@ func TestSDKPublishDeliversToWebHookSubscriber(t *testing.T) {
 		t.Fatalf("subscription PollUntilDone: %v", err)
 	}
 
-	// Publish over the data-plane endpoint, exactly like a real publisher —
+	// Publish over the data-plane endpoint, like a real publisher would:
 	// no cloudemu-internal shortcut.
 	body := `[{"id":"e1","subject":"orders/1","eventType":"Order.Created",` +
 		`"eventTime":"2024-01-02T03:04:05Z","data":{"total":42},"dataVersion":"1.0"}]`
