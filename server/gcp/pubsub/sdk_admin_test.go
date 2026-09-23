@@ -63,7 +63,7 @@ func TestSDKPubSubTopicIAM(t *testing.T) {
 	}
 }
 
-// TestSDKPubSubTopicSubscriptionsList guards topics.subscriptions.list — it
+// TestSDKPubSubTopicSubscriptionsList guards topics.subscriptions.list: it
 // returns the topic's subscription names, not an empty list.
 func TestSDKPubSubTopicSubscriptionsList(t *testing.T) {
 	svc := newSDKService(t)

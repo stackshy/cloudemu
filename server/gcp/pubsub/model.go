@@ -31,8 +31,8 @@ const (
 
 // storedMessage is one message in a topic's append-only log. Every subscription
 // on the topic reads from this shared log by index; per-subscription ack state
-// (not the message bytes) is what makes delivery independent — real Pub/Sub
-// fan-out, where each subscription gets its own copy of every message.
+// (not the message bytes) is what makes delivery independent, mirroring real
+// Pub/Sub fan-out, where each subscription gets its own copy of every message.
 type storedMessage struct {
 	id          string
 	body        string // raw (un-encoded) payload
@@ -181,7 +181,7 @@ func (h *Handler) newSub(name, topicShort string, cfg *subscription, filter filt
 // When the subscription has enableMessageOrdering set, delivery additionally
 // enforces per-ordering-key sequencing: once a message with a given ordering
 // key is outstanding (delivered but not yet acked), no later message sharing
-// that key is delivered until the earlier one is acked — matching real Pub/Sub,
+// that key is delivered until the earlier one is acked, matching real Pub/Sub,
 // which holds back subsequent same-key messages rather than fanning them out
 // concurrently.
 func (h *Handler) deliver(sub *subState, maxMessages int) []receivedMessage {

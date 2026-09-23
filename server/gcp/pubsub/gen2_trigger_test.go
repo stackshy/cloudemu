@@ -233,7 +233,7 @@ func TestGen2FunctionDoesNotFireAfterDelete(t *testing.T) {
 // newServerWithFunctions) so the handler can drive the recursive publish
 // in-process through the exact same PublishToTopic entrypoint GCS
 // object-change notifications use, keeping ctx (and its recursion depth)
-// flowing on one goroutine's call stack — the scenario the guard exists for.
+// flowing on one goroutine's call stack, the scenario the guard exists for.
 func TestGen2PubsubTriggerRecursionBounded(t *testing.T) {
 	cloud := cloudemu.NewGCP()
 

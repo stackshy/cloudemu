@@ -37,7 +37,7 @@ func newRawServer(t *testing.T) (*httptest.Server, *pubsubv1.Service) {
 }
 
 // rawPatch issues a PATCH with the updateMask supplied ONLY as a query
-// parameter (never in the body) — exactly how terraform and gcloud drive
+// parameter (never in the body), exactly how terraform and gcloud drive
 // Pub/Sub subscriptions.patch / topics.patch.
 func rawPatch(t *testing.T, url, body string) *http.Response {
 	t.Helper()

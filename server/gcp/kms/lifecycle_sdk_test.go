@@ -244,7 +244,7 @@ func TestKMSCryptoKeyComputesNextRotationTime(t *testing.T) {
 	svc, base := newKMSService(t)
 	mustKeyRing(t, svc)
 
-	// No nextRotationTime supplied — the handler derives it from createTime +
+	// No nextRotationTime supplied. The handler derives it from createTime +
 	// rotationPeriod.
 	ck, err := svc.Projects.Locations.KeyRings.CryptoKeys.
 		Create(testKeyRingName, &cloudkms.CryptoKey{

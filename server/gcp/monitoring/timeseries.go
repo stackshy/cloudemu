@@ -165,7 +165,7 @@ func oneSeries(fullType string, data []mondriver.MetricDatum) timeSeries {
 
 // resourceFor derives a datum's monitored resource from its label set. A datum
 // carrying an instance_id is a gce_instance whose resource labels are
-// project_id, instance_id and zone (whichever were emitted) — the same labels
+// project_id, instance_id and zone (whichever were emitted), the same labels
 // Cloud Monitoring filters like resource.labels.zone=… match against, so a
 // filtered timeSeries.list returns the series. Anything else is the global
 // resource.

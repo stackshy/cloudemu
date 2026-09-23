@@ -13,7 +13,7 @@ import (
 )
 
 // GCP Compute Load Balancing resources that the portable LoadBalancer model
-// can't express — healthChecks and urlMaps (global) and targetPools (regional).
+// can't express: healthChecks and urlMaps (global) and targetPools (regional).
 // They are stored verbatim through the GCPComputeResourceStore optional
 // capability and re-emitted with server-injected identity so every field the
 // client sent round-trips (create → read/list → delete), which is all Terraform
@@ -266,7 +266,7 @@ func (h *Handler) deleteGCPResource(w http.ResponseWriter, r *http.Request, rp g
 
 	// Real GCP refuses to delete a resource still referenced by another (400
 	// resourceInUseByAnotherResource); deleting it here would orphan the
-	// dependent — a backend service pointing at a missing health check, a target
+	// dependent: a backend service pointing at a missing health check, a target
 	// proxy at a missing url-map, an https proxy at a missing certificate, a
 	// backend service at a missing instance group, or a forwarding rule at a
 	// missing proxy.
@@ -295,7 +295,7 @@ func gcpResourceJSON(res *lbdriver.GCPResource, rp gcprest.ResourcePath, host st
 
 	for k, v := range res.Body {
 		// Reserved internal members (e.g. instance-group membership) are stored in
-		// the body but must never leak onto the wire — they are not real GCP fields.
+		// the body but must never leak onto the wire. They are not real GCP fields.
 		if strings.HasPrefix(k, reservedBodyPrefix) {
 			continue
 		}

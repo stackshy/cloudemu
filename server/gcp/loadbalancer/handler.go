@@ -6,8 +6,8 @@
 //
 // Registration / shadowing: this handler shares the /compute/v1/projects/…
 // URL space with the existing compute (server/gcp/compute) and networks
-// (server/gcp/networks) handlers, but claims a disjoint set of resource types —
-// backendServices / forwardingRules — whereas compute claims instances /
+// (server/gcp/networks) handlers, but claims a disjoint set of resource types
+// (backendServices / forwardingRules), whereas compute claims instances /
 // operations / disks / snapshots / images and networks claims networks /
 // subnetworks / firewalls. Because gcprest.ParsePath keys dispatch on the
 // resource-type segment, first-match-wins routing is unambiguous and the three
@@ -15,7 +15,7 @@
 // unnecessary since there is no route overlap. NOTE: mutating operations return
 // compute#operation envelopes the SDK polls at
 // /compute/v1/projects/{p}/global/operations/{name}, which the compute handler
-// serves — so wire the Compute handler alongside this one when the SDK's
+// serves. So wire the Compute handler alongside this one when the SDK's
 // Insert/Delete pollers are exercised.
 //
 // Driver-abstraction mapping (GCP → loadbalancer driver):
@@ -74,7 +74,7 @@ func New(lb lbdriver.LoadBalancer) *Handler {
 // the compute handler's /operations poll route.
 func (h *Handler) SetOperationRegistry(reg *gcprest.OperationRegistry) { h.ops = reg }
 
-// Matches returns true for the load-balancing resource types — backendServices,
+// Matches returns true for the load-balancing resource types: backendServices,
 // forwardingRules, healthChecks, targetPools, urlMaps, the L7 front-end chain
 // (targetHttpProxies, targetHttpsProxies, sslCertificates) and instanceGroups /
 // regionInstanceGroups. Disjoint from the compute (instances/operations/disks/…)

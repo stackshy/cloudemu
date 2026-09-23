@@ -38,10 +38,10 @@ func newSDKClient(t *testing.T) (*metastore.APIService, string) {
 // patch, delete. The create leaves port, databaseType, releaseChannel, and tier
 // UNSET, and the test asserts the emulator fills the real API defaults and
 // reports them (plus the output-only state/endpointUri/artifactGcsUri/uid/
-// createTime) stably — the exact behavior a Terraform plan needs to converge,
+// createTime) stably, the exact behavior a Terraform plan needs to converge,
 // since those attributes are computed. The nested telemetryConfig/
 // hiveMetastoreConfig blocks are Optional non-Computed in the provider, so they
-// are left absent when the client omits them (asserted below) — injecting a
+// are left absent when the client omits them (asserted below). Injecting a
 // default there is the one thing that drifts a plan.
 func TestSDKServiceLifecycle(t *testing.T) {
 	svc, project := newSDKClient(t)

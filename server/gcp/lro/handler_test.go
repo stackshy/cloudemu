@@ -74,7 +74,7 @@ func TestNilRegistryLegacyDone(t *testing.T) {
 }
 
 // TestUnknownOperationCancelIs404 verifies POST …:cancel on an operation name
-// that was never registered is 404 NOT_FOUND, not a fabricated success — the
+// that was never registered is 404 NOT_FOUND, not a fabricated success: the
 // cross-cutting bug this package closes: a bogus operation must 404 on every
 // verb, not just GET.
 func TestUnknownOperationCancelIs404(t *testing.T) {

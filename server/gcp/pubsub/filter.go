@@ -21,7 +21,7 @@ type filterAll struct{}
 
 func (filterAll) eval(map[string]string) bool { return true }
 
-// hasAttr is `attributes:KEY` — true when the attribute is present.
+// hasAttr is `attributes:KEY`: true when the attribute is present.
 type hasAttr struct{ key string }
 
 func (h hasAttr) eval(a map[string]string) bool {
@@ -29,7 +29,7 @@ func (h hasAttr) eval(a map[string]string) bool {
 	return ok
 }
 
-// equals is `attributes.KEY = "V"` (or != when negate) — exact value match.
+// equals is `attributes.KEY = "V"` (or != when negate): exact value match.
 type equals struct {
 	key, val string
 	negate   bool

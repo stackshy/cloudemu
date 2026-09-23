@@ -10,7 +10,7 @@
 // google_project_iam_audit_config drive via read-modify-write with an etag,
 // and the ones google.golang.org/api/cloudresourcemanager/v1 clients call.
 //
-// The project policy has no portable driver — like the SA-level policy in the
+// The project policy has no portable driver, like the SA-level policy in the
 // iam handler, it is a wire-only concern tracked here in memory, keyed by
 // project id. Bindings (with conditions) and audit configs are stored verbatim
 // so a get→modify→set round-trips unchanged.
@@ -54,7 +54,7 @@ func New() *Handler {
 // setIamPolicy|testIamPermissions}. The single-segment guard (no '/' in the
 // tail) keeps it disjoint from the iam handler (serviceAccounts|roles paths),
 // Firestore (/v1/projects/{p}/databases/…) and every other /v1/projects/
-// handler, so registration order among them is unconstrained — but it must be
+// handler, so registration order among them is unconstrained, but it must be
 // registered ahead of Firestore, whose permissive prefix would otherwise
 // swallow the colon-suffixed verb.
 func (*Handler) Matches(r *http.Request) bool {
@@ -129,7 +129,7 @@ func (h *Handler) getIamPolicy(w http.ResponseWriter, r *http.Request, project s
 
 // setIamPolicy enforces optimistic concurrency: when a policy already exists,
 // the request policy.etag must match the stored etag or the write is rejected
-// with 409 ABORTED — the read-modify-write contract Terraform relies on. Each
+// with 409 ABORTED, the read-modify-write contract Terraform relies on. Each
 // accepted write bumps a per-project version so successive states get distinct
 // etags.
 func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, project string) {
@@ -155,7 +155,7 @@ func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, project s
 	}
 
 	// The unset-policy get reports the initial version (encodeEtag below), so a
-	// write must advance PAST it — otherwise the first write would echo the same
+	// write must advance past it, otherwise the first write would echo the same
 	// etag the caller just read, defeating stale-etag detection on the next
 	// write. Seed the counter to the initial version on first write, then bump.
 	if h.versions[project] == 0 {
@@ -203,7 +203,7 @@ func decodeJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 }
 
 // decodeOptional decodes a body that may be empty (getIamPolicy sends {} or no
-// body). A decode error is swallowed — the only field is an ignored option.
+// body). A decode error is swallowed. The only field is an ignored option.
 func decodeOptional(r *http.Request, v any) error {
 	r.Body = http.MaxBytesReader(nil, r.Body, maxBodyBytes)
 	defer func() { _ = r.Body.Close() }()

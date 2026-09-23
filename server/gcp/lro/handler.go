@@ -5,12 +5,12 @@
 // In real GCP each service exposes its own operations endpoint on its own API
 // host (alloydb.googleapis.com, artifactregistry.googleapis.com, …). CloudEmu
 // collapses every service onto one HTTP server, so those per-service operation
-// paths become indistinguishable by URL alone — whichever handler is registered
+// paths become indistinguishable by URL alone. Whichever handler is registered
 // first (alloydb/gke) would greedily answer every location operation request
 // and fabricate success for the ones it didn't create, shadowing
 // artifactregistry, eventarc, memorystore, etc. This one handler, registered
-// ahead of the service handlers, owns all location-scoped operation traffic —
-// Get, Cancel, and Delete alike — uniformly.
+// ahead of the service handlers, owns all location-scoped operation traffic,
+// Get, Cancel, and Delete alike, uniformly.
 //
 // Every CloudEmu mutation completes synchronously, but a client that polls the
 // returned operation name still expects real-GCP behaviors the handler must
@@ -140,7 +140,7 @@ type Handler struct {
 func New(reg *Registry) *Handler { return &Handler{reg: reg} }
 
 // Matches claims GET, POST /v1/projects/{p}/locations/{l}/operations/{op}:cancel,
-// and DELETE /v1/projects/{p}/locations/{l}/operations/{op} — every verb the
+// and DELETE /v1/projects/{p}/locations/{l}/operations/{op}, every verb the
 // google.longrunning.Operations service exposes on a location-scoped
 // operation. Claiming all three verbs (not just GET) is what keeps the
 // operations-minting handlers (artifactregistry, eventarc, memorystore,
@@ -214,7 +214,7 @@ func (h *Handler) serveCancel(w http.ResponseWriter, name string) {
 }
 
 // serveDelete implements Operations.Delete: removes a completed operation's
-// record, so a subsequent poll 404s — matching real GCP.
+// record, so a subsequent poll 404s, matching real GCP.
 func (h *Handler) serveDelete(w http.ResponseWriter, name string) {
 	if !h.reg.delete(name) {
 		notFound(w, name)
