@@ -161,7 +161,7 @@ func cloneAssoc(a *driver.ResolverRuleAssociation) driver.ResolverRuleAssociatio
 }
 
 // sortedValues returns the store's values sorted by key, each deep-copied via
-// clone — the shared List implementation for every resource group.
+// clone, the shared List implementation for every resource group.
 func sortedValues[T any](all map[string]*T, clone func(*T) T) []T {
 	ids := make([]string, 0, len(all))
 	for id := range all {

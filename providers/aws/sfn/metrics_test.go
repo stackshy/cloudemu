@@ -97,7 +97,7 @@ func TestExecutionMetrics(t *testing.T) {
 
 // TestExecutionMetricsAbortUnderSettle pins that under AsyncSettle a still-
 // running execution records only ExecutionsStarted, and a StopExecution that
-// aborts it records ExecutionsAborted — never a would-be success.
+// aborts it records ExecutionsAborted, never a would-be success.
 func TestExecutionMetricsAbortUnderSettle(t *testing.T) {
 	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	m, cw := newMetricsMock(clk, config.WithAsyncSettle())
@@ -127,8 +127,8 @@ func TestExecutionMetricsAbortUnderSettle(t *testing.T) {
 }
 
 // TestExecutionMetricsSettleNaturally pins that under AsyncSettle a run that
-// settles on its own publishes its close metrics exactly once — at the first
-// settled observation (Describe/List/History), stamped at its StopDate — and
+// settles on its own publishes its close metrics once, at the first
+// settled observation (Describe/List/History), stamped at its StopDate, and
 // that later observations never re-publish.
 func TestExecutionMetricsSettleNaturally(t *testing.T) {
 	clk := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))

@@ -17,10 +17,10 @@ const lambdaInvokeResource = "arn:aws:states:::lambda:invoke"
 // reports.
 const lambdaOKStatus = 200
 
-// taskHandler runs a Task state. The whole state — its InputPath/Parameters
+// taskHandler runs a Task state. The whole state, its InputPath/Parameters
 // input pipeline, the recursion-guarded Lambda invoke, and its
-// ResultSelector/ResultPath/OutputPath result pipeline — runs under Retry, so a
-// matching Retrier re-runs the state (re-invoking the function) exactly as real
+// ResultSelector/ResultPath/OutputPath result pipeline, runs under Retry, so a
+// matching Retrier re-runs the state (re-invoking the function) as real
 // AWS does. Any failure the Retriers do not recover, INCLUDING a state-internal
 // I/O-pipeline error (States.ParameterPathFailure / States.ResultPathMatchFailure
 // / an unsupported Resource), is routed through the state's Catch: a matching

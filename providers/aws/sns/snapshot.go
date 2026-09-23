@@ -31,8 +31,8 @@ type topicSnapshot struct {
 	Deleted       int                `json:"deleted,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// SNS holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. SNS holds no bulk
+// object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := snsSnapshot{Topics: make(map[string]*topicSnapshot, m.topics.Len())}
 

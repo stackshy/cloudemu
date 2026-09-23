@@ -163,7 +163,7 @@ func TestUpdateTopicFIFOAndDeliveryAttributes(t *testing.T) {
 	assert.Equal(t, "alias/my-key", info.KmsMasterKeyID)
 	assert.True(t, info.ContentBasedDeduplication)
 
-	// An explicit false must also stick — this is exactly the bug: a plain
+	// An explicit false must also stick. This is the bug: a plain
 	// zero-value bool couldn't previously be distinguished from "not set".
 	_, err = m.UpdateTopic(ctx, driver.TopicConfig{
 		Name: "t.fifo", ContentBasedDeduplication: false, ContentBasedDeduplicationSet: true,
@@ -704,7 +704,7 @@ func TestPublishReturnsUniqueMessageIDs(t *testing.T) {
 // TestPublishFIFOValidation guards the two real-SNS FIFO Publish requirements:
 // every message needs a MessageGroupId, and needs a MessageDeduplicationId
 // unless the topic has ContentBasedDeduplication enabled. Standard topics are
-// unaffected — MessageGroupId there is optional (forwarded to SQS standard
+// unaffected. MessageGroupId there is optional (forwarded to SQS standard
 // subscriptions for fair-queue routing), never required or rejected.
 func TestPublishFIFOValidation(t *testing.T) {
 	tests := []struct {

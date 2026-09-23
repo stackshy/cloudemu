@@ -119,10 +119,10 @@ func TestNotificationFilterAndTargets(t *testing.T) {
 }
 
 // TestObjectEventFullShape verifies the S3 event record delivered to a target
-// carries the complete documented shape — eventVersion, userIdentity,
+// carries the complete documented shape: eventVersion, userIdentity,
 // requestParameters, responseElements, and the full s3 block with
 // s3SchemaVersion, configurationId, bucket.{name,arn,ownerIdentity} and
-// object.{key,size,eTag,sequencer} — not just bucket.name/object.key.
+// object.{key,size,eTag,sequencer}, not just bucket.name/object.key.
 func TestObjectEventFullShape(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

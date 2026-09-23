@@ -105,7 +105,7 @@ func (m *Mock) SetKMSCrypto(c KMSCrypto) {
 
 // encrypt seals a secret value under kmsKeyID (empty selects the default
 // aws/secretsmanager managed key). With no KMS wired it returns the value
-// unchanged — the library plaintext fallback.
+// unchanged, the library plaintext fallback.
 func (m *Mock) encrypt(ctx context.Context, kmsKeyID string, plaintext []byte) ([]byte, error) {
 	if m.kmsCrypto == nil {
 		stored := make([]byte, len(plaintext))
@@ -220,7 +220,7 @@ func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value 
 	// supplied; a metadata-only secret has no versions until PutSecretValue adds
 	// one. This matters for the common Terraform pattern, where
 	// aws_secretsmanager_secret creates the secret with no value and a separate
-	// aws_secretsmanager_secret_version adds the first version — creating a phantom
+	// aws_secretsmanager_secret_version adds the first version. Creating a phantom
 	// empty version here would demote that first real version's predecessor to a
 	// spurious AWSPREVIOUS.
 	if value != nil {
@@ -278,8 +278,8 @@ func (m *Mock) createSecretConflict(
 	existing.mu.Lock()
 	scheduledForDeletion := !existing.deletedAt.IsZero()
 
-	// A retry of this same CreateSecret call — the same ClientRequestToken
-	// naming the secret's already-created initial version — is a no-op that
+	// A retry of this same CreateSecret call, the same ClientRequestToken
+	// naming the secret's already-created initial version, is a no-op that
 	// returns the existing secret rather than erroring, matching real Secrets
 	// Manager's SDK-retry-safety contract (the whole reason a client token
 	// exists: a lost response must not turn a successful create into a hard
@@ -442,7 +442,7 @@ func (m *Mock) PutSecretValue(_ context.Context, name string, value []byte) (*dr
 //     identical content is an idempotent no-op (the existing version is returned);
 //     reusing it with different content is ResourceExistsException.
 //   - versionStages, when non-empty, are the exact labels the new version takes,
-//     and AWSCURRENT is NOT implied — so staging a candidate as [AWSPENDING]
+//     and AWSCURRENT is NOT implied, so staging a candidate as [AWSPENDING]
 //     leaves the prior AWSCURRENT untouched. An empty versionStages promotes the
 //     new version to AWSCURRENT (demoting the prior current to AWSPREVIOUS).
 func (m *Mock) PutSecretValueStaged(
@@ -493,7 +493,7 @@ func (m *Mock) PutSecretValueStaged(
 
 // reusedTokenVersion enforces ClientRequestToken idempotency: same token + same
 // content returns the existing version unchanged; same token + different content
-// is ResourceExistsException. The comparison is on plaintext — the stored value
+// is ResourceExistsException. The comparison is on plaintext, the stored value
 // is ciphertext whose bytes differ per write even for identical content.
 func (m *Mock) reusedTokenVersion(
 	ctx context.Context, existing *driver.SecretVersion, value []byte, token string,

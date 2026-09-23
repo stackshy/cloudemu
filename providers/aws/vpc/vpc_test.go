@@ -148,7 +148,7 @@ func TestDescribeVPCs(t *testing.T) {
 
 	t.Run("nonexistent ID", func(t *testing.T) {
 		// Real EC2 returns InvalidVpcID.NotFound for an explicit missing ID,
-		// not an empty success — existence checks and Terraform drift rely on it.
+		// not an empty success, existence checks and Terraform drift rely on it.
 		_, err := m.DescribeVPCs(ctx, []string{"vpc-nope"})
 		assertError(t, err, true)
 	})
@@ -1058,7 +1058,7 @@ func TestCreateNetworkACL(t *testing.T) {
 		assertEqual(t, v.ID, acl.VPCID)
 		assertEqual(t, false, acl.IsDefault)
 		// A fresh custom ACL carries only the two unmodifiable catch-all '*'
-		// DENY entries (rule 32767, ingress + egress) — it denies all traffic
+		// DENY entries (rule 32767, ingress + egress), it denies all traffic
 		// until the caller adds a numbered allow rule, matching real EC2.
 		assertEqual(t, 2, len(acl.Rules))
 		for _, r := range acl.Rules {
@@ -1519,8 +1519,8 @@ func TestTagMutation(t *testing.T) {
 // catches any regression to in-place mutation under an unguarded read.
 //
 // Note: this test does NOT mix in Describe calls because reads through
-// memstore.Get release the lock before the caller dereferences the value
-// — a pre-existing pattern in the codebase that is out of scope here. A
+// memstore.Get release the lock before the caller dereferences the value.
+// That's a pre-existing pattern in the codebase that is out of scope here. A
 // follow-up should add a Read closure to memstore (or per-resource locks)
 // so reads can copy Tags under the same lock that protects writes.
 func TestTagMutationConcurrency(t *testing.T) {

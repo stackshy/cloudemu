@@ -116,7 +116,7 @@ func (m *Mock) deriveAllocationCIDR(poolID string, netmask int) (string, bool) {
 func (m *Mock) deriveProvisionCIDR(_ string, netmask int) (string, bool) {
 	s, e, _ := ipv4Range(defaultIPv4Base)
 	// Every top-level pool carves from the same shared base, so a new block must
-	// avoid CIDRs already provisioned into ANY pool — otherwise two pools each
+	// avoid CIDRs already provisioned into ANY pool, otherwise two pools each
 	// asking for a /16 would both receive 10.0.0.0/16 and overlap, defeating
 	// IPAM's non-overlap guarantee.
 	used := usedRanges(m.allProvisionedCIDRs())

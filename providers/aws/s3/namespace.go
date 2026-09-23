@@ -3,7 +3,7 @@ package s3
 import "sync"
 
 // NameReservation is the process-wide S3 bucket-name namespace, shared across
-// every regional S3 mock so bucket names are globally unique — exactly as in
+// every regional S3 mock so bucket names are globally unique, as in
 // real S3, where a bucket name taken in any region cannot be re-created in
 // another. Each region owns its own bucket data plane (a separate *Mock), but
 // they all consult one NameReservation, so CreateBucket rejects a name already

@@ -147,7 +147,7 @@ func (m *Mock) ModifyIpamResourceCidr(
 		}
 
 		// Persist the change so subsequent Get/Describe/metrics reads reflect
-		// it — the base list is re-derived every call, so a purely local edit
+		// it, the base list is re-derived every call, so a purely local edit
 		// would silently revert.
 		m.ipamResourceOverrides[resourceID] = ipamResourceOverride{
 			scopeID:   scopeID,

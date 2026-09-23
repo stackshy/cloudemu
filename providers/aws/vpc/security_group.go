@@ -11,7 +11,7 @@ import (
 // single target, and description) of the ingress/egress rule identified by
 // ruleID within groupID, preserving the rule's RuleID, egress side, and Tags.
 // It backs the AWS-only ec2:ModifySecurityGroupRules action and is exposed via
-// the wire layer's optional sgRuleMutator interface — Azure/GCP/OCI have no
+// the wire layer's optional sgRuleMutator interface. Azure/GCP/OCI have no
 // concept of an sgr- rule id, so this is deliberately not on the shared driver.
 //
 // A missing group is NotFound (mapped to InvalidGroup.NotFound); an absent

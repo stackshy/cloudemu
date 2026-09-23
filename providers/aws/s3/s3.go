@@ -565,7 +565,7 @@ func (m *Mock) storeObject(bkt *bucketMeta, key string, obj *s3Object) error {
 }
 
 // storeObjectConditional evaluates an If-None-Match / If-Match precondition
-// against the current object and, only if it holds, stores obj — both under a
+// against the current object and, only if it holds, stores obj, both under a
 // single versionsMu hold so the check and the write are atomic.
 func (m *Mock) storeObjectConditional(bkt *bucketMeta, key string, obj *s3Object, pre driver.S3PutPrecondition) error {
 	bkt.versionsMu.Lock()
@@ -774,7 +774,7 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 	// held them: unversioned (vid "", deleteMarker false) and suspended (vid
 	// "null", replacing the null object) both remove real bytes; Enabled only
 	// appends a delete marker (a real new vid) while prior versions keep their
-	// bytes, so it is skipped. Best-effort — the in-memory delete already
+	// bytes, so it is skipped. Best-effort: the in-memory delete already
 	// succeeded and byte cleanup must not fail an idempotent delete.
 	if !deleteMarker || vid == nullVersionID {
 		_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key, Version: vid})
@@ -790,8 +790,8 @@ func (m *Mock) DeleteObject(ctx context.Context, bucket, key string) error {
 }
 
 // deleteTopLevelLocked applies a top-level (no versionId) delete. On Enabled it
-// appends a delete marker (leaving every existing version — including protected
-// ones — intact, so no lock check applies); on Suspended it overwrites the null
+// appends a delete marker (leaving every existing version, including protected
+// ones, intact, so no lock check applies); on Suspended it overwrites the null
 // version with a null delete marker; unversioned removes the current object.
 // The Suspended and unversioned branches DESTROY the current object's bytes, so
 // they honor Object Lock: a protected current object cannot be removed (bypass
@@ -922,7 +922,7 @@ func (m *Mock) ListObjects(_ context.Context, bucket string, opts driver.ListOpt
 			continue
 		}
 
-		// Clone metadata only for the page actually returned — cloning every
+		// Clone metadata only for the page actually returned. Cloning every
 		// match would make a paged scan O(bucket) allocations per request.
 		obj := e.obj
 		obj.Metadata = maps.Clone(obj.Metadata)
@@ -952,8 +952,8 @@ type listEntry struct {
 }
 
 // mergeListEntries builds the single lexicographically-sorted stream of object
-// keys and common prefixes. Keys are unique across the two sets — an object
-// that rolls up into a prefix is excluded from matchedObjects — so the merged
+// keys and common prefixes. Keys are unique across the two sets, an object
+// that rolls up into a prefix is excluded from matchedObjects, so the merged
 // ordering is total and stable across paged calls, keeping offset tokens valid.
 func mergeListEntries(objects []driver.ObjectInfo, prefixSet map[string]struct{}) []listEntry {
 	entries := make([]listEntry, 0, len(objects)+len(prefixSet))
@@ -1042,7 +1042,7 @@ func (m *Mock) CopyObject(ctx context.Context, dstBucket, dstKey string, src dri
 	}
 
 	// The destination is a fresh single-PUT object, not a multipart upload, so its
-	// ETag is always the plain MD5 of the copied bytes — even when the source's
+	// ETag is always the plain MD5 of the copied bytes, even when the source's
 	// ETag carries a multipart "-N" suffix.
 	dstObj := &s3Object{
 		Key: dstKey, Data: dataCopy, Size: srcObj.Size, ContentType: srcObj.ContentType,
@@ -1106,7 +1106,7 @@ func copyDstSystemProps(req *driver.CopyObjectRequest, src *copySrcSnapshot) dri
 // preconditions (a failed precondition aborts with FailedPrecondition; a
 // delete-marker source version with InvalidArgument). The destination is
 // always a fresh single-PUT object, so its ETag is recomputed as the plain
-// MD5 of the copied bytes rather than inherited from the source — matching
+// MD5 of the copied bytes rather than inherited from the source, matching
 // real S3 even when the source was uploaded via multipart (a "...-N" ETag).
 func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) (*driver.CopyObjectResult, error) {
 	src, err := m.resolveCopySource(ctx, req.Src, req.SrcVersionID)
@@ -1144,7 +1144,7 @@ func (m *Mock) CopyObjectV2(ctx context.Context, req *driver.CopyObjectRequest) 
 	}
 
 	// The destination is a fresh single-PUT object, not a multipart upload, so its
-	// ETag is always the plain MD5 of the copied bytes — even when the source's
+	// ETag is always the plain MD5 of the copied bytes, even when the source's
 	// ETag carries a multipart "-N" suffix (copy-source preconditions above already
 	// matched against the source's own ETag, so this doesn't affect them).
 	dstObj := &s3Object{
@@ -1301,7 +1301,7 @@ func etagMatches(header, etag string) bool {
 }
 
 // GeneratePresignedURL generates a mock presigned URL.
-// Note: expiry is tracked in the URL but not enforced on use — this is a mock limitation.
+// Note: expiry is tracked in the URL but not enforced on use: this is a mock limitation.
 func (m *Mock) GeneratePresignedURL(_ context.Context, req driver.PresignedURLRequest) (*driver.PresignedURL, error) {
 	if req.Method != http.MethodGet && req.Method != http.MethodPut {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "method must be GET or PUT, got %q", req.Method)
@@ -1814,7 +1814,7 @@ func (m *Mock) deleteObjectVersion(
 
 		if !existed {
 			// Unversioned bucket, key never existed: a no-op idempotent delete,
-			// matching real S3 — nothing was removed, so no event fires.
+			// matching real S3, nothing was removed, so no event fires.
 			return "", false, nil
 		}
 
@@ -1855,8 +1855,8 @@ func (m *Mock) deleteObjectVersion(
 
 	_ = storageengine.Delete(ctx, m.opts.StorageEngine, config.StorageRef{Bucket: bucket, Key: key, Version: versionID})
 
-	// An explicit versionId always permanently removes that version — even when
-	// the removed version was itself a delete marker — so this always fires
+	// An explicit versionId always permanently removes that version, even when
+	// the removed version was itself a delete marker, so this always fires
 	// ObjectRemoved:Delete, never DeleteMarkerCreated.
 	m.notifyObjectRemoved(ctx, bkt, bucket, key, versionID, false)
 

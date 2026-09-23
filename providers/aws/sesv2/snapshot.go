@@ -14,9 +14,9 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // sesv2Snapshot is the full serialized state of the AWS SES v2 mock. Five stores
 // hold unexported value types whose only stateful field is a driver value behind
-// a per-record mutex — identityData, configSetData, and templateData wrap a
+// a per-record mutex, identityData, configSetData, and templateData wrap a
 // single driver struct, while contactListData and tenantData additionally own a
-// nested memstore of fully-exported entries — so all five are promoted to
+// nested memstore of fully-exported entries, so all five are promoted to
 // exported snapshot forms keyed by resource name (the nested stores round-trip
 // through the generic memstore helper). Every other store holds a fully-exported
 // *driver pointer type (or driver.SuppressedDestination) and round-trips through
@@ -75,8 +75,8 @@ type tenantSnapshot struct {
 	Resources json.RawMessage `json:"resources,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// SES v2 retains message metadata, not object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. SES v2 retains
+// message metadata, not object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := sesv2Snapshot{
 		Identities: m.snapshotIdentities(),

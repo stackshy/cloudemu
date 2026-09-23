@@ -371,7 +371,7 @@ func TestListObjects(t *testing.T) {
 			t.Fatalf("expected first page to be truncated with a continuation token")
 		}
 
-		// The continuation must resume strictly past c — no re-listing of b,c.
+		// The continuation must resume strictly past c: no re-listing of b,c.
 		second, err := m.ListObjects(ctx, "sab2", driver.ListOptions{
 			StartAfter: "a", MaxKeys: 2, PageToken: first.NextPageToken,
 		})

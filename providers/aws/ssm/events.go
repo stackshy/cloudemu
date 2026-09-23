@@ -28,7 +28,7 @@ type parameterChangeDetail struct {
 }
 
 // SetEventPublisher wires the EventBridge default bus that parameter changes
-// are published to. Safe to leave unset — no events are emitted.
+// are published to. Safe to leave unset. No events are emitted.
 func (m *Mock) SetEventPublisher(p awsevents.Publisher) {
 	m.events.SetPublisher(p)
 }

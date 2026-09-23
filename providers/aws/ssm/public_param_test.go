@@ -81,7 +81,7 @@ func TestNonAMIPublicParameterStillNotFound(t *testing.T) {
 	}
 }
 
-// A user parameter that was never put stays NotFound — there the error is a
+// A user parameter that was never put stays NotFound. There the error is a
 // real caller bug worth surfacing.
 func TestUserParameterStillNotFound(t *testing.T) {
 	m := New(config.NewOptions())

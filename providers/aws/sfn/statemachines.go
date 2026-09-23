@@ -97,7 +97,7 @@ func (m *Mock) CreateStateMachine(
 // reconcileExisting resolves a CreateStateMachine against a name that is already
 // taken. Real Step Functions makes CreateStateMachine idempotent: a repeat call
 // with the same name whose definition, type, logging and tracing configuration
-// all match the existing machine returns that machine (HTTP 200) — a differing
+// all match the existing machine returns that machine (HTTP 200), a differing
 // roleArn or tags is ignored. Any other difference is StateMachineAlreadyExists.
 // The idempotency check mirrors real Step Functions, which also folds
 // encryptionConfiguration into the comparison.

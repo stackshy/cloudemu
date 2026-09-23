@@ -2,9 +2,9 @@
 // Write control plane: databases and the tables that belong to them, plus
 // resource tags. A database (and a table) is created immediately with a stable
 // arn, and a table is ACTIVE at once; ingesting records and running queries are
-// out of scope. The computed fields clients and IaC read back — the database
+// out of scope. The computed fields clients and IaC read back, the database
 // arn and KMS key, the table arn and status, the createdAt/updatedAt timestamps
-// and the live table count — are minted once at create (or derived) and stored,
+// and the live table count, are minted once at create (or derived) and stored,
 // so repeated reads and a later update never drift.
 package timestreamwrite
 

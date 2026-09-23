@@ -476,7 +476,7 @@ func TestIPAMLifecycle(t *testing.T) {
 
 	// Netmask-only allocation (the standard AWS pattern) must derive a real,
 	// non-empty CIDR of the requested size from the pool's supply, not the
-	// empty string — otherwise downstream reads and AWS/IPAM metrics corrupt.
+	// empty string, otherwise downstream reads and AWS/IPAM metrics corrupt.
 	nmAlloc, err := m.AllocateIpamPoolCidr(ctx, driver.AllocateIpamPoolCidrConfig{IpamPoolID: pool.ID, NetmaskLength: 24})
 	if err != nil {
 		t.Fatalf("AllocateIpamPoolCidr(netmask): %v", err)
@@ -567,7 +567,7 @@ func TestIPAMLifecycle(t *testing.T) {
 
 // TestIPAMProvisionNoCrossPoolOverlap guards the review fix: two top-level
 // pools each provisioning a netmask-only /16 must receive DISTINCT,
-// non-overlapping CIDRs — both carve from the same shared base, so the
+// non-overlapping CIDRs, both carve from the same shared base, so the
 // second must skip the first's block instead of both getting 10.0.0.0/16.
 func TestIPAMProvisionNoCrossPoolOverlap(t *testing.T) {
 	m := newMock()
@@ -873,7 +873,7 @@ func TestTrafficMirroringLifecycle(t *testing.T) {
 		t.Fatalf("expected NotFound for missing target, got %v", err)
 	}
 
-	// Modify must re-validate a re-pointed target/filter, matching Create — a
+	// Modify must re-validate a re-pointed target/filter, matching Create. A
 	// Modify can't bind a live session to a nonexistent target or filter.
 	if _, err := m.ModifyTrafficMirrorSession(ctx, session.ID,
 		driver.TrafficMirrorSessionConfig{TrafficMirrorTargetID: "tmt-missing"}, nil); !cerrors.IsNotFound(err) {

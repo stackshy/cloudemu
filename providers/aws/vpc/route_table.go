@@ -72,7 +72,7 @@ func (m *Mock) CreateRouteTable(_ context.Context, cfg driver.RouteTableConfig) 
 
 // DeleteRouteTable deletes the route table with the given ID.
 //
-// The VPC's main route table cannot be deleted on its own — real EC2 refuses
+// The VPC's main route table cannot be deleted on its own. Real EC2 refuses
 // it, and a caller sweeping a VPC's route tables must skip it rather than
 // treat the failure as a broken teardown.
 func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
@@ -105,7 +105,7 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 // Associations are joined in here rather than kept on the route table itself:
 // they live in their own store (a subnet can be re-pointed at another table),
 // and Describe is the only channel through which a caller can learn an
-// association ID — which it must have before it can disassociate.
+// association ID, which it must have before it can disassociate.
 func (m *Mock) DescribeRouteTables(_ context.Context, ids []string) ([]driver.RouteTable, error) {
 	m.mu.RLock()
 

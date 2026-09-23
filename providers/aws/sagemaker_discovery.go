@@ -10,12 +10,12 @@ import (
 // sagemakerDiscovery projects the durable, inventory-relevant SageMaker
 // resources (models, endpoints, notebook instances) into the cross-service
 // inventory. Transient jobs (training/processing/etc.) are intentionally
-// excluded — real inventory APIs surface the standing resources, not job runs.
+// excluded. Real inventory APIs surface the standing resources, not job runs.
 type sagemakerDiscovery struct{ m smMock }
 
 // smMock is the subset of the SageMaker mock discovery reads. ListTags reads
 // the authoritative ARN-keyed tag store (the target of AddTags / the Resource
-// Groups Tagging API), which is seeded with create-time tags too — so discovery
+// Groups Tagging API), which is seeded with create-time tags too, so discovery
 // reflects tags applied through either path rather than the stale struct copy.
 type smMock interface {
 	ListModels(ctx context.Context) ([]sagemakerdriver.Model, error)

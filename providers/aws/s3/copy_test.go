@@ -87,7 +87,7 @@ func TestCopyObjectV2Preconditions(t *testing.T) {
 
 	// Documented override: with both headers present and if-match true, a false
 	// if-unmodified-since (a time before the source's last modification) does not
-	// block the copy — if-match takes precedence and S3 returns 200 OK.
+	// block the copy: if-match takes precedence and S3 returns 200 OK.
 	mod, perr := time.Parse(s3TimeFormat, info.LastModified)
 	if perr != nil {
 		t.Fatalf("parse LastModified %q: %v", info.LastModified, perr)

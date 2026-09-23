@@ -27,7 +27,7 @@ func (m *Mock) SetInstanceResolver(r InstanceResolver) {
 //
 // Nothing executes: an emulated instance has no guest operating system. The
 // invocation is recorded as successful so a caller's send/poll loop runs to
-// completion, but the script itself is never validated — see driver.RunCommand.
+// completion, but the script itself is never validated. See driver.RunCommand.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (string, error) {
@@ -49,7 +49,7 @@ func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (strin
 	}
 
 	// Resolve tag/attribute Targets to concrete instance ids. Unlike an explicit
-	// id, a Target that matches nothing is not an error — real SSM accepts the
+	// id, a Target that matches nothing is not an error. Real SSM accepts the
 	// command with a TargetCount of zero.
 	resolved := m.resolveTargets(ctx, cfg.Targets)
 	instanceIDs := dedupeStrings(append(append([]string{}, cfg.InstanceIDs...), resolved...))
@@ -88,7 +88,7 @@ func (m *Mock) resolveTargets(ctx context.Context, targets []driver.CommandTarge
 			// Targets are AND-combined, so an unresolvable one must select nothing.
 			// Forwarding the raw key as an EC2 describe-filter name instead falls
 			// into matchesTagFilter's default branch, which matches every instance
-			// unconditionally — fanning the command out to the whole fleet.
+			// unconditionally, fanning the command out to the whole fleet.
 			return nil
 		}
 
@@ -118,7 +118,7 @@ func (m *Mock) resolveTargets(ctx context.Context, targets []driver.CommandTarge
 // "tag:<name>" (passes through unchanged). Other documented keys such as
 // resource-groups:Name / resource-groups:ResourceTypeFilters, and the bare
 // "tag-key" form, are reported unsupported so the caller can decline to forward
-// them — the EC2 matcher would otherwise treat them as an unrestricted match.
+// them, the EC2 matcher would otherwise treat them as an unrestricted match.
 func targetFilterName(key string) (string, bool) {
 	switch {
 	case key == "InstanceIds":

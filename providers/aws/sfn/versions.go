@@ -53,7 +53,7 @@ func (m *Mock) DeleteStateMachineVersion(_ context.Context, versionArn string) e
 		return err
 	}
 
-	// A version an alias still routes to can't be deleted — real SFN returns
+	// A version an alias still routes to can't be deleted. Real SFN returns
 	// ConflictException rather than silently orphaning the alias.
 	if alias := m.aliasRoutingTo(versionArn); alias != "" {
 		return conflict("state machine version %q is referenced by alias %q", versionArn, alias)

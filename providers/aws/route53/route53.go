@@ -72,7 +72,7 @@ func (m *Mock) ChangeResourceTags(_ context.Context, resourceID string, add map[
 // syncZoneTags mirrors a hosted zone's authoritative tag store (tagsByID, the
 // target of ChangeTagsForResource / the Resource Groups Tagging API) onto the
 // zone's own Tags field, which discovery (ListZones) reads. Without this the
-// two stores drift — a tag applied via the tagging API would be invisible to
+// two stores drift, a tag applied via the tagging API would be invisible to
 // Resource Explorer / GetResources. A no-op when resourceID is not a zone (the
 // same tag API also addresses health checks). Callers hold m.tagsMu.
 func (m *Mock) syncZoneTags(resourceID string) {
@@ -269,7 +269,7 @@ func (m *Mock) ListZones(_ context.Context, filter scope.Scope) ([]driver.ZoneIn
 }
 
 // UpdateZone applies the mutable fields (tags, scope) of an existing hosted
-// zone, matching the zone by name — ARM CreateOrUpdate-on-existing semantics.
+// zone, matching the zone by name, ARM CreateOrUpdate-on-existing semantics.
 func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.ZoneInfo, error) {
 	var (
 		id    string
@@ -306,7 +306,7 @@ func (m *Mock) UpdateZone(_ context.Context, cfg driver.ZoneConfig) (*driver.Zon
 	return &result, nil
 }
 
-// UpdateZoneComment updates a hosted zone's Comment by id — the AWS-only
+// UpdateZoneComment updates a hosted zone's Comment by id, the AWS-only
 // UpdateHostedZoneComment operation, addressed by id rather than name (unlike
 // UpdateZone's ARM-style match-by-name). The server package picks this method
 // up via an optional interface assertion, the same pattern DeleteRecordSet
@@ -445,7 +445,7 @@ func (m *Mock) DeleteRecord(ctx context.Context, zoneID, name, recordType string
 
 // DeleteRecordSet deletes the single record set identified by
 // zoneID+name+type+setID. It never touches sibling record sets that share the
-// same name+type but carry a different SetIdentifier — a DELETE of one
+// same name+type but carry a different SetIdentifier. A DELETE of one
 // weighted/latency/failover/geo record must leave its siblings intact.
 func (m *Mock) DeleteRecordSet(_ context.Context, zoneID, name, recordType, setID string) error {
 	if _, ok := m.zones.Get(zoneID); !ok {
@@ -504,7 +504,7 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 
 	// SortedValues gives a stable order keyed by zoneID:name:type[:setID];
 	// filter to this zone in that order so ListRecords is deterministic
-	// (map iteration order must never reach the wire — #259).
+	// (map iteration order must never reach the wire, #259).
 	all := m.records.SortedValues()
 
 	records := make([]driver.RecordInfo, 0, len(all))
