@@ -88,15 +88,35 @@ func defaultGroupFamily(name string) (string, bool) {
 		return "", false
 	}
 
-	rest = strings.TrimSuffix(rest, clusterOnSuffix)
+	family, clusterOn := strings.CutSuffix(rest, clusterOnSuffix)
 
 	for _, f := range knownFamilies() {
-		if rest == f {
+		if family == f && (!clusterOn || hasClusterOnDefault(f)) {
 			return f, true
 		}
 	}
 
 	return "", false
+}
+
+// hasClusterOnDefault reports whether a family also ships a
+// "default.<family>.cluster.on" group. Memcached and Redis before 3.2 don't.
+func hasClusterOnDefault(family string) bool {
+	return !strings.HasPrefix(family, engineMemcached) && family != "redis2.6" && family != "redis2.8"
+}
+
+// defaultGroupNames lists every built-in default parameter group name.
+func defaultGroupNames() []string {
+	var out []string
+
+	for _, f := range knownFamilies() {
+		out = append(out, defaultGroupPrefix+f)
+		if hasClusterOnDefault(f) {
+			out = append(out, defaultGroupPrefix+f+clusterOnSuffix)
+		}
+	}
+
+	return out
 }
 
 // lookupParameterGroup returns a stored group, or the built-in default group

@@ -3,7 +3,7 @@
 
 provider-native `emr` wire service (AWS-only) · no portable driver · [AWS index](./README.md)
 
-## Operations (19)
+## Operations (22)
 
 | Operation | Description |
 | --- | --- |
@@ -16,6 +16,7 @@ provider-native `emr` wire service (AWS-only) · no portable driver · [AWS inde
 | `DescribeCluster` |  |
 | `DescribeSecurityConfiguration` |  |
 | `DescribeStep` |  |
+| `GetAutoTerminationPolicy` |  |
 | `ListBootstrapActions` |  |
 | `ListClusters` |  |
 | `ListInstanceGroups` |  |
@@ -23,6 +24,8 @@ provider-native `emr` wire service (AWS-only) · no portable driver · [AWS inde
 | `ListSecurityConfigurations` |  |
 | `ListSteps` |  |
 | `ModifyInstanceGroups` |  |
+| `PutAutoTerminationPolicy` |  |
+| `RemoveAutoTerminationPolicy` |  |
 | `RemoveTags` |  |
 | `RunJobFlow` |  |
 | `TerminateJobFlows` |  |

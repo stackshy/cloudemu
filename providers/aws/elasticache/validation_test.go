@@ -154,6 +154,58 @@ func TestDeleteCacheParameterGroupGuards(t *testing.T) {
 	}
 }
 
+func TestReplicationGroupParameterGroup(t *testing.T) {
+	m := New(config.NewOptions())
+	ctx := context.Background()
+
+	_, err := m.CreateReplicationGroup(ctx, driver.ReplicationGroupConfig{ID: "rg0", ParameterGroupName: "nope"})
+	if !cerrors.IsNotFound(err) {
+		t.Fatalf("missing group err = %v, want NotFound", err)
+	}
+
+	if _, err = m.CreateCacheParameterGroup(ctx, "pg", "redis7", "x"); err != nil {
+		t.Fatalf("CreateCacheParameterGroup: %v", err)
+	}
+
+	if _, err = m.CreateReplicationGroup(ctx, driver.ReplicationGroupConfig{ID: "rg1", ParameterGroupName: "pg"}); err != nil {
+		t.Fatalf("CreateReplicationGroup: %v", err)
+	}
+
+	if err = m.DeleteCacheParameterGroup(ctx, "pg"); !cerrors.IsFailedPrecondition(err) {
+		t.Fatalf("in-use delete err = %v, want FailedPrecondition", err)
+	}
+
+	if _, err = m.ModifyReplicationGroupParameterGroup(ctx, "rg1", "nope"); !cerrors.IsNotFound(err) {
+		t.Fatalf("modify to missing err = %v, want NotFound", err)
+	}
+
+	rg, err := m.ModifyReplicationGroupParameterGroup(ctx, "rg1", "default.redis7")
+	if err != nil || rg.ParameterGroupName != "default.redis7" {
+		t.Fatalf("modify = %+v, %v", rg, err)
+	}
+
+	if err = m.DeleteCacheParameterGroup(ctx, "pg"); err != nil {
+		t.Fatalf("delete after modify: %v", err)
+	}
+}
+
+func TestDescribeCacheParameterGroupsListsDefaults(t *testing.T) {
+	m := New(config.NewOptions())
+
+	groups, err := m.DescribeCacheParameterGroups(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("describe: %v", err)
+	}
+
+	if len(groups) != len(defaultGroupNames()) {
+		t.Fatalf("got %d groups, want %d defaults", len(groups), len(defaultGroupNames()))
+	}
+
+	if _, ok := defaultGroupFamily("default.memcached1.6.cluster.on"); ok {
+		t.Fatalf("memcached cluster.on group must not exist")
+	}
+}
+
 func TestDefaultParameterGroupName(t *testing.T) {
 	tests := []struct{ engine, version, want string }{
 		{"redis", "7.1", "default.redis7"},

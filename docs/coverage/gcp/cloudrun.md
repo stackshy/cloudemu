@@ -7,7 +7,7 @@ GCP's `cloudrun` service · portable interface `driver.CloudRun` · [GCP index](
 
 | Operation | Description |
 | --- | --- |
-| `CreateJob` | CreateJob stores a job spec. It does not run anything — RunJob does. |
+| `CreateJob` | CreateJob stores a job spec. It does not run anything; RunJob does. |
 | `CreateService` | CreateService stores a service spec and materializes its first Revision, |
 | `DeleteJob` | DeleteJob removes a job and stops any container workloads its executions |
 | `DeleteRevision` | DeleteRevision removes a single revision of a service. |

@@ -2,6 +2,7 @@ package elasticache
 
 import (
 	"context"
+	"sort"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -121,9 +122,19 @@ func (m *Mock) CreateCacheParameterGroup(_ context.Context, name, family, descri
 }
 
 // DescribeCacheParameterGroups returns the named groups, or all when none given.
+// With no names it lists the built-in default groups too, as ElastiCache does.
 func (m *Mock) DescribeCacheParameterGroups(_ context.Context, names []string) ([]ParameterGroup, error) {
 	if len(names) == 0 {
-		return m.parameterGroups.SortedValues(), nil
+		out := m.parameterGroups.SortedValues()
+
+		for _, name := range defaultGroupNames() {
+			pg, _ := m.lookupParameterGroup(name)
+			out = append(out, pg)
+		}
+
+		sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+
+		return out, nil
 	}
 
 	out := make([]ParameterGroup, 0, len(names))
@@ -151,6 +162,14 @@ func (m *Mock) DeleteCacheParameterGroup(_ context.Context, name string) error {
 		if cd.info.ParameterGroupName == name {
 			return cerrors.Newf(cerrors.FailedPrecondition,
 				"InvalidCacheParameterGroupState: cache parameter group %q is in use by %q", name, cd.info.Name)
+		}
+	}
+
+	groups := m.replicationGroups.All()
+	for id := range groups {
+		if groups[id].ParameterGroupName == name {
+			return cerrors.Newf(cerrors.FailedPrecondition,
+				"InvalidCacheParameterGroupState: cache parameter group %q is in use by %q", name, id)
 		}
 	}
 

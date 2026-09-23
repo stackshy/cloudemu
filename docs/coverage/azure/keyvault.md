@@ -83,7 +83,7 @@ KeyVaultSecrets is the Azure Key Vault-specific secret surface: per-version
 
 ### KeyVaultVaults
 
-KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface —
+KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface
 
 | Operation | Description |
 | --- | --- |

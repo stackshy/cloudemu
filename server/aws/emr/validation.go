@@ -5,6 +5,9 @@ import (
 	"regexp"
 )
 
+// maxStepConcurrency is the highest StepConcurrencyLevel EMR allows.
+const maxStepConcurrency = 256
+
 // releaseLabelPattern is the shape of an EMR release label, e.g. emr-6.15.0.
 var releaseLabelPattern = regexp.MustCompile(`^emr-\d+\.\d+\.\d+$`)
 
@@ -33,8 +36,8 @@ func validateRunJobFlow(in *runJobFlowInput) error {
 			"Member must not be null")
 	}
 
-	if in.ReleaseLabel != nil && !releaseLabelPattern.MatchString(*in.ReleaseLabel) {
-		return validationErrorf("The supplied release label is invalid: %s.", *in.ReleaseLabel)
+	if err := validateRunJobFlowOptions(in); err != nil {
+		return err
 	}
 
 	if n := in.Instances.InstanceCount; n != nil && *n < 1 {
@@ -42,6 +45,23 @@ func validateRunJobFlow(in *runJobFlowInput) error {
 	}
 
 	return validateGroupCounts(in.Instances.InstanceGroups, 1)
+}
+
+// validateRunJobFlowOptions checks the optional RunJobFlow settings.
+func validateRunJobFlowOptions(in *runJobFlowInput) error {
+	if err := validateAutoTermination(in.AutoTerminationPolicy); err != nil {
+		return err
+	}
+
+	if n := in.StepConcurrencyLevel; n != nil && (*n < 1 || *n > maxStepConcurrency) {
+		return validationErrorf("StepConcurrencyLevel must be between 1 and %d, got %d.", maxStepConcurrency, *n)
+	}
+
+	if in.ReleaseLabel != nil && !releaseLabelPattern.MatchString(*in.ReleaseLabel) {
+		return validationErrorf("The supplied release label is invalid: %s.", *in.ReleaseLabel)
+	}
+
+	return nil
 }
 
 // validateGroupCounts rejects an instance group whose InstanceCount is below

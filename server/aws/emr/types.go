@@ -19,6 +19,8 @@ type runJobFlowInput struct {
 	Tags                  []tagInput                   `json:"Tags"`
 	Steps                 []stepConfig                 `json:"Steps"`
 	BootstrapActions      []bootstrapActionConfigInput `json:"BootstrapActions"`
+	AutoTerminationPolicy *autoTerminationPolicy       `json:"AutoTerminationPolicy"`
+	StepConcurrencyLevel  *int32                       `json:"StepConcurrencyLevel"`
 }
 
 // jobFlowInstancesConfig mirrors the read members of the SDK
@@ -328,6 +330,7 @@ type clusterWire struct {
 	TerminationProtected    bool               `json:"TerminationProtected"`
 	VisibleToAllUsers       bool               `json:"VisibleToAllUsers"`
 	NormalizedInstanceHours int32              `json:"NormalizedInstanceHours"`
+	StepConcurrencyLevel    int32              `json:"StepConcurrencyLevel"`
 	Applications            []applicationWire  `json:"Applications,omitempty"`
 	Tags                    []tagWire          `json:"Tags,omitempty"`
 }
@@ -505,6 +508,7 @@ func toClusterWire(c *cluster) *clusterWire {
 		TerminationProtected:    c.terminationProtected,
 		VisibleToAllUsers:       c.visibleToAll,
 		NormalizedInstanceHours: 0,
+		StepConcurrencyLevel:    c.stepConcurrency,
 	}
 
 	if c.ec2SubnetID != "" || c.ec2KeyName != "" || c.jobFlowRole != "" {

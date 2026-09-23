@@ -51,6 +51,10 @@ func New(accountID, region string, clock config.Clock) *Handler {
 		"AddTags":              h.addTagsHandler,
 		"RemoveTags":           h.removeTagsHandler,
 
+		"GetAutoTerminationPolicy":    h.getAutoTerminationPolicy,
+		"PutAutoTerminationPolicy":    h.putAutoTerminationPolicy,
+		"RemoveAutoTerminationPolicy": h.removeAutoTerminationPolicy,
+
 		"CreateSecurityConfiguration":   h.createSecurityConfiguration,
 		"DescribeSecurityConfiguration": h.describeSecurityConfiguration,
 		"DeleteSecurityConfiguration":   h.deleteSecurityConfiguration,

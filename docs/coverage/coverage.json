@@ -3145,7 +3145,7 @@
       },
       {
         "name": "CreateInvalidation",
-        "doc": "Invalidations (synchronous — every invalidation is Completed immediately)."
+        "doc": "Invalidations (synchronous: every invalidation is Completed immediately)."
       },
       {
         "name": "DeleteDistribution"
@@ -3214,7 +3214,7 @@
     "operations": [
       {
         "name": "CreateJob",
-        "doc": "CreateJob stores a job spec. It does not run anything — RunJob does."
+        "doc": "CreateJob stores a job spec. It does not run anything; RunJob does."
       },
       {
         "name": "CreateService",
@@ -6381,6 +6381,9 @@
         "name": "DescribeStep"
       },
       {
+        "name": "GetAutoTerminationPolicy"
+      },
+      {
         "name": "ListBootstrapActions"
       },
       {
@@ -6400,6 +6403,12 @@
       },
       {
         "name": "ModifyInstanceGroups"
+      },
+      {
+        "name": "PutAutoTerminationPolicy"
+      },
+      {
+        "name": "RemoveAutoTerminationPolicy"
       },
       {
         "name": "RemoveTags"
@@ -13358,7 +13367,7 @@
       },
       {
         "name": "SubnetGroups",
-        "doc": "SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept —",
+        "doc": "SubnetGroups is an OPTIONAL capability. Subnet groups are an AWS concept;",
         "operations": [
           {
             "name": "CreateDBSubnetGroup"
@@ -15113,7 +15122,7 @@
       },
       {
         "name": "KeyVaultVaults",
-        "doc": "KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface —",
+        "doc": "KeyVaultVaults is the Azure Key Vault control-plane (ARM) surface",
         "operations": [
           {
             "name": "CreateOrUpdateVault",

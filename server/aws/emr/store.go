@@ -117,6 +117,8 @@ type cluster struct {
 	steps                 []*step
 	instanceGroups        []*instanceGroup
 	bootstrapActions      []bootstrapAction
+	idleTimeout           *int64
+	stepConcurrency       int32
 }
 
 // store is the in-memory backing state for the EMR wire handler. EMR clusters
@@ -192,6 +194,16 @@ func (s *store) runJobFlow(in *runJobFlowInput) (*cluster, error) {
 		creation:              now,
 		ready:                 now,
 		visibleToAll:          derefBool(in.VisibleToAllUsers, true),
+		stepConcurrency:       1,
+	}
+
+	if in.StepConcurrencyLevel != nil {
+		c.stepConcurrency = *in.StepConcurrencyLevel
+	}
+
+	if p := in.AutoTerminationPolicy; p != nil && p.IdleTimeout != nil {
+		t := *p.IdleTimeout
+		c.idleTimeout = &t
 	}
 
 	applyInstances(c, in.Instances)

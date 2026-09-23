@@ -93,6 +93,10 @@ func (m *Mock) fillSnapshotSource(cfg cachedriver.SnapshotConfig, snap *cachedri
 		snap.EngineVersion = rg.EngineVersion
 		snap.NodeType = rg.NodeType
 		snap.ParameterGroupName = DefaultParameterGroupName(rg.Engine, rg.EngineVersion)
+
+		if rg.ParameterGroupName != "" {
+			snap.ParameterGroupName = rg.ParameterGroupName
+		}
 		snap.ARN = m.snapshotARN(arnRegion(rg.ARN, fallbackRegion), snap.Name)
 
 		if rg.PrimaryPort != 0 {

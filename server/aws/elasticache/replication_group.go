@@ -1,6 +1,7 @@
 package elasticache
 
 import (
+	"context"
 	"encoding/xml"
 	"net/http"
 	"strconv"
@@ -118,6 +119,7 @@ func (h *Handler) createReplicationGroup(w http.ResponseWriter, r *http.Request)
 		NumCacheNodes:            nodes,
 		SubnetGroupName:          r.Form.Get("CacheSubnetGroupName"),
 		SecurityGroupIDs:         awsquery.ListStrings(r.Form, "SecurityGroupIds.SecurityGroupId"),
+		ParameterGroupName:       r.Form.Get("CacheParameterGroupName"),
 		AutomaticFailoverEnabled: r.Form.Get("AutomaticFailoverEnabled") == formTrue,
 		SnapshotName:             r.Form.Get("SnapshotName"),
 		SnapshotArns:             awsquery.ListStrings(r.Form, "SnapshotArns.SnapshotArn"),
@@ -165,6 +167,29 @@ func (h *Handler) describeReplicationGroups(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// rgParameterGroupModifier is the AWS-only call that changes a replication
+// group's parameter group. The portable driver doesn't carry it.
+type rgParameterGroupModifier interface {
+	ModifyReplicationGroupParameterGroup(ctx context.Context, id, name string) (*cachedriver.ReplicationGroup, error)
+}
+
+// modifyRGParameterGroup applies a CacheParameterGroupName change. It writes
+// the error and returns false when the change fails.
+func (h *Handler) modifyRGParameterGroup(w http.ResponseWriter, r *http.Request, id, name string) bool {
+	mod, ok := h.cache.(rgParameterGroupModifier)
+	if !ok {
+		writeUnsupported(w, "replication group parameter groups")
+		return false
+	}
+
+	if _, err := mod.ModifyReplicationGroupParameterGroup(r.Context(), id, name); err != nil {
+		writeErr(w, err)
+		return false
+	}
+
+	return true
+}
+
 func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.replicationGroups()
 	if !ok {
@@ -178,7 +203,15 @@ func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	rg, err := store.ModifyReplicationGroup(r.Context(), r.Form.Get("ReplicationGroupId"), nodes)
+	id := r.Form.Get("ReplicationGroupId")
+
+	if pg := r.Form.Get("CacheParameterGroupName"); pg != "" {
+		if !h.modifyRGParameterGroup(w, r, id, pg) {
+			return
+		}
+	}
+
+	rg, err := store.ModifyReplicationGroup(r.Context(), id, nodes)
 	if err != nil {
 		writeErr(w, err)
 		return

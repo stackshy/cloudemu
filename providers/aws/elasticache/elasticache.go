@@ -534,6 +534,7 @@ func (m *Mock) memberCacheInfo(rg *driver.ReplicationGroup, memberID string) dri
 		ARN:                     m.cacheARN(region, memberID),
 		NumCacheNodes:           1,
 		SubnetGroupName:         rg.SubnetGroupName,
+		ParameterGroupName:      rg.ParameterGroupName,
 		ReplicationGroupID:      rg.ID,
 		AutoMinorVersionUpgrade: true,
 	}
