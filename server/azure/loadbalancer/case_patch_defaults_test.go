@@ -114,8 +114,8 @@ func TestSDKAzureLBCaseInsensitiveAddressing(t *testing.T) {
 }
 
 // TestSDKAzureLBUpdateTags proves PATCH LoadBalancers.UpdateTags REPLACES the
-// stored tag collection wholesale — a tag present before the PATCH but absent
-// from its body is dropped, not kept — and returns 200 with the updated
+// stored tag collection wholesale: a tag present before the PATCH but absent
+// from its body is dropped, not kept, and returns 200 with the updated
 // resource. This matches every other Microsoft.Network UpdateTags handler in
 // this server (armnetwork's *Client.UpdateTags does not merge).
 func TestSDKAzureLBUpdateTags(t *testing.T) {

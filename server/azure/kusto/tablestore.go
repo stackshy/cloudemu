@@ -11,7 +11,7 @@ import (
 
 // dataStore holds the Kusto query data-plane state: the tables ingested and
 // queried through the /v1|v2/rest endpoints, scoped per (cluster, database).
-// It is independent of the ARM control-plane store — a real Kusto client often
+// It is independent of the ARM control-plane store: a real Kusto client often
 // only touches the data plane in tests, and CloudEmu resolves the cluster from
 // the request Host (with a default fallback), which does not carry the ARM
 // subscription/resource-group scope. Each (cluster, database) pair auto-vivifies

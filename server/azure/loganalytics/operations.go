@@ -11,7 +11,7 @@ import (
 
 // createOrUpdateWorkspace maps Workspaces.CreateOrUpdate onto the logging
 // driver: create when absent, otherwise apply the request's mutable fields
-// (retention, tags) via UpdateLogGroup — ARM PUT semantics, so the caller's
+// (retention, tags) via UpdateLogGroup, per ARM PUT semantics, so the caller's
 // changes are never silently discarded. The Azure-only fields (location, sku)
 // and the assigned customerId GUID are tracked in the wire handler's metadata.
 func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

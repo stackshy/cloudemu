@@ -24,7 +24,7 @@ import (
 // (Microsoft.OperationalInsights/workspaces ARM control plane), mapped onto the
 // logging driver's log-group lifecycle. The data-plane log-query / ingestion
 // API (api.loganalytics.io) is a separate wire surface and is intentionally out
-// of scope — put/get log-event round-trips for Azure are exercised via the AWS
+// of scope: put/get log-event round-trips for Azure are exercised via the AWS
 // and GCP slices, which drive the same shared driver methods.
 
 const (

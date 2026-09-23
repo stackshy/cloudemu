@@ -27,7 +27,7 @@ const (
 
 // parseSubResourceKind maps the ARM URL segment to the kind it addresses.
 // inboundNatPools is deliberately absent: real ARM has no standalone
-// inboundNatPools operation group at all (Get/List/CreateOrUpdate/Delete) —
+// inboundNatPools operation group at all (Get/List/CreateOrUpdate/Delete);
 // it is reflected only as a nested array inside the whole load balancer body.
 func parseSubResourceKind(segment string) subResourceKind {
 	switch segment {
@@ -91,7 +91,7 @@ func (h *Handler) serveSubResource(w http.ResponseWriter, r *http.Request, rp *a
 	}
 }
 
-// listSubResource handles GET .../loadBalancers/{name}/{kind} — every child of
+// listSubResource handles GET .../loadBalancers/{name}/{kind}: every child of
 // kind on the load balancer.
 func (h *Handler) listSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, kind subResourceKind) {
 	az, ok := h.azureLB()
@@ -113,7 +113,7 @@ func (h *Handler) listSubResource(w http.ResponseWriter, r *http.Request, rp *az
 	azurearm.WriteJSON(w, http.StatusOK, subResourceListResult{Value: listChildren(lbID, lb, kind, members)})
 }
 
-// getSubResource handles GET .../loadBalancers/{name}/{kind}/{childName} — the
+// getSubResource handles GET .../loadBalancers/{name}/{kind}/{childName}: the
 // one addressed child, not the parent load balancer.
 func (h *Handler) getSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, kind subResourceKind) {
 	az, ok := h.azureLB()
@@ -141,11 +141,11 @@ func (h *Handler) getSubResource(w http.ResponseWriter, r *http.Request, rp *azu
 	azurearm.WriteJSON(w, http.StatusOK, child)
 }
 
-// putSubResource handles PUT .../loadBalancers/{name}/{kind}/{childName} — the
+// putSubResource handles PUT .../loadBalancers/{name}/{kind}/{childName}: the
 // real standalone create/update ARM exposes only for backendAddressPools and
 // inboundNatRules. It mutates only the addressed child, leaving every sibling
 // untouched; every other kind has no standalone PUT in real ARM (400/405
-// there, matching the SDK surface — see standaloneCRUD).
+// there, matching the SDK surface; see standaloneCRUD).
 func (h *Handler) putSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, kind subResourceKind) {
 	if !standaloneCRUD(kind) {
 		writeMethodNotAllowed(w)
@@ -224,8 +224,8 @@ func putNatRule(
 	azurearm.WriteJSON(w, http.StatusOK, child)
 }
 
-// deleteSubResource handles DELETE .../loadBalancers/{name}/{kind}/{childName}
-// — the real standalone delete ARM exposes only for backendAddressPools and
+// deleteSubResource handles DELETE .../loadBalancers/{name}/{kind}/{childName}:
+// the real standalone delete ARM exposes only for backendAddressPools and
 // inboundNatRules. It removes only the addressed child, leaving every sibling
 // (and the parent load balancer itself) untouched.
 func (h *Handler) deleteSubResource(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, kind subResourceKind) {

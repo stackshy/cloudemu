@@ -7,9 +7,9 @@
 //
 // Azure Load Balancer shares the Microsoft.Network ARM provider with the VNet
 // handler (server/azure/network) and the DNS handler (server/azure/dns), but on
-// a disjoint resource type — this handler claims loadBalancers while the network
+// a disjoint resource type: this handler claims loadBalancers while the network
 // handler claims virtualNetworks / networkSecurityGroups / locations and the DNS
-// handler claims dnsZones — so registration order between them is unconstrained.
+// handler claims dnsZones, so registration order between them is unconstrained.
 // All must register before the permissive BlobStorage fallback.
 //
 // Driver-abstraction mapping (Azure → loadbalancer driver):
@@ -29,27 +29,27 @@
 //
 // Coverage:
 //
-//	PUT    .../loadBalancers/{name}            — LoadBalancers.BeginCreateOrUpdate (LRO, sync-200)
-//	GET    .../loadBalancers/{name}            — LoadBalancers.Get
-//	DELETE .../loadBalancers/{name}            — LoadBalancers.BeginDelete (LRO, sync-200)
-//	GET    .../resourceGroups/{rg}/…/loadBalancers    — LoadBalancers.List (RG scope)
-//	GET    .../subscriptions/{s}/…/loadBalancers      — LoadBalancers.ListAll (sub scope)
+//	PUT    .../loadBalancers/{name}            : LoadBalancers.BeginCreateOrUpdate (LRO, sync-200)
+//	GET    .../loadBalancers/{name}            : LoadBalancers.Get
+//	DELETE .../loadBalancers/{name}            : LoadBalancers.BeginDelete (LRO, sync-200)
+//	GET    .../resourceGroups/{rg}/…/loadBalancers    : LoadBalancers.List (RG scope)
+//	GET    .../subscriptions/{s}/…/loadBalancers      : LoadBalancers.ListAll (sub scope)
 //
 // Sub-resource requests (a URL with a segment past the load balancer name)
 // route through serveSubResource (subresource.go) to true per-child CRUD
 // instead of ever reaching the whole-LB handlers above, matching the real ARM
 // operation surface per child kind:
 //
-//	GET                     .../backendAddressPools[/{name}]      — Get/List
-//	PUT/DELETE              .../backendAddressPools/{name}        — BeginCreateOrUpdate/BeginDelete (LRO, sync-200)
-//	GET                     .../inboundNatRules[/{name}]          — Get/List
-//	PUT/DELETE              .../inboundNatRules/{name}            — BeginCreateOrUpdate/BeginDelete (LRO, sync-200)
-//	GET                     .../probes[/{name}]                   — Get/List only (405 on PUT/DELETE)
-//	GET                     .../loadBalancingRules[/{name}]       — Get/List only (405 on PUT/DELETE)
-//	GET                     .../outboundRules[/{name}]            — Get/List only (405 on PUT/DELETE)
-//	GET                     .../frontendIPConfigurations[/{name}] — Get/List only (405 on PUT/DELETE)
+//	GET                     .../backendAddressPools[/{name}]      : Get/List
+//	PUT/DELETE              .../backendAddressPools/{name}        : BeginCreateOrUpdate/BeginDelete (LRO, sync-200)
+//	GET                     .../inboundNatRules[/{name}]          : Get/List
+//	PUT/DELETE              .../inboundNatRules/{name}            : BeginCreateOrUpdate/BeginDelete (LRO, sync-200)
+//	GET                     .../probes[/{name}]                   : Get/List only (405 on PUT/DELETE)
+//	GET                     .../loadBalancingRules[/{name}]       : Get/List only (405 on PUT/DELETE)
+//	GET                     .../outboundRules[/{name}]            : Get/List only (405 on PUT/DELETE)
+//	GET                     .../frontendIPConfigurations[/{name}] : Get/List only (405 on PUT/DELETE)
 //
-// inboundNatPools has no standalone ARM operation group at all — it is
+// inboundNatPools has no standalone ARM operation group at all: it is
 // reflected only as a nested array inside the whole load balancer body, so a
 // request addressing it standalone 404s.
 package loadbalancer
@@ -171,7 +171,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// A sub-resource segment (backendAddressPools, probes, loadBalancingRules,
 	// inboundNatRules, inboundNatPools, outboundRules, frontendIPConfigurations)
-	// addresses one child of the load balancer, not the load balancer itself —
+	// addresses one child of the load balancer, not the load balancer itself;
 	// route it to per-child CRUD before any whole-LB handler ever sees the
 	// request. Falling through here would let a standalone child PUT/GET/DELETE
 	// be misparsed as a whole-LB request scoped to rp.ResourceName, silently

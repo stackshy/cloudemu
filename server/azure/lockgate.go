@@ -16,14 +16,14 @@ type preDispatch = func(http.ResponseWriter, *http.Request) (*http.Request, bool
 
 // newLockGate builds the management-lock enforcement pre-dispatch hook. It is
 // the single chokepoint that applies Azure lock semantics to every resource
-// type at once, before handler matching — no per-handler edits.
+// type at once, before handler matching: no per-handler edits.
 //
 // Classification (see the lock design):
 //   - Non-control-plane paths (not under /subscriptions/) are data plane and
-//     exempt — locks are control-plane only.
+//     exempt: locks are control-plane only.
 //   - GET/HEAD (reads) are always allowed.
 //   - The locks API itself is self-exempt (h.Matches), so a caller can always
-//     create, read or delete a lock — including to remove a lock and unlock a
+//     create, read or delete a lock, including to remove a lock and unlock a
 //     scope it would otherwise cover.
 //   - Any other mutating method (DELETE/PUT/PATCH/POST) is checked against the
 //     covering locks; a blocked request gets a 409 ScopeLocked and stops.
