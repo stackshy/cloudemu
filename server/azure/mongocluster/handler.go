@@ -4,7 +4,7 @@
 // same way they hit management.azure.com.
 //
 // This is distinct from the Cosmos DB core service
-// (Microsoft.DocumentDB/databaseAccounts) served by the cosmosdb handler — the two
+// (Microsoft.DocumentDB/databaseAccounts) served by the cosmosdb handler: the two
 // share the Microsoft.DocumentDB namespace but claim different resource types, so
 // registration order is unconstrained.
 //

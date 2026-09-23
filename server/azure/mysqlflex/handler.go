@@ -1,4 +1,4 @@
-// Package mysqlflex implements the Azure Database for MySQL — Flexible Server
+// Package mysqlflex implements the Azure Database for MySQL: Flexible Server
 // (Microsoft.DBforMySQL/flexibleServers) ARM REST API as a server.Handler.
 // Real github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/mysql/armmysqlflexibleservers
 // clients configured with a custom endpoint hit this handler the same way they
@@ -6,14 +6,14 @@
 //
 // MVP coverage:
 //
-//	PUT    .../providers/Microsoft.DBforMySQL/flexibleServers/{name}          — Create
-//	GET    .../providers/Microsoft.DBforMySQL/flexibleServers/{name}          — Get
-//	PATCH  .../providers/Microsoft.DBforMySQL/flexibleServers/{name}          — Update
-//	DELETE .../providers/Microsoft.DBforMySQL/flexibleServers/{name}          — Delete
-//	GET    .../providers/Microsoft.DBforMySQL/flexibleServers                 — List
-//	POST   .../providers/Microsoft.DBforMySQL/flexibleServers/{name}/start    — Start
-//	POST   .../providers/Microsoft.DBforMySQL/flexibleServers/{name}/stop     — Stop
-//	POST   .../providers/Microsoft.DBforMySQL/flexibleServers/{name}/restart  — Restart
+//	PUT    .../providers/Microsoft.DBforMySQL/flexibleServers/{name}          : Create
+//	GET    .../providers/Microsoft.DBforMySQL/flexibleServers/{name}          : Get
+//	PATCH  .../providers/Microsoft.DBforMySQL/flexibleServers/{name}          : Update
+//	DELETE .../providers/Microsoft.DBforMySQL/flexibleServers/{name}          : Delete
+//	GET    .../providers/Microsoft.DBforMySQL/flexibleServers                 : List
+//	POST   .../providers/Microsoft.DBforMySQL/flexibleServers/{name}/start    : Start
+//	POST   .../providers/Microsoft.DBforMySQL/flexibleServers/{name}/stop     : Stop
+//	POST   .../providers/Microsoft.DBforMySQL/flexibleServers/{name}/restart  : Restart
 //
 // Mutating ops return 200 OK with the resource body inline so the SDK's LRO
 // poller terminates on the first response.

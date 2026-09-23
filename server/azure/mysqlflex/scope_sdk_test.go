@@ -89,7 +89,7 @@ func TestSDKMySQLFlexScopedGetNotFound(t *testing.T) {
 }
 
 // TestSDKMySQLFlexScopedDeleteNotFound asserts a DELETE issued under the
-// wrong resource group cannot remove another resource group's server —
+// wrong resource group cannot remove another resource group's server:
 // the cross-tenant leak this behavior guards against.
 func TestSDKMySQLFlexScopedDeleteNotFound(t *testing.T) {
 	cf, ts := newFactory(t)
@@ -124,7 +124,7 @@ func skuName(s *armmysqlflexibleservers.Server) string {
 
 // TestSDKMySQLFlexScopedUpdateNotFound asserts a PATCH issued under the wrong
 // resource group cannot mutate another resource group's server (the SKU/storage
-// cross-tenant write) — it must 404 and leave the real server untouched.
+// cross-tenant write); it must 404 and leave the real server untouched.
 func TestSDKMySQLFlexScopedUpdateNotFound(t *testing.T) {
 	cf, ts := newFactory(t)
 	ensureRG(t, ts, "sub-1", "rg-team-a")

@@ -146,7 +146,7 @@ func TestSDKUserAssignedIdentityStableIdentifiers(t *testing.T) {
 		t.Errorf("get tag env = %v, want prod", v)
 	}
 
-	// A second Get must return the SAME ids — proves they are persisted, not
+	// A second Get must return the SAME ids: proves they are persisted, not
 	// regenerated per read.
 	got2, err := client.Get(ctx, rg, name, nil)
 	if err != nil {

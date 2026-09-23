@@ -27,7 +27,7 @@ type identityProps struct {
 }
 
 // listResponse is the ARM list envelope for ListByResourceGroup /
-// ListBySubscription. nextLink is omitted — the emulator returns a single page.
+// ListBySubscription. nextLink is omitted: the emulator returns a single page.
 type listResponse struct {
 	Value []identityResponse `json:"value"`
 }

@@ -65,7 +65,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A collection URL (no resource name) is a list — by resource group when the
+	// A collection URL (no resource name) is a list: by resource group when the
 	// path carried one, otherwise by subscription.
 	if rp.ResourceName == "" {
 		h.list(w, r, &rp)
@@ -232,7 +232,7 @@ func inputFromRequest(req *grafanaRequest) managedgrafana.Input {
 
 // mergePatch builds the Input for a PATCH: only the fields present in the request
 // carry a non-nil pointer, so the driver preserves everything the PATCH did not
-// mention. It reuses inputFromRequest — a PATCH body is structurally the same as
+// mention. It reuses inputFromRequest: a PATCH body is structurally the same as
 // a PUT body, and every field is optional.
 func mergePatch(req *grafanaRequest) managedgrafana.Input {
 	return inputFromRequest(req)

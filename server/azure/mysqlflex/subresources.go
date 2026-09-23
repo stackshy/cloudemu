@@ -421,8 +421,8 @@ func (h *Handler) batchUpdateConfigurations(w http.ResponseWriter, r *http.Reque
 		cfgs = append(cfgs, cfg)
 	}
 
-	// Apply the batch atomically — a bad entry must not leave earlier ones
-	// persisted — via the BatchConfigurations capability.
+	// Apply the batch atomically (a bad entry must not leave earlier ones
+	// persisted) via the BatchConfigurations capability.
 	batch, ok := cf.(rdsdriver.BatchConfigurations)
 	if !ok {
 		writeUnsupported(w, "updateConfigurations")

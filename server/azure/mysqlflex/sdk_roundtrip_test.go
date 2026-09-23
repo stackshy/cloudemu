@@ -500,7 +500,7 @@ func TestSDKMySQLFlexHighAvailabilityUpdate(t *testing.T) {
 		t.Errorf("after PATCH enable: standbyAvailabilityZone = %v, want 3", haEnabled.StandbyAvailabilityZone)
 	}
 
-	// PATCH: disable HA — the standby zone must be cleared.
+	// PATCH: disable HA; the standby zone must be cleared.
 	disablePoller, err := servers.BeginUpdate(ctx, "rg-1", "haupd", armmysqlflexibleservers.ServerForUpdate{
 		Properties: &armmysqlflexibleservers.ServerPropertiesForUpdate{
 			HighAvailability: &armmysqlflexibleservers.HighAvailability{

@@ -3,8 +3,8 @@ package monitor
 import "sync"
 
 // armResource is a stored microsoft.insights ARM resource (metric alert, action
-// group, activity-log alert). The full request body is retained — location,
-// tags and the entire properties object — so a GET/LIST echoes back exactly
+// group, activity-log alert). The full request body is retained: location,
+// tags and the entire properties object, so a GET/LIST echoes back exactly
 // what the caller PUT, instead of a hardcoded stub. This is the fix for the
 // drift where every stored property was dropped and only provisioningState came
 // back.
@@ -17,7 +17,7 @@ type armResource struct {
 // resourceKey identifies a stored resource by its full ARM scope: subscription,
 // resource group, resource kind (metricAlerts/actionGroups/activityLogAlerts)
 // and name. Real Azure resource names are only unique within one resource
-// group, so the subscription and resource group must be part of the key —
+// group, so the subscription and resource group must be part of the key:
 // keying by (kind, name) alone let a list() at one resource group return
 // another resource group's (or another subscription's) resources.
 type resourceKey struct {
