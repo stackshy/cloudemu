@@ -94,7 +94,7 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 			Namespace:  "redis.googleapis.com",
 			MetricName: metricName,
 			Value:      value,
-			Unit:       "None",
+			Unit:       "1", // every metric here is a count, unit "1" in Cloud Monitoring
 			Dimensions: dims,
 			Timestamp:  m.opts.Clock.Now(),
 		},

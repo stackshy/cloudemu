@@ -182,7 +182,7 @@ func (m *Mock) emitMetric(container string, metrics map[string]float64) {
 			Namespace:  "Microsoft.DocumentDB/databaseAccounts",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       "Count", // every metric here is a Count in Azure Monitor
 			Dimensions: map[string]string{"containerName": container},
 			Timestamp:  now,
 		})

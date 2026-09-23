@@ -390,7 +390,7 @@ func (h *Handler) putMetricDataCore(ctx context.Context, in *putMetricDataInput)
 
 		if d.Unit != "" && !alarmeval.ValidUnit(d.Unit) {
 			return newWireError(errInvalidParameterValue, "The parameter MetricData.member."+strconv.Itoa(i+1)+
-				".Unit must be a value in the set [ "+strings.Join(alarmeval.Units(), ", ")+" ].")
+				".Unit must be a value in the set ["+strings.Join(alarmeval.Units(), ", ")+"]")
 		}
 
 		data = append(data, toMetricDatum(in.Namespace, d))

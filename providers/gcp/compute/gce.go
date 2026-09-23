@@ -135,6 +135,20 @@ func gcpMetricNames() []string {
 	}
 }
 
+// metricUnit is the Cloud Monitoring unit of a GCE instance metric.
+// cpu/utilization is a fraction ("10^2.%"). The network counts are bytes and
+// the disk counts are unit "1".
+func metricUnit(name string) string {
+	switch name {
+	case "instance/cpu/utilization":
+		return "10^2.%"
+	case "instance/network/received_bytes_count", "instance/network/sent_bytes_count":
+		return "By"
+	default:
+		return "1"
+	}
+}
+
 // gcpZoneTagKey mirrors the wire layer's zone tag (server/gcp/compute
 // instance_state.go keyZone): a GCE instance's launch zone is round-tripped
 // through its tags because the driver Instance model has no zone field. The
@@ -186,7 +200,7 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, instanceID, launchTime, 
 				Namespace:  "compute.googleapis.com",
 				MetricName: metricName,
 				Value:      values[i],
-				Unit:       "None",
+				Unit:       metricUnit(metricName),
 				Dimensions: dims,
 				Timestamp:  ts,
 			})
@@ -211,7 +225,7 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID, zone string
 			Namespace:  "compute.googleapis.com",
 			MetricName: metricName,
 			Value:      values[i],
-			Unit:       "None",
+			Unit:       metricUnit(metricName),
 			Dimensions: dims,
 			Timestamp:  now,
 		}

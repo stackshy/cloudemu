@@ -63,13 +63,23 @@ func (m *Mock) emitMetric(logGroupName string, metrics map[string]float64) {
 			Namespace:  "Microsoft.OperationalInsights/workspaces",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       metricUnit(name),
 			Dimensions: map[string]string{"logGroupName": logGroupName},
 			Timestamp:  now,
 		})
 	}
 
 	_ = m.monitoring.PutMetricData(context.Background(), data)
+}
+
+// metricUnit is the Azure Monitor unit of a workspace metric. IngestedBytes is
+// Bytes. IngestedEvents is a Count.
+func metricUnit(name string) string {
+	if name == "IngestedBytes" {
+		return "Bytes"
+	}
+
+	return "Count"
 }
 
 // New creates a new Log Analytics mock with the given configuration options.

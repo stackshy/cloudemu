@@ -10,9 +10,22 @@ import (
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
-// defaultMetricUnit is the unit reported for a metric with no stored unit.
-// Count is also the Azure metric definition default.
+// defaultMetricUnit is the unit reported for a metric with no data. Count is
+// also the Azure metric definition default.
 const defaultMetricUnit = "Count"
+
+// unitUnspecified is the Azure MetricUnit for data stored without a unit.
+const unitUnspecified = "Unspecified"
+
+// azureUnit turns a stored unit into an Azure MetricUnit. Data put with no
+// unit, or with the CloudWatch-only None, is Unspecified.
+func azureUnit(stored string) string {
+	if stored == "" || stored == "None" {
+		return unitUnspecified
+	}
+
+	return stored
+}
 
 // wideWindowYears bounds the query window generously so every stored datapoint
 // (backfilled around a VM's launch time under a fake clock) is captured.
@@ -85,8 +98,8 @@ func localizable(v string) map[string]string {
 // query to the one resource the metrics were requested against (the ARM
 // resourceUri the request path hangs off of) so two resources sharing a
 // namespace+metric name never bleed into each other's datapoints. It also
-// returns the unit the data was stored with, or defaultMetricUnit when there
-// is none.
+// returns the Azure unit of the stored data, or defaultMetricUnit when there
+// is no data.
 func (h *MetricsHandler) timeseriesData(
 	ctx context.Context, resourceID, namespace, name string, aggs []string,
 ) (data []map[string]any, unit string) {
@@ -113,8 +126,8 @@ func (h *MetricsHandler) timeseriesData(
 			continue
 		}
 
-		if res.Unit != "" {
-			unit = res.Unit
+		if len(res.Timestamps) > 0 {
+			unit = azureUnit(res.Unit)
 		}
 
 		for i, ts := range res.Timestamps {

@@ -20,7 +20,7 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 
 	require.NoError(t, src.PutMetricData(ctx, []driver.MetricDatum{{
 		Namespace: "compute.googleapis.com", MetricName: "instance/cpu/utilization",
-		Value: 0.42, Unit: "None", Dimensions: map[string]string{"instance_id": "inst-1"},
+		Value: 0.42, Unit: "10^2.%", Dimensions: map[string]string{"instance_id": "inst-1"},
 	}}))
 
 	require.NoError(t, src.CreateAlarm(ctx, driver.AlarmConfig{

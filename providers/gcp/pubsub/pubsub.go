@@ -81,11 +81,21 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 			Namespace:  "pubsub.googleapis.com",
 			MetricName: metricName,
 			Value:      value,
-			Unit:       "None",
+			Unit:       metricUnit(metricName),
 			Dimensions: dims,
 			Timestamp:  m.opts.Clock.Now(),
 		},
 	})
+}
+
+// metricUnit is the Cloud Monitoring unit of a Pub/Sub metric. topic/byte_cost
+// is in bytes ("By"). The operation and message counts are unit "1".
+func metricUnit(name string) string {
+	if name == "topic/byte_cost" {
+		return "By"
+	}
+
+	return "1"
 }
 
 // New creates a new Pub/Sub mock with the given configuration options.
