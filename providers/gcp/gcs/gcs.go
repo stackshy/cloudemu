@@ -172,11 +172,21 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 			Namespace:  "storage.googleapis.com",
 			MetricName: metricName,
 			Value:      value,
-			Unit:       "None",
+			Unit:       metricUnit(metricName),
 			Dimensions: dims,
 			Timestamp:  m.opts.Clock.Now(),
 		},
 	})
+}
+
+// metricUnit is the Cloud Monitoring unit of a storage metric. The network
+// byte counts are in bytes ("By"). api/request_count is unit "1".
+func metricUnit(name string) string {
+	if strings.HasPrefix(name, "network/") {
+		return "By"
+	}
+
+	return "1"
 }
 
 // New creates a new GCS mock.

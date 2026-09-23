@@ -13,12 +13,11 @@ import (
 )
 
 const (
-	statSum           = "Sum"
-	statMinimum       = "Minimum"
-	statMaximum       = "Maximum"
-	statSampleCount   = "SampleCount"
-	statAverage       = "Average"
-	defaultMetricUnit = "Count"
+	statSum         = "Sum"
+	statMinimum     = "Minimum"
+	statMaximum     = "Maximum"
+	statSampleCount = "SampleCount"
+	statAverage     = "Average"
 )
 
 // putMetricDataInput mirrors the AWS wire shape for the operation. Field
@@ -59,42 +58,7 @@ func (h *Handler) putMetricData(w http.ResponseWriter, r *http.Request, body []b
 		return
 	}
 
-	data := make([]mondriver.MetricDatum, 0, len(in.MetricData))
-
-	for i := range in.MetricData {
-		d := &in.MetricData[i]
-		// AWS defaults an omitted timestamp to request-receipt time; storing the
-		// Go zero value instead would make the datapoint unqueryable and leave
-		// alarms stuck in INSUFFICIENT_DATA.
-		ts := time.Now().UTC()
-		if d.Timestamp != nil {
-			ts = *d.Timestamp
-		}
-
-		datum := mondriver.MetricDatum{
-			Namespace:  in.Namespace,
-			MetricName: d.MetricName,
-			Value:      d.Value,
-			Unit:       d.Unit,
-			Dimensions: toDimensionMap(d.Dimensions),
-			Timestamp:  ts,
-			Values:     d.Values,
-			Counts:     d.Counts,
-		}
-
-		if d.StatisticValues != nil {
-			datum.StatisticValues = &mondriver.StatisticSet{
-				SampleCount: d.StatisticValues.SampleCount,
-				Sum:         d.StatisticValues.Sum,
-				Minimum:     d.StatisticValues.Minimum,
-				Maximum:     d.StatisticValues.Maximum,
-			}
-		}
-
-		data = append(data, datum)
-	}
-
-	if err := h.monitoring.PutMetricData(r.Context(), data); err != nil {
+	if err := h.putMetricDataCore(r.Context(), &in); err != nil {
 		writeDriverErr(w, err)
 		return
 	}
@@ -201,37 +165,10 @@ type putMetricAlarmInput struct {
 	Tags                    []tagCBR       `cbor:"Tags,omitempty"`
 }
 
-// validComparisonOperators is the closed CloudWatch ComparisonOperator enum. A
-// value outside this set is rejected with a ValidationError, matching AWS,
-// rather than silently stored (which would leave the alarm unable to fire).
-//
-//nolint:gochecknoglobals // fixed lookup table for a closed enum.
-var validComparisonOperators = map[string]bool{
-	"GreaterThanOrEqualToThreshold":            true,
-	"GreaterThanThreshold":                     true,
-	"LessThanThreshold":                        true,
-	"LessThanOrEqualToThreshold":               true,
-	"LessThanLowerOrGreaterThanUpperThreshold": true,
-	"LessThanLowerThreshold":                   true,
-	"GreaterThanUpperThreshold":                true,
-}
-
-// comparisonOperatorValid reports whether op is empty (unset — AWS allows metric-
-// math/anomaly alarms to omit it) or a member of the closed enum.
-func comparisonOperatorValid(op string) bool {
-	return op == "" || validComparisonOperators[op]
-}
-
 func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []byte) {
 	var in putMetricAlarmInput
 	if err := cbor.Unmarshal(body, &in); err != nil {
 		writeCBORError(w, http.StatusBadRequest, "SerializationException", err.Error())
-		return
-	}
-
-	if !comparisonOperatorValid(in.ComparisonOperator) {
-		writeCBORError(w, http.StatusBadRequest, "ValidationError",
-			"Invalid ComparisonOperator: "+in.ComparisonOperator)
 		return
 	}
 
@@ -257,7 +194,7 @@ func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []
 		Tags:                    tagsToMap(in.Tags),
 	}
 
-	if err := h.monitoring.CreateAlarm(r.Context(), cfg); err != nil {
+	if err := h.putMetricAlarmCore(r.Context(), &cfg); err != nil {
 		writeDriverErr(w, err)
 		return
 	}

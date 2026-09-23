@@ -87,7 +87,7 @@ func (m *Mock) emitMetric(repoName string, metrics map[string]float64) {
 			Namespace:  "Microsoft.ContainerRegistry/registries",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       "Count", // every metric here is a Count in Azure Monitor
 			Dimensions: map[string]string{"repositoryName": repoName},
 			Timestamp:  now,
 		})

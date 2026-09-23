@@ -245,13 +245,23 @@ func (m *Mock) emitMetric(container string, metrics map[string]float64) {
 			Namespace:  "Microsoft.Storage/storageAccounts",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       metricUnit(name),
 			Dimensions: map[string]string{"containerName": container},
 			Timestamp:  now,
 		})
 	}
 
 	_ = m.monitoring.PutMetricData(context.Background(), data)
+}
+
+// metricUnit is the Azure Monitor unit of a storage account metric. Ingress
+// and Egress are Bytes. Transactions is a Count.
+func metricUnit(name string) string {
+	if name == "Ingress" || name == "Egress" {
+		return "Bytes"
+	}
+
+	return "Count"
 }
 
 // New creates a new Azure Blob Storage mock.

@@ -138,7 +138,7 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 	now := m.opts.Clock.Now()
 	params := alarmParams(alarm)
 
-	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, params.WindowStart(now), now)
+	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, alarm.Unit, params.WindowStart(now), now)
 	if len(filtered) == 0 {
 		return
 	}
@@ -190,7 +190,7 @@ func (m *Mock) appendHistory(name, oldState, newState, reason string, now time.T
 }
 
 func (m *Mock) collectFilteredDatums(
-	namespace, metricName string, dims map[string]string, windowStart, now time.Time,
+	namespace, metricName string, dims map[string]string, unit string, windowStart, now time.Time,
 ) []driver.MetricDatum {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -206,7 +206,7 @@ func (m *Mock) collectFilteredDatums(
 			continue
 		}
 
-		if !alarmeval.MatchAlarmDimensions(d.Dimensions, dims) {
+		if !alarmeval.MatchAlarmDimensions(d.Dimensions, dims) || !alarmeval.MatchUnit(d.Unit, unit) {
 			continue
 		}
 
@@ -230,7 +230,7 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 	}
 
 	dataPoints := m.metrics[key]
-	filtered := filterByTimeAndDimensions(dataPoints, input.StartTime, input.EndTime, input.Dimensions)
+	filtered := filterByTimeAndDimensions(dataPoints, input.StartTime, input.EndTime, input.Dimensions, input.Unit)
 
 	// Sort by timestamp.
 	sort.Slice(filtered, func(i, j int) bool {
@@ -245,7 +245,9 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 	return buildMetricResult(filtered, input.StartTime, input.EndTime, period, input.Stat), nil
 }
 
-func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTime time.Time, dims map[string]string) []driver.MetricDatum {
+func filterByTimeAndDimensions(
+	dataPoints []driver.MetricDatum, startTime, endTime time.Time, dims map[string]string, unit string,
+) []driver.MetricDatum {
 	var filtered []driver.MetricDatum
 
 	for i := range dataPoints {
@@ -254,7 +256,7 @@ func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTi
 			continue
 		}
 
-		if !alarmeval.MatchDimensions(d.Dimensions, dims) {
+		if !alarmeval.MatchDimensions(d.Dimensions, dims) || !alarmeval.MatchUnit(d.Unit, unit) {
 			continue
 		}
 

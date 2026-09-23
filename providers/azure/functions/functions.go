@@ -100,7 +100,7 @@ func (m *Mock) emitMetric(functionName string, metrics map[string]float64) {
 			Namespace:  "Microsoft.Web/sites",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       "Count", // every metric here is a Count in Azure Monitor
 			Dimensions: map[string]string{"functionName": functionName},
 			Timestamp:  now,
 		})

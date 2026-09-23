@@ -150,13 +150,23 @@ func (m *Mock) emitMetric(queueName string, metrics map[string]float64) {
 			Namespace:  "Microsoft.ServiceBus/namespaces",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       metricUnit(name),
 			Dimensions: map[string]string{"queueName": queueName},
 			Timestamp:  now,
 		})
 	}
 
 	_ = m.monitoring.PutMetricData(context.Background(), data)
+}
+
+// metricUnit is the Azure Monitor unit of a Service Bus metric. Size is Bytes.
+// The message metrics are Counts.
+func metricUnit(name string) string {
+	if name == "Size" {
+		return "Bytes"
+	}
+
+	return "Count"
 }
 
 // New creates a new Service Bus mock with the given configuration options.

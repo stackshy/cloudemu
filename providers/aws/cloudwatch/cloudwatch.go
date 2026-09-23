@@ -174,7 +174,9 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 	now := m.opts.Clock.Now()
 	params := alarmParams(alarm)
 
-	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, params.WindowStart(now), now)
+	// Data stored under another unit is not seen, so an alarm with the wrong
+	// unit stays in INSUFFICIENT_DATA like on AWS.
+	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, alarm.Unit, params.WindowStart(now), now)
 	if len(filtered) == 0 {
 		return
 	}
@@ -331,7 +333,7 @@ func (m *Mock) alarmNotification(a *alarmData, oldState, newState string, now ti
 }
 
 func (m *Mock) collectFilteredDatums(
-	namespace, metricName string, dims map[string]string, windowStart, now time.Time,
+	namespace, metricName string, dims map[string]string, unit string, windowStart, now time.Time,
 ) []driver.MetricDatum {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -347,7 +349,7 @@ func (m *Mock) collectFilteredDatums(
 			continue
 		}
 
-		if !alarmeval.MatchDimensions(d.Dimensions, dims) {
+		if !alarmeval.MatchDimensions(d.Dimensions, dims) || !alarmeval.MatchUnit(d.Unit, unit) {
 			continue
 		}
 
@@ -370,8 +372,7 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 		MetricName: input.MetricName,
 	}
 
-	dataPoints := m.metrics[key]
-	filtered := filterByTimeAndDimensions(dataPoints, input.StartTime, input.EndTime, input.Dimensions)
+	filtered := filterDatums(m.metrics[key], &input)
 
 	// Sort by timestamp.
 	sort.Slice(filtered, func(i, j int) bool {
@@ -386,16 +387,18 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 	return buildMetricResult(filtered, input.StartTime, input.EndTime, period, input.Stat), nil
 }
 
-func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTime time.Time, dims map[string]string) []driver.MetricDatum {
+// filterDatums keeps the datums inside the query's time range that match its
+// dimensions and unit.
+func filterDatums(dataPoints []driver.MetricDatum, in *driver.GetMetricInput) []driver.MetricDatum {
 	var filtered []driver.MetricDatum
 
 	for i := range dataPoints {
 		d := &dataPoints[i]
-		if d.Timestamp.Before(startTime) || !d.Timestamp.Before(endTime) {
+		if d.Timestamp.Before(in.StartTime) || !d.Timestamp.Before(in.EndTime) {
 			continue
 		}
 
-		if !alarmeval.MatchDimensions(d.Dimensions, dims) {
+		if !alarmeval.MatchDimensions(d.Dimensions, in.Dimensions) || !alarmeval.MatchUnit(d.Unit, in.Unit) {
 			continue
 		}
 
@@ -403,6 +406,37 @@ func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTi
 	}
 
 	return filtered
+}
+
+// MetricUnits returns the sorted distinct units of the data a query would
+// read, with a unit-less datum counted as None. Unit in the query is ignored.
+// GetMetricStatistics uses it to return one datapoint per unit, as AWS does
+// when the caller omits Unit.
+func (m *Mock) MetricUnits(_ context.Context, in *driver.GetMetricInput) []string {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	anyUnit := *in
+	anyUnit.Unit = ""
+
+	seen := map[string]bool{}
+	units := []string{}
+
+	data := filterDatums(m.metrics[metricKey{Namespace: in.Namespace, MetricName: in.MetricName}], &anyUnit)
+	for i := range data {
+		u := alarmeval.EffectiveUnit(data[i].Unit)
+		if seen[u] {
+			continue
+		}
+
+		seen[u] = true
+
+		units = append(units, u)
+	}
+
+	sort.Strings(units)
+
+	return units
 }
 
 func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Time, period int, stat string) *driver.MetricDataResult {
@@ -415,9 +449,9 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Ti
 		return result
 	}
 
-	// Carry the stored unit so the wire layer can echo the real unit (e.g.
-	// "Percent" for CPUUtilization) instead of hardcoding "Count".
-	result.Unit = unitOf(filtered)
+	// Carry the stored unit so the wire layer can echo it. Data put without a
+	// unit reads back as None, like on AWS.
+	result.Unit = alarmeval.EffectiveUnit(unitOf(filtered))
 
 	periodDur := time.Duration(period) * time.Second
 

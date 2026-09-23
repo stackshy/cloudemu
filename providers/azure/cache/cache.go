@@ -81,7 +81,7 @@ func (m *Mock) emitMetric(cacheName string, metrics map[string]float64) {
 			Namespace:  "Microsoft.Cache/redis",
 			MetricName: name,
 			Value:      value,
-			Unit:       "None",
+			Unit:       "Count", // every metric here is a Count in Azure Monitor
 			Dimensions: map[string]string{"cacheName": cacheName},
 			Timestamp:  now,
 		})

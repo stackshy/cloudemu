@@ -156,6 +156,6 @@ func (m *Mock) emitMetric(metricName string, value float64, dims map[string]stri
 
 	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
 		Namespace: "aiplatform.googleapis.com", MetricName: metricName, Value: value,
-		Unit: "Count", Dimensions: dims, Timestamp: m.opts.Clock.Now(),
+		Unit: "1", Dimensions: dims, Timestamp: m.opts.Clock.Now(),
 	}})
 }

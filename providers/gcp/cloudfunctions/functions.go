@@ -94,11 +94,21 @@ func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64,
 			Namespace:  "cloudfunctions.googleapis.com",
 			MetricName: metricName,
 			Value:      value,
-			Unit:       "None",
+			Unit:       metricUnit(metricName),
 			Dimensions: dims,
 			Timestamp:  m.opts.Clock.Now(),
 		},
 	})
+}
+
+// metricUnit is the Cloud Monitoring unit of a function metric.
+// execution_times is in nanoseconds. The counts are unit "1".
+func metricUnit(name string) string {
+	if name == "function/execution_times" {
+		return "ns"
+	}
+
+	return "1"
 }
 
 // New creates a new Cloud Functions mock.

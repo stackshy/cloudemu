@@ -82,6 +82,13 @@ var (
 		"Disk Read Operations/Sec", "Disk Write Operations/Sec",
 		"Available Memory Percentage", "Available Memory Bytes",
 	}
+	// vmMetricUnits are the Azure Monitor units of each metric, from the
+	// Microsoft.Compute/virtualMachines supported-metrics reference.
+	vmMetricUnits = map[string]string{ //nolint:gochecknoglobals // package-level config
+		"Percentage CPU": "Percent", "Network In Total": "Bytes", "Network Out Total": "Bytes",
+		"Disk Read Operations/Sec": "CountPerSecond", "Disk Write Operations/Sec": "CountPerSecond",
+		"Available Memory Percentage": "Percent", "Available Memory Bytes": "Bytes",
+	}
 	// The trailing two values are the memory metrics: ~60% available and 4 GiB.
 	runningMetricValues = []float64{25.0, 1024.0, 512.0, 100.0, 50.0, 60.0, 4294967296.0} //nolint:gochecknoglobals // fixtures
 	zeroMetricValues    = []float64{0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0}                    //nolint:gochecknoglobals // fixtures
@@ -266,7 +273,7 @@ func (m *Mock) emitInstanceMetrics(ctx context.Context, inst *instanceData) {
 				Namespace:  "Microsoft.Compute/virtualMachines",
 				MetricName: metricName,
 				Value:      runningMetricValues[i],
-				Unit:       "None",
+				Unit:       vmMetricUnits[metricName],
 				Dimensions: map[string]string{"resourceId": resourceID},
 				Timestamp:  ts,
 			})
@@ -290,7 +297,7 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, inst *instanceData, val
 			Namespace:  "Microsoft.Compute/virtualMachines",
 			MetricName: metricName,
 			Value:      values[i],
-			Unit:       "None",
+			Unit:       vmMetricUnits[metricName],
 			Dimensions: map[string]string{"resourceId": resourceID},
 			Timestamp:  now,
 		}

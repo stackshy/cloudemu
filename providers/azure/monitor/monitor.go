@@ -144,7 +144,7 @@ func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName strin
 	now := m.opts.Clock.Now()
 	params := alarmParams(alarm)
 
-	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, params.WindowStart(now), now)
+	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, alarm.Unit, params.WindowStart(now), now)
 	if len(filtered) == 0 {
 		return
 	}
@@ -195,7 +195,7 @@ func (m *Mock) appendHistory(name, oldState, newState, reason string, now time.T
 }
 
 func (m *Mock) collectFilteredDatums(
-	namespace, metricName string, dims map[string]string, windowStart, now time.Time,
+	namespace, metricName string, dims map[string]string, unit string, windowStart, now time.Time,
 ) []driver.MetricDatum {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -211,7 +211,7 @@ func (m *Mock) collectFilteredDatums(
 			continue
 		}
 
-		if !matchAlarmDimensions(d.Dimensions, dims) {
+		if !matchAlarmDimensions(d.Dimensions, dims) || !alarmeval.MatchUnit(d.Unit, unit) {
 			continue
 		}
 
@@ -235,7 +235,7 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 	}
 
 	dataPoints := m.metrics[key]
-	filtered := filterByTimeAndDimensions(dataPoints, input.StartTime, input.EndTime, input.Dimensions)
+	filtered := filterByTimeAndDimensions(dataPoints, input.StartTime, input.EndTime, input.Dimensions, input.Unit)
 
 	// Sort by timestamp.
 	sort.Slice(filtered, func(i, j int) bool {
@@ -250,7 +250,9 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 	return buildMetricResult(filtered, input.StartTime, input.EndTime, period, input.Stat), nil
 }
 
-func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTime time.Time, dims map[string]string) []driver.MetricDatum {
+func filterByTimeAndDimensions(
+	dataPoints []driver.MetricDatum, startTime, endTime time.Time, dims map[string]string, unit string,
+) []driver.MetricDatum {
 	var filtered []driver.MetricDatum
 
 	for i := range dataPoints {
@@ -259,7 +261,7 @@ func filterByTimeAndDimensions(dataPoints []driver.MetricDatum, startTime, endTi
 			continue
 		}
 
-		if !matchDimensions(d.Dimensions, dims) {
+		if !matchDimensions(d.Dimensions, dims) || !alarmeval.MatchUnit(d.Unit, unit) {
 			continue
 		}
 
@@ -278,6 +280,9 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Ti
 
 		return result
 	}
+
+	// The wire layer reads the stored unit from here.
+	result.Unit = unitOf(filtered)
 
 	periodDur := time.Duration(period) * time.Second
 
@@ -302,6 +307,17 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Ti
 	}
 
 	return result
+}
+
+// unitOf returns the first non-empty unit among the datums, or "" if none has one.
+func unitOf(data []driver.MetricDatum) string {
+	for i := range data {
+		if data[i].Unit != "" {
+			return data[i].Unit
+		}
+	}
+
+	return ""
 }
 
 func collectPeriodValues(filtered []driver.MetricDatum, periodStart, periodEnd time.Time) []float64 {

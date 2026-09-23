@@ -109,9 +109,7 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) queryPutMetricData(w http.ResponseWriter, r *http.Request) {
-	ns := r.Form.Get("Namespace")
-
-	var data []mondriver.MetricDatum
+	in := putMetricDataInput{Namespace: r.Form.Get("Namespace")}
 
 	for i := 1; ; i++ {
 		p := "MetricData.member." + strconv.Itoa(i) + "."
@@ -120,27 +118,25 @@ func (h *Handler) queryPutMetricData(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 
-		val, _ := strconv.ParseFloat(r.Form.Get(p+"Value"), 64)
-
-		ts := time.Now().UTC()
-		if raw := r.Form.Get(p + "Timestamp"); raw != "" {
-			if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
-				ts = parsed
-			}
-		}
-
-		datum := mondriver.MetricDatum{
-			Namespace: ns, MetricName: name, Value: val, Unit: r.Form.Get(p + "Unit"),
-			Dimensions: queryDimensions(r, p+"Dimensions.member."), Timestamp: ts,
+		d := putMetricDatumCBR{
+			MetricName:      name,
+			Unit:            r.Form.Get(p + "Unit"),
+			Dimensions:      dimsToCBR(queryDimensions(r, p+"Dimensions.member.")),
 			StatisticValues: queryStatisticValues(r, p+"StatisticValues."),
 			Values:          queryFloatList(r, p+"Values.member."),
 			Counts:          queryFloatList(r, p+"Counts.member."),
 		}
 
-		data = append(data, datum)
+		d.Value, _ = strconv.ParseFloat(r.Form.Get(p+"Value"), 64)
+
+		if parsed, err := time.Parse(time.RFC3339, r.Form.Get(p+"Timestamp")); err == nil {
+			d.Timestamp = &parsed
+		}
+
+		in.MetricData = append(in.MetricData, d)
 	}
 
-	if err := h.monitoring.PutMetricData(r.Context(), data); err != nil {
+	if err := h.putMetricDataCore(r.Context(), &in); err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}
@@ -214,6 +210,7 @@ func queryGetMetricStatisticsInput(r *http.Request) getMetricStatisticsInput {
 		MetricName: r.Form.Get("MetricName"),
 		Statistics: queryStringList(r, "Statistics.member."),
 		Dimensions: dimsToCBR(queryDimensions(r, "Dimensions.member.")),
+		Unit:       r.Form.Get("Unit"),
 	}
 
 	in.Period, _ = strconv.Atoi(r.Form.Get("Period"))
@@ -230,20 +227,14 @@ func queryGetMetricStatisticsInput(r *http.Request) getMetricStatisticsInput {
 }
 
 func (h *Handler) queryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
-	comparisonOperator := r.Form.Get("ComparisonOperator")
-	if !comparisonOperatorValid(comparisonOperator) {
-		writeQueryError(w, http.StatusBadRequest, "ValidationError", "Invalid ComparisonOperator: "+comparisonOperator)
-		return
-	}
-
 	threshold, _ := strconv.ParseFloat(r.Form.Get("Threshold"), 64)
 	period, _ := strconv.Atoi(r.Form.Get("Period"))
 	evalPeriods, _ := strconv.Atoi(r.Form.Get("EvaluationPeriods"))
 	datapointsToAlarm, _ := strconv.Atoi(r.Form.Get("DatapointsToAlarm"))
 
-	err := h.monitoring.CreateAlarm(r.Context(), mondriver.AlarmConfig{
+	err := h.putMetricAlarmCore(r.Context(), &mondriver.AlarmConfig{
 		Name: r.Form.Get("AlarmName"), Namespace: r.Form.Get("Namespace"), MetricName: r.Form.Get("MetricName"),
-		Dimensions: queryDimensions(r, "Dimensions.member."), ComparisonOperator: comparisonOperator,
+		Dimensions: queryDimensions(r, "Dimensions.member."), ComparisonOperator: r.Form.Get("ComparisonOperator"),
 		Threshold: threshold, Period: period, EvaluationPeriods: evalPeriods, DatapointsToAlarm: datapointsToAlarm,
 		Stat: r.Form.Get("Statistic"), ExtendedStatistic: r.Form.Get("ExtendedStatistic"),
 		Unit: r.Form.Get("Unit"), TreatMissingData: r.Form.Get("TreatMissingData"),
@@ -543,7 +534,7 @@ func queryDimensions(r *http.Request, prefix string) map[string]string {
 
 // queryStatisticValues parses a StatisticSet (SampleCount/Sum/Minimum/Maximum)
 // from the query-protocol form, returning nil when no SampleCount is present.
-func queryStatisticValues(r *http.Request, prefix string) *mondriver.StatisticSet {
+func queryStatisticValues(r *http.Request, prefix string) *statisticSetCBR {
 	raw := r.Form.Get(prefix + "SampleCount")
 	if raw == "" {
 		return nil
@@ -554,7 +545,7 @@ func queryStatisticValues(r *http.Request, prefix string) *mondriver.StatisticSe
 	minimum, _ := strconv.ParseFloat(r.Form.Get(prefix+"Minimum"), 64)
 	maximum, _ := strconv.ParseFloat(r.Form.Get(prefix+"Maximum"), 64)
 
-	return &mondriver.StatisticSet{SampleCount: sampleCount, Sum: sum, Minimum: minimum, Maximum: maximum}
+	return &statisticSetCBR{SampleCount: sampleCount, Sum: sum, Minimum: minimum, Maximum: maximum}
 }
 
 // queryFloatList parses a 1-indexed list of floats (Values.member.N /
