@@ -54,7 +54,7 @@ func toResourceJSON(rp *azurearm.ResourcePath, kind string, res *armResource) re
 // state-refresh read sees the same settled resource Azure returns:
 //   - provisioningState=Succeeded (a metricAlert create is synchronous), so a
 //     refresh sees a terminal state.
-//   - autoMitigate=true — the documented default for a metricAlert whose request
+//   - autoMitigate=true: the documented default for a metricAlert whose request
 //     omits it (Metric Alerts - Create Or Update returns "autoMitigate": true).
 //     A raw armmonitor client that never set AutoMitigate reads it back as true
 //     against real Azure, so the emulator must apply the same default rather than
@@ -82,7 +82,7 @@ func withMetricAlertDefaults(props map[string]any) map[string]any {
 // PATCH (metricAlerts/actionGroups/activityLogAlerts/autoscaleSettings Update,
 // same as the compute/network/loadbalancer Update and UpdateTags operations
 // already fixed elsewhere in this codebase) SETS the tag collection wholesale
-// when the request carries a tags key — a populated map replaces the stored
+// when the request carries a tags key: a populated map replaces the stored
 // set, an explicit tags:{} wipes it, and an absent tags key leaves the stored
 // set untouched. The merge is a fresh resource, so the stored one is not
 // mutated until the caller commits it.

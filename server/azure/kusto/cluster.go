@@ -30,8 +30,8 @@ func (h *Handler) serveCluster(w http.ResponseWriter, r *http.Request, kp kustoP
 // createCluster serves the PUT LRO. armkusto's ClustersClient.BeginCreateOrUpdate
 // wraps this in a poller; returning a synchronous 201/200 whose body already
 // carries provisioningState=Succeeded (and no Azure-AsyncOperation/Location
-// header) makes PollUntilDone terminate on the first poll, so the poller — a
-// real Kusto create is a long LRO — never hangs.
+// header) makes PollUntilDone terminate on the first poll, so the poller (a
+// real Kusto create is a long LRO) never hangs.
 func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, kp kustoPath) {
 	var req createClusterRequest
 	if !decodeBody(w, r, &req) {
@@ -85,7 +85,7 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, kp kusto
 // the tags object is replaced wholesale when present (resource-level ARM tag
 // PATCH is replace, not deep-merge), sku / zones / location are replaced when
 // supplied, the mutable cluster properties are overlaid (shallow patch), and
-// every untouched field — including the synthesized URIs and run state — is
+// every untouched field, including the synthesized URIs and run state, is
 // preserved. A PATCH on a missing cluster is a 404.
 func (h *Handler) updateCluster(w http.ResponseWriter, r *http.Request, kp kustoPath) {
 	var req updateClusterRequest
@@ -266,7 +266,7 @@ func normalizeSKU(in *kustoSKU) kustoSKU {
 
 // applyClusterPropsPatch overlays the client-mutable properties of a
 // ClusterUpdate onto the existing cluster properties in place. Server-computed
-// fields (state, URIs, provisioningState) are left untouched — toClusterResource
+// fields (state, URIs, provisioningState) are left untouched: toClusterResource
 // recomputes them.
 func applyClusterPropsPatch(dst, patch *clusterProperties) {
 	if patch.EngineType != "" {

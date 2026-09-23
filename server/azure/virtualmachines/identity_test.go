@@ -14,7 +14,7 @@ import (
 // TestSDKVMIdentitySystemAssigned verifies a real armcompute client sees a
 // system-assigned identity attached at create time: a PUT VM with
 // identity.type=SystemAssigned is accepted (already true before this fix),
-// and — the bug — a subsequent GET must actually echo it back, with a
+// and, the bug, a subsequent GET must actually echo it back, with a
 // synthesized principalId/tenantId, rather than losing the identity block
 // entirely.
 func TestSDKVMIdentitySystemAssigned(t *testing.T) {
@@ -104,7 +104,7 @@ func TestSDKVMIdentitySystemAssigned(t *testing.T) {
 
 // TestSDKVMIdentityUserAssigned verifies a VM created with a user-assigned
 // identity gets the userAssignedIdentities map echoed back on GET, with a
-// synthesized principalId/clientId per entry — the identity type mixes with
+// synthesized principalId/clientId per entry: the identity type mixes with
 // SystemAssigned too.
 func TestSDKVMIdentityUserAssigned(t *testing.T) {
 	cloudP := cloudemu.NewAzure()

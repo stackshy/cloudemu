@@ -13,7 +13,7 @@ import (
 //   - a rule/pool/NAT-rule referencing a frontend, backend pool or probe that
 //     is not present anywhere in the same body.
 //
-// Cross-references are resolved only against siblings in the same PUT body —
+// Cross-references are resolved only against siblings in the same PUT body:
 // a full-replace PUT that drops a pool while a rule still points at it is
 // exactly the dangling-reference case this rejects.
 func validateAzureLB(lb *lbdriver.AzureLoadBalancer) error {
@@ -155,7 +155,7 @@ func requireRef(childKind, childName, refKind, ref string, available map[string]
 }
 
 // checkUnique returns a Conflict error if any name in names appears more than
-// once. Empty names are ignored — an unnamed child is rejected by the wire
+// once. Empty names are ignored: an unnamed child is rejected by the wire
 // decoder elsewhere, not here.
 func checkUnique(childKind string, names []string) error {
 	seen := make(map[string]struct{}, len(names))

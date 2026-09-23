@@ -16,7 +16,7 @@ type configStoreRequest struct {
 	Properties *propertiesRequest `json:"properties,omitempty"`
 }
 
-// skuWire is the sku block on the wire — a single-field object {name}.
+// skuWire is the sku block on the wire: a single-field object {name}.
 type skuWire struct {
 	Name string `json:"name"`
 }
@@ -108,7 +108,7 @@ type keysResponse struct {
 	Value []apiKeyWire `json:"value"`
 }
 
-// listResponse is the ARM list envelope. nextLink is omitted — the emulator
+// listResponse is the ARM list envelope. nextLink is omitted: the emulator
 // returns a single page.
 type listResponse struct {
 	Value []configStoreResponse `json:"value"`

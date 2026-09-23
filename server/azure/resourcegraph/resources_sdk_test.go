@@ -43,7 +43,7 @@ func TestSDKGenericResourcesList(t *testing.T) {
 	ts := httptest.NewTLSServer(srv)
 	t.Cleanup(ts.Close)
 
-	// Real Azure requires the resource group to exist before it will list — the
+	// Real Azure requires the resource group to exist before it will list: the
 	// generic-resources listing 404s ResourceGroupNotFound otherwise. Create the
 	// group carrying the workspace, plus an empty group, through the RG wire.
 	rgClient := newResourceGroupsClient(t, ts)

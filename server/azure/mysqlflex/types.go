@@ -55,7 +55,7 @@ type armHighAvailability struct {
 // armServerRestartParameter is the ServerRestartParameter request body for
 // POST .../restart. RestartWithFailover is the EnableStatusEnum
 // "Enabled"/"Disabled"; MaxFailoverSeconds bounds how long the SDK's poller is
-// willing to wait for that failover — the mock's failover is synchronous, so
+// willing to wait for that failover; the mock's failover is synchronous, so
 // it is accepted but not otherwise consulted.
 type armServerRestartParameter struct {
 	RestartWithFailover string `json:"restartWithFailover,omitempty"`
@@ -72,8 +72,8 @@ type armStorage struct {
 // armBackup mirrors properties.backup on a MySQL Flexible Server. Real Azure
 // always returns this block; backupRetentionDays defaults to 7 (range 1-35) and
 // geoRedundantBackup is Disabled/Enabled. geoRedundantBackup is preserved by the
-// generic unmodeled-property overlay, so only the retention days — which real
-// Azure defaults and which terraform-provider-azurerm reads back — is modeled.
+// generic unmodeled-property overlay, so only the retention days (which real
+// Azure defaults and which terraform-provider-azurerm reads back) is modeled.
 type armBackup struct {
 	BackupRetentionDays int `json:"backupRetentionDays,omitempty"`
 }

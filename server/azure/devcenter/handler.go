@@ -65,7 +65,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// A collection URL (no resource name) is a list — by resource group when the
+	// A collection URL (no resource name) is a list: by resource group when the
 	// path carried one, otherwise by subscription.
 	if rp.ResourceName == "" {
 		h.list(w, r, &rp)
@@ -205,7 +205,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request, rp *azurearm.Reso
 
 // inputFromRequest builds a create/update Input from a request body. Pointer
 // fields are carried through verbatim so an absent field falls back to the
-// stored (or default) value in the driver — which makes a PATCH body, where
+// stored (or default) value in the driver, which makes a PATCH body, where
 // every field is optional, merge correctly on its own.
 func inputFromRequest(req *devCenterRequest) devcenter.Input {
 	in := devcenter.Input{

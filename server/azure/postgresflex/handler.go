@@ -7,14 +7,14 @@
 //
 // MVP coverage:
 //
-//	PUT    .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            — Create
-//	GET    .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            — Get
-//	PATCH  .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            — Update
-//	DELETE .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            — Delete
-//	GET    .../providers/Microsoft.DBforPostgreSQL/flexibleServers                   — List by RG
-//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/start      — Start
-//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/stop       — Stop
-//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/restart    — Restart
+//	PUT    .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            : Create
+//	GET    .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            : Get
+//	PATCH  .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            : Update
+//	DELETE .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}            : Delete
+//	GET    .../providers/Microsoft.DBforPostgreSQL/flexibleServers                   : List by RG
+//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/start      : Start
+//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/stop       : Stop
+//	POST   .../providers/Microsoft.DBforPostgreSQL/flexibleServers/{name}/restart    : Restart
 //
 // Mutating ops return 200 OK with the resource body inline so the SDK's LRO
 // poller terminates on the first response.

@@ -255,7 +255,7 @@ func assertIPConfig(t *testing.T, h *armnetwork.BastionHost) {
 }
 
 // TestBastionDNSNameStable proves the computed dnsName is generated once and is
-// identical across repeated GETs and an intervening update — a per-GET regen
+// identical across repeated GETs and an intervening update: a per-GET regen
 // would drift Terraform's computed dns_name.
 func TestBastionDNSNameStable(t *testing.T) {
 	ts := newServer(t)

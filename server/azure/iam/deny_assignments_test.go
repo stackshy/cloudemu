@@ -10,7 +10,7 @@ import (
 
 // TestSDKAzureIAMDenyAssignmentsListEmpty confirms that a subscription with no
 // deny assignments returns a correctly enveloped, empty collection (not an
-// error) — matching a real subscription that has never had Blueprints or
+// error), matching a real subscription that has never had Blueprints or
 // Managed Applications create one.
 func TestSDKAzureIAMDenyAssignmentsListEmpty(t *testing.T) {
 	cf, _ := newClientFactory(t)

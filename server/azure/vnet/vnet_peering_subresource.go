@@ -140,7 +140,7 @@ func (h *Handler) putVNetPeering(w http.ResponseWriter, r *http.Request, rp azur
 
 	// A peering stays Initiated until its reciprocal peering (one on the
 	// remote VNet pointing back at this one) also exists, at which point real
-	// ARM reports both sides Connected — see the peeringState citation on
+	// ARM reports both sides Connected; see the peeringState citation on
 	// AzureVNetPeering in services/networking/driver/azure_network_metadata.go.
 	if reciprocal := findReciprocalPeering(r.Context(), meta, remoteVNet.ID, localID); reciprocal != "" {
 		peering.PeeringState = netdriver.AzurePeeringStateConnected
@@ -187,7 +187,7 @@ func (h *Handler) resolvePeeringRemote(
 }
 
 // findReciprocalPeering scans every peering stored on the remote VNet for one
-// whose own remoteVirtualNetwork reference points back at localVNetARMID —
+// whose own remoteVirtualNetwork reference points back at localVNetARMID:
 // the other half of a two-way peering.
 func findReciprocalPeering(ctx context.Context, meta netdriver.AzureNetworkMetadata, remoteVNetID, localVNetARMID string) string {
 	for _, p := range meta.ListAzureVNetPeerings(ctx, remoteVNetID) {
@@ -232,8 +232,8 @@ func (h *Handler) deleteVNetPeering(w http.ResponseWriter, r *http.Request, rp a
 	writeAcceptedAsync(w, r, rp.Subscription, "peering-delete-"+rp.SubResourceName, nil)
 }
 
-// disconnectReciprocalPeering transitions the surviving reciprocal peering — the
-// one on the remote VNet pointing back at localVNetARMID — to Disconnected after
+// disconnectReciprocalPeering transitions the surviving reciprocal peering (the
+// one on the remote VNet pointing back at localVNetARMID) to Disconnected after
 // its counterpart has been deleted, matching real ARM: deleting one side of a
 // two-way peering leaves the other side stuck in Disconnected rather than
 // Connected. Best-effort: a remote VNet or reciprocal that can't be resolved

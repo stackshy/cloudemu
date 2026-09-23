@@ -2,7 +2,7 @@
 // REST API (the /api/2.0/sql/history/queries surface) as a server.Handler.
 //
 // The in-memory backend does not execute SQL, so there is no query activity to
-// record — the endpoint returns an empty result set. That is enough for the
+// record: the endpoint returns an empty result set. That is enough for the
 // real github.com/databricks/databricks-sdk-go WorkspaceClient's
 // w.QueryHistory.List to succeed (it previously failed with "no handler
 // registered for this request"), which unblocks tools that probe query history

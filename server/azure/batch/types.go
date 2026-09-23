@@ -38,7 +38,7 @@ type accountResponse struct {
 
 // accountPropertiesResponse is the account properties block. The computed fields
 // (endpoints, provisioningState, quotas) are stable across reads; the account
-// keys are deliberately absent — they surface only via listKeys.
+// keys are deliberately absent; they surface only via listKeys.
 type accountPropertiesResponse struct {
 	AccountEndpoint                       string           `json:"accountEndpoint"`
 	NodeManagementEndpoint                string           `json:"nodeManagementEndpoint"`
@@ -64,7 +64,7 @@ type regenerateKeyRequest struct {
 	KeyName string `json:"keyName"`
 }
 
-// accountListResponse is the ARM account list envelope. nextLink is omitted — the
+// accountListResponse is the ARM account list envelope. nextLink is omitted: the
 // emulator returns a single page.
 type accountListResponse struct {
 	Value []accountResponse `json:"value"`

@@ -15,7 +15,7 @@ const defaultActivityCaller = "cloudemu@localhost"
 // recordActivityLogEvent derives an Azure Activity Log management event from a
 // served ARM request and records it. It runs as the server's post-dispatch
 // observer, so the Activity Log API reflects real API activity. Read-only
-// requests (GET/HEAD) and non-ARM (data-plane) URLs are skipped — Activity
+// requests (GET/HEAD) and non-ARM (data-plane) URLs are skipped: Activity
 // Log's Administrative category records writes/deletes/actions, not reads.
 func recordActivityLogEvent(rec mondriver.ActivityLogRecorder, r *http.Request) {
 	verb := writeVerb(r.Method)

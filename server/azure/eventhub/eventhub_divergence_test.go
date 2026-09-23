@@ -220,7 +220,7 @@ func TestSDKNamespaceUpdateAppliesProperties(t *testing.T) {
 
 // TestSDKNamespaceUpdateAppliesExplicitFalse checks that a PATCH which flips a
 // boolean property from true to an EXPLICIT false (and a numeric property from a
-// non-zero value to 0) is actually applied — the change-to-default case a naive
+// non-zero value to 0) is actually applied: the change-to-default case a naive
 // echo-of-request cannot handle. Real Azure's Namespaces - Update applies the
 // values the caller sends, so isAutoInflateEnabled=false and
 // maximumThroughputUnits=0 must be read back after the PATCH, not the stale

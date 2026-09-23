@@ -41,8 +41,8 @@ func (h *Handler) registerAlarm(r *http.Request, name string, props map[string]a
 }
 
 // alarmDimensions maps a metric-alert's evaluation scope onto the driver's
-// dimension filter: the criterion's own dimension filters, plus — when the alert
-// targets exactly one scope — a "resourceId" dimension pinning evaluation to
+// dimension filter: the criterion's own dimension filters, plus, when the alert
+// targets exactly one scope, a "resourceId" dimension pinning evaluation to
 // that resource, so the alert does not fire on another resource's datapoints
 // sharing the same namespace/metric. A multi-scope alert leaves resourceId
 // unset (aggregating across its scopes), matching the dimensionless default.
@@ -79,8 +79,8 @@ func singleScope(props map[string]any) (string, bool) {
 	return scope, true
 }
 
-// actionGroupIDs extracts properties.actions[].actionGroupId — the action
-// group resource ids linked to a metric alert — and stores them on the alarm
+// actionGroupIDs extracts properties.actions[].actionGroupId, the action
+// group resource ids linked to a metric alert, and stores them on the alarm
 // so DescribeAlarms echoes the linkage back (mirroring the AWS CloudWatch
 // alarm's AlarmActions field). On a breach the alarm resolves these ids to the
 // registered action groups and delivers to their receivers (webhook receivers

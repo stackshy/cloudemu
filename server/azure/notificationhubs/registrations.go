@@ -291,5 +291,5 @@ func writeRegistrationEntry(w http.ResponseWriter, c regContext, reg *notifdrive
 func writeRegError(w http.ResponseWriter, status int, msg string) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.WriteHeader(status)
-	_, _ = w.Write([]byte(msg)) //nolint:gosec // plain-text body, not HTML — no XSS surface
+	_, _ = w.Write([]byte(msg)) //nolint:gosec // plain-text body, not HTML: no XSS surface
 }

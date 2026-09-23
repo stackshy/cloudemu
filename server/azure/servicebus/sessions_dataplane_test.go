@@ -29,7 +29,7 @@ func sessionSend(t *testing.T, srv *httptest.Server, queue, sessionID, body stri
 
 // TestSessionSendEnforcement is the Tier-1 (real, faithful) behavior: a session
 // entity requires a SessionId on every send, and a plain (non-session) receive
-// against it returns nothing — real Azure Service Bus sessions are consumed only
+// against it returns nothing: real Azure Service Bus sessions are consumed only
 // via the session receiver, which has no REST equivalent.
 func TestSessionSendEnforcement(t *testing.T) {
 	srv, _ := newTestServer(t)

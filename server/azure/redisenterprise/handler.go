@@ -5,7 +5,7 @@
 // handler the same way they hit management.azure.com.
 //
 // This is distinct from the standard Azure Cache for Redis
-// (Microsoft.Cache/redis) served by the azurecache handler — the two share the
+// (Microsoft.Cache/redis) served by the azurecache handler: the two share the
 // Microsoft.Cache namespace but claim different resource types, so registration
 // order is unconstrained.
 //

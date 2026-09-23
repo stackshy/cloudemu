@@ -86,7 +86,7 @@ func TestSDKUpsertAppliesTags(t *testing.T) {
 
 // TestSDKSameNameZonesStayIndependent asserts that CreateOrUpdate for a zone
 // name that already exists in a different resource group creates a distinct
-// zone rather than hijacking the existing one — the same name legitimately
+// zone rather than hijacking the existing one: the same name legitimately
 // exists in more than one group.
 func TestSDKSameNameZonesStayIndependent(t *testing.T) {
 	zones, _, ts := newDNSClientsAndServer(t)
@@ -133,7 +133,7 @@ func TestSDKSameNameZonesStayIndependent(t *testing.T) {
 
 // TestSDKTXTRecordChunking asserts that a TXT value longer than 255 bytes is
 // returned as valid ≤255-byte character-strings whose concatenation preserves
-// the original value — Azure rejects a single oversized chunk.
+// the original value; Azure rejects a single oversized chunk.
 func TestSDKTXTRecordChunking(t *testing.T) {
 	zones, records := newDNSClients(t)
 	ctx := context.Background()
@@ -180,7 +180,7 @@ func TestSDKTXTRecordChunking(t *testing.T) {
 
 // TestSDKGetResolvesWithinRequestScope asserts that when the same zone name
 // exists in two resource groups, a Get resolves to the zone in the request's
-// group — not an arbitrary same-named zone in another group.
+// group, not an arbitrary same-named zone in another group.
 func TestSDKGetResolvesWithinRequestScope(t *testing.T) {
 	zones, _, ts := newDNSClientsAndServer(t)
 	ctx := context.Background()

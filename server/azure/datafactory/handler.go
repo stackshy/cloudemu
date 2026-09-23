@@ -13,12 +13,12 @@
 //
 // Coverage:
 //
-//	PUT    .../factories/{name}   — Factories.CreateOrUpdate (sync 201/200)
-//	GET    .../factories/{name}   — Factories.Get
-//	PATCH  .../factories/{name}   — Factories.Update (tags + identity replace)
-//	DELETE .../factories/{name}   — Factories.Delete (sync 200)
-//	GET    .../factories          — Factories.ListByResourceGroup
-//	GET    .../providers/Microsoft.DataFactory/factories — Factories.List
+//	PUT    .../factories/{name}   : Factories.CreateOrUpdate (sync 201/200)
+//	GET    .../factories/{name}   : Factories.Get
+//	PATCH  .../factories/{name}   : Factories.Update (tags + identity replace)
+//	DELETE .../factories/{name}   : Factories.Delete (sync 200)
+//	GET    .../factories          : Factories.ListByResourceGroup
+//	GET    .../providers/Microsoft.DataFactory/factories : Factories.List
 //
 // identity is TOP-LEVEL and modeled explicitly (the server-wide echo only reaches
 // the nested properties object); publicNetworkAccess is an explicit enum (the

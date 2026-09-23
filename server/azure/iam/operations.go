@@ -97,14 +97,14 @@ func (h *Handler) createOrUpdateRoleDefinition(
 	// Upsert: try create first, fall back to delete+create on AlreadyExists
 	// so subsequent PUTs to the same id behave as updates per ARM semantics.
 	//
-	// Caveat: the delete+create dance is not atomic — a concurrent reader
+	// Caveat: the delete+create dance is not atomic; a concurrent reader
 	// between the two driver calls observes NotFound. The driver lacks an
 	// Update entry point, so this is the simplest workaround. Real ARM does
 	// an atomic upsert.
 	//
 	// Status code: armauthorization roleDefinitions.CreateOrUpdate models
 	// only 201 Created as success (per the Azure REST API spec for this
-	// specific endpoint — unlike e.g. managedClusters which returns 200 on
+	// specific endpoint, unlike e.g. managedClusters which returns 200 on
 	// update). So we always return 201 regardless of create-vs-update.
 	if _, err := h.iam.CreateRole(r.Context(), iamdriver.RoleConfig{
 		Name:                id,
@@ -190,7 +190,7 @@ func (h *Handler) listRoleDefinitions(w http.ResponseWriter, r *http.Request, sc
 	out := roleDefinitionList{Value: make([]roleDefinitionEnvelope, 0, len(roles)+len(h.builtins))}
 
 	// Built-in roles are assignable at every scope, so they appear in a list at
-	// any scope — rooted at the caller's requested scope, matching real Azure.
+	// any scope, rooted at the caller's requested scope, matching real Azure.
 	for id := range h.builtins {
 		props := h.builtins[id]
 		out.Value = append(out.Value,
@@ -382,7 +382,7 @@ func (h *Handler) getRoleAssignment(w http.ResponseWriter, r *http.Request, scop
 //     its ancestors (permissions inherit downward, so this is the default
 //     real Azure ListForScope narrowing).
 //   - $filter=principalId eq '{guid}': every assignment for that principal,
-//     at, above, or below the queried scope — real Azure widens the match to
+//     at, above, or below the queried scope: real Azure widens the match to
 //     the whole scope subtree for a principal-scoped query, so scope
 //     narrowing is skipped unless combined with atScope().
 //   - $filter=atScope() and principalId eq '{guid}': both applied together.
@@ -481,7 +481,7 @@ func trimODataString(s string) string {
 // scopeAssignmentMatches reports whether a stored assignment's scope is
 // visible from a query scope. Real Azure RoleAssignments.ListForScope returns
 // assignments AT the queried scope and at all ANCESTOR scopes (permissions
-// inherit downward) — never at descendant scopes. An empty or root ("/")
+// inherit downward), never at descendant scopes. An empty or root ("/")
 // query returns everything.
 func scopeAssignmentMatches(query, stored string) bool {
 	return query == "" || query == "/" ||
@@ -505,7 +505,7 @@ func buildRoleDefinitionEnvelope(
 }
 
 // roleDefinitionExists reports whether roleDefinitionID references a role
-// definition known to this handler — either a seeded built-in or a
+// definition known to this handler: either a seeded built-in or a
 // driver-backed custom role. The id may be relative
 // ("/providers/Microsoft.Authorization/roleDefinitions/{guid}") or fully
 // scope-qualified; only the trailing GUID segment identifies the definition.
@@ -559,9 +559,9 @@ func decodeRoleProperties(doc string) (roleDefinitionProperties, error) {
 // query scope. Empty query returns everything (azure SDK calls this with no
 // scope for "list all in subscription"). Real Azure's RoleDefinitions List
 // returns definitions "applicable at scope and above" (MS Learn:
-// rest/api/authorization/role-definitions/list) — the query scope itself or
-// one of its ancestors (management group / subscription / resource group)
-// — never a definition scoped only to a descendant resource; that requires
+// rest/api/authorization/role-definitions/list): the query scope itself or
+// one of its ancestors (management group / subscription / resource group),
+// never a definition scoped only to a descendant resource; that requires
 // the separate atScopeAndBelow $filter, which we don't model.
 func scopeMatches(query, stored string) bool {
 	if query == "" || query == "/" {

@@ -70,7 +70,7 @@ func (h *Handler) getOriginGroup(w http.ResponseWriter, r *http.Request, rp *azu
 	azurearm.WriteJSON(w, http.StatusOK, toOriginGroupJSON(rp, stored))
 }
 
-// updateOriginGroup handles PATCH .../originGroups/{og} — AFDOriginGroups.Update.
+// updateOriginGroup handles PATCH .../originGroups/{og} (AFDOriginGroups.Update).
 // Supplied properties keys overlay the stored ones; every other property is left
 // untouched.
 func (h *Handler) updateOriginGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

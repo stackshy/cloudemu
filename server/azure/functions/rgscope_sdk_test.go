@@ -55,7 +55,7 @@ func TestSDKSiteGetDeleteScopedByResourceGroup(t *testing.T) {
 	}
 
 	// The same site name, requested through a different resource group, must
-	// 404 — not return rgName's site.
+	// 404, not return rgName's site.
 	if _, err := client.Get(ctx, rgNameB, "sdk-scoped-site", nil); err == nil {
 		t.Fatal("Get from wrong resource group returned nil error, want 404")
 	}
@@ -162,7 +162,7 @@ func TestSDKAppServicePlanDeleteAndListWebApps(t *testing.T) {
 	}
 
 	// The plan cannot be deleted while it still hosts a site (guarded, see
-	// TestSDKAppServicePlanDeleteRejectedWhileSiteAssigned) — remove the site
+	// TestSDKAppServicePlanDeleteRejectedWhileSiteAssigned); remove the site
 	// first, then DELETE the plan.
 	if _, err := webAppsClient.Delete(ctx, rgName, "sdk-plan-site", nil); err != nil {
 		t.Fatalf("Sites Delete: %v", err)
@@ -318,7 +318,7 @@ func TestSDKUpdateApplicationSettings(t *testing.T) {
 		t.Fatalf("persisted NEW_SETTING = %v, want value1", got)
 	}
 
-	// PUT replaces the settings map — ORIGINAL from create time must be gone.
+	// PUT replaces the settings map: ORIGINAL from create time must be gone.
 	if _, ok := settings.Properties["ORIGINAL"]; ok {
 		t.Fatalf("PUT config/appsettings merged instead of replacing: %+v", settings.Properties)
 	}

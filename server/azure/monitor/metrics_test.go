@@ -18,7 +18,7 @@ func vmURIFor(name string) string {
 
 // putVM creates name via the real ARM CreateOrUpdate PUT, so the ARM name the
 // URL addresses it by is the same name the compute mock records (and derives
-// its Microsoft.Insights "resourceId" dimension from) — unlike calling
+// its Microsoft.Insights "resourceId" dimension from), unlike calling
 // RunInstances directly, which never associates the driver's internal
 // instance id with an ARM name at all.
 func putVM(t *testing.T, ts *httptest.Server, name string) {
@@ -125,7 +125,7 @@ func TestMetricsDataPlaneIsolatedPerResource(t *testing.T) {
 
 	// The last bucket blends this VM's own tail-end Running datapoint (25) with
 	// its own power-off datapoint (0) landing in the same period, so it reads
-	// below 25 rather than exactly 0 — but it must have moved off 25, proving
+	// below 25 rather than exactly 0, but it must have moved off 25, proving
 	// vm2 saw its own power-off event.
 	last := vm2Data[len(vm2Data)-1]
 	if avg := last["average"].(float64); avg == 25 {

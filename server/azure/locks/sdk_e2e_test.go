@@ -206,7 +206,7 @@ func TestSDKSubscriptionLockRoundTrip(t *testing.T) {
 // TestSDKResourceLevelLockOnExistingHandlerPath is the regression for the
 // dispatch-order bug: a lock on an individual resource is addressed at
 // .../providers/Microsoft.Compute/virtualMachines/vm1/providers/Microsoft.
-// Authorization/locks/lk — a path whose leading providers pair belongs to the
+// Authorization/locks/lk: a path whose leading providers pair belongs to the
 // (registered) VM handler. If the locks handler is not dispatched first this
 // returns 501 instead of round-tripping the lock.
 func TestSDKResourceLevelLockOnExistingHandlerPath(t *testing.T) {

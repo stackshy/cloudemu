@@ -37,7 +37,7 @@ func secretsClientAt(t *testing.T, ts *httptest.Server, vault string) *azsecrets
 
 // TestKeyVaultDoesNotStealBlobContainer is the B7 regression: on a bare host a
 // blob container named after a Key Vault keyword (secrets/keys/certificates)
-// must be created by the storage handler, not stolen (405) by Key Vault — while
+// must be created by the storage handler, not stolen (405) by Key Vault, while
 // a real Key Vault op via the /{vault}/secrets form still reaches Key Vault.
 func TestKeyVaultDoesNotStealBlobContainer(t *testing.T) {
 	cloud := cloudemu.NewAzure()

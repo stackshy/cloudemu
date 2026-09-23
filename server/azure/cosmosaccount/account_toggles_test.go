@@ -2,7 +2,7 @@
 // (enableAutomaticFailover, enableMultipleWriteLocations, publicNetworkAccess)
 // and enableFreeTier that Terraform's azurerm_cosmosdb_account reads back on
 // every refresh. They were not emitted by the handler and leaned on the generic
-// property-echo overlay, which swallows an explicit zero value (false / "") —
+// property-echo overlay, which swallows an explicit zero value (false / ""),
 // so an account created with multiple-write enabled and later PATCHed back to
 // disabled kept reporting enabled, a perpetual Terraform drift. These tests
 // drive the real armcosmos client and pin the fix: the toggles are authoritative
@@ -23,7 +23,7 @@ import (
 // TestSDKDatabaseAccountToggleDefaults asserts an account created without the
 // toggles reports Azure's documented defaults (all false, publicNetworkAccess
 // Enabled) on both the create response and an independent GET, rather than
-// omitting them — Terraform reads each field and an absent value is drift-prone.
+// omitting them: Terraform reads each field and an absent value is drift-prone.
 func TestSDKDatabaseAccountToggleDefaults(t *testing.T) {
 	ctx := context.Background()
 	client := newDatabaseAccountsClient(t)

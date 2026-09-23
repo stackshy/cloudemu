@@ -30,7 +30,7 @@ type armTDECfg struct {
 
 // serveTDE handles the database transparentDataEncryption/current sub-resource.
 // Real Azure SQL TDE PUT is synchronous, so every verb returns 200 inline with
-// no LRO. There is no Delete — TDE cannot be removed, only toggled.
+// no LRO. There is no Delete: TDE cannot be removed, only toggled.
 func (h *Handler) serveTDE(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	tde, ok := h.transparentDataEncryption()
 	if !ok {

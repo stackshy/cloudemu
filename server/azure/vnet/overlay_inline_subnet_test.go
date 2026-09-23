@@ -17,8 +17,8 @@ import (
 // TestSDKInlineSubnetUnmodeledFieldRoundTrips is the load-bearing test for the
 // echo overlay's array recursion: a vnet created with an INLINE subnet carrying
 // a sub-field the handler does not model (privateEndpointNetworkPolicies) must
-// reflect that sub-field on the inline subnet at GET — before the fix it was
-// dropped because the overlay only recursed into maps, never array elements —
+// reflect that sub-field on the inline subnet at GET. Before the fix it was
+// dropped because the overlay only recursed into maps, never array elements,
 // while the modeled sub-field (addressPrefix) stays authoritative and no phantom
 // subnet is injected. It also confirms a STANDALONE subnet PUT still echoes the
 // same unmodeled field (the existing map/scalar path, unchanged).
@@ -93,7 +93,7 @@ func TestSDKInlineSubnetUnmodeledFieldRoundTrips(t *testing.T) {
 			policyOf(sub.Properties.PrivateEndpointNetworkPolicies))
 	}
 
-	// A STANDALONE subnet PUT must still echo the same unmodeled field — the
+	// A STANDALONE subnet PUT must still echo the same unmodeled field: the
 	// pre-existing map/scalar overlay path, which this change must not regress.
 	subnetClient, err := armnetwork.NewSubnetsClient("sub-1", fakeCred{}, opts)
 	if err != nil {

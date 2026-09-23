@@ -9,7 +9,7 @@ import (
 // SAS (service shared-access-signature) query parameter names. See
 // https://learn.microsoft.com/en-us/rest/api/storageservices/create-service-sas.
 const (
-	sasSig    = "sig" // signature — its presence marks a SAS-authenticated request.
+	sasSig    = "sig" // signature; its presence marks a SAS-authenticated request.
 	sasPerm   = "sp"  // signed permissions (r/w/d/l/a/c/…).
 	sasExpiry = "se"  // signed expiry time.
 	sasStart  = "st"  // signed start time (optional).
@@ -27,8 +27,8 @@ const (
 
 // enforceSAS applies SAS permission + validity-window scoping to a request that
 // carries a SAS signature (a `sig` query param). cloudemu does not verify the
-// SAS signature cryptographically — the whole wire layer accepts any
-// credentials — but it honors the permission set (sp) and the validity window
+// SAS signature cryptographically (the whole wire layer accepts any
+// credentials), but it honors the permission set (sp) and the validity window
 // (st/se) so SAS-based least-privilege access control is testable: a read-only
 // SAS can't delete or overwrite, and an expired SAS is rejected. It writes the
 // Azure error and returns true when the request must be rejected.

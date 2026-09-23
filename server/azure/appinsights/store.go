@@ -10,8 +10,8 @@ import (
 // componentState is a stored Application Insights component
 // (Microsoft.Insights/components). The writable properties are kept in Props as
 // a generic map so a GET/LIST echoes back exactly what the caller PUT (plus the
-// injected defaults), while the fields Azure computes ONCE at create —
-// InstrumentationKey, AppID, TenantID, CreationDate — are held as dedicated
+// injected defaults), while the fields Azure computes ONCE at create
+// (InstrumentationKey, AppID, TenantID, CreationDate) are held as dedicated
 // fields so they never change on a subsequent PUT/PATCH. Real Azure documents
 // that "you cannot specify a different value for InstrumentationKey nor AppId in
 // the Put operation", so regenerating them per-GET would be perpetual Terraform
@@ -33,14 +33,14 @@ type componentState struct {
 
 	// Writable properties (Application_Type, Flow_Type, RetentionInDays, …) as
 	// supplied by the caller with defaults filled in. Computed keys are never
-	// stored here — they live in the dedicated fields above.
+	// stored here; they live in the dedicated fields above.
 	Props map[string]any
 }
 
 // store is the concurrency-safe backing map, keyed case-insensitively by the
 // component's full (subscription, resourceGroup, name) scope. Component names are
 // unique only within a subscription+resource group, so all three segments key
-// the entry — keying by name alone would let a list at one resource group return
+// the entry: keying by name alone would let a list at one resource group return
 // another group's components.
 type store struct {
 	m *memstore.Store[*componentState]

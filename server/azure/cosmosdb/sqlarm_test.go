@@ -239,7 +239,7 @@ func TestSDKSQLControlPlaneLifecycle(t *testing.T) {
 }
 
 // TestSDKSQLDatabaseChildLinks pins that a SQL database resource always carries
-// its _colls/_users child links on PUT and GET — Cosmos'
+// its _colls/_users child links on PUT and GET. Cosmos'
 // SQLDatabaseGetPropertiesResource exposes them, so they must not be dropped
 // (the Mongo database resource, by contrast, has neither; see
 // TestSDKMongoDatabaseNoChildLinks).

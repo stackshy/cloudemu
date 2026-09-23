@@ -75,7 +75,7 @@ type catalogSettingsResp struct {
 	CatalogItemSyncEnableStatus string `json:"catalogItemSyncEnableStatus"`
 }
 
-// listResponse is the ARM list envelope. nextLink is omitted — the emulator
+// listResponse is the ARM list envelope. nextLink is omitted: the emulator
 // returns a single page.
 type listResponse struct {
 	Value []devCenterResponse `json:"value"`

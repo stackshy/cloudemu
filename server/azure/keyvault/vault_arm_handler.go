@@ -11,12 +11,12 @@
 //
 // Coverage:
 //
-//	PUT    .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.BeginCreateOrUpdate (LRO, completes inline)
-//	GET    .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.Get
-//	PATCH  .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.Update (partial merge, not a full replace)
-//	DELETE .../providers/Microsoft.KeyVault/vaults/{name}   — Vaults.Delete
-//	GET    .../resourceGroups/{rg}/providers/Microsoft.KeyVault/vaults — Vaults.ListByResourceGroup
-//	GET    .../subscriptions/{sub}/providers/Microsoft.KeyVault/vaults  — Vaults.ListBySubscription
+//	PUT    .../providers/Microsoft.KeyVault/vaults/{name}   : Vaults.BeginCreateOrUpdate (LRO, completes inline)
+//	GET    .../providers/Microsoft.KeyVault/vaults/{name}   : Vaults.Get
+//	PATCH  .../providers/Microsoft.KeyVault/vaults/{name}   : Vaults.Update (partial merge, not a full replace)
+//	DELETE .../providers/Microsoft.KeyVault/vaults/{name}   : Vaults.Delete
+//	GET    .../resourceGroups/{rg}/providers/Microsoft.KeyVault/vaults : Vaults.ListByResourceGroup
+//	GET    .../subscriptions/{sub}/providers/Microsoft.KeyVault/vaults  : Vaults.ListBySubscription
 package keyvault
 
 import (

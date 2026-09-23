@@ -88,7 +88,7 @@ func TestContainerGroupLifecycleDrivesEngine(t *testing.T) {
 	t.Cleanup(srv.Close)
 	ensureRG(t, srv.URL, subID, rgName)
 
-	// 1. PUT create — the engine runs the container.
+	// 1. PUT create: the engine runs the container.
 	body := doReq(t, srv.URL, http.MethodPut, groupURL("cg1")+apiVer,
 		strings.NewReader(createBody), http.StatusCreated)
 
@@ -145,9 +145,9 @@ func TestContainerGroupLifecycleDrivesEngine(t *testing.T) {
 
 // TestContainerGroupsIsolatedAcrossResourceGroups is a regression test for the
 // cross-RG collision fix: a container group's ARM identity is
-// {subscriptionId, resourceGroupName, containerGroupName} — see
-// https://learn.microsoft.com/en-us/rest/api/container-instances/container-groups/create-or-update
-// — so two resource groups can each hold a same-named group without one
+// {subscriptionId, resourceGroupName, containerGroupName} (see
+// https://learn.microsoft.com/en-us/rest/api/container-instances/container-groups/create-or-update),
+// so two resource groups can each hold a same-named group without one
 // aliasing or leaking into the other.
 func TestContainerGroupsIsolatedAcrossResourceGroups(t *testing.T) {
 	const otherRG = "other-rg"

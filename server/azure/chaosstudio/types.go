@@ -65,7 +65,7 @@ type propertiesResponse struct {
 	Steps             json.RawMessage `json:"steps"`
 }
 
-// listResponse is the ARM list envelope. nextLink is omitted — the emulator
+// listResponse is the ARM list envelope. nextLink is omitted: the emulator
 // returns a single page.
 type listResponse struct {
 	Value []experimentResponse `json:"value"`

@@ -18,7 +18,7 @@ import (
 )
 
 // TestSDKAccountLRSHasNoSecondaryRegion proves a plain LRS account (the
-// default) reports no secondary location/status/endpoints — those fields
+// default) reports no secondary location/status/endpoints: those fields
 // only apply to geo-redundant SKUs.
 func TestSDKAccountLRSHasNoSecondaryRegion(t *testing.T) {
 	ctx := context.Background()
@@ -43,7 +43,7 @@ func TestSDKAccountLRSHasNoSecondaryRegion(t *testing.T) {
 }
 
 // TestSDKAccountGRSHasSecondaryRegion proves a GRS account reports its
-// secondary location and status, but — lacking read access — no secondary
+// secondary location and status, but, lacking read access, no secondary
 // endpoints.
 func TestSDKAccountGRSHasSecondaryRegion(t *testing.T) {
 	ctx := context.Background()
@@ -144,7 +144,7 @@ func assertCMKEncryption(t *testing.T, props *armstorage.AccountProperties) {
 }
 
 // TestSDKAccountDefaultEncryptionUnchanged proves an account created without
-// an encryption request still reports the platform-managed default — the CMK
+// an encryption request still reports the platform-managed default: the CMK
 // fix must not regress the common case.
 func TestSDKAccountDefaultEncryptionUnchanged(t *testing.T) {
 	ctx := context.Background()
@@ -171,7 +171,7 @@ func TestSDKAccountDefaultEncryptionUnchanged(t *testing.T) {
 
 // TestSDKAccountUpdatePreservesEncryptionWhenOmitted proves a PATCH that
 // doesn't submit an encryption block leaves a previously configured
-// customer-managed key untouched — encryption lives in its own store
+// customer-managed key untouched: encryption lives in its own store
 // precisely so an unrelated PATCH (e.g. only changing tags) can't blindly
 // reset it.
 func TestSDKAccountUpdatePreservesEncryptionWhenOmitted(t *testing.T) {

@@ -16,12 +16,12 @@
 //
 // Coverage:
 //
-//	PUT/GET/DELETE .../namespaces/{ns}                                     — Namespaces CRUD
-//	GET            .../namespaces                                          — Namespaces List / ListAll
-//	POST           .../checkNamespaceAvailability                          — Namespaces.CheckAvailability
-//	PUT/GET/DELETE .../namespaces/{ns}/AuthorizationRules/{rule}           — namespace SAS rules
-//	POST           .../namespaces/{ns}/AuthorizationRules/{rule}/listKeys  — namespace SAS keys
-//	PUT/GET/DELETE .../namespaces/{ns}/notificationHubs/{h}                — hubs CRUD
+//	PUT/GET/DELETE .../namespaces/{ns}                                     : Namespaces CRUD
+//	GET            .../namespaces                                          : Namespaces List / ListAll
+//	POST           .../checkNamespaceAvailability                          : Namespaces.CheckAvailability
+//	PUT/GET/DELETE .../namespaces/{ns}/AuthorizationRules/{rule}           : namespace SAS rules
+//	POST           .../namespaces/{ns}/AuthorizationRules/{rule}/listKeys  : namespace SAS keys
+//	PUT/GET/DELETE .../namespaces/{ns}/notificationHubs/{h}                : hubs CRUD
 //	PUT/GET/DELETE .../namespaces/{ns}/notificationHubs/{h}/AuthorizationRules/{rule}
 //	POST           .../namespaces/{ns}/notificationHubs/{h}/AuthorizationRules/{rule}/listKeys
 package notificationhubs

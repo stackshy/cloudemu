@@ -7,9 +7,9 @@
 // to all of them. The SDK's workspace create/update/delete, SQL-pool
 // create/delete/pause/resume, Spark-pool create/delete and integration-runtime
 // create/delete/start/stop are Begin* pollers. This handler answers them
-// synchronously — a create returns 201/200 with provisioningState already
+// synchronously: a create returns 201/200 with provisioningState already
 // "Succeeded" and no Azure-AsyncOperation/Location header, a delete returns
-// 200/204, and an action returns 200 — so the poller terminates on its first
+// 200/204, and an action returns 200. So the poller terminates on its first
 // poll and never hangs. This mirrors the Event Hubs and Container Apps
 // control-plane handlers.
 //

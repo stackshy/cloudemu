@@ -11,7 +11,7 @@ import (
 // createOrUpdateProfile handles PUT .../profiles/{name}. The whole profile arrives
 // in one body and fully REPLACES the stored state (ARM CreateOrUpdate). Profiles
 // is an LRO; returning the fully-provisioned body completes the poller on the
-// first response — 201 on create, 200 on update.
+// first response: 201 on create, 200 on update.
 func (h *Handler) createOrUpdateProfile(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body profileJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -42,7 +42,7 @@ func (h *Handler) getProfile(w http.ResponseWriter, r *http.Request, rp *azurear
 	azurearm.WriteJSON(w, http.StatusOK, toProfileJSON(rp, stored))
 }
 
-// updateProfileTags handles PATCH .../profiles/{name} — Profiles.Update. Real
+// updateProfileTags handles PATCH .../profiles/{name} (Profiles.Update). Real
 // armcdn Update REPLACES the tag collection wholesale (an omitted existing key is
 // dropped); every other property is left untouched. A request with tags entirely
 // omitted (nil map) is a no-op.

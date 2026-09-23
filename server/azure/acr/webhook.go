@@ -137,7 +137,7 @@ func (h *ARMHandler) getWebhook(w http.ResponseWriter, r *http.Request, rp *azur
 }
 
 // serveWebhookAction handles the POST action verbs under a named webhook. Only
-// getCallbackConfig is modeled — the sole read path for a webhook's serviceUri
+// getCallbackConfig is modeled: it is the sole read path for a webhook's serviceUri
 // and customHeaders.
 func (h *ARMHandler) serveWebhookAction(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	if !strings.EqualFold(rp.SubResourceAction, "getCallbackConfig") {

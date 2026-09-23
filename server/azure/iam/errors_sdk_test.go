@@ -80,10 +80,10 @@ func TestSDKAzureIAMCreateAssignmentMissingPrincipalIsRejected(t *testing.T) {
 
 // TestSDKAzureIAMUpdateReplacesStoredValue exercises the create-then-update
 // path on a single role definition. Both PUTs must succeed, and a subsequent
-// GET must return the second PUT's values — confirming the upsert path in
+// GET must return the second PUT's values, confirming the upsert path in
 // CreateOrUpdate actually replaces (rather than silently keeping the
 // original). Status code is always 201 for this specific endpoint per the
-// Azure REST spec — see the comment in createOrUpdateRoleDefinition.
+// Azure REST spec; see the comment in createOrUpdateRoleDefinition.
 func TestSDKAzureIAMUpdateReplacesStoredValue(t *testing.T) {
 	roleDefs, _ := newSDKClients(t)
 	ctx := context.Background()
@@ -97,12 +97,12 @@ func TestSDKAzureIAMUpdateReplacesStoredValue(t *testing.T) {
 		},
 	}
 
-	// First PUT — create.
+	// First PUT: create.
 	if _, err := roleDefs.CreateOrUpdate(ctx, testScope, roleID, def, nil); err != nil {
 		t.Fatalf("first CreateOrUpdate: %v", err)
 	}
 
-	// Second PUT — update. Round-trip a different role name so we know the
+	// Second PUT: update. Round-trip a different role name so we know the
 	// update actually replaced the stored value.
 	def.Properties.RoleName = to.Ptr("v2")
 	if _, err := roleDefs.CreateOrUpdate(ctx, testScope, roleID, def, nil); err != nil {
@@ -121,7 +121,7 @@ func TestSDKAzureIAMUpdateReplacesStoredValue(t *testing.T) {
 }
 
 // TestSDKAzureIAMDeleteReturnsResource verifies the handler echoes the
-// deleted resource back in the body of DELETE — real Azure semantics.
+// deleted resource back in the body of DELETE: real Azure semantics.
 func TestSDKAzureIAMDeleteReturnsResource(t *testing.T) {
 	roleDefs, _ := newSDKClients(t)
 	ctx := context.Background()

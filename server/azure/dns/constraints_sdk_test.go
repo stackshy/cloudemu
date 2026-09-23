@@ -37,7 +37,7 @@ func TestSDKAzureDNSMaxNumberOfRecordSets(t *testing.T) {
 }
 
 // TestSDKAzureDNSListByType asserts RecordSets.ListByType returns the zone's
-// record sets of the requested type — previously a type-only GET fell through
+// record sets of the requested type. Previously a type-only GET fell through
 // to a single-record Get and 404'd.
 func TestSDKAzureDNSListByType(t *testing.T) {
 	zones, records := newDNSClients(t)

@@ -23,7 +23,7 @@ import (
 // SNI and in the Host header. This lets a test address two distinct
 // {vault}.vault.azure.net hostnames against a single local httptest TLS
 // server, reproducing how two real Key Vault vaults are two distinct
-// hostnames that resolve to Azure's shared data-plane front door — exactly
+// hostnames that resolve to Azure's shared data-plane front door: exactly
 // the signal cloudemu's wire layer uses to scope a request to its vault.
 func hostRedirectTransport(addr string) *http.Client {
 	return &http.Client{

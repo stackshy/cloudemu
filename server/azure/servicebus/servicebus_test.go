@@ -242,7 +242,7 @@ func TestDataPlaneSendReceive(t *testing.T) {
 // Service Bus must decline unknown entities and let the Queue Storage handler
 // serve them. With only Service Bus registered here, a declined request reaches
 // no handler and returns 501; in the full server it falls through to Queue
-// Storage. (A genuinely-addressed Service Bus miss still 404s — see
+// Storage. (A genuinely-addressed Service Bus miss still 404s; see
 // TestDataPlaneSubscriptionNotFound for the subscription path.)
 func TestDataPlaneUnknownFlatEntityDeclined(t *testing.T) {
 	srv, _ := newTestServer(t)

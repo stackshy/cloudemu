@@ -10,7 +10,7 @@ import (
 // createOrUpdatePolicy handles PUT .../firewallPolicies/{name}. The whole policy
 // arrives in one body and fully REPLACES the stored state (ARM CreateOrUpdate).
 // FirewallPolicies.CreateOrUpdate is an LRO; returning the fully-provisioned body
-// completes the poller on the first response — 201 on create, 200 on update.
+// completes the poller on the first response: 201 on create, 200 on update.
 func (h *Handler) createOrUpdatePolicy(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body policyJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -43,7 +43,7 @@ func (h *Handler) getPolicy(w http.ResponseWriter, r *http.Request, rp *azurearm
 	azurearm.WriteJSON(w, http.StatusOK, toPolicyJSON(rp, stored))
 }
 
-// updatePolicyTags handles PATCH .../firewallPolicies/{name} —
+// updatePolicyTags handles PATCH .../firewallPolicies/{name}:
 // FirewallPolicies.UpdateTags. UpdateTags REPLACES the tag collection wholesale;
 // every other property is left untouched. A request with tags omitted is a no-op.
 func (h *Handler) updatePolicyTags(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

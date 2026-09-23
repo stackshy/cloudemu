@@ -40,7 +40,7 @@ func createTestVNet(t *testing.T, ctx context.Context, vnets *armnetwork.Virtual
 	pollDone(t, p)
 }
 
-// Finding: DeleteSubnet has no in-use guard — a standalone subnet delete
+// Finding: DeleteSubnet has no in-use guard: a standalone subnet delete
 // bypassed the check the whole-vnet-delete path already had.
 func TestSDKDeleteSubnetInUseBlocked(t *testing.T) {
 	ts := newVNetServer(t)
@@ -92,7 +92,7 @@ func TestSDKDeleteSubnetInUseBlocked(t *testing.T) {
 	}
 }
 
-// Finding: CreateSubnet did zero CIDR validation — a prefix outside the
+// Finding: CreateSubnet did zero CIDR validation: a prefix outside the
 // vnet's address space was silently accepted.
 func TestSDKCreateSubnetOutsideVNetAddressSpaceRejected(t *testing.T) {
 	ts := newVNetServer(t)
@@ -116,7 +116,7 @@ func TestSDKCreateSubnetOutsideVNetAddressSpaceRejected(t *testing.T) {
 	}
 }
 
-// Finding: CreateSubnet did zero CIDR validation — a prefix overlapping a
+// Finding: CreateSubnet did zero CIDR validation: a prefix overlapping a
 // sibling subnet was silently accepted.
 func TestSDKCreateSubnetOverlappingSiblingRejected(t *testing.T) {
 	ts := newVNetServer(t)

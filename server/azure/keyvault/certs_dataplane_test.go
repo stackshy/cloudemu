@@ -185,7 +185,7 @@ func TestCertificateNotFoundIs404(t *testing.T) {
 // TestCertificatesNotMisroutedToStorage is the core regression: against the
 // FULL emulator (Key Vault registered alongside the permissive Table/Blob/Queue
 // storage fallbacks), a certificate request must reach the Key Vault handler
-// and NOT fall through to storage — which used to answer the azcertificates SDK
+// and NOT fall through to storage, which used to answer the azcertificates SDK
 // a garbage HTTP 400 odata.error "PartitionKey and RowKey are required".
 func TestCertificatesNotMisroutedToStorage(t *testing.T) {
 	cloud := cloudemu.NewAzure()

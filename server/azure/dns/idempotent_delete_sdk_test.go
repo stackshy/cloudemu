@@ -11,7 +11,7 @@ import (
 
 // TestSDKAzureDNSRecordSetFqdnNoTrailingDot asserts the record set fqdn matches
 // real Azure, which returns "<name>.<zone>" for a relative record and "<zone>"
-// for the apex — neither carrying a trailing dot (mirroring nameServers).
+// for the apex, neither carrying a trailing dot (mirroring nameServers).
 func TestSDKAzureDNSRecordSetFqdnNoTrailingDot(t *testing.T) {
 	zones, records := newDNSClients(t)
 	ctx := context.Background()

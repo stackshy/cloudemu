@@ -121,7 +121,7 @@ func TestSDKKeyVaultExpiryRoundTrip(t *testing.T) {
 }
 
 // TestSDKKeyVaultExpiredSecretForbidsGet proves an expired secret's current
-// version 403s on get rather than returning the (unusable) value — matching
+// version 403s on get rather than returning the (unusable) value, matching
 // real Key Vault, which never falls back to an earlier version either.
 func TestSDKKeyVaultExpiredSecretForbidsGet(t *testing.T) {
 	client := newSecretsClient(t)
@@ -278,7 +278,7 @@ func TestSDKKeyVaultSetSecretDeletedNameConflict(t *testing.T) {
 	}
 
 	// Setting a secret whose name is soft-deleted must fail with 409 Conflict
-	// and the ObjectIsDeletedButRecoverable inner error code — matching real
+	// and the ObjectIsDeletedButRecoverable inner error code, matching real
 	// Key Vault, which forbids reusing the name until recover or purge.
 	_, err := client.SetSecret(ctx, "conflicted", azsecrets.SetSecretParameters{Value: to.Ptr("v2")}, nil)
 

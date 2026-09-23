@@ -4,23 +4,23 @@
 //
 // Coverage (api-version 2022-04-01):
 //
-//	PUT    /{scope}/providers/Microsoft.Authorization/roleDefinitions/{id}   — CreateOrUpdate
-//	GET    /{scope}/providers/Microsoft.Authorization/roleDefinitions/{id}   — Get
-//	DELETE /{scope}/providers/Microsoft.Authorization/roleDefinitions/{id}   — Delete
-//	GET    /{scope}/providers/Microsoft.Authorization/roleDefinitions        — List
-//	PUT    /{scope}/providers/Microsoft.Authorization/roleAssignments/{id}   — Create
-//	GET    /{scope}/providers/Microsoft.Authorization/roleAssignments/{id}   — Get
-//	DELETE /{scope}/providers/Microsoft.Authorization/roleAssignments/{id}   — Delete
-//	GET    /{scope}/providers/Microsoft.Authorization/roleAssignments        — List at scope
+//	PUT    /{scope}/providers/Microsoft.Authorization/roleDefinitions/{id}   : CreateOrUpdate
+//	GET    /{scope}/providers/Microsoft.Authorization/roleDefinitions/{id}   : Get
+//	DELETE /{scope}/providers/Microsoft.Authorization/roleDefinitions/{id}   : Delete
+//	GET    /{scope}/providers/Microsoft.Authorization/roleDefinitions        : List
+//	PUT    /{scope}/providers/Microsoft.Authorization/roleAssignments/{id}   : Create
+//	GET    /{scope}/providers/Microsoft.Authorization/roleAssignments/{id}   : Get
+//	DELETE /{scope}/providers/Microsoft.Authorization/roleAssignments/{id}   : Delete
+//	GET    /{scope}/providers/Microsoft.Authorization/roleAssignments        : List at scope
 //
 // Scope can be subscription, resource-group, resource, or
-// management-group — anything that appears before /providers/Microsoft.Authorization
+// management-group: anything that appears before /providers/Microsoft.Authorization
 // in the URL. The handler treats it as an opaque string.
 //
 // RoleDefinitions back through the shared iamdriver.IAM (each Azure role
 // definition is stored as a driver Role with AssumeRolePolicyDoc holding the
 // ARM properties JSON). RoleAssignments back through the Azure IAM mock's
-// RoleAssignment* methods (see Driver below) — Azure's RoleAssignment shape
+// RoleAssignment* methods (see Driver below): Azure's RoleAssignment shape
 // (principal + role + scope) does not map onto the AWS-shaped driver
 // interface, so those methods live on the concrete mock instead.
 package iam
@@ -127,7 +127,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // parseAuthPath splits a Microsoft.Authorization URL into (scope, kind, id).
 //
-//   - scope is everything before "/providers/Microsoft.Authorization/" — the
+//   - scope is everything before "/providers/Microsoft.Authorization/": the
 //     RBAC scope (subscription, resource group, resource, management group, …),
 //     normalized to start with a leading "/" and with any trailing slash trimmed.
 //   - kind is "roledefinitions" or "roleassignments" (lower-case).

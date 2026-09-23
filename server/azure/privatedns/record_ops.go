@@ -10,7 +10,7 @@ import (
 
 // createOrUpdateRecord handles PUT .../privateDnsZones/{zone}/{type}/{name}. The
 // whole record set arrives in one body and fully REPLACES the stored state.
-// RecordSets.CreateOrUpdate returns the provisioned body — 201 on create, 200 on
+// RecordSets.CreateOrUpdate returns the provisioned body: 201 on create, 200 on
 // update.
 func (h *Handler) createOrUpdateRecord(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body recordJSON

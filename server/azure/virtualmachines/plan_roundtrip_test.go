@@ -14,7 +14,7 @@ import (
 // TestSDKVMPlanRoundTrip verifies that a VM's top-level plan block (the
 // marketplace purchase plan, armcompute.VirtualMachine.Plan) survives a
 // create → get round-trip. plan is a sibling of properties, so the generic
-// property overlay cannot recover it — the handler must model it explicitly.
+// property overlay cannot recover it: the handler must model it explicitly.
 // Without that, a marketplace-image VM read back through the Azure SDK (or
 // azurerm's Read) sees an empty plan and drifts/replaces on every plan.
 func TestSDKVMPlanRoundTrip(t *testing.T) {

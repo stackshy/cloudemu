@@ -16,7 +16,7 @@ import (
 
 // TestSDKFindBlobsByTags drives the real azblob client through Find Blobs by
 // Tags at both the account and container scope, asserting the ?where tag query
-// returns exactly the blobs whose index tags match — including a multi-term AND
+// returns exactly the blobs whose index tags match, including a multi-term AND
 // query and an @container-scoped account query.
 func TestSDKFindBlobsByTags(t *testing.T) {
 	ctx := context.Background()

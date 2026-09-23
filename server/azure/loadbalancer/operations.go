@@ -20,7 +20,7 @@ func (h *Handler) azureLB() (lbdriver.AzureLoadBalancers, bool) {
 
 // createOrUpdateLoadBalancer handles PUT .../loadBalancers/{name}. The whole
 // nested load balancer arrives in one body and fully REPLACES the stored state,
-// so any frontend / pool / rule / probe omitted from the body is removed —
+// so any frontend / pool / rule / probe omitted from the body is removed,
 // matching ARM's CreateOrUpdate semantics (no stale-child accumulation).
 //
 // LoadBalancers.CreateOrUpdate is an LRO in the SDK; returning 200 with the
@@ -75,9 +75,9 @@ func (h *Handler) getLoadBalancer(w http.ResponseWriter, r *http.Request, rp *az
 	azurearm.WriteJSON(w, http.StatusOK, toLBJSON(rp, stored, h.poolMembers(r.Context(), rp.Subscription)))
 }
 
-// updateLoadBalancerTags handles PATCH .../loadBalancers/{name} —
+// updateLoadBalancerTags handles PATCH .../loadBalancers/{name}:
 // LoadBalancers.UpdateTags. Real armnetwork UpdateTags REPLACES the tag
-// collection wholesale (it does not merge — an omitted existing key is
+// collection wholesale (it does not merge; an omitted existing key is
 // dropped), matching every other Microsoft.Network UpdateTags handler in this
 // server (see server/azure/vnet/network_updatetags.go); every child of the
 // load balancer is left untouched. A request body with the tags field

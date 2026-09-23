@@ -21,7 +21,7 @@ type lockResponse struct {
 	Properties lockProperties `json:"properties"`
 }
 
-// listResponse is the ARM list envelope. nextLink is omitted — the emulator
+// listResponse is the ARM list envelope. nextLink is omitted: the emulator
 // returns a single page.
 type listResponse struct {
 	Value []lockResponse `json:"value"`

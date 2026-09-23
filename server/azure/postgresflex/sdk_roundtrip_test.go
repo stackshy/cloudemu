@@ -372,7 +372,7 @@ func TestSDKPostgresFlexHighAvailability(t *testing.T) {
 	}
 }
 
-// TestSDKPostgresFlexHighAvailabilityUpdate covers the PATCH path — the case
+// TestSDKPostgresFlexHighAvailabilityUpdate covers the PATCH path: the case
 // that previously silently dropped highAvailability on PostgreSQL. A server
 // created with HA disabled is switched to ZoneRedundant via BeginUpdate, then
 // disabled again, clearing the standby zone.

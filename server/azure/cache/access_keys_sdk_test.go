@@ -32,7 +32,7 @@ func createCache(t *testing.T, client *armredis.Client, name string) {
 	}
 }
 
-// TestSDKAzureCacheListKeys verifies ListKeys returns both access keys — the
+// TestSDKAzureCacheListKeys verifies ListKeys returns both access keys: the
 // primary way a client fetches the credential needed to connect to the cache.
 func TestSDKAzureCacheListKeys(t *testing.T) {
 	client := newRedisClient(t)

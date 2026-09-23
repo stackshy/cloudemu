@@ -15,8 +15,8 @@ import (
 // convention already applied to gcplb/azurelb create/update: 400
 // InvalidArgument, not a silent no-op deferred to breach time). ARM resource
 // ids are case-insensitive, so this resolves each id by scanning the stored
-// action groups and comparing canonical ids with strings.EqualFold — the same
-// pattern actionGroupInUse uses below — rather than an exact-case store.get(),
+// action groups and comparing canonical ids with strings.EqualFold, the same
+// pattern actionGroupInUse uses below, rather than an exact-case store.get(),
 // which would reject a reference that differs only in casing even though
 // RegisterActionGroup/fireActionGroups (providers/azure/monitor/actiongroups.go)
 // already resolve such a reference case-insensitively at breach time.
@@ -49,7 +49,7 @@ func (h *Handler) actionGroupExists(agID string) bool {
 }
 
 // activityLogActionGroupIDs extracts properties.actions.actionGroups[].
-// actionGroupId from an activityLogAlert definition — the nested shape real
+// actionGroupId from an activityLogAlert definition: the nested shape real
 // Microsoft.Insights/activityLogAlerts use to link action groups, distinct
 // from a metricAlert's flat properties.actions[].actionGroupId.
 func activityLogActionGroupIDs(props map[string]any) []string {
@@ -80,7 +80,7 @@ func activityLogActionGroupIDs(props map[string]any) []string {
 }
 
 // actionGroupInUse reports what still references the action group with ARM
-// resource id agID — a metric alert or an activity-log alert — across the
+// resource id agID (a metric alert or an activity-log alert) across the
 // whole store (not scoped to the action group's own resource group, since a
 // referencing alert can live in a different one). Returns "" when nothing
 // references it, matching the azurelb poolReferencedBy convention: an empty

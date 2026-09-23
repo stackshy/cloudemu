@@ -142,7 +142,7 @@ type propertiesResponse struct {
 	ClusterUUID               string                 `json:"clusterUuid,omitempty"`
 }
 
-// listResponse is the ARM list envelope. nextLink is omitted — the emulator
+// listResponse is the ARM list envelope. nextLink is omitted: the emulator
 // returns a single page.
 type listResponse struct {
 	Value []fsResponse `json:"value"`
@@ -263,7 +263,7 @@ func identityToWire(id *managedlustre.Identity) *identityWire {
 
 // inputFromRequest builds a create/update Input from a request body. Pointer and
 // slice fields are carried through verbatim so an absent field falls back to the
-// stored (or default) value in the driver — which makes a PATCH body, where every
+// stored (or default) value in the driver, which makes a PATCH body, where every
 // field is optional, merge correctly on its own.
 func inputFromRequest(req *fsRequest) managedlustre.Input {
 	in := managedlustre.Input{Tags: req.Tags, Zones: req.Zones}

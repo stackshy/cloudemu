@@ -12,7 +12,7 @@ import (
 
 // TestSDKStandaloneRouteSubresource drives the real armnetwork RoutesClient
 // (the azurerm_route resource) through create/get/delete against a route table
-// that already carries an inline route — the standalone route must coexist with
+// that already carries an inline route: the standalone route must coexist with
 // the inline one on the whole-table GET, be independently gettable, and DELETE
 // must remove only itself. Guards the sub-resource round-trip fix.
 func TestSDKStandaloneRouteSubresource(t *testing.T) {

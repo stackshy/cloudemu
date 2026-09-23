@@ -164,7 +164,7 @@ func TestSDKMySQLFlexConfigurations(t *testing.T) {
 		t.Fatalf("value: got %v, want 200", got.Properties)
 	}
 
-	// DefaultValue must be populated (the catalog default), not just Value —
+	// DefaultValue must be populated (the catalog default), not just Value:
 	// a real client relies on it to know what "reset" restores.
 	if got.Properties.DefaultValue == nil || *got.Properties.DefaultValue != "151" {
 		t.Errorf("max_connections defaultValue: got %v, want 151", got.Properties.DefaultValue)
@@ -225,7 +225,7 @@ func TestSDKMySQLFlexConfigurations(t *testing.T) {
 	}
 }
 
-// mustCreateHAServer creates a server with ZoneRedundant HighAvailability —
+// mustCreateHAServer creates a server with ZoneRedundant HighAvailability,
 // the precondition a forced failover needs (there is a standby to fail over
 // to).
 func mustCreateHAServer(t *testing.T, cf *armmysqlflexibleservers.ClientFactory, name string) {

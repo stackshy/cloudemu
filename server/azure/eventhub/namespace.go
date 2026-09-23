@@ -119,8 +119,8 @@ func (h *Handler) updateNamespace(w http.ResponseWriter, r *http.Request, ep ehP
 // mergeNamespaceProperties applies the client-settable properties present in src
 // onto dst, leaving unset (nil) fields unchanged. This matches the ARM
 // Namespaces - Update (PATCH) partial-update semantics: only the properties the
-// caller includes in the request body are modified (the computed fields —
-// provisioningState, status, serviceBusEndpoint, metricId, timestamps — are
+// caller includes in the request body are modified (the computed fields:
+// provisioningState, status, serviceBusEndpoint, metricId, timestamps, are
 // re-derived on every read by toNamespaceResource, so they are not merged here).
 func mergeNamespaceProperties(dst, src *namespaceProperties) {
 	if src.IsAutoInflateEnabled != nil {

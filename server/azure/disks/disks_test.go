@@ -136,7 +136,7 @@ func TestSDKDiskRoundTrip(t *testing.T) {
 }
 
 // TestSDKDiskListResourceGroupCaseInsensitive verifies that a disk created in
-// "rg-1" is returned by a list against "RG-1" — ARM resource-group names are
+// "rg-1" is returned by a list against "RG-1": ARM resource-group names are
 // case-insensitive.
 func TestSDKDiskListResourceGroupCaseInsensitive(t *testing.T) {
 	cloudP := cloudemu.NewAzure()

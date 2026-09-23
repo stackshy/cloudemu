@@ -268,7 +268,7 @@ func TestBlobStorageTriggerDisabledFunctionSkipped(t *testing.T) {
 // its own trigger container terminates at recursionguard.MaxDepth rather than
 // recursing unbounded, mirroring TestServiceBusTopicTriggerRecursionGuard. The
 // handler forwards the ctx it was invoked with into its own PutObject call (a
-// direct provider call, not a fresh HTTP round trip) — that ctx-carried depth
+// direct provider call, not a fresh HTTP round trip); that ctx-carried depth
 // is the channel the guard rides on.
 func TestBlobStorageTriggerRecursionGuard(t *testing.T) {
 	ts, p := newFullAzureServerWithProvider(t)

@@ -39,7 +39,7 @@ func TestVMResourceGroupCaseInsensitive(t *testing.T) {
 					VMSize: to.Ptr(armcompute.VirtualMachineSizeTypesStandardD2SV3),
 				},
 				// additionalCapabilities is not modeled by the handler, so it is
-				// captured by the property overlay — the ideal probe for whether
+				// captured by the property overlay: the ideal probe for whether
 				// a differently-cased read still resolves the overlay entry.
 				AdditionalCapabilities: &armcompute.AdditionalCapabilities{
 					HibernationEnabled: to.Ptr(true),

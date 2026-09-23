@@ -14,7 +14,7 @@ import (
 // propertyOverlay remembers the request properties an ARM handler did not model
 // (and therefore dropped), keyed by the resource's ARM id. It lets the Azure
 // server echo unmodeled properties back on the create response and on later
-// reads, instead of silently discarding them — real Azure preserves properties
+// reads, instead of silently discarding them. Real Azure preserves properties
 // it accepts, and a caller that sets one expects to read it back.
 //
 // The store is per-server: it is created in New alongside the handlers, so the
@@ -62,7 +62,7 @@ func (o *propertyOverlay) lookup(id string) map[string]any {
 // resourceGroups/rg-1 and read back via resourceGroups/RG-1 must resolve the
 // same overlay entry; without this, the differently-cased read would miss and
 // silently drop unmodeled properties. Only the resource-group segment is
-// touched — the rest of the id (including the resource name) is left byte-for-
+// touched; the rest of the id (including the resource name) is left byte-for-
 // byte, so distinct resources never collide. Applied identically on capture,
 // lookup and evict, so the internal map key is consistent regardless of the
 // casing a request used; the response body's id is never altered.
@@ -86,7 +86,7 @@ func normalizeOverlayKey(id string) string {
 	return id[:start] + strings.ToLower(id[start:end]) + id[end:]
 }
 
-// evict drops any entry for id — called when a resource is deleted so the
+// evict drops any entry for id. Called when a resource is deleted so the
 // store does not grow without bound across create/delete cycles.
 func (o *propertyOverlay) evict(id string) {
 	if id == "" {
@@ -104,7 +104,7 @@ func (o *propertyOverlay) evict(id string) {
 // echoUnmodeledProperties wraps next so that unmodeled properties on ARM
 // resource requests survive into the response. It only engages for ARM resource
 // paths (which begin with /subscriptions/) so the storage/table/queue
-// data-plane handlers — which return XML or binary — are never buffered or
+// data-plane handlers (which return XML or binary) are never buffered or
 // rewritten. Non-JSON responses, error responses, and responses without a
 // top-level id/properties pair pass through untouched.
 func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.Handler {
@@ -131,7 +131,7 @@ func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.H
 
 // isTagsAtScope reports whether path targets the Tags resource provider
 // (Microsoft.Resources/tags/default). That handler fully models properties.tags,
-// and Replace/Delete legitimately drop tag keys — the overlay, which only ever
+// and Replace/Delete legitimately drop tag keys. The overlay, which only ever
 // ADDS keys the response is missing, would wrongly resurrect a just-removed tag
 // as an "unmodeled" property, so the path must bypass the overlay entirely.
 func isTagsAtScope(path string) bool {
@@ -148,11 +148,11 @@ func isTagsAtScope(path string) bool {
 // to read the id from). Handles both a top-level resource
 // (.../{type}/{name}) and a named sub-resource one level down
 // (.../{type}/{name}/{subResource}/{subResourceName}, e.g. a SQL database
-// under its server) — the sub-resource id is built the same way the handlers
+// under its server): the sub-resource id is built the same way the handlers
 // that create these resources build it (see server/azure/sql childID), so it
 // matches the "id" field the overlay was captured under. Returns "" for a path
 // that isn't a single named resource or named sub-resource, in which case
-// nothing is evicted — e.g. a bodiless action like .../failoverGroups/{n}/
+// nothing is evicted: e.g. a bodiless action like .../failoverGroups/{n}/
 // failover carries a SubResourceAction and is left alone.
 func resourceIDFromPath(urlPath string) string {
 	rp, ok := azurearm.ParsePath(urlPath)
@@ -306,7 +306,7 @@ func (c *captureWriter) rewrite(
 // rewriteList merges each list item's previously-recorded overlay entry into
 // its own properties, keyed by the item's own "id". A collection list (e.g.
 // RecordSets.ListByDnsZone) carries no request body to capture fresh
-// unmodeled properties from — list is read-only — so this only replays what
+// unmodeled properties from; list is read-only, so this only replays what
 // an earlier create/update on that same item already recorded; without it, a
 // record set with unmodeled data (e.g. an MX or SRV DNS record set, whose
 // MXRecords/SRVRecords are not natively modeled) loses that data specifically
@@ -353,7 +353,7 @@ func (c *captureWriter) rewriteList(
 
 // captureUnmodeled resolves the unmodeled properties to merge into this
 // response and updates the overlay store. The overlay is only rewritten when
-// the request actually carried a properties object — a lifecycle action
+// the request actually carried a properties object. A lifecycle action
 // (POST start/stop/restart) or any request without properties leaves the
 // stored set intact, so it is never wiped by a subsequent bodiless call. A PUT
 // replaces the set (full-replace semantics); a PATCH unions the freshly
@@ -382,8 +382,8 @@ func captureUnmodeled(
 // read. Such a key must never be captured by the overlay or echoed back:
 // because the owning handler deliberately omits it from its response (mirroring
 // Azure), the generic overlay would otherwise treat it as an unmodeled property
-// and reflect the caller's secret on the create response and on every later GET
-// — a credential leak. Matched case-insensitively at any nesting depth, since
+// and reflect the caller's secret on the create response and on every later GET:
+// a credential leak. Matched case-insensitively at any nesting depth, since
 // missingProperties descends into nested objects.
 //
 // A key is treated as write-only in two ways:
@@ -392,19 +392,19 @@ func captureUnmodeled(
 // verbatim): any key whose lowercased name ENDS WITH "password" or "secret".
 // This covers every write-only credential input real Azure accepts but never
 // echoes, regardless of the prefix a handler's model happens not to know:
-//   - administratorLoginPassword — Microsoft.Sql/servers (server/azure/sql),
+//   - administratorLoginPassword: Microsoft.Sql/servers (server/azure/sql),
 //     DBforMySQL/DBforPostgreSQL flexibleServers (mysqlflex/postgresflex) and
 //     Cosmos DB for PostgreSQL clusters (cosmospostgresql); each toARM* omits it.
-//   - adminPassword — VM osProfile (virtualmachines); the osProfile model has no
+//   - adminPassword: VM osProfile (virtualmachines); the osProfile model has no
 //     password field, so it is dropped.
-//   - initialCassandraAdminPassword — managed Cassandra (managedcassandra);
+//   - initialCassandraAdminPassword: managed Cassandra (managedcassandra);
 //     toARMCluster omits it.
-//   - password — Cosmos-PG role (toARMRole drops it) and Container Instances
+//   - password: Cosmos-PG role (toARMRole drops it) and Container Instances
 //     imageRegistryCredentials[].password (the array is unmodeled, captured
-//     verbatim — hence the []any recursion in sanitizeUnmodeled).
-//   - secret — AKS servicePrincipalProfile.secret (armManagedClusterProperties
+//     verbatim, hence the []any recursion in sanitizeUnmodeled).
+//   - secret: AKS servicePrincipalProfile.secret (armManagedClusterProperties
 //     omits the whole block).
-//   - serverAppSecret / clientSecret — AKS aadProfile.serverAppSecret and any
+//   - serverAppSecret / clientSecret: AKS aadProfile.serverAppSecret and any
 //     clientSecret-style field in a verbatim-captured subtree (aadProfile is
 //     unmodeled). The sibling serverAppID (public) does not end in the suffix,
 //     so it still round-trips, matching real Azure's aadProfile read.
@@ -415,7 +415,7 @@ func captureUnmodeled(
 // preserved. Verified by sweeping every server/azure response/toARM* struct: no
 // field a handler RETURNS has a json name ending in "password" or "secret". The
 // sole password-ending returned field is the Container Instances exec action's
-// `password`, a bare {webSocketUri, password} object with no id/properties — the
+// `password`, a bare {webSocketUri, password} object with no id/properties. The
 // overlay only rewrites ARM resources and only ever ADDS unmodeled keys onto a
 // properties map (it never removes a handler's own fields), so that response is
 // untouched. Output credential keys a client never sends on write
@@ -429,7 +429,7 @@ func captureUnmodeled(
 // denylisting the key skips the whole credential subtree.
 //
 // 3. Path-aware rule: a bare "value" key is write-only only when its immediate
-// containing key is "secrets" — Container Apps configuration.secrets[].value,
+// containing key is "secrets": Container Apps configuration.secrets[].value,
 // the one secret input whose owning handler models the secret (echoing its name)
 // but omits the value on read, exactly as real Azure does (values are served
 // only via listSecrets). toConfigResponse therefore returns {name} per secret,
@@ -501,7 +501,7 @@ func sanitizeUnmodeled(v any, parent string) any {
 }
 
 // isZeroScalarJSON reports whether v is the JSON zero value for a scalar type:
-// null, "", false, or 0. Only scalars are classified — maps and slices always
+// null, "", false, or 0. Only scalars are classified; maps and slices always
 // return false here (an empty object/array is a much rarer "clear" signal and
 // is left to the existing verbatim-capture behavior).
 func isZeroScalarJSON(v any) bool {
@@ -520,8 +520,8 @@ func isZeroScalarJSON(v any) bool {
 }
 
 // missingProperties returns the entries of req that resp does not already carry,
-// descending into nested objects — and, element-by-element, into arrays of
-// objects — so an unmodeled leaf under a modeled parent (or under a modeled
+// descending into nested objects, and, element-by-element, into arrays of
+// objects, so an unmodeled leaf under a modeled parent (or under a modeled
 // array element, e.g. a vnet inline subnet or a VM data disk) is still captured.
 // A key present in both as scalars is considered modeled (the handler owns it)
 // and is omitted. Write-only secret keys (writeOnlyProperty) are skipped at
@@ -561,21 +561,21 @@ func missingEntry(k string, reqVal, respVal any, present bool) (any, bool) {
 	if !present {
 		// A request scalar at its JSON zero value (null/""/false/0) that the
 		// response doesn't echo is far more likely a field the handler DOES
-		// model — and correctly dropped via omitempty because a PATCH just set it
-		// back to its default — than genuinely unmodeled data worth preserving.
+		// model, and correctly dropped via omitempty because a PATCH just set it
+		// back to its default, than genuinely unmodeled data worth preserving.
 		// Azure SQL's PATCH-to-clear elasticPoolId (set it to "" to remove a
 		// database from its elastic pool) is exactly this shape: without this
 		// guard, the overlay "helpfully" re-injected the just-cleared "" back into
 		// every future response, resurrecting pool membership the request
 		// explicitly removed. A non-zero scalar or a populated object/array is
-		// still captured verbatim below — this only narrows the false-positive
+		// still captured verbatim below; this only narrows the false-positive
 		// case of a zero scalar.
 		if isZeroScalarJSON(reqVal) {
 			return nil, false
 		}
 
 		// A wholly-unmodeled object is captured verbatim, so strip any write-only
-		// secret nested inside it — the per-key skip in the caller only covers
+		// secret nested inside it: the per-key skip in the caller only covers
 		// keys the loop visits directly, not those buried in a subtree the handler
 		// dropped entirely (e.g. a VM osProfile the response omits, carrying
 		// adminPassword).
@@ -656,10 +656,10 @@ func missingArrayElements(req, resp []any, parent string) []any {
 
 // mergeProperties overlays the unmodeled properties onto resp without
 // overwriting any key resp already carries (the handler/driver is authoritative
-// for the properties it models). Nested objects — and, element by element,
-// arrays of objects — are merged recursively.
+// for the properties it models). Nested objects, and, element by element,
+// arrays of objects, are merged recursively.
 func mergeProperties(resp, unmodeled map[string]any) map[string]any {
-	// Size the map to resp and let it grow for the unmodeled keys — summing the
+	// Size the map to resp and let it grow for the unmodeled keys: summing the
 	// two lengths as a capacity hint is a pointless overflow risk for no gain.
 	out := make(map[string]any, len(resp))
 	for k, v := range resp {
@@ -692,7 +692,7 @@ func mergeProperties(resp, unmodeled map[string]any) map[string]any {
 }
 
 // mergeArrayElements enriches each response array element with the unmodeled
-// sub-fields captured for it, aligned by index — the apply-side mirror of
+// sub-fields captured for it, aligned by index: the apply-side mirror of
 // missingArrayElements. It preserves the response array exactly: same length,
 // same order, same elements, only adding back per-element unmodeled sub-fields
 // (via mergeProperties, which never overwrites a modeled field). It never

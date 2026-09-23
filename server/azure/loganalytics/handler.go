@@ -11,7 +11,7 @@
 // (provisioningState, customerId, sku, location) live in the wire handler's
 // per-workspace metadata. Workspace child resources (savedSearches, tables,
 // dataExports) and the sharedKeys action are served from the handler's own
-// in-memory stores — they have no portable equivalent.
+// in-memory stores: they have no portable equivalent.
 //
 // Microsoft.OperationalInsights is a distinct ARM provider name from every
 // other Azure handler (compute, network, DNS, sql, …), so registration order is
@@ -19,16 +19,16 @@
 //
 // Coverage:
 //
-//	PUT    .../workspaces/{w}                                — Workspaces.BeginCreateOrUpdate (LRO, completes inline)
-//	GET    .../workspaces/{w}                                — Workspaces.Get
-//	DELETE .../workspaces/{w}                                — Workspaces.BeginDelete (LRO, completes inline)
-//	GET    .../providers/Microsoft.OperationalInsights/workspaces — Workspaces.NewListPager (subscription scope)
-//	GET    .../resourceGroups/{rg}/…/workspaces             — Workspaces.NewListByResourceGroupPager
-//	PUT/GET/DELETE .../workspaces/{w}/savedSearches/{id}     — SavedSearchesClient
-//	GET    .../workspaces/{w}/savedSearches                  — SavedSearchesClient.ListByWorkspace
-//	PUT/GET/DELETE .../workspaces/{w}/tables/{name}          — TablesClient
-//	PUT/GET/DELETE .../workspaces/{w}/dataExports/{name}     — DataExportsClient
-//	POST   .../workspaces/{w}/sharedKeys                     — SharedKeysClient.GetSharedKeys
+//	PUT    .../workspaces/{w}                                : Workspaces.BeginCreateOrUpdate (LRO, completes inline)
+//	GET    .../workspaces/{w}                                : Workspaces.Get
+//	DELETE .../workspaces/{w}                                : Workspaces.BeginDelete (LRO, completes inline)
+//	GET    .../providers/Microsoft.OperationalInsights/workspaces : Workspaces.NewListPager (subscription scope)
+//	GET    .../resourceGroups/{rg}/…/workspaces             : Workspaces.NewListByResourceGroupPager
+//	PUT/GET/DELETE .../workspaces/{w}/savedSearches/{id}     : SavedSearchesClient
+//	GET    .../workspaces/{w}/savedSearches                  : SavedSearchesClient.ListByWorkspace
+//	PUT/GET/DELETE .../workspaces/{w}/tables/{name}          : TablesClient
+//	PUT/GET/DELETE .../workspaces/{w}/dataExports/{name}     : DataExportsClient
+//	POST   .../workspaces/{w}/sharedKeys                     : SharedKeysClient.GetSharedKeys
 package loganalytics
 
 import (

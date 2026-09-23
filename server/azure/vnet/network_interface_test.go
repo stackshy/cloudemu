@@ -396,7 +396,7 @@ func TestSDKNetworkInterfacePublicIPDoubleAttachRejected(t *testing.T) {
 
 // TestSDKNetworkInterfaceSoleIPConfigForcedPrimary verifies that a NIC's one
 // and only ipConfiguration is always reported primary, even when the request
-// submitted it as non-primary — real Azure forces this rather than leaving it
+// submitted it as non-primary: real Azure forces this rather than leaving it
 // non-primary or erroring (Microsoft Learn, "Configure IP addresses for an
 // Azure network interface": "Each network interface is assigned one primary
 // IP configuration").

@@ -169,7 +169,7 @@ func TestEnforceReadOnlyE2E(t *testing.T) {
 }
 
 // TestEnforceInheritanceE2E: a lock at subscription scope blocks a resource
-// (resource-group) delete beneath it — inheritance flows downward.
+// (resource-group) delete beneath it: inheritance flows downward.
 func TestEnforceInheritanceE2E(t *testing.T) {
 	ts := newEnforceServer(t)
 	locksClient := newLocksClient(t, ts)

@@ -12,11 +12,11 @@
 //
 // Coverage:
 //
-//	PUT    .../bastionHosts/{name}    — BastionHosts.BeginCreateOrUpdate (LRO, sync 201/200)
-//	GET    .../bastionHosts/{name}    — BastionHosts.Get
-//	PATCH  .../bastionHosts/{name}    — BastionHosts.UpdateTags
-//	DELETE .../bastionHosts/{name}    — BastionHosts.BeginDelete (LRO, sync-200)
-//	GET    .../{scope}/…/bastionHosts — BastionHosts.List / ListByResourceGroup
+//	PUT    .../bastionHosts/{name}    : BastionHosts.BeginCreateOrUpdate (LRO, sync 201/200)
+//	GET    .../bastionHosts/{name}    : BastionHosts.Get
+//	PATCH  .../bastionHosts/{name}    : BastionHosts.UpdateTags
+//	DELETE .../bastionHosts/{name}    : BastionHosts.BeginDelete (LRO, sync-200)
+//	GET    .../{scope}/…/bastionHosts : BastionHosts.List / ListByResourceGroup
 //
 // The whole host arrives in one PUT body and fully replaces the stored state
 // (ARM CreateOrUpdate). sku and zones are top-level; the dnsName is computed once

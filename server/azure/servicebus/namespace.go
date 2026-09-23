@@ -275,8 +275,8 @@ func writeNSNotFound(w http.ResponseWriter, name string) {
 }
 
 // paginate returns the listPageSize-sized window of resources that starts at the
-// request's $skip offset. When more items remain it emits a nextLink — an
-// absolute URL that repeats the request with $skip advanced — that armservicebus
+// request's $skip offset. When more items remain it emits a nextLink (an
+// absolute URL that repeats the request with $skip advanced) that armservicebus
 // pagers follow until the collection is exhausted. A collection that fits a
 // single page (skip 0, len <= listPageSize) returns no nextLink.
 func paginate(r *http.Request, resources []any) listResponse {
@@ -307,7 +307,7 @@ func paginationSkip(r *http.Request) int {
 // nextPageLink builds the absolute URL that continues a listing at offset skip,
 // preserving the request path and query (api-version included) and overriding
 // $skip. armservicebus pagers GET this URL verbatim, so it must carry scheme and
-// host — a server request URL has neither.
+// host: a server request URL has neither.
 func nextPageLink(r *http.Request, skip int) string {
 	next := *r.URL
 	next.Host = r.Host

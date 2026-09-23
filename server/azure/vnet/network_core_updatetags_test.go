@@ -377,7 +377,7 @@ func TestSDKNetworkInterfaceUpdateTags(t *testing.T) {
 // resource's identity by smuggling a cloudemu:-prefixed key into an UpdateTags
 // PATCH: the reserved key is stripped, a normal user tag in the same PATCH still
 // applies, and an independent Get(rg, name) still resolves (not 404) with
-// identity intact — before and after a tags:{} wipe.
+// identity intact, before and after a tags:{} wipe.
 func TestSDKVirtualNetworkUpdateTagsAnchorImmutable(t *testing.T) {
 	ts := newVNetServer(t)
 	ctx := context.Background()
@@ -412,7 +412,7 @@ func TestSDKVirtualNetworkUpdateTagsAnchorImmutable(t *testing.T) {
 
 	assertTag(t, ptrTags(resp), "team", "net")
 
-	// The resource is still resolvable by (rg, name) — the hijack did not orphan it.
+	// The resource is still resolvable by (rg, name): the hijack did not orphan it.
 	got, err := client.Get(ctx, "rg-1", "vnet-victim", nil)
 	if err != nil {
 		t.Fatalf("Get after collision PATCH: %v (resource orphaned)", err)
@@ -428,7 +428,7 @@ func TestSDKVirtualNetworkUpdateTagsAnchorImmutable(t *testing.T) {
 		t.Errorf("reserved key leaked into stored tags: %v", got.Tags)
 	}
 
-	// A tags:{} wipe clears user tags but the anchor survives — still resolvable.
+	// A tags:{} wipe clears user tags but the anchor survives: still resolvable.
 	rawTagsPatch(t, ts,
 		"/subscriptions/sub-1/resourceGroups/rg-1/providers/Microsoft.Network/virtualNetworks/vnet-victim",
 		`{"tags":{}}`)

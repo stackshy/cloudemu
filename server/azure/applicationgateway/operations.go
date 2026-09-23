@@ -10,10 +10,10 @@ import (
 
 // createOrUpdateGateway handles PUT .../applicationGateways/{name}. The whole
 // nested gateway arrives in one body and fully REPLACES the stored state, so any
-// child or top-level property omitted from the body is removed — matching ARM's
+// child or top-level property omitted from the body is removed, matching ARM's
 // CreateOrUpdate semantics. ApplicationGateways.CreateOrUpdate is an LRO;
 // returning the fully-provisioned body (provisioningState=Succeeded) completes
-// the poller on the first response — 201 on create, 200 on update.
+// the poller on the first response: 201 on create, 200 on update.
 func (h *Handler) createOrUpdateGateway(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	var body appGwJSON
 	if !azurearm.DecodeJSON(w, r, &body) {
@@ -46,7 +46,7 @@ func (h *Handler) getGateway(w http.ResponseWriter, r *http.Request, rp *azurear
 	azurearm.WriteJSON(w, http.StatusOK, toGatewayJSON(rp, stored))
 }
 
-// updateGatewayTags handles PATCH .../applicationGateways/{name} —
+// updateGatewayTags handles PATCH .../applicationGateways/{name}:
 // ApplicationGateways.UpdateTags. Real armnetwork UpdateTags REPLACES the tag
 // collection wholesale (an omitted existing key is dropped), matching every
 // other Microsoft.Network UpdateTags handler in this server; every child of the
@@ -112,7 +112,7 @@ func (h *Handler) listGateways(w http.ResponseWriter, r *http.Request, rp *azure
 
 // buildGateway maps the ARM request body to the native store model. Zones and
 // identity are modeled explicitly (they are top-level, so the server-wide
-// unmodeled-property echo — which only reaches "properties" — cannot preserve
+// unmodeled-property echo, which only reaches "properties", cannot preserve
 // them). The armnetwork SDK and Terraform carry sku UNDER properties.sku, so it
 // is modeled by extracting it from the properties object (with a top-level
 // fallback for a raw REST client that sends it there). The modeled nested

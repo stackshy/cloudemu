@@ -84,7 +84,7 @@ func TestEnforceLevelsAndMethods(t *testing.T) {
 
 // TestEnforceDeleteBlockedByDescendantLock proves that deleting a container
 // (resource group) is blocked when a lock sits on a resource inside it, even
-// though no lock covers the RG scope itself — the RG-delete-with-locked-child
+// though no lock covers the RG scope itself: the RG-delete-with-locked-child
 // asymmetry.
 func TestEnforceDeleteBlockedByDescendantLock(t *testing.T) {
 	h := New()

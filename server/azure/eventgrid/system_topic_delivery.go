@@ -27,7 +27,7 @@ type systemTopicDelivery interface {
 // systemTopicBusName derives the delivery bus that backs a system topic from its
 // source: the trailing segment of the source resource id (the storage account
 // name for a Microsoft.Storage system topic), which is exactly the key the
-// source producer stamps on event.EventBus — the Blob Storage producer publishes
+// source producer stamps on event.EventBus: the Blob Storage producer publishes
 // with EventBus = the account name. Empty when source is empty.
 func systemTopicBusName(source string) string {
 	trimmed := strings.TrimRight(source, "/")

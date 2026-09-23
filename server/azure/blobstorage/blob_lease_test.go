@@ -117,7 +117,7 @@ func TestSDKLeaseGatesWrites(t *testing.T) {
 // TestSDKLeasedWritePreservesLease is the regression test for the lease-destroyed-
 // on-write blocker: an authorized write (with the correct lease id) used to
 // rebuild the blob object and drop its lease fields, leaving the blob unleased.
-// After the fix the lease survives the write — Renew still works and a
+// After the fix the lease survives the write: Renew still works and a
 // subsequent no-lease write is still rejected.
 func TestSDKLeasedWritePreservesLease(t *testing.T) {
 	e := newBlobEnv(t)
@@ -285,7 +285,7 @@ func TestSDKLeaseBreak(t *testing.T) {
 }
 
 // TestSDKGetBlockList checks Get Block List returns uncommitted blocks after
-// Stage Block and, once committed, the committed block list — the previous
+// Stage Block and, once committed, the committed block list. The previous
 // misroute 404'd because comp=blocklist GET fell through to a plain blob
 // download before any commit had happened.
 func TestSDKGetBlockList(t *testing.T) {
@@ -369,7 +369,7 @@ func TestSDKListBlobsIncludesMetadataAndAccessTier(t *testing.T) {
 
 	// Unlike Set Metadata's HTTP-header round trip (canonicalized to "Team" by
 	// Go's http.Header), List Blobs' metadata comes from an XML element name,
-	// which isn't canonicalized — it keeps the lowercase name the driver
+	// which isn't canonicalized: it keeps the lowercase name the driver
 	// stores it under.
 	if item.Metadata["team"] == nil || *item.Metadata["team"] != "platform" {
 		t.Errorf("listed metadata = %v, want team=platform", item.Metadata)

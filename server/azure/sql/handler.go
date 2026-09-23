@@ -6,15 +6,15 @@
 //
 // MVP coverage:
 //
-//	PUT    .../providers/Microsoft.Sql/servers/{s}                      — Create or update server
-//	GET    .../providers/Microsoft.Sql/servers/{s}                      — Get server
-//	DELETE .../providers/Microsoft.Sql/servers/{s}                      — Delete server (cascade-deletes databases)
-//	GET    .../providers/Microsoft.Sql/servers                          — List servers in RG
-//	PUT    .../providers/Microsoft.Sql/servers/{s}/databases/{d}        — Create or update database
-//	PATCH  .../providers/Microsoft.Sql/servers/{s}/databases/{d}        — Update database
-//	GET    .../providers/Microsoft.Sql/servers/{s}/databases/{d}        — Get database
-//	DELETE .../providers/Microsoft.Sql/servers/{s}/databases/{d}        — Delete database
-//	GET    .../providers/Microsoft.Sql/servers/{s}/databases            — List databases on a server
+//	PUT    .../providers/Microsoft.Sql/servers/{s}                      : Create or update server
+//	GET    .../providers/Microsoft.Sql/servers/{s}                      : Get server
+//	DELETE .../providers/Microsoft.Sql/servers/{s}                      : Delete server (cascade-deletes databases)
+//	GET    .../providers/Microsoft.Sql/servers                          : List servers in RG
+//	PUT    .../providers/Microsoft.Sql/servers/{s}/databases/{d}        : Create or update database
+//	PATCH  .../providers/Microsoft.Sql/servers/{s}/databases/{d}        : Update database
+//	GET    .../providers/Microsoft.Sql/servers/{s}/databases/{d}        : Get database
+//	DELETE .../providers/Microsoft.Sql/servers/{s}/databases/{d}        : Delete database
+//	GET    .../providers/Microsoft.Sql/servers/{s}/databases            : List databases on a server
 //
 // Mutating ops return 200 OK with the resource body inline so the SDK's LRO
 // poller terminates on the first response.

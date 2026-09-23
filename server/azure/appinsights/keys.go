@@ -10,9 +10,9 @@ import (
 // at create. Deriving them deterministically from the component's ARM id (via the
 // shared ETag helper, which already produces a stable GUID-shaped token) makes
 // them reproducible, and storing them on the state at create keeps them byte-for-
-// byte identical on every later GET — the property the REST contract guarantees
-// ("you cannot specify a different value for InstrumentationKey nor AppId in the
-// Put operation") and the #1 Terraform-drift source if it were regenerated.
+// byte identical on every later GET. That is the property the REST contract
+// guarantees ("you cannot specify a different value for InstrumentationKey nor
+// AppId in the Put operation"), and the #1 Terraform-drift source if it were regenerated.
 
 func newInstrumentationKey(id string) string { return azurearm.ETag("appinsights-ikey", id) }
 

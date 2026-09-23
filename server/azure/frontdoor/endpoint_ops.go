@@ -68,7 +68,7 @@ func (h *Handler) getEndpoint(w http.ResponseWriter, r *http.Request, rp *azurea
 	azurearm.WriteJSON(w, http.StatusOK, toEndpointJSON(rp, stored))
 }
 
-// updateEndpoint handles PATCH .../afdEndpoints/{ep} — AFDEndpoints.Update. Tags
+// updateEndpoint handles PATCH .../afdEndpoints/{ep} (AFDEndpoints.Update). Tags
 // are REPLACED wholesale when supplied; supplied properties keys (enabledState,
 // ...) overlay the stored ones, leaving every other property untouched.
 func (h *Handler) updateEndpoint(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

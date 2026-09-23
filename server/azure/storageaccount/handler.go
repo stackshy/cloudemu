@@ -11,11 +11,11 @@
 //
 // Coverage:
 //
-//	PUT    .../providers/Microsoft.Storage/storageAccounts/{name} — create/update
-//	GET    .../providers/Microsoft.Storage/storageAccounts/{name} — get
-//	PATCH  .../providers/Microsoft.Storage/storageAccounts/{name} — partial update
-//	DELETE .../providers/Microsoft.Storage/storageAccounts/{name} — delete
-//	GET/PUT .../storageAccounts/{name}/blobServices/default — blob service properties
+//	PUT    .../providers/Microsoft.Storage/storageAccounts/{name} : create/update
+//	GET    .../providers/Microsoft.Storage/storageAccounts/{name} : get
+//	PATCH  .../providers/Microsoft.Storage/storageAccounts/{name} : partial update
+//	DELETE .../providers/Microsoft.Storage/storageAccounts/{name} : delete
+//	GET/PUT .../storageAccounts/{name}/blobServices/default : blob service properties
 //	                                       (versioning/soft-delete/change-feed/CORS)
 //
 // Create is a long-running operation in real Azure; the emulator completes it
@@ -55,7 +55,7 @@ const (
 	// The REST reference's property text calls TLS 1.0 the "default
 	// interpretation", but its own GetProperties sample response reports
 	// "TLS1_2", and the azurerm provider always sends min_tls_version=TLS1_2
-	// explicitly — so TLS1_2 matches the documented example, causes no Terraform
+	// explicitly, so TLS1_2 matches the documented example, causes no Terraform
 	// drift, and reflects modern Azure hardening.
 	defaultMinTLSVersion       = "TLS1_2"
 	defaultPublicNetworkAccess = "Enabled"
@@ -168,14 +168,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // through to the account-resource switch when true).
 func (h *Handler) serveNonAccountRoute(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) bool {
 	// POST /subscriptions/{sub}/providers/Microsoft.Storage/checkNameAvailability
-	// — AccountsClient.CheckNameAvailability. Subscription-scoped, no resource
+	// (AccountsClient.CheckNameAvailability). Subscription-scoped, no resource
 	// group or account name in the path.
 	if strings.EqualFold(rp.ResourceType, checkNameActionType) {
 		h.checkNameAvailability(w, r)
 		return true
 	}
 
-	// An empty resource name is a collection path — a subscription- or
+	// An empty resource name is a collection path: a subscription- or
 	// resource-group-scoped list (…/storageAccounts). Route it to the list
 	// handler rather than rejecting it, so a management-plane inventory sees
 	// accounts created by PUT (matching real Azure and the disks/vnet handlers).
@@ -184,14 +184,14 @@ func (h *Handler) serveNonAccountRoute(w http.ResponseWriter, r *http.Request, r
 		return true
 	}
 
-	// GET/PUT .../storageAccounts/{name}/blobServices/default —
+	// GET/PUT .../storageAccounts/{name}/blobServices/default:
 	// BlobServicesClient GetServiceProperties/SetServiceProperties.
 	if strings.EqualFold(rp.SubResource, "blobServices") {
 		h.serveBlobServiceRoute(w, r, rp)
 		return true
 	}
 
-	// POST .../storageAccounts/{name}/{action} — key management (listKeys,
+	// POST .../storageAccounts/{name}/{action}: key management (listKeys,
 	// regenerateKey). These carry a sub-resource action segment.
 	if r.Method == http.MethodPost && rp.SubResource != "" {
 		h.serveAction(w, r, rp)
@@ -203,12 +203,12 @@ func (h *Handler) serveNonAccountRoute(w http.ResponseWriter, r *http.Request, r
 
 // serveBlobServiceRoute serves .../storageAccounts/{name}/blobServices/default,
 // the BlobServicesClient GetServiceProperties/SetServiceProperties
-// sub-resource — a distinct resource from the account itself that must never
+// sub-resource: a distinct resource from the account itself that must never
 // fall through to createOrUpdate, which would silently wipe the account's
 // SKU/properties on every "enable versioning" call. A path that continues
 // past .../default (e.g. .../blobServices/default/containers/{name}, the ARM
 // BlobContainers sub-resource) is not this resource and must not be silently
-// treated as a blob-service-properties write — that would fake success on an
+// treated as a blob-service-properties write: that would fake success on an
 // unimplemented resource instead of reporting it as missing.
 func (h *Handler) serveBlobServiceRoute(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	if rp.SubResourceAction != "" {
@@ -327,7 +327,7 @@ func accountNameError(name string) (msg string, ok bool) {
 }
 
 // isLowerAlnum reports whether s consists only of lower-case ASCII letters and
-// digits — the character set real Azure enforces for a storage account name.
+// digits: the character set real Azure enforces for a storage account name.
 func isLowerAlnum(s string) bool {
 	for _, c := range s {
 		if (c < 'a' || c > 'z') && (c < '0' || c > '9') {
@@ -441,7 +441,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 	// Storage account create-or-update is a long-running operation in the ARM
 	// SDK: armstorage AccountsClient.BeginCreate accepts only 200 (synchronous
 	// terminal) or 202 (async) as the initial status and rejects 201. So this
-	// path answers 200 with the terminal resource on both create and update —
+	// path answers 200 with the terminal resource on both create and update;
 	// do not "fix" it to 201, which would break the real SDK poller.
 	azurearm.WriteJSON(w, http.StatusOK, h.toARMAccount(r.Context(), rp))
 }
@@ -488,7 +488,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp *azurearm.Re
 	}
 
 	// Encryption lives in its own store (see AccountEncryptionConfig), so only
-	// touch it when the PATCH actually submitted an encryption block —
+	// touch it when the PATCH actually submitted an encryption block;
 	// otherwise a PATCH that only changes, say, tags would blindly reset any
 	// previously configured customer-managed key.
 	if h.encryption != nil && body.Properties != nil && body.Properties.Encryption != nil {
@@ -765,7 +765,7 @@ func (h *Handler) toARMAccount(ctx context.Context, rp *azurearm.ResourcePath) a
 
 	// GRS/RA-GRS/GZRS/RA-GZRS replicate to a documented paired region;
 	// secondaryEndpoints is only readable (and thus only reported) on the
-	// read-access (RA-*) variants — matching real Azure.
+	// read-access (RA-*) variants, matching real Azure.
 	if skuIsGeoRedundant(attrs.SKU) {
 		if secondary := secondaryLocationFor(location); secondary != "" {
 			props.SecondaryLocation = secondary
@@ -863,7 +863,7 @@ func secondaryLocationFor(location string) string {
 // armEncryptionFor renders the account encryption response block: the
 // always-on platform-managed default (Microsoft.Storage), or, when the
 // account was created/updated with a customer-managed key, the
-// Microsoft.Keyvault key source and its key-vault properties — echoed back
+// Microsoft.Keyvault key source and its key-vault properties, echoed back
 // exactly as requested instead of always reporting the platform default.
 func armEncryptionFor(enc storagedriver.AccountEncryption) *armEncryption {
 	if enc.KeySource != "Microsoft.Keyvault" {
@@ -944,7 +944,7 @@ func strOr(v, def string) string {
 	return v
 }
 
-// boolOr dereferences p when set, else returns the real-Azure default def —
+// boolOr dereferences p when set, else returns the real-Azure default def:
 // letting an explicitly-stored false survive while an unset toggle reads back
 // its documented default.
 func boolOr(p *bool, def bool) bool {

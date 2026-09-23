@@ -7,23 +7,23 @@
 //
 // Application Gateway shares the Microsoft.Network ARM provider with the VNet
 // handler (server/azure/vnet), the DNS handler and the Load Balancer handler,
-// but on a disjoint resource type — this handler claims applicationGateways
-// while those claim virtualNetworks / dnsZones / loadBalancers — so registration
+// but on a disjoint resource type: this handler claims applicationGateways
+// while those claim virtualNetworks / dnsZones / loadBalancers, so registration
 // order between them is unconstrained. All must register before the permissive
 // BlobStorage fallback.
 //
 // Coverage:
 //
-//	PUT    .../applicationGateways/{name}   — ApplicationGateways.BeginCreateOrUpdate (LRO, sync 201/200)
-//	GET    .../applicationGateways/{name}   — ApplicationGateways.Get
-//	PATCH  .../applicationGateways/{name}   — ApplicationGateways.UpdateTags
-//	DELETE .../applicationGateways/{name}   — ApplicationGateways.BeginDelete (LRO, sync-200)
-//	GET    .../resourceGroups/{rg}/…/applicationGateways — ApplicationGateways.List (RG scope)
-//	GET    .../subscriptions/{s}/…/applicationGateways   — ApplicationGateways.ListAll (sub scope)
+//	PUT    .../applicationGateways/{name}   : ApplicationGateways.BeginCreateOrUpdate (LRO, sync 201/200)
+//	GET    .../applicationGateways/{name}   : ApplicationGateways.Get
+//	PATCH  .../applicationGateways/{name}   : ApplicationGateways.UpdateTags
+//	DELETE .../applicationGateways/{name}   : ApplicationGateways.BeginDelete (LRO, sync-200)
+//	GET    .../resourceGroups/{rg}/…/applicationGateways : ApplicationGateways.List (RG scope)
+//	GET    .../subscriptions/{s}/…/applicationGateways   : ApplicationGateways.ListAll (sub scope)
 //
 // The whole gateway arrives in one PUT body and fully replaces the stored state
 // (ARM CreateOrUpdate semantics). SKU (name/tier/capacity), zones and identity
-// are modeled explicitly — the server-wide unmodeled-property echo only reaches
+// are modeled explicitly: the server-wide unmodeled-property echo only reaches
 // the top-level "properties" object and so cannot preserve them. The seven
 // required nested collections plus optional probes/sslCertificates are modeled:
 // each item gets an ARM sub-resource id self-link and a provisioningState, while
@@ -34,7 +34,7 @@
 //
 // Unlike Load Balancer, Application Gateway has NO standalone child ARM
 // operation groups (backendAddressPools/httpListeners/... are not independently
-// addressable) — every child is managed only through the whole-gateway PUT. A
+// addressable); every child is managed only through the whole-gateway PUT. A
 // sub-resource path is therefore served read-only (Get/List reflection of the
 // inline children, with ids), and 405s on child PUT/DELETE (subresource.go).
 package applicationgateway
@@ -99,7 +99,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A sub-resource segment addresses one child collection of the gateway, not
-	// the gateway itself — route it to the read-only reflection before any
+	// the gateway itself; route it to the read-only reflection before any
 	// whole-gateway handler sees it, so a child GET is never misparsed as a
 	// whole-gateway request scoped to the gateway's own name.
 	if rp.SubResource != "" {

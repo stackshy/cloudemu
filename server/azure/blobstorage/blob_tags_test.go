@@ -106,7 +106,7 @@ func TestSetTagsEmptyClearsTags(t *testing.T) {
 }
 
 // TestUnknownCompFailsClosed proves a blob PUT with an unrecognized comp value
-// is rejected (fail-closed) and does NOT overwrite the blob body — the
+// is rejected (fail-closed) and does NOT overwrite the blob body: the
 // architectural root fix that prevents the tags/page corruption class.
 func TestUnknownCompFailsClosed(t *testing.T) {
 	e := newBlobEnv(t)

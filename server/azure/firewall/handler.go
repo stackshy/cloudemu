@@ -14,11 +14,11 @@
 //
 // Coverage:
 //
-//	PUT    .../azureFirewalls/{name}    — AzureFirewalls.BeginCreateOrUpdate (LRO, sync 201/200)
-//	GET    .../azureFirewalls/{name}    — AzureFirewalls.Get
-//	PATCH  .../azureFirewalls/{name}    — AzureFirewalls.UpdateTags
-//	DELETE .../azureFirewalls/{name}    — AzureFirewalls.BeginDelete (LRO, sync-200)
-//	GET    .../{scope}/…/azureFirewalls — AzureFirewalls.List / ListAll
+//	PUT    .../azureFirewalls/{name}    : AzureFirewalls.BeginCreateOrUpdate (LRO, sync 201/200)
+//	GET    .../azureFirewalls/{name}    : AzureFirewalls.Get
+//	PATCH  .../azureFirewalls/{name}    : AzureFirewalls.UpdateTags
+//	DELETE .../azureFirewalls/{name}    : AzureFirewalls.BeginDelete (LRO, sync-200)
+//	GET    .../{scope}/…/azureFirewalls : AzureFirewalls.List / ListAll
 //	(and the identical surface for firewallPolicies)
 //
 // The whole resource arrives in one PUT body and fully replaces the stored state

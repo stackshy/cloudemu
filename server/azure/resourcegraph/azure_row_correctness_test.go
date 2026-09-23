@@ -131,7 +131,7 @@ func TestSDKResourceGraph_RealResourceGroupAndLocation(t *testing.T) {
 	require.NoError(t, err)
 
 	// Create a VM through the ARM wire so it carries the internal cloudemu:azureName
-	// tag the wire handler stamps — the tag that must not leak into an ARG row.
+	// tag the wire handler stamps: the tag that must not leak into an ARG row.
 	vms, err := armcompute.NewVirtualMachinesClient("123456789012", fakeCred{}, opts)
 	require.NoError(t, err)
 

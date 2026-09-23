@@ -9,8 +9,8 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
 )
 
-// ResourcesHandler serves the generic Microsoft.Resources listing API — the
-// `az resource list` surface — at two scopes:
+// ResourcesHandler serves the generic Microsoft.Resources listing API (the
+// `az resource list` surface) at two scopes:
 //
 //	GET /subscriptions/{sub}/resources
 //	GET /subscriptions/{sub}/resourceGroups/{rg}/resources

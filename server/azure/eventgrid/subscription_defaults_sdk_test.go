@@ -10,8 +10,8 @@ import (
 
 // TestSDKEventSubscriptionDefaultsStamped proves that an event subscription
 // created without a retry policy or delivery schema reports Event Grid's
-// documented read-only defaults on GET — retryPolicy 30 attempts / 1440-minute
-// TTL and eventDeliverySchema EventGridSchema — matching real Azure. A real user
+// documented read-only defaults on GET: retryPolicy 30 attempts / 1440-minute
+// TTL and eventDeliverySchema EventGridSchema, matching real Azure. A real user
 // reading the subscription back (az CLI, SDK, Terraform state) sees these
 // populated on Azure, so the emulator must populate them too.
 func TestSDKEventSubscriptionDefaultsStamped(t *testing.T) {
@@ -46,7 +46,7 @@ func TestSDKEventSubscriptionDefaultsStamped(t *testing.T) {
 }
 
 // TestSDKEventSubscriptionExplicitRetryPolicyPreserved proves that caller-set
-// retry policy and delivery schema are round-tripped unchanged — the default
+// retry policy and delivery schema are round-tripped unchanged: the default
 // stamping fills only absent fields and never overrides an explicit value.
 func TestSDKEventSubscriptionExplicitRetryPolicyPreserved(t *testing.T) {
 	client := newEventGridFactory(t).NewEventSubscriptionsClient()
@@ -97,8 +97,8 @@ func TestSDKEventSubscriptionExplicitRetryPolicyPreserved(t *testing.T) {
 
 // TestSDKEventSubscriptionPartialRetryPolicyFilled proves the default stamping
 // is per-subfield: a retry policy that sets only MaxDeliveryAttempts keeps that
-// value and has its absent EventTimeToLiveInMinutes filled with the 1440 default
-// — not an all-or-nothing fill that would either overwrite the caller's value or
+// value and has its absent EventTimeToLiveInMinutes filled with the 1440 default,
+// not an all-or-nothing fill that would either overwrite the caller's value or
 // leave the TTL empty.
 func TestSDKEventSubscriptionPartialRetryPolicyFilled(t *testing.T) {
 	client := newEventGridFactory(t).NewEventSubscriptionsClient()

@@ -263,8 +263,8 @@ func TestSDKAzureDNSRecordSets(t *testing.T) {
 
 // TestSDKAzureDNSListPreservesUnmodeledRecordTypes is the regression for the
 // HIGH finding: MX and SRV record sets are not natively modeled by the DNS
-// handler (Azure represents them as properties.MXRecords / properties.SRVRecords
-// — see RecordSet in
+// handler (Azure represents them as properties.MXRecords / properties.SRVRecords;
+// see RecordSet in
 // https://learn.microsoft.com/en-us/rest/api/dns/record-sets/list-by-dns-zone),
 // so cloudemu relies on the unmodeled-property overlay to round-trip their
 // data. A single RecordSets.Get on one of them worked, but

@@ -4,9 +4,9 @@ import "testing"
 
 // TestPartitionIDs covers the partitionCount → shard-id-slice allocation
 // (go/uncontrolled-allocation-size): a legitimate count round-trips, and a
-// pathologically large or negative count — which a Premium/Dedicated-tier
+// pathologically large or negative count (which a Premium/Dedicated-tier
 // request can carry unchecked past the Basic/Standard maxPartitionCount
-// validation — is clamped rather than driving an unbounded allocation.
+// validation) is clamped rather than driving an unbounded allocation.
 func TestPartitionIDs(t *testing.T) {
 	cases := []struct {
 		name  string

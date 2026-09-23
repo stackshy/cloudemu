@@ -80,7 +80,7 @@ type jobPropertiesResp struct {
 	Functions                          []childResponse `json:"functions,omitempty"`
 }
 
-// jobListResponse is the ARM job list envelope. nextLink is omitted — the
+// jobListResponse is the ARM job list envelope. nextLink is omitted: the
 // emulator returns a single page.
 type jobListResponse struct {
 	Value []jobResponse `json:"value"`

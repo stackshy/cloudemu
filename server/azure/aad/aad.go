@@ -3,11 +3,11 @@
 // custom cloud via ARM_METADATA_HOSTNAME / metadata_host) needs before it can
 // talk to CloudEmu's ARM wire server:
 //
-//   - GET  /metadata/endpoints        — the environment-discovery document that
+//   - GET  /metadata/endpoints: the environment-discovery document that
 //     tells the client where the Resource Manager and login endpoints live. The
 //     document points both back at the emulator (derived from the request Host),
 //     so every subsequent ARM and token call lands on the same listener.
-//   - POST /{tenant}/oauth2/v2.0/token — the OAuth2 client-credentials token
+//   - POST /{tenant}/oauth2/v2.0/token: the OAuth2 client-credentials token
 //     endpoint. It returns a well-formed, fake-signed JWT bearer. CloudEmu's ARM
 //     layer accepts any credentials (the signature is never verified), so the
 //     only requirement is that the client SUCCESSFULLY OBTAINS a token whose

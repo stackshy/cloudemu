@@ -101,7 +101,7 @@ type armRegistryUsage struct {
 
 // armWebhook mirrors armcontainerregistry.Webhook. Properties on create carry
 // serviceUri and customHeaders (WebhookPropertiesCreateParameters); the plain
-// GET response omits them (WebhookProperties) — they are exposed only via
+// GET response omits them (WebhookProperties); they are exposed only via
 // getCallbackConfig. toARMWebhook builds the read shape (omitting them) and
 // toARMWebhookWithCallback the create/update shape (including them).
 type armWebhook struct {

@@ -5,9 +5,9 @@
 // management.azure.com, driving the shared dns driver.
 //
 // Azure DNS shares the Microsoft.Network ARM provider with the VNet handler
-// (server/azure/network), but on a disjoint resource type — this handler
+// (server/azure/network), but on a disjoint resource type: this handler
 // claims dnsZones while the network handler claims virtualNetworks /
-// networkSecurityGroups / locations — so registration order between the two is
+// networkSecurityGroups / locations, so registration order between the two is
 // unconstrained. Both must register before the permissive BlobStorage
 // fallback.
 //
@@ -18,17 +18,17 @@
 //
 // Coverage:
 //
-//	PUT    .../dnsZones/{z}                              — Zones.CreateOrUpdate
-//	PATCH  .../dnsZones/{z}                              — Zones.Update (tags merge)
-//	GET    .../dnsZones/{z}                              — Zones.Get
-//	DELETE .../dnsZones/{z}                              — Zones.Delete (LRO, completes inline)
-//	GET    .../providers/Microsoft.Network/dnsZones      — Zones.List (subscription scope)
-//	GET    .../resourceGroups/{rg}/…/dnsZones            — Zones.ListByResourceGroup
-//	PUT    .../dnsZones/{z}/{type}/{name}                — RecordSets.CreateOrUpdate
-//	PATCH  .../dnsZones/{z}/{type}/{name}                — RecordSets.Update (merge supplied)
-//	GET    .../dnsZones/{z}/{type}/{name}                — RecordSets.Get
-//	DELETE .../dnsZones/{z}/{type}/{name}                — RecordSets.Delete
-//	GET    .../dnsZones/{z}/recordsets|all               — RecordSets.ListByDnsZone / ListAllByDnsZone
+//	PUT    .../dnsZones/{z}                              : Zones.CreateOrUpdate
+//	PATCH  .../dnsZones/{z}                              : Zones.Update (tags merge)
+//	GET    .../dnsZones/{z}                              : Zones.Get
+//	DELETE .../dnsZones/{z}                              : Zones.Delete (LRO, completes inline)
+//	GET    .../providers/Microsoft.Network/dnsZones      : Zones.List (subscription scope)
+//	GET    .../resourceGroups/{rg}/…/dnsZones            : Zones.ListByResourceGroup
+//	PUT    .../dnsZones/{z}/{type}/{name}                : RecordSets.CreateOrUpdate
+//	PATCH  .../dnsZones/{z}/{type}/{name}                : RecordSets.Update (merge supplied)
+//	GET    .../dnsZones/{z}/{type}/{name}                : RecordSets.Get
+//	DELETE .../dnsZones/{z}/{type}/{name}                : RecordSets.Delete
+//	GET    .../dnsZones/{z}/recordsets|all               : RecordSets.ListByDnsZone / ListAllByDnsZone
 package dns
 
 import (
@@ -60,7 +60,7 @@ type Handler struct {
 // atomicRecordUpserter is the optional capability the Azure dns.Mock exposes
 // for a single-lock CreateOrUpdate that atomically evaluates a record set's
 // If-Match/If-None-Match preconditions against its current ETag before minting
-// a fresh one and writing — closing the TOCTOU a separate GetRecord followed by
+// a fresh one and writing, closing the TOCTOU a separate GetRecord followed by
 // a Create-or-Update call would leave open between two concurrent PUTs. The
 // production Azure dns.Mock always implements it; createOrUpdateRecordSet falls
 // back to the plain (non-atomic, precondition-less) two-call upsert for any
@@ -163,7 +163,7 @@ func (h *Handler) serveRecordSetCollection(w http.ResponseWriter, r *http.Reques
 
 func (h *Handler) serveRecordSet(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	// A type-only path (…/dnsZones/{zone}/{type} with no record name) is
-	// RecordSets.ListByType — a type-filtered list of the zone's record sets,
+	// RecordSets.ListByType: a type-filtered list of the zone's record sets,
 	// not a single-record Get.
 	if rp.SubResourceName == "" && r.Method == http.MethodGet {
 		h.listRecordSetsByType(w, r, rp)
