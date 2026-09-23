@@ -68,6 +68,10 @@ func getMetricDataForm(in *awscw.GetMetricDataInput) url.Values {
 			form.Set(p+"MetricStat.Period", strconv.Itoa(int(aws.ToInt32(ms.Period))))
 			form.Set(p+"MetricStat.Stat", aws.ToString(ms.Stat))
 
+			if ms.Unit != "" {
+				form.Set(p+"MetricStat.Unit", string(ms.Unit))
+			}
+
 			for j, d := range ms.Metric.Dimensions {
 				dp := p + "MetricStat.Metric.Dimensions.member." + strconv.Itoa(j+1) + "."
 				form.Set(dp+"Name", aws.ToString(d.Name))

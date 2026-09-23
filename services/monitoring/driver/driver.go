@@ -51,6 +51,7 @@ type GetMetricInput struct {
 	EndTime    time.Time
 	Period     int    // seconds
 	Stat       string // "Average", "Sum", "Minimum", "Maximum", "SampleCount"
+	Unit       string // only data stored with this unit; "" means any unit
 }
 
 // MetricDataResult is a set of metric data points.

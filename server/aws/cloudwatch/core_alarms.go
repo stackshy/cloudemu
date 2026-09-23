@@ -3,13 +3,52 @@ package cloudwatch
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
+	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
-// The cores in this file hold the SetAlarmState logic. The query and the
-// CBOR codecs both call them.
+// The cores in this file hold the PutMetricAlarm and SetAlarmState logic.
+// The query and the CBOR codecs both call them.
+
+// validComparisonOperators is the closed CloudWatch ComparisonOperator enum.
+// AWS rejects any other value with a ValidationError. Storing it would leave
+// the alarm unable to fire.
+//
+//nolint:gochecknoglobals // fixed lookup table for a closed enum.
+var validComparisonOperators = map[string]bool{
+	"GreaterThanOrEqualToThreshold":            true,
+	"GreaterThanThreshold":                     true,
+	"LessThanThreshold":                        true,
+	"LessThanOrEqualToThreshold":               true,
+	"LessThanLowerOrGreaterThanUpperThreshold": true,
+	"LessThanLowerThreshold":                   true,
+	"GreaterThanUpperThreshold":                true,
+}
+
+// comparisonOperatorValid reports whether op is empty or in the enum. Metric
+// math and anomaly alarms may leave it out.
+func comparisonOperatorValid(op string) bool {
+	return op == "" || validComparisonOperators[op]
+}
+
+// putMetricAlarmCore validates the alarm and then stores it. A rejected
+// request never reaches the driver.
+func (h *Handler) putMetricAlarmCore(ctx context.Context, cfg *mondriver.AlarmConfig) error {
+	if !comparisonOperatorValid(cfg.ComparisonOperator) {
+		return newWireError(errValidation, "Invalid ComparisonOperator: "+cfg.ComparisonOperator)
+	}
+
+	if cfg.Unit != "" && !alarmeval.ValidUnit(cfg.Unit) {
+		return newWireError(errValidation, "1 validation error detected: Value '"+cfg.Unit+
+			"' at 'unit' failed to satisfy constraint: Member must satisfy enum value set: ["+
+			strings.Join(alarmeval.Units(), ", ")+"]")
+	}
+
+	return h.monitoring.CreateAlarm(ctx, *cfg)
+}
 
 // errInvalidFormat is the code for StateReasonData that is not JSON.
 const errInvalidFormat = "InvalidFormat"

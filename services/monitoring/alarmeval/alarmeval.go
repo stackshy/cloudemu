@@ -6,6 +6,7 @@
 package alarmeval
 
 import (
+	"sort"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -26,6 +27,57 @@ func ValidState(s string) bool {
 	default:
 		return false
 	}
+}
+
+// UnitNone is the unit CloudWatch gives a datum published without one.
+const UnitNone = "None"
+
+// validUnits is the CloudWatch StandardUnit enum.
+//
+//nolint:gochecknoglobals // closed enum
+var validUnits = map[string]bool{
+	"Seconds": true, "Microseconds": true, "Milliseconds": true,
+	"Bytes": true, "Kilobytes": true, "Megabytes": true, "Gigabytes": true, "Terabytes": true,
+	"Bits": true, "Kilobits": true, "Megabits": true, "Gigabits": true, "Terabits": true,
+	"Percent": true, "Count": true,
+	"Bytes/Second": true, "Kilobytes/Second": true, "Megabytes/Second": true,
+	"Gigabytes/Second": true, "Terabytes/Second": true,
+	"Bits/Second": true, "Kilobits/Second": true, "Megabits/Second": true,
+	"Gigabits/Second": true, "Terabits/Second": true,
+	"Count/Second": true, UnitNone: true,
+}
+
+// ValidUnit reports whether u is a CloudWatch StandardUnit value.
+func ValidUnit(u string) bool {
+	return validUnits[u]
+}
+
+// Units returns every StandardUnit value, sorted. Error messages list them.
+func Units() []string {
+	out := make([]string, 0, len(validUnits))
+	for u := range validUnits {
+		out = append(out, u)
+	}
+
+	sort.Strings(out)
+
+	return out
+}
+
+// EffectiveUnit returns the unit a datum is stored under. An empty unit is None.
+func EffectiveUnit(u string) string {
+	if u == "" {
+		return UnitNone
+	}
+
+	return u
+}
+
+// MatchUnit reports whether a datum stored with datumUnit is picked by a read
+// or an alarm that asks for want. An empty want picks every unit. CloudWatch
+// does no unit conversion, so any other want must match exactly.
+func MatchUnit(datumUnit, want string) bool {
+	return want == "" || EffectiveUnit(datumUnit) == want
 }
 
 // defaultPeriodSeconds is the period assumed when an alarm omits one.

@@ -101,6 +101,7 @@ func (e *mathEvaluator) resolveMetricStat(ms *metricStatCBR) (mathSeries, error)
 		EndTime:    e.end,
 		Period:     ms.Period,
 		Stat:       ms.Stat,
+		Unit:       ms.Unit,
 	})
 	if err != nil {
 		return mathSeries{}, err

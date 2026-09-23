@@ -3,9 +3,11 @@ package cloudwatch
 import (
 	"context"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -180,6 +182,7 @@ type getMetricStatisticsInput struct {
 	Period     int            `cbor:"Period"`
 	Statistics []string       `cbor:"Statistics,omitempty"`
 	Dimensions []dimensionCBR `cbor:"Dimensions,omitempty"`
+	Unit       string         `cbor:"Unit,omitempty"`
 }
 
 // datapoint is one GetMetricStatistics datapoint. A nil statistic was not
@@ -199,6 +202,12 @@ type getMetricStatisticsResult struct {
 	Datapoints []datapoint
 }
 
+// metricUnitLister is the AWS-local capability that lists the units a
+// metric's data was stored under.
+type metricUnitLister interface {
+	MetricUnits(ctx context.Context, in *mondriver.GetMetricInput) []string
+}
+
 func (h *Handler) getMetricStatisticsCore(
 	ctx context.Context, in *getMetricStatisticsInput,
 ) (getMetricStatisticsResult, error) {
@@ -212,51 +221,65 @@ func (h *Handler) getMetricStatisticsCore(
 	dims := toDimensionMap(in.Dimensions)
 
 	if h.ipam != nil && in.Namespace == netdriver.IpamMetricNamespace {
-		return h.ipamMetricStatistics(ctx, in.MetricName, dims, stats), nil
+		return h.ipamMetricStatistics(ctx, in.MetricName, dims, in.Unit, stats), nil
 	}
 
-	var start, end time.Time
-	if in.StartTime != nil {
-		start = *in.StartTime
-	}
-
-	if in.EndTime != nil {
-		end = *in.EndTime
+	q := mondriver.GetMetricInput{
+		Namespace:  in.Namespace,
+		MetricName: in.MetricName,
+		Dimensions: dims,
+		StartTime:  timeOrZero(in.StartTime),
+		EndTime:    timeOrZero(in.EndTime),
+		Period:     in.Period,
+		Unit:       in.Unit,
 	}
 
 	acc := newDatapointAcc()
 
-	for _, stat := range stats {
-		res, err := h.monitoring.GetMetricData(ctx, mondriver.GetMetricInput{
-			Namespace:  in.Namespace,
-			MetricName: in.MetricName,
-			Dimensions: dims,
-			StartTime:  start,
-			EndTime:    end,
-			Period:     in.Period,
-			Stat:       stat,
-		})
-		if err != nil {
-			return getMetricStatisticsResult{}, err
-		}
+	for _, unit := range h.statisticUnits(ctx, &q) {
+		q.Unit = unit
 
-		acc.add(res, stat)
+		for _, stat := range stats {
+			q.Stat = stat
+
+			res, err := h.monitoring.GetMetricData(ctx, q)
+			if err != nil {
+				return getMetricStatisticsResult{}, err
+			}
+
+			acc.add(res, stat, unit)
+		}
 	}
 
 	return getMetricStatisticsResult{Label: in.MetricName, Datapoints: acc.datapoints()}, nil
 }
 
+// statisticUnits returns the units to read one at a time. AWS keeps data put
+// with different units apart, so an omitted Unit gives one datapoint per unit.
+// A provider that cannot list its units is read once for any unit.
+func (h *Handler) statisticUnits(ctx context.Context, q *mondriver.GetMetricInput) []string {
+	if q.Unit != "" {
+		return []string{q.Unit}
+	}
+
+	if l, ok := h.monitoring.(metricUnitLister); ok {
+		return l.MetricUnits(ctx, q)
+	}
+
+	return []string{""}
+}
+
 // ipamMetricStatistics returns one datapoint for a derived AWS/IPAM metric.
 // IPAM metrics are point-in-time values, so every statistic equals the value.
 func (h *Handler) ipamMetricStatistics(
-	ctx context.Context, name string, dims map[string]string, stats []string,
+	ctx context.Context, name string, dims map[string]string, unit string, stats []string,
 ) getMetricStatisticsResult {
 	for _, mtr := range h.ipam.IpamMetrics(ctx) {
-		if mtr.MetricName != name || !dimensionsMatch(mtr.Dimensions, dims) {
+		if mtr.MetricName != name || !dimensionsMatch(mtr.Dimensions, dims) || !alarmeval.MatchUnit(mtr.Unit, unit) {
 			continue
 		}
 
-		dp := datapoint{Timestamp: time.Unix(0, 0).UTC(), Unit: mtr.Unit}
+		dp := datapoint{Timestamp: time.Unix(0, 0).UTC(), Unit: alarmeval.EffectiveUnit(mtr.Unit)}
 		for _, stat := range stats {
 			setStat(&dp, stat, mtr.Value)
 		}
@@ -278,35 +301,43 @@ func dimensionsMatch(have, want map[string]string) bool {
 	return true
 }
 
+// datapointKey is one datapoint slot. Data with different units at the same
+// timestamp are separate datapoints.
+type datapointKey struct {
+	ts   int64
+	unit string
+}
+
 // datapointAcc merges one result per statistic into one datapoint per
-// timestamp, so each datapoint carries every requested statistic.
+// timestamp and unit, so each datapoint carries every requested statistic.
 type datapointAcc struct {
-	byTS  map[int64]*datapoint
-	order []int64
-	unit  string
+	byKey map[datapointKey]*datapoint
+	order []datapointKey
 }
 
 func newDatapointAcc() *datapointAcc {
-	return &datapointAcc{byTS: map[int64]*datapoint{}}
+	return &datapointAcc{byKey: map[datapointKey]*datapoint{}}
 }
 
-func (a *datapointAcc) add(res *mondriver.MetricDataResult, stat string) {
+// add merges one statistic's result. unit is the unit that was asked for. When
+// it is empty the result's own unit is used.
+func (a *datapointAcc) add(res *mondriver.MetricDataResult, stat, unit string) {
 	if res == nil {
 		return
 	}
 
-	if a.unit == "" {
-		a.unit = res.Unit
+	if unit == "" {
+		unit = alarmeval.EffectiveUnit(res.Unit)
 	}
 
 	for i := range res.Timestamps {
 		ts := res.Timestamps[i].UTC()
-		key := ts.UnixNano()
+		key := datapointKey{ts: ts.UnixNano(), unit: unit}
 
-		dp, ok := a.byTS[key]
+		dp, ok := a.byKey[key]
 		if !ok {
-			dp = &datapoint{Timestamp: ts}
-			a.byTS[key] = dp
+			dp = &datapoint{Timestamp: ts, Unit: unit}
+			a.byKey[key] = dp
 			a.order = append(a.order, key)
 		}
 
@@ -314,21 +345,19 @@ func (a *datapointAcc) add(res *mondriver.MetricDataResult, stat string) {
 	}
 }
 
-// datapoints returns the merged datapoints oldest first.
+// datapoints returns the merged datapoints oldest first, then by unit.
 func (a *datapointAcc) datapoints() []datapoint {
-	unit := a.unit
-	if unit == "" {
-		unit = defaultMetricUnit
-	}
+	sort.Slice(a.order, func(i, j int) bool {
+		if a.order[i].ts != a.order[j].ts {
+			return a.order[i].ts < a.order[j].ts
+		}
 
-	sort.Slice(a.order, func(i, j int) bool { return a.order[i] < a.order[j] })
+		return a.order[i].unit < a.order[j].unit
+	})
 
 	out := make([]datapoint, 0, len(a.order))
-
 	for _, key := range a.order {
-		dp := a.byTS[key]
-		dp.Unit = unit
-		out = append(out, *dp)
+		out = append(out, *a.byKey[key])
 	}
 
 	return out
@@ -349,4 +378,51 @@ func setStat(dp *datapoint, stat string, value float64) {
 	default:
 		dp.Average = &v
 	}
+}
+
+// putMetricDataCore validates every datum and then stores them. One bad
+// datum rejects the whole request, so nothing is stored.
+func (h *Handler) putMetricDataCore(ctx context.Context, in *putMetricDataInput) error {
+	data := make([]mondriver.MetricDatum, 0, len(in.MetricData))
+
+	for i := range in.MetricData {
+		d := &in.MetricData[i]
+
+		if d.Unit != "" && !alarmeval.ValidUnit(d.Unit) {
+			return newWireError(errInvalidParameterValue, "The parameter MetricData.member."+strconv.Itoa(i+1)+
+				".Unit must be a value in the set [ "+strings.Join(alarmeval.Units(), ", ")+" ].")
+		}
+
+		data = append(data, toMetricDatum(in.Namespace, d))
+	}
+
+	return h.monitoring.PutMetricData(ctx, data)
+}
+
+func toMetricDatum(namespace string, d *putMetricDatumCBR) mondriver.MetricDatum {
+	// AWS stamps a datum without a timestamp with the time it was received.
+	// The Go zero time would put it outside every query and alarm window.
+	ts := time.Now().UTC()
+	if d.Timestamp != nil {
+		ts = *d.Timestamp
+	}
+
+	datum := mondriver.MetricDatum{
+		Namespace:  namespace,
+		MetricName: d.MetricName,
+		Value:      d.Value,
+		Unit:       d.Unit,
+		Dimensions: toDimensionMap(d.Dimensions),
+		Timestamp:  ts,
+		Values:     d.Values,
+		Counts:     d.Counts,
+	}
+
+	if s := d.StatisticValues; s != nil {
+		datum.StatisticValues = &mondriver.StatisticSet{
+			SampleCount: s.SampleCount, Sum: s.Sum, Minimum: s.Minimum, Maximum: s.Maximum,
+		}
+	}
+
+	return datum
 }

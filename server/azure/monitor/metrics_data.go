@@ -10,6 +10,10 @@ import (
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
+// defaultMetricUnit is the unit reported for a metric with no stored unit.
+// Count is also the Azure metric definition default.
+const defaultMetricUnit = "Count"
+
 // wideWindowYears bounds the query window generously so every stored datapoint
 // (backfilled around a VM's launch time under a fake clock) is captured.
 const wideWindowYears = 50
@@ -80,13 +84,18 @@ func localizable(v string) map[string]string {
 // timestamp so multiple aggregation queries align. resourceID scopes the
 // query to the one resource the metrics were requested against (the ARM
 // resourceUri the request path hangs off of) so two resources sharing a
-// namespace+metric name never bleed into each other's datapoints.
-func (h *MetricsHandler) timeseriesData(ctx context.Context, resourceID, namespace, name string, aggs []string) []map[string]any {
+// namespace+metric name never bleed into each other's datapoints. It also
+// returns the unit the data was stored with, or defaultMetricUnit when there
+// is none.
+func (h *MetricsHandler) timeseriesData(
+	ctx context.Context, resourceID, namespace, name string, aggs []string,
+) (data []map[string]any, unit string) {
 	start := time.Unix(0, 0)
 	end := time.Now().AddDate(wideWindowYears, 0, 0)
 
 	order := []time.Time{}
 	rows := map[time.Time]map[string]any{}
+	unit = defaultMetricUnit
 
 	for _, agg := range aggs {
 		key := aggregationTable[agg]
@@ -104,6 +113,10 @@ func (h *MetricsHandler) timeseriesData(ctx context.Context, resourceID, namespa
 			continue
 		}
 
+		if res.Unit != "" {
+			unit = res.Unit
+		}
+
 		for i, ts := range res.Timestamps {
 			row, ok := rows[ts]
 			if !ok {
@@ -117,7 +130,7 @@ func (h *MetricsHandler) timeseriesData(ctx context.Context, resourceID, namespa
 		}
 	}
 
-	return orderedRows(order, rows)
+	return orderedRows(order, rows), unit
 }
 
 func orderedRows(order []time.Time, rows map[time.Time]map[string]any) []map[string]any {
@@ -153,19 +166,21 @@ func (h *MetricsHandler) listDefinitions(w http.ResponseWriter, r *http.Request)
 
 	value := make([]map[string]any, 0, len(names))
 	for _, name := range names {
-		value = append(value, definitionEntry(uri, namespace, name))
+		// The definition carries the unit this resource's data was stored with.
+		_, unit := h.timeseriesData(r.Context(), "/"+uri, namespace, name, []string{"count"})
+		value = append(value, definitionEntry(uri, namespace, name, unit))
 	}
 
 	azurearm.WriteJSON(w, http.StatusOK, map[string]any{"value": value})
 }
 
-func definitionEntry(uri, namespace, name string) map[string]any {
+func definitionEntry(uri, namespace, name, unit string) map[string]any {
 	return map[string]any{
 		"id":                        uri + metricDefsSuffix + "/" + name,
 		"resourceId":                uri,
 		"namespace":                 namespace,
 		"name":                      localizable(name),
-		"unit":                      "Count",
+		"unit":                      unit,
 		"primaryAggregationType":    "Average",
 		"supportedAggregationTypes": []string{"Average", "Minimum", "Maximum", "Total", "Count"},
 		"metricAvailabilities":      []map[string]any{{"timeGrain": defaultIntervalPT, "retention": "P93D"}},

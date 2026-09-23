@@ -51,6 +51,9 @@ type cwWire struct {
 	reasonData func(t *testing.T, name string) string
 	// historyData returns the HistoryData of each alarm history item.
 	historyData func(t *testing.T, name string) []string
+	// putCode and putAlarmCode return the error code, or "" on success.
+	putCode      func(t *testing.T, in *awscw.PutMetricDataInput) string
+	putAlarmCode func(t *testing.T, in *awscw.PutMetricAlarmInput) string
 }
 
 type cwProtocol struct {
@@ -210,6 +213,16 @@ func newCBORWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 			}
 			return data
 		},
+		putCode: func(t *testing.T, in *awscw.PutMetricDataInput) string {
+			t.Helper()
+			_, err := c.PutMetricData(ctx, in)
+			return sdkErrCode(t, err)
+		},
+		putAlarmCode: func(t *testing.T, in *awscw.PutMetricAlarmInput) string {
+			t.Helper()
+			_, err := c.PutMetricAlarm(ctx, in)
+			return sdkErrCode(t, err)
+		},
 	}
 }
 
@@ -364,6 +377,14 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 			post(t, url.Values{"Action": {"DescribeAlarmHistory"}, "AlarmName": {name}}, &x)
 			return x.Data
 		},
+		putCode: func(t *testing.T, in *awscw.PutMetricDataInput) string {
+			t.Helper()
+			return postCode(t, putMetricDataForm(in), nil)
+		},
+		putAlarmCode: func(t *testing.T, in *awscw.PutMetricAlarmInput) string {
+			t.Helper()
+			return postCode(t, putAlarmForm(in), nil)
+		},
 	}
 }
 
@@ -382,6 +403,10 @@ func putMetricDataForm(in *awscw.PutMetricDataInput) url.Values {
 		p := "MetricData.member." + strconv.Itoa(i+1) + "."
 		form.Set(p+"MetricName", aws.ToString(d.MetricName))
 		form.Set(p+"Value", strconv.FormatFloat(aws.ToFloat64(d.Value), 'g', -1, 64))
+
+		if d.Unit != "" {
+			form.Set(p+"Unit", string(d.Unit))
+		}
 
 		if d.Timestamp != nil {
 			form.Set(p+"Timestamp", d.Timestamp.UTC().Format(time.RFC3339))
@@ -436,6 +461,10 @@ func getStatsForm(in *awscw.GetMetricStatisticsInput) url.Values {
 
 	for i, s := range in.Statistics {
 		form.Set("Statistics.member."+strconv.Itoa(i+1), string(s))
+	}
+
+	if in.Unit != "" {
+		form.Set("Unit", string(in.Unit))
 	}
 
 	addDimensionsForm(form, in.Dimensions)
