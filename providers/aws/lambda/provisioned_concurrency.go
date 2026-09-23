@@ -9,7 +9,7 @@ import (
 
 // statusReady is the terminal Status a provisioned-concurrency allocation
 // reports once it settles. The emulator has no real cold-start pool, so a Put
-// allocates synchronously and is READY immediately — there is no IN_PROGRESS
+// allocates synchronously and is READY immediately. There is no IN_PROGRESS
 // window to observe.
 const statusReady = "READY"
 
@@ -20,9 +20,9 @@ const minProvisionedConcurrentExecutions = 1
 
 // PutFunctionProvisionedConcurrencyConfig sets (replacing any existing) the
 // provisioned-concurrency configuration for a published version or alias
-// qualifier. Real Lambda rejects a target that resolves to $LATEST —
+// qualifier. Real Lambda rejects a target that resolves to $LATEST,
 // provisioned concurrency can only attach to an immutable qualifier, because
-// $LATEST's code can change underneath it — whether that's the literal
+// $LATEST's code can change underneath it, whether that's the literal
 // unqualified/"$LATEST" qualifier or an alias whose own FunctionVersion is
 // $LATEST (a valid CreateAlias target). It also rejects a weighted alias
 // (RoutingConfig.AdditionalVersionWeights set), since provisioned concurrency
@@ -184,7 +184,7 @@ func setProvisionedConcurrencyConfig(fd *funcData, cfg driver.ProvisionedConcurr
 }
 
 // aliasHasWeightedRouting reports whether qualifier names an alias with a
-// weighted RoutingConfig (AdditionalVersionWeights set) — provisioned
+// weighted RoutingConfig (AdditionalVersionWeights set), provisioned
 // concurrency cannot attach to a target split across versions. A qualifier
 // that names a version (not an alias) or an unweighted alias returns false.
 // ad is a shared pointer held in the aliases store, so its alias field is read
@@ -204,7 +204,7 @@ func aliasHasWeightedRouting(fd *funcData, qualifier string) bool {
 // sumProvisionedConcurrency totals the RequestedProvisionedConcurrentExecutions
 // across every qualifier's provisioned-concurrency config on fd. Reserved
 // concurrency can never be set (or fully removed) below this total, since
-// provisioned concurrency is carved out of the reserved budget — see
+// provisioned concurrency is carved out of the reserved budget. See
 // PutFunctionConcurrency and DeleteFunctionConcurrency.
 func sumProvisionedConcurrency(fd *funcData) int {
 	var total int

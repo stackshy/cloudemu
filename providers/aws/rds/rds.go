@@ -288,7 +288,7 @@ func clusterSnapshotARN(region, accountID, id string) string {
 }
 
 // cloneSlice returns a shallow copy of s (nil for empty), so a slice returned
-// by a Describe call never aliases the store's backing array — a caller
+// by a Describe call never aliases the store's backing array. A caller
 // mutating the result can't corrupt internal state.
 func cloneSlice[T any](s []T) []T {
 	if len(s) == 0 {
@@ -468,7 +468,7 @@ func (m *Mock) newInstance(ctx context.Context, cfg rdsdriver.InstanceConfig) rd
 	// StorageType/InstanceClass above, 0 is a meaningful explicit value (it
 	// disables automated backups). The wire layer, which can see whether the
 	// caller supplied the parameter at all, applies the AWS default (1) before
-	// this field is set — mirroring AutoMinorVersionUpgrade below. A direct Go
+	// this field is set, mirroring AutoMinorVersionUpgrade below. A direct Go
 	// library caller who wants the default must set it explicitly.
 	backupWindow := cfg.PreferredBackupWindow
 	if backupWindow == "" {
@@ -819,7 +819,7 @@ func applyImmediateMods(inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanc
 
 // pendingModifiedValues computes the deferrable changes that differ from the
 // instance's current values, returning nil when nothing is pending. A pending
-// password change is recorded masked — the plaintext is never stored here.
+// password change is recorded masked. The plaintext is never stored here.
 func pendingModifiedValues(
 	inst *rdsdriver.Instance, input *rdsdriver.ModifyInstanceInput,
 ) *rdsdriver.PendingModifiedValues {
@@ -976,7 +976,7 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 
 	// Tear down the real database backing the instance, if any. A cluster member
 	// shares the cluster-owned database (keyed by the cluster, not the member), so
-	// it is left for DeleteCluster to tear down once — deleting one member must
+	// it is left for DeleteCluster to tear down once, deleting one member must
 	// not drop a database its siblings still use.
 	if inst.ClusterID == "" {
 		if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {
@@ -1525,7 +1525,7 @@ type restoreDefaults struct {
 // source-instance lookup. This matches real RDS: a snapshot is a
 // self-contained point-in-time image, so a restore reflects the source's
 // shape AT SNAPSHOT TIME even if the source instance has since been deleted
-// or modified — e.g. the RestoreDBInstanceFromDBSnapshot docs default
+// or modified, e.g. the RestoreDBInstanceFromDBSnapshot docs default
 // DBInstanceClass to "the same DBInstanceClass as the original DB instance"
 // and Iops to "the IOPS value ... taken from the backup" when omitted. Older
 // snapshots taken before these fields were captured fall back to a live
@@ -1706,7 +1706,7 @@ func (m *Mock) DeleteClusterSnapshot(_ context.Context, id string) error {
 
 // RestoreClusterFromSnapshot creates a new cluster from a cluster snapshot and
 // provisions its shared real database (when an engine is wired in) so the
-// reported endpoints — and any members added later — reach a real database.
+// reported endpoints, and any members added later, reach a real database.
 func (m *Mock) RestoreClusterFromSnapshot(
 	ctx context.Context, input rdsdriver.RestoreClusterInput,
 ) (*rdsdriver.Cluster, error) {

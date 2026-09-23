@@ -67,7 +67,7 @@ func TestLambdaDurationUnitAndThrottles(t *testing.T) {
 
 // TestLambdaDurationIsMeasured pins that Duration is the handler's measured run
 // time on the configured clock (here a handler that takes 250ms of FakeClock
-// time), not a constant — for successful and failed invocations alike.
+// time), not a constant, for successful and failed invocations alike.
 func TestLambdaDurationIsMeasured(t *testing.T) {
 	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	opts := config.NewOptions(config.WithClock(fc), config.WithRegion("us-east-1"))

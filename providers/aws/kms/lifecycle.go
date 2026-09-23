@@ -203,7 +203,7 @@ func (m *Mock) ListKeys(_ context.Context) ([]driver.KeyMetadata, error) {
 }
 
 // EnableKey marks a key enabled. A PendingDeletion or PendingImport key can't
-// be enabled — the latter has no material, so enabling it would only make
+// be enabled. The latter has no material, so enabling it would only make
 // subsequent crypto fail with a confusing error.
 func (m *Mock) EnableKey(_ context.Context, keyID string) error {
 	return m.mutateKey(keyID, func(kd *keyData) error {

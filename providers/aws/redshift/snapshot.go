@@ -11,10 +11,10 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // redshiftSnapshot is the full serialized state of the AWS Redshift mock. Every
-// memstore store holds a fully-exported value type — rdbdriver.Cluster /
+// memstore store holds a fully-exported value type: rdbdriver.Cluster /
 // rdbdriver.ClusterSnapshot for the shared resources, and the redshift-package
 // ParameterGroup / SubnetGroup (all fields exported) for the redshift-specific
-// ones — so each round-trips through the generic memstore helper keyed by its
+// ones, so each round-trips through the generic memstore helper keyed by its
 // resource id/name. The mu-guarded tagsByARN map (ARN -> tag map) lives beside
 // the stores and is captured with them. The wired deps (opts, monitoring,
 // subnetResolver) and the real DatabaseEngine backing are intentionally not
@@ -29,8 +29,8 @@ type redshiftSnapshot struct {
 	TagsByARN map[string]map[string]string `json:"tagsByArn,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Redshift is control-plane only and holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Redshift is
+// control-plane only and holds no bulk object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap redshiftSnapshot
 	if err := m.snapshotStores(&snap); err != nil {

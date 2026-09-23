@@ -9,7 +9,7 @@ import (
 // SubnetResolver is the slice of the networking mock this package needs to
 // derive a cluster subnet group's VPC and per-subnet availability zones. Real
 // Redshift infers VpcId from the member subnets rather than taking it as input,
-// and returns each subnet's availability zone on describe — so both have to be
+// and returns each subnet's availability zone on describe, so both have to be
 // resolved, not left blank.
 type SubnetResolver interface {
 	DescribeSubnets(ctx context.Context, ids []string) ([]netdriver.SubnetInfo, error)

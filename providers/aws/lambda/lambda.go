@@ -59,10 +59,10 @@ const (
 	defaultTimeoutSecs = 3
 )
 
-// AWS Lambda create-time range limits. MemorySize must be 128–10240 MB and
-// Timeout must be 1–900 seconds; an out-of-range value is rejected with
+// AWS Lambda create-time range limits. MemorySize must be 128-10240 MB and
+// Timeout must be 1-900 seconds; an out-of-range value is rejected with
 // InvalidParameterValueException. The 10240 MB ceiling is the value the Lambda
-// service actually enforces — the API reference's 32768 is only the wire-schema
+// service actually enforces. The API reference's 32768 is only the wire-schema
 // bound. See
 // https://docs.aws.amazon.com/lambda/latest/dg/configuration-function-common.html
 const (
@@ -76,8 +76,8 @@ const (
 // CreateFunction/UpdateFunctionConfiguration API enum accepts (current GA
 // runtimes plus older values the service still allows on an existing
 // function), used only to produce a helpful, AWS-shaped enum list in the
-// rejection error. It is NOT the sole source of truth for what's accepted —
-// see validateRuntime — because AWS ships new runtimes roughly twice a year
+// rejection error. It is NOT the sole source of truth for what's accepted
+// (see validateRuntime) because AWS ships new runtimes roughly twice a year
 // (nodejs24.x, python3.14, java17.al2023, ... have all shipped since this
 // list was last written) and a hardcoded enum silently goes stale, wrongly
 // rejecting every real, currently-supported runtime it doesn't yet know
@@ -142,13 +142,13 @@ var validRuntimes = map[string]bool{
 // runtimeFamilyPattern matches the *shape* of a real Lambda runtime
 // identifier: a known language-family prefix (nodejs/python/java/dotnet/
 // ruby/go/provided) followed by a version/variant suffix (digits, dots,
-// lowercase letters — e.g. "22.x", "3.14", ".al2023"). Real AWS ships new
+// lowercase letters, e.g. "22.x", "3.14", ".al2023"). Real AWS ships new
 // runtime versions within these same families a couple of times a year, so
 // rejecting solely on the validRuntimes snapshot above would start wrongly
 // rejecting brand-new, genuinely valid runtimes (e.g. nodejs24.x before this
 // list was updated to include it) the moment AWS releases them. Validation
-// therefore only rejects a Runtime that doesn't even match a known family —
-// the "totally-fake-runtime" / typo case a real user actually hits — and
+// therefore only rejects a Runtime that doesn't even match a known family,
+// the "totally-fake-runtime" / typo case a real user actually hits, and
 // accepts anything shaped like a real identifier even when it isn't yet in
 // the explicit snapshot.
 var runtimeFamilyPattern = regexp.MustCompile(`^(nodejs|python|java|dotnet|ruby|go|provided)[0-9a-z.]*$`)
@@ -196,7 +196,7 @@ type aliasData struct {
 type layerData struct {
 	// mu guards nextVer (the monotonic version counter's read-modify-write) and
 	// permissions, the two pieces of layerData mutated in place after the entry
-	// is stored — versions is itself a memstore.Store and is safe on its own.
+	// is stored; versions is itself a memstore.Store and is safe on its own.
 	mu          sync.Mutex
 	versions    *memstore.Store[*driver.LayerVersion]
 	nextVer     int
@@ -228,7 +228,7 @@ type funcData struct {
 	// via policyKey: "" and "$LATEST" collapse to the unqualified $LATEST URL,
 	// an alias name is kept as-is), matching AWS's one-URL-per-(function,
 	// qualifier) scoping. Real Lambda rejects a numbered-version qualifier
-	// outright — see validateFunctionURLQualifier.
+	// outright. See validateFunctionURLQualifier.
 	urlConfigs map[string]*driver.FunctionURLConfig
 	// awsConfig holds the AWS-only settings (VpcConfig/DeadLetterConfig/
 	// TracingConfig) applied through the AWSConfigurable optional interface.
@@ -238,7 +238,7 @@ type funcData struct {
 	// unqualified function config), matching AWS's per-version/alias scoping.
 	eventInvokeConfigs map[string]driver.EventInvokeConfig
 	// provisionedConcurrencyConfigs holds the provisioned-concurrency config
-	// keyed by qualifier (a published version or alias name — unlike
+	// keyed by qualifier (a published version or alias name, unlike
 	// eventInvokeConfigs, $LATEST/unqualified is rejected outright rather than
 	// normalized, since real Lambda cannot attach provisioned concurrency to
 	// the mutable $LATEST code).
@@ -277,8 +277,8 @@ func (m *Mock) SetMonitoring(mon mondriver.Monitoring) {
 
 // SetLogSink wires the CloudWatch Logs target that Invoke writes each
 // invocation's START/END/REPORT lines (and any captured stdout/stderr) into,
-// under the conventional /aws/lambda/<name> log group. Safe to leave unset —
-// invocation-log surfacing is then skipped, so library users are unaffected.
+// under the conventional /aws/lambda/<name> log group. Safe to leave unset.
+// Invocation-log surfacing is then skipped, so library users are unaffected.
 func (m *Mock) SetLogSink(l logdriver.Logging) {
 	m.logs = l
 }
@@ -376,8 +376,8 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 	return &result, nil
 }
 
-// validateFunctionLimits enforces the AWS MemorySize (128–10240 MB) and Timeout
-// (1–900 s) create-time ranges, returning an InvalidArgument error the wire
+// validateFunctionLimits enforces the AWS MemorySize (128-10240 MB) and Timeout
+// (1-900 s) create-time ranges, returning an InvalidArgument error the wire
 // layer maps to InvalidParameterValueException / HTTP 400.
 func validateFunctionLimits(memory, timeout int) error {
 	if memory < minMemoryMB || memory > maxMemoryMB {
@@ -457,7 +457,7 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 	}
 
 	info.LastModified = m.opts.Clock.Now().UTC().Format(time.RFC3339)
-	// Every update — configuration or code — mints a new revision, matching the
+	// Every update, configuration or code, mints a new revision, matching the
 	// RevisionId Terraform reads to detect drift.
 	info.RevisionID = newRevisionID()
 
@@ -596,7 +596,7 @@ func (m *Mock) runInvocation(
 }
 
 // durationMillis is the invocation's measured run time on the configured clock,
-// in milliseconds — the value real Lambda reports as Duration.
+// in milliseconds, the value real Lambda reports as Duration.
 func (m *Mock) durationMillis(start time.Time) float64 {
 	return float64(m.opts.Clock.Since(start)) / float64(time.Millisecond)
 }
@@ -645,8 +645,8 @@ func (m *Mock) resolveQualifier(fd *funcData, qualifier string, routingKey []byt
 // invocation to: the additional versions in RoutingConfig.AdditionalVersionWeights
 // receive their configured fractions of traffic, the alias's primary
 // FunctionVersion the remainder. The choice is deterministic in routingKey
-// (the invoke payload) — a given event always routes to the same version, and
-// across many distinct events the split approaches the configured weights — so
+// (the invoke payload), a given event always routes to the same version, and
+// across many distinct events the split approaches the configured weights, so
 // tests can assert the distribution without flakiness. An alias with no weights
 // always resolves to its primary FunctionVersion.
 func selectAliasVersion(a *driver.Alias, routingKey []byte) string {
@@ -690,7 +690,7 @@ func hashToUnitFloat(key []byte) float64 {
 // Lambda notifications, DynamoDB Streams / SQS event source mappings). An
 // unknown function is a no-op so a stale target never fails the caller. A
 // handler that runs but raises (StatusCode 500 / a non-empty FunctionError,
-// exactly as Invoke reports it — see invoke's X-Amz-Function-Error semantics)
+// as Invoke reports it, see invoke's X-Amz-Function-Error semantics)
 // is surfaced here as a genuine error, unlike Invoke itself: callers that only
 // care whether delivery succeeded (S3, DynamoDB Streams) already discard
 // InvokeExternal's error, while a caller that must react to handler failure
@@ -703,10 +703,10 @@ func hashToUnitFloat(key []byte) float64 {
 // (write -> deliver -> Invoke -> handler -> write -> ...). Left unbounded that
 // recurses the process into an unrecoverable "fatal error: stack overflow".
 // ctx carries the re-entrant delivery depth (see internal/recursionguard);
-// once it reaches recursionguard.MaxDepth — matching AWS Lambda's own
+// once it reaches recursionguard.MaxDepth, matching AWS Lambda's own
 // recursive-loop detection, which stops invoking a function after ~16
 // invocations within one chain of requests (see
-// https://docs.aws.amazon.com/lambda/latest/dg/invocation-recursion.html) —
+// https://docs.aws.amazon.com/lambda/latest/dg/invocation-recursion.html),
 // further delivery is dropped instead of recursing.
 func (m *Mock) InvokeExternal(ctx context.Context, functionARN string, payload []byte) error {
 	name := functionNameFromARN(functionARN)
@@ -735,7 +735,7 @@ func (m *Mock) InvokeExternal(ctx context.Context, functionARN string, payload [
 
 // FunctionExists reports whether functionARN resolves to a live function. It
 // lets a cross-service caller (EventBridge's DLQ routing) distinguish a target
-// that is genuinely gone from one InvokeExternal merely no-ops for by design —
+// that is genuinely gone from one InvokeExternal merely no-ops for by design.
 // InvokeExternal itself must keep silently no-op'ing an unknown function for
 // its other callers (S3 notifications, DynamoDB Streams, SQS event-source
 // mappings), which rely on a stale target never failing them.

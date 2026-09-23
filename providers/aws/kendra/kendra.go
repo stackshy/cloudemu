@@ -32,7 +32,7 @@ const indexIDBytes = 16
 
 // dataSourceIDBytes is the number of random bytes rendered as hex into a data
 // source id (a 32-character lowercase-hex string, within the documented
-// [a-zA-Z0-9][a-zA-Z0-9_-]* pattern and 1–100 length).
+// [a-zA-Z0-9][a-zA-Z0-9_-]* pattern and 1-100 length).
 const dataSourceIDBytes = 16
 
 // Mock is an in-memory implementation of the Amazon Kendra control plane.

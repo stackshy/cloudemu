@@ -16,7 +16,7 @@ import (
 )
 
 // PublishLayerVersion publishes a new version of a layer. Version numbers are
-// monotonically increasing per layer name and are never reused — even after
+// monotonically increasing per layer name and are never reused, even after
 // DeleteLayerVersion removes the highest version, the next publish continues
 // from where the counter left off.
 //
@@ -122,7 +122,7 @@ func (m *Mock) DeleteLayerVersion(_ context.Context, name string, version int) e
 
 	ld.versions.Delete(verStr)
 
-	// Drop the deleted version's resource policy along with it — a future
+	// Drop the deleted version's resource policy along with it, a future
 	// publish never reuses this version number, so the policy can never be
 	// referenced again.
 	ld.mu.Lock()

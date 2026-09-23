@@ -259,7 +259,7 @@ func (m *Mock) appendRecord(
 	shard := shardForHashKey(sd.shards, key)
 	if shard == nil {
 		// Unreachable for MD5-routed keys (they tile the full range) and for
-		// bounds-checked explicit keys — a genuine internal invariant.
+		// bounds-checked explicit keys, a genuine internal invariant.
 		return "", "", errInUse("no open shard covers the record's hash key")
 	}
 
@@ -495,8 +495,8 @@ type listShardsToken struct {
 }
 
 // filter reconstructs the ShardFilter a paginating token must keep applying.
-// Full-set and AFTER_SHARD_ID filters aren't persisted — the AfterShard cursor
-// already captures them — so only the state-narrowing types come back here.
+// Full-set and AFTER_SHARD_ID filters aren't persisted, the AfterShard cursor
+// already captures them, so only the state-narrowing types come back here.
 func (t listShardsToken) filter() *driver.ShardFilter {
 	if t.FilterType == "" {
 		return nil

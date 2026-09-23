@@ -99,7 +99,7 @@ func TestUpdateFunctionTimeoutLimits(t *testing.T) {
 
 // TestUpdateFunctionOmittedFieldsSucceed covers the common Terraform/CLI case
 // of an update that only touches one field (e.g. just Description): omitting
-// Memory/Timeout/Runtime must not be treated as an invalid 0/"" value — the
+// Memory/Timeout/Runtime must not be treated as an invalid 0/"" value. The
 // update succeeds and the function keeps its prior Memory/Timeout/Runtime.
 func TestUpdateFunctionOmittedFieldsSucceed(t *testing.T) {
 	m := newTestMock()

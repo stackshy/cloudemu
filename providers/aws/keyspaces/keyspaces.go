@@ -1,5 +1,5 @@
 // Package keyspaces provides an in-memory mock of Amazon Keyspaces, the managed
-// Apache Cassandra–compatible service. Keyspaces is control-plane only here, so
+// Apache Cassandra-compatible service. Keyspaces is control-plane only here, so
 // this mock models keyspaces, tables (schema/capacity/encryption/PITR/TTL),
 // user-defined types, tags, and provisioned auto-scaling settings.
 package keyspaces

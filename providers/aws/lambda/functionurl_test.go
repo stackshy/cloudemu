@@ -226,7 +226,7 @@ func TestFunctionURLConfigInvalidAuthTypeAndInvokeMode(t *testing.T) {
 }
 
 // TestFunctionURLConfigCOWIndependence confirms a caller mutating a returned
-// config's Cors slices never disturbs the stored state — the copy-on-write
+// config's Cors slices never disturbs the stored state, the copy-on-write
 // contract every funcData map field in this package follows.
 func TestFunctionURLConfigCOWIndependence(t *testing.T) {
 	m := newTestMock()

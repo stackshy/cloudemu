@@ -1,12 +1,12 @@
 // Package kmscrypto routes Secrets Manager and SSM SecureString values through
 // real KMS envelope encryption so their at-rest form is genuine ciphertext and
 // their KMS-failure paths are real: a disabled or deleted key makes a read fail
-// exactly as it does in AWS.
+// as it does in AWS.
 //
 // Encrypt asks KMS for a data key (wrapped under the addressed KMS key), seals
 // the value locally with AES-256-GCM under that data key, and returns a
 // self-describing blob carrying the wrapped key. Decrypt unwraps the data key
-// back through KMS — the step that surfaces a disabled/deleted key — then opens
+// back through KMS, the step that surfaces a disabled/deleted key, then opens
 // the AES-GCM ciphertext. KMS's own crypto (providers/aws/kms) is used as-is and
 // never modified.
 package kmscrypto
@@ -134,7 +134,7 @@ func (e *Envelope) Encrypt(ctx context.Context, keyRef string, plaintext []byte)
 
 // Decrypt opens an envelope blob produced by Encrypt. Unwrapping the data key
 // goes back through KMS, so a disabled or deleted key surfaces the KMS error
-// here — matching a real Secrets Manager / SSM read against a broken key.
+// here, matching a real Secrets Manager / SSM read against a broken key.
 func (e *Envelope) Decrypt(ctx context.Context, blob []byte) ([]byte, error) {
 	if len(blob) < headerSize || blob[0] != blobMagic {
 		return nil, errInvalidBlob()

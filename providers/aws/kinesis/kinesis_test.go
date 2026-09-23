@@ -362,8 +362,8 @@ func TestExpiredIteratorForMissingShard(t *testing.T) {
 }
 
 // TestConsumerARNCarriesCreationTimestamp verifies the enhanced-fan-out consumer
-// ARN ends with the creation timestamp (Unix seconds) as real Kinesis does — the
-// documented Consumer.ConsumerARN pattern requires a trailing ":[0-9]+" — and
+// ARN ends with the creation timestamp (Unix seconds) as real Kinesis does, the
+// documented Consumer.ConsumerARN pattern requires a trailing ":[0-9]+", and
 // that recreating a consumer with the same name at a later time yields a distinct
 // ARN.
 func TestConsumerARNCarriesCreationTimestamp(t *testing.T) {
@@ -414,7 +414,7 @@ func TestConsumerARNCarriesCreationTimestamp(t *testing.T) {
 }
 
 // TestConsumerARNUniqueSameSecond drives register/deregister/re-register cycles
-// for one consumer name under the REAL wall-clock — the realistic case a fake
+// for one consumer name under the REAL wall-clock, the realistic case a fake
 // clock advanced a full minute never exercises. Because cloudemu registers
 // instantly, many cycles land in the same wall-clock second; every ARN must still
 // be distinct (and each a valid AWS consumer ARN), so IAM/terraform/e2e loops that

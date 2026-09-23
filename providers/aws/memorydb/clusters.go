@@ -274,7 +274,7 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg mdbdriver.CreateClusterCon
 
 // reserveCluster validates cfg, builds the cluster with its synthetic endpoint,
 // stores it, links its ACL and multi-region membership, and emits the create
-// metrics/event — all under the provider lock. It returns a clone of the stored
+// metrics/event, all under the provider lock. It returns a clone of the stored
 // cluster.
 func (m *Mock) reserveCluster(cfg *mdbdriver.CreateClusterConfig) (*mdbdriver.Cluster, error) {
 	m.mu.Lock()

@@ -2,7 +2,7 @@
 // relationaldb/driver.RelationalDB so the same backend serves both the
 // portable API (relationaldb.DB) and the SDK-compat HTTP layer.
 //
-// Redshift's primary unit is the cluster — there is no separate "instance"
+// Redshift's primary unit is the cluster. There is no separate "instance"
 // resource. Instance-level operations therefore return InvalidArgument with a
 // hint to use the cluster ops; cluster lifecycle (Create/Modify/Delete/Reboot)
 // and cluster snapshot/restore are first-class. The mock emits CloudWatch-shaped
@@ -236,7 +236,7 @@ func (m *Mock) DescribeClusterParameters(_ context.Context, name string) ([]rdbd
 	return out, nil
 }
 
-// ResetClusterParameterGroup restores parameters to their engine defaults —
+// ResetClusterParameterGroup restores parameters to their engine defaults,
 // the named ones, or all of them when resetAll is set.
 func (m *Mock) ResetClusterParameterGroup(
 	_ context.Context, name string, paramNames []string, resetAll bool,
@@ -500,7 +500,7 @@ func (*Mock) StopInstance(_ context.Context, _ string) error {
 	return errInstanceOpsUnsupported
 }
 
-// RebootInstance delegates to RebootCluster — Redshift only has clusters, so a
+// RebootInstance delegates to RebootCluster, Redshift only has clusters, so a
 // "reboot instance" call against a Redshift cluster ID is interpreted as a
 // cluster reboot.
 func (m *Mock) RebootInstance(ctx context.Context, id string) error {
@@ -917,7 +917,7 @@ func (m *Mock) StopCluster(_ context.Context, id string) error {
 	return m.transitionCluster(id, rdbdriver.StateAvailable, rdbdriver.StateStopped, "stop", transitionIdempotent)
 }
 
-// RebootCluster cycles a cluster — emits running-value metrics and leaves it available.
+// RebootCluster cycles a cluster: emits running-value metrics and leaves it available.
 func (m *Mock) RebootCluster(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1030,7 +1030,7 @@ func (m *Mock) transitionCluster(id, from, to, verb string, mode transitionMode)
 	return nil
 }
 
-// CreateSnapshot is unsupported — Redshift only has cluster snapshots.
+// CreateSnapshot is unsupported: Redshift only has cluster snapshots.
 func (*Mock) CreateSnapshot(_ context.Context, _ rdbdriver.SnapshotConfig) (*rdbdriver.Snapshot, error) {
 	return nil, errInstanceOpsUnsupported
 }

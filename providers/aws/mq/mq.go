@@ -2,7 +2,7 @@
 // plane (managed message broker for ActiveMQ and RabbitMQ): brokers, their
 // broker users, configurations with immutable revisions, and resource tagging.
 //
-// The mock is control-plane only — it does NOT run an ActiveMQ or RabbitMQ
+// The mock is control-plane only. It does NOT run an ActiveMQ or RabbitMQ
 // engine. A broker is created immediately in the RUNNING state with a stable
 // brokerId (b-<uuid>), brokerArn, created timestamp and per-instance
 // consoleUrl/endpoints/ipAddress, so a round-tripped broker reflects exactly

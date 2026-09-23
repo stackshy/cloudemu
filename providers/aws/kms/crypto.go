@@ -72,7 +72,7 @@ func generateAsymmetric(spec string) (crypto.PrivateKey, error) {
 
 // canonicalContext renders the encryption context as deterministic AEAD
 // additional data. Each key and value is length-prefixed (not delimited by a
-// separator) so distinct contexts can never collide into the same AAD — e.g.
+// separator) so distinct contexts can never collide into the same AAD, e.g.
 // {"a=b":"c"} and {"a":"b=c"} produce different bytes, unlike a naive "k=v;"
 // join.
 func canonicalContext(ctx map[string]string) []byte {
@@ -250,7 +250,7 @@ func rsaAlgOrDefault(alg string) string {
 // emulator's own symmetric AES-GCM or RSA output) names its own key and
 // decrypts without a KeyId. Raw RSA-OAEP ciphertext produced offline from a
 // downloaded public key (see GetPublicKey) carries no envelope, so it is
-// decrypted via the asymmetric fallback using the explicit KeyId — matching
+// decrypted via the asymmetric fallback using the explicit KeyId, matching
 // real KMS, where asymmetric Decrypt requires the key identifier.
 func (m *Mock) Decrypt(_ context.Context, in driver.DecryptInput) (*driver.DecryptOutput, error) {
 	if out, matched, err := m.decryptWrapped(in); matched {

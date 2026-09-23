@@ -11,7 +11,7 @@ import (
 
 // TestSnapshotRoundTripLambda proves a snapshot/restore round-trip preserves a
 // function together with its published version (and that version's captured
-// config), an alias pointing at that version, and an event-source mapping — all
+// config), an alias pointing at that version, and an event-source mapping, all
 // under their original identities.
 func TestSnapshotRoundTripLambda(t *testing.T) {
 	ctx := context.Background()
@@ -105,9 +105,9 @@ func TestSnapshotRoundTripLambda(t *testing.T) {
 }
 
 // TestSnapshotRestoreLegacyFunctionURLConfig proves Restore migrates a
-// snapshot taken before Function URLs gained qualifier scoping — which
+// snapshot taken before Function URLs gained qualifier scoping, which
 // serialized the config under the singular "urlConfig" key instead of today's
-// per-qualifier "urlConfigs" map — so an old on-disk snapshot's Function URL
+// per-qualifier "urlConfigs" map, so an old on-disk snapshot's Function URL
 // config isn't silently dropped.
 func TestSnapshotRestoreLegacyFunctionURLConfig(t *testing.T) {
 	ctx := context.Background()
