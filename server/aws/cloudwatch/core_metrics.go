@@ -37,6 +37,12 @@ type listMetricsResult struct {
 }
 
 func (h *Handler) listMetricsCore(ctx context.Context, in listMetricsInput) (listMetricsResult, error) {
+	// ListMetrics documents only InvalidParameterValue, not InvalidNextToken.
+	offset, err := offsetFromToken(in.NextToken, errInvalidParameterValue)
+	if err != nil {
+		return listMetricsResult{}, err
+	}
+
 	var rows []mondriver.MetricIdentifier
 
 	// An exact AWS/IPAM request returns only the synthetic IPAM metrics.
@@ -60,7 +66,7 @@ func (h *Handler) listMetricsCore(ctx context.Context, in listMetricsInput) (lis
 		return metricRowKey(matched[i]) < metricRowKey(matched[j])
 	})
 
-	from, to, next := pageWindow(len(matched), decodeOffsetToken(in.NextToken), listMetricsPageSize)
+	from, to, next := pageWindow(len(matched), offset, listMetricsPageSize)
 
 	res := listMetricsResult{Metrics: matched[from:to]}
 	if next > 0 {

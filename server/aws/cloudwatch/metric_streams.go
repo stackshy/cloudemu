@@ -205,7 +205,7 @@ func (h *Handler) listMetricStreams(w http.ResponseWriter, r *http.Request, body
 		size = in.MaxResults
 	}
 
-	from, to, next := pageWindow(len(entries), decodeOffsetToken(in.NextToken), size)
+	from, to, next := pageWindow(len(entries), lenientOffset(in.NextToken), size)
 
 	rows := make([]metricStreamEntryCBR, 0, to-from)
 

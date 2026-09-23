@@ -1,8 +1,8 @@
 package cloudwatch
 
-// This file implements the CloudWatch read/tag operations added for wire
-// fidelity: GetMetricData (the modern primary read API), DescribeAlarmHistory,
-// DescribeAlarmsForMetric, EnableAlarmActions/DisableAlarmActions, and the
+// This file holds the CBOR codecs for GetMetricData and
+// DescribeAlarmsForMetric (their logic is in core_metric_data.go), plus
+// DescribeAlarmHistory, EnableAlarmActions/DisableAlarmActions, and the
 // alarm tagging operations. The alarm-action and tag operations use AWS-local
 // optional interfaces so the shared Monitoring interface is unchanged.
 
@@ -53,18 +53,6 @@ type metricDataQueryCBR struct {
 	ReturnData *bool          `cbor:"ReturnData,omitempty"`
 }
 
-type getMetricDataInput struct {
-	MetricDataQueries []metricDataQueryCBR `cbor:"MetricDataQueries"`
-	StartTime         *time.Time           `cbor:"StartTime,omitempty"`
-	EndTime           *time.Time           `cbor:"EndTime,omitempty"`
-	MaxDatapoints     int                  `cbor:"MaxDatapoints,omitempty"`
-	NextToken         string               `cbor:"NextToken,omitempty"`
-}
-
-// defaultMaxDatapoints is the AWS GetMetricData datapoint budget per page when a
-// caller omits MaxDatapoints; results past it spill onto a NextToken page.
-const defaultMaxDatapoints = 100800
-
 type metricDataResultCBR struct {
 	ID         string      `cbor:"Id"`
 	Label      string      `cbor:"Label,omitempty"`
@@ -78,8 +66,7 @@ type getMetricDataOutput struct {
 	NextToken         string                `cbor:"NextToken,omitempty"`
 }
 
-// getMetricData implements the modern GetMetricData read API used by SDK v2,
-// dashboards, and Grafana.
+// getMetricData is the CBOR codec for GetMetricData.
 func (h *Handler) getMetricData(w http.ResponseWriter, r *http.Request, body []byte) {
 	var in getMetricDataInput
 	if err := cbor.Unmarshal(body, &in); err != nil {
@@ -87,112 +74,25 @@ func (h *Handler) getMetricData(w http.ResponseWriter, r *http.Request, body []b
 		return
 	}
 
-	start := timeOrZero(in.StartTime)
-	end := timeOrZero(in.EndTime)
-
-	eval := newMathEvaluator(r.Context(), h.monitoring, in.MetricDataQueries, start, end)
-
-	out := make([]metricDataResultCBR, 0, len(in.MetricDataQueries))
-
-	for i := range in.MetricDataQueries {
-		q := in.MetricDataQueries[i]
-
-		series, err := eval.resolve(q.ID)
-		if err != nil {
-			writeDriverErr(w, err)
-			return
-		}
-
-		// A query with ReturnData explicitly false is an input to other queries
-		// only (e.g. a raw metric feeding a math expression) and is not emitted
-		// as a data row. When omitted, ReturnData defaults to true.
-		if q.ReturnData != nil && !*q.ReturnData {
-			continue
-		}
-
-		out = append(out, buildMetricDataResult(q, series))
+	res, err := h.getMetricDataCore(r.Context(), &in)
+	if err != nil {
+		writeDriverErr(w, err)
+		return
 	}
 
-	rows, next := pageMetricData(out, &in)
+	rows := make([]metricDataResultCBR, 0, len(res.Rows))
 
-	resp := getMetricDataOutput{MetricDataResults: rows}
-	if next != "" {
-		resp.NextToken = next
+	for i := range res.Rows {
+		row := &res.Rows[i]
+		rows = append(rows, metricDataResultCBR{
+			ID: row.ID, Label: row.Label, Timestamps: row.Timestamps, Values: row.Values, StatusCode: row.StatusCode,
+		})
 	}
 
-	writeCBORResponse(w, resp)
+	writeCBORResponse(w, getMetricDataOutput{MetricDataResults: rows, NextToken: res.NextToken})
 }
 
-// pageMetricData returns the leading result rows that fit the MaxDatapoints
-// budget from the NextToken offset, plus the token for the next page (empty on
-// the last row). At least one row is returned so a row larger than the budget
-// still makes progress instead of stalling the paginator.
-func pageMetricData(rows []metricDataResultCBR, in *getMetricDataInput) (page []metricDataResultCBR, next string) {
-	budget := in.MaxDatapoints
-	if budget <= 0 {
-		budget = defaultMaxDatapoints
-	}
-
-	start := decodeOffsetToken(in.NextToken)
-	if start > len(rows) {
-		start = len(rows)
-	}
-
-	used, end := 0, start
-	for end < len(rows) {
-		n := len(rows[end].Values)
-		if end > start && used+n > budget {
-			break
-		}
-
-		used += n
-		end++
-	}
-
-	if end < len(rows) {
-		return rows[start:end], encodeOffsetToken(end)
-	}
-
-	return rows[start:end], ""
-}
-
-func buildMetricDataResult(q metricDataQueryCBR, series mathSeries) metricDataResultCBR {
-	row := metricDataResultCBR{ID: q.ID, Label: metricDataLabel(q), StatusCode: statusCodeComplete}
-
-	row.Timestamps = make([]time.Time, len(series.timestamps))
-	for i := range series.timestamps {
-		row.Timestamps[i] = series.timestamps[i].UTC()
-	}
-
-	row.Values = series.values
-
-	return row
-}
-
-// metricDataLabel resolves the response label for a query: the caller-supplied
-// Label, else the metric name for a MetricStat query, else the query Id.
-func metricDataLabel(q metricDataQueryCBR) string {
-	if q.Label != "" {
-		return q.Label
-	}
-
-	if q.MetricStat != nil {
-		return q.MetricStat.Metric.MetricName
-	}
-
-	return q.ID
-}
-
-type describeAlarmsForMetricInput struct {
-	Namespace  string         `cbor:"Namespace"`
-	MetricName string         `cbor:"MetricName"`
-	Dimensions []dimensionCBR `cbor:"Dimensions,omitempty"`
-	Statistic  string         `cbor:"Statistic,omitempty"`
-	Period     int            `cbor:"Period,omitempty"`
-}
-
-// describeAlarmsForMetric returns the alarms configured against a specific
-// metric, filtered server-side by namespace, metric name, and dimensions.
+// describeAlarmsForMetric is the CBOR codec for DescribeAlarmsForMetric.
 func (h *Handler) describeAlarmsForMetric(w http.ResponseWriter, r *http.Request, body []byte) {
 	var in describeAlarmsForMetricInput
 	if err := cbor.Unmarshal(body, &in); err != nil {
@@ -200,54 +100,18 @@ func (h *Handler) describeAlarmsForMetric(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	alarms, err := h.monitoring.DescribeAlarms(r.Context(), nil)
+	alarms, err := h.describeAlarmsForMetricCore(r.Context(), &in)
 	if err != nil {
 		writeDriverErr(w, err)
 		return
 	}
 
-	wantDims := toDimensionMap(in.Dimensions)
 	out := make([]metricAlarmCBR, 0, len(alarms))
-
 	for i := range alarms {
-		if alarmMatchesMetric(&alarms[i], &in, wantDims) {
-			out = append(out, toMetricAlarmCBR(&alarms[i]))
-		}
+		out = append(out, toMetricAlarmCBR(&alarms[i]))
 	}
 
 	writeCBORResponse(w, describeAlarmsOutput{MetricAlarms: out})
-}
-
-// alarmMatchesMetric reports whether an alarm targets the metric described by a
-// DescribeAlarmsForMetric request.
-func alarmMatchesMetric(a *mondriver.AlarmInfo, in *describeAlarmsForMetricInput, wantDims map[string]string) bool {
-	if a.Namespace != in.Namespace || a.MetricName != in.MetricName {
-		return false
-	}
-
-	if in.Period != 0 && a.Period != in.Period {
-		return false
-	}
-
-	if in.Statistic != "" && a.Statistic != in.Statistic {
-		return false
-	}
-
-	return dimensionsEqual(a.Dimensions, wantDims)
-}
-
-func dimensionsEqual(a, b map[string]string) bool {
-	if len(a) != len(b) {
-		return false
-	}
-
-	for k, v := range a {
-		if b[k] != v {
-			return false
-		}
-	}
-
-	return true
 }
 
 type describeAlarmHistoryInput struct {
@@ -343,7 +207,7 @@ func pageAlarmHistory(items []alarmHistoryItemCBR, in *describeAlarmHistoryInput
 		size = alarmHistoryPageSize
 	}
 
-	from, to, nextOff := pageWindow(len(items), decodeOffsetToken(in.NextToken), size)
+	from, to, nextOff := pageWindow(len(items), lenientOffset(in.NextToken), size)
 	if nextOff > 0 {
 		return items[from:to], encodeOffsetToken(nextOff)
 	}

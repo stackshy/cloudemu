@@ -33,6 +33,13 @@ type cwWire struct {
 	put         func(t *testing.T, in *awscw.PutMetricDataInput)
 	listMetrics func(t *testing.T, in *awscw.ListMetricsInput) *awscw.ListMetricsOutput
 	getStats    func(t *testing.T, in *awscw.GetMetricStatisticsInput) *awscw.GetMetricStatisticsOutput
+	putAlarm    func(t *testing.T, in *awscw.PutMetricAlarmInput)
+
+	// These return the error code, or "" on success.
+	getMetricData   func(t *testing.T, in *awscw.GetMetricDataInput) (*awscw.GetMetricDataOutput, string)
+	alarmsForMetric func(t *testing.T, in *awscw.DescribeAlarmsForMetricInput) (*awscw.DescribeAlarmsForMetricOutput, string)
+	listMetricsCode func(t *testing.T, in *awscw.ListMetricsInput) string
+	alarmsCode      func(t *testing.T, in *awscw.DescribeAlarmsInput) string
 }
 
 type cwProtocol struct {
@@ -107,6 +114,41 @@ func newCBORWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 
 			return out
 		},
+		putAlarm: func(t *testing.T, in *awscw.PutMetricAlarmInput) {
+			t.Helper()
+
+			if _, err := c.PutMetricAlarm(ctx, in); err != nil {
+				t.Fatalf("PutMetricAlarm: %v", err)
+			}
+		},
+		getMetricData: func(t *testing.T, in *awscw.GetMetricDataInput) (*awscw.GetMetricDataOutput, string) {
+			t.Helper()
+
+			out, err := c.GetMetricData(ctx, in)
+
+			return out, sdkErrCode(t, err)
+		},
+		alarmsForMetric: func(t *testing.T, in *awscw.DescribeAlarmsForMetricInput) (*awscw.DescribeAlarmsForMetricOutput, string) {
+			t.Helper()
+
+			out, err := c.DescribeAlarmsForMetric(ctx, in)
+
+			return out, sdkErrCode(t, err)
+		},
+		listMetricsCode: func(t *testing.T, in *awscw.ListMetricsInput) string {
+			t.Helper()
+
+			_, err := c.ListMetrics(ctx, in)
+
+			return sdkErrCode(t, err)
+		},
+		alarmsCode: func(t *testing.T, in *awscw.DescribeAlarmsInput) string {
+			t.Helper()
+
+			_, err := c.DescribeAlarms(ctx, in)
+
+			return sdkErrCode(t, err)
+		},
 	}
 }
 
@@ -115,7 +157,8 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 
 	p, ts := newWireServer(t, ipam)
 
-	post := func(t *testing.T, form url.Values, out any) {
+	// postCode returns the error code, or "" after decoding a 200 into out.
+	postCode := func(t *testing.T, form url.Values, out any) string {
 		t.Helper()
 
 		req, _ := http.NewRequest(http.MethodPost, ts.URL+"/", strings.NewReader(form.Encode()))
@@ -130,13 +173,32 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 
 		body, _ := io.ReadAll(resp.Body)
 		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("%s: status %d body %s", form.Get("Action"), resp.StatusCode, body)
+			var e struct {
+				Code string `xml:"Error>Code"`
+			}
+
+			_ = xml.Unmarshal(body, &e)
+			if e.Code == "" {
+				t.Fatalf("%s: status %d body %s", form.Get("Action"), resp.StatusCode, body)
+			}
+
+			return e.Code
 		}
 
 		if out != nil {
 			if err := xml.Unmarshal(body, out); err != nil {
 				t.Fatalf("%s: decode %v body %s", form.Get("Action"), err, body)
 			}
+		}
+
+		return ""
+	}
+
+	post := func(t *testing.T, form url.Values, out any) {
+		t.Helper()
+
+		if code := postCode(t, form, out); code != "" {
+			t.Fatalf("%s: error %s", form.Get("Action"), code)
 		}
 	}
 
@@ -161,6 +223,41 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 			post(t, getStatsForm(in), &x)
 
 			return x.toSDK()
+		},
+		putAlarm: func(t *testing.T, in *awscw.PutMetricAlarmInput) {
+			t.Helper()
+			post(t, putAlarmForm(in), nil)
+		},
+		getMetricData: func(t *testing.T, in *awscw.GetMetricDataInput) (*awscw.GetMetricDataOutput, string) {
+			t.Helper()
+
+			var x getMetricDataXML
+			code := postCode(t, getMetricDataForm(in), &x)
+
+			return x.toSDK(), code
+		},
+		alarmsForMetric: func(t *testing.T, in *awscw.DescribeAlarmsForMetricInput) (*awscw.DescribeAlarmsForMetricOutput, string) {
+			t.Helper()
+
+			var x alarmsForMetricXML
+			code := postCode(t, alarmsForMetricForm(in), &x)
+
+			return x.toSDK(), code
+		},
+		listMetricsCode: func(t *testing.T, in *awscw.ListMetricsInput) string {
+			t.Helper()
+
+			return postCode(t, listMetricsForm(in), nil)
+		},
+		alarmsCode: func(t *testing.T, in *awscw.DescribeAlarmsInput) string {
+			t.Helper()
+
+			form := url.Values{"Action": {"DescribeAlarms"}}
+			if in.NextToken != nil {
+				form.Set("NextToken", *in.NextToken)
+			}
+
+			return postCode(t, form, nil)
 		},
 	}
 }

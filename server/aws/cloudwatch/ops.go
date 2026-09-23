@@ -361,7 +361,12 @@ func (h *Handler) describeAlarms(w http.ResponseWriter, r *http.Request, body []
 		size = maxAlarmPageSize
 	}
 
-	offset := decodeOffsetToken(in.NextToken)
+	offset, err := offsetFromToken(in.NextToken, errInvalidNextToken)
+	if err != nil {
+		writeDriverErr(w, err)
+		return
+	}
+
 	from, to, next := pageWindow(len(matched), offset, size)
 
 	resp := describeAlarmsOutput{MetricAlarms: matched[from:to]}

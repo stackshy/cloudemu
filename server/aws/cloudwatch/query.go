@@ -57,6 +57,10 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
 		h.queryListMetrics(w, r)
 	case opGetMetricStatistics:
 		h.queryGetMetricStatistics(w, r)
+	case opGetMetricData:
+		h.queryGetMetricData(w, r)
+	case opDescribeAlarmsForMetric:
+		h.queryDescribeAlarmsForMetric(w, r)
 	case opPutMetricAlarm:
 		h.queryPutMetricAlarm(w, r)
 	case opPutCompositeAlarm:
@@ -297,7 +301,12 @@ func (h *Handler) queryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 		size = v
 	}
 
-	offset := decodeOffsetToken(r.Form.Get("NextToken"))
+	offset, err := offsetFromToken(r.Form.Get("NextToken"), errInvalidNextToken)
+	if err != nil {
+		writeQueryDriverErr(w, err)
+		return
+	}
+
 	from, to, next := pageWindow(len(members), offset, size)
 
 	result := describeAlarmsResultXML{MetricAlarms: members[from:to]}
@@ -706,6 +715,11 @@ func writeQueryError(w http.ResponseWriter, status int, code, msg string) {
 }
 
 func writeQueryDriverErr(w http.ResponseWriter, err error) {
+	if we, ok := asWireError(err); ok {
+		writeQueryError(w, http.StatusBadRequest, we.code, we.msg)
+		return
+	}
+
 	code, status := "InternalFailure", http.StatusInternalServerError
 
 	switch {

@@ -136,7 +136,7 @@ func (h *Handler) listDashboards(w http.ResponseWriter, r *http.Request, body []
 		return
 	}
 
-	from, to, next := pageWindow(len(entries), decodeOffsetToken(in.NextToken), dashboardPageSize)
+	from, to, next := pageWindow(len(entries), lenientOffset(in.NextToken), dashboardPageSize)
 
 	rows := make([]dashboardEntryCBR, 0, to-from)
 	for _, e := range entries[from:to] {

@@ -61,7 +61,7 @@ func (h *Handler) queryListDashboards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	from, to, next := pageWindow(len(entries), decodeOffsetToken(r.Form.Get("NextToken")), dashboardPageSize)
+	from, to, next := pageWindow(len(entries), lenientOffset(r.Form.Get("NextToken")), dashboardPageSize)
 
 	rows := make([]dashboardEntryXML, 0, to-from)
 	for _, e := range entries[from:to] {
