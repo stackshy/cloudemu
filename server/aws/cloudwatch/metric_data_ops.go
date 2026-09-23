@@ -165,7 +165,11 @@ func (h *Handler) describeAlarmHistory(w http.ResponseWriter, r *http.Request, b
 		return
 	}
 
-	items, next := pageAlarmHistory(filterAlarmHistory(entries, &in), &in)
+	items, next, err := pageAlarmHistory(filterAlarmHistory(entries, &in), &in)
+	if err != nil {
+		writeDriverErr(w, err)
+		return
+	}
 
 	resp := describeAlarmHistoryOutput{AlarmHistoryItems: items}
 	if next != "" {
@@ -200,19 +204,25 @@ func filterAlarmHistory(entries []mondriver.AlarmHistoryEntry, in *describeAlarm
 
 // pageAlarmHistory returns the requested page of history items and the NextToken
 // for the following page (empty on the last page). Paging by offset keeps every
-// entry retrievable instead of dropping the tail past MaxRecords.
-func pageAlarmHistory(items []alarmHistoryItemCBR, in *describeAlarmHistoryInput) (page []alarmHistoryItemCBR, next string) {
+// entry retrievable instead of dropping the tail past MaxRecords. A bad
+// NextToken returns InvalidNextToken, as the API reference documents.
+func pageAlarmHistory(items []alarmHistoryItemCBR, in *describeAlarmHistoryInput) ([]alarmHistoryItemCBR, string, error) {
 	size := in.MaxRecords
 	if size <= 0 {
 		size = alarmHistoryPageSize
 	}
 
-	from, to, nextOff := pageWindow(len(items), lenientOffset(in.NextToken), size)
-	if nextOff > 0 {
-		return items[from:to], encodeOffsetToken(nextOff)
+	offset, err := offsetFromToken(in.NextToken, errInvalidNextToken)
+	if err != nil {
+		return nil, "", err
 	}
 
-	return items[from:to], ""
+	from, to, nextOff := pageWindow(len(items), offset, size)
+	if nextOff > 0 {
+		return items[from:to], encodeOffsetToken(nextOff), nil
+	}
+
+	return items[from:to], "", nil
 }
 
 // historyEntryMatches reports whether an entry passes the HistoryItemType and

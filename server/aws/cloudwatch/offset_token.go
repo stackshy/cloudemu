@@ -57,11 +57,3 @@ func pageWindow(total, start, size int) (from, to, next int) {
 
 	return start, end, end
 }
-
-// lenientOffset decodes a NextToken and reads a bad token as offset 0. Only
-// the ops that do not validate their token yet use it.
-func lenientOffset(tok string) int {
-	n, _ := decodeOffsetToken(tok)
-
-	return n
-}

@@ -61,7 +61,14 @@ func (h *Handler) queryListDashboards(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	from, to, next := pageWindow(len(entries), lenientOffset(r.Form.Get("NextToken")), dashboardPageSize)
+	// ListDashboards documents only InvalidParameterValue, not InvalidNextToken.
+	offset, err := offsetFromToken(r.Form.Get("NextToken"), errInvalidParameterValue)
+	if err != nil {
+		writeQueryDriverErr(w, err)
+		return
+	}
+
+	from, to, next := pageWindow(len(entries), offset, dashboardPageSize)
 
 	rows := make([]dashboardEntryXML, 0, to-from)
 	for _, e := range entries[from:to] {
@@ -118,7 +125,11 @@ func (h *Handler) queryDescribeAlarmHistory(w http.ResponseWriter, r *http.Reque
 		return
 	}
 
-	items, next := pageAlarmHistory(filterAlarmHistory(entries, &in), &in)
+	items, next, err := pageAlarmHistory(filterAlarmHistory(entries, &in), &in)
+	if err != nil {
+		writeQueryDriverErr(w, err)
+		return
+	}
 
 	members := make([]alarmHistoryMemberXML, 0, len(items))
 	for i := range items {

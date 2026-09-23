@@ -40,6 +40,9 @@ type cwWire struct {
 	alarmsForMetric func(t *testing.T, in *awscw.DescribeAlarmsForMetricInput) (*awscw.DescribeAlarmsForMetricOutput, string)
 	listMetricsCode func(t *testing.T, in *awscw.ListMetricsInput) string
 	alarmsCode      func(t *testing.T, in *awscw.DescribeAlarmsInput) string
+
+	// tokenCode calls a paged list op with only a NextToken.
+	tokenCode func(t *testing.T, op, token string) string
 }
 
 type cwProtocol struct {
@@ -146,6 +149,24 @@ func newCBORWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 			t.Helper()
 
 			_, err := c.DescribeAlarms(ctx, in)
+
+			return sdkErrCode(t, err)
+		},
+		tokenCode: func(t *testing.T, op, token string) string {
+			t.Helper()
+
+			var err error
+
+			switch op {
+			case "DescribeAlarmHistory":
+				_, err = c.DescribeAlarmHistory(ctx, &awscw.DescribeAlarmHistoryInput{NextToken: aws.String(token)})
+			case "ListMetricStreams":
+				_, err = c.ListMetricStreams(ctx, &awscw.ListMetricStreamsInput{NextToken: aws.String(token)})
+			case "ListDashboards":
+				_, err = c.ListDashboards(ctx, &awscw.ListDashboardsInput{NextToken: aws.String(token)})
+			default:
+				t.Fatalf("tokenCode: unknown op %s", op)
+			}
 
 			return sdkErrCode(t, err)
 		},
@@ -258,6 +279,11 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 			}
 
 			return postCode(t, form, nil)
+		},
+		tokenCode: func(t *testing.T, op, token string) string {
+			t.Helper()
+
+			return postCode(t, url.Values{"Action": {op}, "NextToken": {token}}, nil)
 		},
 	}
 }

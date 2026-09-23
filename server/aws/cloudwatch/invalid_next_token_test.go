@@ -11,8 +11,8 @@ import (
 
 // TestInvalidNextToken: a token the server did not issue is rejected. It was
 // read as offset 0 before, so a bad token silently restarted paging.
-// GetMetricData and DescribeAlarms document InvalidNextToken. ListMetrics
-// documents only InvalidParameterValue.
+// Each op returns the code its API reference documents: InvalidNextToken,
+// or InvalidParameterValue for ListMetrics and ListDashboards.
 func TestInvalidNextToken(t *testing.T) {
 	const bogus = "not-a-token"
 
@@ -52,6 +52,9 @@ func TestInvalidNextToken(t *testing.T) {
 				return w.listMetricsCode(t, &awscw.ListMetricsInput{NextToken: aws.String(bogus)})
 			},
 		},
+		{name: "DescribeAlarmHistory", want: "InvalidNextToken", call: tokenCall("DescribeAlarmHistory", bogus)},
+		{name: "ListMetricStreams", want: "InvalidNextToken", call: tokenCall("ListMetricStreams", bogus)},
+		{name: "ListDashboards", want: "InvalidParameterValue", call: tokenCall("ListDashboards", bogus)},
 	}
 
 	for _, p := range cwProtocols() {
@@ -62,5 +65,12 @@ func TestInvalidNextToken(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func tokenCall(op, token string) func(t *testing.T, w cwWire) string {
+	return func(t *testing.T, w cwWire) string {
+		t.Helper()
+		return w.tokenCode(t, op, token)
 	}
 }
