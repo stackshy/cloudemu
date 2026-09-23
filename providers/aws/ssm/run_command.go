@@ -118,7 +118,7 @@ func (m *Mock) resolveTargets(ctx context.Context, targets []driver.CommandTarge
 // "tag:<name>" (passes through unchanged). Other documented keys such as
 // resource-groups:Name / resource-groups:ResourceTypeFilters, and the bare
 // "tag-key" form, are reported unsupported so the caller can decline to forward
-// them, the EC2 matcher would otherwise treat them as an unrestricted match.
+// them. The EC2 matcher would otherwise treat them as an unrestricted match.
 func targetFilterName(key string) (string, bool) {
 	switch {
 	case key == "InstanceIds":

@@ -14,7 +14,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // sesv2Snapshot is the full serialized state of the AWS SES v2 mock. Five stores
 // hold unexported value types whose only stateful field is a driver value behind
-// a per-record mutex, identityData, configSetData, and templateData wrap a
+// a per-record mutex; identityData, configSetData, and templateData wrap a
 // single driver struct, while contactListData and tenantData additionally own a
 // nested memstore of fully-exported entries, so all five are promoted to
 // exported snapshot forms keyed by resource name (the nested stores round-trip

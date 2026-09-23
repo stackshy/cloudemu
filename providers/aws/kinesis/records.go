@@ -495,7 +495,7 @@ type listShardsToken struct {
 }
 
 // filter reconstructs the ShardFilter a paginating token must keep applying.
-// Full-set and AFTER_SHARD_ID filters aren't persisted, the AfterShard cursor
+// Full-set and AFTER_SHARD_ID filters aren't persisted. The AfterShard cursor
 // already captures them, so only the state-narrowing types come back here.
 func (t listShardsToken) filter() *driver.ShardFilter {
 	if t.FilterType == "" {

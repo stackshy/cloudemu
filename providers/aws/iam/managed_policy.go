@@ -16,7 +16,7 @@ const awsManagedPolicyPrefix = "arn:aws:iam::aws:policy/"
 //
 // AWS publishes a finite, fixed set, and an ARN outside it is NoSuchEntity in
 // a real account. Honoring any well-formed ARN would accept typos and
-// invented names, the emulator would happily attach
+// invented names. The emulator would happily attach
 // AmazonEKSClusterPolicyy, so unknown names are rejected. That makes a
 // missing entry a loud, one-line fix here rather than a silent divergence
 // from the account the caller will really run against.

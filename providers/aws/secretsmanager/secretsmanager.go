@@ -493,7 +493,7 @@ func (m *Mock) PutSecretValueStaged(
 
 // reusedTokenVersion enforces ClientRequestToken idempotency: same token + same
 // content returns the existing version unchanged; same token + different content
-// is ResourceExistsException. The comparison is on plaintext, the stored value
+// is ResourceExistsException. The comparison is on plaintext. The stored value
 // is ciphertext whose bytes differ per write even for identical content.
 func (m *Mock) reusedTokenVersion(
 	ctx context.Context, existing *driver.SecretVersion, value []byte, token string,

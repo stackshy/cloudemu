@@ -170,7 +170,7 @@ func TestObjectLockOverwriteBlocked(t *testing.T) {
 
 // TestObjectLockTopLevelDeleteBlockedUnversioned covers the WORM guard on a
 // top-level (no versionId) delete of an in-place object: it must not destroy a
-// COMPLIANCE-locked or legal-held object's bytes. (Defense-in-depth, real S3
+// COMPLIANCE-locked or legal-held object's bytes. (Defense-in-depth: real S3
 // cannot reach this state, so the lock is crafted white-box.)
 func TestObjectLockTopLevelDeleteBlockedUnversioned(t *testing.T) {
 	m, fc := newLockMock()

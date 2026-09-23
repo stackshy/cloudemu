@@ -1524,7 +1524,7 @@ func (m *Mock) DeregisterTargets(_ context.Context, targetGroupARN string, targe
 
 		// No exact (ID, Port) match. Per the DeregisterTargets docs, a port
 		// is only required when the target was registered with a port
-		// override; a caller that omits Port (t.Port == 0, the common case,
+		// override; a caller that omits Port (t.Port == 0, the common case:
 		// RegisterTargets docs Example 1 registers and deregisters by ID
 		// alone) still identifies a target unambiguously as long as that ID
 		// is registered under exactly one port. Deregistering an unknown

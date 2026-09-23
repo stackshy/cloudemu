@@ -87,7 +87,7 @@ func TestDeleteDBSubnetGroup_SucceedsOnceEmpty(t *testing.T) {
 }
 
 // TestDeleteDBSubnetGroup_UnrelatedInstanceDoesNotBlock guards against the
-// guard being too broad, an instance in a different group is not a reason to
+// guard being too broad. An instance in a different group is not a reason to
 // refuse.
 func TestDeleteDBSubnetGroup_UnrelatedInstanceDoesNotBlock(t *testing.T) {
 	t.Parallel()

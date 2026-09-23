@@ -177,7 +177,7 @@ func TestInvokeFunction(t *testing.T) {
 	t.Run("no handler echoes a success stub", func(t *testing.T) {
 		// The emulator can't run an uploaded zip, so with no Go handler it
 		// returns a 200 stub echoing the payload rather than a FunctionError
-		// (issue #319), invoke stays testable.
+		// (issue #319); invoke stays testable.
 		out, err := m.Invoke(ctx, driver.InvokeInput{
 			FunctionName: "my-func",
 			Payload:      []byte(`{"k":1}`),
@@ -539,7 +539,7 @@ func TestAliasWeightedRoutingRejectsLatest(t *testing.T) {
 
 // TestAliasWeightedRoutingRejectsOutOfBoundsWeights proves each additional
 // version weight must lie in [0.0, 1.0] and the additional weights must sum to
-// at most 1.0, real Lambda rejects violations as InvalidParameterValueException.
+// at most 1.0. Real Lambda rejects violations as InvalidParameterValueException.
 func TestAliasWeightedRoutingRejectsOutOfBoundsWeights(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

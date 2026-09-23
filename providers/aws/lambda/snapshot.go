@@ -270,7 +270,7 @@ func (m *Mock) restoreFunc(name string, fs *funcSnapshot) funcData {
 
 // legacyURLConfigs returns fs.URLConfigs, migrating a pre-qualifier-scoping
 // snapshot's legacy singular "urlConfig" field (fs.URLConfig) into the new
-// per-qualifier map when the snapshot predates it, otherwise a Function URL
+// per-qualifier map when the snapshot predates it; otherwise a Function URL
 // config in an old on-disk snapshot would silently vanish on restore, since
 // the new map field isn't present in that JSON.
 func legacyURLConfigs(fs *funcSnapshot) map[string]*driver.FunctionURLConfig {

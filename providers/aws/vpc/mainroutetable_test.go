@@ -85,7 +85,7 @@ func TestMainRouteTableCannotBeDeletedDirectly(t *testing.T) {
 	}
 }
 
-// It is implicit in the VPC, so it goes with the VPC, otherwise it would
+// It is implicit in the VPC, so it goes with the VPC; otherwise it would
 // strand a row nothing can address.
 func TestMainRouteTableDiesWithVPC(t *testing.T) {
 	ctx := context.Background()
@@ -170,7 +170,7 @@ func TestDeleteRefusedWhileAnInterfaceIsAttached(t *testing.T) {
 		t.Error("vpc delete should be refused while an interface is attached")
 	}
 
-	// Draining releases the interface, and the deletes then succeed, the
+	// Draining releases the interface, and the deletes then succeed. The
 	// refusal has to be recoverable or it is just a wall.
 	enis, err := m.DescribeNetworkInterfaces(ctx, nil)
 	if err != nil {

@@ -72,7 +72,7 @@ func (m *Mock) ChangeResourceTags(_ context.Context, resourceID string, add map[
 // syncZoneTags mirrors a hosted zone's authoritative tag store (tagsByID, the
 // target of ChangeTagsForResource / the Resource Groups Tagging API) onto the
 // zone's own Tags field, which discovery (ListZones) reads. Without this the
-// two stores drift, a tag applied via the tagging API would be invisible to
+// two stores drift. A tag applied via the tagging API would be invisible to
 // Resource Explorer / GetResources. A no-op when resourceID is not a zone (the
 // same tag API also addresses health checks). Callers hold m.tagsMu.
 func (m *Mock) syncZoneTags(resourceID string) {

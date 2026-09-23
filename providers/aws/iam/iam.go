@@ -659,7 +659,7 @@ func (m *Mock) attachPolicy(
 		return errors.Newf(errors.NotFound, "%s %q not found", entityType, principalName)
 	}
 
-	// AWS-managed policies are never created by the caller, they already
+	// AWS-managed policies are never created by the caller. They already
 	// exist in every account, so attaching one must not require a preceding
 	// CreatePolicy.
 	if !m.ensureAWSManagedPolicy(policyARN) {

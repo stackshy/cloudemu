@@ -442,7 +442,7 @@ func (m *Mock) ModifyTrafficMirrorSession(
 		return nil, errors.Newf(errors.NotFound, "traffic mirror session %q not found", id)
 	}
 
-	// Re-validate a re-pointed target/filter, matching Create, otherwise a
+	// Re-validate a re-pointed target/filter, matching Create; otherwise a
 	// Modify could bind the session to a nonexistent target or filter.
 	if cfg.TrafficMirrorTargetID != "" && !m.trafficMirrorTargets.Has(cfg.TrafficMirrorTargetID) {
 		return nil, errors.Newf(errors.NotFound,

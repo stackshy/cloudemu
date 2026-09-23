@@ -148,7 +148,7 @@ func TestDescribeVPCs(t *testing.T) {
 
 	t.Run("nonexistent ID", func(t *testing.T) {
 		// Real EC2 returns InvalidVpcID.NotFound for an explicit missing ID,
-		// not an empty success, existence checks and Terraform drift rely on it.
+		// not an empty success. Existence checks and Terraform drift rely on it.
 		_, err := m.DescribeVPCs(ctx, []string{"vpc-nope"})
 		assertError(t, err, true)
 	})
@@ -1058,7 +1058,7 @@ func TestCreateNetworkACL(t *testing.T) {
 		assertEqual(t, v.ID, acl.VPCID)
 		assertEqual(t, false, acl.IsDefault)
 		// A fresh custom ACL carries only the two unmodifiable catch-all '*'
-		// DENY entries (rule 32767, ingress + egress), it denies all traffic
+		// DENY entries (rule 32767, ingress + egress). It denies all traffic
 		// until the caller adds a numbered allow rule, matching real EC2.
 		assertEqual(t, 2, len(acl.Rules))
 		for _, r := range acl.Rules {

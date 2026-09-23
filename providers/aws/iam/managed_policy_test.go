@@ -73,7 +73,7 @@ func TestAttachCataloguedAWSManagedPolicies(t *testing.T) {
 }
 
 // AWS publishes a fixed set, so a name outside it is NoSuchEntity in a real
-// account. Accepting anything well-formed would let a typo through, the
+// account. Accepting anything well-formed would let a typo through. The
 // emulator would attach AmazonEKSClusterPolicyy and the caller would only find
 // out in production.
 func TestAttachUnknownAWSManagedPolicyFails(t *testing.T) {
@@ -158,7 +158,7 @@ func TestCheckPermissionHonorsManagedPolicyDocument(t *testing.T) {
 	}
 }
 
-// Every catalogued name must have a document that actually parses, a
+// Every catalogued name must have a document that actually parses. A
 // catalog entry without one would materialize as an empty-Statement policy
 // again, silently reintroducing the bug this change fixes, and a malformed
 // document would silently evaluate to no grants (evaluatePolicy discards an

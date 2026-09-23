@@ -976,7 +976,7 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 
 	// Tear down the real database backing the instance, if any. A cluster member
 	// shares the cluster-owned database (keyed by the cluster, not the member), so
-	// it is left for DeleteCluster to tear down once, deleting one member must
+	// it is left for DeleteCluster to tear down once. Deleting one member must
 	// not drop a database its siblings still use.
 	if inst.ClusterID == "" {
 		if err := dbengine.Deprovision(ctx, m.opts.DatabaseEngine, &inst); err != nil {

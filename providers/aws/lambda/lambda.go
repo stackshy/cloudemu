@@ -238,7 +238,7 @@ type funcData struct {
 	// unqualified function config), matching AWS's per-version/alias scoping.
 	eventInvokeConfigs map[string]driver.EventInvokeConfig
 	// provisionedConcurrencyConfigs holds the provisioned-concurrency config
-	// keyed by qualifier (a published version or alias name, unlike
+	// keyed by qualifier (a published version or alias name; unlike
 	// eventInvokeConfigs, $LATEST/unqualified is rejected outright rather than
 	// normalized, since real Lambda cannot attach provisioned concurrency to
 	// the mutable $LATEST code).
@@ -645,7 +645,7 @@ func (m *Mock) resolveQualifier(fd *funcData, qualifier string, routingKey []byt
 // invocation to: the additional versions in RoutingConfig.AdditionalVersionWeights
 // receive their configured fractions of traffic, the alias's primary
 // FunctionVersion the remainder. The choice is deterministic in routingKey
-// (the invoke payload), a given event always routes to the same version, and
+// (the invoke payload). A given event always routes to the same version, and
 // across many distinct events the split approaches the configured weights, so
 // tests can assert the distribution without flakiness. An alias with no weights
 // always resolves to its primary FunctionVersion.
@@ -690,7 +690,7 @@ func hashToUnitFloat(key []byte) float64 {
 // Lambda notifications, DynamoDB Streams / SQS event source mappings). An
 // unknown function is a no-op so a stale target never fails the caller. A
 // handler that runs but raises (StatusCode 500 / a non-empty FunctionError,
-// as Invoke reports it, see invoke's X-Amz-Function-Error semantics)
+// as Invoke reports it; see invoke's X-Amz-Function-Error semantics)
 // is surfaced here as a genuine error, unlike Invoke itself: callers that only
 // care whether delivery succeeded (S3, DynamoDB Streams) already discard
 // InvokeExternal's error, while a caller that must react to handler failure

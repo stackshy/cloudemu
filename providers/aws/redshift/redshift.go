@@ -500,7 +500,7 @@ func (*Mock) StopInstance(_ context.Context, _ string) error {
 	return errInstanceOpsUnsupported
 }
 
-// RebootInstance delegates to RebootCluster, Redshift only has clusters, so a
+// RebootInstance delegates to RebootCluster. Redshift only has clusters, so a
 // "reboot instance" call against a Redshift cluster ID is interpreted as a
 // cluster reboot.
 func (m *Mock) RebootInstance(ctx context.Context, id string) error {

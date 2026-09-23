@@ -121,7 +121,7 @@ func TestS3NameReservationCrossRegion(t *testing.T) {
 }
 
 // TestS3NotificationNonDefaultRegion proves a bucket in a NON-default region
-// delivers its object events to THAT region's queue, not another region's, the
+// delivers its object events to THAT region's queue, not another region's. The
 // S3→SQS wire is same-region because both are regional services of one provider.
 func TestS3NotificationNonDefaultRegion(t *testing.T) {
 	ctx := context.Background()

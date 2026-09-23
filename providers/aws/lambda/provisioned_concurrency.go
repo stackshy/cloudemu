@@ -184,7 +184,7 @@ func setProvisionedConcurrencyConfig(fd *funcData, cfg driver.ProvisionedConcurr
 }
 
 // aliasHasWeightedRouting reports whether qualifier names an alias with a
-// weighted RoutingConfig (AdditionalVersionWeights set), provisioned
+// weighted RoutingConfig (AdditionalVersionWeights set). Provisioned
 // concurrency cannot attach to a target split across versions. A qualifier
 // that names a version (not an alias) or an unweighted alias returns false.
 // ad is a shared pointer held in the aliases store, so its alias field is read

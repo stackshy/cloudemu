@@ -360,7 +360,7 @@ func TestDeregisterTargets(t *testing.T) {
 	})
 
 	t.Run("success by id alone when unambiguous", func(t *testing.T) {
-		// A caller that omits Port (the common case, RegisterTargets docs
+		// A caller that omits Port (the common case: RegisterTargets docs
 		// Example 1 registers and deregisters by ID alone) can still
 		// deregister as long as that ID has exactly one registered port.
 		err := m.DeregisterTargets(ctx, tg.ARN, []driver.Target{{ID: "i-2"}})

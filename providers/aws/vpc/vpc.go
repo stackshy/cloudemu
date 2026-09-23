@@ -497,7 +497,7 @@ func (m *Mock) DeleteVPC(_ context.Context, id string) error {
 
 	// Real EC2 refuses the delete while user-managed dependencies remain and
 	// auto-removes the ones it created (main route table, default security
-	// group). An active peering connection does not block, it is deleted with
+	// group). An active peering connection does not block; it is deleted with
 	// the VPC, so it is deliberately absent from the dependency scan.
 	if dep, blocked := m.vpcDependency(id); blocked {
 		return errors.Newf(errors.FailedPrecondition,
@@ -747,7 +747,7 @@ func (m *Mock) DeleteSubnet(_ context.Context, id string) error {
 	}
 
 	// Real EC2 refuses to delete a subnet while ANY network interface still
-	// resides in it, an unattached (available) ENI counts, not just an attached
+	// resides in it. An unattached (available) ENI counts, not just an attached
 	// one. Accepting the delete otherwise lets a broken drain pass unnoticed.
 	if eni, blocked := m.eniInSubnet(id); blocked {
 		return errors.Newf(errors.FailedPrecondition,
@@ -899,7 +899,7 @@ func (m *Mock) ModifySubnetAttribute(_ context.Context, id string, update driver
 
 // attachedENIIn reports an interface still attached within the given VPC, and
 // within the given subnet when one is named. An interface that has been
-// detached no longer blocks anything, that is the whole point of detaching it.
+// detached no longer blocks anything. That is the whole point of detaching it.
 func (m *Mock) attachedENIIn(vpcID, subnetID string) (string, bool) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()

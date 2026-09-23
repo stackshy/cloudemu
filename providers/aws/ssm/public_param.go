@@ -18,7 +18,7 @@ const awsPublicParamPrefix = "/aws/service/"
 //
 // Restricting to known trees matters: AWS answers ParameterNotFound for a path
 // it does not publish, and accepting anything ending in /ami-id would resolve
-// typos and invented distros, the caller would launch an instance from an
+// typos and invented distros. The caller would launch an instance from an
 // image that does not exist anywhere but here.
 //
 //nolint:gochecknoglobals // static lookup table
@@ -71,7 +71,7 @@ func isPublicAMIParam(name string) bool {
 // and reports whether the name is now known.
 //
 // Only the AMI-id family is synthesized. Other published parameters carry
-// payloads that cannot be derived, the ECS-optimized family holds a JSON blob,
+// payloads that cannot be derived: the ECS-optimized family holds a JSON blob,
 // and inventing those would be fiction presented as fact, so they stay
 // NotFound.
 func (m *Mock) ensurePublicParameter(name string) bool {

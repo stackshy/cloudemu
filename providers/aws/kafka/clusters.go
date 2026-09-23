@@ -49,7 +49,7 @@ func validateClusterName(name string) error {
 }
 
 // validateStorageMode rejects a StorageMode outside the modeled enum (empty is
-// allowed, the field is optional).
+// allowed since the field is optional).
 func validateStorageMode(mode string) error {
 	switch mode {
 	case "", "LOCAL", "TIERED":
@@ -60,7 +60,7 @@ func validateStorageMode(mode string) error {
 }
 
 // validateEnhancedMonitoring rejects an EnhancedMonitoring value outside the
-// modeled enum (empty is allowed, the field is optional).
+// modeled enum (empty is allowed since the field is optional).
 func validateEnhancedMonitoring(level string) error {
 	switch level {
 	case "", "DEFAULT", "PER_BROKER", "PER_TOPIC_PER_BROKER", "PER_TOPIC_PER_PARTITION":
@@ -140,7 +140,7 @@ func (m *Mock) getCluster(arn string) (*clusterData, error) {
 // ListTopics, UpdateBrokerCount/Storage, UpdateMonitoring) reference a cluster
 // but do NOT model NotFoundException in the aws-sdk-go-v2 smithy model, so a
 // missing cluster there must be a 400 BadRequestException (a 404 NotFoundException
-// would deserialize as an untyped generic error, the REST API reference lists a
+// would deserialize as an untyped generic error; the REST API reference lists a
 // generic 404, but the smithy model, which the SDK uses, does not model it here).
 func (m *Mock) getClusterBR(arn string) (*clusterData, error) {
 	return m.getClusterErr(arn, badRequest)

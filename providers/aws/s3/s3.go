@@ -952,7 +952,7 @@ type listEntry struct {
 }
 
 // mergeListEntries builds the single lexicographically-sorted stream of object
-// keys and common prefixes. Keys are unique across the two sets, an object
+// keys and common prefixes. Keys are unique across the two sets. An object
 // that rolls up into a prefix is excluded from matchedObjects, so the merged
 // ordering is total and stable across paged calls, keeping offset tokens valid.
 func mergeListEntries(objects []driver.ObjectInfo, prefixSet map[string]struct{}) []listEntry {
@@ -1814,7 +1814,7 @@ func (m *Mock) deleteObjectVersion(
 
 		if !existed {
 			// Unversioned bucket, key never existed: a no-op idempotent delete,
-			// matching real S3, nothing was removed, so no event fires.
+			// matching real S3. Nothing was removed, so no event fires.
 			return "", false, nil
 		}
 
