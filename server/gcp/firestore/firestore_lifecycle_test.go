@@ -260,7 +260,7 @@ func TestDatabaseLifecycle(t *testing.T) {
 
 	// Drop the table underneath the SDK; collection ops now surface NotFound.
 	// The handler namespaces the driver table by project and database
-	// ("{project}\x00{database}\x00{collection}"), so drop that exact key — the
+	// ("{project}\x00{database}\x00{collection}"), so drop that exact key. The
 	// SDK's REST client targets the default database.
 	if err := h.fs.DeleteTable(ctx, dbProject+"\x00(default)\x00users"); err != nil {
 		t.Fatalf("DeleteTable: %v", err)
@@ -304,7 +304,7 @@ func TestDatabaseTypedErrors(t *testing.T) {
 		t.Errorf("Get in missing collection: code=%v err=%v, want NotFound", code, err)
 	}
 
-	// Writing into a not-yet-existent collection succeeds — real Firestore
+	// Writing into a not-yet-existent collection succeeds. Real Firestore
 	// creates the collection lazily on first write (#321 E2E fix).
 	if _, err = client.Collection("ghost").Doc("x").Set(ctx, map[string]any{"a": 1}); err != nil {
 		t.Errorf("Set in new collection: %v, want nil (lazy create)", err)
@@ -315,7 +315,7 @@ func TestDatabaseTypedErrors(t *testing.T) {
 		t.Errorf("Get after lazy-create Set: %v, want nil", err)
 	}
 
-	// Deleting a missing document is idempotent — no error (matches real
+	// Deleting a missing document is idempotent: no error (matches real
 	// Firestore's unconditional delete).
 	if _, err := client.Collection("orders").Doc("never-existed").Delete(ctx); err != nil {
 		t.Errorf("Delete missing doc: %v, want nil", err)
@@ -578,8 +578,8 @@ func TestDatabaseQueryFilters(t *testing.T) {
 }
 
 // TestDatabaseNumericRoundTrip pins the wire-format numeric
-// behaviors: ints stay int64, non-integer floats stay float64, and — per the
-// survey — integer-valued float64s are re-encoded as integerValue, so a Go
+// behaviors: ints stay int64, non-integer floats stay float64, and, per the
+// survey, integer-valued float64s are re-encoded as integerValue, so a Go
 // float64(2) comes back as int64(2) through the SDK.
 func TestDatabaseNumericRoundTrip(t *testing.T) {
 	ctx, client, _ := newDBClient(t, "nums")
@@ -668,7 +668,7 @@ func TestDatabaseTTLFakeClock(t *testing.T) {
 	// Advance past s1's TTL but not s2's.
 	fc.Advance(2 * time.Minute)
 
-	// BatchGetItems does NOT check TTL (survey) — expired s1 still returned.
+	// BatchGetItems does not check TTL (survey): expired s1 still returned.
 	batch, err := fs.BatchGetItems(ctx, "sessions", []map[string]any{{"id": "s1"}, {"id": "s2"}})
 	if err != nil {
 		t.Fatalf("BatchGetItems: %v", err)
@@ -829,7 +829,7 @@ func TestDatabaseQueryOperators(t *testing.T) {
 		"p0": {"status": "active", "tags": []string{"red", "new"}, "score": 10},
 		"p1": {"status": "pending", "tags": []string{"blue"}, "score": 20},
 		"p2": {"status": "archived", "tags": []string{"red", "old"}, "score": 30, "owner": nil},
-		"p3": {"score": 5}, // no status/tags/owner — must be excluded from not-in / !=
+		"p3": {"score": 5}, // no status/tags/owner: must be excluded from not-in / !=
 	}
 	for id, fields := range docs {
 		if _, err := coll.Doc(id).Set(ctx, fields); err != nil {
@@ -850,7 +850,7 @@ func TestDatabaseQueryOperators(t *testing.T) {
 	count("!=", coll.Where("status", "!=", "active"), 2)
 	count("array-contains", coll.Where("tags", "array-contains", "red"), 2)
 	count("array-contains-any", coll.Where("tags", "array-contains-any", []string{"blue", "old"}), 2)
-	// array-contains on a scalar (string) field matches nothing — no substring fallback.
+	// array-contains on a scalar (string) field matches nothing: no substring fallback.
 	count("array-contains on scalar", coll.Where("status", "array-contains", "arch"), 0)
 	count("numeric >", coll.Where("score", ">", 15), 2)
 	count("is-null", coll.Where("owner", "==", nil), 1)

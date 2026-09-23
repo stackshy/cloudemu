@@ -3,7 +3,7 @@
 // when it has no shared LRO registry (a standalone package server). When an
 // assembled server wires the shared registry via SetOperationRegistry, this
 // handler must stop claiming the operations path entirely and defer to the
-// shared lro.Handler — which is registered ahead of it and, unlike this
+// shared lro.Handler, which is registered ahead of it and, unlike this
 // handler previously did, 404s an operation name it never created instead of
 // fabricating success. See server/gcp/lro for the shared handler.
 

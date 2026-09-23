@@ -14,7 +14,7 @@ import (
 
 // fullServer boots the complete GCP server with EVERY handler registered (as
 // the `cloudemu serve --providers gcp` binary does), so cross-handler dispatch
-// collisions surface — the kind single-driver package tests can't catch.
+// collisions surface, the kind single-driver package tests can't catch.
 func fullServer(t *testing.T) *httptest.Server {
 	t.Helper()
 

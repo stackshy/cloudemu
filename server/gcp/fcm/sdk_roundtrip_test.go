@@ -93,8 +93,8 @@ func TestSDKFCMSendErrors(t *testing.T) {
 		t.Fatalf("Send(empty): got %v, want 400", err)
 	}
 
-	// A message with more than one target (topic + token) is INVALID_ARGUMENT
-	// — real FCM allows exactly one of token/topic/condition.
+	// A message with more than one target (topic + token) is INVALID_ARGUMENT.
+	// Real FCM allows exactly one of token/topic/condition.
 	_, err = svc.Projects.Messages.Send("projects/"+testProject, &fcm.SendMessageRequest{
 		Message: &fcm.Message{Topic: "news", Token: "device-tok"},
 	}).Context(ctx).Do()
@@ -104,7 +104,7 @@ func TestSDKFCMSendErrors(t *testing.T) {
 	}
 
 	// A message with NO target (none of token/topic/condition) is
-	// INVALID_ARGUMENT — real FCM requires exactly one.
+	// INVALID_ARGUMENT. Real FCM requires exactly one.
 	_, err = svc.Projects.Messages.Send("projects/"+testProject, &fcm.SendMessageRequest{
 		Message: &fcm.Message{Notification: &fcm.Notification{Title: "hi", Body: "there"}},
 	}).Context(ctx).Do()

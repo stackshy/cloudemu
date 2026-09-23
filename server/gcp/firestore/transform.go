@@ -58,7 +58,7 @@ func transformResult(ft *fieldTransform, cur any, commit time.Time) (any, bool) 
 
 // applyIncrement adds the operand to the current value. An absent or
 // non-numeric current value is treated as 0. The result stays an int64 when
-// both operands are integers, and a float64 when either is a double — matching
+// both operands are integers, and a float64 when either is a double, matching
 // Firestore's numeric typing.
 func applyIncrement(cur any, operand *value) any {
 	opI, opF, opIsInt, opOk := wireNumber(operand)

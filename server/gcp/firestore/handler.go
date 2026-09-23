@@ -4,12 +4,12 @@
 //
 // Supported operations (parity with AWS DynamoDB):
 //
-//	POST   /v1/projects/{p}/databases/{db}/documents/{collection}        — create document
+//	POST   /v1/projects/{p}/databases/{db}/documents/{collection}        : create document
 //	POST   /v1/projects/{p}/databases/{db}/documents/{collection}?documentId={id}
-//	GET    /v1/projects/{p}/databases/{db}/documents/{collection}        — list documents
-//	GET    /v1/projects/{p}/databases/{db}/documents/{collection}/{id}   — get document
-//	PATCH  /v1/projects/{p}/databases/{db}/documents/{collection}/{id}   — update document
-//	DELETE /v1/projects/{p}/databases/{db}/documents/{collection}/{id}   — delete document
+//	GET    /v1/projects/{p}/databases/{db}/documents/{collection}        : list documents
+//	GET    /v1/projects/{p}/databases/{db}/documents/{collection}/{id}   : get document
+//	PATCH  /v1/projects/{p}/databases/{db}/documents/{collection}/{id}   : update document
+//	DELETE /v1/projects/{p}/databases/{db}/documents/{collection}/{id}   : delete document
 package firestore
 
 import (
@@ -63,8 +63,8 @@ const (
 //
 // Each key is prefixed with a NUL byte so it cannot collide with a real
 // Firestore field name (field names are UTF-8 text and never contain NUL).
-// This lets a user field literally named "id" — or "__createTime__" /
-// "__updateTime__" — round-trip through storage instead of being clobbered by
+// This lets a user field literally named "id", or "__createTime__" /
+// "__updateTime__", round-trip through storage instead of being clobbered by
 // the handler's bookkeeping.
 const (
 	fieldID         = "\x00id"
@@ -72,7 +72,7 @@ const (
 	fieldUpdateTime = "\x00updateTime"
 	// fieldCollPath is a transient, never-persisted key set on a cloned item
 	// during a collection-group (allDescendants) query so the response can
-	// reconstruct each document's owning collection path — matched documents
+	// reconstruct each document's owning collection path. Matched documents
 	// come from many different subcollections, not the query's base collection.
 	fieldCollPath = "\x00collPath"
 )
@@ -124,7 +124,7 @@ func (*Handler) Matches(r *http.Request) bool {
 // ServeHTTP routes the request based on URL path shape.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// Batched write API: POST .../documents:commit, .../documents:batchGet,
-	// .../documents:runQuery — these end with `:action`.
+	// .../documents:runQuery. These end with `:action`.
 	if action, base, ok := splitActionSuffix(r.URL.Path); ok {
 		h.serveAction(w, r, base, action)
 		return
@@ -300,11 +300,11 @@ type stagedWrite struct {
 // stageKey uniquely names a document across collections for the commit overlay.
 func stageKey(table, id string) string { return table + "\x00" + id }
 
-// commit handles POST .../documents:commit — the batch-write endpoint the REST
+// commit handles POST .../documents:commit, the batch-write endpoint the REST
 // SDK uses for Set / Update / Delete. A `transaction` field, when present,
 // identifies the transaction this commit belongs to: its recorded read-set
 // (populated by batchGet while the transaction was open) is checked for
-// conflicting writes before anything is applied — see
+// conflicting writes before anything is applied: see
 // checkTransactionConflict.
 //
 // The batch is applied atomically. Phase 1 validates every write's precondition
@@ -327,7 +327,7 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 
 	// The transaction is terminal after this commit attempt either way: on
 	// success it is done, and on an aborted/conflicting commit the SDK's
-	// RunTransaction begins a brand-new transaction to retry — so the read-set
+	// RunTransaction begins a brand-new transaction to retry. So the read-set
 	// is captured and discarded up front rather than kept around.
 	reads := h.txns.reads(req.Transaction)
 	h.txns.end(req.Transaction)
@@ -377,8 +377,8 @@ func (h *Handler) commit(w http.ResponseWriter, r *http.Request, _ string) {
 
 // checkTransactionConflict enforces optimistic concurrency for a transactional
 // commit: every document the transaction read (via batchGet, while it was
-// open) must still be in the exact state it was read in — same existence, same
-// stored commit time — or the commit is aborted with HTTP 409/ABORTED so the
+// open) must still be in the exact state it was read in (same existence, same
+// stored commit time), or the commit is aborted with HTTP 409/ABORTED so the
 // SDK's RunTransaction retries the whole attempt against fresh data. Without
 // this, concurrent read-modify-write transactions (two clients both
 // incrementing a counter) would silently race and lose updates instead of one
@@ -661,7 +661,7 @@ func checkUpdateTimePrecondition(w http.ResponseWriter, pc *precondition, exists
 // A dotted field path (e.g. "profile.age") addresses a NESTED field: the path
 // is split into segments, intermediate maps are descended (created as needed),
 // and the leaf is set or deleted. This matches real Firestore's updateMask
-// semantics — a masked nested path present in the body is written, and a masked
+// semantics: a masked nested path present in the body is written, and a masked
 // nested path absent from the body deletes just that nested leaf while sibling
 // fields are left untouched.
 func mergeMasked(existing, body map[string]any, id string, paths []string) map[string]any {
@@ -783,9 +783,9 @@ func cloneStringMap(v any) map[string]any {
 	return dst
 }
 
-// batchGet handles POST .../documents:batchGet — the batched-read endpoint.
+// batchGet handles POST .../documents:batchGet, the batched-read endpoint.
 // The Go SDK's DocumentRef.Get / Transaction.Get both route through this
-// endpoint (never the single-document GET verb), so it — not getDocument — is
+// endpoint (never the single-document GET verb), so it (not getDocument) is
 // the read path that must feed the transaction registry.
 type batchGetRequest struct {
 	Documents   []string `json:"documents"`
@@ -836,7 +836,7 @@ func (h *Handler) batchGet(w http.ResponseWriter, r *http.Request, _ string) {
 	writeJSON(w, http.StatusOK, entries)
 }
 
-// runQuery handles POST .../documents:runQuery — for collection scans.
+// runQuery handles POST .../documents:runQuery, for collection scans.
 // allResults asks the driver for the entire matched set (runQuery streams
 // rather than pages; the driver's zero-limit default is 100).
 const allResults = 1 << 30
@@ -1037,8 +1037,8 @@ func (h *Handler) runQuery(w http.ResponseWriter, r *http.Request, base string) 
 
 	// runQuery's base path is the PARENT resource (the documents root or a
 	// specific document). The queried collection lives directly under it, so
-	// the driver table is the parent path joined with the from collection id —
-	// this scopes a subcollection query to its own namespace instead of the
+	// the driver table is the parent path joined with the from collection id.
+	// This scopes a subcollection query to its own namespace instead of the
 	// trailing collection id alone.
 	p, perr := parseFirestorePath(base)
 	if perr != nil {
@@ -1241,7 +1241,7 @@ func streamQueryResults(w http.ResponseWriter, items []map[string]any, p firesto
 }
 
 // streamGroupResults streams collection-group query results. Each item was
-// tagged (in runGroupQuery) with fieldCollPath — its owning collection path —
+// tagged (in runGroupQuery) with fieldCollPath (its owning collection path)
 // so every document's resource name is rebuilt from its own subcollection
 // rather than a single shared collection.
 func streamGroupResults(w http.ResponseWriter, items []map[string]any, project, database string) {
@@ -1325,9 +1325,9 @@ func (p firestorePath) parentPath() string {
 const nsSep = "\x00"
 
 // namespacePrefix is the driver-table-key prefix that scopes a collection to a
-// single (project, database). Documents under different projects — or under the
+// single (project, database). Documents under different projects, or under the
 // same project but different databases, including the default database
-// "(default)" vs a named database — resolve to distinct prefixes and therefore
+// "(default)" vs a named database, resolve to distinct prefixes and therefore
 // never share a collection namespace.
 func (p firestorePath) namespacePrefix() string {
 	return p.project + nsSep + p.database + nsSep
@@ -1335,14 +1335,14 @@ func (p firestorePath) namespacePrefix() string {
 
 // tableKey returns the driver "table" this location's collection maps to,
 // namespaced by project and database. Every driver read/write/list/query/delete
-// must key on this — not on the bare collection path — so a document written
+// must key on this, not on the bare collection path, so a document written
 // under project A / database X is invisible under project B or database Y.
 func (p firestorePath) tableKey() string {
 	return p.namespacePrefix() + p.collection
 }
 
 // documentName returns this location's full Firestore document resource
-// path, for use in a client-facing error message — never the internal,
+// path, for use in a client-facing error message, never the internal,
 // NUL-joined driver table key returned by tableKey.
 func (p firestorePath) documentName() string {
 	return fmt.Sprintf("projects/%s/databases/%s/documents/%s/%s", p.project, p.database, p.collection, p.documentID)
@@ -1498,7 +1498,7 @@ func (h *Handler) getDocument(w http.ResponseWriter, r *http.Request, p firestor
 	writeJSON(w, http.StatusOK, mapToDocument(item, p, p.documentID))
 }
 
-// listDocuments handles GET .../{collection} — the ListDocuments RPC. It honors
+// listDocuments handles GET .../{collection}, the ListDocuments RPC. It honors
 // pageSize/pageToken (so a large collection pages fully instead of silently
 // truncating at the driver's default limit), the optional orderBy, and
 // mask.fieldPaths field projection.
@@ -1670,7 +1670,7 @@ func (h *Handler) updateDocument(w http.ResponseWriter, r *http.Request, p fires
 	writeJSON(w, http.StatusOK, mapToDocument(item, p, p.documentID))
 }
 
-// deleteDocument handles the raw DELETE verb (no precondition support — a
+// deleteDocument handles the raw DELETE verb (no precondition support; a
 // precondition-guarded delete goes through :commit, see stageDelete). Real
 // Firestore's DeleteDocument is idempotent: deleting a document that does not
 // exist succeeds rather than erroring, so a NotFound from the driver (either
@@ -1972,7 +1972,7 @@ func writeError(w http.ResponseWriter, status int, statusCode, msg string) {
 // cerrors.Message(err) rather than err.Error(): the latter prepends the
 // internal cloudemu code name ("NotFound: ...") and, for a few driver errors,
 // embeds the raw namespaced driver table key (project+database+collection
-// joined with NUL bytes) — neither of which a real Firestore error message
+// joined with NUL bytes), neither of which a real Firestore error message
 // ever contains.
 func writeErr(w http.ResponseWriter, err error) {
 	msg := cerrors.Message(err)

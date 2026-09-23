@@ -18,7 +18,7 @@ type instancePatch struct {
 	setFileShares  bool
 }
 
-// createInstance handles POST .../instances?instanceId={i} — Create (LRO).
+// createInstance handles POST .../instances?instanceId={i}: Create (LRO).
 func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt route) {
 	instanceID := r.URL.Query().Get("instanceId")
 	if instanceID == "" {
@@ -45,7 +45,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, rt rout
 	h.writeDoneOperation(w, rt, m)
 }
 
-// getInstance handles GET .../instances/{i} — Get.
+// getInstance handles GET .../instances/{i}: Get.
 func (h *Handler) getInstance(w http.ResponseWriter, rt route) {
 	m, err := h.store.get(instanceName(rt.project, rt.location, rt.name))
 	if err != nil {
@@ -56,7 +56,7 @@ func (h *Handler) getInstance(w http.ResponseWriter, rt route) {
 	gcprest.WriteJSON(w, http.StatusOK, toJSON(m))
 }
 
-// listInstances handles GET .../instances — List, scoped to (project, location).
+// listInstances handles GET .../instances: List, scoped to (project, location).
 func (h *Handler) listInstances(w http.ResponseWriter, rt route) {
 	models := h.store.list(rt.project, rt.location)
 
@@ -68,7 +68,7 @@ func (h *Handler) listInstances(w http.ResponseWriter, rt route) {
 	gcprest.WriteJSON(w, http.StatusOK, listInstancesResponse{Instances: out})
 }
 
-// patchInstance handles PATCH .../instances/{i}?updateMask= — Update (LRO).
+// patchInstance handles PATCH .../instances/{i}?updateMask=: Update (LRO).
 func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route) {
 	var body instanceRequest
 	if !gcprest.DecodeJSON(w, r, &body) {
@@ -89,7 +89,7 @@ func (h *Handler) patchInstance(w http.ResponseWriter, r *http.Request, rt route
 	h.writeDoneOperation(w, rt, m)
 }
 
-// deleteInstance handles DELETE .../instances/{i} — Delete (LRO).
+// deleteInstance handles DELETE .../instances/{i}: Delete (LRO).
 func (h *Handler) deleteInstance(w http.ResponseWriter, rt route) {
 	name := instanceName(rt.project, rt.location, rt.name)
 	if err := h.store.delete(name); err != nil {

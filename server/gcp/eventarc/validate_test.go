@@ -70,7 +70,7 @@ func TestSDKEventarcMissingTypeFilter(t *testing.T) {
 }
 
 // TestSDKEventarcUncatalogedEventTypeAccepted: Eventarc's event-type catalog
-// is open-ended — Firebase events, future Google-added types, and (for
+// is open-ended: Firebase events, future Google-added types, and (for
 // channel/third-party triggers) arbitrary provider-defined strings with no
 // fixed Google list. A well-formed "type" filter naming a type CloudEmu
 // doesn't special-case must be accepted, not rejected as "unknown"; rejecting
@@ -191,7 +191,7 @@ func TestSDKEventarcDestinationCloudFunctionNotFound(t *testing.T) {
 }
 
 // TestSDKEventarcPatchValidation: patching eventFilters or destination goes
-// through the same validation as Create — a well-formed but uncataloged
+// through the same validation as Create: a well-formed but uncataloged
 // event type is accepted (and takes effect), while a patch routing to a
 // destination that doesn't exist is rejected and leaves the stored trigger
 // unchanged.
@@ -216,7 +216,7 @@ func TestSDKEventarcPatchValidation(t *testing.T) {
 	name := parent() + "/triggers/patch-validate"
 
 	// A patch naming a well-formed but uncataloged event type is accepted,
-	// not rejected as "unknown" — Eventarc's event-type space is open-ended.
+	// not rejected as "unknown". Eventarc's event-type space is open-ended.
 	uncataloged := &eventarc.Trigger{
 		EventFilters: []*eventarc.EventFilter{{Attribute: "type", Value: "example.provider.event.v1"}},
 	}
@@ -256,7 +256,7 @@ func TestSDKEventarcPatchValidation(t *testing.T) {
 }
 
 // TestSDKEventarcWorkflowDestinationUnvalidated: a Workflow destination isn't
-// backed by a driver, so it is accepted unchecked even on the full server —
+// backed by a driver, so it is accepted unchecked even on the full server,
 // documenting the deliberate scope limit rather than silently 404ing every
 // workflow trigger.
 func TestSDKEventarcWorkflowDestinationUnvalidated(t *testing.T) {

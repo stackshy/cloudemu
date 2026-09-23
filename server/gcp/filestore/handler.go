@@ -4,13 +4,13 @@
 // provider (google_filestore_instance) pointed at this server manage Filestore
 // instances end-to-end.
 //
-// Coverage (v1 REST — instance control plane):
+// Coverage (v1 REST, instance control plane):
 //
-//	POST   /v1/projects/{p}/locations/{l}/instances?instanceId={i}  — Create (LRO)
-//	GET    /v1/projects/{p}/locations/{l}/instances/{i}             — Get
-//	GET    /v1/projects/{p}/locations/{l}/instances                 — List
-//	PATCH  /v1/projects/{p}/locations/{l}/instances/{i}?updateMask= — Update (LRO)
-//	DELETE /v1/projects/{p}/locations/{l}/instances/{i}             — Delete (LRO)
+//	POST   /v1/projects/{p}/locations/{l}/instances?instanceId={i}  : Create (LRO)
+//	GET    /v1/projects/{p}/locations/{l}/instances/{i}             : Get
+//	GET    /v1/projects/{p}/locations/{l}/instances                 : List
+//	PATCH  /v1/projects/{p}/locations/{l}/instances/{i}?updateMask= : Update (LRO)
+//	DELETE /v1/projects/{p}/locations/{l}/instances/{i}             : Delete (LRO)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true; a
 // created instance is READY immediately, so an SDK or Terraform LRO wait
@@ -21,11 +21,11 @@
 // # Path collision with Memorystore (the make-or-break integration risk)
 //
 // Filestore and Memorystore for Redis are distinct real APIs on distinct hosts
-// (file.googleapis.com vs redis.googleapis.com) that share the EXACT same path
-// grammar — /v1/projects/{p}/locations/{l}/instances[/{i}]. CloudEmu collapses
+// (file.googleapis.com vs redis.googleapis.com) that share the exact same path
+// grammar: /v1/projects/{p}/locations/{l}/instances[/{i}]. CloudEmu collapses
 // every GCP service onto one HTTP server, and a client pointed at it via a
 // custom endpoint (option.WithEndpoint / *_custom_endpoint) sends the emulator's
-// own host in the Host header, not the API host — so the two CANNOT be told
+// own host in the Host header, not the API host. So the two cannot be told
 // apart by URL or Host alone.
 //
 // They are disambiguated by content and ownership, the pattern Spanner uses to
@@ -34,7 +34,7 @@
 // Memorystore request fall through to it:
 //
 //   - Create POST: claimed only when the body carries a Filestore shape
-//     (fileShares or networks) — a Redis create body (memorySizeGb/redisConfigs,
+//     (fileShares or networks). A Redis create body (memorySizeGb/redisConfigs,
 //     no fileShares/networks) is not claimed.
 //   - Item GET/PATCH/DELETE (.../instances/{i}): claimed only when THIS store
 //     owns the instance, so Redis instance traffic falls through.
@@ -72,8 +72,8 @@ const (
 	minResourceParts = 4 // [projects, {p}, locations, {l}]
 	maxProbeBytes    = 1 << 20
 
-	restCollection = 1 // [instances]           — the collection
-	restItem       = 2 // [instances, {name}]   — a named item
+	restCollection = 1 // [instances]           : the collection
+	restItem       = 2 // [instances, {name}]   : a named item
 )
 
 // Handler serves file.googleapis.com v1 instance requests against its own store.

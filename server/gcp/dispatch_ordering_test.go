@@ -13,7 +13,7 @@ package gcp_test
 // These tests drive the FULL production server (NewFromProvider) with those
 // ambiguous /v1/projects/ paths and assert the specific handler served (HTTP
 // 200 plus the service's list marker). If Firestore caught them it would fail
-// to parse the path and answer 404 NOT_FOUND — so moving Firestore earlier (or
+// to parse the path and answer 404 NOT_FOUND. So moving Firestore earlier (or
 // alphabetizing registrations) makes these tests fail.
 
 import (
