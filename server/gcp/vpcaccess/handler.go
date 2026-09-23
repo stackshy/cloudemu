@@ -5,12 +5,12 @@
 //
 // Coverage (connector control plane):
 //
-//	POST   /v1/…/connectors?connectorId=   — CreateConnector (LRO)
-//	GET    /v1/…/connectors                — ListConnectors
-//	GET    /v1/…/connectors/{id}           — GetConnector
-//	PATCH  /v1/…/connectors/{id}?updateMask= — PatchConnector (LRO)
-//	DELETE /v1/…/connectors/{id}           — DeleteConnector (LRO)
-//	GET    /v1/…/operations/{op}           — Operations.Get (shared poller)
+//	POST   /v1/…/connectors?connectorId=   : CreateConnector (LRO)
+//	GET    /v1/…/connectors                : ListConnectors
+//	GET    /v1/…/connectors/{id}           : GetConnector
+//	PATCH  /v1/…/connectors/{id}?updateMask= : PatchConnector (LRO)
+//	DELETE /v1/…/connectors/{id}           : DeleteConnector (LRO)
+//	GET    /v1/…/operations/{op}           : Operations.Get (shared poller)
 //
 // Every mutating RPC returns a google.longrunning.Operation with done=true and
 // the resulting connector embedded in `response` as an Any typed
@@ -18,7 +18,7 @@
 // LRO wait terminates on the first poll instead of hanging.
 //
 // Location-scoped operations: a connector's operations live under
-// /v1/projects/{p}/locations/{l}/operations — the SAME space the shared GCP LRO
+// /v1/projects/{p}/locations/{l}/operations, the same space the shared GCP LRO
 // poller owns. Matches returns false for operation paths when a shared registry
 // is wired, letting that poller win; a standalone package server (no registry)
 // serves its own polls. The connectors resource-type guard keeps this handler

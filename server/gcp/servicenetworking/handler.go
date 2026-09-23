@@ -2,7 +2,7 @@
 // (servicenetworking.googleapis.com).
 //
 // Private services access is how a VPC reaches Google-managed services over
-// internal addresses — a managed database peered into the caller's network,
+// internal addresses, a managed database peered into the caller's network,
 // for instance. A caller sets a connection up while building the network and
 // removes it while tearing the network down, so an unimplemented API blocks
 // the teardown rather than just the feature.
@@ -90,8 +90,8 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
-	// Capped like every sibling handler. The decode stays tolerant — a
-	// connection removal legitimately sends no body — but an unbounded read
+	// Capped like every sibling handler. The decode stays tolerant, a
+	// connection removal legitimately sends no body, but an unbounded read
 	// is not the way to accept that.
 	r.Body = http.MaxBytesReader(w, r.Body, gcprest.MaxBodyBytes)
 

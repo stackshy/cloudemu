@@ -106,7 +106,7 @@ func (h *Handler) routeRouters(w http.ResponseWriter, r *http.Request, rp gcpres
 }
 
 // routerBody is the slice of a router this handler needs to read. Everything
-// else the caller sends — NAT blocks, BGP settings — is stored verbatim and
+// else the caller sends (NAT blocks, BGP settings) is stored verbatim and
 // echoed back, so a caller that patches an unmodelled field still reads it.
 type routerBody struct {
 	Name string `json:"name"`
@@ -165,7 +165,7 @@ func (h *Handler) listRouters(w http.ResponseWriter, r *http.Request, rp gcprest
 // field-level PATCH semantics.
 //
 // Terraform's google_compute_router_nat adds NAT with a partial patch that
-// carries only {nats:[...]} — no name, network, or bgp — so replacing the
+// carries only {nats:[...]} (no name, network, or bgp), so replacing the
 // stored body would drop those and make the next google_compute_router read
 // diff (a forced replacement). Merging top-level fields, patch wins, keeps the
 // router's other settings while the caller's nats array replaces the old one.

@@ -5,20 +5,20 @@
 //
 // Supported operations (parity with AWS EC2 VPC):
 //
-//	POST   /compute/v1/projects/{p}/global/networks                       — insert network
-//	GET    /compute/v1/projects/{p}/global/networks/{name}                — get
-//	GET    /compute/v1/projects/{p}/global/networks                       — list
-//	DELETE /compute/v1/projects/{p}/global/networks/{name}                — delete
+//	POST   /compute/v1/projects/{p}/global/networks                       : insert network
+//	GET    /compute/v1/projects/{p}/global/networks/{name}                : get
+//	GET    /compute/v1/projects/{p}/global/networks                       : list
+//	DELETE /compute/v1/projects/{p}/global/networks/{name}                : delete
 //
-//	POST   /compute/v1/projects/{p}/regions/{r}/subnetworks               — insert subnet
-//	GET    /compute/v1/projects/{p}/regions/{r}/subnetworks/{name}        — get
-//	GET    /compute/v1/projects/{p}/regions/{r}/subnetworks               — list
-//	DELETE /compute/v1/projects/{p}/regions/{r}/subnetworks/{name}        — delete
+//	POST   /compute/v1/projects/{p}/regions/{r}/subnetworks               : insert subnet
+//	GET    /compute/v1/projects/{p}/regions/{r}/subnetworks/{name}        : get
+//	GET    /compute/v1/projects/{p}/regions/{r}/subnetworks               : list
+//	DELETE /compute/v1/projects/{p}/regions/{r}/subnetworks/{name}        : delete
 //
-//	POST   /compute/v1/projects/{p}/global/firewalls                      — insert firewall
-//	GET    /compute/v1/projects/{p}/global/firewalls/{name}               — get
-//	GET    /compute/v1/projects/{p}/global/firewalls                      — list
-//	DELETE /compute/v1/projects/{p}/global/firewalls/{name}               — delete
+//	POST   /compute/v1/projects/{p}/global/firewalls                      : insert firewall
+//	GET    /compute/v1/projects/{p}/global/firewalls/{name}               : get
+//	GET    /compute/v1/projects/{p}/global/firewalls                      : list
+//	DELETE /compute/v1/projects/{p}/global/firewalls/{name}               : delete
 package vpc
 
 import (
@@ -335,7 +335,7 @@ func (h *Handler) insertNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 // networkStorage derives the internal CIDR and the tag set persisted for a
 // network insert. A network with an explicit IPv4Range is a (deprecated) legacy
 // network; only those carry an IPv4Range on the wire. Auto/custom-mode networks
-// must NOT report one — the driver still needs a non-empty CIDR internally, so a
+// must not report one. The driver still needs a non-empty CIDR internally, so a
 // placeholder is stored but hidden from the response unless legacy.
 // description/routingMode/mtu have no first-class VPC slots, so they ride in
 // tags and are reconstructed on read (else Terraform shows a perpetual diff).
@@ -434,7 +434,7 @@ func (h *Handler) deleteNetwork(w http.ResponseWriter, r *http.Request, rp gcpre
 	// or firewall (see vpc.Mock.DeleteVPC), so the guard is authoritative at the
 	// driver layer and protects every caller, not just the wire. Real GCP answers
 	// 400 resourceInUseByAnotherResource rather than the generic 409 conditionNotMet
-	// WriteCErr maps FailedPrecondition to, so translate that one case here — and
+	// WriteCErr maps FailedPrecondition to, so translate that one case here, and
 	// re-derive the child's user-facing name so the message names the resource the
 	// caller typed, not the provider error's internal driver id.
 	if err := h.net.DeleteVPC(r.Context(), v.ID); err != nil {
@@ -522,7 +522,7 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 	}
 
 	// Subnetwork names are unique per region; a duplicate insert in the same
-	// region must 409. Without this the shadow subnet leaks — get/delete resolve
+	// region must 409. Without this the shadow subnet leaks. Get/delete resolve
 	// only the first match, so the second one can never be reached or removed.
 	if _, err := findSubnetByName(r.Context(), h.net, req.Name, rp.ScopeName); err == nil {
 		gcprest.WriteError(w, http.StatusConflict, "alreadyExists",
@@ -559,7 +559,7 @@ func (h *Handler) insertSubnetwork(w http.ResponseWriter, r *http.Request, rp gc
 // subnetTags builds the tag set persisted for a subnetwork insert. purpose/
 // stackType/privateIpGoogleAccess/description have no first-class driver slots,
 // and secondaryIpRanges (GKE VPC-native / Terraform secondary_ip_range) is
-// stored verbatim as JSON — mirroring the firewall spec — so alias ranges
+// stored verbatim as JSON, mirroring the firewall spec, so alias ranges
 // survive the round-trip.
 func subnetTags(req *subnetworkRequest) map[string]string {
 	tags := map[string]string{
@@ -618,7 +618,7 @@ func (h *Handler) listSubnetworks(w http.ResponseWriter, r *http.Request, rp gcp
 	items := make([]subnetworkResponse, 0, len(infos))
 
 	for i := range infos {
-		// subnetworks.list is regional — only return subnets in this region.
+		// subnetworks.list is regional: only return subnets in this region.
 		if rp.ScopeName != "" && infos[i].AvailabilityZone != rp.ScopeName {
 			continue
 		}
@@ -813,7 +813,7 @@ func (h *Handler) expandSubnetIPCIDR(w http.ResponseWriter, r *http.Request, rp 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
-// validateSuperset reports whether expanded strictly contains current — the
+// validateSuperset reports whether expanded strictly contains current: the
 // same-base, broader-prefix relationship GCP requires of expandIpCidrRange.
 func validateSuperset(current, expanded string) error {
 	_, curNet, err := net.ParseCIDR(current)
@@ -921,7 +921,7 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 	}
 
 	// Priority 0 is a valid GCP value (highest precedence), so distinguish an
-	// omitted priority (nil) from an explicit 0 — only the former defaults to
+	// omitted priority (nil) from an explicit 0: only the former defaults to
 	// 1000. Forcing 0→1000 would silently alter rule precedence and drive a
 	// perpetual terraform diff.
 	if req.Priority == nil {
@@ -930,7 +930,7 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 	}
 
 	// Firewalls map onto driver SecurityGroups; the driver requires a VPC ID.
-	// A supplied network MUST exist — real GCP rejects a firewall insert that
+	// A supplied network must exist. Real GCP rejects a firewall insert that
 	// references an unknown network. Propagate the resolve error (404) rather
 	// than fabricating a phantom VPC that would then leak into networks.list.
 	vpcID, err := resolveNetwork(r.Context(), h.net, req.Network)
@@ -940,7 +940,7 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 	}
 
 	if vpcID == "" {
-		// No network supplied — GCP defaults to the project's network; use any
+		// No network supplied. GCP defaults to the project's network; use any
 		// existing one or create the default.
 		vpcs, _ := h.net.DescribeVPCs(r.Context(), nil)
 		if len(vpcs) > 0 {
@@ -1360,7 +1360,7 @@ func toNetworkResponse(info *netdriver.VPCInfo, rp gcprest.ResourcePath, host st
 	// omits it (emitting it would wrongly read as legacy and conflict with
 	// autoCreateSubnetworks). Legacy networks predate routingConfig/mtu, so they
 	// carry neither; a modern network always reads back both, defaulting to
-	// REGIONAL routing and a 1460-byte MTU when the insert omitted them — real
+	// REGIONAL routing and a 1460-byte MTU when the insert omitted them. Real
 	// GCP always populates them, so omitting the default reads as a perpetual
 	// Terraform diff on routing_mode/mtu.
 	if info.Tags[legacyNetTag] == trueValue {
@@ -1444,7 +1444,7 @@ func toSubnetworkResponse(info *netdriver.SubnetInfo, rp gcprest.ResourcePath, h
 	return resp
 }
 
-// gatewayAddress returns the first usable host of a CIDR — GCP assigns it as
+// gatewayAddress returns the first usable host of a CIDR. GCP assigns it as
 // the subnet's default gateway. Returns "" for a malformed range.
 func gatewayAddress(cidr string) string {
 	_, ipNet, err := net.ParseCIDR(cidr)

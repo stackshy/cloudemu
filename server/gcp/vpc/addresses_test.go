@@ -10,7 +10,7 @@ import (
 )
 
 // TestSDKGlobalAddressAllocatesIP covers the finding that a reserved address
-// was stored verbatim with no IP allocated — Get returned status/address/
+// was stored verbatim with no IP allocated. Get returned status/address/
 // selfLink/kind empty and id=0, breaking PSA/VPC_PEERING range reservation.
 func TestSDKGlobalAddressAllocatesIP(t *testing.T) {
 	ts := newGCPNetServer(t)

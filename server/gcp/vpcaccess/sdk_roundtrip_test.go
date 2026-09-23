@@ -36,7 +36,7 @@ func newSDKClient(t *testing.T) (*vpcaccess.Service, string) {
 // TestSDKConnectorLifecycle drives the full connector lifecycle through the real
 // google.golang.org/api/vpcaccess client: create (LRO), poll, get, list, patch,
 // delete. The create leaves min/max instances+throughput UNSET, and the test
-// asserts the emulator fills the real API defaults and reports them stably — the
+// asserts the emulator fills the real API defaults and reports them stably, the
 // exact behavior a Terraform plan needs to converge (those fields are computed).
 func TestSDKConnectorLifecycle(t *testing.T) {
 	svc, project := newSDKClient(t)

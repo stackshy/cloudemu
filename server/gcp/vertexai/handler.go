@@ -16,7 +16,7 @@
 // Model Garden generateContent surface.
 //
 // LRO polling note: the operations collection
-// (.../locations/{l}/operations/{id}) is intentionally NOT claimed here — the
+// (.../locations/{l}/operations/{id}) is intentionally not claimed here. The
 // GKE handler, registered ahead of Vertex on the shared prefix, already owns
 // it. This is safe because every Vertex mutation completes done-on-arrival with
 // its result inlined (above), so a client never needs to poll. If a future

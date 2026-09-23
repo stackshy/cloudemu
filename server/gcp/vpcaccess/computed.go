@@ -12,7 +12,7 @@ const (
 	// Defaults the real API fills when the client omits these fields. The
 	// Terraform google provider marks min/max instances and throughput
 	// Optional+Computed with no schema default, so it sends nothing and reads
-	// them back from the API — if the emulator did not fill them, a plan would
+	// them back from the API: if the emulator did not fill them, a plan would
 	// diff forever. Throughput mirrors 100 Mbps per instance (2→200, 3→300).
 	defaultMinInstances  = 2
 	defaultMaxInstances  = 3
@@ -26,7 +26,7 @@ const (
 )
 
 // seedConnector injects the output-only and API-defaulted fields a connector
-// carries so a GET reports them stably across refreshes — the classic
+// carries so a GET reports them stably across refreshes, the classic
 // Serverless VPC Access drift point. A caller-supplied value is always left
 // untouched (Terraform may set any of the numeric fields explicitly); only an
 // absent field is defaulted. state is minted READY so Terraform reconciles a

@@ -4,27 +4,27 @@
 // clients and gcloud use /v1/; the Terraform google-beta provider's
 // google_service_directory_{namespace,service,endpoint} resources exist only in
 // google-beta and default to /v1beta1/. Both hit this handler unchanged. The two
-// versions differ only in the field name of the service/endpoint string map —
-// `annotations` in v1, `metadata` in v1beta1 — which the handler decodes from
+// versions differ only in the field name of the service/endpoint string map
+// (`annotations` in v1, `metadata` in v1beta1), which the handler decodes from
 // either key and re-emits under the name matching the request's version.
 //
-// Coverage (registration control plane only, synchronous REST — no LRO):
+// Coverage (registration control plane only, synchronous REST, no LRO):
 //
-//	POST   /v1/…/namespaces?namespaceId=                       — CreateNamespace
-//	GET    /v1/…/namespaces                                    — ListNamespaces
-//	GET    /v1/…/namespaces/{ns}                               — GetNamespace
-//	PATCH  /v1/…/namespaces/{ns}?updateMask=                   — PatchNamespace
-//	DELETE /v1/…/namespaces/{ns}                               — DeleteNamespace
-//	POST   /v1/…/namespaces/{ns}/services?serviceId=           — CreateService
-//	GET    /v1/…/namespaces/{ns}/services                      — ListServices
-//	GET    /v1/…/namespaces/{ns}/services/{svc}                — GetService
-//	PATCH  /v1/…/namespaces/{ns}/services/{svc}?updateMask=    — PatchService
-//	DELETE /v1/…/namespaces/{ns}/services/{svc}                — DeleteService
-//	POST   /v1/…/services/{svc}/endpoints?endpointId=          — CreateEndpoint
-//	GET    /v1/…/services/{svc}/endpoints                      — ListEndpoints
-//	GET    /v1/…/services/{svc}/endpoints/{ep}                 — GetEndpoint
-//	PATCH  /v1/…/services/{svc}/endpoints/{ep}?updateMask=     — PatchEndpoint
-//	DELETE /v1/…/services/{svc}/endpoints/{ep}                 — DeleteEndpoint
+//	POST   /v1/…/namespaces?namespaceId=                       : CreateNamespace
+//	GET    /v1/…/namespaces                                    : ListNamespaces
+//	GET    /v1/…/namespaces/{ns}                               : GetNamespace
+//	PATCH  /v1/…/namespaces/{ns}?updateMask=                   : PatchNamespace
+//	DELETE /v1/…/namespaces/{ns}                               : DeleteNamespace
+//	POST   /v1/…/namespaces/{ns}/services?serviceId=           : CreateService
+//	GET    /v1/…/namespaces/{ns}/services                      : ListServices
+//	GET    /v1/…/namespaces/{ns}/services/{svc}                : GetService
+//	PATCH  /v1/…/namespaces/{ns}/services/{svc}?updateMask=    : PatchService
+//	DELETE /v1/…/namespaces/{ns}/services/{svc}                : DeleteService
+//	POST   /v1/…/services/{svc}/endpoints?endpointId=          : CreateEndpoint
+//	GET    /v1/…/services/{svc}/endpoints                      : ListEndpoints
+//	GET    /v1/…/services/{svc}/endpoints/{ep}                 : GetEndpoint
+//	PATCH  /v1/…/services/{svc}/endpoints/{ep}?updateMask=     : PatchEndpoint
+//	DELETE /v1/…/services/{svc}/endpoints/{ep}                 : DeleteEndpoint
 //
 // Every RPC returns the resource (or an empty object for delete) directly with
 // no google.longrunning.Operation wrapper. Deleting a parent cascades to its

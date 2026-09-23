@@ -13,7 +13,7 @@ var connectorStateNames = []string{"", "READY", "CREATING", "DELETING", "ERROR",
 // numeric value is rewritten to its canonical name. Within Serverless VPC
 // Access's in-scope surface, a numeric `state` is a connector's provisioning
 // state (the only enum on the resource). state is output-only, so a client never
-// sends it — but a GAPIC roundtrip that marshals an explicit State as a protojson
+// sends it, but a GAPIC roundtrip that marshals an explicit State as a protojson
 // integer is normalized defensively.
 //
 //nolint:gochecknoglobals // immutable lookup set
