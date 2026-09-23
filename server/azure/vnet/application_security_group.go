@@ -111,7 +111,7 @@ func (*Handler) createASG(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 }
 
 // patchASG applies an ARM UpdateTags PATCH (ApplicationSecurityGroupsClient.
-// UpdateTags — a synchronous 200): the body's tags REPLACE the stored set
+// UpdateTags, a synchronous 200): the body's tags REPLACE the stored set
 // wholesale (tags:{} wipes them), the ASG's other fields are left intact, and
 // the full resource is returned. The get-modify-put is guarded by patchMu so a
 // concurrent PATCH cannot drop the write. A PATCH on a missing ASG is a 404.

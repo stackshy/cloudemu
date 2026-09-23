@@ -23,7 +23,7 @@ const (
 	plsAliasHashLen = 12
 )
 
-// ARM JSON shapes — privateEndpoints.
+// ARM JSON shapes: privateEndpoints.
 
 type peConnectionState struct {
 	Status          string `json:"status,omitempty"`
@@ -79,7 +79,7 @@ type privateEndpointListResponse struct {
 	Value []privateEndpointResponse `json:"value"`
 }
 
-// ARM JSON shapes — privateLinkServices.
+// ARM JSON shapes: privateLinkServices.
 
 type plsIPConfigProps struct {
 	PrivateIPAllocationMethod string    `json:"privateIPAllocationMethod,omitempty"`

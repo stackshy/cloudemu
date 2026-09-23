@@ -9,7 +9,7 @@ import (
 )
 
 // Finding (BLOCKER): VirtualNetworkPeerings PUT/GET/DELETE were not routed as
-// a sub-resource — routeVNet never inspected rp.SubResource for
+// a sub-resource: routeVNet never inspected rp.SubResource for
 // "virtualNetworkPeerings", so a standalone peering op hit the whole-VNet
 // handler keyed on the parent VNet's own name. A peering DELETE therefore
 // deleted the entire virtual network. This verifies a standalone peering
@@ -58,7 +58,7 @@ func TestSDKVNetPeeringSubResourceCRUD(t *testing.T) {
 		t.Fatalf("one-sided peering state = %v, want Initiated", created.Properties.PeeringState)
 	}
 
-	// The parent VNet must still exist and be untouched by the peering PUT —
+	// The parent VNet must still exist and be untouched by the peering PUT:
 	// this is the BLOCKER regression: a peering op must never alias the VNet.
 	gotVNet, err := vnets.Get(ctx, "rg-1", "vnet-a", nil)
 	if err != nil {

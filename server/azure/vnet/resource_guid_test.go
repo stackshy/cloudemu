@@ -15,8 +15,8 @@ import (
 )
 
 // TestSDKVNetResourceGUID verifies that a virtual network carries a non-empty
-// properties.resourceGuid — the ARM-persisted identifier real Azure assigns on
-// create — and that it stays stable across a repeat PUT (the same resource
+// properties.resourceGuid, the ARM-persisted identifier real Azure assigns on
+// create, and that it stays stable across a repeat PUT (the same resource
 // updated in place keeps its identity), while a differently-named vnet gets
 // its own distinct GUID.
 func TestSDKVNetResourceGUID(t *testing.T) {

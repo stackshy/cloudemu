@@ -27,7 +27,7 @@ func (h *Handler) routeRouteTable(w http.ResponseWriter, r *http.Request, rp azu
 	// SubResource="routes", SubResourceName="{routeName}". Routed before the
 	// whole-route-table method switch below so a standalone route PUT/GET/DELETE
 	// never hits createRouteTable/getRouteTable/deleteRouteTable, which are scoped
-	// to rp.ResourceName (the route table's own name) — without this a route
+	// to rp.ResourceName (the route table's own name); without this a route
 	// DELETE deletes the entire route table and a route PUT wipes its route list.
 	if rp.SubResource == subResRoutes {
 		h.routeRoute(w, r, rp)

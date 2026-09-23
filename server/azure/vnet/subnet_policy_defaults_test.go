@@ -9,9 +9,9 @@ import (
 )
 
 // TestSDKSubnetNetworkPolicyDefaults confirms a subnet created without either
-// network-policy field reports the ARM defaults on GET —
+// network-policy field reports the ARM defaults on GET:
 // privateEndpointNetworkPolicies=Disabled and
-// privateLinkServiceNetworkPolicies=Enabled (Subnets REST reference) — and that
+// privateLinkServiceNetworkPolicies=Enabled (Subnets REST reference), and that
 // explicit values round-trip and a subsequent PUT that omits them resets to the
 // defaults (full-replace CreateOrUpdate semantics).
 func TestSDKSubnetNetworkPolicyDefaults(t *testing.T) {

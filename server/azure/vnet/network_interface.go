@@ -109,7 +109,7 @@ func (h *Handler) routeNIC(w http.ResponseWriter, r *http.Request, rp azurearm.R
 	}
 
 	// InterfacesClient.BeginListEffectiveNetworkSecurityGroups: a POST action
-	// on the NIC, not a nested collection — routed before the whole-NIC method
+	// on the NIC, not a nested collection: routed before the whole-NIC method
 	// switch so it never falls through to createNIC/getNIC/deleteNIC.
 	if strings.EqualFold(rp.SubResource, subResEffectiveNSGs) {
 		if r.Method != http.MethodPost {
@@ -216,7 +216,7 @@ func (*Handler) deleteNIC(w http.ResponseWriter, r *http.Request, rp azurearm.Re
 ) {
 	if err := svc.DeleteNetworkInterface(r.Context(), rp.ResourceGroup, rp.ResourceName); err != nil {
 		// A NIC attached to a VM: ARM answers 400 with this specific code, which
-		// armnetwork clients switch on — not the generic 409 WriteCErr would emit.
+		// armnetwork clients switch on, not the generic 409 WriteCErr would emit.
 		if cerrors.IsFailedPrecondition(err) {
 			azurearm.WriteError(w, http.StatusBadRequest, "InUseNetworkInterfaceCannotBeDeleted", cerrors.Message(err))
 			return
@@ -363,7 +363,7 @@ const (
 
 // publicIPClaimant returns the owner already bound to the public IP other than
 // the resource being written (selfKind + selfRG + selfName), so a NIC and a NAT
-// gateway both refuse to steal a static public IP that is already in use — real
+// gateway both refuse to steal a static public IP that is already in use: real
 // Azure binds one to a single owner (PublicIPAddressCannotBeAssignedToMultiple…).
 // NICs reference the IP by its ARM id; NAT gateways reference it by the driver
 // Elastic-IP allocationID, so the caller passes both.

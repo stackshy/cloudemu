@@ -147,7 +147,7 @@ func (h *Handler) createPublicIPPrefix(w http.ResponseWriter, r *http.Request, r
 }
 
 // patchPublicIPPrefix applies an ARM UpdateTags PATCH (PublicIPPrefixesClient.
-// UpdateTags — a synchronous 200): the body's tags REPLACE the stored set
+// UpdateTags, a synchronous 200): the body's tags REPLACE the stored set
 // wholesale (tags:{} wipes them), the prefix's other fields are left intact, and
 // the full resource is returned. The get-modify-put is guarded by patchMu so a
 // concurrent PATCH cannot drop the write. A PATCH on a missing prefix is a 404.
@@ -294,7 +294,7 @@ func (h *Handler) prefixPublicIPRefs(ctx context.Context, prefixARMID string) []
 
 // prefixSubscription extracts the subscription id from a prefix ARM id so the
 // public IP back-references share the same subscription. The id shape is
-// /subscriptions/{sub}/resourceGroups/... — a malformed id yields "".
+// /subscriptions/{sub}/resourceGroups/...; a malformed id yields "".
 func prefixSubscription(armID string) string {
 	rp, ok := azurearm.ParsePath(armID)
 	if !ok {

@@ -217,7 +217,7 @@ func TestSDKPublicIPFieldsRoundTrip(t *testing.T) {
 }
 
 // TestSDKPublicIPSKUTierAndVersionRoundTrip guards sku.tier and
-// publicIPAddressVersion — both dropped before — round-tripping on GET, so
+// publicIPAddressVersion (both dropped before) round-tripping on GET, so
 // azurerm's sku_tier and ip_version do not perpetually diff. An explicit
 // tier/version is echoed back verbatim; an omitted one reports the ARM defaults
 // (Regional, IPv4) rather than an empty string.
@@ -368,7 +368,7 @@ func TestSDKPublicIPIPConfigurationBackref(t *testing.T) {
 // TestSDKPublicIPRePUTUpdatesInPlace guards the re-PUT idempotency fix: a
 // second CreateOrUpdate to the same publicIPAddresses/{name} must mutate the
 // existing allocation in place, not mint a duplicate. It asserts the critical
-// invariant — LIST returns exactly ONE entry for the name — plus the updated
+// invariant (LIST returns exactly ONE entry for the name) plus the updated
 // idleTimeout and tags round-tripping on GET, and the address staying stable.
 func TestSDKPublicIPRePUTUpdatesInPlace(t *testing.T) {
 	ts := newVNetServer(t)

@@ -7,17 +7,17 @@
 //
 //	PUT/GET/DELETE  /subscriptions/{s}/resourceGroups/{rg}/providers/
 //	    Microsoft.Network/virtualNetworks/{name}
-//	GET .../virtualNetworks                              — list in RG
-//	PUT/GET/DELETE  .../virtualNetworks/{vn}/subnets/{n} — nested subnet
-//	GET .../virtualNetworks/{vn}/subnets                 — list subnets
-//	PUT/GET/DELETE  .../networkSecurityGroups/{name}     — NSG CRUD
-//	GET .../networkSecurityGroups                        — list NSGs
-//	PUT/GET/DELETE  .../routeTables/{name}               — route table CRUD
-//	GET .../routeTables                                  — list route tables
-//	PUT/GET/DELETE  .../networkInterfaces/{name}         — NIC CRUD
-//	GET .../networkInterfaces                            — list NICs
-//	PUT/GET/DELETE  .../virtualNetworks/{vn}/virtualNetworkPeerings/{n} — peering CRUD
-//	GET .../virtualNetworks/{vn}/virtualNetworkPeerings  — list peerings
+//	GET .../virtualNetworks                              : list in RG
+//	PUT/GET/DELETE  .../virtualNetworks/{vn}/subnets/{n} : nested subnet
+//	GET .../virtualNetworks/{vn}/subnets                 : list subnets
+//	PUT/GET/DELETE  .../networkSecurityGroups/{name}     : NSG CRUD
+//	GET .../networkSecurityGroups                        : list NSGs
+//	PUT/GET/DELETE  .../routeTables/{name}               : route table CRUD
+//	GET .../routeTables                                  : list route tables
+//	PUT/GET/DELETE  .../networkInterfaces/{name}         : NIC CRUD
+//	GET .../networkInterfaces                            : list NICs
+//	PUT/GET/DELETE  .../virtualNetworks/{vn}/virtualNetworkPeerings/{n} : peering CRUD
+//	GET .../virtualNetworks/{vn}/virtualNetworkPeerings  : list peerings
 package vnet
 
 import (
@@ -87,7 +87,7 @@ const (
 	armSubnetPENPTag  = "cloudemu:azureSubnetPENP"
 	armSubnetPLSNPTag = "cloudemu:azureSubnetPLSNP"
 	// armSubnetPrefixesTag records the full addressPrefixes list (comma-joined)
-	// a subnet was created/updated with via the plural addressPrefixes form —
+	// a subnet was created/updated with via the plural addressPrefixes form,
 	// the form the azurerm provider always sends. The driver only stores a
 	// single CIDRBlock, so this tag preserves the multi-prefix list and the
 	// plural response form; its presence is what makes a subnet's GET echo
@@ -258,7 +258,7 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 	// VirtualNetworkPeerings sub-resource (VirtualNetworkPeeringsClient):
 	// SubResource="virtualNetworkPeerings", SubResourceName="{peeringName}".
-	// Routed before the whole-VNet method switch below — BLOCKER fix: without
+	// Routed before the whole-VNet method switch below. BLOCKER fix: without
 	// this, a peering PUT/GET/DELETE fell through to createVNet/getVNet/deleteVNet
 	// keyed on rp.ResourceName (the parent VNet's own name), so a peering DELETE
 	// deleted the entire virtual network instead of just the peering.
@@ -269,7 +269,7 @@ func (h *Handler) routeVNet(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 	// CheckIPAddressAvailability is a GET action on the vnet itself
 	// (.../virtualNetworks/{name}/CheckIPAddressAvailability?ipAddress=...),
-	// not a nested resource — route it before the plain vnet GET/PUT/DELETE
+	// not a nested resource: route it before the plain vnet GET/PUT/DELETE
 	// switch below, or it falls through and answers with the vnet body instead
 	// of an IPAddressAvailabilityResult.
 	if strings.EqualFold(rp.SubResource, subResCheckIPAvail) {
@@ -439,7 +439,7 @@ func (p *subnetRequestProps) addressPrefixList() []string {
 	return nil
 }
 
-// primaryPrefix returns the first prefix in a list, or "" for an empty list —
+// primaryPrefix returns the first prefix in a list, or "" for an empty list:
 // the single CIDR the cross-cloud driver stores for a subnet.
 func primaryPrefix(prefixes []string) string {
 	if len(prefixes) > 0 {
@@ -516,11 +516,11 @@ func (h *Handler) upsertVNet(ctx context.Context, rg, name string, prefixes []st
 // whole PUT rather than orphaning a NIC's reference).
 //
 // subs == nil (the properties.subnets key was absent from the JSON body
-// entirely, not sent as []) leaves every existing subnet untouched — Azure
+// entirely, not sent as []) leaves every existing subnet untouched. Azure
 // added this exact carve-out so tag-only/address-space-only updates don't
 // need to round-trip the subnet list. See "Azure Virtual Network now supports
 // updates without subnet property" (Microsoft Community Hub). An explicit
-// empty array, by contrast, is a request to delete every subnet — nil vs.
+// empty array, by contrast, is a request to delete every subnet; nil vs.
 // non-nil is exactly what encoding/json's Unmarshal already distinguishes for
 // a JSON array field, so no extra presence-tracking is needed here.
 func (h *Handler) materializeSubnets(ctx context.Context, vpcID string, subs []subnetRequest) error {
@@ -552,7 +552,7 @@ func (h *Handler) materializeSubnets(ctx context.Context, vpcID string, subs []s
 // upsertWantedSubnets creates every named subnet in subs that isn't already in
 // haveByName and applies an in-place CreateOrUpdate to those that are (changed
 // address prefix, replaced NSG / NAT gateway associations), validating each
-// CIDR first, and returns the set of names this PUT's body wants — the input
+// CIDR first, and returns the set of names this PUT's body wants: the input
 // deleteOmittedSubnets needs to find what to remove.
 func (h *Handler) upsertWantedSubnets(
 	ctx context.Context, vpcID string, subs []subnetRequest, haveByName map[string]netdriver.SubnetInfo,
@@ -665,7 +665,7 @@ func inlineSubnetTags(sub *subnetRequest) map[string]string {
 
 // deleteOmittedSubnets removes every previously-existing subnet whose name
 // isn't in wanted, refusing (without deleting anything further) the first one
-// still in use by a NIC — the same guard deleteSubnet applies standalone.
+// still in use by a NIC: the same guard deleteSubnet applies standalone.
 func (h *Handler) deleteOmittedSubnets(ctx context.Context, haveByName map[string]netdriver.SubnetInfo, wanted map[string]struct{}) error {
 	for name, info := range haveByName {
 		if _, ok := wanted[name]; ok {
@@ -708,7 +708,7 @@ func (h *Handler) listVNets(w http.ResponseWriter, r *http.Request, rp azurearm.
 
 	for i := range infos {
 		// Skip anchors fabricated only to satisfy the driver's mandatory VPCID
-		// when creating a standalone NSG/route table — they are not user vnets.
+		// when creating a standalone NSG/route table: they are not user vnets.
 		if tagOr(infos[i].Tags, armSyntheticAnchorTag, "") == "true" {
 			continue
 		}
@@ -771,7 +771,7 @@ func (h *Handler) deleteVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 // the resource-group cascade delete: when an RG is removed, the resources
 // created under it must go too rather than lingering as globally addressable
 // orphans. Deletion is forceful (the in-use guards that gate an individual
-// DELETE do not apply — the whole group is going away), and best-effort: a
+// DELETE do not apply: the whole group is going away), and best-effort: a
 // single driver-level failure is returned but does not stop the remaining
 // teardown. The subscription is unused (the emulator is single-estate).
 //
@@ -1093,7 +1093,7 @@ func (*Handler) resolveSubnetRef(
 	return ref.ID, true
 }
 
-// upsertSubnet creates the named subnet, or — when it already exists — applies
+// upsertSubnet creates the named subnet, or, when it already exists, applies
 // an in-place update (armnetwork's SubnetsClient.BeginCreateOrUpdate, the real
 // ARM mechanism). CreateOrUpdate is a full replacement: the address prefix is
 // changed when it differs, and the NAT gateway / NSG associations are REPLACED
@@ -1133,7 +1133,7 @@ func (h *Handler) upsertSubnet(
 
 // updateExistingSubnet applies an in-place CreateOrUpdate to an existing subnet:
 // it changes the address prefix when it differs and REPLACES the NSG / NAT
-// gateway associations from the request body (an omitted reference — empty id —
+// gateway associations from the request body (an omitted reference, empty id,
 // clears that association, matching ARM's full-replacement semantics).
 func (h *Handler) updateExistingSubnet(
 	ctx context.Context, existing *netdriver.SubnetInfo, cidr, prefixTag, natGatewayID, nsgID, routeTableID string,
@@ -1169,8 +1169,8 @@ func (h *Handler) updateExistingSubnet(
 	return existing, nil
 }
 
-// replaceSubnetAssociation sets the subnet tag identified by tagKey to id, or —
-// when id is empty (the reference was omitted from the request body) — clears
+// replaceSubnetAssociation sets the subnet tag identified by tagKey to id, or,
+// when id is empty (the reference was omitted from the request body), clears
 // it, so a CreateOrUpdate that drops an NSG / NAT gateway reference removes the
 // association. existing.Tags is updated to mirror the store mutation.
 func (h *Handler) replaceSubnetAssociation(ctx context.Context, existing *netdriver.SubnetInfo, tagKey, id string) error {
@@ -1223,8 +1223,8 @@ func tagsWithout(in map[string]string, key string) map[string]string {
 	return out
 }
 
-// findSubnetInVNet resolves a subnet by (vnet, name) — subnet names are only
-// unique within a vnet — mirroring subnetCIDR's scoped lookup.
+// findSubnetInVNet resolves a subnet by (vnet, name): subnet names are only
+// unique within a vnet, mirroring subnetCIDR's scoped lookup.
 func findSubnetInVNet(ctx context.Context, n netdriver.Networking, vpcID, name string) (*netdriver.SubnetInfo, error) {
 	subs, err := n.DescribeSubnets(ctx, nil)
 	if err != nil {
@@ -1518,7 +1518,7 @@ func (h *Handler) deleteNSG(w http.ResponseWriter, r *http.Request, rp azurearm.
 	// associated resources; the association must be dropped first.
 	//
 	// The reference scan reads the subnets/NICs stores and the delete writes the
-	// security-groups store — two independent memstores. Their per-store locks
+	// security-groups store: two independent memstores. Their per-store locks
 	// cannot span both, so this check-then-delete is not atomic; a subnet PUT
 	// that associates the NSG in the same instant may slip through. Real ARM has
 	// the same eventual-consistency window, and making it atomic would need a
@@ -1628,7 +1628,7 @@ func (h *Handler) createPublicIP(w http.ResponseWriter, r *http.Request, rp azur
 }
 
 // upsertPublicIP reuses an existing public IP of the same name (idempotent
-// re-PUT — real ARM CreateOrUpdate) or allocates a new one. On the found branch
+// re-PUT, real ARM CreateOrUpdate) or allocates a new one. On the found branch
 // it mutates the existing allocation in place rather than allocating a second,
 // hidden one, so LIST returns exactly one entry per name and the allocation
 // never leaks.
@@ -1680,7 +1680,7 @@ func (h *Handler) deletePublicIP(w http.ResponseWriter, r *http.Request, rp azur
 	// A NIC's ipConfiguration reference doesn't go through
 	// AssociateAddress/eip.AssociationID (that's reserved for AWS-style
 	// instance/NAT-gateway attachment), so it needs its own in-use check here
-	// — the same scan the ipConfiguration back-reference already does. This scan
+	// (the same scan the ipConfiguration back-reference already does). This scan
 	// reads the NICs store while ReleaseAddress deletes from the public-IP store,
 	// so it shares the same non-atomic, ARM-like consistency window documented on
 	// the NSG guard; the eip's own association guard (ReleaseAddress) is atomic.
@@ -1738,7 +1738,7 @@ func (h *Handler) listPublicIPs(w http.ResponseWriter, r *http.Request, rp azure
 	azurearm.WriteJSON(w, http.StatusOK, out)
 }
 
-// Lookup helpers — driver indexes by its own ID, so we match by tag.
+// Lookup helpers: driver indexes by its own ID, so we match by tag.
 
 func findVNetByName(ctx context.Context, n netdriver.Networking, name string) (*netdriver.VPCInfo, error) {
 	infos, err := n.DescribeVPCs(ctx, nil)
@@ -1823,7 +1823,7 @@ func findNSGByName(ctx context.Context, n netdriver.Networking, name string) (*n
 }
 
 // findPublicIPByName matches by both the ARM name tag and, when rg is
-// non-empty, the resource-group tag — a public IP in a different resource
+// non-empty, the resource-group tag: a public IP in a different resource
 // group with the same name must not match (see armPublicIPRGTag).
 func findPublicIPByName(ctx context.Context, n netdriver.Networking, rg, name string) (*netdriver.ElasticIP, error) {
 	infos, err := n.DescribeAddresses(ctx, nil)
@@ -1950,7 +1950,7 @@ func toSubnetResponse(info *netdriver.SubnetInfo, rp azurearm.ResourcePath) subn
 
 	// Echo back whichever address-prefix form the caller used: the plural
 	// addressPrefixes (recorded in armSubnetPrefixesTag by a request that used
-	// it — the azurerm provider always does) or the singular addressPrefix.
+	// it, the azurerm provider always does) or the singular addressPrefix.
 	if raw := tagOr(info.Tags, armSubnetPrefixesTag, ""); raw != "" {
 		out.Properties.AddressPrefixes = strings.Split(raw, ",")
 	} else {
@@ -2019,7 +2019,7 @@ func (h *Handler) nsgAssociatedSubnets(ctx context.Context, nsgARMID string) []a
 }
 
 // subnetsAssociatedByTag scans every subnet for an association tag (tagKey)
-// whose value matches armID and returns the subnets' ARM ids — the read-only
+// whose value matches armID and returns the subnets' ARM ids: the read-only
 // back-reference an NSG / route table reports once a subnet points at it. armID
 // supplies the subscription/resource-group for the built subnet ids.
 func (h *Handler) subnetsAssociatedByTag(ctx context.Context, tagKey, armID string) []armIDRef {
@@ -2221,7 +2221,7 @@ func writeAcceptedAsync(w http.ResponseWriter, r *http.Request, sub, opID string
 
 // Tag helpers.
 
-// armTagsObject is the ARM UpdateTags PATCH body ({"tags": {...}}) — the
+// armTagsObject is the ARM UpdateTags PATCH body ({"tags": {...}}): the
 // TagsObject the armnetwork *Client.UpdateTags / BeginUpdateTags methods send.
 // Only tags are updatable through this operation; the resource's properties are
 // left intact.
@@ -2230,7 +2230,7 @@ type armTagsObject struct {
 }
 
 // replacementTags normalizes an UpdateTags PATCH body's tags for wholesale
-// replacement — real Azure's resource-level UpdateTags SETS the tag collection,
+// replacement. Real Azure's resource-level UpdateTags SETS the tag collection,
 // it does not merge (the merge/replace/delete modes live only on the generic
 // Microsoft.Resources/tags API). A populated map replaces the stored set (cloned
 // so the store never aliases the request); a present-but-empty map ({}) wipes it
@@ -2264,7 +2264,7 @@ func tagOr(m map[string]string, key, fallback string) string {
 	return fallback
 }
 
-// orDefault returns v, or fallback when v is empty — used to surface the ARM
+// orDefault returns v, or fallback when v is empty. Used to surface the ARM
 // defaults (IPv4, Regional) a real GET always reports for a public IP whose
 // stored record predates the field being modeled.
 func orDefault(v, fallback string) string {
