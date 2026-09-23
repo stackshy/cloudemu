@@ -88,7 +88,7 @@ type serviceActionDetail struct {
 // not yet committed (CreateService/UpdateService/DeleteService converging or
 // draining it). They are published only after the caller stores the service:
 // an event target that stops a task re-enters reconcileServiceAfterStop, which
-// must see the committed record — against the half-built or superseded one it
+// must see the committed record; against the half-built or superseded one, it
 // computes the wrong shortfall and over-provisions the service.
 type pendingTaskEvents struct {
 	tasks    []*driver.Task
@@ -108,7 +108,7 @@ func (m *Mock) publish(ctx context.Context, p *pendingTaskEvents) {
 }
 
 // SetEventPublisher wires the EventBridge default bus that task state changes
-// and service actions are published to. Safe to leave unset — no events are
+// and service actions are published to. Safe to leave unset. No events are
 // emitted.
 func (m *Mock) SetEventPublisher(p awsevents.Publisher) {
 	m.events.SetPublisher(p)

@@ -162,7 +162,7 @@ func (m *Mock) deregisterInstanceLocked(containerInstance string, force bool) (*
 	}
 
 	// Force-deregistering an instance with running tasks stops those tasks, as
-	// real ECS does — leaving them RUNNING on a deleted instance would strand
+	// real ECS does. Leaving them RUNNING on a deleted instance would strand
 	// them. The instance is removed, so its capacity need not be returned.
 	var stopped []*driver.Task
 	if force {

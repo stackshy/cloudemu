@@ -66,7 +66,7 @@ type crawlerSucceededDetail struct {
 }
 
 // SetEventPublisher wires the EventBridge default bus that job-run and crawler
-// state changes are published to. Safe to leave unset — no events are emitted.
+// state changes are published to. Safe to leave unset. No events are emitted.
 func (m *Mock) SetEventPublisher(p awsevents.Publisher) {
 	m.events.SetPublisher(p)
 }

@@ -56,7 +56,7 @@ const (
 // AWS lets the same instance ID or IP be registered multiple times with
 // different port overrides (RegisterTargets docs, "Register targets by
 // instance ID using port overrides": the same instance ID is registered
-// twice with Port=80 and Port=766, and both remain distinct targets) — so
+// twice with Port=80 and Port=766, and both remain distinct targets), so
 // the health store must key on (ID, Port), not ID alone.
 type targetKey struct {
 	id   string
@@ -96,7 +96,7 @@ type Mock struct {
 	// healthArmed marks (by settleKey) every target whose healthSettle window
 	// has been started. Real ELBv2 only begins health checking once a target
 	// group is referenced by a listener, so the window must not start at
-	// RegisterTargets time — a target sitting on an unattached target group for
+	// RegisterTargets time. A target sitting on an unattached target group for
 	// an arbitrary time must not burn its health-check clock. Instead
 	// observeTargetHealth arms it lazily, the first time it observes the group
 	// as referenced, and this set makes that a one-time transition: once armed,
@@ -406,7 +406,7 @@ const (
 	// Health-check defaults specific to a lambda target group (CreateTargetGroup
 	// API reference): the interval defaults to 35 (not 30), and both threshold
 	// counts default to 5. A lambda target group carries no health-check protocol,
-	// port, or path — health checks are disabled by default — so those are left
+	// port, or path (health checks are disabled by default), so those are left
 	// unset rather than defaulted the way an instance/ip group's are.
 	intervalLambdaSec = 35
 	thresholdLambda   = 5
@@ -424,8 +424,8 @@ func isHTTPProtocol(p string) bool {
 // reference, this is NOT the target group's own protocol mirrored back: an
 // Application Load Balancer target group (HTTP or HTTPS) always defaults to
 // HTTP, and a Network or Gateway Load Balancer target group (TCP, TLS, UDP,
-// TCP_UDP, GENEVE, QUIC, TCP_QUIC) always defaults to TCP — the GENEVE, TLS,
-// UDP, TCP_UDP, QUIC, and TCP_QUIC protocols are not themselves supported as a
+// TCP_UDP, GENEVE, QUIC, TCP_QUIC) always defaults to TCP. The GENEVE, TLS,
+// UDP, TCP_UDP, QUIC, and TCP_QUIC protocols are not supported as a
 // health check protocol.
 func defaultHealthCheckProtocol(tgProtocol string) string {
 	if isHTTPProtocol(tgProtocol) {
@@ -439,8 +439,8 @@ func defaultHealthCheckProtocol(tgProtocol string) string {
 // to for a target group of the given protocol and target type. Per the
 // CreateTargetGroup API reference: a lambda target group defaults to 30; among
 // the rest, an HTTP target group defaults to 6, a GENEVE (Gateway Load Balancer)
-// target group to 5, and every other protocol — HTTPS, TCP, TLS, UDP, TCP_UDP,
-// QUIC, TCP_QUIC, whose health check runs over TCP — to 10. The prior flat 5
+// target group to 5, and every other protocol (HTTPS, TCP, TLS, UDP, TCP_UDP,
+// QUIC, TCP_QUIC, whose health check runs over TCP) to 10. The prior flat 5
 // under-reported the timeout real AWS returns for every non-GENEVE protocol.
 func defaultHealthCheckTimeout(tgProtocol, targetType string) int {
 	if targetType == targetTypeLambda {
@@ -526,7 +526,7 @@ func applyHealthCheckNumericDefaults(hc *driver.HealthCheck, timeout int) {
 
 // defaultLambdaHealthCheck fills the health-check defaults for a lambda target
 // group. Unlike an instance/ip group, a lambda group defaults with health checks
-// disabled and so carries no protocol, port, or path — real ELBv2 returns none,
+// disabled and so carries no protocol, port, or path. Real ELBv2 returns none,
 // and returning a protocol makes Terraform reject the group with "health_check
 // .protocol cannot be specified when target_type is lambda". Only the numeric
 // defaults (interval 35, timeout 30, both thresholds 5) are applied; an
@@ -558,7 +558,7 @@ func defaultLambdaHealthCheck(hc driver.HealthCheck) driver.HealthCheck {
 // Per the API reference, a target group can be deleted only if it is not
 // referenced by any actions. A target group that is still the forward target of
 // a listener default action or a rule action fails with ResourceInUse.
-// DeleteTargetGroup is otherwise idempotent — its only documented error is
+// DeleteTargetGroup is otherwise idempotent: its only documented error is
 // ResourceInUse, so deleting a missing/already-deleted target group succeeds,
 // mirroring DeleteLoadBalancer and keeping teardown-retry flows working.
 func (m *Mock) DeleteTargetGroup(_ context.Context, arn string) error {
@@ -916,9 +916,9 @@ func (m *Mock) CreateRule(_ context.Context, cfg driver.RuleConfig) (*driver.Rul
 }
 
 // ruleARN builds a rule ARN from the listener's resource path so it reads
-// arn:aws:elasticloadbalancing:REGION:ACCT:listener-rule/<lb>/<listener-id>/<rule-id>
-// — resource type "listener-rule" with a single "arn:" prefix, never nesting the
-// full listener ARN inside the value (which breaks ARN parsers).
+// arn:aws:elasticloadbalancing:REGION:ACCT:listener-rule/<lb>/<listener-id>/<rule-id>,
+// using resource type "listener-rule" with a single "arn:" prefix, never nesting
+// the full listener ARN inside the value (which breaks ARN parsers).
 func (m *Mock) ruleARN(listenerARN string) string {
 	ruleID := idgen.GenerateID("")
 	resource := "listener-rule/" + ruleID
@@ -1130,7 +1130,7 @@ type prioritySlot struct {
 }
 
 // checkPriorityConflicts reports FailedPrecondition (mapped to PriorityInUse)
-// when a requested priority collides with another rule on the same listener —
+// when a requested priority collides with another rule on the same listener,
 // either a rule outside the batch or a second rule inside it.
 func (m *Mock) checkPriorityConflicts(
 	pairs []driver.RulePriorityPair, moving map[string]driver.RuleInfo,
@@ -1216,8 +1216,8 @@ func (m *Mock) GetLBAttributes(_ context.Context, lbARN string) (*driver.LBAttri
 	}
 
 	// Extra is a map, so the struct copy above still aliases the stored one.
-	// A caller reading attributes, mutating Extra, and writing them back —
-	// which is what a partial attribute update does — would otherwise write
+	// A caller reading attributes, mutating Extra, and writing them back,
+	// which is what a partial attribute update does, would otherwise write
 	// into the shared map outside this lock, and two overlapping updates on
 	// one load balancer crash the process with a concurrent map write.
 	attrs.Extra = copyStringMap(attrs.Extra)
@@ -1454,7 +1454,7 @@ func mergedListenerAttributes(lbType string, overrides map[string]string) map[st
 // time DescribeTargetHealth observes the group as referenced. Re-registering a
 // target that is currently draining (a rolling deploy scaling an instance
 // back in before its drain window elapsed) cancels the drain and restarts
-// registration — including the arm bit — matching real ELBv2: RegisterTargets
+// registration, including the arm bit, matching real ELBv2: RegisterTargets
 // on an in-service target resets its health tracking.
 func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets []driver.Target) error {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {
@@ -1498,7 +1498,7 @@ func (m *Mock) RegisterTargets(_ context.Context, targetGroupARN string, targets
 // "draining" (Target.DeregistrationInProgress) for its deregistration delay so
 // in-flight connections finish, then removes it. beginDraining starts that
 // window; when async settling is off the window elapses instantly, so the
-// target disappears from this call's Describe onward — the historical
+// target disappears from this call's Describe onward, the historical
 // synchronous behavior.
 func (m *Mock) DeregisterTargets(_ context.Context, targetGroupARN string, targets []driver.Target) error {
 	if _, ok := m.tgs.Get(targetGroupARN); !ok {
@@ -1524,7 +1524,7 @@ func (m *Mock) DeregisterTargets(_ context.Context, targetGroupARN string, targe
 
 		// No exact (ID, Port) match. Per the DeregisterTargets docs, a port
 		// is only required when the target was registered with a port
-		// override; a caller that omits Port (t.Port == 0, the common case —
+		// override; a caller that omits Port (t.Port == 0, the common case,
 		// RegisterTargets docs Example 1 registers and deregisters by ID
 		// alone) still identifies a target unambiguously as long as that ID
 		// is registered under exactly one port. Deregistering an unknown
@@ -1542,7 +1542,7 @@ func (m *Mock) DeregisterTargets(_ context.Context, targetGroupARN string, targe
 
 // solePortMatch reports the single entry registered under id, when exactly one
 // exists. Two or more entries for the same id (different port overrides) are
-// left untouched — disambiguating them requires the caller to specify the
+// left untouched. Disambiguating them requires the caller to specify the
 // port, matching real ELBv2 semantics.
 func solePortMatch(tgHealth map[targetKey]*driver.TargetHealth, id string) (targetKey, bool) {
 	var match targetKey
@@ -1567,7 +1567,7 @@ func solePortMatch(tgHealth map[targetKey]*driver.TargetHealth, id string) (targ
 
 // beginDraining transitions a registered target to "draining" and starts its
 // deregistration-delay settle window. When that window is inactive (async
-// settling off), the target is removed immediately instead — the caller must
+// settling off), the target is removed immediately instead. The caller must
 // hold healthMu.
 func (m *Mock) beginDraining(
 	tgHealth map[targetKey]*driver.TargetHealth, targetGroupARN string, key targetKey, now time.Time,
@@ -1614,7 +1614,7 @@ func (m *Mock) DescribeTargetHealth(_ context.Context, targetGroupARN string) ([
 
 	// A target group not forwarded to by any listener (default action or rule)
 	// on a load balancer reports every registering target as "unused" /
-	// Target.NotInUse and does not advance — real ELBv2 only begins health
+	// Target.NotInUse and does not advance. Real ELBv2 only begins health
 	// checks once a listener routes to the group. An explicitly set state
 	// (e.g. ECS SetTargetHealth) is left untouched; only the automatic
 	// initial->healthy progression is gated.
@@ -1664,7 +1664,7 @@ func (m *Mock) observeTargetHealth(
 		}
 
 		// Arm the settle window the first time the group is observed as
-		// referenced — never before, and never again once armed. This is what
+		// referenced, never before, and never again once armed. This is what
 		// keeps a target on a not-yet-attached target group from burning its
 		// health-check clock while it waits.
 		if _, armed := m.healthArmed[sk]; !armed {

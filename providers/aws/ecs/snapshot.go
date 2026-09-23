@@ -12,13 +12,13 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // ecsSnapshot is the full serialized state of the ECS mock. Every store holds a
 // fully-exported driver type (or []driver.Tag / string), so each round-trips
-// through the generic memstore helper keyed by its resource id — ARNs and the
+// through the generic memstore helper keyed by its resource id: ARNs and the
 // "cluster/name", "family:revision" composite keys survive unchanged, so a
 // restore is transparent to clients. The dynamic-host-port counter is preserved
 // so newly placed bridge-mode ports do not collide with restored ones. The
 // mutexes, the optional wired deps (launcher, logs, registrar), and the
-// in-flight taskSettle transients are not serialized — a settle window is a
-// sub-few-second overlay, so a restored task is simply observed in its final
+// in-flight taskSettle transients are not serialized. A settle window is a
+// sub-few-second overlay, so a restored task is observed in its final
 // state, matching how EC2 excludes its own settle windows.
 type ecsSnapshot struct {
 	Clusters      json.RawMessage `json:"clusters,omitempty"`
@@ -33,8 +33,8 @@ type ecsSnapshot struct {
 	PortCounter   uint32          `json:"portCounter,omitempty"`
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// ECS holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. ECS holds no bulk
+// object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	var snap ecsSnapshot
 	if err := m.snapshotStores(&snap); err != nil {

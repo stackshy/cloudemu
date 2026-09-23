@@ -24,7 +24,7 @@ func mkListenerForTags(t *testing.T, m *Mock, tags map[string]string) (lbARN, li
 }
 
 // TestCreateListenerStoresTags proves a listener created with Tags reports
-// them back on the returned ListenerInfo and on a subsequent describe — before
+// them back on the returned ListenerInfo and on a subsequent describe. Before
 // this fix ListenerInfo had no Tags field at all, so listener tags set at
 // create time were silently dropped.
 func TestCreateListenerStoresTags(t *testing.T) {
@@ -39,7 +39,7 @@ func TestCreateListenerStoresTags(t *testing.T) {
 }
 
 // TestCreateRuleStoresTags and TestGetRule prove a rule created with Tags
-// reports them back via the new GetRule accessor — required because ELBv2
+// reports them back via the new GetRule accessor, required because ELBv2
 // DescribeTags accepts listener-rule ARNs directly, and DescribeRules only
 // looks up by parent listener ARN.
 func TestCreateRuleStoresTags(t *testing.T) {
@@ -74,8 +74,8 @@ func TestGetRuleNotFound(t *testing.T) {
 }
 
 // TestAddResourceTagsAppliesToListener and TestAddResourceTagsAppliesToRule
-// prove AddResourceTags/RemoveResourceTags — generalized to operate over any
-// of the four taggable ELBv2 resource kinds — reach listeners and rules, not
+// prove AddResourceTags/RemoveResourceTags (generalized to operate over any
+// of the four taggable ELBv2 resource kinds) reach listeners and rules, not
 // just load balancers and target groups.
 func TestAddResourceTagsAppliesToListener(t *testing.T) {
 	m := newTestMock()

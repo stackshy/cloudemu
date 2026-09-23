@@ -12,7 +12,7 @@ import (
 // ELBv2 never mirrors the target group's own protocol back onto the health
 // check: an Application Load Balancer target group (HTTP or HTTPS) always
 // defaults its health check to HTTP. Mirroring the protocol instead (the prior
-// behavior) produced a health check protocol real AWS never returns —
+// behavior) produced a health check protocol real AWS never returns,
 // surfacing as a perpetual Terraform plan diff on any aws_lb_target_group with
 // protocol = "HTTPS" and no explicit health_check block.
 func TestDefaultHealthCheckProtocolHTTPS(t *testing.T) {

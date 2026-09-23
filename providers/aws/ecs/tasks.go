@@ -30,7 +30,7 @@ func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Ta
 	cluster := resolveClusterName(in.Cluster)
 
 	// A task is a child of its cluster, so its cluster/task ARNs must carry the
-	// cluster's region — the region the cluster was created in — not the region
+	// cluster's region, the region the cluster was created in, not the region
 	// this RunTask request happens to be signed for. Derive it from the stored
 	// cluster's ARN; only the implicit (never-created) default cluster has no
 	// stored ARN, so it falls back to the request region.
@@ -46,7 +46,7 @@ func (m *Mock) RunTask(ctx context.Context, in driver.RunTaskInput) ([]driver.Ta
 	}
 
 	// An unresolved or deregistered (INACTIVE) task definition is a synchronous
-	// ClientException in real ECS, not a placement failure — failures[] is
+	// ClientException in real ECS, not a placement failure; failures[] is
 	// reserved for capacity/placement.
 	td, err := m.resolveLaunchableTaskDef(in.TaskDefinition)
 	if err != nil {
@@ -219,7 +219,7 @@ type taskSpec struct {
 // Every branch that actually stores the task also calls recordTags(task.ARN,
 // spec.tags), mirroring CreateCluster/CreateService/RegisterTaskDefinition:
 // task.Tags alone (echoed on RunTask/DescribeTasks) is not enough, because
-// ListTagsForResource reads the separate m.tags store keyed by ARN — without
+// ListTagsForResource reads the separate m.tags store keyed by ARN. Without
 // this call a task launched with --tags describes with them but
 // ListTagsForResource silently reports none.
 //
@@ -289,8 +289,8 @@ const connectivityConnected = "CONNECTED"
 const defaultAZSuffix = "a"
 
 // stampLaunch fills the fields real ECS computes at launch: the task-level
-// size from the task definition, the placement zone, each container's ARN, and
-// — once the task actually ran — startedAt/connectivity (plus the stop
+// size from the task definition, the placement zone, each container's ARN, and,
+// once the task actually ran, startedAt/connectivity (plus the stop
 // timestamps for an engine-backed task that already ran to completion).
 func (m *Mock) stampLaunch(task *driver.Task, td *driver.TaskDefinition) {
 	task.CPU, task.Memory = td.CPU, td.Memory
@@ -328,7 +328,7 @@ func (m *Mock) stampStop(task *driver.Task) {
 	task.StoppingAt, task.StoppedAt = now, now
 }
 
-// beginLaunchSettle starts the task's launch settle window — a realistic
+// beginLaunchSettle starts the task's launch settle window, a realistic
 // lastStatus transient shown before the task's already-final RUNNING becomes
 // wire-visible: PROVISIONING while a Fargate task's ENI attaches, PENDING for
 // EC2/EXTERNAL placement (matching AWS's own vocabulary for each launch type).
@@ -350,7 +350,7 @@ func (m *Mock) beginLaunchSettle(task *driver.Task) {
 	m.taskSettle.Begin(task.ARN, intermediate, m.opts.Clock.Now(), m.opts.SettleDuration(settle.DefaultECSTaskStartSettle))
 }
 
-// beginStopSettle starts the task's stop settle window — a realistic
+// beginStopSettle starts the task's stop settle window, a realistic
 // lastStatus transient shown before the task's already-final STOPPED becomes
 // wire-visible: DEPROVISIONING while a Fargate task's ENI detaches, STOPPING
 // for EC2/EXTERNAL. The window is inactive (immediately observed as final)
@@ -378,7 +378,7 @@ func (m *Mock) overlayStatus(t *driver.Task) {
 // lastStatus with the current settle observation, so a caller polling
 // DescribeTasks/ListTasks shortly after RunTask/StopTask sees the realistic
 // PROVISIONING/PENDING or STOPPING/DEPROVISIONING transient (when AsyncSettle
-// is enabled) before the terminal RUNNING/STOPPED — matching the
+// is enabled) before the terminal RUNNING/STOPPED, matching the
 // aws-sdk-go-v2 TasksRunning/TasksStopped waiters.
 func (m *Mock) observedTask(t *driver.Task) driver.Task {
 	out := cloneTask(t)
@@ -473,7 +473,7 @@ func (m *Mock) placeOnInstance(
 
 // containersFor builds the RUNNING containers for a newly launched task,
 // resolving each container's bridge/host network bindings (awsvpc/Fargate
-// tasks carry none — traffic reaches the container directly through its ENI).
+// tasks carry none, since traffic reaches the container directly through its ENI).
 func (m *Mock) containersFor(td *driver.TaskDefinition) []driver.Container {
 	out := make([]driver.Container, 0, len(td.ContainerDefinitions))
 
@@ -498,8 +498,8 @@ const defaultProtocol = "tcp"
 // port mapping under the task's network mode. Host mode always binds the host
 // port to the same value as the container port; bridge mode uses the caller's
 // explicit hostPort or, when left 0, a dynamically assigned one. awsvpc mode
-// (Fargate or EC2 trunking) carries no bindings — the container's ENI IP is
-// addressed directly.
+// (Fargate or EC2 trunking) carries no bindings, since the container's ENI IP
+// is addressed directly.
 func (m *Mock) networkBindingsFor(networkMode string, mappings []driver.PortMapping) []driver.NetworkBinding {
 	if networkMode == networkModeAwsvpc || len(mappings) == 0 {
 		return nil
@@ -556,7 +556,7 @@ func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*dri
 		m.emitTaskStateChange(ctx, updated, taskEventVersionStop)
 		// Reconciliation may itself place a replacement task (taking placeMu
 		// via reserve), so it must run after stopTaskLocked has released
-		// placeMu — calling it while still holding placeMu would deadlock on a
+		// placeMu. Calling it while still holding placeMu would deadlock on a
 		// non-reentrant mutex.
 		m.reconcileServiceAfterStop(ctx, updated)
 	}
@@ -571,8 +571,8 @@ func (m *Mock) StopTask(ctx context.Context, cluster, task, reason string) (*dri
 // reconciling its service, reporting whether this call stopped it. drainService
 // (the scheduler's own drain, used by DeleteService and UpdateService's
 // redeploy) uses it directly: it owns and re-converges the whole service
-// itself, so a separate reconciliation would race it — relaunching a
-// replacement for a task it is deliberately draining — and it publishes the
+// itself, so a separate reconciliation would race it (relaunching a
+// replacement for a task it is deliberately draining), and it publishes the
 // STOPPED events only once the service record is committed.
 func (m *Mock) stopTaskQuiet(ctx context.Context, cluster, task, reason string) (*driver.Task, bool, error) {
 	updated, alreadyStopped, err := m.stopTaskLocked(ctx, cluster, task, reason)

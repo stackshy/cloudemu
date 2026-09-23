@@ -159,7 +159,7 @@ func addonKey(clusterName, addonName string) string {
 // stub assumed "SDK clients only base64-decode it for the kubeconfig", which
 // holds for the raw SDK but not for anything that then builds a TLS config:
 // client-go calls AppendCertsFromPEM and fails with "unable to parse bytes as
-// PEM block" — an error raised at kubernetes.NewForConfig, far from EKS, that
+// PEM block", an error raised at kubernetes.NewForConfig, far from EKS, that
 // gives no hint the CA was synthetic. Any tool deriving a kubeconfig from
 // DescribeCluster (which is the documented way to reach an EKS cluster) hits
 // this immediately.
@@ -324,8 +324,8 @@ func clusterLoggingState(groups []eksdriver.ClusterLogging) map[string]bool {
 // applyClusterLogging merges incoming per-type log setup onto cur, preserving
 // the state of any log type the caller doesn't mention. Real EKS UpdateClusterConfig
 // only touches the log types actually listed in the request, not the whole set.
-// The result is normalized into (up to) two groups — enabled types and disabled
-// types, in allClusterLogTypes() order — matching the canonical shape real EKS
+// The result is normalized into (up to) two groups, enabled types and disabled
+// types, in allClusterLogTypes() order, matching the canonical shape real EKS
 // reports after an update.
 func applyClusterLogging(cur, incoming []eksdriver.ClusterLogging) []eksdriver.ClusterLogging {
 	if len(incoming) == 0 {
@@ -786,7 +786,7 @@ func clusterConfigUpdateType(accessConfigChanged, loggingChanged, vpcEndpointCha
 // applyVPCUpdate merges a caller-supplied resourcesVpcConfig onto the stored
 // cluster, reporting whether the endpoint-access flags and/or the other VPC
 // fields changed. A nil cfg means the caller omitted resourcesVpcConfig
-// entirely, so nothing is touched — critically, the endpoint-access flags are
+// entirely, so nothing is touched. The endpoint-access flags are
 // NOT reset to false on a logging/accessConfig/tags-only update.
 func applyVPCUpdate(c *eksdriver.Cluster, cfg *eksdriver.VPCConfig) (endpointChanged, otherChanged bool) {
 	if cfg == nil {
@@ -949,7 +949,7 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 
 	// Wave 2: tear down the cluster's Kubernetes data-plane state too. The
 	// UID map entry is dropped after deregister so subsequent describes find
-	// nothing — matching the real cluster going away.
+	// nothing, matching the real cluster going away.
 	if uid, ok := m.k8sUIDs[name]; ok && m.k8sAPI != nil {
 		m.k8sAPI.DeregisterCluster(uid)
 		delete(m.k8sUIDs, name)

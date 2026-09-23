@@ -26,7 +26,7 @@ const (
 
 // backTaskWithEngine runs the task's containers on the configured
 // ContainerEngine (when one is wired) and reflects the observed per-container
-// state — LastStatus, ExitCode, RuntimeID — back onto the task. It records the
+// state (LastStatus, ExitCode, RuntimeID) back onto the task. It records the
 // engine handle so StopTask/ExecuteCommand can reach the workload later, and
 // surfaces any awslogs-configured container output into CloudWatch Logs. When no
 // engine is configured it is a no-op and the task keeps its synthetic RUNNING
@@ -59,7 +59,7 @@ func (m *Mock) backTaskWithEngine(ctx context.Context, task *driver.Task, spec *
 
 	// A standalone RunToCompletion task that reached its terminal state (an
 	// essential container exited) is torn down at once, just as real ECS kills
-	// the remaining containers the instant the essential one exits — so no
+	// the remaining containers the instant the essential one exits, so no
 	// sidecar or exited container lingers until the engine's Close(). Reaping
 	// after surfaceLogs keeps the captured output intact.
 	if terminal {

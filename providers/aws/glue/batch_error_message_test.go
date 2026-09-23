@@ -9,7 +9,7 @@ import (
 )
 
 // requireCleanBatchErrors fails if any per-entry ErrorMessage carries the
-// internal canonical-code prefix ("NotFound: ...") — real Glue reports only the
+// internal canonical-code prefix ("NotFound: ..."). Real Glue reports only the
 // human message.
 func requireCleanBatchErrors(t *testing.T, op string, errs []driver.BatchError) {
 	t.Helper()

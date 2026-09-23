@@ -9,7 +9,7 @@ import (
 
 // TestSnapshotRestoreRoundTripAllStores populates every IAM store and every
 // attachment/membership map, snapshots, restores into a fresh mock, and asserts
-// each piece of state round-trips under its original identity — a missed store
+// each piece of state round-trips under its original identity, a missed store
 // would be silent data loss. The EC2->instance-profile cross-reference (profile
 // keyed by name, carrying its role name) is included.
 func TestSnapshotRestoreRoundTripAllStores(t *testing.T) {

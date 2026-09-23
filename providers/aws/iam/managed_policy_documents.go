@@ -5,8 +5,8 @@ package iam
 // AWS-managed policy content; a few use a documented wildcard pattern
 // (`service:Get*`/`List*`/`Describe*` for a read-only policy, `service:*`
 // for a full-access one) where the real policy enumerates dozens of
-// individual actions that a wildcard already covers for evaluation purposes
-// — those are called out in the doc's own comment. Every entry is faithful
+// individual actions that a wildcard already covers for evaluation purposes.
+// Those are called out in the doc's own comment. Every entry is faithful
 // enough that CheckPermission/SimulatePrincipalPolicy make the same
 // allow/deny call a real account would for the actions this emulator's
 // wire layer actually authorizes.
@@ -47,7 +47,7 @@ const docReadOnlyAccess = `{
 // docEC2FullAccess is AmazonEC2FullAccess. elasticloadbalancing:*,
 // cloudwatch:*, and autoscaling:* are all real full companion grants in the
 // published policy (EC2 creates and monitors load balancers, alarms, and
-// scaling groups on the caller's behalf) — not an approximation.
+// scaling groups on the caller's behalf), not an approximation.
 const docEC2FullAccess = `{
 	"Version": "2012-10-17",
 	"Statement": [
@@ -305,7 +305,7 @@ const docS3ReadOnlyAccess = `{
 // docRDSFullAccess approximates AmazonRDSFullAccess (the real policy also
 // lists specific ec2/sns read actions individually; grouped by service
 // wildcard here). logs access is scoped to the same read verbs as the
-// read-only sibling below — real AmazonRDSFullAccess does not grant
+// read-only sibling below. Real AmazonRDSFullAccess does not grant
 // unrestricted CloudWatch Logs write/delete.
 const docRDSFullAccess = `{
 	"Version": "2012-10-17",
@@ -454,8 +454,8 @@ const docCloudWatchAgentServerPolicy = `{
 // docCloudWatchFullAccess approximates CloudWatchFullAccess (the real
 // policy also grants scoped oam:* cross-account-observability actions;
 // omitted since this emulator has no oam surface). sns access is scoped to
-// alarm-notification topic management — the same subset the
-// AutoScalingFullAccess/AmazonElastiCacheFullAccess companion grants use —
+// alarm-notification topic management, the same subset the
+// AutoScalingFullAccess/AmazonElastiCacheFullAccess companion grants use,
 // not the full sns:* surface (Publish/DeleteTopic/AddPermission on every
 // topic), which real CloudWatchFullAccess does not grant.
 const docCloudWatchFullAccess = `{
@@ -543,7 +543,7 @@ const docIAMReadOnlyAccess = `{
 
 // awsManagedPolicyDocuments maps each cataloged AWS-managed policy name (the
 // part of the ARN after awsManagedPolicyPrefix, path included) to its policy
-// document. This is the same finite, fixed set AWS itself publishes — see
+// document. This is the same finite, fixed set AWS itself publishes. See
 // the package comment on ensureAWSManagedPolicy for why an unlisted name is
 // rejected rather than accepted with a placeholder.
 //

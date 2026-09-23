@@ -562,7 +562,7 @@ func TestPutEvents(t *testing.T) {
 
 	t.Run("byte-identical events in one call get unique ids", func(t *testing.T) {
 		// Under the deterministic FakeClock the timestamp is identical, so the
-		// batch index must keep the ids distinct — real EventBridge never
+		// batch index must keep the ids distinct. Real EventBridge never
 		// repeats an EventId, and consumers use it as an idempotency key.
 		result, err := m.PutEvents(ctx, []driver.Event{
 			{Source: "dup.app", DetailType: "Same", Detail: `{"k":"v"}`},

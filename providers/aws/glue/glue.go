@@ -8,7 +8,7 @@
 // SUCCEEDED synchronously because there is no real Spark compute plane behind
 // the emulator; likewise crawler/workflow/blueprint runs settle immediately.
 // Read-only analytics, ML-transform, data-quality, integration, glossary, and
-// column-statistics operations return plausible synthesized results — see the
+// column-statistics operations return plausible synthesized results. See the
 // synth.go file and docs/services.md.
 package glue
 
@@ -169,7 +169,7 @@ func partitionKey(catalogID, db, table string, values []string) string {
 }
 
 // validName reports whether s is a non-empty Glue resource name within length
-// limits. Glue names are 1–255 chars.
+// limits. Glue names are 1-255 chars.
 func validName(s string) bool {
 	const maxLen = 255
 

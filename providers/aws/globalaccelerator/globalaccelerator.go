@@ -3,7 +3,7 @@
 // endpoint groups under each listener, plus per-accelerator flow-log attributes
 // and resource tags.
 //
-// The mock is control-plane only — it routes no real traffic and runs no health
+// The mock is control-plane only. It routes no real traffic and runs no health
 // checks. An accelerator is created synchronously with stable computed fields
 // (arn, two deterministic static IPv4 addresses, dnsName, dualStackDnsName,
 // status, createdTime) minted once at create and stored, so repeated reads never

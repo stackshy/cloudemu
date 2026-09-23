@@ -98,8 +98,8 @@ func restoreWrapped[D, V any](s *memstore.Store[*D], in map[string]V, build func
 	}
 }
 
-// Snapshot captures the mock's entire state as JSON. includeAssets is unused —
-// Glue holds no bulk object bodies.
+// Snapshot captures the mock's entire state as JSON. includeAssets is unused. Glue holds no bulk
+// object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := m.snapshotStores()
 	m.snapshotSideMaps(&snap)

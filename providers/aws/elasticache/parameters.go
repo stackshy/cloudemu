@@ -25,7 +25,7 @@ type Parameter struct {
 
 // ParameterUpdate is one name→value pair from a ModifyCacheParameterGroup /
 // ResetCacheParameterGroup ParameterNameValues list. For a reset the Value is
-// ignored — only the Name identifies the parameter to restore to its default.
+// ignored. Only the Name identifies the parameter to restore to its default.
 type ParameterUpdate struct {
 	Name  string
 	Value string
@@ -40,7 +40,7 @@ const (
 
 // defaultCacheParameters returns a curated set of engine-default parameters for
 // a cache parameter group family (e.g. "redis7", "memcached1.6"). It is not the
-// full real list of hundreds — it is the representative subset IaC reads and the
+// full real list of hundreds. It is the representative subset IaC reads and the
 // parameters commonly set through Terraform (notably maxmemory-policy for
 // Redis). Every entry carries Source "system".
 func defaultCacheParameters(family string) []Parameter {

@@ -387,7 +387,7 @@ func TestAddonLifecycle(t *testing.T) {
 }
 
 // DeleteCluster must fail until child nodegroups, profiles, and addons are
-// all cleared — matching real EKS behaviour.
+// all cleared, matching real EKS behaviour.
 func TestDeleteCluster_RejectsAttachedChildren(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()

@@ -73,7 +73,7 @@ func TestAttachCataloguedAWSManagedPolicies(t *testing.T) {
 }
 
 // AWS publishes a fixed set, so a name outside it is NoSuchEntity in a real
-// account. Accepting anything well-formed would let a typo through — the
+// account. Accepting anything well-formed would let a typo through, the
 // emulator would attach AmazonEKSClusterPolicyy and the caller would only find
 // out in production.
 func TestAttachUnknownAWSManagedPolicyFails(t *testing.T) {
@@ -112,8 +112,8 @@ func TestManagedPolicyPathIsPreserved(t *testing.T) {
 	}
 }
 
-// A customer-managed ARN that was never created must still be NotFound —
-// materializing those on demand would hide a genuine caller bug.
+// A customer-managed ARN that was never created must still be NotFound.
+// Materializing those on demand would hide a genuine caller bug.
 func TestNonManagedPolicyStillNotFound(t *testing.T) {
 	ctx := context.Background()
 	m := newIAM(t)
@@ -158,7 +158,7 @@ func TestCheckPermissionHonorsManagedPolicyDocument(t *testing.T) {
 	}
 }
 
-// Every catalogued name must have a document that actually parses — a
+// Every catalogued name must have a document that actually parses, a
 // catalog entry without one would materialize as an empty-Statement policy
 // again, silently reintroducing the bug this change fixes, and a malformed
 // document would silently evaluate to no grants (evaluatePolicy discards an

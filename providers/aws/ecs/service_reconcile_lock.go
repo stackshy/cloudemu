@@ -8,7 +8,7 @@ import "sync"
 // sequence for a single service, closing the TOCTOU that otherwise lets two
 // concurrent StopTask calls on two different tasks of the same service each
 // read the pre-replacement counts, each independently compute the full
-// shortfall, and each launch a replacement — over-provisioning the service
+// shortfall, and each launch a replacement, over-provisioning the service
 // above desiredCount with nothing to ever scale it back down. Keying by
 // service (rather than one global lock) keeps unrelated services reconciling
 // concurrently.

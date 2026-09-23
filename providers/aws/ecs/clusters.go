@@ -26,8 +26,8 @@ func (m *Mock) CreateCluster(ctx context.Context, in driver.CreateClusterInput) 
 	// Serialize the reject-if-ACTIVE / create-or-reuse compare-and-set so two
 	// concurrent creates of the same name can't both succeed. Only an ACTIVE
 	// cluster of the same name is a conflict; a previously deleted (INACTIVE)
-	// tombstone is overwritten, so a deleted cluster name can be recreated —
-	// real ECS lets the name be reused once the old cluster is gone.
+	// tombstone is overwritten, so a deleted cluster name can be recreated.
+	// Real ECS lets the name be reused once the old cluster is gone.
 	m.clusterMu.Lock()
 	if existing, ok := m.clusters.Get(name); ok && existing.Status == statusActive {
 		m.clusterMu.Unlock()

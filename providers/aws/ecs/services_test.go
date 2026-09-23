@@ -65,7 +65,7 @@ func TestStopTask_ReconcilesOwningService(t *testing.T) {
 	assert.Equal(t, rolloutCompleted, found[0].Deployments[0].RolloutState)
 
 	// Exactly 2 tasks are actually RUNNING (the untouched original plus the
-	// replacement) — the stopped task must not still be counted.
+	// replacement). The stopped task must not still be counted.
 	running, err := m.ListTasks(ctx, "prod", "", statusRunning, "web-svc")
 	require.NoError(t, err)
 	assert.Len(t, running, 2)
@@ -124,7 +124,7 @@ func TestDeleteService_DrainDoesNotDoubleReconcile(t *testing.T) {
 // TestCreateService_AvailabilityZoneRebalancingDefaultsToDisabled guards that
 // a fresh service always echoes availabilityZoneRebalancing (real ECS never
 // leaves it unset), defaulting to "DISABLED" when the caller doesn't specify
-// one — this is what lets a Terraform apply immediately followed by a plan
+// one. This is what lets a Terraform apply immediately followed by a plan
 // come back clean instead of showing a perpetual 1-attribute diff.
 func TestCreateService_AvailabilityZoneRebalancingDefaultsToDisabled(t *testing.T) {
 	m := newTestMock()
@@ -192,7 +192,7 @@ func TestUpdateService_AvailabilityZoneRebalancing(t *testing.T) {
 // decide-shortfall -> launch-replacements -> commit sequence must be atomic
 // per service, or two concurrent StopTask calls on two different RUNNING
 // tasks of the same service can each read the pre-replacement counts, each
-// independently compute the full shortfall, and each launch a replacement —
+// independently compute the full shortfall, and each launch a replacement,
 // leaving the service permanently over-provisioned above desiredCount (with
 // nothing to ever scale it back down). Repeated iterations under -race make
 // this reliably catch a regression of the lock.
@@ -265,7 +265,7 @@ func TestStopTask_ConcurrentSameServiceNoOverLaunch(t *testing.T) {
 // TestStopTask_StandaloneTaskNoServiceGroupNoop guards the reconcile path for
 // a standalone task started via RunTask (no owning service, so no
 // "service:"-prefixed Group): serviceNameFromGroup must report false and
-// reconcileServiceAfterStop must no-op cleanly on StopTask — no crash, no
+// reconcileServiceAfterStop must no-op cleanly on StopTask: no crash, no
 // accidental relaunch, no phantom service.
 func TestStopTask_StandaloneTaskNoServiceGroupNoop(t *testing.T) {
 	m := newTestMock()

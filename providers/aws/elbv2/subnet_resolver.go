@@ -9,7 +9,7 @@ import (
 // SubnetResolver is the slice of the networking mock this package needs to
 // derive a load balancer's VPC. Real ELBv2 infers VpcId from the member subnets
 // rather than taking it as input, and callers wiring a load balancer to a
-// target group or security group by VpcId read that field — so it has to be
+// target group or security group by VpcId read that field, so it has to be
 // resolved, not left blank.
 type SubnetResolver interface {
 	DescribeSubnets(ctx context.Context, ids []string) ([]netdriver.SubnetInfo, error)
@@ -43,10 +43,10 @@ func (m *Mock) resolveVPCID(ctx context.Context, subnetIDs []string) string {
 }
 
 // resolveAZs maps each of the given subnet IDs to its availability zone, real
-// ELBv2 reports the AZ each member subnet actually sits in — a multi-AZ load
+// ELBv2 reports the AZ each member subnet actually sits in, a multi-AZ load
 // balancer's AvailabilityZones must reflect the real placement, not a single
 // stand-in zone repeated for every subnet. A subnet the resolver can't place
-// (no resolver wired, or the subnet is unknown) is simply absent from the
+// (no resolver wired, or the subnet is unknown) is absent from the
 // result; the caller falls back to a placeholder zone for it.
 func (m *Mock) resolveAZs(ctx context.Context, subnetIDs []string) map[string]string {
 	if m.subnetResolver == nil || len(subnetIDs) == 0 {

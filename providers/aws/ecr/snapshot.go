@@ -48,7 +48,7 @@ type imageSnapshot struct {
 	Layers []driver.LayerInfo `json:"layers,omitempty"`
 }
 
-// Snapshot captures every repository's state as JSON. includeAssets is unused —
+// Snapshot captures every repository's state as JSON. includeAssets is unused.
 // ECR stores image manifests/metadata, not object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	m.mu.Lock()

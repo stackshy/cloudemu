@@ -267,7 +267,7 @@ func (m *Mock) PutRule(_ context.Context, cfg *driver.RuleConfig) (*driver.Rule,
 
 	// Reject a structurally invalid event pattern at deploy time. Without this a
 	// typo'd pattern (e.g. a non-array leaf) would store "successfully" and then
-	// silently match nothing, so targets never fire — the worst failure mode for
+	// silently match nothing, so targets never fire, the worst failure mode for
 	// an event-driven app.
 	pattern := cfg.EventPattern
 	if pattern != "" {
@@ -545,8 +545,8 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 // PublishServiceEvent puts a native AWS service lifecycle event (EC2 instance
 // state change, ECS task state change, ...) on the default event bus, the way
 // real AWS services publish to the account's default bus automatically. The
-// event takes the same path as PutEvents — stored in the bus history, matched
-// against the bus's rules, and delivered to their targets — so a rule written
+// event takes the same path as PutEvents: stored in the bus history, matched
+// against the bus's rules, and delivered to their targets, so a rule written
 // against the real event pattern fires in cloudemu too.
 //
 // Service events can loop back into their producer (an "ECS Task State Change"
@@ -579,7 +579,7 @@ func (m *Mock) PublishServiceEvent(ctx context.Context, source, detailType strin
 // Step Functions state machine (ASYNC) are all first-class EventBridge targets.
 // The body delivered to each target is the event envelope by default, but is
 // replaced by the target's Input (constant), InputPath (selected subtree), or
-// InputTransformer (templated) when one is configured — matching how real
+// InputTransformer (templated) when one is configured, matching how real
 // EventBridge shapes each target's payload independently.
 //
 // A target whose dispatch fails is routed to its configured DeadLetterConfig
@@ -630,8 +630,8 @@ func (m *Mock) deliverToTarget(
 	}
 
 	// The DLQ message body is the original event that failed to be delivered
-	// (matching real EventBridge, which puts the source event — not the
-	// target-specific transformed payload — on the dead-letter queue).
+	// (matching real EventBridge, which puts the source event, not the
+	// target-specific transformed payload, on the dead-letter queue).
 	if m.sqs.DeliverExternal(ctx, dlqARN, string(envelope)) == nil {
 		m.emitMetric("InvocationsSentToDlq", 1, dims)
 	}
@@ -641,7 +641,7 @@ func (m *Mock) deliverToTarget(
 // its ARN, reporting whether dispatch succeeded. Unknown/unsupported target
 // services and a service whose deliverer was never wired report success
 // (matching EventBridge accepting the target but this emulator not modeling
-// that sink — an emulator limitation, not a real delivery failure eligible for
+// that sink, an emulator limitation, not a real delivery failure eligible for
 // the target's DLQ).
 func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) bool {
 	switch {
@@ -673,8 +673,8 @@ func (m *Mock) dispatchTarget(ctx context.Context, arn, body string) bool {
 // dispatchLambda dispatches a Lambda target, reporting success/failure. Unlike
 // the other target services, a stale Lambda target (its function deleted after
 // PutTargets) is checked explicitly with FunctionExists before invoking: a
-// nil m.lambda (backend not wired) reports success — an emulator-coverage
-// limitation, not a real failure — but a wired backend whose target function
+// nil m.lambda (backend not wired) reports success, an emulator-coverage
+// limitation, not a real failure, but a wired backend whose target function
 // is gone is a genuine dispatch failure, eligible for the target's DLQ, that
 // InvokeExternal's own no-op-for-unknown-function contract cannot surface
 // (that contract is deliberate for InvokeExternal's other callers).
@@ -739,7 +739,7 @@ func (m *Mock) reservedVars(rule *driver.Rule, event *driver.Event, envelope []b
 // ruleARN builds the EventBridge rule ARN, matching the wire handler's format.
 // Real EventBridge omits the bus segment for a rule on the default bus
 // ("arn:...:rule/<rule>") and includes it only for a custom-bus rule
-// ("arn:...:rule/<bus>/<rule>") — see the PutRule API's sample response.
+// ("arn:...:rule/<bus>/<rule>"). See the PutRule API's sample response.
 func (m *Mock) ruleARN(bus, rule string) string {
 	if bus == "" || bus == defaultBusName {
 		return "arn:aws:events:" + m.opts.Region + ":" + m.opts.AccountID + ":rule/" + rule
@@ -849,7 +849,7 @@ func targetsFromStore(store *memstore.Store[driver.Target]) []driver.Target {
 // generateEventID hashes the event's identity plus the clock and its position
 // within the PutEvents batch. The batch index is included because real
 // EventBridge always issues unique IDs, and under a deterministic (fake) clock
-// two byte-identical events in one call would otherwise collide — breaking any
+// two byte-identical events in one call would otherwise collide, breaking any
 // consumer that uses EventId as an idempotency/history key.
 func generateEventID(event *driver.Event, now time.Time, index int) string {
 	data := fmt.Sprintf("%s:%s:%s:%s:%d:%d",
@@ -862,7 +862,7 @@ func generateEventID(event *driver.Event, now time.Time, index int) string {
 // compactPattern strips insignificant whitespace from an event pattern JSON
 // string, matching real EventBridge's normalization of the stored pattern
 // (DescribeRule/ListRules echo it back compacted, not verbatim). Key order is
-// preserved — json.Compact only removes whitespace, it does not re-encode or
+// preserved; json.Compact only removes whitespace, it does not re-encode or
 // reorder. Falls back to the original string if it isn't valid JSON.
 func compactPattern(pattern string) string {
 	var buf bytes.Buffer
@@ -875,8 +875,8 @@ func compactPattern(pattern string) string {
 
 // matchesPattern reports whether an event satisfies an EventBridge event
 // pattern. An empty pattern matches everything (schedule-only rules). The
-// pattern is evaluated against the full event envelope — source, detail-type,
-// resources, and the nested detail object — using the shared content-filtering
+// pattern is evaluated against the full event envelope: source, detail-type,
+// resources, and the nested detail object, using the shared content-filtering
 // engine (exact, nested, prefix/suffix/anything-but/exists/numeric/cidr/wildcard).
 func matchesPattern(event *driver.Event, pattern string) bool {
 	if pattern == "" {
@@ -919,8 +919,8 @@ func eventObject(event *driver.Event) map[string]any {
 	return obj
 }
 
-// UpdateEventBus replaces the mutable fields of an existing event bus —
-// ARM CreateOrUpdate-on-existing semantics (tags come from the request;
+// UpdateEventBus replaces the mutable fields of an existing event bus, ARM
+// CreateOrUpdate-on-existing semantics (tags come from the request;
 // identity and CreatedAt are preserved).
 func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*driver.EventBusInfo, error) {
 	bd, ok := m.buses.Get(cfg.Name)
@@ -945,7 +945,7 @@ func (m *Mock) UpdateEventBus(_ context.Context, cfg driver.EventBusConfig) (*dr
 // MatchedRules returns the rules on the event's own bus that match it (exported
 // for testing). Matching is scoped to event.EventBus (empty resolves to the
 // default bus) so a rule on one bus never fires for an event published to a
-// different bus — real EventBridge isolates buses from each other.
+// different bus. Real EventBridge isolates buses from each other.
 func (m *Mock) MatchedRules(event *driver.Event) []driver.Rule {
 	busName := event.EventBus
 	if busName == "" {

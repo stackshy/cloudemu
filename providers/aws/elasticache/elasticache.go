@@ -214,7 +214,7 @@ type Mock struct {
 	tagsByARN map[string]map[string]string
 }
 
-// ParameterGroup is an ElastiCache cache parameter group — a named, engine-family
+// ParameterGroup is an ElastiCache cache parameter group, a named, engine-family
 // set of engine parameters. The emulator stores its identity plus any user
 // overrides (name→value) applied via ModifyCacheParameterGroup, so IaC that
 // creates a group, sets `parameter { … }` blocks, and reads them back on refresh
@@ -284,7 +284,7 @@ func (m *Mock) CreateCache(ctx context.Context, cfg driver.CacheConfig) (*driver
 
 	// A replication group's member nodes ("<groupId>-001", …) are describable as
 	// single-node cache clusters without being backed by m.caches, so guard the
-	// same id space here — real ElastiCache rejects a create colliding with a
+	// same id space here. Real ElastiCache rejects a create colliding with a
 	// member id with CacheClusterAlreadyExists.
 	if _, member := m.lookupMember(cfg.Name); member {
 		return nil, errors.Newf(errors.AlreadyExists, "cache %q already exists", cfg.Name)
@@ -566,7 +566,7 @@ func (m *Mock) ListCaches(_ context.Context, filter scope.Scope) ([]driver.Cache
 	return caches, nil
 }
 
-// UpdateCache replaces the mutable fields of an existing cache — ARM
+// UpdateCache replaces the mutable fields of an existing cache, ARM
 // CreateOrUpdate-on-existing semantics (node type and tags come from the
 // request; identity, endpoint, and CreatedAt are preserved).
 func (m *Mock) UpdateCache(_ context.Context, cfg driver.CacheConfig) (*driver.CacheInfo, error) {

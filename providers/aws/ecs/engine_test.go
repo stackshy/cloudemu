@@ -186,7 +186,7 @@ func TestEssentialExitReapsEngineWorkload(t *testing.T) {
 	assert.Equal(t, statusStopped, task.LastStatus)
 	assert.Equal(t, "EssentialContainerExited", task.StopCode)
 
-	// The engine workload was torn down immediately — no container lingers.
+	// The engine workload was torn down immediately. No container lingers.
 	assert.Equal(t, []string{"h-reap"}, eng.stopped)
 
 	// The handle is dropped, so a later StopTask does not re-stop the workload.

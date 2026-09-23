@@ -170,7 +170,7 @@ func (m *Mock) CreateUser(_ context.Context, cfg driver.UserConfig) (*driver.Use
 
 // DeleteUser deletes the IAM user with the given name. Like real IAM it refuses
 // (DeleteConflict) while managed policies are still attached, access keys still
-// exist, or the user is still a member of a group — the caller must remove
+// exist, or the user is still a member of a group. The caller must remove
 // those first.
 func (m *Mock) DeleteUser(_ context.Context, name string) error {
 	if !m.users.Has(name) {
@@ -292,7 +292,7 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 
 // DeleteRole deletes the IAM role with the given name. Like real IAM, it
 // refuses (DeleteConflict) while managed policies are still attached or inline
-// policies still exist — the caller must detach/delete them first.
+// policies still exist. The caller must detach/delete them first.
 func (m *Mock) DeleteRole(_ context.Context, name string) error {
 	role, ok := m.roles.Get(name)
 	if !ok {
@@ -394,7 +394,7 @@ func (m *Mock) CreatePolicy(_ context.Context, cfg driver.PolicyConfig) (*driver
 
 // DeletePolicy deletes the IAM policy with the given ARN. Like real IAM it
 // refuses (DeleteConflict) while the policy is still attached to any user or
-// role, or while non-default versions still exist — the caller must detach it
+// role, or while non-default versions still exist. The caller must detach it
 // everywhere and delete non-default versions (DeletePolicyVersion) first.
 func (m *Mock) DeletePolicy(_ context.Context, arn string) error {
 	p, ok := m.policies.Get(arn)
@@ -659,8 +659,8 @@ func (m *Mock) attachPolicy(
 		return errors.Newf(errors.NotFound, "%s %q not found", entityType, principalName)
 	}
 
-	// AWS-managed policies are never created by the caller — they already
-	// exist in every account — so attaching one must not require a preceding
+	// AWS-managed policies are never created by the caller, they already
+	// exist in every account, so attaching one must not require a preceding
 	// CreatePolicy.
 	if !m.ensureAWSManagedPolicy(policyARN) {
 		return errors.Newf(errors.NotFound, "policy %q not found", policyARN)
@@ -905,8 +905,8 @@ func evaluatePolicy(doc, action, resource string, cctx ConditionContext) (allow,
 
 // CheckPermission reports whether a principal (a user, role, or group friendly
 // name) is allowed to perform action on resource. It evaluates the principal's
-// full effective policy set — attached managed policies, inline policies, and
-// (for a user) the policies inherited from every group it belongs to — and,
+// full effective policy set: attached managed policies, inline policies, and
+// (for a user) the policies inherited from every group it belongs to, and,
 // when a permissions boundary is attached, intersects that set with the
 // boundary: the action must be allowed by BOTH the identity policies and the
 // boundary. An explicit Deny anywhere wins; the default is an implicit deny.

@@ -55,7 +55,7 @@ func ruleTagsSet(v *driver.RuleInfo, tags map[string]string) { v.Tags = tags }
 
 // addTagsToStore merges tags into the tag map of the value stored at arn in
 // store (initializing a nil map first), reporting false (a no-op) when arn
-// does not resolve in this store — letting AddResourceTags try the next
+// does not resolve in this store, letting AddResourceTags try the next
 // resource kind, matching AWS's tolerance for a mixed multi-resource-kind
 // AddTags call.
 func addTagsToStore[T any](
