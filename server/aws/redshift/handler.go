@@ -8,7 +8,8 @@
 // predicate parses the form body once and only claims requests whose Action is
 // one of the known Redshift operations. Register order matters: RDS first
 // (DBInstance/DBCluster verbs), then Redshift (Cluster verbs), then EC2 as the
-// catch-all. Each handler's action set is mutually exclusive.
+// catch-all. Verbs shared with other services (tags, DescribeEvents) are
+// claimed only when the request is meant for Redshift.
 package redshift
 
 import (
@@ -58,6 +59,12 @@ var redshiftActions = map[string]struct{}{ //nolint:gochecknoglobals // static l
 	"CreateTags":                     {},
 	"DeleteTags":                     {},
 	"DescribeTags":                   {},
+	actionDescribeEvents:             {},
+	"CreateEventSubscription":        {},
+	"DescribeEventSubscriptions":     {},
+	"ModifyEventSubscription":        {},
+	"DeleteEventSubscription":        {},
+	"DescribeEventCategories":        {},
 }
 
 // clusterGroupManager is the AWS-specific parameter/subnet-group surface, not
@@ -135,10 +142,28 @@ func (*Handler) Matches(r *http.Request) bool {
 	// claim these only when the SigV4 credential scope names "redshift";
 	// otherwise let them fall through to the owning handler.
 	if _, ambiguous := ambiguousTagActions[action]; ambiguous {
-		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == "redshift"
+		return awsquery.CredentialScopeService(r.Header.Get("Authorization")) == scopeRedshift
+	}
+
+	// The event verbs are also RDS verbs, and DescribeEvents is an ElastiCache
+	// verb too. Pass on a request signed for another service, or one naming
+	// another API version.
+	if _, shared := sharedEventActions[action]; shared {
+		return ownsSharedRequest(r)
 	}
 
 	return true
+}
+
+// sharedEventActions are the event verbs Redshift shares with RDS, and for
+// DescribeEvents also with ElastiCache.
+var sharedEventActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
+	actionDescribeEvents:         {},
+	"CreateEventSubscription":    {},
+	"DescribeEventSubscriptions": {},
+	"ModifyEventSubscription":    {},
+	"DeleteEventSubscription":    {},
+	"DescribeEventCategories":    {},
 }
 
 // ambiguousTagActions are the tag verbs Redshift shares with other
@@ -204,6 +229,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.deleteTags(w, r)
 	case "DescribeTags":
 		h.describeTags(w, r)
+	case actionDescribeEvents:
+		h.describeEvents(w, r)
+	case "CreateEventSubscription":
+		h.createEventSubscription(w, r)
+	case "DescribeEventSubscriptions":
+		h.describeEventSubscriptions(w, r)
+	case "ModifyEventSubscription":
+		h.modifyEventSubscription(w, r)
+	case "DeleteEventSubscription":
+		h.deleteEventSubscription(w, r)
+	case "DescribeEventCategories":
+		h.describeEventCategories(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest,
 			"InvalidAction", "unknown Redshift action: "+action)

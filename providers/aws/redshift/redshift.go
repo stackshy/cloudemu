@@ -110,6 +110,7 @@ type Mock struct {
 	clusterSnapshots *memstore.Store[rdbdriver.ClusterSnapshot]
 	parameterGroups  *memstore.Store[ParameterGroup]
 	subnetGroups     *memstore.Store[SubnetGroup]
+	eventSubs        *memstore.Store[EventSubscription]
 	tagsByARN        map[string]map[string]string // ResourceName (ARN) -> tags
 
 	// clusterSettle overlays a transient creating/modifying window (keyed by
@@ -122,6 +123,7 @@ type Mock struct {
 	opts           *config.Options
 	monitoring     mondriver.Monitoring
 	subnetResolver SubnetResolver
+	topics         TopicLookup
 }
 
 // New creates a new AWS Redshift mock.
@@ -131,6 +133,7 @@ func New(opts *config.Options) *Mock {
 		clusterSnapshots: memstore.New[rdbdriver.ClusterSnapshot](),
 		parameterGroups:  memstore.New[ParameterGroup](),
 		subnetGroups:     memstore.New[SubnetGroup](),
+		eventSubs:        memstore.New[EventSubscription](),
 		clusterSettle:    settle.NewSet(),
 		opts:             opts,
 	}

@@ -461,6 +461,8 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	// A Redshift cluster subnet group derives its VpcId and per-subnet AZs from
 	// the member subnets, matching RDS/ElastiCache DB subnet groups.
 	p.Redshift.SetSubnetResolver(p.VPC)
+	// A Redshift event subscription checks that its SNS topic exists.
+	p.Redshift.SetTopicLookup(p.SNS)
 	p.EKS.SetMonitoring(p.CloudWatch)
 	// An EKS cluster's resourcesVpcConfig.vpcId is derived from its subnets,
 	// matching real EKS (which auto-creates the cluster SG and infers the VPC).

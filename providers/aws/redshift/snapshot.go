@@ -25,6 +25,7 @@ type redshiftSnapshot struct {
 	ClusterSnapshots json.RawMessage `json:"clusterSnapshots,omitempty"`
 	ParameterGroups  json.RawMessage `json:"parameterGroups,omitempty"`
 	SubnetGroups     json.RawMessage `json:"subnetGroups,omitempty"`
+	EventSubs        json.RawMessage `json:"eventSubscriptions,omitempty"`
 
 	TagsByARN map[string]map[string]string `json:"tagsByArn,omitempty"`
 }
@@ -53,6 +54,7 @@ func (m *Mock) snapshotStores(snap *redshiftSnapshot) error {
 		{&snap.ClusterSnapshots, m.clusterSnapshots.Snapshot},
 		{&snap.ParameterGroups, m.parameterGroups.Snapshot},
 		{&snap.SubnetGroups, m.subnetGroups.Snapshot},
+		{&snap.EventSubs, m.eventSubs.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -98,6 +100,7 @@ func (m *Mock) restoreStores(snap *redshiftSnapshot) error {
 		{snap.ClusterSnapshots, m.clusterSnapshots.LoadSnapshot},
 		{snap.ParameterGroups, m.parameterGroups.LoadSnapshot},
 		{snap.SubnetGroups, m.subnetGroups.LoadSnapshot},
+		{snap.EventSubs, m.eventSubs.LoadSnapshot},
 	}
 
 	for _, l := range loads {
