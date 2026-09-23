@@ -216,7 +216,7 @@ func TestSDKTagsAtScopeLifecycle(t *testing.T) {
 }
 
 // TestSDKTagsAtScopeIsolatedByScope verifies two scopes keep independent tag
-// sets — a resource-id scope and a subscription scope do not bleed into each
+// sets: a resource-id scope and a subscription scope do not bleed into each
 // other.
 func TestSDKTagsAtScopeIsolatedByScope(t *testing.T) {
 	client := newClient(t)

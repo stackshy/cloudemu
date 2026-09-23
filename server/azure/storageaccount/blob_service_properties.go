@@ -11,7 +11,7 @@ import (
 // serveBlobService serves the storage-account Blob service properties
 // sub-resource: GET/PUT …/storageAccounts/{name}/blobServices/default
 // (BlobServicesClient GetServiceProperties/SetServiceProperties). This is a
-// distinct account-level resource from the storage account itself — a PUT
+// distinct account-level resource from the storage account itself: a PUT
 // here persists+echoes only the blob service properties and never touches
 // the account's SKU/kind/tags/encryption.
 func (h *Handler) serveBlobService(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {

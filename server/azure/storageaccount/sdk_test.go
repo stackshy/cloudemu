@@ -155,7 +155,7 @@ func TestSDKStorageAccountGetMissing(t *testing.T) {
 }
 
 // A management-API create must be visible to the list calls, at both the
-// subscription and resource-group scope — the gap reported in #404, where a
+// subscription and resource-group scope: the gap reported in #404, where a
 // PUT-created account was returned by GET-by-id but not by list.
 func TestSDKStorageAccountList(t *testing.T) {
 	ctx := context.Background()
@@ -218,7 +218,7 @@ func TestSDKStorageAccountList(t *testing.T) {
 // Storage account create-or-update is a long-running operation in the ARM SDK:
 // armstorage AccountsClient.BeginCreate's generated create accepts only 200
 // (synchronous terminal) or 202 (async) and rejects 201. So the handler must
-// answer 200 on both create and re-apply — this guards against a well-meaning
+// answer 200 on both create and re-apply; this guards against a well-meaning
 // "return 201 on create" change that would break the real SDK poller.
 func TestSDKStorageAccountCreateReturns200LROContract(t *testing.T) {
 	srv := azureserver.New(azureserver.Drivers{BlobStorage: cloudemu.NewAzure().BlobStorage})

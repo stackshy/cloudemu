@@ -73,7 +73,7 @@ func (h *Handler) putSQLPool(w http.ResponseWriter, r *http.Request, rp *azurear
 	h.mu.Unlock()
 
 	// The armsynapse SQLPoolsClient.BeginCreate poller accepts a synchronous 200
-	// (or 202), not 201 — a 201 fails its initial-response status check.
+	// (or 202), not 201: a 201 fails its initial-response status check.
 	azurearm.WriteJSON(w, http.StatusOK, resource)
 }
 

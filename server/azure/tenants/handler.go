@@ -2,7 +2,7 @@
 // (GET /tenants).
 //
 // The tenants list is a global (non-subscription-scoped) management endpoint a
-// caller hits when connecting an account — it is one of the first calls the
+// caller hits when connecting an account: it is one of the first calls the
 // Azure CLI and SDKs make to discover the directory a credential belongs to.
 // Because the path does not start with /subscriptions/, it would otherwise fall
 // through to the permissive blob-storage data-plane fallback and come back as a
