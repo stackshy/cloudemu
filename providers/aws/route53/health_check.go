@@ -14,26 +14,28 @@ const (
 	statusHealthy           = "HEALTHY"
 	statusUnhealthy         = "UNHEALTHY"
 	healthCheckTCP          = "TCP"
+	typeCalculated          = "CALCULATED"
+	typeCloudWatchMetric    = "CLOUDWATCH_METRIC"
+	typeRecoveryControl     = "RECOVERY_CONTROL"
+	typeHTTPStrMatch        = "HTTP_STR_MATCH"
+	typeHTTPSStrMatch       = "HTTPS_STR_MATCH"
+
+	// Limits from the Route 53 HealthCheckConfig reference.
+	maxSearchStringLen   = 255
+	maxChildHealthChecks = 256
 )
 
 // CreateHealthCheck creates a new Route 53 health check.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) CreateHealthCheck(_ context.Context, cfg driver.HealthCheckConfig) (*driver.HealthCheckInfo, error) {
-	if err := validateHealthCheckConfig(&cfg); err != nil {
-		return nil, err
-	}
+	interval, threshold := cfg.IntervalSeconds, cfg.FailureThreshold
 
-	id := idgen.GenerateID("hc-")
-
-	interval := cfg.IntervalSeconds
-	if interval == 0 {
-		interval = defaultInterval
-	}
-
-	threshold := cfg.FailureThreshold
-	if threshold == 0 {
-		threshold = defaultFailureThreshold
+	// CALCULATED, CLOUDWATCH_METRIC and RECOVERY_CONTROL checks do no probing,
+	// so real Route 53 gives them no request interval or failure threshold.
+	if probes(cfg.Protocol) {
+		interval = valueOrDefault(interval, defaultInterval)
+		threshold = valueOrDefault(threshold, defaultFailureThreshold)
 	}
 
 	tags := make(map[string]string, len(cfg.Tags))
@@ -42,7 +44,6 @@ func (m *Mock) CreateHealthCheck(_ context.Context, cfg driver.HealthCheckConfig
 	}
 
 	hc := driver.HealthCheckInfo{
-		ID:               id,
 		Endpoint:         cfg.Endpoint,
 		Port:             cfg.Port,
 		Protocol:         cfg.Protocol,
@@ -53,37 +54,144 @@ func (m *Mock) CreateHealthCheck(_ context.Context, cfg driver.HealthCheckConfig
 		Tags:             tags,
 	}
 
-	m.healthChecks.Set(id, hc)
+	applyRoute53Fields(&hc, &cfg)
+
+	if err := validateHealthCheck(&hc); err != nil {
+		return nil, err
+	}
+
+	hc.ID = idgen.GenerateID("hc-")
+	m.healthChecks.Set(hc.ID, hc)
 
 	result := hc
 
 	return &result, nil
 }
 
-// validateHealthCheckConfig applies the per-type endpoint rules. CALCULATED,
-// CLOUDWATCH_METRIC and RECOVERY_CONTROL checks watch other resources, so they
-// take no endpoint or port. Every other type needs an endpoint, and TCP also
-// needs a port.
-func validateHealthCheckConfig(cfg *driver.HealthCheckConfig) error {
-	switch cfg.Protocol {
-	case "CALCULATED", "CLOUDWATCH_METRIC", "RECOVERY_CONTROL":
-		if cfg.Endpoint != "" || cfg.Port != 0 {
-			return errors.Newf(errors.InvalidArgument,
-				"IPAddress, FullyQualifiedDomainName and Port are not allowed for %s health checks", cfg.Protocol)
-		}
-
-		return nil
-	case "", "HTTP", "HTTPS", "HTTP_STR_MATCH", "HTTPS_STR_MATCH", healthCheckTCP:
+// probes reports whether a health check type sends requests to an endpoint.
+func probes(protocol string) bool {
+	switch protocol {
+	case typeCalculated, typeCloudWatchMetric, typeRecoveryControl:
+		return false
 	default:
-		return errors.Newf(errors.InvalidArgument, "invalid health check type %q", cfg.Protocol)
+		return true
+	}
+}
+
+func valueOrDefault(v, def int) int {
+	if v == 0 {
+		return def
 	}
 
-	if cfg.Endpoint == "" {
+	return v
+}
+
+// applyRoute53Fields copies the Route 53 only fields that cfg sets onto hc.
+// Fields cfg leaves unset keep their value in hc.
+func applyRoute53Fields(hc *driver.HealthCheckInfo, cfg *driver.HealthCheckConfig) {
+	if cfg.SearchString != "" {
+		hc.SearchString = cfg.SearchString
+	}
+
+	if cfg.Inverted != nil {
+		hc.Inverted = *cfg.Inverted
+	}
+
+	if cfg.HealthThreshold != nil {
+		hc.HealthThreshold = *cfg.HealthThreshold
+	}
+
+	if cfg.ChildHealthChecks != nil {
+		hc.ChildHealthChecks = append([]string{}, cfg.ChildHealthChecks...)
+	}
+
+	if cfg.AlarmIdentifier != nil {
+		alarm := *cfg.AlarmIdentifier
+		hc.AlarmIdentifier = &alarm
+	}
+
+	if cfg.InsufficientDataHealthStatus != "" {
+		hc.InsufficientDataHealthStatus = cfg.InsufficientDataHealthStatus
+	}
+}
+
+// validateHealthCheck applies the per-type rules from the Route 53
+// HealthCheckConfig reference. CALCULATED, CLOUDWATCH_METRIC and
+// RECOVERY_CONTROL checks watch other resources, so they take no endpoint or
+// port. Every other type needs an endpoint.
+func validateHealthCheck(hc *driver.HealthCheckInfo) error {
+	switch hc.Protocol {
+	case typeCalculated:
+		return validateCalculated(hc)
+	case typeCloudWatchMetric:
+		return validateCloudWatchMetric(hc)
+	case typeRecoveryControl:
+		return validateNoEndpoint(hc)
+	case "", "HTTP", "HTTPS", typeHTTPStrMatch, typeHTTPSStrMatch, healthCheckTCP:
+		return validateEndpointCheck(hc)
+	default:
+		return errors.Newf(errors.InvalidArgument, "invalid health check type %q", hc.Protocol)
+	}
+}
+
+func validateNoEndpoint(hc *driver.HealthCheckInfo) error {
+	if hc.Endpoint != "" || hc.Port != 0 {
+		return errors.Newf(errors.InvalidArgument,
+			"IPAddress, FullyQualifiedDomainName and Port are not allowed for %s health checks", hc.Protocol)
+	}
+
+	return nil
+}
+
+func validateCalculated(hc *driver.HealthCheckInfo) error {
+	if err := validateNoEndpoint(hc); err != nil {
+		return err
+	}
+
+	if hc.HealthThreshold < 0 || hc.HealthThreshold > maxChildHealthChecks {
+		return errors.Newf(errors.InvalidArgument, "HealthThreshold must be between 0 and %d", maxChildHealthChecks)
+	}
+
+	if len(hc.ChildHealthChecks) > maxChildHealthChecks {
+		return errors.Newf(errors.InvalidArgument, "ChildHealthChecks can have at most %d members", maxChildHealthChecks)
+	}
+
+	return nil
+}
+
+func validateCloudWatchMetric(hc *driver.HealthCheckInfo) error {
+	if err := validateNoEndpoint(hc); err != nil {
+		return err
+	}
+
+	if hc.AlarmIdentifier == nil || hc.AlarmIdentifier.Name == "" || hc.AlarmIdentifier.Region == "" {
+		return errors.New(errors.InvalidArgument, "AlarmIdentifier with Region and Name is required for CLOUDWATCH_METRIC health checks")
+	}
+
+	switch hc.InsufficientDataHealthStatus {
+	case "", "Healthy", "Unhealthy", "LastKnownStatus":
+		return nil
+	default:
+		return errors.Newf(errors.InvalidArgument, "invalid InsufficientDataHealthStatus %q", hc.InsufficientDataHealthStatus)
+	}
+}
+
+func validateEndpointCheck(hc *driver.HealthCheckInfo) error {
+	if hc.Endpoint == "" {
 		return errors.New(errors.InvalidArgument, "endpoint is required")
 	}
 
-	if cfg.Protocol == healthCheckTCP && cfg.Port == 0 {
+	if hc.Protocol == healthCheckTCP && hc.Port == 0 {
 		return errors.New(errors.InvalidArgument, "Port is required for TCP health checks")
+	}
+
+	if len(hc.SearchString) > maxSearchStringLen {
+		return errors.Newf(errors.InvalidArgument, "SearchString must be at most %d characters", maxSearchStringLen)
+	}
+
+	isStrMatch := hc.Protocol == typeHTTPStrMatch || hc.Protocol == typeHTTPSStrMatch
+	if isStrMatch && hc.SearchString == "" {
+		return errors.Newf(errors.InvalidArgument, "SearchString is required for %s health checks", hc.Protocol)
 	}
 
 	return nil
@@ -162,6 +270,12 @@ func (m *Mock) UpdateHealthCheck(_ context.Context, id string, cfg driver.Health
 		}
 
 		hc.Tags = tags
+	}
+
+	applyRoute53Fields(&hc, &cfg)
+
+	if err := validateHealthCheck(&hc); err != nil {
+		return nil, err
 	}
 
 	m.healthChecks.Set(id, hc)
