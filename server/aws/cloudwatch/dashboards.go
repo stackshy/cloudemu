@@ -136,7 +136,14 @@ func (h *Handler) listDashboards(w http.ResponseWriter, r *http.Request, body []
 		return
 	}
 
-	from, to, next := pageWindow(len(entries), decodeOffsetToken(in.NextToken), dashboardPageSize)
+	// ListDashboards documents only InvalidParameterValue, not InvalidNextToken.
+	offset, err := offsetFromToken(in.NextToken, errInvalidParameterValue)
+	if err != nil {
+		writeDriverErr(w, err)
+		return
+	}
+
+	from, to, next := pageWindow(len(entries), offset, dashboardPageSize)
 
 	rows := make([]dashboardEntryCBR, 0, to-from)
 	for _, e := range entries[from:to] {

@@ -109,7 +109,13 @@ func (h *Handler) queryListMetricStreams(w http.ResponseWriter, r *http.Request)
 		size = v
 	}
 
-	from, to, next := pageWindow(len(entries), decodeOffsetToken(r.Form.Get("NextToken")), size)
+	offset, err := offsetFromToken(r.Form.Get("NextToken"), errInvalidNextToken)
+	if err != nil {
+		writeMetricStreamQueryDriverErr(w, err)
+		return
+	}
+
+	from, to, next := pageWindow(len(entries), offset, size)
 
 	members := make([]metricStreamEntryXML, 0, to-from)
 

@@ -5,25 +5,36 @@ import (
 	"strconv"
 )
 
-// decodeOffsetToken parses a NextToken produced by encodeOffsetToken back into a
-// slice offset. An empty token means "start from the beginning"; a malformed
-// token is treated as offset 0 so a stray token never wedges pagination.
-func decodeOffsetToken(tok string) int {
+// decodeOffsetToken parses a NextToken made by encodeOffsetToken. An empty
+// token means the first page. ok is false for a token this handler did not
+// issue, and the offset is then 0.
+func decodeOffsetToken(tok string) (offset int, ok bool) {
 	if tok == "" {
-		return 0
+		return 0, true
 	}
 
 	raw, err := base64.StdEncoding.DecodeString(tok)
 	if err != nil {
-		return 0
+		return 0, false
 	}
 
 	n, err := strconv.Atoi(string(raw))
 	if err != nil || n < 0 {
-		return 0
+		return 0, false
 	}
 
-	return n
+	return n, true
+}
+
+// offsetFromToken decodes a NextToken. A bad token returns a wireError with
+// the given code, since ops document different codes for it.
+func offsetFromToken(tok, code string) (int, error) {
+	n, ok := decodeOffsetToken(tok)
+	if !ok {
+		return 0, newWireError(code, "The value "+tok+" for parameter NextToken is invalid.")
+	}
+
+	return n, nil
 }
 
 // encodeOffsetToken renders a slice offset as an opaque NextToken.
