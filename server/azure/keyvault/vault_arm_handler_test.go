@@ -347,7 +347,7 @@ func TestVaultARMScopeMismatch(t *testing.T) {
 	}
 }
 
-// TestVaultARMUpdatePartialMerge exercises PATCH — Vaults.Update. Unlike PUT,
+// TestVaultARMUpdatePartialMerge exercises PATCH (Vaults.Update). Unlike PUT,
 // a PATCH carrying only one property must merge onto the stored vault rather
 // than replacing it: every other property (tenantId, sku, accessPolicies,
 // soft-delete flags) must survive untouched.

@@ -10,7 +10,7 @@ import (
 
 // TestSDKAzureIAMRoleDefinitionPreservesCreatedOn confirms that updating a role
 // definition (a second PUT to the same id) preserves the original createdOn
-// while advancing updatedOn — the real-Azure timestamp contract. A regression
+// while advancing updatedOn: the real-Azure timestamp contract. A regression
 // here (resetting createdOn on every PUT) would surface immediately.
 func TestSDKAzureIAMRoleDefinitionPreservesCreatedOn(t *testing.T) {
 	roleDefs, _ := newSDKClients(t)

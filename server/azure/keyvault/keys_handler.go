@@ -8,25 +8,25 @@
 //
 // Coverage (Key Vault 7.x REST shapes):
 //
-//	POST   /keys/{name}/create                 — create key (RSA/EC)
-//	PUT    /keys/{name}                         — import key
-//	GET    /keys/{name}[/{version}]             — get current or specific version
-//	PATCH  /keys/{name}/{version}               — update version attributes
-//	GET    /keys/{name}/versions                — list versions
-//	GET    /keys                                — list keys
-//	DELETE /keys/{name}                         — soft-delete key
-//	POST   /keys/{name}/{version}/encrypt       — encrypt
-//	POST   /keys/{name}/{version}/decrypt       — decrypt
-//	POST   /keys/{name}/{version}/wrapkey       — wrap key
-//	POST   /keys/{name}/{version}/unwrapkey     — unwrap key
-//	POST   /keys/{name}/{version}/sign          — sign digest
-//	POST   /keys/{name}/{version}/verify        — verify signature
-//	GET    /keys/{name}/rotationpolicy          — get key rotation policy
-//	PUT    /keys/{name}/rotationpolicy          — update key rotation policy
-//	GET    /deletedkeys                         — list deleted keys
-//	GET    /deletedkeys/{name}                  — get deleted key
-//	POST   /deletedkeys/{name}/recover          — recover deleted key
-//	DELETE /deletedkeys/{name}                  — purge deleted key
+//	POST   /keys/{name}/create                 : create key (RSA/EC)
+//	PUT    /keys/{name}                         : import key
+//	GET    /keys/{name}[/{version}]             : get current or specific version
+//	PATCH  /keys/{name}/{version}               : update version attributes
+//	GET    /keys/{name}/versions                : list versions
+//	GET    /keys                                : list keys
+//	DELETE /keys/{name}                         : soft-delete key
+//	POST   /keys/{name}/{version}/encrypt       : encrypt
+//	POST   /keys/{name}/{version}/decrypt       : decrypt
+//	POST   /keys/{name}/{version}/wrapkey       : wrap key
+//	POST   /keys/{name}/{version}/unwrapkey     : unwrap key
+//	POST   /keys/{name}/{version}/sign          : sign digest
+//	POST   /keys/{name}/{version}/verify        : verify signature
+//	GET    /keys/{name}/rotationpolicy          : get key rotation policy
+//	PUT    /keys/{name}/rotationpolicy          : update key rotation policy
+//	GET    /deletedkeys                         : list deleted keys
+//	GET    /deletedkeys/{name}                  : get deleted key
+//	POST   /deletedkeys/{name}/recover          : recover deleted key
+//	DELETE /deletedkeys/{name}                  : purge deleted key
 package keyvault
 
 import (

@@ -16,7 +16,7 @@ const (
 	builtInCreatedOn = "2017-12-05T00:00:00.0000000Z"
 
 	// builtInAssignableScope is the root scope built-in roles are assignable
-	// at — real built-ins carry assignableScopes ["/"], meaning they can be
+	// at: real built-ins carry assignableScopes ["/"], meaning they can be
 	// assigned at any scope in the hierarchy.
 	builtInAssignableScope = "/"
 )

@@ -37,7 +37,7 @@ func listAssignmentPrincipals(
 
 // TestSDKAzureIAMListRoleAssignmentsFilterByPrincipalID confirms
 // $filter=principalId eq '{guid}' narrows RoleAssignments.ListForScope to
-// just that principal's assignments, matching real Azure — and that a
+// just that principal's assignments, matching real Azure, and that a
 // different principalId returns none.
 func TestSDKAzureIAMListRoleAssignmentsFilterByPrincipalID(t *testing.T) {
 	cf, _ := newClientFactory(t)
@@ -53,8 +53,8 @@ func TestSDKAzureIAMListRoleAssignmentsFilterByPrincipalID(t *testing.T) {
 	readerRoleDef := builtInReaderRoleDefinitionID()
 	ownerRoleDef := testScope + "/providers/Microsoft.Authorization/roleDefinitions/" + builtInOwnerGUID
 
-	// principalA gets two DISTINCT (role, scope) bindings — a duplicate
-	// (principal, role, scope) triple would itself conflict — so the "two
+	// principalA gets two DISTINCT (role, scope) bindings. A duplicate
+	// (principal, role, scope) triple would itself conflict, so the "two
 	// assignments for one principal" case exercises a real, valid setup.
 	mustCreateAssignment(t, roleAssigns, ctx, "44444444-0000-0000-0000-000000000001", readerRoleDef, principalA)
 	mustCreateAssignment(t, roleAssigns, ctx, "55555555-0000-0000-0000-000000000002", ownerRoleDef, principalA)
@@ -146,7 +146,7 @@ func TestSDKAzureIAMDeleteRoleDefinitionBlockedByActiveAssignment(t *testing.T) 
 		t.Fatalf("got status %d, want 409", respErr.StatusCode)
 	}
 
-	// The role definition must still exist — the rejected delete must not
+	// The role definition must still exist: the rejected delete must not
 	// have removed it.
 	if _, err := roleDefs.Get(ctx, testScope, roleDefID, nil); err != nil {
 		t.Fatalf("Get role definition after blocked delete: %v", err)
