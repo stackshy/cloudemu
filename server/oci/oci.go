@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/oci/identity"
 	"github.com/stackshy/cloudemu/v2/server/oci/monitoring"
+	"github.com/stackshy/cloudemu/v2/server/oci/nosql"
 	"github.com/stackshy/cloudemu/v2/server/oci/vcn"
 	"github.com/stackshy/cloudemu/v2/server/oci/workrequest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
@@ -106,6 +107,10 @@ func New(d Drivers) *server.Server {
 		}
 
 		srv.Register(vcnHandler)
+	}
+
+	if d.NoSQL != nil {
+		srv.Register(nosql.New(d.NoSQL, d.WorkRequests))
 	}
 
 	return srv

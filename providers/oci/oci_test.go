@@ -62,6 +62,12 @@ func TestVCNIsWired(t *testing.T) {
 	require.NotNil(t, p.VCN, "the VCN slot is filled by the vcn mock")
 }
 
+func TestNoSQLIsWired(t *testing.T) {
+	p := oci.New()
+
+	require.NotNil(t, p.NoSQL, "the NoSQL slot is filled by the nosql mock")
+}
+
 // TestServiceSlotsAreNilOrLive keeps what the retired per-service-name test
 // asserted, without naming a service: a slot reads as nil until a branch fills
 // it. A typed nil in an interface field passes a != nil check and then panics,
