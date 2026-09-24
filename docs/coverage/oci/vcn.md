@@ -65,36 +65,6 @@ OCI's `networking` service · portable interface `driver.Networking` · [OCI ind
 | `UpdateSubnetTags` |  |
 | `UpdateVPCTags` | Tag mutation. Update* merges keys into the resource's existing Tags |
 
-## Optional capabilities
-
-Discovered by type assertion; only some providers implement these.
-
-### NetworkInterfaceCreator
-
-NetworkInterfaceCreator is the AWS-specific ENI-creation surface. It's kept
-
-| Operation | Description |
-| --- | --- |
-| `CreateNetworkInterface` |  |
-
-### NetworkInterfaces
-
-NetworkInterfaces is an OPTIONAL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `DeleteNetworkInterface` |  |
-| `DescribeNetworkInterfaces` |  |
-| `DetachNetworkInterface` |  |
-
-### VPCAttributes
-
-VPCAttributes is an OPTIONAL capability, discovered by type assertion.
-
-| Operation | Description |
-| --- | --- |
-| `ModifyVPCAttribute` |  |
-
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
