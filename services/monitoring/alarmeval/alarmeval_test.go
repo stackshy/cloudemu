@@ -79,17 +79,15 @@ func TestEvaluateWindowMOfN(t *testing.T) {
 		return out
 	}
 
-	state, _, evaluated := alarmeval.EvaluateWindow(mk(0, 0, 100), &p, now)
-	assert.True(t, evaluated)
-	assert.Equal(t, alarmeval.StateOK, state, "1 of 3 periods breaching stays OK")
+	out := alarmeval.EvaluateWindow(mk(0, 0, 100), &p, now)
+	assert.False(t, out.Retain)
+	assert.Equal(t, alarmeval.StateOK, out.State, "1 of 3 periods breaching stays OK")
 
-	state, _, evaluated = alarmeval.EvaluateWindow(mk(100, 100, 100), &p, now)
-	assert.True(t, evaluated)
-	assert.Equal(t, alarmeval.StateAlarm, state, "3 of 3 periods breaching alarms")
+	out = alarmeval.EvaluateWindow(mk(100, 100, 100), &p, now)
+	assert.Equal(t, alarmeval.StateAlarm, out.State, "3 of 3 periods breaching alarms")
 
-	state, _, evaluated = alarmeval.EvaluateWindow(mk(0, 0, 0), &p, now)
-	assert.True(t, evaluated)
-	assert.Equal(t, alarmeval.StateOK, state, "recovery to OK")
+	out = alarmeval.EvaluateWindow(mk(0, 0, 0), &p, now)
+	assert.Equal(t, alarmeval.StateOK, out.State, "recovery to OK")
 }
 
 // TestRecentDatapoints: one value per non-empty period, oldest first.
@@ -130,15 +128,14 @@ func TestEvaluateWindowTreatMissingData(t *testing.T) {
 	one := []driver.MetricDatum{{Value: 100, Timestamp: now}}
 
 	// Default "missing": the two empty periods aren't counted, 1 < 3 -> OK.
-	state, _, evaluated := alarmeval.EvaluateWindow(one, &base, now)
-	assert.True(t, evaluated)
-	assert.Equal(t, alarmeval.StateOK, state)
+	out := alarmeval.EvaluateWindow(one, &base, now)
+	assert.False(t, out.Retain)
+	assert.Equal(t, alarmeval.StateOK, out.State)
 
 	// "breaching": empty periods count as breaching, 3 of 3 -> ALARM.
 	breaching := base
 	breaching.TreatMissingData = "breaching"
-	state, _, _ = alarmeval.EvaluateWindow(one, &breaching, now)
-	assert.Equal(t, alarmeval.StateAlarm, state)
+	assert.Equal(t, alarmeval.StateAlarm, alarmeval.EvaluateWindow(one, &breaching, now).State)
 }
 
 func TestWindowStart(t *testing.T) {

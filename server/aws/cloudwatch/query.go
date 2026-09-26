@@ -355,6 +355,10 @@ func toAlarmMemberXML(a *mondriver.AlarmInfo) alarmMemberXML {
 		m.StateUpdatedTimestamp = a.StateUpdatedTimestamp.UTC().Format(time.RFC3339)
 	}
 
+	if !a.StateTransitionedTimestamp.IsZero() {
+		m.StateTransitionedTimestamp = a.StateTransitionedTimestamp.UTC().Format(time.RFC3339)
+	}
+
 	return m
 }
 
@@ -636,29 +640,30 @@ type dimensionXML struct {
 }
 
 type alarmMemberXML struct {
-	AlarmName               string         `xml:"AlarmName"`
-	AlarmArn                string         `xml:"AlarmArn,omitempty"`
-	AlarmDescription        string         `xml:"AlarmDescription,omitempty"`
-	Namespace               string         `xml:"Namespace,omitempty"`
-	MetricName              string         `xml:"MetricName,omitempty"`
-	Dimensions              []dimensionXML `xml:"Dimensions>member,omitempty"`
-	StateValue              string         `xml:"StateValue"`
-	StateReason             string         `xml:"StateReason,omitempty"`
-	StateReasonData         string         `xml:"StateReasonData,omitempty"`
-	StateUpdatedTimestamp   string         `xml:"StateUpdatedTimestamp,omitempty"`
-	ComparisonOperator      string         `xml:"ComparisonOperator"`
-	Threshold               float64        `xml:"Threshold"`
-	Period                  int            `xml:"Period,omitempty"`
-	EvaluationPeriods       int            `xml:"EvaluationPeriods,omitempty"`
-	DatapointsToAlarm       int            `xml:"DatapointsToAlarm,omitempty"`
-	Statistic               string         `xml:"Statistic,omitempty"`
-	ExtendedStatistic       string         `xml:"ExtendedStatistic,omitempty"`
-	Unit                    string         `xml:"Unit,omitempty"`
-	TreatMissingData        string         `xml:"TreatMissingData,omitempty"`
-	ActionsEnabled          bool           `xml:"ActionsEnabled"`
-	AlarmActions            []string       `xml:"AlarmActions>member,omitempty"`
-	OKActions               []string       `xml:"OKActions>member,omitempty"`
-	InsufficientDataActions []string       `xml:"InsufficientDataActions>member,omitempty"`
+	AlarmName                  string         `xml:"AlarmName"`
+	AlarmArn                   string         `xml:"AlarmArn,omitempty"`
+	AlarmDescription           string         `xml:"AlarmDescription,omitempty"`
+	Namespace                  string         `xml:"Namespace,omitempty"`
+	MetricName                 string         `xml:"MetricName,omitempty"`
+	Dimensions                 []dimensionXML `xml:"Dimensions>member,omitempty"`
+	StateValue                 string         `xml:"StateValue"`
+	StateReason                string         `xml:"StateReason,omitempty"`
+	StateReasonData            string         `xml:"StateReasonData,omitempty"`
+	StateUpdatedTimestamp      string         `xml:"StateUpdatedTimestamp,omitempty"`
+	StateTransitionedTimestamp string         `xml:"StateTransitionedTimestamp,omitempty"`
+	ComparisonOperator         string         `xml:"ComparisonOperator"`
+	Threshold                  float64        `xml:"Threshold"`
+	Period                     int            `xml:"Period,omitempty"`
+	EvaluationPeriods          int            `xml:"EvaluationPeriods,omitempty"`
+	DatapointsToAlarm          int            `xml:"DatapointsToAlarm,omitempty"`
+	Statistic                  string         `xml:"Statistic,omitempty"`
+	ExtendedStatistic          string         `xml:"ExtendedStatistic,omitempty"`
+	Unit                       string         `xml:"Unit,omitempty"`
+	TreatMissingData           string         `xml:"TreatMissingData,omitempty"`
+	ActionsEnabled             bool           `xml:"ActionsEnabled"`
+	AlarmActions               []string       `xml:"AlarmActions>member,omitempty"`
+	OKActions                  []string       `xml:"OKActions>member,omitempty"`
+	InsufficientDataActions    []string       `xml:"InsufficientDataActions>member,omitempty"`
 }
 
 type compositeAlarmMemberXML struct {

@@ -50,10 +50,18 @@ type alarmData struct {
 	AlarmActions            []string
 	OKActions               []string
 	InsufficientDataActions []string
+	// StateTransitionedTimestamp is when State last changed.
+	StateTransitionedTimestamp time.Time
+	// LastEvaluatedAt is when the alarm was last evaluated or had its state
+	// set. The next lazy evaluation is due one EvaluationInterval later.
+	LastEvaluatedAt time.Time
 }
 
 // Mock is an in-memory mock implementation of the GCP Cloud Monitoring service.
 type Mock struct {
+	// alarmMu guards every alarm field and is taken before mu. Notifications
+	// are delivered only after both are released.
+	alarmMu          sync.Mutex
 	mu               sync.RWMutex
 	metrics          map[metricKey][]driver.MetricDatum
 	alarms           *memstore.Store[*alarmData]
@@ -94,84 +102,16 @@ func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error
 	}
 	m.mu.Unlock()
 
-	// Evaluate alarms for each unique namespace/metric pair that was updated.
+	// New data re-evaluates the alarms on each updated metric right away.
 	seen := make(map[metricKey]bool)
 
 	for i := range data {
-		mk := metricKey{Namespace: data[i].Namespace, MetricName: data[i].MetricName}
-		if !seen[mk] {
-			seen[mk] = true
-
-			m.evaluateAlarms(data[i].Namespace, data[i].MetricName)
-		}
+		seen[metricKey{Namespace: data[i].Namespace, MetricName: data[i].MetricName}] = true
 	}
+
+	m.evaluateMetricAlarms(seen)
 
 	return nil
-}
-
-func (m *Mock) evaluateAlarms(namespace, metricName string) {
-	allAlarms := m.alarms.All()
-
-	for _, alarm := range allAlarms {
-		if alarm.Namespace != namespace || alarm.MetricName != metricName {
-			continue
-		}
-
-		m.evaluateSingleAlarm(alarm, namespace, metricName)
-	}
-}
-
-// alarmParams projects an alert policy's thresholds onto the shared evaluator's Params.
-func alarmParams(alarm *alarmData) alarmeval.Params {
-	return alarmeval.Params{
-		Period:             alarm.Period,
-		EvaluationPeriods:  alarm.EvaluationPeriods,
-		DatapointsToAlarm:  alarm.DatapointsToAlarm,
-		Stat:               alarm.Stat,
-		ComparisonOperator: alarm.ComparisonOperator,
-		Threshold:          alarm.Threshold,
-		TreatMissingData:   alarm.TreatMissingData,
-	}
-}
-
-func (m *Mock) evaluateSingleAlarm(alarm *alarmData, namespace, metricName string) {
-	now := m.opts.Clock.Now()
-	params := alarmParams(alarm)
-
-	filtered := m.collectFilteredDatums(namespace, metricName, alarm.Dimensions, alarm.Unit, params.WindowStart(now), now)
-	if len(filtered) == 0 {
-		return
-	}
-
-	newState, reason, ok := alarmeval.EvaluateWindow(filtered, &params, now)
-	if !ok {
-		return
-	}
-
-	m.transitionAlarm(alarm, newState, reason, now)
-}
-
-// transitionAlarm sets an alert policy's state and, only on a state change,
-// records a history entry, mirroring CloudWatch, where the history entry happens
-// on a state change whether it came from metric evaluation or a manual
-// SetAlarmState. On an incident open (ALARM) or close (OK) transition it also
-// delivers the incident to the policy's referenced notification channels
-// (webhook POST / Pub/Sub publish; email / SMS / other are record-only),
-// matching real Cloud Monitoring which notifies on both open and close.
-func (m *Mock) transitionAlarm(alarm *alarmData, newState, reason string, now time.Time) {
-	oldState := alarm.State
-
-	if oldState != newState {
-		m.appendHistory(alarm.Name, oldState, newState, reason, now)
-		alarm.StateUpdatedTimestamp = now
-	}
-
-	alarm.State = newState
-	alarm.StateReason = reason
-
-	if oldState != newState {
-		m.fireNotificationChannels(alarm, newState, now)
-	}
 }
 
 // appendHistory records one alert policy state transition in the history log.
@@ -386,33 +326,45 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 		dims[k] = v
 	}
 
+	now := m.opts.Clock.Now()
+
 	alarm := &alarmData{
-		Name:                    cfg.Name,
-		Namespace:               cfg.Namespace,
-		MetricName:              cfg.MetricName,
-		Dimensions:              dims,
-		ComparisonOperator:      cfg.ComparisonOperator,
-		Threshold:               cfg.Threshold,
-		Period:                  cfg.Period,
-		EvaluationPeriods:       cfg.EvaluationPeriods,
-		DatapointsToAlarm:       cfg.DatapointsToAlarm,
-		Stat:                    cfg.Stat,
-		ExtendedStatistic:       cfg.ExtendedStatistic,
-		Unit:                    cfg.Unit,
-		TreatMissingData:        cfg.TreatMissingData,
-		State:                   "INSUFFICIENT_DATA",
-		AlarmActions:            append([]string{}, cfg.AlarmActions...),
-		OKActions:               append([]string{}, cfg.OKActions...),
-		InsufficientDataActions: append([]string{}, cfg.InsufficientDataActions...),
+		Name:                       cfg.Name,
+		Namespace:                  cfg.Namespace,
+		MetricName:                 cfg.MetricName,
+		Dimensions:                 dims,
+		ComparisonOperator:         cfg.ComparisonOperator,
+		Threshold:                  cfg.Threshold,
+		Period:                     cfg.Period,
+		EvaluationPeriods:          cfg.EvaluationPeriods,
+		DatapointsToAlarm:          cfg.DatapointsToAlarm,
+		Stat:                       cfg.Stat,
+		ExtendedStatistic:          cfg.ExtendedStatistic,
+		Unit:                       cfg.Unit,
+		TreatMissingData:           cfg.TreatMissingData,
+		State:                      alarmeval.StateInsufficientData,
+		StateUpdatedTimestamp:      now,
+		StateTransitionedTimestamp: now,
+		AlarmActions:               append([]string{}, cfg.AlarmActions...),
+		OKActions:                  append([]string{}, cfg.OKActions...),
+		InsufficientDataActions:    append([]string{}, cfg.InsufficientDataActions...),
 	}
 
+	m.alarmMu.Lock()
 	m.alarms.Set(cfg.Name, alarm)
+	fire := m.evaluateLocked(alarm, now)
+	m.alarmMu.Unlock()
+
+	m.deliver([]*incidentFire{fire})
 
 	return nil
 }
 
 // DeleteAlarm deletes the alert policy with the given name.
 func (m *Mock) DeleteAlarm(_ context.Context, name string) error {
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
+
 	if !m.alarms.Delete(name) {
 		return cerrors.Newf(cerrors.NotFound, "alert policy %q not found", name)
 	}
@@ -422,6 +374,11 @@ func (m *Mock) DeleteAlarm(_ context.Context, name string) error {
 
 // DescribeAlarms returns alert policies matching the given names, or all policies if names is empty.
 func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.AlarmInfo, error) {
+	m.evaluateDue(m.opts.Clock.Now())
+
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
+
 	if len(names) == 0 {
 		all := m.alarms.All()
 		result := make([]driver.AlarmInfo, 0, len(all))
@@ -454,12 +411,24 @@ func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) erro
 		return cerrors.Newf(cerrors.InvalidArgument, "invalid alarm state %q: must be OK, ALARM or INSUFFICIENT_DATA", state)
 	}
 
+	now := m.opts.Clock.Now()
+
+	m.alarmMu.Lock()
+
 	a, ok := m.alarms.Get(name)
 	if !ok {
+		m.alarmMu.Unlock()
+
 		return cerrors.Newf(cerrors.NotFound, "alert policy %q not found", name)
 	}
 
-	m.transitionAlarm(a, state, reason, m.opts.Clock.Now())
+	// The forced state holds for one evaluation interval.
+	a.LastEvaluatedAt = now
+	fire := m.transitionLocked(a, state, reason, now)
+	a.StateReason = reason
+	m.alarmMu.Unlock()
+
+	m.deliver([]*incidentFire{fire})
 
 	return nil
 }
@@ -471,6 +440,9 @@ func (m *Mock) SetAlarmState(_ context.Context, name, state, reason string) erro
 // CreateAlarm would cause; a subsequent breach then delivers to the new channel
 // set. actions is copied defensively.
 func (m *Mock) SetAlarmActions(_ context.Context, name string, actions []string) error {
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
+
 	a, ok := m.alarms.Get(name)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "alert policy %q not found", name)
@@ -571,6 +543,8 @@ func (m *Mock) ListNotificationChannels(_ context.Context) ([]driver.Notificatio
 // CloudWatch's default TimestampDescending order); when limit > 0 it keeps the
 // newest limit entries.
 func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) ([]driver.AlarmHistoryEntry, error) {
+	m.evaluateDue(m.opts.Clock.Now())
+
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -650,24 +624,25 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 	}
 
 	return driver.AlarmInfo{
-		Name:                    a.Name,
-		Namespace:               a.Namespace,
-		MetricName:              a.MetricName,
-		State:                   a.State,
-		ComparisonOperator:      a.ComparisonOperator,
-		Threshold:               a.Threshold,
-		StateReason:             a.StateReason,
-		StateUpdatedTimestamp:   a.StateUpdatedTimestamp,
-		Period:                  a.Period,
-		EvaluationPeriods:       a.EvaluationPeriods,
-		DatapointsToAlarm:       a.DatapointsToAlarm,
-		Statistic:               a.Stat,
-		ExtendedStatistic:       a.ExtendedStatistic,
-		Unit:                    a.Unit,
-		TreatMissingData:        a.TreatMissingData,
-		AlarmActions:            append([]string{}, a.AlarmActions...),
-		OKActions:               append([]string{}, a.OKActions...),
-		InsufficientDataActions: append([]string{}, a.InsufficientDataActions...),
-		Dimensions:              dims,
+		Name:                       a.Name,
+		Namespace:                  a.Namespace,
+		MetricName:                 a.MetricName,
+		State:                      a.State,
+		ComparisonOperator:         a.ComparisonOperator,
+		Threshold:                  a.Threshold,
+		StateReason:                a.StateReason,
+		StateUpdatedTimestamp:      a.StateUpdatedTimestamp,
+		StateTransitionedTimestamp: a.StateTransitionedTimestamp,
+		Period:                     a.Period,
+		EvaluationPeriods:          a.EvaluationPeriods,
+		DatapointsToAlarm:          a.DatapointsToAlarm,
+		Statistic:                  a.Stat,
+		ExtendedStatistic:          a.ExtendedStatistic,
+		Unit:                       a.Unit,
+		TreatMissingData:           a.TreatMissingData,
+		AlarmActions:               append([]string{}, a.AlarmActions...),
+		OKActions:                  append([]string{}, a.OKActions...),
+		InsufficientDataActions:    append([]string{}, a.InsufficientDataActions...),
+		Dimensions:                 dims,
 	}
 }

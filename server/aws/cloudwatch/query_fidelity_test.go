@@ -78,7 +78,11 @@ func TestQueryDescribeAlarmsFullFidelity(t *testing.T) {
 		"<Value>i-abc</Value>",
 		"arn:aws:sns:us-east-1:123456789012:t1",
 		"arn:aws:sns:us-east-1:123456789012:t2",
-		"<StateValue>INSUFFICIENT_DATA</StateValue>",
+		// A new alarm is evaluated at once. With notBreaching and no data the
+		// empty periods count as good, so it is OK. See the "- - - - -" row in
+		// https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/alarms-and-missing-data.html.
+		"<StateValue>OK</StateValue>",
+		"<StateTransitionedTimestamp>",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("DescribeAlarms missing %q\nbody: %s", want, body)

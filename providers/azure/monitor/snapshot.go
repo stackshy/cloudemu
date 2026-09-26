@@ -55,7 +55,11 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	}
 	m.mu.RUnlock()
 
-	if err := m.snapshotStores(&snap); err != nil {
+	m.alarmMu.Lock()
+	err := m.snapshotStores(&snap)
+	m.alarmMu.Unlock()
+
+	if err != nil {
 		return nil, err
 	}
 
@@ -133,6 +137,9 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.deliveries = append(m.deliveries, snap.Deliveries...)
 	}
 	m.mu.Unlock()
+
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
 
 	return m.restoreStores(&snap)
 }

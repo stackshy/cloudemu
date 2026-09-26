@@ -1191,10 +1191,12 @@ func TestAlarmTriggeredByAutoMetrics(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// Verify initial state
+	// PutMetricAlarm evaluates a new alarm at once, so the launch metrics
+	// already in the window put it in ALARM. See API_PutMetricAlarm: "The
+	// alarm is then evaluated and its state is set appropriately."
 	alarms, _ := p.CloudWatch.DescribeAlarms(ctx, []string{"any-cpu"})
-	if alarms[0].State != "INSUFFICIENT_DATA" {
-		t.Errorf("expected INSUFFICIENT_DATA, got %s", alarms[0].State)
+	if alarms[0].State != "ALARM" {
+		t.Errorf("expected ALARM from the launch metrics, got %s", alarms[0].State)
 	}
 
 	// A lifecycle op re-emits the instance's running auto-metrics (CPU=25),

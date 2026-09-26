@@ -112,6 +112,8 @@ type AlarmInfo struct {
 	// Tags are the alarm's resource tags. Populated by providers that store
 	// them (AWS CloudWatch alarm tags); empty for the others.
 	Tags map[string]string
+	// StateTransitionedTimestamp is when State last changed.
+	StateTransitionedTimestamp time.Time
 }
 
 // NotificationChannelConfig describes a notification channel.

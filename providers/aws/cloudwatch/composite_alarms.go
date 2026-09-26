@@ -62,6 +62,9 @@ func (m *Mock) PutCompositeAlarm(_ context.Context, cfg driver.CompositeAlarmCon
 		tags[k] = v
 	}
 
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
+
 	if existing, ok := m.compositeAlarms.Get(cfg.Name); ok {
 		state = existing.State
 		stateReason = existing.StateReason
@@ -90,6 +93,11 @@ func (m *Mock) PutCompositeAlarm(_ context.Context, cfg driver.CompositeAlarmCon
 // DescribeCompositeAlarms returns composite alarms matching the given names, or
 // all composite alarms when names is empty.
 func (m *Mock) DescribeCompositeAlarms(_ context.Context, names []string) ([]driver.CompositeAlarmInfo, error) {
+	m.evaluateDue(m.opts.Clock.Now())
+
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
+
 	if len(names) == 0 {
 		all := m.compositeAlarms.All()
 		out := make([]driver.CompositeAlarmInfo, 0, len(all))
@@ -122,6 +130,9 @@ func (m *Mock) DescribeCompositeAlarms(_ context.Context, names []string) ([]dri
 // composite alarm names in one call, so a name that is not a composite alarm is
 // not an error here.
 func (m *Mock) DeleteCompositeAlarms(_ context.Context, names []string) error {
+	m.alarmMu.Lock()
+	defer m.alarmMu.Unlock()
+
 	for _, name := range names {
 		m.compositeAlarms.Delete(name)
 	}

@@ -97,6 +97,9 @@ func TestAlarmHistoryNewestFirst(t *testing.T) {
 	require.NoError(t, m.CreateAlarm(ctx, driver.AlarmConfig{
 		Name: "hist", Namespace: "Microsoft.Compute", MetricName: "Load",
 		ComparisonOperator: "GreaterThanThreshold", Threshold: 1, Period: 60, EvaluationPeriods: 1, Stat: "Average",
+		// This test is about ordering. "ignore" stops the no-data revert
+		// that a later read would otherwise add.
+		TreatMissingData: "ignore",
 	}))
 
 	for _, s := range []string{"ALARM", "OK", "ALARM"} {

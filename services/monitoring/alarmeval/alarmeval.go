@@ -3,9 +3,22 @@
 // dimension matching, per-statistic aggregation of the three PutMetricData datum
 // forms, and the per-Period M-of-N rule with OK recovery and TreatMissingData
 // handling. Keeping this in one place stops the three providers from drifting.
+//
+// Evaluation is lazy and clock based. A provider evaluates an alarm when data
+// arrives, when the alarm is created or updated, and on any read that shows
+// state once EvaluationInterval has passed since the last evaluation. There is
+// no background ticker.
+//
+// The window slides. It ends at the evaluation instant and is not aligned to
+// the wall clock, which is the documented CloudWatch default: "the boundaries
+// of the window are not aligned to the wall clock"
+// (https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/alarm-evaluation.html).
+// One difference is kept on purpose. AWS evaluates on its own minute ticks,
+// while cloudemu evaluates at the moment it looks.
 package alarmeval
 
 import (
+	"fmt"
 	"sort"
 	"time"
 
@@ -83,10 +96,21 @@ func MatchUnit(datumUnit, want string) bool {
 // defaultPeriodSeconds is the period assumed when an alarm omits one.
 const defaultPeriodSeconds = 60
 
-// TreatMissingData policies from PutMetricAlarm. Any other value (including the
-// empty string) is the AWS default "missing": a period with no data is simply
-// not counted toward the M-of-N rule.
+// Evaluation cadences from the CloudWatch alarm-evaluation guide. A period
+// under a minute is evaluated every 10 seconds. A window longer than a day is
+// evaluated once an hour. Anything else is evaluated every minute.
 const (
+	highResInterval  = 10 * time.Second
+	standardInterval = time.Minute
+	multiDayInterval = time.Hour
+	oneDaySeconds    = 86400
+)
+
+// TreatMissingData policies from PutMetricAlarm. Any other value, including
+// the empty string, is the AWS default "missing". With "missing" an empty
+// period is not counted toward the M-of-N rule.
+const (
+	TreatMissingIgnore       = "ignore"
 	treatMissingBreaching    = "breaching"
 	treatMissingNotBreaching = "notBreaching"
 )
@@ -100,6 +124,55 @@ type Params struct {
 	ComparisonOperator string
 	Threshold          float64
 	TreatMissingData   string
+	// IgnoreMissingByDefault makes an empty TreatMissingData act as "ignore".
+	// AWS sets it for AWS/DynamoDB alarms. An explicit policy still wins.
+	IgnoreMissingByDefault bool
+}
+
+// Outcome is the result of one evaluation. When Retain is true the alarm
+// keeps its current state and State is empty.
+type Outcome struct {
+	State  string
+	Reason string
+	Retain bool
+}
+
+// EvaluationInterval is how often CloudWatch evaluates an alarm with this
+// period and number of evaluation periods.
+func EvaluationInterval(period, evalPeriods int) time.Duration {
+	if period <= 0 {
+		period = defaultPeriodSeconds
+	}
+
+	if evalPeriods <= 0 {
+		evalPeriods = 1
+	}
+
+	switch {
+	case period < defaultPeriodSeconds:
+		return highResInterval
+	case period*evalPeriods > oneDaySeconds:
+		return multiDayInterval
+	default:
+		return standardInterval
+	}
+}
+
+// Due reports whether an alarm last evaluated at lastEval should be evaluated
+// again at now. An alarm that was never evaluated is always due.
+func Due(lastEval, now time.Time, interval time.Duration) bool {
+	return lastEval.IsZero() || !now.Before(lastEval.Add(interval))
+}
+
+// EvaluationTime is the instant an evaluation at now looks back from. A
+// multi-day alarm only sees data up to the top of the current hour, as the
+// CloudWatch guide describes. Every other alarm looks back from now.
+func (p *Params) EvaluationTime(now time.Time) time.Time {
+	if EvaluationInterval(p.Period, p.EvaluationPeriods) == multiDayInterval {
+		return now.Truncate(time.Hour)
+	}
+
+	return now
 }
 
 // normalize applies the defaults CloudWatch uses for an omitted Period,
@@ -193,14 +266,13 @@ func StatOf(datums []driver.MetricDatum, stat string) float64 {
 
 // EvaluateWindow applies CloudWatch's M-of-N rule. It groups datums (already
 // filtered to the alarm's metric series and evaluation window) into the last
-// EvaluationPeriods per-Period buckets (bucket 0 is the most recent period),
-// evaluates the statistic per bucket, and returns ALARM when at least
-// DatapointsToAlarm buckets breach, otherwise OK (which is how an alarm recovers
-// once the breaching periods age out of the window). Empty periods are counted
-// per TreatMissingData. evaluated is false when there is nothing to evaluate (all
-// periods missing under a non-breaching policy), so the caller leaves the state
-// unchanged rather than forcing a transition.
-func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) (state, reason string, evaluated bool) {
+// EvaluationPeriods per-Period buckets, where bucket 0 is the most recent
+// period. It returns ALARM when at least DatapointsToAlarm buckets breach and
+// OK otherwise, which is how an alarm recovers once breaching periods age out.
+// Empty periods count per TreatMissingData. When every period is empty and the
+// policy does not fill them in, "missing" gives INSUFFICIENT_DATA and "ignore"
+// keeps the current state.
+func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) Outcome {
 	periodDur, evalPeriods, datapointsToAlarm := p.normalize()
 	buckets := bucketByPeriod(datums, now, periodDur, evalPeriods)
 
@@ -223,14 +295,37 @@ func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) (stat
 	}
 
 	if present == 0 {
-		return "", "", false
+		return missingOutcome(p, evalPeriods)
 	}
 
 	if breaching >= datapointsToAlarm {
-		return StateAlarm, "Threshold crossed", true
+		return Outcome{State: StateAlarm, Reason: "Threshold crossed"}
 	}
 
-	return StateOK, "Threshold not crossed", true
+	return Outcome{State: StateOK, Reason: "Threshold not crossed"}
+}
+
+// missingOutcome is the result when every period in the window is empty and
+// the policy does not fill them in.
+func missingOutcome(p *Params, evalPeriods int) Outcome {
+	treat := p.TreatMissingData
+	if treat == "" && p.IgnoreMissingByDefault {
+		treat = TreatMissingIgnore
+	}
+
+	if treat == TreatMissingIgnore {
+		return Outcome{Retain: true}
+	}
+
+	noun := "datapoints were"
+	if evalPeriods == 1 {
+		noun = "datapoint was"
+	}
+
+	return Outcome{
+		State:  StateInsufficientData,
+		Reason: fmt.Sprintf("Insufficient Data: %d %s unknown.", evalPeriods, noun),
+	}
 }
 
 // RecentDatapoints returns the statistic of each non-empty period in the
