@@ -18,13 +18,19 @@ const (
 	testViewPolicy  = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy"
 )
 
+// newAPICluster creates cluster c1 with the given mode. The creator admin
+// entry is turned off so tests count only the entries they create.
 func newAPICluster(t *testing.T, mode string) *Mock {
 	t.Helper()
 
 	m := newTestMock()
+	noBootstrap := false
+
 	if _, err := m.CreateCluster(context.Background(), eksdriver.ClusterConfig{
 		Name: "c1", Version: "1.30",
-		AccessConfig: eksdriver.AccessConfigRequest{AuthenticationMode: mode},
+		AccessConfig: eksdriver.AccessConfigRequest{
+			AuthenticationMode: mode, BootstrapClusterCreatorAdminPermissions: &noBootstrap,
+		},
 	}); err != nil {
 		t.Fatalf("create cluster: %v", err)
 	}
@@ -350,14 +356,14 @@ func TestDeleteClusterRemovesAccessEntries(t *testing.T) {
 		t.Fatalf("delete cluster: %v", err)
 	}
 
-	// A new cluster with the same name starts with no entries.
+	// A new cluster with the same name starts with only the creator entry.
 	if _, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{
 		Name: "c1", AccessConfig: eksdriver.AccessConfigRequest{AuthenticationMode: "API"},
 	}); err != nil {
 		t.Fatalf("recreate: %v", err)
 	}
 
-	if list, err := m.ListAccessEntries(ctx, "c1", ""); err != nil || len(list) != 0 {
+	if list, err := m.ListAccessEntries(ctx, "c1", ""); err != nil || len(list) != 1 || list[0] == testRoleArn {
 		t.Fatalf("entries after cluster delete = %v err %v", list, err)
 	}
 }

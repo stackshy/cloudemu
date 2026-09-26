@@ -115,6 +115,10 @@ type ClusterConfig struct {
 	NetworkConfig NetworkConfig
 	AccessConfig  AccessConfigRequest
 	Tags          map[string]string
+	// CreatorPrincipalArn and CreatorAccessKeyID identify the caller. They
+	// pick the principal of the bootstrap cluster admin access entry.
+	CreatorPrincipalArn string
+	CreatorAccessKeyID  string
 }
 
 // Cluster is the mock-side representation of an EKS cluster.

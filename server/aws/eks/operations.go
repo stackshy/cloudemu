@@ -9,6 +9,8 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
+	"github.com/stackshy/cloudemu/v2/server/authctx"
+	"github.com/stackshy/cloudemu/v2/server/wire/sigv4"
 )
 
 // parseMaxResults reads the EKS maxResults query param (0 = server default).
@@ -102,10 +104,16 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := eksdriver.ClusterConfig{
-		Name:    body.Name,
-		Version: body.Version,
-		RoleArn: body.RoleArn,
-		Tags:    body.Tags,
+		Name:               body.Name,
+		Version:            body.Version,
+		RoleArn:            body.RoleArn,
+		Tags:               body.Tags,
+		CreatorAccessKeyID: sigv4.AccessKeyID(r),
+	}
+
+	// With EnforceAuth on, the gate has resolved the real caller.
+	if p, ok := authctx.PrincipalFrom(r.Context()); ok {
+		cfg.CreatorPrincipalArn = p.ARN
 	}
 
 	if body.ResourcesVpcConfig != nil {

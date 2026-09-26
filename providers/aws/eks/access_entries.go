@@ -203,7 +203,7 @@ func (m *Mock) accessEntryClusterLocked(name string) (*eksdriver.Cluster, error)
 		return nil, cerrors.Newf(cerrors.NotFound, "No cluster found for name: %s.", name)
 	}
 
-	if c.AccessConfig.AuthenticationMode == defaultAuthenticationMode {
+	if !apiAuthMode(c.AccessConfig.AuthenticationMode) {
 		return nil, cerrors.New(cerrors.FailedPrecondition, msgAuthModeNotAPI)
 	}
 

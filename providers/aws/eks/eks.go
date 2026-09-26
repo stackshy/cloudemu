@@ -628,6 +628,12 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "cluster %q already exists", cfg.Name)
 	}
 
+	if mode := cfg.AccessConfig.AuthenticationMode; mode != "" {
+		if err := validateAuthMode(mode); err != nil {
+			return nil, err
+		}
+	}
+
 	version := cfg.Version
 	if version == "" {
 		// Real EKS defaults to the latest supported Kubernetes version when the
@@ -671,6 +677,7 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 	}
 
 	m.clusters.Set(cfg.Name, cluster)
+	m.bootstrapCreatorEntryLocked(&cluster, cfg)
 
 	m.emitClusterMetrics(cfg.Name)
 
@@ -842,16 +849,21 @@ func (m *Mock) UpdateClusterConfig(
 			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
 	}
 
+	accessConfigChanged := accessConfig != nil && accessConfig.AuthenticationMode != "" &&
+		accessConfig.AuthenticationMode != c.AccessConfig.AuthenticationMode
+	if accessConfigChanged {
+		if err := validateAuthModeUpdate(c.AccessConfig.AuthenticationMode, accessConfig.AuthenticationMode); err != nil {
+			return nil, err
+		}
+
+		c.AccessConfig.AuthenticationMode = accessConfig.AuthenticationMode
+	}
+
 	vpcEndpointChanged, vpcOtherChanged := applyVPCUpdate(&c, cfg)
 
 	loggingChanged := len(logging) > 0
 	if loggingChanged {
 		c.Logging = applyClusterLogging(c.Logging, logging)
-	}
-
-	accessConfigChanged := accessConfig != nil && accessConfig.AuthenticationMode != ""
-	if accessConfigChanged {
-		c.AccessConfig.AuthenticationMode = accessConfig.AuthenticationMode
 	}
 
 	if tags != nil {

@@ -16,6 +16,8 @@ const (
 	sdkViewPolicy  = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSViewPolicy"
 )
 
+// createClusterWithMode creates a cluster without the creator admin entry, so
+// tests count only the entries they create.
 func createClusterWithMode(t *testing.T, client *awseks.Client, name string, mode ekstypes.AuthenticationMode) {
 	t.Helper()
 
@@ -24,7 +26,9 @@ func createClusterWithMode(t *testing.T, client *awseks.Client, name string, mod
 		Version:            aws.String("1.30"),
 		RoleArn:            aws.String("arn:aws:iam::123456789012:role/eks-cluster"),
 		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{SubnetIds: []string{"subnet-1"}},
-		AccessConfig:       &ekstypes.CreateAccessConfigRequest{AuthenticationMode: mode},
+		AccessConfig: &ekstypes.CreateAccessConfigRequest{
+			AuthenticationMode: mode, BootstrapClusterCreatorAdminPermissions: aws.Bool(false),
+		},
 	})
 	if err != nil {
 		t.Fatalf("CreateCluster: %v", err)
