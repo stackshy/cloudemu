@@ -231,6 +231,10 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		return nil, cerrors.New(cerrors.InvalidArgument, "record type is required")
 	}
 
+	if err := driver.ValidateAddresses(cfg.Type, cfg.Values); err != nil {
+		return nil, err
+	}
+
 	key := recordKey(cfg.ZoneID, cfg.Name, cfg.Type, cfg.SetID)
 
 	values := make([]string, len(cfg.Values))
@@ -370,6 +374,10 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver.RecordInfo, error) {
 	if _, ok := m.zones.Get(cfg.ZoneID); !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "managed zone %q not found", cfg.ZoneID)
+	}
+
+	if err := driver.ValidateAddresses(cfg.Type, cfg.Values); err != nil {
+		return nil, err
 	}
 
 	key := recordKey(cfg.ZoneID, cfg.Name, cfg.Type, cfg.SetID)

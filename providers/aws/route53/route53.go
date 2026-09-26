@@ -419,6 +419,10 @@ func (m *Mock) CreateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 		return nil, errors.New(errors.InvalidArgument, "record type is required")
 	}
 
+	if err := driver.ValidateAddresses(cfg.Type, cfg.Values); err != nil {
+		return nil, err
+	}
+
 	key := recordKey(cfg.ZoneID, cfg.Name, cfg.Type, cfg.SetID)
 
 	if m.records.Has(key) {
@@ -527,6 +531,10 @@ func (m *Mock) ListRecords(_ context.Context, zoneID string) ([]driver.RecordInf
 func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver.RecordInfo, error) {
 	if _, ok := m.zones.Get(cfg.ZoneID); !ok {
 		return nil, errors.Newf(errors.NotFound, "zone %q not found", cfg.ZoneID)
+	}
+
+	if err := driver.ValidateAddresses(cfg.Type, cfg.Values); err != nil {
+		return nil, err
 	}
 
 	key := recordKey(cfg.ZoneID, cfg.Name, cfg.Type, cfg.SetID)

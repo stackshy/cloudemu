@@ -284,6 +284,10 @@ func (m *Mock) CreateOrUpdateRecordSet(
 		return nil, false, cerrors.Newf(cerrors.NotFound, "private dns zone %q not found", zone)
 	}
 
+	if err := validateAddresses(recordType, rs.RecordData); err != nil {
+		return nil, false, err
+	}
+
 	_, existed := m.records.Get(recordKey(rg, zone, recordType, name))
 
 	stored := cloneRecord(rs)
