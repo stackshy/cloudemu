@@ -36,13 +36,20 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 		return nil, err
 	}
 
-	params, paramValues, err := mergeParameters(t, in.Parameters)
+	params, paramValues, err := m.mergeParameters(ctx, t, in.Parameters)
+	if err != nil {
+		return nil, err
+	}
+
+	stackID := m.newStackID(in.StackName)
+	resolver := m.newResolver(in.StackName, stackID, paramValues, in.NotificationARNs)
+
+	effective, err := resolver.Prepare(t)
 	if err != nil {
 		return nil, err
 	}
 
 	now := m.clock.Now()
-	stackID := m.newStackID(in.StackName)
 	sd := &stackData{
 		resolved:  map[string]cfn.ResolvedResource{},
 		deleteIDs: map[string]string{},
@@ -50,7 +57,7 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 			ID: stackID, Name: in.StackName, Status: cfn.StatusCreateInProgress,
 			Description: t.Description, Parameters: params, Tags: in.Tags,
 			Capabilities: in.Capabilities, TemplateBody: body,
-			CreationTime: now, LastUpdated: now,
+			CreationTime: now, LastUpdated: now, NotificationARNs: in.NotificationARNs,
 		},
 	}
 
@@ -60,9 +67,8 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 
 	m.emitStackEvent(sd, cfn.StatusCreateInProgress, "User Initiated")
 
-	resolver := m.newResolver(sd, paramValues)
-	if err := m.provision(ctx, sd, t, resolver, nil); err != nil {
-		m.rollback(ctx, sd, cfn.StatusRollbackInProgress, cfn.StatusRollbackComplete, cerrors.Message(err))
+	if perr := m.provision(ctx, sd, effective, resolver, nil); perr != nil {
+		m.rollback(ctx, sd, cfn.StatusRollbackInProgress, cfn.StatusRollbackComplete, cerrors.Message(perr))
 	} else {
 		m.emitStackEvent(sd, cfn.StatusCreateComplete, "")
 	}
@@ -99,24 +105,61 @@ func (m *Mock) claimStackSlot(name string, sd *stackData) bool {
 // priorState captures the stack metadata an update overwrites, so a failed
 // update can revert it during rollback.
 type priorState struct {
-	templateBody string
-	params       []cfn.Parameter
-	description  string
-	outputs      []cfn.Output
+	templateBody     string
+	params           []cfn.Parameter
+	description      string
+	outputs          []cfn.Output
+	notificationARNs []string
+}
+
+// updatePlan is everything UpdateStack works out before it changes anything.
+// newT and oldT have their conditions applied.
+type updatePlan struct {
+	body                 string
+	params               []cfn.Parameter
+	description          string
+	notificationARNs     []string
+	newT, oldT           *cfn.Template
+	newRes, oldRes       *cfn.Resolver
+	prior                priorState
+	keep, create, remove map[string]bool
 }
 
 // UpdateStack reconciles the stack to a new template: resources whose type or
 // properties are unchanged are kept (same physical id); changed ones, and any
 // resource that references a changed one, are replaced (delete + create); added
-// ones are created, and removed ones are deleted. A failure rolls the stack back
-// to its pre-update state (deleting what the update created, restoring what it
-// deleted) and marks it UPDATE_ROLLBACK_COMPLETE.
+// ones are created, and removed ones are deleted. A resource whose condition is
+// false counts as absent. A failure rolls the stack back to its pre-update
+// state (deleting what the update created, restoring what it deleted) and
+// marks it UPDATE_ROLLBACK_COMPLETE.
 func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.Stack, error) {
 	sd, err := m.activeStack(in.StackName)
 	if err != nil {
 		return nil, err
 	}
 
+	plan, err := m.planUpdate(ctx, sd, in)
+	if err != nil {
+		return nil, err
+	}
+
+	m.emitStackEvent(sd, cfn.StatusUpdateInProgress, "User Initiated")
+	m.applyStackMeta(sd, in, plan)
+
+	if rerr := m.reconcile(ctx, sd, plan); rerr != nil {
+		m.rollbackUpdate(ctx, sd, plan, cerrors.Message(rerr))
+	} else {
+		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
+	}
+
+	out := sd.snapshotStack()
+
+	return &out, nil
+}
+
+// planUpdate parses and checks the new template, applies the conditions of
+// both templates, and computes the resource diff. It changes no state.
+func (m *Mock) planUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStackInput) (*updatePlan, error) {
 	body, err := m.templateBody(ctx, in.TemplateBody, in.TemplateURL)
 	if err != nil {
 		return nil, err
@@ -127,61 +170,63 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 		return nil, err
 	}
 
-	params, paramValues, err := mergeParameters(newT, in.Parameters)
+	params, paramValues, err := m.mergeParameters(ctx, newT, in.Parameters)
 	if err != nil {
 		return nil, err
 	}
 
-	prior := sd.priorState()
+	p := &updatePlan{body: body, params: params, description: newT.Description, prior: sd.priorState()}
 
-	oldT, err := cfn.ParseTemplate(prior.templateBody)
+	p.notificationARNs = in.NotificationARNs
+	if p.notificationARNs == nil {
+		p.notificationARNs = p.prior.notificationARNs
+	}
+
+	name, id := sd.identity()
+
+	p.newRes = m.newResolver(name, id, paramValues, p.notificationARNs)
+	if p.newT, err = p.newRes.Prepare(newT); err != nil {
+		return nil, err
+	}
+
+	oldT, err := cfn.ParseTemplate(p.prior.templateBody)
 	if err != nil {
 		return nil, err
 	}
 
-	keep, create, remove, err := diffResources(oldT, newT)
+	p.oldRes = m.newResolver(name, id, paramValuesFrom(p.prior.params), p.prior.notificationARNs)
+	if p.oldT, err = p.oldRes.Prepare(oldT); err != nil {
+		return nil, err
+	}
+
+	p.keep, p.create, p.remove, err = diffResources(p.oldT, p.newT)
 	if err != nil {
 		return nil, err
 	}
 
-	m.emitStackEvent(sd, cfn.StatusUpdateInProgress, "User Initiated")
-	m.applyStackMeta(sd, in, body, params, newT.Description)
-
-	if rerr := m.reconcile(ctx, sd, newT, paramValues, keep, create, remove); rerr != nil {
-		m.rollbackUpdate(ctx, sd, oldT, &prior, create, remove, cerrors.Message(rerr))
-	} else {
-		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
-	}
-
-	out := sd.snapshotStack()
-
-	return &out, nil
+	return p, nil
 }
 
 // rollbackUpdate reverses a failed update: it deletes the resources the update
 // created and re-provisions (from the previous template) the resources the
 // update deleted or replaced, then reverts the stack metadata and outputs to
 // their pre-update values.
-func (m *Mock) rollbackUpdate(
-	ctx context.Context, sd *stackData, oldT *cfn.Template, prior *priorState, created, removed map[string]bool, reason string,
-) {
+func (m *Mock) rollbackUpdate(ctx context.Context, sd *stackData, p *updatePlan, reason string) {
 	m.emitStackEvent(sd, cfn.StatusUpdateRollbackInProgress, reason)
 
-	m.teardown(ctx, sd, created)
-
-	resolver := m.newResolver(sd, paramValuesFrom(prior.params))
+	m.teardown(ctx, sd, p.create)
 
 	sd.mu.RLock()
 	for id, rr := range sd.resolved { // survivors kept through the update
-		resolver.Resources[id] = rr
+		p.oldRes.Resources[id] = rr
 	}
 	sd.mu.RUnlock()
 
 	// Best-effort restore of the deleted/replaced resources from the old
 	// template; a restore failure still lands the stack in a terminal state.
-	_ = m.provision(ctx, sd, oldT, resolver, removed)
+	_ = m.provision(ctx, sd, p.oldT, p.oldRes, p.remove)
 
-	m.revertStackMeta(sd, prior)
+	m.revertStackMeta(sd, &p.prior)
 	m.emitStackEvent(sd, cfn.StatusUpdateRollbackComplete, "")
 }
 
@@ -209,23 +254,18 @@ func (m *Mock) DeleteStack(ctx context.Context, name string) error {
 // reconcile applies a precomputed update diff: it deletes replaced/removed
 // resources, then creates added/replaced ones, seeding the resolver with the
 // resources kept unchanged so their references still resolve.
-func (m *Mock) reconcile(
-	ctx context.Context, sd *stackData, newT *cfn.Template,
-	paramValues map[string]string, keep, create, remove map[string]bool,
-) error {
-	m.teardown(ctx, sd, remove)
-
-	resolver := m.newResolver(sd, paramValues)
+func (m *Mock) reconcile(ctx context.Context, sd *stackData, p *updatePlan) error {
+	m.teardown(ctx, sd, p.remove)
 
 	sd.mu.RLock()
-	for id := range keep {
+	for id := range p.keep {
 		if rr, ok := sd.resolved[id]; ok {
-			resolver.Resources[id] = rr
+			p.newRes.Resources[id] = rr
 		}
 	}
 	sd.mu.RUnlock()
 
-	return m.provision(ctx, sd, newT, resolver, create)
+	return m.provision(ctx, sd, p.newT, p.newRes, p.create)
 }
 
 // provision creates resources in dependency order. When only is non-nil, only
@@ -452,13 +492,52 @@ func classifyChanges(oldT, newT *cfn.Template, changed map[string]bool) (keep, c
 }
 
 // mergeParameters resolves each template parameter to a value (supplied, else
-// its default) and rejects a stack whose required parameters were not given.
-func mergeParameters(t *cfn.Template, provided []cfn.Parameter) ([]cfn.Parameter, map[string]string, error) {
+// its default). It rejects undeclared keys, missing values and values that
+// break a constraint. An SSM parameter type is resolved from Parameter Store.
+// The returned map holds the values Ref sees.
+func (m *Mock) mergeParameters(
+	ctx context.Context, t *cfn.Template, provided []cfn.Parameter,
+) ([]cfn.Parameter, map[string]string, error) {
 	given := make(map[string]string, len(provided))
+
+	var undeclared []string
+
 	for _, p := range provided {
 		given[p.Key] = p.Value
+
+		if _, ok := t.Parameters[p.Key]; !ok {
+			undeclared = append(undeclared, p.Key)
+		}
 	}
 
+	if len(undeclared) > 0 {
+		sort.Strings(undeclared)
+
+		return nil, nil, cerrors.Newf(cerrors.InvalidArgument,
+			"Parameters: [%s] do not exist in the template", strings.Join(undeclared, ", "))
+	}
+
+	out, err := parameterValues(t, given)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	values := make(map[string]string, len(out))
+
+	for i := range out {
+		if cerr := m.checkParameter(ctx, t, &out[i]); cerr != nil {
+			return nil, nil, cerr
+		}
+
+		values[out[i].Key] = effectiveValue(&out[i])
+	}
+
+	return out, values, nil
+}
+
+// parameterValues picks each parameter's value, supplied or default, and
+// reports the ones with neither.
+func parameterValues(t *cfn.Template, given map[string]string) ([]cfn.Parameter, error) {
 	names := make([]string, 0, len(t.Parameters))
 	for name := range t.Parameters {
 		names = append(names, name)
@@ -467,37 +546,63 @@ func mergeParameters(t *cfn.Template, provided []cfn.Parameter) ([]cfn.Parameter
 	sort.Strings(names)
 
 	out := make([]cfn.Parameter, 0, len(names))
-	values := make(map[string]string, len(names))
 
 	var missing []string
 
 	for _, name := range names {
 		def := t.Parameters[name]
 
-		switch {
-		case given[name] != "" || hasKey(given, name):
-			values[name] = given[name]
-		case def.Default != nil:
-			values[name] = cfn.Stringify(def.Default)
-		default:
+		value, ok := given[name]
+		if !ok && def.Default != nil {
+			value, ok = cfn.Stringify(def.Default), true
+		}
+
+		if !ok {
 			missing = append(missing, name)
 			continue
 		}
 
-		out = append(out, cfn.Parameter{Key: name, Value: values[name], NoEcho: def.NoEcho})
+		out = append(out, cfn.Parameter{Key: name, Value: value, NoEcho: def.NoEcho})
 	}
 
 	if len(missing) > 0 {
-		return nil, nil, cerrors.Newf(cerrors.InvalidArgument,
+		return nil, cerrors.Newf(cerrors.InvalidArgument,
 			"Parameters: [%s] must have values", strings.Join(missing, ", "))
 	}
 
-	return out, values, nil
+	return out, nil
 }
 
-func hasKey(m map[string]string, k string) bool {
-	_, ok := m[k]
-	return ok
+// checkParameter checks one value against its constraints and resolves an
+// SSM parameter type.
+func (m *Mock) checkParameter(ctx context.Context, t *cfn.Template, p *cfn.Parameter) error {
+	def := t.Parameters[p.Key]
+
+	if err := cfn.CheckParameterValue(p.Key, &def, p.Value); err != nil {
+		return err
+	}
+
+	if _, isSSM := cfn.SSMValueType(def.Type); !isSSM {
+		return nil
+	}
+
+	resolved, err := m.resolveSSMParameter(ctx, p.Value)
+	if err != nil {
+		return err
+	}
+
+	p.ResolvedValue = resolved
+
+	return nil
+}
+
+// effectiveValue is the value Ref returns for a stored parameter.
+func effectiveValue(p *cfn.Parameter) string {
+	if p.ResolvedValue != "" {
+		return p.ResolvedValue
+	}
+
+	return p.Value
 }
 
 func resolveProps(resolver *cfn.Resolver, raw map[string]any) (map[string]any, error) {
@@ -510,7 +615,11 @@ func resolveProps(resolver *cfn.Resolver, raw map[string]any) (map[string]any, e
 		return nil, err
 	}
 
-	out, _ := resolved.(map[string]any)
+	out, ok := resolved.(map[string]any)
+	if !ok {
+		// Properties was an Fn::If that chose AWS::NoValue.
+		out = map[string]any{}
+	}
 
 	return out, nil
 }
@@ -548,14 +657,15 @@ func resolveOutputs(resolver *cfn.Resolver, t *cfn.Template) ([]cfn.Output, erro
 	return out, nil
 }
 
-func (m *Mock) newResolver(sd *stackData, paramValues map[string]string) *cfn.Resolver {
+func (m *Mock) newResolver(name, id string, paramValues map[string]string, notificationARNs []string) *cfn.Resolver {
 	return &cfn.Resolver{
-		Params:    paramValues,
-		Resources: map[string]cfn.ResolvedResource{},
-		Region:    m.region,
-		AccountID: m.accountID,
-		StackName: sd.stack.Name,
-		StackID:   sd.stack.ID,
+		Params:           paramValues,
+		Resources:        map[string]cfn.ResolvedResource{},
+		Region:           m.region,
+		AccountID:        m.accountID,
+		StackName:        name,
+		StackID:          id,
+		NotificationARNs: notificationARNs,
 	}
 }
 
@@ -593,13 +703,14 @@ func (m *Mock) tick() time.Time {
 	return m.clock.Now()
 }
 
-func (m *Mock) applyStackMeta(sd *stackData, in *cfn.UpdateStackInput, body string, params []cfn.Parameter, desc string) {
+func (m *Mock) applyStackMeta(sd *stackData, in *cfn.UpdateStackInput, p *updatePlan) {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	sd.stack.TemplateBody = body
-	sd.stack.Parameters = params
-	sd.stack.Description = desc
+	sd.stack.TemplateBody = p.body
+	sd.stack.Parameters = p.params
+	sd.stack.Description = p.description
+	sd.stack.NotificationARNs = p.notificationARNs
 	sd.stack.LastUpdated = m.clock.Now()
 
 	if in.Tags != nil {
@@ -618,11 +729,20 @@ func (sd *stackData) priorState() priorState {
 	defer sd.mu.RUnlock()
 
 	return priorState{
-		templateBody: sd.stack.TemplateBody,
-		params:       append([]cfn.Parameter(nil), sd.stack.Parameters...),
-		description:  sd.stack.Description,
-		outputs:      append([]cfn.Output(nil), sd.stack.Outputs...),
+		templateBody:     sd.stack.TemplateBody,
+		params:           append([]cfn.Parameter(nil), sd.stack.Parameters...),
+		description:      sd.stack.Description,
+		outputs:          append([]cfn.Output(nil), sd.stack.Outputs...),
+		notificationARNs: append([]string(nil), sd.stack.NotificationARNs...),
 	}
+}
+
+// identity returns the stack's name and id.
+func (sd *stackData) identity() (name, id string) {
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	return sd.stack.Name, sd.stack.ID
 }
 
 // revertStackMeta restores the metadata and outputs captured before an update
@@ -635,15 +755,16 @@ func (m *Mock) revertStackMeta(sd *stackData, prior *priorState) {
 	sd.stack.Parameters = prior.params
 	sd.stack.Description = prior.description
 	sd.stack.Outputs = prior.outputs
+	sd.stack.NotificationARNs = prior.notificationARNs
 	sd.stack.LastUpdated = m.clock.Now()
 }
 
-// paramValuesFrom projects resolved stack parameters into the name→value map
+// paramValuesFrom projects stored stack parameters into the name→value map
 // the resolver consumes.
 func paramValuesFrom(params []cfn.Parameter) map[string]string {
 	out := make(map[string]string, len(params))
-	for _, p := range params {
-		out[p.Key] = p.Value
+	for i := range params {
+		out[params[i].Key] = effectiveValue(&params[i])
 	}
 
 	return out

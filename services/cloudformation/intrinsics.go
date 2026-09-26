@@ -26,15 +26,93 @@ type Resolver struct {
 	AccountID string
 	StackName string
 	StackID   string
+	// NotificationARNs is what Ref AWS::NotificationARNs returns.
+	NotificationARNs []string
+
+	// Prepare fills these from the template.
+	listParams map[string]bool
+	mappings   map[string]map[string]map[string]any
+	conditions map[string]bool
 }
+
+// noValue is what Ref AWS::NoValue resolves to. Maps and lists drop it, so
+// the property or item it stands for is removed.
+type noValue struct{}
 
 // Intrinsic function names supported by the resolver.
 const (
-	fnRef    = "Ref"
-	fnGetAtt = "Fn::GetAtt"
-	fnSub    = "Fn::Sub"
-	fnJoin   = "Fn::Join"
+	fnRef       = "Ref"
+	fnGetAtt    = "Fn::GetAtt"
+	fnSub       = "Fn::Sub"
+	fnJoin      = "Fn::Join"
+	fnIf        = "Fn::If"
+	fnFindInMap = "Fn::FindInMap"
+	fnSelect    = "Fn::Select"
+	fnSplit     = "Fn::Split"
+	fnBase64    = "Fn::Base64"
+	fnCidr      = "Fn::Cidr"
+	fnGetAZs    = "Fn::GetAZs"
 )
+
+// Pseudo parameter names.
+const (
+	pseudoRegion           = "AWS::Region"
+	pseudoAccountID        = "AWS::AccountId"
+	pseudoStackName        = "AWS::StackName"
+	pseudoStackID          = "AWS::StackId"
+	pseudoPartition        = "AWS::Partition"
+	pseudoURLSuffix        = "AWS::URLSuffix"
+	pseudoNotificationARNs = "AWS::NotificationARNs"
+	pseudoNoValue          = "AWS::NoValue"
+)
+
+// pseudoParams is the set of pseudo parameter names Ref accepts.
+var pseudoParams = map[string]bool{ //nolint:gochecknoglobals // static lookup table
+	pseudoRegion: true, pseudoAccountID: true, pseudoStackName: true, pseudoStackID: true,
+	pseudoPartition: true, pseudoURLSuffix: true, pseudoNotificationARNs: true, pseudoNoValue: true,
+}
+
+// intrinsicFn evaluates one intrinsic function's argument.
+type intrinsicFn func(r *Resolver, arg any) (any, error)
+
+// lookupIntrinsic returns the evaluator for a function name. It is a switch,
+// not a map, because a package-level map of these methods is an
+// initialization cycle.
+func lookupIntrinsic(fn string) (intrinsicFn, bool) {
+	switch fn {
+	case fnRef:
+		return func(r *Resolver, arg any) (any, error) { return r.ref(scalarString(arg)) }, true
+	case fnGetAtt:
+		return func(r *Resolver, arg any) (any, error) { return r.getAtt(arg) }, true
+	case fnSub:
+		return func(r *Resolver, arg any) (any, error) { return r.sub(arg) }, true
+	case fnJoin:
+		return func(r *Resolver, arg any) (any, error) { return r.join(arg) }, true
+	case fnIf:
+		return (*Resolver).evalIf, true
+	case fnFindInMap:
+		return (*Resolver).findInMap, true
+	default:
+		return lookupListIntrinsic(fn)
+	}
+}
+
+func lookupListIntrinsic(fn string) (intrinsicFn, bool) {
+	switch fn {
+	case fnSelect:
+		return (*Resolver).selectFn, true
+	case fnSplit:
+		return (*Resolver).split, true
+	case fnBase64:
+		return (*Resolver).base64, true
+	case fnCidr:
+		return (*Resolver).cidr, true
+	case fnGetAZs:
+		return (*Resolver).getAZs, true
+	default:
+		return nil, false
+	}
+}
 
 var subVarPattern = regexp.MustCompile(`\$\{[^}]+\}`)
 
@@ -76,7 +154,9 @@ func (r *Resolver) resolveMap(m map[string]any) (any, error) {
 			return nil, err
 		}
 
-		out[k] = rv
+		if _, drop := rv.(noValue); !drop {
+			out[k] = rv
+		}
 	}
 
 	return out, nil
@@ -91,7 +171,9 @@ func (r *Resolver) resolveList(l []any) (any, error) {
 			return nil, err
 		}
 
-		out = append(out, rv)
+		if _, drop := rv.(noValue); !drop {
+			out = append(out, rv)
+		}
 	}
 
 	return out, nil
@@ -114,28 +196,34 @@ func intrinsic(m map[string]any) (fn string, arg any, ok bool) {
 }
 
 func (r *Resolver) evalIntrinsic(fn string, arg any) (any, error) {
-	switch fn {
-	case fnRef:
-		return r.ref(scalarString(arg))
-	case fnGetAtt:
-		return r.getAtt(arg)
-	case fnSub:
-		return r.sub(arg)
-	case fnJoin:
-		return r.join(arg)
-	default:
+	eval, ok := lookupIntrinsic(fn)
+	if !ok {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "unsupported intrinsic function %q", fn)
 	}
+
+	return eval(r, arg)
 }
 
-// ref resolves Ref: a pseudo-parameter, a template parameter, or a resource
-// (returning that resource's Ref value, its physical id or ARN).
-func (r *Resolver) ref(name string) (string, error) {
+// ref resolves Ref: a pseudo parameter, a template parameter, or a resource
+// (returning that resource's Ref value, its physical id or ARN). A list-typed
+// parameter and AWS::NotificationARNs return a list.
+func (r *Resolver) ref(name string) (any, error) {
+	switch name {
+	case pseudoNoValue:
+		return noValue{}, nil
+	case pseudoNotificationARNs:
+		return stringList(r.NotificationARNs), nil
+	}
+
 	if v, ok := r.pseudo(name); ok {
 		return v, nil
 	}
 
 	if v, ok := r.Params[name]; ok {
+		if r.listParams[name] {
+			return stringList(splitList(v)), nil
+		}
+
 		return v, nil
 	}
 
@@ -146,24 +234,50 @@ func (r *Resolver) ref(name string) (string, error) {
 	return "", cerrors.Newf(cerrors.InvalidArgument, "unresolved Ref to %q", name)
 }
 
+func stringList(in []string) []any {
+	out := make([]any, len(in))
+	for i, s := range in {
+		out[i] = s
+	}
+
+	return out
+}
+
 func (r *Resolver) pseudo(name string) (string, bool) {
 	switch name {
-	case "AWS::Region":
+	case pseudoRegion:
 		return r.Region, true
-	case "AWS::AccountId":
+	case pseudoAccountID:
 		return r.AccountID, true
-	case "AWS::StackName":
+	case pseudoStackName:
 		return r.StackName, true
-	case "AWS::StackId":
+	case pseudoStackID:
 		return r.StackID, true
-	case "AWS::Partition":
-		return "aws", true
-	case "AWS::URLSuffix":
+	case pseudoPartition:
+		return partition(r.Region), true
+	case pseudoURLSuffix:
+		if partition(r.Region) == partitionChina {
+			return "amazonaws.com.cn", true
+		}
+
 		return "amazonaws.com", true
-	case "AWS::NoValue":
-		return "", true
 	default:
 		return "", false
+	}
+}
+
+// partitionChina is the partition of the cn- regions.
+const partitionChina = "aws-cn"
+
+// partition returns the AWS partition a region belongs to.
+func partition(region string) string {
+	switch {
+	case strings.HasPrefix(region, "cn-"):
+		return partitionChina
+	case strings.HasPrefix(region, "us-gov-"):
+		return "aws-us-gov"
+	default:
+		return "aws"
 	}
 }
 
@@ -279,10 +393,13 @@ func (r *Resolver) subVar(name string, locals map[string]string) (string, error)
 		return r.getAtt([]any{name[:i], name[i+1:]})
 	}
 
-	return r.ref(name)
+	v, err := r.ref(name)
+
+	return scalarString(v), err
 }
 
-// join resolves Fn::Join: [delimiter, [values...]].
+// join resolves Fn::Join: [delimiter, [values...]]. The list may itself be
+// an intrinsic that returns a list, such as Fn::Split or a list parameter.
 func (r *Resolver) join(arg any) (string, error) {
 	const joinArgs = 2
 
@@ -293,20 +410,19 @@ func (r *Resolver) join(arg any) (string, error) {
 
 	delim := scalarString(parts[0])
 
-	list, ok := parts[1].([]any)
+	resolved, err := r.Resolve(parts[1])
+	if err != nil {
+		return "", err
+	}
+
+	list, ok := resolved.([]any)
 	if !ok {
 		return "", cerrors.New(cerrors.InvalidArgument, "Fn::Join second argument must be a list")
 	}
 
 	pieces := make([]string, 0, len(list))
-
 	for _, e := range list {
-		s, err := r.ResolveString(e)
-		if err != nil {
-			return "", err
-		}
-
-		pieces = append(pieces, s)
+		pieces = append(pieces, scalarString(e))
 	}
 
 	return strings.Join(pieces, delim), nil

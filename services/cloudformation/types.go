@@ -43,6 +43,9 @@ type Parameter struct {
 	Value string
 	// NoEcho marks a value that stack reads show masked.
 	NoEcho bool
+	// ResolvedValue is the Parameter Store value an SSM parameter type
+	// resolved to. It is empty for other types.
+	ResolvedValue string
 }
 
 // Output is a resolved stack output.
@@ -95,6 +98,9 @@ type Stack struct {
 	DeletionTime time.Time
 	Resources    []StackResource
 	Events       []StackEvent
+
+	// NotificationARNs are the SNS topics the stack reports events to.
+	NotificationARNs []string
 }
 
 // StackSummary is the condensed stack view ListStacks returns.
@@ -118,6 +124,8 @@ type CreateStackInput struct {
 	Parameters   []Parameter
 	Tags         map[string]string
 	Capabilities []string
+
+	NotificationARNs []string
 }
 
 // UpdateStackInput is the request to update an existing stack.
@@ -128,6 +136,9 @@ type UpdateStackInput struct {
 	Parameters   []Parameter
 	Tags         map[string]string
 	Capabilities []string
+
+	// NotificationARNs replaces the stack's topics. Nil keeps them.
+	NotificationARNs []string
 }
 
 // ValidateTemplateInput is the request to validate a template. TemplateBody

@@ -28,6 +28,8 @@ type Mock struct {
 	region    string
 	// fetchTemplate reads a TemplateURL object from the emulated S3.
 	fetchTemplate TemplateFetcher
+	// readParameter reads Parameter Store for SSM parameter types.
+	readParameter ParameterReader
 }
 
 // stackData is the stored state of one stack, guarded by its own mutex.
@@ -262,6 +264,7 @@ func (sd *stackData) snapshotStack() cfn.Stack {
 	s.Outputs = append([]cfn.Output(nil), sd.stack.Outputs...)
 	s.Resources = append([]cfn.StackResource(nil), sd.stack.Resources...)
 	s.Capabilities = append([]string(nil), sd.stack.Capabilities...)
+	s.NotificationARNs = append([]string(nil), sd.stack.NotificationARNs...)
 	s.Events = append([]cfn.StackEvent(nil), sd.stack.Events...)
 
 	if sd.stack.Tags != nil {

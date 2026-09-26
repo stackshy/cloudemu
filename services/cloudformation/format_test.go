@@ -12,13 +12,36 @@ import (
 	cfn "github.com/stackshy/cloudemu/v2/services/cloudformation"
 )
 
-// propYAML wraps a property value in a one-resource YAML template.
+// yamlPrelude declares the names the short-form cases refer to, so the
+// template passes validation.
+const yamlPrelude = `Parameters:
+  Env: {Type: String}
+  A: {Type: String}
+  B: {Type: String}
+  Net: {Type: String}
+  Prefix: {Type: String}
+Mappings:
+  Map: {us-east-1: {Ami: ami-1}}
+Conditions:
+  IsProd: !Equals [a, a]
+  A: !Equals [a, a]
+  B: !Equals [a, b]
+`
+
+const jsonPrelude = `"Parameters":{"Env":{"Type":"String"},"A":{"Type":"String"},"B":{"Type":"String"},"Net":{"Type":"String"},"Prefix":{"Type":"String"}},
+"Mappings":{"Map":{"us-east-1":{"Ami":"ami-1"}}},
+"Conditions":{"IsProd":{"Fn::Equals":["a","a"]},"A":{"Fn::Equals":["a","a"]},"B":{"Fn::Equals":["a","b"]}},`
+
+// propYAML wraps a property value in a YAML template that also declares the
+// names the value refers to.
 func propYAML(value string) string {
-	return "Resources:\n  R:\n    Type: AWS::S3::Bucket\n    Properties:\n      P: " + value + "\n"
+	return yamlPrelude + "Resources:\n  Bucket: {Type: AWS::S3::Bucket}\n  Vpc: {Type: AWS::EC2::VPC}\n" +
+		"  Other: {Type: AWS::SNS::Topic}\n  R:\n    Type: AWS::S3::Bucket\n    Properties:\n      P: " + value + "\n"
 }
 
 func propJSON(value string) string {
-	return `{"Resources":{"R":{"Type":"AWS::S3::Bucket","Properties":{"P":` + value + `}}}}`
+	return `{` + jsonPrelude + `"Resources":{"Bucket":{"Type":"AWS::S3::Bucket"},"Vpc":{"Type":"AWS::EC2::VPC"},"Other":{"Type":"AWS::SNS::Topic"},` +
+		`"R":{"Type":"AWS::S3::Bucket","Properties":{"P":` + value + `}}}}`
 }
 
 func parsedProp(t *testing.T, body string) any {
@@ -114,8 +137,11 @@ func TestYAMLShortForms(t *testing.T) {
 func TestYAMLBlockShortForms(t *testing.T) {
 	t.Parallel()
 
-	body := `
+	body := yamlPrelude + `
 Resources:
+  Bucket: {Type: AWS::S3::Bucket}
+  Vpc: {Type: AWS::EC2::VPC}
+  Other: {Type: AWS::SNS::Topic}
   R:
     Type: AWS::S3::Bucket
     Properties:
@@ -190,7 +216,10 @@ func TestJSONAndYAMLTemplatesEqual(t *testing.T) {
 func TestYAMLTemplateResolves(t *testing.T) {
 	t.Parallel()
 
-	body := `Resources:
+	body := `Parameters:
+  Env: {Type: String}
+Resources:
+  Bucket: {Type: AWS::S3::Bucket}
   R:
     Type: AWS::S3::Bucket
     Properties:

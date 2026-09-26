@@ -1,6 +1,7 @@
 package cloudformation
 
 import (
+	"strconv"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -23,6 +24,14 @@ func buildTemplate(top map[string]any) (*Template, error) {
 	}
 
 	if t.Parameters, err = buildSection(top, "Parameters", buildParameter); err != nil {
+		return nil, err
+	}
+
+	if t.Mappings, err = buildMappings(top["Mappings"]); err != nil {
+		return nil, err
+	}
+
+	if t.Conditions, err = objectField(top["Conditions"], "Conditions"); err != nil {
 		return nil, err
 	}
 
@@ -106,6 +115,10 @@ func buildParameter(m map[string]any, path string) (ParameterDef, error) {
 		return p, formatErr("[/%s] Every Parameters object must contain a Type member.", path)
 	}
 
+	if !validParamType(p.Type) {
+		return p, formatErr("Unrecognized parameter type: %s", p.Type)
+	}
+
 	if p.Description, err = scalarField(m["Description"], path+"/Description"); err != nil {
 		return p, err
 	}
@@ -122,7 +135,119 @@ func buildParameter(m map[string]any, path string) (ParameterDef, error) {
 		return p, formatErr("[/%s/AllowedValues] must be a list", path)
 	}
 
-	return p, nil
+	err = buildConstraints(m, path, &p)
+
+	return p, err
+}
+
+// buildConstraints reads the value constraints a parameter may declare.
+func buildConstraints(m map[string]any, path string, p *ParameterDef) error {
+	var err error
+
+	if p.AllowedPattern, err = scalarField(m["AllowedPattern"], path+"/AllowedPattern"); err != nil {
+		return err
+	}
+
+	if p.ConstraintDescription, err = scalarField(m["ConstraintDescription"], path+"/ConstraintDescription"); err != nil {
+		return err
+	}
+
+	if p.MinLength, err = intField(m["MinLength"], path+"/MinLength"); err != nil {
+		return err
+	}
+
+	if p.MaxLength, err = intField(m["MaxLength"], path+"/MaxLength"); err != nil {
+		return err
+	}
+
+	if p.MinValue, err = numberField(m["MinValue"], path+"/MinValue"); err != nil {
+		return err
+	}
+
+	p.MaxValue, err = numberField(m["MaxValue"], path+"/MaxValue")
+
+	return err
+}
+
+// numberField reads a number written as a number or a numeric string. A
+// missing field gives nil.
+func numberField(v any, path string) (*float64, error) {
+	if v == nil {
+		return nil, nil
+	}
+
+	switch v.(type) {
+	case map[string]any, []any, bool:
+		return nil, formatErr("[/%s] must be a number", path)
+	}
+
+	f, err := strconv.ParseFloat(strings.TrimSpace(scalarString(v)), 64)
+	if err != nil {
+		return nil, formatErr("[/%s] must be a number", path)
+	}
+
+	return &f, nil
+}
+
+// intField reads a whole number the way numberField reads any number.
+func intField(v any, path string) (*int, error) {
+	f, err := numberField(v, path)
+	if err != nil || f == nil {
+		return nil, err
+	}
+
+	if *f != float64(int(*f)) {
+		return nil, formatErr("[/%s] must be an integer", path)
+	}
+
+	n := int(*f)
+
+	return &n, nil
+}
+
+// objectField reads an optional section that must be an object.
+func objectField(v any, path string) (map[string]any, error) {
+	switch m := v.(type) {
+	case nil:
+		return nil, nil
+	case map[string]any:
+		return m, nil
+	default:
+		return nil, formatErr("[/%s] must be an object", path)
+	}
+}
+
+// buildMappings reads the Mappings section: each map holds top-level keys,
+// and each top-level key holds second-level keys and their values.
+func buildMappings(raw any) (map[string]map[string]map[string]any, error) {
+	maps, err := objectField(raw, "Mappings")
+	if err != nil || maps == nil {
+		return nil, err
+	}
+
+	out := make(map[string]map[string]map[string]any, len(maps))
+
+	for _, name := range sortedKeys(maps) {
+		top, ok := maps[name].(map[string]any)
+		if !ok {
+			return nil, formatErr("[/Mappings/%s] Every Mappings member %s must be a map", name, name)
+		}
+
+		inner := make(map[string]map[string]any, len(top))
+
+		for _, key := range sortedKeys(top) {
+			second, ok := top[key].(map[string]any)
+			if !ok {
+				return nil, formatErr("[/Mappings/%s/%s] Every Mappings attribute must be a map", name, key)
+			}
+
+			inner[key] = second
+		}
+
+		out[name] = inner
+	}
+
+	return out, nil
 }
 
 // boolField reads a boolean written as true/false or as the strings "true" and
@@ -166,7 +291,9 @@ func buildResource(m map[string]any, path string) (ResourceDef, error) {
 		return r, formatErr("[/%s/Properties] must be an object", path)
 	}
 
-	return r, nil
+	r.Condition, err = scalarField(m["Condition"], path+"/Condition")
+
+	return r, err
 }
 
 func buildOutput(m map[string]any, path string) (OutputDef, error) {
@@ -190,5 +317,7 @@ func buildOutput(m map[string]any, path string) (OutputDef, error) {
 		return o, formatErr("[/%s/Export] must be an object", path)
 	}
 
-	return o, nil
+	o.Condition, err = scalarField(m["Condition"], path+"/Condition")
+
+	return o, err
 }
