@@ -6,6 +6,8 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/monitoring/metricmath"
 )
 
 // EventBridge identity of the alarm state change event. See "Alarm events and
@@ -43,11 +45,14 @@ type alarmEventSettings struct {
 	Metrics     []alarmEventMetric `json:"metrics"`
 }
 
-// alarmEventMetric is one metric query of the alarm.
+// alarmEventMetric is one metric query of the alarm. It has either a
+// metricStat or an expression.
 type alarmEventMetric struct {
-	ID         string              `json:"id"`
-	MetricStat alarmEventMetricRef `json:"metricStat"`
-	ReturnData bool                `json:"returnData"`
+	ID         string               `json:"id"`
+	MetricStat *alarmEventMetricRef `json:"metricStat,omitempty"`
+	Expression string               `json:"expression,omitempty"`
+	Label      string               `json:"label,omitempty"`
+	ReturnData bool                 `json:"returnData"`
 }
 
 // alarmEventMetricRef is the metricStat of a metric query.
@@ -122,6 +127,10 @@ func eventState(value, reason, reasonData string, at time.Time) alarmEventState 
 // eventMetricsLocked renders the alarm's metric query. The caller holds
 // alarmMu.
 func eventMetricsLocked(a *alarmData) []alarmEventMetric {
+	if len(a.Metrics) > 0 {
+		return mathEventMetrics(a.Metrics)
+	}
+
 	// Alarms restored from an older snapshot have no query id yet.
 	if a.MetricQueryID == "" {
 		a.MetricQueryID = idgen.UUID()
@@ -134,13 +143,35 @@ func eventMetricsLocked(a *alarmData) []alarmEventMetric {
 
 	return []alarmEventMetric{{
 		ID: a.MetricQueryID,
-		MetricStat: alarmEventMetricRef{
+		MetricStat: &alarmEventMetricRef{
 			Metric: alarmEventMetricID{Dimensions: copyMap(a.Dimensions), Name: a.MetricName, Namespace: a.Namespace},
 			Period: a.Period,
 			Stat:   stat,
 		},
 		ReturnData: true,
 	}}
+}
+
+// mathEventMetrics renders a math alarm's Metrics list.
+func mathEventMetrics(queries []driver.MetricDataQuery) []alarmEventMetric {
+	out := make([]alarmEventMetric, 0, len(queries))
+
+	for i := range queries {
+		q := &queries[i]
+		em := alarmEventMetric{ID: q.ID, Expression: q.Expression, Label: q.Label, ReturnData: metricmath.ReturnsData(q)}
+
+		if ms := q.MetricStat; ms != nil {
+			em.MetricStat = &alarmEventMetricRef{
+				Metric: alarmEventMetricID{Dimensions: copyMap(ms.Dimensions), Name: ms.MetricName, Namespace: ms.Namespace},
+				Period: ms.Period,
+				Stat:   ms.Stat,
+			}
+		}
+
+		out = append(out, em)
+	}
+
+	return out
 }
 
 // stateEventLocked builds the event for a transition out of prev. It runs

@@ -61,6 +61,32 @@ type MetricDataResult struct {
 	Unit       string // the unit stored with the underlying datapoints, if any
 }
 
+// MetricStat names one metric and how to aggregate it: the statistic over
+// each Period, optionally only for data stored with Unit.
+type MetricStat struct {
+	Namespace  string
+	MetricName string
+	Dimensions map[string]string
+	Period     int
+	Stat       string
+	Unit       string
+}
+
+// MetricDataQuery is one entry of a metric-math query list. It has either a
+// MetricStat or an Expression that combines other entries by ID. A nil
+// ReturnData means true.
+type MetricDataQuery struct {
+	ID         string
+	Expression string
+	Label      string
+	ReturnData *bool
+	// Period is the granularity of an Expression entry's points. Zero means
+	// the entries it references use their own periods.
+	Period     int
+	AccountID  string
+	MetricStat *MetricStat
+}
+
 // AlarmConfig describes an alarm to create.
 type AlarmConfig struct {
 	Name                    string
@@ -82,6 +108,13 @@ type AlarmConfig struct {
 	AlarmDescription        string
 	ActionsEnabled          *bool // nil defaults to true (AWS semantics)
 	Tags                    map[string]string
+	// Metrics makes this a metric-math alarm. It replaces Namespace,
+	// MetricName, Dimensions, Period, Stat and Unit. The one entry that
+	// returns data is the series the alarm watches.
+	Metrics []MetricDataQuery
+	// ThresholdMetricID names the Metrics entry that supplies the threshold
+	// band of an anomaly detection alarm.
+	ThresholdMetricID string
 }
 
 // AlarmInfo describes an alarm.
@@ -114,6 +147,9 @@ type AlarmInfo struct {
 	Tags map[string]string
 	// StateTransitionedTimestamp is when State last changed.
 	StateTransitionedTimestamp time.Time
+	// Metrics and ThresholdMetricID echo a metric-math alarm's query list.
+	Metrics           []MetricDataQuery
+	ThresholdMetricID string
 }
 
 // NotificationChannelConfig describes a notification channel.

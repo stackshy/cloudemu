@@ -8,6 +8,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/monitoring/metricmath"
 )
 
 // initialStateReason is the reason AWS gives a newly created alarm.
@@ -98,6 +99,8 @@ func (m *Mock) newAlarmData(cfg *driver.AlarmConfig, now time.Time) *alarmData {
 		Tags:                       copyMap(cfg.Tags),
 		MetricQueryID:              idgen.UUID(),
 		ConfigUpdatedAt:            now,
+		Metrics:                    metricmath.Clone(cfg.Metrics),
+		ThresholdMetricID:          cfg.ThresholdMetricID,
 	}
 }
 

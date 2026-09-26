@@ -3,11 +3,13 @@ package cloudwatch
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/monitoring/metricmath"
 )
 
 // The cores in this file hold the PutMetricAlarm and SetAlarmState logic.
@@ -47,7 +49,201 @@ func (h *Handler) putMetricAlarmCore(ctx context.Context, cfg *mondriver.AlarmCo
 			strings.Join(alarmeval.Units(), ", ")+"]")
 	}
 
+	if err := validateAlarmMetrics(cfg); err != nil {
+		return err
+	}
+
 	return h.monitoring.CreateAlarm(ctx, *cfg)
+}
+
+// metricQueryIDPattern is the MetricDataQuery Id rule from the API reference.
+var metricQueryIDPattern = regexp.MustCompile(`^[a-z][a-zA-Z0-9_]*$`)
+
+// validateAlarmMetrics checks the Metrics list of a metric-math alarm. An
+// expression outside the supported syntax is stored as is, because AWS accepts
+// it. It evaluates to no data.
+func validateAlarmMetrics(cfg *mondriver.AlarmConfig) error {
+	if len(cfg.Metrics) == 0 {
+		return validateSingleMetric(cfg)
+	}
+
+	if hasSingleMetricFields(cfg) {
+		return newWireError(errValidation, "Metrics cannot be used with MetricName, Namespace, Dimensions, Period, Unit, "+
+			"Statistic or ExtendedStatistic.")
+	}
+
+	if err := validateQueryCounts(cfg.Metrics); err != nil {
+		return err
+	}
+
+	ids, err := metricQueryIDs(cfg.Metrics)
+	if err != nil {
+		return err
+	}
+
+	return validateQueryLinks(cfg, ids)
+}
+
+// validateQueryLinks checks how the entries refer to each other: one watched
+// entry, a known ThresholdMetricId, known references and no cycle.
+func validateQueryLinks(cfg *mondriver.AlarmConfig, ids map[string]bool) error {
+	if len(metricmath.Watched(cfg.Metrics, cfg.ThresholdMetricID)) != 1 {
+		return newWireError(errValidation, "Exactly one element of the metrics list should return data.")
+	}
+
+	if cfg.ThresholdMetricID != "" && !ids[cfg.ThresholdMetricID] {
+		return newWireError(errValidation, "ThresholdMetricId "+cfg.ThresholdMetricID+" does not match any Id in the metrics list.")
+	}
+
+	if err := expressionRefsKnown(cfg.Metrics, ids); err != nil {
+		return err
+	}
+
+	if id, ok := metricmath.Cycle(cfg.Metrics); ok {
+		return newWireError(errValidation, "Error in expression '"+id+"': Circular dependency in the metrics list.")
+	}
+
+	return nil
+}
+
+// validateSingleMetric checks an alarm without Metrics. It must name a
+// metric and cannot use ThresholdMetricId.
+func validateSingleMetric(cfg *mondriver.AlarmConfig) error {
+	if cfg.ThresholdMetricID != "" {
+		return newWireError(errValidation, "ThresholdMetricId can only be used with Metrics.")
+	}
+
+	if cfg.MetricName == "" {
+		return newWireError(errValidation, "For each PutMetricAlarm operation, you must specify either MetricName, "+
+			"a Metrics array, or an EvaluationCriteria.")
+	}
+
+	return nil
+}
+
+// hasSingleMetricFields reports whether any field of a single-metric alarm
+// is set. Metrics replaces all of them.
+func hasSingleMetricFields(cfg *mondriver.AlarmConfig) bool {
+	return cfg.Namespace != "" || cfg.MetricName != "" || len(cfg.Dimensions) > 0 || cfg.Period != 0 ||
+		cfg.Unit != "" || cfg.Stat != "" || cfg.ExtendedStatistic != ""
+}
+
+// metricQueryIDs checks each entry's Id and shape and returns the set of Ids.
+func metricQueryIDs(queries []mondriver.MetricDataQuery) (map[string]bool, error) {
+	ids := make(map[string]bool, len(queries))
+
+	for i := range queries {
+		q := &queries[i]
+
+		if !metricQueryIDPattern.MatchString(q.ID) {
+			return nil, newWireError(errValidation, "Invalid metrics list: the id '"+q.ID+
+				"' must start with a lowercase letter and contain only letters, numbers and underscores.")
+		}
+
+		if ids[q.ID] {
+			return nil, newWireError(errValidation, "Invalid metrics list: the id '"+q.ID+"' is used more than once.")
+		}
+
+		ids[q.ID] = true
+
+		if err := validateQueryShape(q); err != nil {
+			return nil, err
+		}
+	}
+
+	return ids, nil
+}
+
+// Limits on a PutMetricAlarm Metrics list.
+const (
+	maxAlarmMetricStats  = 10
+	maxAlarmExpressions  = 10
+	secondsPerMinute     = 60
+	highResolutionPeriod = 30
+	highResolutionStep   = 10
+)
+
+// validPeriod reports whether p is 10, 20, 30 or a multiple of 60.
+func validPeriod(p int) bool {
+	if p <= 0 {
+		return false
+	}
+
+	if p <= highResolutionPeriod {
+		return p%highResolutionStep == 0
+	}
+
+	return p%secondsPerMinute == 0
+}
+
+// validateQueryShape checks one Metrics entry. It has exactly one of
+// MetricStat and Expression. A MetricStat needs a valid Period and a Stat.
+// An Expression Period, when set, follows the same Period rule.
+func validateQueryShape(q *mondriver.MetricDataQuery) error {
+	if (q.MetricStat == nil) == (q.Expression == "") {
+		return newWireError(errValidation, "Invalid metrics list: the element '"+q.ID+
+			"' must specify exactly one of MetricStat and Expression.")
+	}
+
+	if ms := q.MetricStat; ms != nil {
+		if !validPeriod(ms.Period) {
+			return newWireError(errValidation, "Invalid metrics list: the element '"+q.ID+
+				"' must have a MetricStat Period of 10, 20, 30 or a multiple of 60.")
+		}
+
+		if ms.Stat == "" {
+			return newWireError(errValidation, "Invalid metrics list: the element '"+q.ID+"' must have a MetricStat Stat.")
+		}
+	}
+
+	if q.Period != 0 && !validPeriod(q.Period) {
+		return newWireError(errValidation, "Invalid metrics list: the element '"+q.ID+
+			"' must have a Period of 10, 20, 30 or a multiple of 60.")
+	}
+
+	return nil
+}
+
+// validateQueryCounts enforces the per-alarm limits on MetricStat and
+// Expression entries.
+func validateQueryCounts(queries []mondriver.MetricDataQuery) error {
+	stats, exprs := 0, 0
+
+	for i := range queries {
+		if queries[i].MetricStat != nil {
+			stats++
+		} else {
+			exprs++
+		}
+	}
+
+	if stats > maxAlarmMetricStats {
+		return newWireError(errValidation, "The metrics list can contain at most 10 MetricStat elements.")
+	}
+
+	if exprs > maxAlarmExpressions {
+		return newWireError(errValidation, "The metrics list can contain at most 10 Expression elements.")
+	}
+
+	return nil
+}
+
+// expressionRefsKnown checks that each expression only reads Ids in the list.
+func expressionRefsKnown(queries []mondriver.MetricDataQuery, ids map[string]bool) error {
+	for i := range queries {
+		refs, ok := metricmath.References(queries[i].Expression)
+		if !ok {
+			continue
+		}
+
+		for _, ref := range refs {
+			if !ids[ref] {
+				return newWireError(errValidation, "Error in expression '"+queries[i].ID+"': Unrecognized metric '"+ref+"'.")
+			}
+		}
+	}
+
+	return nil
 }
 
 // errInvalidFormat is the code for StateReasonData that is not JSON.

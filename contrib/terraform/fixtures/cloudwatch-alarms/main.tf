@@ -13,6 +13,50 @@ resource "aws_cloudwatch_metric_alarm" "cpu_percent" {
   comparison_operator = "GreaterThanThreshold"
 }
 
+# A metric-math alarm on an error rate. The Metrics list must round-trip
+# through DescribeAlarms or the post-apply plan shows a diff.
+resource "aws_cloudwatch_metric_alarm" "rate" {
+  alarm_name          = "error-rate"
+  evaluation_periods  = 1
+  threshold           = 20
+  comparison_operator = "GreaterThanThreshold"
+
+  metric_query {
+    id = "err"
+
+    metric {
+      namespace   = "M/App"
+      metric_name = "Errors"
+      period      = 60
+      stat        = "Sum"
+      dimensions = {
+        Service = "api"
+      }
+    }
+  }
+
+  metric_query {
+    id = "req"
+
+    metric {
+      namespace   = "M/App"
+      metric_name = "Requests"
+      period      = 60
+      stat        = "Sum"
+      dimensions = {
+        Service = "api"
+      }
+    }
+  }
+
+  metric_query {
+    id          = "rate"
+    expression  = "err/req*100"
+    label       = "ErrorRate"
+    return_data = true
+  }
+}
+
 # Data for U/App Cpu is put as Percent, so this alarm never sees it and stays
 # in INSUFFICIENT_DATA.
 resource "aws_cloudwatch_metric_alarm" "wrong_unit" {
