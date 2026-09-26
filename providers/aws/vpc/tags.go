@@ -11,7 +11,8 @@ import (
 // UpdateResourceTags merges tags onto a VPC-family resource that has no
 // dedicated Update*Tags method: route tables, internet gateways, NAT
 // gateways, network ACLs, DHCP option sets, peering connections, managed
-// prefix lists, and egress-only internet gateways. An unknown or missing id
+// prefix lists, egress-only internet gateways, security-group rules, Elastic IP
+// allocations, VPC endpoints and VPC endpoint services. An unknown or missing id
 // is NotFound, so the wire layer can map it to the InvalidID.NotFound code
 // real EC2 returns for CreateTags on a non-existent resource.
 func (m *Mock) UpdateResourceTags(_ context.Context, id string, tags map[string]string) error {
@@ -63,6 +64,32 @@ func (m *Mock) mutateResourceTags(id string, transform func(map[string]string) m
 		})
 	case strings.HasPrefix(id, "sgr-"):
 		return m.mutateRuleTags(id, transform)
+	default:
+		return m.mutateAddressingTags(id, transform)
+	}
+}
+
+// mutateAddressingTags is the mutateResourceTags continuation for Elastic IP
+// allocations (eipalloc-), VPC endpoint services (vpce-svc-) and VPC endpoints
+// (vpce-). These are the same records AllocateAddress / CreateVpcEndpoint
+// TagSpecifications write, so tags added after creation show up on the
+// Describe calls. vpce-svc- is checked before vpce- because it shares the prefix.
+// m.mu is held because the Describe readers for these records read their fields
+// under m.mu.RLock (see the Mock.mu comment).
+func (m *Mock) mutateAddressingTags(id string, transform func(map[string]string) map[string]string) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	switch {
+	case strings.HasPrefix(id, "eipalloc-"):
+		return m.eips.Update(id, func(v *eipData) *eipData { v.Tags = transform(v.Tags); return v })
+	case strings.HasPrefix(id, "vpce-svc-"):
+		return m.endpointServices.Update(id, func(v *driver.EndpointService) *driver.EndpointService {
+			v.Tags = transform(v.Tags)
+			return v
+		})
+	case strings.HasPrefix(id, "vpce-"):
+		return m.endpoints.Update(id, func(v *driver.VPCEndpoint) *driver.VPCEndpoint { v.Tags = transform(v.Tags); return v })
 	default:
 		return false
 	}

@@ -110,6 +110,9 @@ func (m *Mock) DeleteVPCEndpoint(
 func (m *Mock) DescribeVPCEndpoints(
 	_ context.Context, ids []string,
 ) ([]driver.VPCEndpoint, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	for _, id := range ids {
 		if !m.endpoints.Has(id) {
 			return nil, errors.Newf(
