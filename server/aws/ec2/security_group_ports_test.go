@@ -154,3 +154,79 @@ func assertSGErrCode(t *testing.T, op string, err error, want string) {
 		t.Fatalf("%s: err = %v, want %s", op, err, want)
 	}
 }
+
+// TestAuthorizeSecurityGroupTCPNeedsBothPorts covers the rule that a TCP or UDP
+// permission must name both ports, in the IpPermissions and top-level forms.
+func TestAuthorizeSecurityGroupTCPNeedsBothPorts(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID := newPortTestGroup(t, ctx, c)
+
+	_, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("tcp"),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("10.1.0.0/16")}},
+		}},
+	})
+	assertSGErrCode(t, "ip permissions without ports", err, "InvalidParameterValue")
+
+	if !strings.Contains(err.Error(), "Must specify both from and to ports with TCP/UDP.") {
+		t.Fatalf("message = %v", err)
+	}
+
+	_, err = c.AuthorizeSecurityGroupEgress(ctx, &ec2.AuthorizeSecurityGroupEgressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("udp"), FromPort: aws.Int32(53),
+			IpRanges: []ec2types.IpRange{{CidrIp: aws.String("10.1.0.0/16")}},
+		}},
+	})
+	assertSGErrCode(t, "egress without to port", err, "InvalidParameterValue")
+
+	_, err = c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID), IpProtocol: aws.String("tcp"), CidrIp: aws.String("10.2.0.0/16"),
+	})
+	assertSGErrCode(t, "top-level form without ports", err, "InvalidParameterValue")
+
+	// The all-protocols rule needs no ports.
+	_, err = c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID),
+		IpPermissions: []ec2types.IpPermission{{
+			IpProtocol: aws.String("-1"),
+			IpRanges:   []ec2types.IpRange{{CidrIp: aws.String("10.3.0.0/16")}},
+		}},
+	})
+	assertSGErrCode(t, "all protocols without ports", err, "")
+}
+
+// TestAuthorizeSecurityGroupTopLevelForm covers the older top-level
+// IpProtocol/FromPort/ToPort/CidrIp form.
+func TestAuthorizeSecurityGroupTopLevelForm(t *testing.T) {
+	ctx := context.Background()
+	c := newSGServer(t)
+	groupID := newPortTestGroup(t, ctx, c)
+
+	_, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID), IpProtocol: aws.String("tcp"),
+		FromPort: aws.Int32(99999), ToPort: aws.Int32(99999), CidrIp: aws.String("10.2.0.0/16"),
+	})
+	assertSGErrCode(t, "top-level bad port", err, "InvalidParameterValue")
+
+	if _, err := c.AuthorizeSecurityGroupIngress(ctx, &ec2.AuthorizeSecurityGroupIngressInput{
+		GroupId: aws.String(groupID), IpProtocol: aws.String("tcp"),
+		FromPort: aws.Int32(8080), ToPort: aws.Int32(8080), CidrIp: aws.String("10.2.0.0/16"),
+	}); err != nil {
+		t.Fatalf("top-level valid rule: %v", err)
+	}
+
+	out, err := c.DescribeSecurityGroups(ctx, &ec2.DescribeSecurityGroupsInput{GroupIds: []string{groupID}})
+	if err != nil {
+		t.Fatalf("DescribeSecurityGroups: %v", err)
+	}
+
+	perms := out.SecurityGroups[0].IpPermissions
+	if len(perms) != 1 || aws.ToInt32(perms[0].FromPort) != 8080 || aws.ToString(perms[0].IpRanges[0].CidrIp) != "10.2.0.0/16" {
+		t.Fatalf("IpPermissions = %+v, want one tcp 8080 rule", perms)
+	}
+}

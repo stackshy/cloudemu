@@ -742,7 +742,7 @@ func parseIPPermissions(form url.Values) ([]netdriver.SecurityRule, error) {
 
 	indices := awsquery.CollectIndices(form, prefix)
 	if len(indices) == 0 {
-		return nil, nil
+		return legacyPermission(form)
 	}
 
 	var rules []netdriver.SecurityRule
@@ -761,14 +761,54 @@ func parseIPPermissions(form url.Values) ([]netdriver.SecurityRule, error) {
 	return rules, nil
 }
 
-// parsePortRange reads the FromPort and ToPort fields under base. A missing
-// field is 0. A value that is not an integer is InvalidParameterValue.
-func parsePortRange(form url.Values, base string) (from, to int, err error) {
-	if from, err = parsePort(form, base+".FromPort"); err != nil {
+// legacyPermission reads the older top-level form (IpProtocol, FromPort,
+// ToPort, CidrIp) that EC2 still accepts when IpPermissions is absent.
+func legacyPermission(form url.Values) ([]netdriver.SecurityRule, error) {
+	proto := form.Get("IpProtocol")
+	if proto == "" {
+		return nil, nil
+	}
+
+	from, to, err := parsePortRange(form, "FromPort", "ToPort", proto)
+	if err != nil {
+		return nil, err
+	}
+
+	return []netdriver.SecurityRule{{
+		Protocol: proto, FromPort: from, ToPort: to,
+		CIDR: form.Get("CidrIp"), RuleID: idgen.GenerateID("sgr-"),
+	}}, nil
+}
+
+// errMissingTCPUDPPorts is the error EC2 returns when a TCP or UDP rule
+// leaves out FromPort or ToPort.
+func errMissingTCPUDPPorts() error {
+	return newInvalidParameterErr("Invalid value 'Must specify both from and to ports with TCP/UDP.' for portRange.")
+}
+
+// isTCPOrUDP reports whether proto names TCP or UDP, by name or number.
+func isTCPOrUDP(proto string) bool {
+	switch strings.ToLower(proto) {
+	case "tcp", "udp", "6", "17":
+		return true
+	default:
+		return false
+	}
+}
+
+// parsePortRange reads the fromKey and toKey port fields. A missing field is
+// 0, except that TCP and UDP need both. A value that is not an integer is
+// InvalidParameterValue.
+func parsePortRange(form url.Values, fromKey, toKey, proto string) (from, to int, err error) {
+	if isTCPOrUDP(proto) && (form.Get(fromKey) == "" || form.Get(toKey) == "") {
+		return 0, 0, errMissingTCPUDPPorts()
+	}
+
+	if from, err = parsePort(form, fromKey); err != nil {
 		return 0, 0, err
 	}
 
-	if to, err = parsePort(form, base+".ToPort"); err != nil {
+	if to, err = parsePort(form, toKey); err != nil {
 		return 0, 0, err
 	}
 
@@ -796,7 +836,7 @@ func parsePort(form url.Values, key string) (int, error) {
 func rulesForPermission(form url.Values, base string) ([]netdriver.SecurityRule, error) {
 	proto := form.Get(base + ".IpProtocol")
 
-	fromPort, toPort, err := parsePortRange(form, base)
+	fromPort, toPort, err := parsePortRange(form, base+".FromPort", base+".ToPort", proto)
 	if err != nil {
 		return nil, err
 	}
@@ -1061,7 +1101,7 @@ func (h *Handler) modifySecurityGroupRules(w http.ResponseWriter, r *http.Reques
 // object at base into a SecurityRule, enforcing AWS's "exactly one target"
 // rule across CidrIpv4/CidrIpv6/PrefixListId/ReferencedGroupId.
 func parseSecurityGroupRuleRequest(form url.Values, base string) (netdriver.SecurityRule, error) {
-	fromPort, toPort, err := parsePortRange(form, base)
+	fromPort, toPort, err := parsePortRange(form, base+".FromPort", base+".ToPort", form.Get(base+".IpProtocol"))
 	if err != nil {
 		return netdriver.SecurityRule{}, err
 	}
