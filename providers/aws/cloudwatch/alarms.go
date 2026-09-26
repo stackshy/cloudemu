@@ -14,13 +14,14 @@ import (
 const initialStateReason = "Unchecked: Initial alarm creation"
 
 // CreateAlarm creates or updates an alarm. A new alarm starts in
-// INSUFFICIENT_DATA and is evaluated at once. An update keeps the current
+// INSUFFICIENT_DATA and is evaluated at once. Both publish a configuration
+// change event. An update keeps the current
 // state and tags and overwrites the rest of the configuration. Its state is
 // left unchanged, as PutMetricAlarm documents, and the next due evaluation
 // uses the new configuration.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
+func (m *Mock) CreateAlarm(ctx context.Context, cfg driver.AlarmConfig) error {
 	if cfg.Name == "" {
 		return errors.Newf(errors.InvalidArgument, "alarm name is required")
 	}
@@ -43,14 +44,22 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 
 	m.alarms.Set(cfg.Name, alarm)
 
-	var notice *alarmNotice
-	if !update {
+	var (
+		notice *alarmNotice
+		config *alarmStateEvent
+	)
+
+	if update {
+		config = configEventLocked(operationUpdate, alarm, existing)
+	} else {
+		config = configEventLocked(operationCreate, alarm, nil)
 		notice = m.evaluateLocked(alarm, now)
 	}
 
 	m.alarmMu.Unlock()
 
-	m.publish(notice)
+	m.emitEvent(ctx, config)
+	m.publish(ctx, notice)
 
 	return nil
 }
@@ -87,6 +96,8 @@ func (m *Mock) newAlarmData(cfg *driver.AlarmConfig, now time.Time) *alarmData {
 		ActionsEnabled:             actionsEnabled,
 		AlarmArn:                   idgen.AWSARN("cloudwatch", m.opts.Region, m.opts.AccountID, "alarm:"+cfg.Name),
 		Tags:                       copyMap(cfg.Tags),
+		MetricQueryID:              idgen.UUID(),
+		ConfigUpdatedAt:            now,
 	}
 }
 
@@ -100,22 +111,32 @@ func copyMap(in map[string]string) map[string]string {
 	return out
 }
 
-// DeleteAlarm deletes the alarm with the given name.
-func (m *Mock) DeleteAlarm(_ context.Context, name string) error {
+// DeleteAlarm deletes the alarm with the given name and publishes a
+// configuration change event.
+func (m *Mock) DeleteAlarm(ctx context.Context, name string) error {
 	m.alarmMu.Lock()
-	defer m.alarmMu.Unlock()
 
-	if !m.alarms.Delete(name) {
+	a, ok := m.alarms.Get(name)
+	if !ok {
+		m.alarmMu.Unlock()
+
 		return errors.Newf(errors.NotFound, "alarm %q not found", name)
 	}
+
+	config := configEventLocked(operationDelete, a, nil)
+
+	m.alarms.Delete(name)
+	m.alarmMu.Unlock()
+
+	m.emitEvent(ctx, config)
 
 	return nil
 }
 
 // DescribeAlarms returns alarms matching the given names, or all alarms if
 // names is empty. Alarms that are due are evaluated first.
-func (m *Mock) DescribeAlarms(_ context.Context, names []string) ([]driver.AlarmInfo, error) {
-	m.evaluateDue(m.opts.Clock.Now())
+func (m *Mock) DescribeAlarms(ctx context.Context, names []string) ([]driver.AlarmInfo, error) {
+	m.evaluateDue(ctx, m.opts.Clock.Now())
 
 	m.alarmMu.Lock()
 	defer m.alarmMu.Unlock()
@@ -159,7 +180,7 @@ func (m *Mock) SetAlarmState(ctx context.Context, name, state, reason string) er
 // The forced state is temporary. AWS says metric alarms "return to their
 // actual state quickly". Here the state holds for one evaluation interval and
 // the next due evaluation puts the real state back.
-func (m *Mock) SetAlarmStateWithData(_ context.Context, name, state, reason, reasonData string) error {
+func (m *Mock) SetAlarmStateWithData(ctx context.Context, name, state, reason, reasonData string) error {
 	if !alarmeval.ValidState(state) {
 		return errors.Newf(errors.InvalidArgument, "invalid alarm state %q: must be OK, ALARM or INSUFFICIENT_DATA", state)
 	}
@@ -182,7 +203,7 @@ func (m *Mock) SetAlarmStateWithData(_ context.Context, name, state, reason, rea
 	a.StateReasonData = reasonData
 	m.alarmMu.Unlock()
 
-	m.publish(notice)
+	m.publish(ctx, notice)
 
 	return nil
 }

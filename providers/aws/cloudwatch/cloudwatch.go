@@ -10,6 +10,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
@@ -53,8 +54,8 @@ type metricKey struct {
 
 // Mock is an in-memory mock implementation of the AWS CloudWatch service.
 type Mock struct {
-	// alarmMu guards every alarm field and is taken before mu. SNS actions are
-	// published only after both are released.
+	// alarmMu guards every alarm field and is taken before mu. SNS actions and
+	// EventBridge events are published only after both are released.
 	alarmMu         sync.Mutex
 	mu              sync.RWMutex
 	metrics         map[metricKey][]driver.MetricDatum
@@ -66,6 +67,7 @@ type Mock struct {
 	history         []driver.AlarmHistoryEntry
 	opts            *config.Options
 	sns             ActionPublisher
+	events          awsevents.Emitter
 }
 
 // SetSNSPublisher wires the SNS backend so an alarm state transition delivers
@@ -105,6 +107,11 @@ type alarmData struct {
 	// LastEvaluatedAt is when the alarm was last evaluated or had its state
 	// set. The next lazy evaluation is due one EvaluationInterval later.
 	LastEvaluatedAt time.Time
+	// MetricQueryID is the id of the alarm's metric query in its state change
+	// events. A new configuration gets a new id, as on AWS.
+	MetricQueryID string
+	// ConfigUpdatedAt is when the configuration was last put.
+	ConfigUpdatedAt time.Time
 }
 
 // New creates a new CloudWatch mock with the given configuration options.
@@ -121,7 +128,7 @@ func New(opts *config.Options) *Mock {
 }
 
 // PutMetricData stores metric data points and evaluates any matching alarms.
-func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error {
+func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) error {
 	if len(data) == 0 {
 		return errors.Newf(errors.InvalidArgument, "metric data is required")
 	}
@@ -143,7 +150,7 @@ func (m *Mock) PutMetricData(_ context.Context, data []driver.MetricDatum) error
 		seen[metricKey{Namespace: data[i].Namespace, MetricName: data[i].MetricName}] = true
 	}
 
-	m.evaluateMetricAlarms(seen)
+	m.evaluateMetricAlarms(ctx, seen)
 
 	return nil
 }
@@ -456,8 +463,8 @@ func (m *Mock) ListNotificationChannels(_ context.Context) ([]driver.Notificatio
 // default TimestampDescending order). When limit > 0 it keeps the newest limit
 // entries. Passing limit <= 0 returns the full history so a caller can apply its
 // own filters before truncating. Alarms that are due are evaluated first.
-func (m *Mock) GetAlarmHistory(_ context.Context, alarmName string, limit int) ([]driver.AlarmHistoryEntry, error) {
-	m.evaluateDue(m.opts.Clock.Now())
+func (m *Mock) GetAlarmHistory(ctx context.Context, alarmName string, limit int) ([]driver.AlarmHistoryEntry, error) {
+	m.evaluateDue(ctx, m.opts.Clock.Now())
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
