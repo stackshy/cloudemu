@@ -263,6 +263,13 @@ func New(opts ...config.Option) *Provider {
 	return p
 }
 
+// Tickables returns the services that do time-driven work. The serve
+// background ticker calls each one on its interval. New time-driven services
+// register here.
+func (p *Provider) Tickables() []config.Tickable {
+	return []config.Tickable{p.CloudMonitoring}
+}
+
 // Close tears down any real engines wired into the provider via
 // config.With<X>Engine, stopping the Docker containers or subprocesses they
 // own. It is a no-op when no engine is wired (the in-memory default), and is

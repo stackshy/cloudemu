@@ -433,7 +433,7 @@ generated cert's SANs with `--tls-host <name>` and trust that cert in your clien
 | `--k8s-nodes` | `1` | synthetic nodes per Kubernetes cluster; >1 adds a tainted control-plane node plus workers (env `CLOUDEMU_K8S_NODES`) |
 | `--k8s-progression` | `false` | client-created Pods start Pending and move to Running on a ticker (env `CLOUDEMU_K8S_PROGRESSION`) |
 | `--k8s-progression-interval` | (built-in) | tick interval for `--k8s-progression` (env `CLOUDEMU_K8S_PROGRESSION_INTERVAL`) |
-| `--tick-interval` | `1s` | how often time-driven work runs, such as CloudWatch alarm evaluation and alarm actions; `0` turns it off (env `CLOUDEMU_TICK_INTERVAL`) |
+| `--tick-interval` | `1s` | how often time-driven work runs, such as CloudWatch alarms, Azure Monitor metric alerts and GCP alert policies firing their actions; `0` turns it off (env `CLOUDEMU_TICK_INTERVAL`) |
 | `--enforce-auth` | `false` | require authentication: SigV4 verification for AWS (long-term IAM keys and STS temporary credentials), Bearer-token claim checks for Azure (see `cloudemu serve -h` for the exact scope) |
 | `--vcr` | (off) | record or replay the wire protocol: `record` \| `replay` (requires `--vcr-cassette`) |
 | `--vcr-cassette` | (none) | path to the cassette file to record into / replay from |

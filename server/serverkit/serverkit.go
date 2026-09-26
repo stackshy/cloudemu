@@ -204,7 +204,8 @@ type App struct {
 	// through it rather than through the single-value maps above. Nil when AWS is
 	// not selected.
 	awsMux    *awsserver.RegionMux
-	providers []closer // current live providers, Close()d when swapped out
+	tickables []config.Tickable // NON-AWS providers; AWS regions are enumerated from awsMux
+	providers []closer          // current live providers, Close()d when swapped out
 	// gcpBigtable is the current GCP bigtable Admin store (rebuilt on reset). The
 	// gRPC BigtableAdmin servers resolve it per-RPC through currentBigtableAdmin so
 	// they always target the live store, exactly as the REST handler reads the
@@ -513,6 +514,7 @@ func (a *App) swapFresh() []closer {
 		freshProviders []closer
 		freshBigtable  btdriver.Admin
 		freshAWSMux    *awsserver.RegionMux
+		freshTickables []config.Tickable
 	)
 
 	for _, p := range a.sel {
@@ -548,6 +550,8 @@ func (a *App) swapFresh() []closer {
 		if b.bigtable != nil {
 			freshBigtable = b.bigtable
 		}
+
+		freshTickables = append(freshTickables, b.tickables...)
 	}
 
 	if a.k8sBackend != nil {
@@ -572,6 +576,7 @@ func (a *App) swapFresh() []closer {
 	a.discovery = freshDiscovery
 	a.gcpBigtable = freshBigtable
 	a.awsMux = freshAWSMux
+	a.tickables = freshTickables
 
 	outgoing := a.providers
 	a.providers = freshProviders
@@ -591,6 +596,7 @@ type builtProvider struct {
 	provider  closer                    // nil for oci (no Close/engine teardown) and aws (the mux is the closer)
 	bigtable  btdriver.Admin            // non-nil only for gcp (gRPC BigtableAdmin store)
 	mux       *awsserver.RegionMux      // non-nil only for aws (per-region dispatch + enumeration)
+	tickables []config.Tickable         // azure and gcp; aws regions are ticked through the mux
 }
 
 // buildProvider constructs one provider and its hooks. It shares the single new
@@ -620,6 +626,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 			discovery: cloud.ResourceDiscovery,
 			provider:  cloud,
 			bigtable:  d.Bigtable,
+			tickables: cloud.Tickables(),
 		}
 	case providerAzure:
 		// Azure subscriptions are GUIDs, unlike the 12-digit AWS account id.
@@ -641,6 +648,7 @@ func (a *App) buildProvider(p string, k8s *kubernetes.APIServer) builtProvider {
 			snap:      cloud.SnapshotServices(),
 			discovery: cloud.ResourceDiscovery,
 			provider:  cloud,
+			tickables: cloud.Tickables(),
 		}
 	case providerOCI:
 		cloud := cloudemu.NewOCI(a.baseOpts...)
@@ -1200,9 +1208,10 @@ func (a *App) shutdown(servers []listenerServer) error {
 // newTicker builds the background tick scheduler. The Kubernetes entry runs
 // only with --k8s-progression and the data plane on. The services entry runs
 // on TickInterval. Both sources read the current state on each tick, since a
-// reset swaps it.
+// reset swaps it. Ticks use the providers' clock, which is real time unless
+// BaseOptions sets one.
 func (a *App) newTicker() *scheduler {
-	s := newScheduler(config.RealClock{}, a.markDirty)
+	s := newScheduler(config.NewOptions(a.baseOpts...).Clock, a.markDirty)
 
 	if a.cfg.K8sProgression && a.k8sBackend != nil {
 		interval := a.cfg.K8sProgressionInterval
@@ -1231,17 +1240,17 @@ func (a *App) k8sTickables() []config.Tickable {
 	return []config.Tickable{tickFunc(func(time.Time) bool { return k8s.TickAll() })}
 }
 
-// serviceTickables returns the Tickables of every live AWS region.
+// serviceTickables returns the Tickables of the Azure and GCP providers and
+// of every live AWS region.
 func (a *App) serviceTickables() []config.Tickable {
 	a.rebuildMu.Lock()
 	mux := a.awsMux
+	out := append([]config.Tickable(nil), a.tickables...)
 	a.rebuildMu.Unlock()
 
 	if mux == nil {
-		return nil
+		return out
 	}
-
-	var out []config.Tickable
 
 	for _, prov := range mux.LiveProviders() {
 		out = append(out, prov.Tickables()...)
