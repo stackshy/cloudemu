@@ -22,6 +22,10 @@
 //	DescribeStackResources     API.DescribeStackResources
 //	ListStackResources         API.ListStackResources
 //	GetTemplate                API.GetTemplate
+//	ValidateTemplate           API.ValidateTemplate
+//
+// Templates may be JSON or YAML, given inline (TemplateBody) or as an S3
+// object URL (TemplateURL).
 package cloudformation
 
 import (
@@ -52,6 +56,7 @@ var cfnActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"DescribeStackResources": {},
 	"ListStackResources":     {},
 	"GetTemplate":            {},
+	"ValidateTemplate":       {},
 }
 
 // Handler serves CloudFormation query-protocol requests against a stack API.
@@ -111,6 +116,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.listStackResources(w, r)
 	case "GetTemplate":
 		h.getTemplate(w, r)
+	case "ValidateTemplate":
+		h.validateTemplate(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
 			"unknown CloudFormation action: "+r.Form.Get("Action"))

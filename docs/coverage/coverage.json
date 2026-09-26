@@ -3129,6 +3129,9 @@
       },
       {
         "name": "UpdateStack"
+      },
+      {
+        "name": "ValidateTemplate"
       }
     ],
     "providers": {

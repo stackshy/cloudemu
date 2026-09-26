@@ -3,7 +3,7 @@
 
 provider-native `cloudformation` wire service (AWS-only) · no portable driver · [AWS index](./README.md)
 
-## Operations (9)
+## Operations (10)
 
 | Operation | Description |
 | --- | --- |
@@ -16,6 +16,7 @@ provider-native `cloudformation` wire service (AWS-only) · no portable driver �
 | `ListStackResources` |  |
 | `ListStacks` |  |
 | `UpdateStack` |  |
+| `ValidateTemplate` |  |
 
 ## Not in scope
 

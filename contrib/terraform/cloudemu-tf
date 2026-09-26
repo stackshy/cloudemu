@@ -94,6 +94,7 @@ provider "aws" {
     sfn            = "$endpoint"
     eventbridge    = "$endpoint"
     elbv2          = "$endpoint"
+    cloudformation = "$endpoint"
   }
 }
 EOF

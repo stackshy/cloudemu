@@ -9,6 +9,7 @@ package cloudformation
 import (
 	"context"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -25,6 +26,8 @@ type Mock struct {
 	clock     config.Clock
 	accountID string
 	region    string
+	// fetchTemplate reads a TemplateURL object from the emulated S3.
+	fetchTemplate TemplateFetcher
 }
 
 // stackData is the stored state of one stack, guarded by its own mutex.
@@ -62,15 +65,46 @@ func (m *Mock) SetRegistry(r cfn.Registry) {
 }
 
 // activeStack returns the stored stackData for an active (not deleted) stack by
-// name, or a NotFound error. A DELETE_COMPLETE stack is treated as absent, the
-// way DescribeStacks-by-name behaves in real CloudFormation.
-func (m *Mock) activeStack(name string) (*stackData, error) {
-	sd, ok := m.stacks.Get(name)
+// name or stack ID, or a NotFound error. A DELETE_COMPLETE stack is treated as
+// absent, the way DescribeStacks-by-name behaves in real CloudFormation.
+func (m *Mock) activeStack(nameOrID string) (*stackData, error) {
+	sd, _, ok := m.findStack(nameOrID)
 	if !ok || sd.status() == cfn.StatusDeleteComplete {
-		return nil, cerrors.Newf(cerrors.NotFound, "Stack with id %s does not exist", name)
+		return nil, cerrors.Newf(cerrors.NotFound, "Stack with id %s does not exist", nameOrID)
 	}
 
 	return sd, nil
+}
+
+// findStack resolves a StackName that is either a stack name or a stack ID
+// (the stack ARN). byID reports the ID form. An ID only matches the stack it
+// was minted for, not a later stack that reused the name.
+func (m *Mock) findStack(nameOrID string) (sd *stackData, byID, ok bool) {
+	name := nameOrID
+
+	if rest, isARN := strings.CutPrefix(nameOrID, "arn:"); isARN {
+		_, after, found := strings.Cut(rest, ":stack/")
+		if !found {
+			return nil, true, false
+		}
+
+		name, _, _ = strings.Cut(after, "/")
+		byID = true
+	}
+
+	sd, ok = m.stacks.Get(name)
+	if ok && byID && sd.stackID() != nameOrID {
+		return nil, true, false
+	}
+
+	return sd, byID, ok
+}
+
+func (sd *stackData) stackID() string {
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	return sd.stack.ID
 }
 
 func (sd *stackData) status() string {
@@ -81,11 +115,12 @@ func (sd *stackData) status() string {
 }
 
 // DescribeStacks returns the named stack, or every active stack when name is "".
+// A stack ID also finds a deleted stack, as in real CloudFormation.
 func (m *Mock) DescribeStacks(_ context.Context, name string) ([]cfn.Stack, error) {
 	if name != "" {
-		sd, err := m.activeStack(name)
-		if err != nil {
-			return nil, err
+		sd, byID, ok := m.findStack(name)
+		if !ok || (!byID && sd.status() == cfn.StatusDeleteComplete) {
+			return nil, cerrors.Newf(cerrors.NotFound, "Stack with id %s does not exist", name)
 		}
 
 		return []cfn.Stack{sd.snapshotStack()}, nil
@@ -190,7 +225,7 @@ func (m *Mock) GetTemplate(_ context.Context, name string) (string, error) {
 // stackAnyState resolves a stack by name regardless of status (used by reads
 // that remain valid after deletion, like GetTemplate and DescribeStackEvents).
 func (m *Mock) stackAnyState(name string) (*stackData, error) {
-	sd, ok := m.stacks.Get(name)
+	sd, _, ok := m.findStack(name)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "Stack with id %s does not exist", name)
 	}
@@ -223,7 +258,7 @@ func (sd *stackData) snapshotStack() cfn.Stack {
 	defer sd.mu.RUnlock()
 
 	s := sd.stack
-	s.Parameters = append([]cfn.Parameter(nil), sd.stack.Parameters...)
+	s.Parameters = maskParameters(sd.stack.Parameters)
 	s.Outputs = append([]cfn.Output(nil), sd.stack.Outputs...)
 	s.Resources = append([]cfn.StackResource(nil), sd.stack.Resources...)
 	s.Capabilities = append([]string(nil), sd.stack.Capabilities...)

@@ -35,6 +35,7 @@ func createInput(form url.Values) cfn.CreateStackInput {
 	return cfn.CreateStackInput{
 		StackName:    form.Get("StackName"),
 		TemplateBody: form.Get("TemplateBody"),
+		TemplateURL:  form.Get("TemplateURL"),
 		Parameters:   parseParameters(form),
 		Tags:         parseTags(form),
 		Capabilities: awsquery.ListStrings(form, "Capabilities.member"),
@@ -45,6 +46,7 @@ func updateInput(form url.Values) cfn.UpdateStackInput {
 	return cfn.UpdateStackInput{
 		StackName:    form.Get("StackName"),
 		TemplateBody: form.Get("TemplateBody"),
+		TemplateURL:  form.Get("TemplateURL"),
 		Parameters:   parseParameters(form),
 		Tags:         parseTags(form),
 		Capabilities: awsquery.ListStrings(form, "Capabilities.member"),
@@ -246,6 +248,26 @@ type getTemplateResponse struct {
 	Result  struct {
 		TemplateBody string `xml:"TemplateBody"`
 	} `xml:"GetTemplateResult"`
+	Meta responseMetadata `xml:"ResponseMetadata"`
+}
+
+type templateParameterXML struct {
+	ParameterKey string  `xml:"ParameterKey"`
+	DefaultValue *string `xml:"DefaultValue,omitempty"`
+	NoEcho       bool    `xml:"NoEcho"`
+	Description  string  `xml:"Description,omitempty"`
+}
+
+type validateTemplateResponse struct {
+	XMLName xml.Name `xml:"ValidateTemplateResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Result  struct {
+		Description        string                 `xml:"Description,omitempty"`
+		Parameters         []templateParameterXML `xml:"Parameters>member"`
+		Capabilities       []string               `xml:"Capabilities>member,omitempty"`
+		CapabilitiesReason string                 `xml:"CapabilitiesReason,omitempty"`
+		DeclaredTransforms []string               `xml:"DeclaredTransforms>member"`
+	} `xml:"ValidateTemplateResult"`
 	Meta responseMetadata `xml:"ResponseMetadata"`
 }
 
