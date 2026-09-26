@@ -18,6 +18,7 @@ package ssm
 import (
 	"context"
 	"encoding/base64"
+	stderrors "errors"
 	"regexp"
 	"sort"
 	"strconv"
@@ -59,7 +60,10 @@ type paramData struct {
 	versions    []*version
 	latest      int64
 	tags        map[string]string
-	mu          sync.RWMutex
+	// deleted is set, under mu, when a policy expired the parameter. A write
+	// that got this record before the deletion then retries as a create.
+	deleted bool
+	mu      sync.RWMutex
 }
 
 // KMSCrypto is the KMS seam SSM uses to encrypt SecureString values. Encrypt
@@ -501,7 +505,13 @@ func (m *Mock) putParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 	m.evaluateNamedPolicies(ctx, cfg.Name)
 
 	if existing, ok := m.params.Get(cfg.Name); ok {
-		return m.overwriteParameter(ctx, existing, &cfg, sent, now)
+		ver, tier, err := m.overwriteParameter(ctx, existing, &cfg, sent, now)
+		if !stderrors.Is(err, errExpiredDuringWrite) {
+			return ver, tier, err
+		}
+
+		// The parameter expired after it was read. It is gone from the store,
+		// so the write goes ahead as a create.
 	}
 
 	dataType := cfg.DataType
@@ -537,6 +547,10 @@ func (m *Mock) overwriteParameter(
 	existing.mu.Lock()
 	defer existing.mu.Unlock()
 
+	if existing.deleted {
+		return 0, "", errExpiredDuringWrite
+	}
+
 	if !cfg.Overwrite {
 		return 0, "", errors.Newf(errors.AlreadyExists,
 			"parameter %q already exists; set Overwrite to update it", cfg.Name)
@@ -550,8 +564,9 @@ func (m *Mock) overwriteParameter(
 	policies := sent
 	cur, hasCur := existing.versionByNumber(existing.latest)
 
+	// Kept policies are copied, so older versions keep their own status.
 	if cfg.Policies == nil && hasCur {
-		policies = cur.policies
+		policies = clonePolicies(cur.policies)
 	}
 
 	tier, err := resolveOverwriteTier(existing, cfg.Tier, cfg.Value, len(policies) > 0)
@@ -657,6 +672,10 @@ func (m *Mock) createParameter(
 
 	return 1, tier, nil
 }
+
+// errExpiredDuringWrite tells putParameter that the record it was about to
+// overwrite expired first. It never leaves the package.
+var errExpiredDuringWrite = errors.New(errors.NotFound, "parameter expired during the write")
 
 // resolveSelector splits a name of the form "name:selector" into its base name
 // and selector (a version number or a label). An empty selector means latest.

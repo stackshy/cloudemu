@@ -247,6 +247,23 @@ func expiration(ps []*policy) *policy {
 	return nil
 }
 
+// clonePolicies copies policies, so a new version can change their status
+// without changing an older version.
+func clonePolicies(ps []*policy) []*policy {
+	if len(ps) == 0 {
+		return nil
+	}
+
+	out := make([]*policy, 0, len(ps))
+
+	for _, p := range ps {
+		c := *p
+		out = append(out, &c)
+	}
+
+	return out
+}
+
 // resetNoChange sets NoChangeNotification policies back to Pending. A change
 // to the parameter restarts their period.
 func resetNoChange(ps []*policy) {

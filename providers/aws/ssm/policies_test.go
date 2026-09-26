@@ -338,10 +338,11 @@ func TestPolicyNoChangeNotificationResetsOnOverwrite(t *testing.T) {
 		t.Fatalf("history = %v, %v", history, err)
 	}
 
-	// Both versions share the kept policy, so both show its live status.
-	for _, h := range history {
-		if len(h.Policies) != 1 || h.Policies[0].Status != "Pending" {
-			t.Fatalf("version %d policies = %+v, want the reset Pending policy", h.Version, h.Policies)
+	// The kept policy is copied, so version 1 keeps the status it had and
+	// only version 2 starts over.
+	for i, want := range []string{"Finished", "Pending"} {
+		if len(history[i].Policies) != 1 || history[i].Policies[0].Status != want {
+			t.Fatalf("version %d policies = %+v, want status %s", history[i].Version, history[i].Policies, want)
 		}
 	}
 
@@ -473,5 +474,100 @@ func TestSnapshotKeepsPoliciesAndSettings(t *testing.T) {
 
 	if !dst.Tick(policyEpoch.Add(48 * time.Hour)) {
 		t.Fatal("restored Expiration did not fire")
+	}
+}
+
+// countingPublisher counts Expiration events.
+type countingPublisher struct {
+	mu          sync.Mutex
+	expirations int
+}
+
+func (c *countingPublisher) PublishServiceEvent(_ context.Context, _, _ string, detail any, _ []string) {
+	body, _ := json.Marshal(detail)
+
+	var d map[string]string
+	_ = json.Unmarshal(body, &d)
+
+	if d["policy-type"] == "Expiration" {
+		c.mu.Lock()
+		c.expirations++
+		c.mu.Unlock()
+	}
+}
+
+// TestPolicyExpirationPublishedOnce races ticks and lazy reads on an expired
+// parameter. Only the first caller may publish the Expiration event.
+func TestPolicyExpirationPublishedOnce(t *testing.T) {
+	const workers = 8
+
+	for range 50 {
+		m, fc := newPolicyMock()
+		pub := &countingPublisher{}
+		m.SetEventPublisher(pub)
+		putAdvanced(t, m, "/once", policies(expirationPolicy(policyEpoch.Add(time.Hour))))
+		fc.Set(policyEpoch.Add(time.Hour))
+
+		var wg sync.WaitGroup
+
+		for i := range workers {
+			wg.Add(1)
+
+			go func() {
+				defer wg.Done()
+
+				if i%2 == 0 {
+					m.Tick(policyEpoch.Add(time.Hour))
+				} else {
+					_, _ = m.GetParameter(context.Background(), "/once", false)
+				}
+			}()
+		}
+
+		wg.Wait()
+
+		if pub.expirations != 1 {
+			t.Fatalf("Expiration events = %d, want exactly 1", pub.expirations)
+		}
+	}
+}
+
+// TestPolicyOverwriteRacingExpiryKeepsTheWrite races an overwrite that
+// clears the policies against the tick that expires the parameter. Either
+// order must leave the written value readable.
+func TestPolicyOverwriteRacingExpiryKeepsTheWrite(t *testing.T) {
+	ctx := context.Background()
+	clear := "[]"
+
+	for range 300 {
+		m, _ := newPolicyMock()
+		putAdvanced(t, m, "/race", policies(expirationPolicy(policyEpoch.Add(time.Hour))))
+
+		var wg sync.WaitGroup
+
+		wg.Add(2)
+
+		go func() {
+			defer wg.Done()
+
+			m.Tick(policyEpoch.Add(time.Hour))
+		}()
+
+		go func() {
+			defer wg.Done()
+
+			if _, _, err := m.PutParameter(ctx, driver.PutConfig{
+				Name: "/race", Value: "new", Tier: "Advanced", Overwrite: true, Policies: &clear,
+			}); err != nil {
+				t.Errorf("PutParameter: %v", err)
+			}
+		}()
+
+		wg.Wait()
+
+		p, err := m.GetParameter(ctx, "/race", false)
+		if err != nil || p.Value != "new" {
+			t.Fatalf("after the race: %+v, %v; want the written value", p, err)
+		}
 	}
 }

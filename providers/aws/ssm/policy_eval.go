@@ -58,15 +58,13 @@ func (m *Mock) evaluateNamedPolicies(ctx context.Context, name string) {
 // evaluateParamPolicies runs pd's due policies, removes pd when it expired and
 // then publishes the actions. It must be called without any lock held.
 func (m *Mock) evaluateParamPolicies(ctx context.Context, pd *paramData, now time.Time) bool {
-	notices, expired := pd.duePolicies(now)
-
-	if expired {
+	notices := pd.duePolicies(now, func() {
 		// Remove only this record. A parameter re-created under the same name
 		// after this one was read is left alone.
 		m.params.UpdateOrDelete(pd.name, func(cur *paramData) (*paramData, bool) {
 			return cur, cur != pd
 		})
-	}
+	})
 
 	for i := range notices {
 		m.events.Emit(ctx, eventSource, eventPolicyAction, notices[i].detail, m.arn(notices[i].name))
@@ -76,15 +74,23 @@ func (m *Mock) evaluateParamPolicies(ctx context.Context, pd *paramData, now tim
 }
 
 // duePolicies marks the policies of pd that are due at now as Finished and
-// returns their notices. expired reports that the Expiration time passed.
-func (pd *paramData) duePolicies(now time.Time) (notices []policyNotice, expired bool) {
+// returns their notices. When the Expiration time has passed it marks pd
+// deleted and calls remove, both under pd.mu. So only the first caller emits
+// the Expiration notice, and an overwrite waiting on pd.mu sees the deletion.
+func (pd *paramData) duePolicies(now time.Time, remove func()) []policyNotice {
 	pd.mu.Lock()
 	defer pd.mu.Unlock()
 
+	if pd.deleted {
+		return nil
+	}
+
 	v, ok := pd.versionByNumber(pd.latest)
 	if !ok || len(v.policies) == 0 {
-		return nil, false
+		return nil
 	}
+
+	var notices []policyNotice
 
 	exp := expiration(v.policies)
 
@@ -99,15 +105,16 @@ func (pd *paramData) duePolicies(now time.Time) (notices []policyNotice, expired
 		}
 	}
 
-	if exp != nil && !now.Before(exp.at) {
+	if exp != nil && exp.status == policyStatusPending && !now.Before(exp.at) {
 		exp.status = policyStatusFinished
+		pd.deleted = true
+
+		remove()
 
 		notices = append(notices, pd.notice(v, policyExpiration, "The parameter expired and was deleted."))
-
-		return notices, true
 	}
 
-	return notices, false
+	return notices
 }
 
 // notificationDue reports whether a notification policy fires at now, with
