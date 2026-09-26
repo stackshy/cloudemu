@@ -123,12 +123,14 @@ func (m *Mock) SetStepFunctionsStarter(s StepFunctionsStarter) {
 	m.sfn = s
 }
 
-func (m *Mock) emitMetric(metricName string, value float64, dims map[string]string) {
+// emitMetric pushes one AWS/Events metric. ctx carries the event hop depth, so
+// an alarm on this metric that publishes an event back here stays bounded.
+func (m *Mock) emitMetric(ctx context.Context, metricName string, value float64, dims map[string]string) {
 	if m.monitoring == nil {
 		return
 	}
 
-	_ = m.monitoring.PutMetricData(context.Background(), []mondriver.MetricDatum{{
+	_ = m.monitoring.PutMetricData(ctx, []mondriver.MetricDatum{{
 		Namespace: "AWS/Events", MetricName: metricName, Value: value, Unit: "Count",
 		Dimensions: dims, Timestamp: m.opts.Clock.Now(),
 	}})
@@ -532,8 +534,8 @@ func (m *Mock) PutEvents(ctx context.Context, events []driver.Event) (*driver.Pu
 		m.deliverToTargets(ctx, matched, &events[i])
 
 		dims := map[string]string{"EventBusName": busName}
-		m.emitMetric("PutEventsRequestCount", 1, dims)
-		m.emitMetric("MatchedEvents", float64(len(matched)), dims)
+		m.emitMetric(ctx, "PutEventsRequestCount", 1, dims)
+		m.emitMetric(ctx, "MatchedEvents", float64(len(matched)), dims)
 
 		result.SuccessCount++
 		result.EventIDs = append(result.EventIDs, eventID)
@@ -622,7 +624,7 @@ func (m *Mock) deliverToTarget(
 	}
 
 	dims := map[string]string{"RuleName": rule.Name, "EventBusName": busName}
-	m.emitMetric("FailedInvocations", 1, dims)
+	m.emitMetric(ctx, "FailedInvocations", 1, dims)
 
 	dlqARN := deadLetterARN(t.DeadLetterConfig)
 	if dlqARN == "" || m.sqs == nil {
@@ -633,7 +635,7 @@ func (m *Mock) deliverToTarget(
 	// (matching real EventBridge, which puts the source event, not the
 	// target-specific transformed payload, on the dead-letter queue).
 	if m.sqs.DeliverExternal(ctx, dlqARN, string(envelope)) == nil {
-		m.emitMetric("InvocationsSentToDlq", 1, dims)
+		m.emitMetric(ctx, "InvocationsSentToDlq", 1, dims)
 	}
 }
 
@@ -854,9 +856,10 @@ func targetsFromStore(store *memstore.Store[driver.Target]) []driver.Target {
 func generateEventID(event *driver.Event, now time.Time, index int) string {
 	data := fmt.Sprintf("%s:%s:%s:%s:%d:%d",
 		event.Source, event.DetailType, event.Detail, event.EventBus, now.UnixNano(), index)
-	hash := sha256.Sum256([]byte(data))
+	h := sha256.Sum256([]byte(data))
 
-	return fmt.Sprintf("%x", hash[:16])
+	// AWS event ids are UUID shaped.
+	return fmt.Sprintf("%x-%x-%x-%x-%x", h[0:4], h[4:6], h[6:8], h[8:10], h[10:16])
 }
 
 // compactPattern strips insignificant whitespace from an event pattern JSON

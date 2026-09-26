@@ -92,8 +92,8 @@ func (m *Mock) PutCompositeAlarm(_ context.Context, cfg driver.CompositeAlarmCon
 
 // DescribeCompositeAlarms returns composite alarms matching the given names, or
 // all composite alarms when names is empty.
-func (m *Mock) DescribeCompositeAlarms(_ context.Context, names []string) ([]driver.CompositeAlarmInfo, error) {
-	m.evaluateDue(m.opts.Clock.Now())
+func (m *Mock) DescribeCompositeAlarms(ctx context.Context, names []string) ([]driver.CompositeAlarmInfo, error) {
+	m.evaluateDue(ctx, m.opts.Clock.Now())
 
 	m.alarmMu.Lock()
 	defer m.alarmMu.Unlock()

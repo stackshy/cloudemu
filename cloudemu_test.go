@@ -2,6 +2,7 @@ package cloudemu
 
 import (
 	"context"
+	"encoding/json"
 	"github.com/stackshy/cloudemu/v2/services/scope"
 	"sort"
 	"sync/atomic"
@@ -9386,4 +9387,69 @@ func TestTopologyCanConnectGCP(t *testing.T) {
 	p := NewGCP()
 	ctx := context.Background()
 	testTopologyCanConnect(t, ctx, p.GCE, p.VPC, p.CloudDNS)
+}
+
+// TestAlarmStateChangeEventToSQS pins that an alarm transition reaches an SQS
+// queue through a default-bus EventBridge rule, as on AWS.
+func TestAlarmStateChangeEventToSQS(t *testing.T) {
+	ctx := context.Background()
+	p := NewAWS()
+
+	q, err := p.SQS.CreateQueue(ctx, mqdriver.QueueConfig{Name: "alarm-events"})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := p.EventBridge.PutRule(ctx, &ebdriver.RuleConfig{
+		Name: "alarms", EventPattern: `{"source":["aws.cloudwatch"],"detail-type":["CloudWatch Alarm State Change"]}`,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.EventBridge.PutTargets(ctx, "", "alarms", []ebdriver.Target{{ID: "q", ARN: q.ARN}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.CloudWatch.CreateAlarm(ctx, mondriver.AlarmConfig{
+		Name: "late", Namespace: "App", MetricName: "Latency", ComparisonOperator: "GreaterThanThreshold",
+		Threshold: 1, Period: 300, EvaluationPeriods: 1, Stat: "Average",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := p.CloudWatch.SetAlarmState(ctx, "late", "ALARM", "e2e"); err != nil {
+		t.Fatal(err)
+	}
+
+	msgs, err := p.SQS.ReceiveMessages(ctx, mqdriver.ReceiveMessageInput{QueueURL: q.URL, MaxMessages: 10})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(msgs) != 1 {
+		t.Fatalf("got %d messages, want 1", len(msgs))
+	}
+
+	var ev struct {
+		Source     string   `json:"source"`
+		DetailType string   `json:"detail-type"`
+		Resources  []string `json:"resources"`
+		Detail     struct {
+			AlarmName     string            `json:"alarmName"`
+			State         map[string]string `json:"state"`
+			PreviousState map[string]string `json:"previousState"`
+		} `json:"detail"`
+	}
+
+	if err := json.Unmarshal([]byte(msgs[0].Body), &ev); err != nil {
+		t.Fatal(err)
+	}
+
+	if ev.Source != "aws.cloudwatch" || ev.DetailType != "CloudWatch Alarm State Change" || ev.Detail.AlarmName != "late" {
+		t.Fatalf("unexpected event: %s", msgs[0].Body)
+	}
+
+	if ev.Detail.State["value"] != "ALARM" || ev.Detail.PreviousState["value"] != "INSUFFICIENT_DATA" || len(ev.Resources) != 1 {
+		t.Fatalf("unexpected detail: %s", msgs[0].Body)
+	}
 }

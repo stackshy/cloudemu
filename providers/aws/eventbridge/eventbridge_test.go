@@ -571,6 +571,8 @@ func TestPutEvents(t *testing.T) {
 		require.NoError(t, err)
 		require.Len(t, result.EventIDs, 2)
 		assert.NotEqual(t, result.EventIDs[0], result.EventIDs[1], "identical events must get distinct EventIds")
+		// AWS event ids are UUIDs.
+		assert.Regexp(t, `^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`, result.EventIDs[0])
 	})
 }
 

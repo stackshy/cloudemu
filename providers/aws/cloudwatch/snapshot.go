@@ -18,8 +18,8 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // the generic memstore helper. The metric buffer is keyed by a struct
 // (metricKey), which json cannot serialize as a map key, so it is promoted
 // to a deterministically-ordered slice. The alarm-history slice is captured
-// in order. The mutex, the wired SNS
-// action publisher, and *config.Options are intentionally not captured.
+// in order. The mutexes, the wired SNS and EventBridge
+// publishers, and *config.Options are intentionally not captured.
 type cwSnapshot struct {
 	Metrics         []metricEntrySnapshot      `json:"metrics,omitempty"`
 	Alarms          json.RawMessage            `json:"alarms,omitempty"`

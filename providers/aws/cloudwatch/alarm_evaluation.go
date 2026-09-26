@@ -15,10 +15,12 @@ import (
 // https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/alarms-and-missing-data.html.
 const dynamoDBNamespace = "AWS/DynamoDB"
 
-// alarmNotice is one state change waiting to be sent to its SNS topics. It
-// is built under alarmMu and published after the lock is released, so a
-// subscriber that calls back into this mock cannot deadlock.
+// alarmNotice is one state change waiting to be published: its EventBridge
+// event and the message for its SNS topics. It is built under alarmMu and
+// published after the lock is released, so a subscriber or rule target that
+// calls back into this mock cannot deadlock.
 type alarmNotice struct {
+	event   *alarmStateEvent
 	topics  []string
 	message string
 }
@@ -27,12 +29,12 @@ type alarmNotice struct {
 // alarm changed state. It has the Tickable signature of the shared scheduler
 // seam. Reads already evaluate lazily, so nothing has to call it.
 func (m *Mock) Tick(now time.Time) bool {
-	return m.evaluateDue(now)
+	return m.evaluateDue(context.Background(), now)
 }
 
 // evaluateDue evaluates each alarm whose evaluation interval has passed since
 // it was last evaluated. It reports whether any alarm changed state.
-func (m *Mock) evaluateDue(now time.Time) bool {
+func (m *Mock) evaluateDue(ctx context.Context, now time.Time) bool {
 	var (
 		notices []*alarmNotice
 		changed bool
@@ -52,7 +54,7 @@ func (m *Mock) evaluateDue(now time.Time) bool {
 
 	m.alarmMu.Unlock()
 
-	m.publish(notices...)
+	m.publish(ctx, notices...)
 
 	return changed
 }
@@ -60,7 +62,7 @@ func (m *Mock) evaluateDue(now time.Time) bool {
 // evaluateMetricAlarms evaluates, right away, every alarm on one of the given
 // metrics. PutMetricData calls it so new data shows up without waiting for
 // the next interval.
-func (m *Mock) evaluateMetricAlarms(keys map[metricKey]bool) {
+func (m *Mock) evaluateMetricAlarms(ctx context.Context, keys map[metricKey]bool) {
 	now := m.opts.Clock.Now()
 
 	var notices []*alarmNotice
@@ -75,7 +77,7 @@ func (m *Mock) evaluateMetricAlarms(keys map[metricKey]bool) {
 
 	m.alarmMu.Unlock()
 
-	m.publish(notices...)
+	m.publish(ctx, notices...)
 }
 
 // alarmParams projects an alarm's thresholds onto the shared evaluator's Params.
@@ -143,8 +145,8 @@ func evaluationReasonData(datums []driver.MetricDatum, p *alarmeval.Params, now 
 
 // transitionLocked moves an alarm to newState. Nothing happens when the state
 // is unchanged: the reason, the timestamps and the history all describe the
-// last transition, and actions fire only on a change. The caller holds
-// alarmMu. It returns the notice to publish, or nil.
+// last transition, and actions and events fire only on a change. The caller
+// holds alarmMu. It returns the notice to publish, or nil.
 func (m *Mock) transitionLocked(alarm *alarmData, newState, reason, reasonData string, now time.Time) *alarmNotice {
 	oldState := alarm.State
 	if oldState == newState {
@@ -153,13 +155,19 @@ func (m *Mock) transitionLocked(alarm *alarmData, newState, reason, reasonData s
 
 	m.appendHistory(alarm, newState, reason, reasonData, now)
 
+	prev := eventState(alarm.State, alarm.StateReason, alarm.StateReasonData, alarm.StateUpdatedTimestamp)
+
 	alarm.State = newState
 	alarm.StateReason = reason
 	alarm.StateReasonData = reasonData
 	alarm.StateUpdatedTimestamp = now
 	alarm.StateTransitionedTimestamp = now
 
-	return m.actionNotice(alarm, oldState, newState, now)
+	// The event is sent even when actions are disabled.
+	notice := &alarmNotice{event: stateEventLocked(alarm, prev)}
+	notice.topics, notice.message = m.actionTopics(alarm, oldState, newState, now)
+
+	return notice
 }
 
 // appendHistory records one alarm state transition in the history log.
@@ -180,12 +188,13 @@ func (m *Mock) appendHistory(alarm *alarmData, newState, reason, reasonData stri
 	})
 }
 
-// actionNotice builds the SNS notice for a state change. It is nil when no
-// publisher is wired, actions are disabled, or the new state has no SNS
-// actions. Other action ARNs (Auto Scaling, EC2) are stored but not fired.
-func (m *Mock) actionNotice(a *alarmData, oldState, newState string, now time.Time) *alarmNotice {
+// actionTopics returns the SNS topics and message for a state change. There
+// are no topics when no publisher is wired, actions are disabled, or the new
+// state has no SNS actions. Other action ARNs (Auto Scaling, EC2) are stored
+// but not fired.
+func (m *Mock) actionTopics(a *alarmData, oldState, newState string, now time.Time) (topics []string, message string) {
 	if m.sns == nil || !a.ActionsEnabled {
-		return nil
+		return nil, ""
 	}
 
 	var actions []string
@@ -199,8 +208,6 @@ func (m *Mock) actionNotice(a *alarmData, oldState, newState string, now time.Ti
 		actions = a.InsufficientDataActions
 	}
 
-	var topics []string
-
 	for _, arn := range actions {
 		if strings.HasPrefix(arn, snsTopicARNPrefix) {
 			topics = append(topics, arn)
@@ -208,18 +215,23 @@ func (m *Mock) actionNotice(a *alarmData, oldState, newState string, now time.Ti
 	}
 
 	if len(topics) == 0 {
-		return nil
+		return nil, ""
 	}
 
-	return &alarmNotice{topics: topics, message: m.alarmNotification(a, oldState, newState, now)}
+	return topics, m.alarmNotification(a, oldState, newState, now)
 }
 
-// publish sends each notice to its SNS topics. Callers must not hold alarmMu
-// or mu, because a subscriber may call straight back into this mock.
-func (m *Mock) publish(notices ...*alarmNotice) {
+// publish sends each notice's event to EventBridge and its message to its SNS
+// topics. Callers must not hold alarmMu or mu, because a subscriber or rule
+// target may call straight back into this mock.
+func (m *Mock) publish(ctx context.Context, notices ...*alarmNotice) {
 	for _, n := range notices {
 		if n == nil {
 			continue
+		}
+
+		if n.event != nil {
+			m.emitStateEvent(ctx, n.event)
 		}
 
 		for _, arn := range n.topics {
