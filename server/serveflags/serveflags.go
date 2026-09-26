@@ -191,11 +191,12 @@ func registerK8sProgressionFlags(fs *flag.FlagSet, c *CommonConfig, getenv func(
 func registerEnforceAuthFlag(fs *flag.FlagSet, c *CommonConfig) {
 	fs.BoolVar(&c.EnforceAuth, "enforce-auth", false,
 		"require authentication on each request; off by default. AWS: verify the SigV4 signature against a registered IAM access "+
-			"key (403 on failure) and enforce IAM authorization — long-term (AKIA) keys are verified, STS temporary (ASIA) "+
-			"credentials are accepted unverified for now, authorization is enforced for JSON-RPC services only, and applies only to "+
-			"principals that have IAM policies. Azure: validate each request's Bearer token claims (accepted audience, expiry, a "+
-			"principal claim) and reject missing/malformed/expired/wrong-audience tokens with 401 — the token SIGNATURE is NOT "+
-			"verified (no Azure AD signing key), so this is claims-based authentication only; RBAC authorization is a follow-up")
+			"key or an STS temporary (ASIA) credential (403 on failure). ASIA credentials are verified against the secret STS "+
+			"recorded when it issued them, and unknown or expired sessions are rejected. IAM authorization is then enforced for "+
+			"long-term (AKIA) keys on JSON-RPC services only, and applies only to principals that have IAM policies. Azure: "+
+			"validate each request's Bearer token claims (accepted audience, expiry, a principal claim) and reject "+
+			"missing/malformed/expired/wrong-audience tokens with 401. The token signature is not verified (no Azure AD signing "+
+			"key), so this is claims-based authentication only; RBAC authorization is a follow-up")
 }
 
 // Validate checks the cross-field constraints both entrypoints share: --tls-cert

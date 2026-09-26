@@ -121,7 +121,7 @@ func netCanConnect(base, from, to, port, proto string, jsonOut bool) error {
 		verdict = "YES"
 	}
 
-	fmt.Printf("%s — %s\n", verdict, res.Reason)
+	fmt.Printf("%s: %s\n", verdict, res.Reason)
 	printHops(res.Path)
 
 	return nil

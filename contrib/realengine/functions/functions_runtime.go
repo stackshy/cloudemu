@@ -11,7 +11,7 @@ import (
 var (
 	errUnsupportedRuntime  = errors.New("unsupported runtime: real execution supports python* and nodejs*")
 	errNodeHTTPUnsupported = errors.New(
-		"http framework not yet supported for node runtimes: gen1 Node uses the Express (req,res) contract — follow-up",
+		"http framework not yet supported for node runtimes: gen1 Node uses the Express (req,res) contract (follow-up)",
 	)
 )
 

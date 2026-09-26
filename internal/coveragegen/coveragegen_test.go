@@ -231,7 +231,7 @@ func TestPrimaryInterfaceNotOptionalCapability(t *testing.T) {
 	// carries the full surface, so a correct resolution has many more.
 	const minPrimaryOps = 10
 	if len(svc.Operations) < minPrimaryOps {
-		t.Errorf("networking has %d operations, want >= %d — likely resolved to an optional capability",
+		t.Errorf("networking has %d operations, want >= %d (likely resolved to an optional capability)",
 			len(svc.Operations), minPrimaryOps)
 	}
 }

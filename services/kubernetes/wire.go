@@ -94,7 +94,7 @@ func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
 	// kubectl and client-go send built-in kinds as protobuf on writes (their
 	// Accept header still allows JSON, which is why reads worked while writes
 	// arrived protobuf-framed). Decode them rather than rejecting: kubectl does
-	// NOT retry a write as JSON on 415, it surfaces the error, so a 415 here
+	// NOT retry a write as JSON on 415. It surfaces the error, so a 415 here
 	// means `kubectl create/scale/apply` simply cannot write to the emulator.
 	if bytes.HasPrefix(body, protobufMagic) {
 		return decodeProtobufBody(w, body, v)

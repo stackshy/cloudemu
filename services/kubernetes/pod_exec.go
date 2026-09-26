@@ -93,7 +93,7 @@ func runSyntheticExecSession(w http.ResponseWriter, r *http.Request, route *Rout
 // is visibly emulated rather than passing as a real container exec.
 func writeExecBanner(stdout io.Writer, r *http.Request, route *Route) {
 	_, _ = fmt.Fprintf(stdout,
-		"cloudemu: synthetic %s session for pod %s/%s — no real container runtime; command echoed, no on-disk state\n",
+		"cloudemu: synthetic %s session for pod %s/%s (no real container runtime; command echoed, no on-disk state)\n",
 		route.Subresource, route.Namespace, route.Name)
 
 	if route.Subresource != subresourcePodExec {

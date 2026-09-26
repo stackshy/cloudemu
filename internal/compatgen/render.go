@@ -41,9 +41,9 @@ func renderReadme(entries []entry) string {
 	b.WriteString("# Compatibility matrix\n\n")
 	b.WriteString("Does a **real cloud SDK** call for each operation succeed against CloudEmu's ")
 	b.WriteString("wire server? Every cell below is backed by a live round-trip through the ")
-	b.WriteString("official SDK — not a hand-maintained checkbox.\n\n")
+	b.WriteString("official SDK, not a hand-maintained checkbox.\n\n")
 	b.WriteString("Legend: ✅ verified via a real SDK · `·` supported but not yet compat-tested · ")
-	b.WriteString("`—` not offered by that provider.\n\n")
+	b.WriteString("`-` not offered by that provider.\n\n")
 	b.WriteString("Each service's summary breaks the verified counts out per SDK/language. ")
 	b.WriteString("Only languages with compat tests today appear; more rows land as their ")
 	b.WriteString("suites are added.\n\n")
@@ -84,7 +84,7 @@ func renderService(b *strings.Builder, service string, entries []entry) {
 
 			switch {
 			case !ok:
-				sym = " — |"
+				sym = " - |"
 			case len(c.Clients) > 0:
 				sym = " ✅ |"
 

@@ -15,7 +15,7 @@ import (
 // `kubectl -n kube-system get pods/deploy/ds/svc` look like a managed cluster
 // (EKS/AKS/GKE) instead of a bare object store, without any bespoke controller.
 // They are cosmetic: coredns does not actually resolve DNS (there is no real
-// resolver), it just makes the cluster look real to tooling.
+// resolver); it just makes the cluster look real to tooling.
 //
 // Control-plane static pods (apiserver/scheduler/controller-manager/etcd) are
 // intentionally omitted: managed clusters hide them, which is the look we want.
