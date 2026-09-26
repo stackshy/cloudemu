@@ -161,10 +161,10 @@ func scalarString(v any) string {
 		return t
 	case bool:
 		if t {
-			return "true"
+			return wordTrue
 		}
 
-		return "false"
+		return wordFalse
 	case json.Number:
 		return t.String()
 	case float64:

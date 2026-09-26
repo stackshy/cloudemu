@@ -99,20 +99,12 @@ func parseS3URL(raw string) (s3Object, bool) {
 		return s3Object{}, false
 	}
 
-	host := strings.ToLower(u.Hostname())
-	path := strings.TrimPrefix(u.Path, "/")
-	version := u.Query().Get("versionId")
-
-	var bucket string
-
-	switch {
-	case u.Scheme == "https" && awsS3HostRE.MatchString(host):
-		bucket = awsS3HostRE.FindStringSubmatch(host)[1]
-	case (u.Scheme == "http" || u.Scheme == "https") && isLocalHost(host):
-		bucket, _ = localVirtualBucket(host)
-	default:
+	bucket, ok := hostBucket(u)
+	if !ok {
 		return s3Object{}, false
 	}
+
+	path := strings.TrimPrefix(u.Path, "/")
 
 	if bucket == "" {
 		var found bool
@@ -125,8 +117,26 @@ func parseS3URL(raw string) (s3Object, bool) {
 		return s3Object{}, false
 	}
 
-	return s3Object{bucket: bucket, key: path, versionID: version}, true
+	return s3Object{bucket: bucket, key: path, versionID: u.Query().Get("versionId")}, true
 }
+
+// hostBucket checks the URL's host is an S3 endpoint. It returns the bucket
+// for a virtual-hosted URL and "" for the path form.
+func hostBucket(u *url.URL) (bucket string, ok bool) {
+	host := strings.ToLower(u.Hostname())
+
+	switch {
+	case u.Scheme == schemeHTTPS && awsS3HostRE.MatchString(host):
+		return awsS3HostRE.FindStringSubmatch(host)[1], true
+	case (u.Scheme == "http" || u.Scheme == schemeHTTPS) && isLocalHost(host):
+		b, _ := localVirtualBucket(host)
+		return b, true
+	default:
+		return "", false
+	}
+}
+
+const schemeHTTPS = "https"
 
 // localSuffix is the wildcard DNS name LocalStack-style tooling uses for
 // virtual-hosted S3 on the local machine.

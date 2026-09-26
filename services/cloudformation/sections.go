@@ -37,6 +37,12 @@ func buildTemplate(top map[string]any) (*Template, error) {
 	return t, nil
 }
 
+// The spellings CloudFormation accepts for a boolean written as a string.
+const (
+	wordTrue  = "true"
+	wordFalse = "false"
+)
+
 func formatErr(format string, args ...any) error {
 	return cerrors.Newf(cerrors.InvalidArgument, formatErrPrefix+format, args...)
 }
@@ -129,9 +135,9 @@ func boolField(v any, path string) (bool, error) {
 		return b, nil
 	case string:
 		switch strings.ToLower(b) {
-		case "true":
+		case wordTrue:
 			return true, nil
-		case "false":
+		case wordFalse:
 			return false, nil
 		}
 	}
