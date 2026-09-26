@@ -5869,6 +5869,9 @@
       },
       {
         "name": "RevokeAccess"
+      },
+      {
+        "name": "Update"
       }
     ],
     "providers": {

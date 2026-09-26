@@ -63,7 +63,7 @@ var nativeWireOperations = map[string][]string{ //nolint:gochecknoglobals // gen
 		"GetMetadataEndpoints", "GetToken",
 	},
 	"azure/disks": {
-		"CreateOrUpdate", "Delete", "Get", "GrantAccess", "List", "ListByResourceGroup", "RevokeAccess",
+		"CreateOrUpdate", "Delete", "Get", "GrantAccess", "List", "ListByResourceGroup", "RevokeAccess", "Update",
 	},
 	"azure/snapshots": {
 		"CreateOrUpdate", "Delete", "Get", "List", "ListByResourceGroup",

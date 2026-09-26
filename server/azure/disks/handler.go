@@ -4,6 +4,7 @@
 // Supported operations:
 //
 //	PUT    .../disks/{name}  : CreateOrUpdate (returns 202 + Azure-AsyncOperation)
+//	PATCH  .../disks/{name}  : Update (returns 202 + Azure-AsyncOperation)
 //	GET    .../disks/{name}  : Get
 //	GET    .../disks         : List in resource group
 //	DELETE .../disks/{name}  : Delete (returns 202 + Azure-AsyncOperation)
@@ -97,6 +98,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
+	case http.MethodPatch:
+		h.update(w, r, rp)
 	case http.MethodGet:
 		h.get(w, r, rp)
 	case http.MethodDelete:

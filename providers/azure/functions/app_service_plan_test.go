@@ -211,3 +211,39 @@ func TestAppServicePlanResourceGroupIsolation(t *testing.T) {
 	// Deleting an already-gone (or never-scoped) plan is NotFound.
 	require.True(t, cerrors.IsNotFound(m.DeleteAppServicePlan(ctx, "sub1", "rgA", "default")))
 }
+
+func TestPatchAppServicePlan(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+
+	_, err := m.CreateAppServicePlan(ctx, AppServicePlan{
+		Name: "p", Subscription: "sub", ResourceGroup: "rg", SKUName: "S1", Tags: map[string]string{"env": "dev"},
+	})
+	require.NoError(t, err)
+
+	reserved, workers, sku := true, 10, "P1v3"
+
+	got, err := m.PatchAppServicePlan(ctx, "sub", "rg", "p", AppServicePlanPatch{
+		SKUName: &sku, Reserved: &reserved, MaximumElasticWorkerCount: &workers,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, "P1v3", got.SKUName)
+	assert.Equal(t, "PremiumV3", got.SKUTier, "a new SKU name re-derives the tier")
+	assert.True(t, got.Reserved)
+	assert.Equal(t, 10, got.MaximumElasticWorkerCount)
+	assert.Equal(t, map[string]string{"env": "dev"}, got.Tags, "omitted tags are kept")
+	assert.Equal(t, 1, got.Capacity, "omitted capacity is kept")
+
+	got, err = m.PatchAppServicePlan(ctx, "sub", "rg", "p", AppServicePlanPatch{Tags: map[string]string{}})
+	require.NoError(t, err)
+	assert.Empty(t, got.Tags, "an empty tags map clears the tags")
+	assert.True(t, got.Reserved, "an omitted property is kept")
+
+	stored, err := m.GetAppServicePlan(ctx, "sub", "rg", "p")
+	require.NoError(t, err)
+	assert.Equal(t, got, stored)
+
+	_, err = m.PatchAppServicePlan(ctx, "sub", "other-rg", "p", AppServicePlanPatch{Reserved: &reserved})
+	assert.True(t, cerrors.IsNotFound(err), "a PATCH in another resource group is NotFound, got %v", err)
+}

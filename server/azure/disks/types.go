@@ -24,6 +24,22 @@ type diskRequestProps struct {
 	Tier              string        `json:"tier"`
 }
 
+// diskUpdateRequest is the PATCH body (armcompute.DiskUpdate). Every field is
+// optional; pointers and a nil map distinguish "omitted" from a zero value, so
+// an omitted field leaves the disk unchanged while "tags":{} clears the tags.
+type diskUpdateRequest struct {
+	SKU        *diskSKU                `json:"sku"`
+	Tags       map[string]string       `json:"tags"`
+	Properties *diskUpdateRequestProps `json:"properties"`
+}
+
+type diskUpdateRequestProps struct {
+	DiskSizeGB        *int    `json:"diskSizeGB"`
+	DiskIOPSReadWrite *int    `json:"diskIOPSReadWrite"`
+	DiskMBpsReadWrite *int    `json:"diskMBpsReadWrite"`
+	Tier              *string `json:"tier"`
+}
+
 type creationData struct {
 	CreateOption     string `json:"createOption,omitempty"`
 	SourceURI        string `json:"sourceUri,omitempty"`
