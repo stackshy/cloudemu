@@ -236,6 +236,26 @@ type DataCatalog struct {
 	Parameters  map[string]string
 }
 
+// TableMetadata is a Data Catalog table as Athena reports it. Parameters carry
+// the table parameters plus the storage descriptor fields Athena flattens into
+// them (inputformat, outputformat, location, serde.*).
+type TableMetadata struct {
+	Name           string
+	CreateTime     time.Time
+	LastAccessTime time.Time
+	TableType      string
+	Columns        []Column
+	PartitionKeys  []Column
+	Parameters     map[string]string
+}
+
+// Column is one table column.
+type Column struct {
+	Name    string
+	Type    string
+	Comment string
+}
+
 // DataCatalogSummary is the light projection returned by ListDataCatalogs.
 type DataCatalogSummary struct {
 	CatalogName string

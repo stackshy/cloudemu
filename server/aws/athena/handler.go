@@ -47,6 +47,8 @@ func New(d athenadriver.Athena) *Handler {
 		"ListQueryExecutions": h.listQueryExecutions,
 		"GetDatabase":         h.getDatabase,
 		"ListDatabases":       h.listDatabases,
+		"GetTableMetadata":    h.getTableMetadata,
+		"ListTableMetadata":   h.listTableMetadata,
 		"GetDataCatalog":      h.getDataCatalog,
 		"ListDataCatalogs":    h.listDataCatalogs,
 		"TagResource":         h.tagResource,

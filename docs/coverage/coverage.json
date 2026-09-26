@@ -898,6 +898,10 @@
         "doc": "GetQueryResults returns the result rows for a SUCCEEDED execution. DDL and"
       },
       {
+        "name": "GetTableMetadata",
+        "doc": "GetTableMetadata returns a table's metadata, or an error tagged"
+      },
+      {
         "name": "GetWorkGroup",
         "doc": "GetWorkGroup returns a deep copy of a workgroup, or an error tagged"
       },
@@ -914,6 +918,10 @@
       {
         "name": "ListQueryExecutions",
         "doc": "ListQueryExecutions returns execution ids in the given workgroup"
+      },
+      {
+        "name": "ListTableMetadata",
+        "doc": "ListTableMetadata lists the tables of a database. expression is a Hive"
       },
       {
         "name": "ListTagsForResource"
