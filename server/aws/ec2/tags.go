@@ -95,6 +95,7 @@ func (h *Handler) describeTags(w http.ResponseWriter, r *http.Request) {
 	var recs []tagRecord
 	recs = h.collectComputeTags(r.Context(), recs)
 	recs = h.collectNetworkTags(r.Context(), recs)
+	recs = h.collectAddressingTags(r.Context(), recs)
 
 	items := make([]describeTagItemXML, 0, len(recs))
 
@@ -179,6 +180,37 @@ func (h *Handler) collectNetworkTags(ctx context.Context, recs []tagRecord) []ta
 			recs = appendTagRecords(recs, sgs[i].ID, "security-group", sgs[i].Tags)
 			recs = appendSGRuleTagRecords(recs, sgs[i].IngressRules)
 			recs = appendSGRuleTagRecords(recs, sgs[i].EgressRules)
+		}
+	}
+
+	return recs
+}
+
+// collectAddressingTags appends tag records for Elastic IP allocations, VPC
+// endpoints and VPC endpoint services, using the resource-type names real EC2
+// DescribeTags reports for them.
+func (h *Handler) collectAddressingTags(ctx context.Context, recs []tagRecord) []tagRecord {
+	if h.vpc == nil {
+		return recs
+	}
+
+	if eips, err := h.vpc.DescribeAddresses(ctx, nil); err == nil {
+		for i := range eips {
+			recs = appendTagRecords(recs, eips[i].AllocationID, "elastic-ip", eips[i].Tags)
+		}
+	}
+
+	if eps, err := h.vpc.DescribeVPCEndpoints(ctx, nil); err == nil {
+		for i := range eps {
+			recs = appendTagRecords(recs, eps[i].ID, "vpc-endpoint", eps[i].Tags)
+		}
+	}
+
+	if svcs, ok := h.vpc.(netdriver.VPCEndpointServices); ok {
+		if list, err := svcs.DescribeVPCEndpointServiceConfigurations(ctx, nil); err == nil {
+			for i := range list {
+				recs = appendTagRecords(recs, list[i].ID, "vpc-endpoint-service", list[i].Tags)
+			}
 		}
 	}
 
@@ -332,7 +364,10 @@ func tagNotFoundCode(id string) string {
 // their own methods and are handled separately.
 //
 //nolint:gochecknoglobals // static id-prefix routing table
-var networkResourceTagPrefixes = []string{"rtb-", "igw-", "nat-", "acl-", "dopt-", "pcx-", "pl-", "eigw-", "sgr-"}
+var networkResourceTagPrefixes = []string{
+	"rtb-", "igw-", "nat-", "acl-", "dopt-", "pcx-", "pl-", "eigw-", "sgr-",
+	"eipalloc-", "vpce-", // vpce- also covers vpce-svc- endpoint services
+}
 
 // networkTaggableID reports whether id belongs to a resource tagged via the
 // NetworkResourceTagger optional interface.

@@ -100,3 +100,71 @@ func routeTableTag(t *testing.T, m *Mock, id, key string) string {
 func isNotFound(err error) bool {
 	return err != nil && errors.IsNotFound(err)
 }
+
+// TestAddressingResourceTagger covers tagging Elastic IP allocations, VPC
+// endpoints and VPC endpoint services after creation: the tag merges with the
+// ones set at create time on the same record the Describe calls read, delete
+// removes only the named key, and an unknown id of each prefix is NotFound.
+func TestAddressingResourceTagger(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	v := createTestVPC(m)
+
+	eip, err := m.AllocateAddress(ctx, driver.ElasticIPConfig{Tags: map[string]string{"Name": "eip"}})
+	requireNoError(t, err)
+
+	ep, err := m.CreateVPCEndpoint(ctx, driver.VPCEndpointConfig{
+		VPCID: v.ID, ServiceName: "com.amazonaws.us-east-1.s3", EndpointType: "Gateway",
+		Tags: map[string]string{"Name": "ep"},
+	})
+	requireNoError(t, err)
+
+	svc, err := m.CreateVPCEndpointServiceConfiguration(ctx, driver.EndpointServiceConfig{
+		NetworkLoadBalancerARNs: []string{"arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/n/1"},
+	})
+	requireNoError(t, err)
+
+	for _, id := range []string{eip.AllocationID, ep.ID, svc.ID} {
+		requireNoError(t, m.UpdateResourceTags(ctx, id, map[string]string{"env": "prod"}))
+	}
+
+	eips, err := m.DescribeAddresses(ctx, []string{eip.AllocationID})
+	requireNoError(t, err)
+	assertEqual(t, "prod", eips[0].Tags["env"])
+	assertEqual(t, "eip", eips[0].Tags["Name"])
+
+	eps, err := m.DescribeVPCEndpoints(ctx, []string{ep.ID})
+	requireNoError(t, err)
+	assertEqual(t, "prod", eps[0].Tags["env"])
+	assertEqual(t, "ep", eps[0].Tags["Name"])
+
+	svcs, err := m.DescribeVPCEndpointServiceConfigurations(ctx, []string{svc.ID})
+	requireNoError(t, err)
+	assertEqual(t, "prod", svcs[0].Tags["env"])
+
+	for _, id := range []string{eip.AllocationID, ep.ID, svc.ID} {
+		requireNoError(t, m.RemoveResourceTags(ctx, id, []string{"env"}))
+	}
+
+	eips, err = m.DescribeAddresses(ctx, []string{eip.AllocationID})
+	requireNoError(t, err)
+
+	if _, ok := eips[0].Tags["env"]; ok {
+		t.Fatalf("eip still carries env after RemoveResourceTags: %v", eips[0].Tags)
+	}
+
+	assertEqual(t, "eip", eips[0].Tags["Name"])
+
+	eps, err = m.DescribeVPCEndpoints(ctx, []string{ep.ID})
+	requireNoError(t, err)
+
+	if _, ok := eps[0].Tags["env"]; ok {
+		t.Fatalf("endpoint still carries env after RemoveResourceTags: %v", eps[0].Tags)
+	}
+
+	for _, id := range []string{"eipalloc-missing", "vpce-missing", "vpce-svc-missing"} {
+		if err := m.UpdateResourceTags(ctx, id, map[string]string{"k": "v"}); !isNotFound(err) {
+			t.Fatalf("UpdateResourceTags(%s) = %v, want NotFound", id, err)
+		}
+	}
+}
