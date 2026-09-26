@@ -12,7 +12,7 @@ import (
 	"os"
 )
 
-const usage = `cloudemu — in-memory AWS/Azure/GCP emulator
+const usage = `cloudemu: in-memory AWS/Azure/GCP emulator
 
 Usage:
   cloudemu start [flags]     Start the emulator in the background (accepts serve flags)

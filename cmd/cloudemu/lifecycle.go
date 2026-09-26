@@ -366,8 +366,8 @@ func waitForEndpoints(path string, timeout time.Duration) (map[string]string, er
 }
 
 func printEndpoints(eps map[string]string) {
-	fmt.Println("cloudemu — running")
-	fmt.Println("──────────────────")
+	fmt.Println("cloudemu: running")
+	fmt.Println("─────────────────")
 
 	for _, k := range endpointOrder() {
 		if ep := eps[k]; ep != "" {

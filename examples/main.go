@@ -17,7 +17,7 @@ func main() {
 	ctx := context.Background()
 
 	fmt.Println("==========================================")
-	fmt.Println("  CloudEmu — Real Cloud Simulation Demo")
+	fmt.Println("  CloudEmu: Real Cloud Simulation Demo")
 	fmt.Println("==========================================")
 	fmt.Println()
 

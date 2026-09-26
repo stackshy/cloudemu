@@ -1348,7 +1348,7 @@ func dangerWarning(cfg *Config) string {
 	}
 
 	return fmt.Sprintf(
-		"warning: --admin control plane is reachable on non-loopback host %q — "+
+		"warning: --admin control plane is reachable on non-loopback host %q: "+
 			"POST /_cloudemu/reset wipes all state, and GET /_cloudemu/snapshot dumps "+
 			"all emulated state (including secret values) to any caller; "+
 			"pass --admin=false to disable it",

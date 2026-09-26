@@ -74,7 +74,7 @@ ctr.Reset(ctx)                      // clean slate between tests
 On start the server prints its endpoints:
 
 ```
-cloudemu — standalone server
+cloudemu (standalone server)
 ────────────────────────────
   AWS         http://127.0.0.1:4566
   Azure       https://127.0.0.1:4568   (self-signed TLS)
@@ -283,7 +283,7 @@ cloudemu doctor --host 0.0.0.0  # check the interface you'll bind serve to
 ```
 
 ```text
-cloudemu doctor — preflight check
+cloudemu doctor: preflight check
 
 [ ok ] version 2.x.y (commit abc1234, built 2026-08-30 by goreleaser)
 
@@ -296,7 +296,7 @@ Ports on 127.0.0.1 (free = free at check time; a port can still be taken before 
 
 [ ok ] docker found at /usr/bin/docker (only needed for the :engines image)
 ...
-[ ok ] all preflight checks passed — ready to `cloudemu serve`.
+[ ok ] all preflight checks passed, ready to `cloudemu serve`.
 ```
 
 An in-use required port (AWS/Azure/GCP/Kubernetes) is a blocker: the line is
