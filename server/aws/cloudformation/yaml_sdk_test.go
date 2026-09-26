@@ -9,6 +9,7 @@ import (
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfn "github.com/aws/aws-sdk-go-v2/service/cloudformation"
 	"github.com/aws/aws-sdk-go-v2/service/s3"
+	s3types "github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/aws/smithy-go"
 )
 
@@ -123,6 +124,55 @@ func TestTemplateURLRealSDK(t *testing.T) {
 		StackName: aws.String("missing"), TemplateURL: aws.String("https://templates.s3.amazonaws.com/nope.yaml"),
 	})
 	requireValidationError(t, err, "TemplateURL must reference a valid S3 object to which you have access.")
+
+	_, err = c.cfn.ValidateTemplate(ctx, &awscfn.ValidateTemplateInput{
+		TemplateURL: aws.String("https://templates.example.com/app/stack.yaml"),
+	})
+	requireValidationError(t, err, "TemplateURL must be an Amazon S3 URL.")
+}
+
+func TestTemplateURLVersionRealSDK(t *testing.T) {
+	c := boot(t)
+	ctx := context.Background()
+
+	if _, err := c.s3.CreateBucket(ctx, &s3.CreateBucketInput{Bucket: aws.String("vtemplates")}); err != nil {
+		t.Fatalf("CreateBucket: %v", err)
+	}
+
+	if _, err := c.s3.PutBucketVersioning(ctx, &s3.PutBucketVersioningInput{
+		Bucket:                  aws.String("vtemplates"),
+		VersioningConfiguration: &s3types.VersioningConfiguration{Status: s3types.BucketVersioningStatusEnabled},
+	}); err != nil {
+		t.Fatalf("PutBucketVersioning: %v", err)
+	}
+
+	put := func(desc string) string {
+		out, err := c.s3.PutObject(ctx, &s3.PutObjectInput{
+			Bucket: aws.String("vtemplates"), Key: aws.String("t.yaml"),
+			Body: strings.NewReader("Description: " + desc + "\nResources:\n  B: {Type: AWS::S3::Bucket}\n"),
+		})
+		if err != nil {
+			t.Fatalf("PutObject: %v", err)
+		}
+
+		return aws.ToString(out.VersionId)
+	}
+
+	first := put("first")
+	put("second")
+
+	base := "https://vtemplates.s3.amazonaws.com/t.yaml"
+
+	for url, want := range map[string]string{base: "second", base + "?versionId=" + first: "first"} {
+		out, err := c.cfn.ValidateTemplate(ctx, &awscfn.ValidateTemplateInput{TemplateURL: aws.String(url)})
+		if err != nil {
+			t.Fatalf("ValidateTemplate %s: %v", url, err)
+		}
+
+		if got := aws.ToString(out.Description); got != want {
+			t.Fatalf("%s: Description = %q, want %q", url, got, want)
+		}
+	}
 }
 
 func TestValidateTemplateRealSDK(t *testing.T) {

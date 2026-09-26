@@ -4,6 +4,11 @@
 // templates, SSM documents, EKS add-on configuration) can then treat the two
 // formats alike.
 //
+// Scalars follow YAML 1.1, as CloudFormation does. Plain yes, no, on and off
+// are booleans (the CloudFormation parameter docs tell users to quote Yes and
+// No to keep them strings). 0755 is octal, and other leading-zero integers
+// such as account IDs stay strings. Timestamps stay literal strings.
+//
 // Custom tags such as !Ref are passed to a TagFunc. Aliases, merge keys,
 // duplicate keys and the binary, omap, pairs and set types are rejected.
 package yamlconv
@@ -270,6 +275,52 @@ func (c converter) sequence(n *yaml.Node) (any, error) {
 	return out, nil
 }
 
+// yaml11Bool reads the YAML 1.1 boolean words yes, no, on and off (in lower,
+// title or upper case) as booleans when they are plain, unquoted and untagged.
+// yaml.v3 follows YAML 1.2 and keeps them as strings. The word list matches
+// SnakeYAML, so y and n stay strings.
+func yaml11Bool(n *yaml.Node) (value, ok bool) {
+	if n.Style != 0 {
+		return false, false
+	}
+
+	switch n.Value {
+	case "yes", "Yes", "YES", "on", "On", "ON":
+		return true, true
+	case "no", "No", "NO", "off", "Off", "OFF":
+		return false, true
+	default:
+		return false, false
+	}
+}
+
+// leadingZeroRE matches a plain integer with a leading zero, such as 0755 or
+// 012345678901.
+var leadingZeroRE = regexp.MustCompile(`^[-+]?0[0-9_]+$`)
+
+// octalRE matches a YAML 1.1 octal integer.
+var octalRE = regexp.MustCompile(`^[-+]?0[0-7_]+$`)
+
+// leadingZero applies the YAML 1.1 rule CloudFormation uses. 0755 is octal.
+// Any other leading-zero integer, such as an account ID or 08, is a string.
+// yaml.v3 would read those as decimal or float and lose the leading zeros.
+func leadingZero(lit string) (any, bool) {
+	if !leadingZeroRE.MatchString(lit) {
+		return nil, false
+	}
+
+	if !octalRE.MatchString(lit) {
+		return lit, true
+	}
+
+	v, err := strconv.ParseInt(strings.ReplaceAll(lit, "_", ""), 8, 64)
+	if err != nil {
+		return lit, true
+	}
+
+	return json.Number(strconv.FormatInt(v, 10)), true
+}
+
 // jsonNumberRE matches the number grammar encoding/json accepts.
 var jsonNumberRE = regexp.MustCompile(`^-?(0|[1-9]\d*)(\.\d+)?([eE][+-]?\d+)?$`)
 
@@ -286,7 +337,13 @@ func scalar(n *yaml.Node) (any, error) {
 		return b, nil
 	case "!!int", "!!float":
 		return number(n), nil
-	case "!!str", "!!timestamp":
+	case "!!str":
+		if b, ok := yaml11Bool(n); ok {
+			return b, nil
+		}
+
+		return n.Value, nil
+	case "!!timestamp":
 		return n.Value, nil
 	default:
 		return nil, nodeErr(n, MsgUnsupported+" "+n.ShortTag())
@@ -299,6 +356,10 @@ func scalar(n *yaml.Node) (any, error) {
 func number(n *yaml.Node) any {
 	if jsonNumberRE.MatchString(n.Value) {
 		return json.Number(n.Value)
+	}
+
+	if v, ok := leadingZero(n.Value); ok {
+		return v
 	}
 
 	var v any

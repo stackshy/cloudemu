@@ -98,11 +98,17 @@ func TestCreateStackMalformedYAML(t *testing.T) {
 	}
 }
 
-// fakeS3 is a TemplateFetcher over an in-memory bucket/key map.
+// fakeS3 is a TemplateFetcher over an in-memory map keyed by "bucket/key",
+// with "?versionId=v" appended for a specific version.
 type fakeS3 map[string]string
 
-func (f fakeS3) fetch(_ context.Context, bucket, key string) ([]byte, error) {
-	body, ok := f[bucket+"/"+key]
+func (f fakeS3) fetch(_ context.Context, bucket, key, versionID string) ([]byte, error) {
+	id := bucket + "/" + key
+	if versionID != "" {
+		id += "?versionId=" + versionID
+	}
+
+	body, ok := f[id]
 	if !ok {
 		return nil, errors.New("NoSuchKey")
 	}
@@ -162,29 +168,68 @@ func TestTemplateSourceErrors(t *testing.T) {
 
 func TestParseS3URL(t *testing.T) {
 	cases := []struct {
-		url, bucket, key string
+		url              string
+		bucket, key, ver string
 		ok               bool
 	}{
-		{"https://s3.amazonaws.com/b/k.yaml", "b", "k.yaml", true},
-		{"https://s3.eu-west-1.amazonaws.com/b/dir/k.json", "b", "dir/k.json", true},
-		{"https://s3-eu-west-1.amazonaws.com/b/k", "b", "k", true},
-		{"https://b.s3.amazonaws.com/dir/k", "b", "dir/k", true},
-		{"https://my.bucket.s3.us-west-2.amazonaws.com/k", "my.bucket", "k", true},
-		{"https://b.s3-us-west-2.amazonaws.com/k", "b", "k", true},
-		{"http://localhost:4566/b/k%20x.yaml", "b", "k x.yaml", true},
-		{"http://b.s3.localhost.localstack.cloud:4566/k", "b", "k", true},
-		{"https://b.s3.amazonaws.com/", "", "", false},
-		{"https://s3.amazonaws.com/b/", "", "", false},
-		{"ftp://s3.amazonaws.com/b/k", "", "", false},
-		{"not a url", "", "", false},
+		{"https://s3.amazonaws.com/b/k.yaml", "b", "k.yaml", "", true},
+		{"https://s3.eu-west-1.amazonaws.com/b/dir/k.json", "b", "dir/k.json", "", true},
+		{"https://s3-eu-west-1.amazonaws.com/b/k", "b", "k", "", true},
+		{"https://s3.dualstack.us-east-1.amazonaws.com/b/k", "b", "k", "", true},
+		{"https://s3.cn-north-1.amazonaws.com.cn/b/k", "b", "k", "", true},
+		{"https://b.s3.amazonaws.com/dir/k", "b", "dir/k", "", true},
+		{"https://my.bucket.s3.us-west-2.amazonaws.com/k", "my.bucket", "k", "", true},
+		{"https://b.s3-us-west-2.amazonaws.com/k", "b", "k", "", true},
+		{"https://b.s3.amazonaws.com/k?versionId=v1", "b", "k", "v1", true},
+		{"http://localhost:4566/b/k%20x.yaml", "b", "k x.yaml", "", true},
+		{"http://127.0.0.1:4566/b/k?versionId=v2", "b", "k", "v2", true},
+		{"http://host.docker.internal:4566/b/k", "b", "k", "", true},
+		{"http://b.s3.localhost.localstack.cloud:4566/k", "b", "k", "", true},
+		{"http://s3.amazonaws.com/b/k", "", "", "", false},
+		{"https://example.com/b/k", "", "", "", false},
+		{"https://s3.amazonaws.com.evil.com/b/k", "", "", "", false},
+		{"https://b.s3.amazonaws.com/", "", "", "", false},
+		{"https://s3.amazonaws.com/b/", "", "", "", false},
+		{"ftp://s3.amazonaws.com/b/k", "", "", "", false},
+		{"not a url", "", "", "", false},
 	}
 
 	for _, tc := range cases {
-		b, k, ok := parseS3URL(tc.url)
-		if ok != tc.ok || b != tc.bucket || k != tc.key {
-			t.Errorf("%s: got (%q, %q, %v), want (%q, %q, %v)", tc.url, b, k, ok, tc.bucket, tc.key, tc.ok)
+		obj, ok := parseS3URL(tc.url)
+		if ok != tc.ok || obj.bucket != tc.bucket || obj.key != tc.key || obj.versionID != tc.ver {
+			t.Errorf("%s: got (%+v, %v), want (%q, %q, %q, %v)", tc.url, obj, ok, tc.bucket, tc.key, tc.ver, tc.ok)
 		}
 	}
+}
+
+func TestTemplateURLVersion(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock(newBacking())
+	m.SetTemplateFetcher(fakeS3{
+		"b/t.yaml":              "Resources:\n  B: {Type: Test::Bucket, Properties: {Name: current}}\n",
+		"b/t.yaml?versionId=v1": "Resources:\n  B: {Type: Test::Bucket, Properties: {Name: first}}\n",
+	}.fetch)
+
+	stack, err := m.CreateStack(ctx, &cfn.CreateStackInput{
+		StackName: "ver", TemplateURL: "https://b.s3.amazonaws.com/t.yaml?versionId=v1",
+	})
+	requireNoError(t, err)
+	assertEqual(t, stack.Resources[0].PhysicalID, "first", "versionId picks that version")
+
+	_, err = m.CreateStack(ctx, &cfn.CreateStackInput{
+		StackName: "ver2", TemplateURL: "https://b.s3.amazonaws.com/t.yaml?versionId=nope",
+	})
+	assertErrMsg(t, err, msgTemplateAccess)
+}
+
+func TestTemplateURLRejectsNonS3Host(t *testing.T) {
+	m := newTestMock(newBacking())
+	m.SetTemplateFetcher(fakeS3{"b/k": yamlStackTemplate}.fetch)
+
+	_, err := m.CreateStack(context.Background(), &cfn.CreateStackInput{
+		StackName: "s", TemplateURL: "https://templates.example.com/b/k",
+	})
+	assertErrMsg(t, err, msgNotS3URL)
 }
 
 func TestValidateTemplate(t *testing.T) {

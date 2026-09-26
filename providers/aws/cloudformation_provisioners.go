@@ -39,8 +39,18 @@ func cloudformationRegistry(p *Provider) cfn.Registry {
 
 // cloudformationTemplateFetcher reads a TemplateURL object from the emulated S3.
 func cloudformationTemplateFetcher(p *Provider) cfnprovider.TemplateFetcher {
-	return func(ctx context.Context, bucket, key string) ([]byte, error) {
-		obj, err := p.S3.GetObject(ctx, bucket, key)
+	return func(ctx context.Context, bucket, key, versionID string) ([]byte, error) {
+		var (
+			obj *storagedriver.Object
+			err error
+		)
+
+		if versionID != "" {
+			obj, err = p.S3.GetObjectVersion(ctx, bucket, key, versionID)
+		} else {
+			obj, err = p.S3.GetObject(ctx, bucket, key)
+		}
+
 		if err != nil {
 			return nil, err
 		}
@@ -462,7 +472,7 @@ func propBool(props map[string]any, key string) bool {
 	case bool:
 		return v
 	case string:
-		return v == "true"
+		return strings.EqualFold(v, "true")
 	default:
 		return false
 	}

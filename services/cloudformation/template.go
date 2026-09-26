@@ -1,7 +1,6 @@
 package cloudformation
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -11,39 +10,43 @@ import (
 )
 
 // Template is the parsed CloudFormation document. Only the sections the
-// orchestrator acts on are modeled; unknown top-level keys are ignored.
+// orchestrator acts on are modeled. Scalar fields such as Description accept any
+// scalar and hold its string form, the way CloudFormation reads them.
 type Template struct {
-	FormatVersion string                  `json:"AWSTemplateFormatVersion"`
-	Description   string                  `json:"Description"`
-	Parameters    map[string]ParameterDef `json:"Parameters"`
-	Resources     map[string]ResourceDef  `json:"Resources"`
-	Outputs       map[string]OutputDef    `json:"Outputs"`
-	Transform     any                     `json:"Transform"`
+	FormatVersion string
+	Description   string
+	Parameters    map[string]ParameterDef
+	Resources     map[string]ResourceDef
+	Outputs       map[string]OutputDef
+	Transform     any
 }
 
 // ParameterDef is a template parameter declaration.
 type ParameterDef struct {
-	Type          string `json:"Type"`
-	Default       any    `json:"Default"`
-	Description   string `json:"Description"`
-	AllowedValues []any  `json:"AllowedValues"`
-	NoEcho        bool   `json:"NoEcho"`
+	Type          string
+	Default       any
+	Description   string
+	AllowedValues []any
+	NoEcho        bool
 }
 
 // ResourceDef is one resource declaration keyed by logical ID in the template.
 type ResourceDef struct {
-	Type       string         `json:"Type"`
-	Properties map[string]any `json:"Properties"`
-	DependsOn  any            `json:"DependsOn"`
+	Type       string
+	Properties map[string]any
+	DependsOn  any
 }
 
 // OutputDef is one output declaration.
 type OutputDef struct {
-	Value       any    `json:"Value"`
-	Description string `json:"Description"`
-	Export      *struct {
-		Name any `json:"Name"`
-	} `json:"Export"`
+	Value       any
+	Description string
+	Export      *ExportDef
+}
+
+// ExportDef is an output's Export block.
+type ExportDef struct {
+	Name any
 }
 
 // ParseTemplate parses a CloudFormation template body in JSON or YAML. A body
@@ -78,33 +81,7 @@ func ParseTemplate(body string) (*Template, error) {
 		return nil, cerrors.New(cerrors.InvalidArgument, formatErrPrefix+"At least one Resources member must be defined.")
 	}
 
-	for _, id := range sortedKeys(t.Resources) {
-		if t.Resources[id].Type == "" {
-			return nil, cerrors.Newf(cerrors.InvalidArgument,
-				formatErrPrefix+"[/Resources/%s] Every Resources object must contain a Type member.", id)
-		}
-	}
-
 	return t, nil
-}
-
-// buildTemplate maps the decoded tree onto Template. A JSON round trip keeps
-// one decoding path for both formats.
-func buildTemplate(top map[string]any) (*Template, error) {
-	raw, err := json.Marshal(top)
-	if err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, formatErrPrefix+"%v", err)
-	}
-
-	dec := json.NewDecoder(bytes.NewReader(raw))
-	dec.UseNumber()
-
-	var t Template
-	if err := dec.Decode(&t); err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, formatErrPrefix+"%v", err)
-	}
-
-	return &t, nil
 }
 
 // templateSections are the top-level keys CloudFormation accepts.
