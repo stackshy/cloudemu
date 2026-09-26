@@ -40,7 +40,7 @@ func newEventWriter(w http.ResponseWriter) *eventWriter {
 	// frame: the socket can be torn down (RST) before the last event
 	// (metadata, emitted last) is read, intermittently dropping it under CI load.
 	// Relying on normal keep-alive chunked termination writes the terminating
-	// chunk — delivering every frame — before the connection is ever closed. Any
+	// chunk, delivering every frame, before the connection is ever closed. Any
 	// later teardown of the pooled connection surfaces as a benign
 	// "use of closed network connection" that the stream tests already tolerate
 	// via benignStreamTeardown, and never as lost data.

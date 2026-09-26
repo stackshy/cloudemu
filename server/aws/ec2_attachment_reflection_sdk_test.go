@@ -241,7 +241,7 @@ func TestTerminateCleansUpAttachments(t *testing.T) {
 	require.NoError(t, err)
 
 	// The secondary ENI is detached back to available (not stuck in-use on the
-	// dead instance) — so it can be deleted, which then unwedges DeleteSubnet.
+	// dead instance), so it can be deleted, which then unwedges DeleteSubnet.
 	desc, err := client.DescribeNetworkInterfaces(ctx, &ec2.DescribeNetworkInterfacesInput{
 		NetworkInterfaceIds: []string{secondaryID},
 	})

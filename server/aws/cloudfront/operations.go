@@ -9,7 +9,7 @@ import (
 )
 
 // listMaxItems is the default page size reported in a DistributionList/
-// InvalidationList — the emulator never truncates.
+// InvalidationList. The emulator never truncates.
 const listMaxItems = 100
 
 // ifMatch returns the request's If-Match header, trimmed of the weak-validator

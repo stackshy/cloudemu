@@ -1,4 +1,4 @@
-// dynamodb_number_set_test.go — real aws-sdk-go-v2 round-trips proving the
+// dynamodb_number_set_test.go: real aws-sdk-go-v2 round-trips proving the
 // DynamoDB Number Set (NS) preserves each element's exact decimal string.
 // Elements beyond float64's mantissa (large ids, high-precision decimals) must
 // not be corrupted by parsing through float64, and set operations (ADD/DELETE)
@@ -43,7 +43,7 @@ func suiteDDBUpdate(t *testing.T, client *dynamodb.Client, table, expr string,
 }
 
 // TestDDBNumberSetPrecision: an NS carrying two 30-digit integers that map to the
-// SAME float64 round-trips both exact strings — float parsing would corrupt them
+// SAME float64 round-trips both exact strings. Float parsing would corrupt them
 // and collapse them into one element.
 func TestDDBNumberSetPrecision(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)

@@ -3,7 +3,7 @@ package cloudwatch
 // The AWS CLI and the Terraform AWS provider speak CloudWatch's classic query
 // protocol (form-encoded POST, XML responses). This file adds the query-protocol
 // dashboard operations (backing aws_cloudwatch_dashboard) and DescribeAlarmHistory
-// so those clients work — the rpc-v2-cbor twins live in dashboards.go and
+// so those clients work. The rpc-v2-cbor twins live in dashboards.go and
 // metric_data_ops.go.
 
 import (

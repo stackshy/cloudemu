@@ -1,4 +1,4 @@
-// dynamodb_validation_test.go — real aws-sdk-go-v2 round-trips proving the
+// dynamodb_validation_test.go: real aws-sdk-go-v2 round-trips proving the
 // request-shape and schema validations DynamoDB enforces: CreateTable key/attr
 // consistency, PutItem key presence and type, BatchWriteItem/BatchGetItem size
 // caps and duplicate keys, and UpdateTable add-GSI attribute-definition checks.
@@ -152,7 +152,7 @@ func TestDDBBatchGetOver100(t *testing.T) {
 }
 
 // TestDDBPutItemEmptyStringPartitionKey: an empty-string value on the partition
-// key is a ValidationException — a String key attribute may not be zero-length.
+// key is a ValidationException; a String key attribute may not be zero-length.
 func TestDDBPutItemEmptyStringPartitionKey(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)
 	ctx := context.Background()
@@ -293,7 +293,7 @@ func TestDDBUpdateTableAddGSIWithoutAttrDef(t *testing.T) {
 }
 
 // TestDDBCreateTableBillingThroughput: CreateTable's cross-field rule between
-// BillingMode and ProvisionedThroughput — PROVISIONED requires a valid (>=1)
+// BillingMode and ProvisionedThroughput. PROVISIONED requires a valid (>=1)
 // RCU/WCU, PAY_PER_REQUEST forbids either being set, and PAY_PER_REQUEST with
 // no throughput at all (the ordinary on-demand case) must NOT be rejected.
 func TestDDBCreateTableBillingThroughput(t *testing.T) {
@@ -448,7 +448,7 @@ func TestDDBUpdateTableBillingThroughput(t *testing.T) {
 
 // TestDDBUpdateTableAddGSIOnProvisionedTableSucceeds: adding a GSI via
 // UpdateTable without touching BillingMode/ProvisionedThroughput at all must
-// still succeed on an already-valid PROVISIONED table — the billing/throughput
+// still succeed on an already-valid PROVISIONED table. The billing/throughput
 // validation must not fire for an unrelated field.
 func TestDDBUpdateTableAddGSIOnProvisionedTableSucceeds(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)
@@ -484,7 +484,7 @@ func TestDDBUpdateTableAddGSIOnProvisionedTableSucceeds(t *testing.T) {
 }
 
 // TestDDBCreateTableGSIThroughput: CreateTable's cross-field rule between the
-// table's BillingMode and each GSI's own ProvisionedThroughput — a PROVISIONED
+// table's BillingMode and each GSI's own ProvisionedThroughput. A PROVISIONED
 // table requires every GSI to declare a valid (>=1) RCU/WCU, and a
 // PAY_PER_REQUEST table forbids any GSI from declaring throughput at all. The
 // ordinary on-demand case (PAY_PER_REQUEST, GSI with no throughput) must NOT
@@ -566,7 +566,7 @@ func TestDDBCreateTableGSIThroughput(t *testing.T) {
 }
 
 // TestDDBCreateTableLSINeverRequiresThroughput: an LSI shares the base
-// table's throughput and never declares its own — a CreateTable with a
+// table's throughput and never declares its own, so a CreateTable with a
 // PROVISIONED table and an LSI (no per-index throughput field exists on an
 // LSI) must succeed.
 func TestDDBCreateTableLSINeverRequiresThroughput(t *testing.T) {
@@ -597,7 +597,7 @@ func TestDDBCreateTableLSINeverRequiresThroughput(t *testing.T) {
 }
 
 // TestDDBUpdateTableAddGSIThroughput: UpdateTable's GSI-Create path enforces
-// the same per-GSI throughput rule as CreateTable — a newly-added GSI on a
+// the same per-GSI throughput rule as CreateTable: a newly-added GSI on a
 // PROVISIONED table must declare valid throughput, and on a PAY_PER_REQUEST
 // table must declare none.
 func TestDDBUpdateTableAddGSIThroughput(t *testing.T) {
@@ -669,7 +669,7 @@ func TestDDBUpdateTableAddGSIThroughput(t *testing.T) {
 
 // TestDDBPutItemGSIKeyTypeValidation: PutItem validates a GSI key attribute's
 // type when the item carries it, names the offending index, but does NOT
-// require the attribute to be present at all — a sparse GSI (an item that
+// require the attribute to be present at all. A sparse GSI (an item that
 // omits the GSI key attribute) is a normal, valid write.
 func TestDDBPutItemGSIKeyTypeValidation(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)

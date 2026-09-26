@@ -1,7 +1,7 @@
-// dynamodb_transaction_test.go — real aws-sdk-go-v2 round-trips proving
+// dynamodb_transaction_test.go: real aws-sdk-go-v2 round-trips proving
 // TransactWriteItems honors per-operation ConditionExpression, applies Update
-// and ConditionCheck items, and rejects duplicate targets — the divergences
-// where the wire handler previously modeled only unconditional Put/Delete.
+// and ConditionCheck items, and rejects duplicate targets. The wire handler
+// previously modeled only unconditional Put/Delete.
 package dynamodb_test
 
 import (

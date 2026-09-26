@@ -7,9 +7,9 @@
 //
 // URL shapes follow what the SDK emits:
 //
-//	POST /agents/{agentId}/agentAliases/{agentAliasId}/sessions/{sessionId}/text — InvokeAgent
-//	POST /knowledgebases/{knowledgeBaseId}/retrieve                              — Retrieve
-//	POST /retrieveAndGenerate                                                    — RetrieveAndGenerate
+//	POST /agents/{agentId}/agentAliases/{agentAliasId}/sessions/{sessionId}/text   InvokeAgent
+//	POST /knowledgebases/{knowledgeBaseId}/retrieve                                Retrieve
+//	POST /retrieveAndGenerate                                                      RetrieveAndGenerate
 //
 // The Matches predicate is intentionally SPECIFIC to these suffixes (.../text,
 // .../retrieve) and the exact /retrieveAndGenerate path so it does not collide

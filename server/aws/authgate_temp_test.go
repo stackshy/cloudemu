@@ -43,7 +43,7 @@ func signTemp(t *testing.T, r *http.Request, akid, secret, token string, signing
 // TestVerifyTempCredential exercises the STS temporary-credential branch of the
 // gate directly: a signature made with the STS-issued secret verifies, a forged
 // secret is rejected, an unknown key is rejected, and an expired session is
-// rejected — all deterministically on a FakeClock.
+// rejected, all deterministically on a FakeClock.
 func TestVerifyTempCredential(t *testing.T) {
 	now := time.Date(2026, 3, 4, 5, 6, 7, 0, time.UTC)
 	clock := config.NewFakeClock(now)
@@ -128,7 +128,7 @@ func TestVerifyTempCredential(t *testing.T) {
 
 // TestAuthGateVerifiesAssumedRoleCredential is the real-user end-to-end flow: a
 // registered AKIA key assumes a role over the SDK, then the returned ASIA
-// credential is used to make an authenticated request against the same server —
+// credential is used to make an authenticated request against the same server,
 // proving STS and the gate share the session store. A tampered secret is
 // rejected. Uses the real clock so the SDK's own signing time is fresh.
 func TestAuthGateVerifiesAssumedRoleCredential(t *testing.T) {
@@ -225,8 +225,8 @@ func TestAuthGateVerifiesAssumedRoleCredential(t *testing.T) {
 	}
 }
 
-// TestSTSCredentialsGatedByEnforceAuth proves the session store — and thus the
-// unique/verifiable credentials — appear only under EnforceAuth. With it off,
+// TestSTSCredentialsGatedByEnforceAuth proves the session store, and thus the
+// unique/verifiable credentials, appear only under EnforceAuth. With it off,
 // AssumeRole returns the fixed synthetic credential the emulator always has, so
 // the default behavior is unchanged.
 func TestSTSCredentialsGatedByEnforceAuth(t *testing.T) {

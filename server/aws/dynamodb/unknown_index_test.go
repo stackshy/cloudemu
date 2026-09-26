@@ -14,7 +14,7 @@ import (
 
 // TestQueryScanUnknownIndexIsValidationException covers that a Query or Scan
 // naming an index the table doesn't have answers ValidationException (a bad
-// request), not ResourceNotFoundException — while a missing table named with an
+// request), not ResourceNotFoundException, while a missing table named with an
 // IndexName is still ResourceNotFoundException.
 func TestQueryScanUnknownIndexIsValidationException(t *testing.T) {
 	client, _ := newSuiteDDBEnv(t)

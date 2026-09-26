@@ -7,35 +7,35 @@
 // Routing is by (HTTP method, path-template); method disambiguates same-path
 // operations. URL shapes follow what the SDK emits:
 //
-//	PUT    /agents/                                   — CreateAgent
-//	POST   /agents/                                   — ListAgents
-//	GET    /agents/{agentId}/                         — GetAgent
-//	PUT    /agents/{agentId}/                         — UpdateAgent
-//	DELETE /agents/{agentId}/                         — DeleteAgent
-//	POST   /agents/{agentId}/                         — PrepareAgent
-//	PUT    /agents/{agentId}/agentaliases/            — CreateAgentAlias
-//	PUT    /knowledgebases/                           — CreateKnowledgeBase
-//	POST   /knowledgebases/                           — ListKnowledgeBases
-//	GET    /knowledgebases/{id}                       — GetKnowledgeBase
-//	PUT    /knowledgebases/{id}                       — UpdateKnowledgeBase
-//	DELETE /knowledgebases/{id}                       — DeleteKnowledgeBase
-//	PUT    /knowledgebases/{kb}/datasources/          — CreateDataSource
-//	POST   /knowledgebases/{kb}/datasources/          — ListDataSources
-//	GET    /knowledgebases/{kb}/datasources/{ds}      — GetDataSource
-//	PUT    /knowledgebases/{kb}/datasources/{ds}      — UpdateDataSource
-//	DELETE /knowledgebases/{kb}/datasources/{ds}      — DeleteDataSource
-//	PUT    /knowledgebases/{kb}/datasources/{ds}/ingestionjobs/ — StartIngestionJob
-//	POST   /flows/                                    — CreateFlow
-//	GET    /flows/                                    — ListFlows
-//	GET    /flows/{id}/                               — GetFlow
-//	PUT    /flows/{id}/                               — UpdateFlow
-//	DELETE /flows/{id}/                               — DeleteFlow
-//	POST   /flows/{id}/                               — PrepareFlow
-//	POST   /prompts/                                  — CreatePrompt
-//	GET    /prompts/                                  — ListPrompts
-//	GET    /prompts/{id}/                             — GetPrompt
-//	PUT    /prompts/{id}/                             — UpdatePrompt
-//	DELETE /prompts/{id}/                             — DeletePrompt
+//	PUT    /agents/                                     CreateAgent
+//	POST   /agents/                                     ListAgents
+//	GET    /agents/{agentId}/                           GetAgent
+//	PUT    /agents/{agentId}/                           UpdateAgent
+//	DELETE /agents/{agentId}/                           DeleteAgent
+//	POST   /agents/{agentId}/                           PrepareAgent
+//	PUT    /agents/{agentId}/agentaliases/              CreateAgentAlias
+//	PUT    /knowledgebases/                             CreateKnowledgeBase
+//	POST   /knowledgebases/                             ListKnowledgeBases
+//	GET    /knowledgebases/{id}                         GetKnowledgeBase
+//	PUT    /knowledgebases/{id}                         UpdateKnowledgeBase
+//	DELETE /knowledgebases/{id}                         DeleteKnowledgeBase
+//	PUT    /knowledgebases/{kb}/datasources/            CreateDataSource
+//	POST   /knowledgebases/{kb}/datasources/            ListDataSources
+//	GET    /knowledgebases/{kb}/datasources/{ds}        GetDataSource
+//	PUT    /knowledgebases/{kb}/datasources/{ds}        UpdateDataSource
+//	DELETE /knowledgebases/{kb}/datasources/{ds}        DeleteDataSource
+//	PUT    /knowledgebases/{kb}/datasources/{ds}/ingestionjobs/   StartIngestionJob
+//	POST   /flows/                                      CreateFlow
+//	GET    /flows/                                      ListFlows
+//	GET    /flows/{id}/                                 GetFlow
+//	PUT    /flows/{id}/                                 UpdateFlow
+//	DELETE /flows/{id}/                                 DeleteFlow
+//	POST   /flows/{id}/                                 PrepareFlow
+//	POST   /prompts/                                    CreatePrompt
+//	GET    /prompts/                                    ListPrompts
+//	GET    /prompts/{id}/                               GetPrompt
+//	PUT    /prompts/{id}/                               UpdatePrompt
+//	DELETE /prompts/{id}/                               DeletePrompt
 package bedrockagent
 
 import (

@@ -170,7 +170,7 @@ func projectionBlock(projType string, nonKey []string) map[string]any {
 // conditionalWriter is the optional provider capability backing ATOMIC
 // conditional writes and transactions. Discovered by type assertion (like
 // throughputUpdater / pitrController) so it stays off the cross-cloud Database
-// interface — only the AWS mock implements it. Each method evaluates the
+// interface; only the AWS mock implements it. Each method evaluates the
 // ConditionExpression(s) and applies the mutation under a single hold of the
 // table lock, closing the check-then-act TOCTOU window a handler-level
 // pre-check would leave open. A failed condition surfaces as a
@@ -514,7 +514,7 @@ func keySchemaKeys(req *createTableRequest) (partitionKey, sortKey string) {
 
 // secondaryIndexJSON is the shared wire shape of a GSI or LSI on CreateTable.
 // ProvisionedThroughput is only meaningful for a GSI (an LSI always shares the
-// base table's throughput and never carries its own) — validateGSIThroughput
+// base table's throughput and never carries its own). validateGSIThroughput
 // is the only reader of this field.
 type secondaryIndexJSON struct {
 	IndexName string `json:"IndexName"`
@@ -535,7 +535,7 @@ type secondaryIndexJSON struct {
 // validateGSIThroughput enforces the same PROVISIONED/PAY_PER_REQUEST
 // throughput rule as validateProvisionedThroughput, but per GSI: on a
 // PROVISIONED table each GSI must declare its own valid (>=1) RCU/WCU, and on
-// a PAY_PER_REQUEST table no GSI may declare any. LSIs are never checked —
+// a PAY_PER_REQUEST table no GSI may declare any. LSIs are never checked, so
 // callers must not pass one here.
 func validateGSIThroughput(billingMode string, gsi *secondaryIndexJSON) error {
 	return validateProvisionedThroughput(billingMode,
@@ -580,7 +580,7 @@ func (h *Handler) applyCreateTags(r *http.Request, w http.ResponseWriter, table 
 
 // tableStatusReader is the optional provider capability that reports a table's
 // and its GSIs' live lifecycle status (CREATING/UPDATING/ACTIVE). Discovered by
-// type assertion so it stays off the cross-cloud Database interface — only the
+// type assertion so it stays off the cross-cloud Database interface; only the
 // AWS mock implements it. A provider without it (or with async settling
 // disabled) reports ACTIVE, which is why tableDescription still defaults every
 // status to ACTIVE and this overlay only ever narrows it to a transient value.
@@ -745,7 +745,7 @@ func gsiDescriptions(cfg *dbdriver.TableConfig, billing string) []map[string]any
 		// Real AWS attaches ProvisionedThroughput to every GSI, including on a
 		// PAY_PER_REQUEST table where the capacities read back as zero. Omitting it
 		// there makes the Terraform provider blank the whole index element (name
-		// included), producing a perpetual add/remove diff — so emit zeros.
+		// included), producing a perpetual add/remove diff, so emit zeros.
 		if billing == billingProvisioned {
 			desc["ProvisionedThroughput"] = map[string]any{
 				"ReadCapacityUnits":      cfg.ReadCapacityUnits,
@@ -780,7 +780,7 @@ func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Describe before deleting so the response carries the real ARN, key schema
-	// and attribute definitions a client reads back — not a name-only stub.
+	// and attribute definitions a client reads back, not a name-only stub.
 	full, err := h.db.DescribeTable(r.Context(), req.TableName)
 	if err != nil {
 		writeErr(w, err)
@@ -993,7 +993,7 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A GetItem against a table that does not exist is a ResourceNotFoundException
-	// in real DynamoDB — distinct from a missing item, which returns an empty
+	// in real DynamoDB, distinct from a missing item, which returns an empty
 	// (200) response. Resolve the table first so the two cases don't conflate.
 	if _, terr := h.db.DescribeTable(r.Context(), req.TableName); terr != nil {
 		writeErr(w, terr)
@@ -1025,8 +1025,8 @@ func (h *Handler) getItem(w http.ResponseWriter, r *http.Request) {
 
 // addConsumedCapacity adds a ConsumedCapacity block to resp when the request
 // asked for it (ReturnConsumedCapacity=TOTAL or INDEXES). The emulator charges a
-// nominal one capacity unit — enough for clients that assert the field is
-// present and non-nil, which real SDK cost-tracking code does.
+// nominal one capacity unit. That is enough for clients that assert the field
+// is present and non-nil, as real SDK cost-tracking code does.
 func addConsumedCapacity(resp map[string]any, returnConsumed, table string) {
 	if !strings.EqualFold(returnConsumed, "TOTAL") && !strings.EqualFold(returnConsumed, "INDEXES") {
 		return

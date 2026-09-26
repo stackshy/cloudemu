@@ -181,8 +181,8 @@ func (h *Handler) describeAlarmHistory(w http.ResponseWriter, r *http.Request, b
 }
 
 // filterAlarmHistory applies the DescribeAlarmHistory request filters to the
-// newest-first entries — HistoryItemType, the StartDate/EndDate window, then
-// ScanBy ordering — returning every match in wire order. Paging is applied
+// newest-first entries (HistoryItemType, the StartDate/EndDate window, then
+// ScanBy ordering) and returns every match in wire order. Paging is applied
 // separately by pageAlarmHistory so entries past the first page stay reachable.
 func filterAlarmHistory(entries []mondriver.AlarmHistoryEntry, in *describeAlarmHistoryInput) []alarmHistoryItemCBR {
 	start := timeOrZero(in.StartDate)

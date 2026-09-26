@@ -1,4 +1,4 @@
-// table_settings_test.go — real aws-sdk-go-v2 journeys covering the
+// table_settings_test.go: real aws-sdk-go-v2 journeys covering the
 // DeletionProtectionEnabled and TableClass round-trip that IaC clients read
 // back on every refresh, plus the UpdateTable mutation of both and the
 // deletion-protection guard on DeleteTable.

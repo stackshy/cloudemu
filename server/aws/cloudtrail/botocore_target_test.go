@@ -12,9 +12,9 @@ import (
 )
 
 // TestBotocoreQualifiedTargetDispatches covers that the fully-qualified
-// X-Amz-Target botocore (AWS CLI/boto3) sends —
-// "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.<Op>" — dispatches to
-// CloudTrail exactly like the aws-sdk-go-v2 short form, through the full AWS
+// X-Amz-Target botocore (AWS CLI/boto3) sends,
+// "com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.<Op>", dispatches to
+// CloudTrail like the aws-sdk-go-v2 short form, through the full AWS
 // server dispatcher.
 func TestBotocoreQualifiedTargetDispatches(t *testing.T) {
 	ts := httptest.NewServer(awsserver.New(awsserver.DriversFrom(cloudemu.NewAWS())))

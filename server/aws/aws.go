@@ -383,20 +383,20 @@ type Drivers struct {
 	// "AWSStepFunctions.") against the sfn driver.
 	SFN sfndriver.SFN
 	// STS serves the AWS STS query protocol (GetCallerIdentity, AssumeRole,
-	// GetSessionToken). It has no backing driver — identity is derived from
-	// AccountID and Region — so it is gated on this bool. Enable it so SDK code
+	// GetSessionToken). It has no backing driver; identity is derived from
+	// AccountID and Region, so it is gated on this bool. Enable it so SDK code
 	// paths that call sts:GetCallerIdentity or sts:AssumeRole on init succeed.
 	STS bool
 	// EMR serves the Amazon EMR JSON 1.1 protocol (X-Amz-Target prefix
 	// "ElasticMapReduce.") for the cluster/step lifecycle. Cluster state lives
-	// only in the wire server, so the handler owns its own in-memory store — no
-	// backing driver — and it is gated on this bool. AccountID/Region shape the
+	// only in the wire server, so the handler owns its own in-memory store (no
+	// backing driver) and it is gated on this bool. AccountID/Region shape the
 	// cluster ARNs; Clock drives the lifecycle timeline.
 	EMR bool
 	// SavingsPlans serves the AWS Savings Plans REST-JSON API (path-based
 	// operation dispatch, api 2019-06-28) for the plan purchase/describe
 	// lifecycle. Plan state lives only in the wire server, so the handler owns
-	// its own in-memory store — no backing driver — and it is gated on this
+	// its own in-memory store (no backing driver) and it is gated on this
 	// bool. AccountID shapes the (global) plan ARNs; Region tags plans; Clock
 	// drives the queued/active timeline. The handler's store also implements
 	// services/cost.Commitments, feeding purchased commitments to the billing
@@ -421,7 +421,7 @@ type Drivers struct {
 	// CostExplorer is the inventory the Cost Explorer JSON 1.1 handler prices
 	// (X-Amz-Target prefix "AWSInsightsIndexService."). A *resourcediscovery.Engine
 	// satisfies it; leave nil to omit the handler. The handler has no cost model
-	// of its own — it prices this inventory with services/cost + services/pricing.
+	// of its own; it prices this inventory with services/cost + services/pricing.
 	CostExplorer cost.Inventory
 	AccountID    string
 	Region       string
@@ -433,14 +433,14 @@ type Drivers struct {
 	// fails to resolve its key (InvalidClientTokenId).
 	//
 	// Long-term (AKIA) keys and STS temporary (ASIA) credentials are both
-	// verified — ASIA against the secret STS minted for that session (rejected
+	// verified: ASIA against the secret STS minted for that session (rejected
 	// if forged or expired).
 	//
 	// It also enforces IAM authorization for JSON-RPC services (the operation is
 	// bound to the X-Amz-Target header the dispatcher routes on); query and REST
 	// services are authenticated only, because their executed operation cannot be
 	// soundly bound to an IAM service before dispatch. Authorization applies only
-	// to principals that have IAM policies defined — a policy-less user/role and
+	// to principals that have IAM policies defined; a policy-less user/role and
 	// the account-admin/root and ASIA identities are left unrestricted.
 	EnforceAuth bool
 	// Clock drives SigV4 timestamp-expiry evaluation and STS temporary-credential
@@ -450,9 +450,9 @@ type Drivers struct {
 	// STSSessions is a shared STS temporary-credential session store. In a
 	// multi-region deployment the region mux constructs ONE store and injects it
 	// into every region's Drivers, so an ASIA credential minted via AssumeRole in
-	// one region verifies in another — real STS tokens are global. Leave nil (the
+	// one region verifies in another; real STS tokens are global. Leave nil (the
 	// default, e.g. NewFromProvider) and New creates a per-server store when
-	// EnforceAuth is on, exactly as before.
+	// EnforceAuth is on, as before.
 	STSSessions *stssrv.SessionStore
 	// ResourceExplorerLister overrides the inventory the Resource Explorer 2
 	// handler queries. The region mux sets it to a cross-region aggregator so
@@ -571,7 +571,7 @@ func NewFromProvider(p *awsprovider.Provider) *server.Server {
 //     same query-protocol endpoint for all of them.
 //   - Lambda matches on the /2015-03-31/functions path prefix and must
 //     register before S3 so its REST URLs aren't swallowed by the catch-all.
-//   - K8sAPI matches /k8s/{uid}/... — disjoint from every other AWS path;
+//   - K8sAPI matches /k8s/{uid}/..., disjoint from every other AWS path;
 //     registered before S3's REST fallback.
 //   - S3 is the REST fallback.
 //
@@ -606,7 +606,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	// Resource Groups Tagging API: X-Amz-Target prefix
-	// ResourceGroupsTaggingAPI_20170126.* — disjoint from DynamoDB/SQS.
+	// ResourceGroupsTaggingAPI_20170126.*, disjoint from DynamoDB/SQS.
 	if d.ResourceDiscovery != nil {
 		srv.Register(resourcegroupstaggingapi.New(d.ResourceDiscovery))
 	}
@@ -629,131 +629,131 @@ func New(d Drivers) *server.Server {
 		srv.Register(ecr.New(d.ECR))
 	}
 
-	// Secrets Manager matches the X-Amz-Target prefix "secretsmanager." —
+	// Secrets Manager matches the X-Amz-Target prefix "secretsmanager.",
 	// disjoint from DynamoDB, SQS, ECR, SageMaker, and the tagging API.
 	if d.SecretsManager != nil {
 		srv.Register(secretsmanagersrv.New(d.SecretsManager))
 	}
 
-	// KMS matches the X-Amz-Target prefix "TrentService." — disjoint from
+	// KMS matches the X-Amz-Target prefix "TrentService.", disjoint from
 	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
 	if d.KMS != nil {
 		srv.Register(kmssrv.New(d.KMS))
 	}
 
-	// ACM matches the X-Amz-Target prefix "CertificateManager." — disjoint
+	// ACM matches the X-Amz-Target prefix "CertificateManager.", disjoint
 	// from the other JSON 1.1 services.
 	if d.ACM != nil {
 		srv.Register(acmsrv.New(d.ACM))
 	}
 
-	// Step Functions matches the X-Amz-Target prefix "AWSStepFunctions." —
+	// Step Functions matches the X-Amz-Target prefix "AWSStepFunctions.",
 	// disjoint from every other JSON-RPC service, so registration order is free.
 	if d.SFN != nil {
 		srv.Register(sfnsrv.New(d.SFN))
 	}
 
-	// Kinesis matches the X-Amz-Target prefix "Kinesis_20131202." — disjoint
+	// Kinesis matches the X-Amz-Target prefix "Kinesis_20131202.", disjoint
 	// from the other JSON 1.1 services, so registration order is unconstrained.
 	if d.Kinesis != nil {
 		srv.Register(kinesissrv.New(d.Kinesis))
 	}
 
-	// CloudTrail matches the X-Amz-Target prefix "CloudTrail_20131101." —
+	// CloudTrail matches the X-Amz-Target prefix "CloudTrail_20131101.",
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.CloudTrail != nil {
 		srv.Register(cloudtrailsrv.New(d.CloudTrail))
 	}
 
-	// Glue matches the X-Amz-Target prefix "AWSGlue." — disjoint from the other
+	// Glue matches the X-Amz-Target prefix "AWSGlue.", disjoint from the other
 	// JSON 1.1 services, so registration order is unconstrained.
 	if d.Glue != nil {
 		srv.Register(gluesrv.New(d.Glue))
 	}
 
 	// AOSS (OpenSearch Serverless) matches the X-Amz-Target prefix
-	// "OpenSearchServerless." — disjoint from the other JSON-RPC services, so
+	// "OpenSearchServerless.", disjoint from the other JSON-RPC services, so
 	// registration order is unconstrained.
 	if d.AOSS != nil {
 		srv.Register(aosssrv.New(d.AOSS))
 	}
 
-	// Kendra matches the X-Amz-Target prefix "AWSKendraFrontendService." —
+	// Kendra matches the X-Amz-Target prefix "AWSKendraFrontendService.",
 	// disjoint from the other JSON 1.1 services, so registration order is
 	// unconstrained.
 	if d.Kendra != nil {
 		srv.Register(kendrasrv.New(d.Kendra))
 	}
 
-	// Athena matches the X-Amz-Target prefix "AmazonAthena." — disjoint from the
+	// Athena matches the X-Amz-Target prefix "AmazonAthena.", disjoint from the
 	// other JSON 1.1 services, so registration order is unconstrained.
 	if d.Athena != nil {
 		srv.Register(athenasrv.New(d.Athena))
 	}
 
-	// TimestreamWrite matches the X-Amz-Target prefix "Timestream_20181101." —
+	// TimestreamWrite matches the X-Amz-Target prefix "Timestream_20181101.",
 	// disjoint from the other JSON-RPC services, so registration order is
 	// unconstrained.
 	if d.TimestreamWrite != nil {
 		srv.Register(timestreamwritesrv.New(d.TimestreamWrite))
 	}
 
-	// HealthLake matches the X-Amz-Target prefix "HealthLake." — disjoint from
+	// HealthLake matches the X-Amz-Target prefix "HealthLake.", disjoint from
 	// the other JSON-RPC services, so registration order is unconstrained.
 	if d.HealthLake != nil {
 		srv.Register(healthlakesrv.New(d.HealthLake))
 	}
 
 	// GlobalAccelerator matches the X-Amz-Target prefix
-	// "GlobalAccelerator_V20180706." — disjoint from the other JSON-RPC targets.
+	// "GlobalAccelerator_V20180706.", disjoint from the other JSON-RPC targets.
 	if d.GlobalAccelerator != nil {
 		srv.Register(globalacceleratorsrv.New(d.GlobalAccelerator))
 	}
 
-	// AppRunner matches the X-Amz-Target prefix "AppRunner." — disjoint from the
+	// AppRunner matches the X-Amz-Target prefix "AppRunner.", disjoint from the
 	// other JSON-RPC services, so registration order is unconstrained.
 	if d.AppRunner != nil {
 		srv.Register(apprunnersrv.New(d.AppRunner))
 	}
 
-	// Transfer matches the X-Amz-Target prefix "TransferService." — disjoint from
+	// Transfer matches the X-Amz-Target prefix "TransferService.", disjoint from
 	// the other JSON 1.1 services, so registration order is unconstrained.
 	if d.Transfer != nil {
 		srv.Register(transfersrv.New(d.Transfer))
 	}
 
 	// Cognito matches the X-Amz-Target prefix
-	// "AWSCognitoIdentityProviderService." — disjoint from the other JSON 1.1
+	// "AWSCognitoIdentityProviderService.", disjoint from the other JSON 1.1
 	// services, so registration order is unconstrained.
 	if d.Cognito != nil {
 		srv.Register(cognitosrv.New(d.Cognito))
 	}
 
-	// AWS Config matches the X-Amz-Target prefix "StarlingDoveService." —
+	// AWS Config matches the X-Amz-Target prefix "StarlingDoveService.",
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.Config != nil {
 		srv.Register(configservicesrv.New(d.Config, d.AccountID, d.Region))
 	}
 
-	// WAFv2 matches the X-Amz-Target prefix "AWSWAF_20190729." — disjoint from
+	// WAFv2 matches the X-Amz-Target prefix "AWSWAF_20190729.", disjoint from
 	// the other JSON 1.1 services, so registration order is unconstrained.
 	if d.WAFv2 != nil {
 		srv.Register(wafv2srv.New(d.WAFv2))
 	}
 
-	// Cost Explorer matches the X-Amz-Target prefix "AWSInsightsIndexService." —
+	// Cost Explorer matches the X-Amz-Target prefix "AWSInsightsIndexService.",
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.CostExplorer != nil {
 		srv.Register(costexplorersrv.New(d.CostExplorer))
 	}
 
-	// Service Quotas matches the X-Amz-Target prefix "ServiceQuotasV20190624." —
+	// Service Quotas matches the X-Amz-Target prefix "ServiceQuotasV20190624.",
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.ServiceQuotas != nil {
 		srv.Register(servicequotassrv.New(d.ServiceQuotas, d.AccountID, d.Region))
 	}
 
-	// EMR matches the X-Amz-Target prefix "ElasticMapReduce." — disjoint from the
+	// EMR matches the X-Amz-Target prefix "ElasticMapReduce.", disjoint from the
 	// other JSON 1.1 services, so registration order is free. It carries its own
 	// in-memory cluster/step store (no backing driver).
 	if d.EMR {
@@ -793,8 +793,8 @@ func New(d Drivers) *server.Server {
 		srv.Register(savingsplanssrv.New(d.AccountID, d.Region, d.Clock))
 	}
 
-	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113."
-	// — disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, SSM,
+	// ECS matches the X-Amz-Target prefix "AmazonEC2ContainerServiceV20141113.",
+	// which is disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, SSM,
 	// EventBridge, and the tagging API, so registration order is unconstrained.
 	if d.ECS != nil {
 		srv.Register(ecssrv.New(d.ECS))
@@ -879,9 +879,9 @@ func New(d Drivers) *server.Server {
 	// CodeArtifact uses REST-JSON verb + path routing under the /v1/ prefix with
 	// the resource identity in the QUERY STRING (e.g. POST /v1/domain?domain=,
 	// GET /v1/repository?domain=&repository=, POST /v1/repositories). Its Matches
-	// claims the /v1/domain(s) and /v1/repository(ies) trees — distinct from the
+	// claims the /v1/domain(s) and /v1/repository(ies) trees, distinct from the
 	// other /v1/ claimants (MQ's /v1/brokers, AppSync's /v1/apis, Kafka's
-	// /v1/clusters) — and the shared /v1/tag, /v1/tags and /v1/untag roots only
+	// /v1/clusters), and the shared /v1/tag, /v1/tags and /v1/untag roots only
 	// when their ?resourceArn= names a CodeArtifact (:codeartifact:) ARN, so it
 	// must run before the S3 catch-all and shadows none of them. CodeArtifact's
 	// /v1/tags carries no path segment (it takes ?resourceArn=), unlike the
@@ -904,8 +904,8 @@ func New(d Drivers) *server.Server {
 	// FIS (Fault Injection Simulator) uses REST-JSON verb + path routing at the
 	// root (e.g. POST /experimentTemplates, GET /experimentTemplates/{id},
 	// POST /experiments, DELETE /experiments/{id}, POST /tags/{arn}). Its Matches
-	// claims the /experimentTemplates and /experiments trees — distinct from the
-	// other root claimants (Grafana's /workspaces) — and the shared /tags paths
+	// claims the /experimentTemplates and /experiments trees, distinct from the
+	// other root claimants (Grafana's /workspaces), and the shared /tags paths
 	// only when the ARN names a FIS (:fis:) resource, so it must run before the S3
 	// catch-all and is disjoint from the other /tags claimants, which scope their
 	// claims to their own ARN markers.
@@ -957,26 +957,26 @@ func New(d Drivers) *server.Server {
 		srv.Register(kafkasrv.New(d.Kafka))
 	}
 
-	// Route53Resolver matches the X-Amz-Target prefix "Route53Resolver." —
+	// Route53Resolver matches the X-Amz-Target prefix "Route53Resolver.",
 	// disjoint from the other JSON 1.1 services, so registration order is free.
 	if d.Route53Resolver != nil {
 		srv.Register(route53resolversrv.New(d.Route53Resolver))
 	}
 
-	// SSM Parameter Store matches the X-Amz-Target prefix "AmazonSSM." —
+	// SSM Parameter Store matches the X-Amz-Target prefix "AmazonSSM.",
 	// disjoint from DynamoDB, SQS, ECR, SageMaker, Secrets Manager, EventBridge,
 	// CloudWatch Logs, and the tagging API.
 	if d.SSM != nil {
 		srv.Register(ssmsrv.New(d.SSM))
 	}
 
-	// EventBridge matches the X-Amz-Target prefix "AWSEvents." — disjoint from
+	// EventBridge matches the X-Amz-Target prefix "AWSEvents.", disjoint from
 	// DynamoDB, SQS, ECR, SageMaker, Secrets Manager, and the tagging API.
 	if d.EventBridge != nil {
 		srv.Register(eventbridge.New(d.EventBridge, d.AccountID, d.Region))
 	}
 
-	// CloudWatch Logs matches the X-Amz-Target prefix "Logs_20140328." —
+	// CloudWatch Logs matches the X-Amz-Target prefix "Logs_20140328.",
 	// disjoint from DynamoDB, SQS, Secrets Manager, ECR, SageMaker, and the
 	// tagging API, so registration order relative to them is unconstrained.
 	if d.CloudWatchLogs != nil {
@@ -1056,7 +1056,7 @@ func New(d Drivers) *server.Server {
 
 	// Prefer the injected shared session store (multi-region: one store across all
 	// regions so ASIA credentials are global). Fall back to a per-server store
-	// when auth is on and none was injected — the single-server library path.
+	// when auth is on and none was injected: the single-server library path.
 	stsSessions := d.STSSessions
 	if stsSessions == nil && d.EnforceAuth {
 		stsSessions = stssrv.NewSessionStore(authClock)
@@ -1078,7 +1078,7 @@ func New(d Drivers) *server.Server {
 		// Clock/Region drive the EC2 handler's wire-only Reserved Instance surface
 		// (deterministic queued/active/retired timeline; region-tagged commitments
 		// and offering catalog). Its purchased reservations also implement
-		// cost.Commitments — union them with the Savings Plans source via
+		// cost.Commitments: union them with the Savings Plans source via
 		// cost.Combine for the CE reservation coverage/utilization consumer.
 		srv.Register(ec2.New(d.EC2, d.VPC, d.AccountID, ec2.WithClock(d.Clock), ec2.WithRegion(d.Region)))
 	}
@@ -1152,7 +1152,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	// bedrock-agent control plane: agents, knowledge bases, data sources, flows,
-	// prompts. REST/JSON rooted at /agents, /knowledgebases, /flows, /prompts —
+	// prompts. REST/JSON rooted at /agents, /knowledgebases, /flows, /prompts;
 	// registered before S3's permissive REST fallback.
 	if d.BedrockAgent != nil {
 		srv.Register(bedrockagent.New(d.BedrockAgent))
@@ -1166,7 +1166,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(sagemakersrv.New(d.SageMaker))
 	}
 
-	// Kubernetes data-plane API. Matches /k8s/{uid}/... — disjoint from
+	// Kubernetes data-plane API. Matches /k8s/{uid}/..., disjoint from
 	// every other AWS path. Registered before S3's REST fallback.
 	if d.K8sAPI != nil {
 		srv.Register(d.K8sAPI)
@@ -1185,7 +1185,7 @@ func New(d Drivers) *server.Server {
 		srv.Register(resourceexplorer2.New(rxLister, d.AccountID, d.Region))
 	}
 
-	// Route 53 is a REST/XML service rooted at /2013-04-01/hostedzone — its own
+	// Route 53 is a REST/XML service rooted at /2013-04-01/hostedzone, its own
 	// path space, disjoint from every other AWS handler. It must register
 	// before S3 because S3 is the permissive REST fallback that would otherwise
 	// claim those paths.
@@ -1194,7 +1194,7 @@ func New(d Drivers) *server.Server {
 	}
 
 	// CloudFront is a REST/XML service rooted at /2020-05-31/distribution and
-	// /2020-05-31/tagging — its own path space, disjoint from every other AWS
+	// /2020-05-31/tagging, its own path space, disjoint from every other AWS
 	// handler. It must register before S3 because S3 is the permissive REST
 	// fallback that would otherwise claim those paths.
 	if d.CloudFront != nil {
@@ -1215,7 +1215,7 @@ func New(d Drivers) *server.Server {
 	// Region awareness always runs; SigV4 authentication is opt-in. Both are
 	// pre-dispatch concerns, so they are composed into one hook: the region
 	// stamper first rewrites the request context with the caller's region (from
-	// the SigV4 credential scope), then the auth gate — when enabled — runs on
+	// the SigV4 credential scope), then the auth gate, when enabled, runs on
 	// that rewritten request. The region stamper does not depend on auth being
 	// on, and adds no request-path change beyond a context value.
 	var authGate func(http.ResponseWriter, *http.Request) (*http.Request, bool)

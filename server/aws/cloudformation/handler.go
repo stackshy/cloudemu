@@ -13,15 +13,15 @@
 //
 // Coverage (query protocol):
 //
-//	CreateStack              — API.CreateStack
-//	UpdateStack              — API.UpdateStack
-//	DeleteStack              — API.DeleteStack
-//	DescribeStacks           — API.DescribeStacks
-//	DescribeStackEvents      — API.DescribeStackEvents
-//	ListStacks               — API.ListStacks
-//	DescribeStackResources   — API.DescribeStackResources
-//	ListStackResources       — API.ListStackResources
-//	GetTemplate              — API.GetTemplate
+//	CreateStack                API.CreateStack
+//	UpdateStack                API.UpdateStack
+//	DeleteStack                API.DeleteStack
+//	DescribeStacks             API.DescribeStacks
+//	DescribeStackEvents        API.DescribeStackEvents
+//	ListStacks                 API.ListStacks
+//	DescribeStackResources     API.DescribeStackResources
+//	ListStackResources         API.ListStackResources
+//	GetTemplate                API.GetTemplate
 package cloudformation
 
 import (

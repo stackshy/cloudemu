@@ -341,7 +341,7 @@ func (h *Handler) applyBatchWrite(ctx context.Context, table string, req *batchW
 // batchGetItem handles BatchGetItem (gets across one or more tables). Each
 // per-table entry may carry a ProjectionExpression (with ExpressionAttributeNames
 // placeholders); when present, only the named attributes are returned for that
-// table's items — otherwise all attributes are returned.
+// table's items. Otherwise all attributes are returned.
 func (h *Handler) batchGetItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		RequestItems map[string]struct {
@@ -544,7 +544,7 @@ func (h *Handler) transactWriteItems(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// The whole transaction — every ConditionExpression check and every write —
+	// The whole transaction (every ConditionExpression check and every write)
 	// runs under a single hold of the provider's table lock, so it is atomic
 	// (all-or-nothing) and isolated from concurrent single-item writes. This
 	// replaces the former handler-level evaluate-then-apply, which dropped the

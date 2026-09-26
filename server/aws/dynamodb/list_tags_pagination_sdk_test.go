@@ -1,4 +1,4 @@
-// list_tags_pagination_sdk_test.go — real aws-sdk-go-v2 journeys for
+// list_tags_pagination_sdk_test.go: real aws-sdk-go-v2 journeys for
 // ListTagsOfResource pagination: a resource's tags (well under the 50-tag cap)
 // return in a single page with no NextToken, and a malformed NextToken is
 // rejected with a ValidationException.

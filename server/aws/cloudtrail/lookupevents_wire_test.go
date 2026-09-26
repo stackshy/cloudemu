@@ -19,8 +19,8 @@ import (
 
 // TestLookupEventsRecordsAPIActivity drives real SDK clients through the wire:
 // EC2 API calls are recorded as CloudTrail management events, and LookupEvents
-// returns them with EventName/EventSource/EventTime populated — the real-user
-// proof that the audit trail reflects activity instead of staying empty.
+// returns them with EventName/EventSource/EventTime populated. This proves the
+// audit trail reflects real activity instead of staying empty.
 func TestLookupEventsRecordsAPIActivity(t *testing.T) {
 	ctx := context.Background()
 

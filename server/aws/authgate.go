@@ -16,9 +16,9 @@ import (
 )
 
 // tempCredentialPrefix marks STS-issued temporary access keys (ASIA). Their
-// secret is minted by STS, which — when EnforceAuth is on — records it in the
-// session store so the signature made with it can be SigV4-verified here exactly
-// like a long-term AKIA key, and a forged ASIA credential (unknown/wrong secret)
+// secret is minted by STS, which, when EnforceAuth is on, records it in the
+// session store so the signature made with it can be SigV4-verified here like
+// a long-term AKIA key, and a forged ASIA credential (unknown/wrong secret)
 // is rejected.
 const tempCredentialPrefix = "ASIA"
 

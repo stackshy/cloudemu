@@ -14,7 +14,7 @@ import (
 // stream "a" gets the newest event, so DescribeLogStreams with
 // orderBy=LastEventTime + descending must return it first (name order would put
 // "a" first anyway, so "a" is deliberately given the newest event while "b"
-// sorts first by name — descending LastEventTime must still surface "a").
+// sorts first by name; descending LastEventTime must still surface "a").
 func TestSDKDescribeLogStreamsOrderByLastEventTime(t *testing.T) {
 	client := newLogsClient(t)
 	ctx := context.Background()

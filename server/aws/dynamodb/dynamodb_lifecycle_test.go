@@ -1,5 +1,4 @@
-// dynamodb_lifecycle_test.go — //
-// Real-user-journey  tests that drive the genuine aws-sdk-go-v2 DynamoDB
+// dynamodb_lifecycle_test.go holds real-user-journey tests that drive the genuine aws-sdk-go-v2 DynamoDB
 // client against the emulator's HTTP server (httptest). Assertions are made
 // on SDK-decoded responses and SDK-visible typed errors, not raw HTTP.
 //
@@ -77,9 +76,9 @@ func newSuiteDDBEnv(t *testing.T, opts ...emuconfig.Option) (*dynamodb.Client, *
 		// httptest servers under parallel CI load occasionally close the TCP
 		// connection while the SDK is still reading a (200) response body,
 		// surfacing as "use of closed network connection". Retry ONLY that
-		// transient transport error — the retryables list is replaced (not
+		// transient transport error. The retryables list is replaced (not
 		// extended), so API errors and the emulator's 500s are still observed on
-		// exactly one attempt, as the negative-path assertions expect.
+		// one attempt, as the negative-path assertions expect.
 		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
 			so.Retryables = []retry.IsErrorRetryable{retryClosedNetConn{}}
 		})
@@ -636,7 +635,7 @@ func TestDDBScanDefaultReturnsAll(t *testing.T) {
 
 // TestDDBScanPaginationContinuation: a real SDK user pages through
 // 30 items with Limit=10 by following LastEvaluatedKey / ExclusiveStartKey
-// until exhaustion — the standard DynamoDB pagination contract.
+// until exhaustion, the standard DynamoDB pagination contract.
 //
 // NOTE: the emulator's DynamoDB handler never emits LastEvaluatedKey and
 // ignores ExclusiveStartKey (driver-level PageTokens are not wired to the
@@ -910,7 +909,7 @@ func TestDDBTypedErrors(t *testing.T) {
 
 	t.Run("GetItem on missing table is ResourceNotFoundException", func(t *testing.T) {
 		// A GetItem against a table that does not exist is a
-		// ResourceNotFoundException in real DynamoDB — distinct from a missing
+		// ResourceNotFoundException in real DynamoDB, distinct from a missing
 		// item (which returns an empty 200). The two must not conflate.
 		_, err := client.GetItem(ctx, &dynamodb.GetItemInput{
 			TableName: aws.String("ghost"),
@@ -1272,8 +1271,8 @@ func TestDDBQueryFilterBeginsWith(t *testing.T) {
 		})
 	}
 
-	// The sort key (ts) is filtered with begins_with in the FilterExpression —
-	// distinct from the KeyConditionExpression, which only matches the
+	// The sort key (ts) is filtered with begins_with in the FilterExpression,
+	// separately from the KeyConditionExpression, which only matches the
 	// partition key here.
 	out, err := client.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String("logs"),
@@ -1830,7 +1829,7 @@ func TestDDBUpdateTableAddGSI(t *testing.T) {
 
 	// Real AWS rejects an AttributeDefinition not used by any key at CreateTable,
 	// so the GSI key attribute (email) is declared on the UpdateTable request
-	// that adds the index — not up front here.
+	// that adds the index, not up front here.
 	_, err := client.CreateTable(ctx, &dynamodb.CreateTableInput{
 		TableName:   aws.String("gsiadd"),
 		BillingMode: ddbtypes.BillingModePayPerRequest,
