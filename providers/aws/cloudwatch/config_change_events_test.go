@@ -132,3 +132,17 @@ func TestConfigChangeEventOnDelete(t *testing.T) {
 	assertError(t, m.DeleteAlarm(ctx, "cfg"), true)
 	assertEqual(t, 2, len(bus.ofType(eventAlarmConfigChange)))
 }
+
+// An alarm with no TreatMissingData reports the AWS default in its event.
+func TestConfigChangeEventDefaultsTreatMissingData(t *testing.T) {
+	m, bus, _ := newEventMock()
+
+	cfg := lazyAlarm("dflt", 300, "")
+	requireNoError(t, m.CreateAlarm(context.Background(), cfg))
+
+	events := bus.ofType(eventAlarmConfigChange)
+	assertEqual(t, 1, len(events))
+
+	body := requireConfigEvent(t, events[0], "dflt", "create", stateInsufficientData)
+	assertEqual(t, "missing", body["treatMissingData"])
+}

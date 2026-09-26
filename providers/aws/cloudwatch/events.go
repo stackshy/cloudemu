@@ -85,7 +85,7 @@ type alarmConfigBody struct {
 	EvaluationPeriods       int                `json:"evaluationPeriods"`
 	Threshold               float64            `json:"threshold"`
 	ComparisonOperator      string             `json:"comparisonOperator"`
-	TreatMissingData        string             `json:"treatMissingData,omitempty"`
+	TreatMissingData        string             `json:"treatMissingData"`
 	Metrics                 []alarmEventMetric `json:"metrics"`
 	AlarmName               string             `json:"alarmName"`
 	Description             string             `json:"description,omitempty"`
@@ -158,6 +158,10 @@ func stateEventLocked(a *alarmData, prev alarmEventState) *alarmStateEvent {
 	}
 }
 
+// treatMissingDefault is the TreatMissingData value AWS reports when an alarm
+// sets none.
+const treatMissingDefault = "missing"
+
 // configBodyLocked renders an alarm's configuration. The caller holds alarmMu.
 func configBodyLocked(a *alarmData) alarmConfigBody {
 	updated := a.ConfigUpdatedAt
@@ -165,11 +169,16 @@ func configBodyLocked(a *alarmData) alarmConfigBody {
 		updated = a.StateUpdatedTimestamp
 	}
 
+	treatMissing := a.TreatMissingData
+	if treatMissing == "" {
+		treatMissing = treatMissingDefault
+	}
+
 	return alarmConfigBody{
 		EvaluationPeriods:       a.EvaluationPeriods,
 		Threshold:               a.Threshold,
 		ComparisonOperator:      a.ComparisonOperator,
-		TreatMissingData:        a.TreatMissingData,
+		TreatMissingData:        treatMissing,
 		Metrics:                 eventMetricsLocked(a),
 		AlarmName:               a.Name,
 		Description:             a.AlarmDescription,
