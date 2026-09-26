@@ -84,6 +84,11 @@ func TestAWSCloudFormationCompat(t *testing.T) {
 		return err
 	})
 
+	sess.Op(svc, "ValidateTemplate", func() error {
+		_, err := client.ValidateTemplate(ctx, &awscfn.ValidateTemplateInput{TemplateBody: aws.String(compatTemplate)})
+		return err
+	})
+
 	sess.Op(svc, "UpdateStack", func() error {
 		_, err := client.UpdateStack(ctx, &awscfn.UpdateStackInput{
 			StackName:    aws.String(stack),

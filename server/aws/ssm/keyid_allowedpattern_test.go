@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
+	awskms "github.com/aws/aws-sdk-go-v2/service/kms"
 	awsssm "github.com/aws/aws-sdk-go-v2/service/ssm"
 	ssmtypes "github.com/aws/aws-sdk-go-v2/service/ssm/types"
 	"github.com/aws/smithy-go"
@@ -35,8 +36,20 @@ func describeOne(t *testing.T, client *awsssm.Client, name string) ssmtypes.Para
 // surfaced on DescribeParameters ParameterMetadata (defaulting to alias/aws/ssm
 // when omitted), and NOT on the GetParameter Parameter shape, matching AWS.
 func TestSDKSecureStringKeyIDRoundTrip(t *testing.T) {
-	client := newSSMClient(t)
+	client, kmsClient := newSSMAndKMSClients(t)
 	ctx := context.Background()
+
+	// An explicit KeyId must name a real key, so create alias/my-key first.
+	key, err := kmsClient.CreateKey(ctx, &awskms.CreateKeyInput{})
+	if err != nil {
+		t.Fatalf("CreateKey: %v", err)
+	}
+
+	if _, err := kmsClient.CreateAlias(ctx, &awskms.CreateAliasInput{
+		AliasName: aws.String("alias/my-key"), TargetKeyId: key.KeyMetadata.KeyId,
+	}); err != nil {
+		t.Fatalf("CreateAlias: %v", err)
+	}
 
 	if _, err := client.PutParameter(ctx, &awsssm.PutParameterInput{
 		Name:  aws.String("/app/secure-default"),
@@ -65,7 +78,7 @@ func TestSDKSecureStringKeyIDRoundTrip(t *testing.T) {
 
 	// GetParameter's Parameter shape has no KeyId field, so nothing to assert
 	// there; a String parameter carrying a KeyId is rejected instead.
-	_, err := client.PutParameter(ctx, &awsssm.PutParameterInput{
+	_, err = client.PutParameter(ctx, &awsssm.PutParameterInput{
 		Name:  aws.String("/app/plain"),
 		Value: aws.String("v"),
 		Type:  ssmtypes.ParameterTypeString,

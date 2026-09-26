@@ -41,6 +41,8 @@ const (
 type Parameter struct {
 	Key   string
 	Value string
+	// NoEcho marks a value that stack reads show masked.
+	NoEcho bool
 }
 
 // Output is a resolved stack output.
@@ -107,10 +109,12 @@ type StackSummary struct {
 	DeletionTime        time.Time
 }
 
-// CreateStackInput is the request to create a stack.
+// CreateStackInput is the request to create a stack. Exactly one of
+// TemplateBody and TemplateURL is set.
 type CreateStackInput struct {
 	StackName    string
 	TemplateBody string
+	TemplateURL  string
 	Parameters   []Parameter
 	Tags         map[string]string
 	Capabilities []string
@@ -120,9 +124,35 @@ type CreateStackInput struct {
 type UpdateStackInput struct {
 	StackName    string
 	TemplateBody string
+	TemplateURL  string
 	Parameters   []Parameter
 	Tags         map[string]string
 	Capabilities []string
+}
+
+// ValidateTemplateInput is the request to validate a template. TemplateBody
+// wins when both fields are set.
+type ValidateTemplateInput struct {
+	TemplateBody string
+	TemplateURL  string
+}
+
+// TemplateParameter is one parameter declaration as ValidateTemplate reports it.
+type TemplateParameter struct {
+	Key          string
+	DefaultValue string
+	HasDefault   bool
+	NoEcho       bool
+	Description  string
+}
+
+// TemplateSummary is the ValidateTemplate result.
+type TemplateSummary struct {
+	Description        string
+	Parameters         []TemplateParameter
+	Capabilities       []string
+	CapabilitiesReason string
+	DeclaredTransforms []string
 }
 
 // API is the CloudFormation control surface a wire handler drives. The AWS
@@ -138,4 +168,5 @@ type API interface {
 	DescribeStackResources(ctx context.Context, stackName string) ([]StackResource, error)
 	ListStackResources(ctx context.Context, stackName string) ([]StackResource, error)
 	GetTemplate(ctx context.Context, stackName string) (string, error)
+	ValidateTemplate(ctx context.Context, in *ValidateTemplateInput) (*TemplateSummary, error)
 }

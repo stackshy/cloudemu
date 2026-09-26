@@ -3,72 +3,120 @@ package cloudformation
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
 // Template is the parsed CloudFormation document. Only the sections the
-// orchestrator acts on are modeled; unknown top-level keys are ignored.
+// orchestrator acts on are modeled. Scalar fields such as Description accept any
+// scalar and hold its string form, the way CloudFormation reads them.
 type Template struct {
-	FormatVersion string                  `json:"AWSTemplateFormatVersion"`
-	Description   string                  `json:"Description"`
-	Parameters    map[string]ParameterDef `json:"Parameters"`
-	Resources     map[string]ResourceDef  `json:"Resources"`
-	Outputs       map[string]OutputDef    `json:"Outputs"`
+	FormatVersion string
+	Description   string
+	Parameters    map[string]ParameterDef
+	Resources     map[string]ResourceDef
+	Outputs       map[string]OutputDef
+	Transform     any
 }
 
 // ParameterDef is a template parameter declaration.
 type ParameterDef struct {
-	Type          string `json:"Type"`
-	Default       any    `json:"Default"`
-	Description   string `json:"Description"`
-	AllowedValues []any  `json:"AllowedValues"`
-	NoEcho        bool   `json:"NoEcho"`
+	Type          string
+	Default       any
+	Description   string
+	AllowedValues []any
+	NoEcho        bool
 }
 
 // ResourceDef is one resource declaration keyed by logical ID in the template.
 type ResourceDef struct {
-	Type       string         `json:"Type"`
-	Properties map[string]any `json:"Properties"`
-	DependsOn  any            `json:"DependsOn"`
+	Type       string
+	Properties map[string]any
+	DependsOn  any
 }
 
 // OutputDef is one output declaration.
 type OutputDef struct {
-	Value       any    `json:"Value"`
-	Description string `json:"Description"`
-	Export      *struct {
-		Name any `json:"Name"`
-	} `json:"Export"`
+	Value       any
+	Description string
+	Export      *ExportDef
 }
 
-// ParseTemplate parses a CloudFormation template body. Only JSON is supported;
-// YAML (which additionally needs the short-form intrinsic tags !Ref/!GetAtt) is
-// deferred. An empty body or one with no Resources section is rejected the way
-// CloudFormation rejects a template with no resources.
+// ExportDef is an output's Export block.
+type ExportDef struct {
+	Name any
+}
+
+// ParseTemplate parses a CloudFormation template body in JSON or YAML. A body
+// whose first non-space character is "{" is JSON. Anything else is YAML, where
+// the short-form tags such as !Ref and !GetAtt expand to their long forms.
+// Numbers decode as json.Number in both formats, so the trees compare equal.
 func ParseTemplate(body string) (*Template, error) {
-	if body == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "template body is empty")
+	if strings.TrimSpace(body) == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, MsgNoTemplate)
 	}
 
-	var t Template
-	if err := json.Unmarshal([]byte(body), &t); err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "template format error: %v", err)
+	tree, err := decodeTemplate(body)
+	if err != nil {
+		return nil, err
+	}
+
+	top, ok := tree.(map[string]any)
+	if !ok {
+		return nil, cerrors.New(cerrors.InvalidArgument, formatErrPrefix+"template must be an object")
+	}
+
+	if sectionErr := checkSections(top); sectionErr != nil {
+		return nil, sectionErr
+	}
+
+	t, err := buildTemplate(top)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(t.Resources) == 0 {
-		return nil, cerrors.New(cerrors.InvalidArgument,
-			"template format error: at least one Resources member must be defined")
+		return nil, cerrors.New(cerrors.InvalidArgument, formatErrPrefix+"At least one Resources member must be defined.")
 	}
 
-	for id, r := range t.Resources {
-		if r.Type == "" {
-			return nil, cerrors.Newf(cerrors.InvalidArgument,
-				"template format error: resource %q has no Type", id)
+	return t, nil
+}
+
+// templateSections are the top-level keys CloudFormation accepts.
+var templateSections = map[string]bool{ //nolint:gochecknoglobals // static lookup table
+	"AWSTemplateFormatVersion": true, "Description": true, "Metadata": true,
+	"Parameters": true, "Rules": true, "Mappings": true, "Conditions": true,
+	"Transform": true, "Resources": true, "Outputs": true, "Hooks": true,
+}
+
+func checkSections(top map[string]any) error {
+	var bad []string
+
+	for _, k := range sortedKeys(top) {
+		if !templateSections[k] {
+			bad = append(bad, k)
 		}
 	}
 
-	return &t, nil
+	if len(bad) > 0 {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			formatErrPrefix+"Invalid template property or properties [%s]", strings.Join(bad, ", "))
+	}
+
+	return nil
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	return keys
 }
 
 // DependsOnList normalizes a resource's DependsOn (a string or a list of
@@ -113,14 +161,14 @@ func scalarString(v any) string {
 		return t
 	case bool:
 		if t {
-			return "true"
+			return wordTrue
 		}
 
-		return "false"
+		return wordFalse
 	case json.Number:
 		return t.String()
 	case float64:
-		// JSON numbers decode as float64; render integers without a trailing ".0".
+		// Render integers without a trailing ".0".
 		if t == float64(int64(t)) {
 			return fmt.Sprintf("%d", int64(t))
 		}

@@ -13,13 +13,15 @@
 // EKS uses REST/JSON (not the AWS query protocol). URL paths follow the
 // shape the SDK emits, e.g. POST /clusters, POST
 // /clusters/{name}/node-groups, POST /clusters/{name}/addons/{addon}/update.
-// The handler's Matches predicate is rooted at /clusters so it does not
-// shadow the catch-all S3 handler that may be registered alongside.
+// The handler's Matches predicate is rooted at /clusters, /tags/ and a few
+// exact top-level GET paths so it does not shadow the catch-all S3 handler
+// that may be registered alongside.
 package eks
 
 import (
 	"encoding/json"
 	"net/http"
+	"net/url"
 	"strings"
 
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
@@ -34,6 +36,11 @@ const (
 	// tagsPrefix is the EKS tagging API root: /tags/{resourceArn}.
 	tagsPrefix = "/tags/"
 
+	// Top-level GET paths outside /clusters.
+	pathAccessPolicies = "/access-policies"
+	pathAddonVersions  = "/addons/supported-versions"
+	pathAddonSchemas   = "/addons/configuration-schemas"
+
 	// segNodeGroups, segFargateProfiles, segAddons are the EKS sub-resource
 	// path segments. Real SDK kebab-cases them (note "node-groups" with a
 	// hyphen; the JSON body field is camelCase "nodegroupName").
@@ -44,6 +51,8 @@ const (
 	segUpdateConfig    = "update-config"
 	segUpdateVersion   = "update-version"
 	segUpdate          = "update"
+	segAccessEntries   = "access-entries"
+	segAccessPolicies  = "access-policies"
 )
 
 // Path-segment counts the dispatcher branches on. Naming each one keeps the
@@ -53,6 +62,7 @@ const (
 	pathSegsClusterSubresource = 2 // /clusters/{name}/{action}
 	pathSegsChildResource      = 3 // /clusters/{name}/{kind}/{child}
 	pathSegsChildAction        = 4 // /clusters/{name}/{kind}/{child}/{action}
+	pathSegsPolicyAssociation  = 5 // /clusters/{name}/access-entries/{arn}/access-policies/{policyArn}
 )
 
 // Handler serves AWS EKS REST/JSON requests against an EKS driver.
@@ -65,28 +75,53 @@ func New(eks eksdriver.EKS) *Handler {
 	return &Handler{eks: eks}
 }
 
-// Matches claims any request rooted at /clusters or exactly /clusters. The
-// predicate is intentionally narrow: it rejects anything outside that path
-// so the catch-all S3 handler can serve unrelated REST URLs without
-// interference.
+// Matches claims requests rooted at /clusters or /tags/, plus the exact
+// GET paths for ListAccessPolicies, DescribeAddonVersions and
+// DescribeAddonConfiguration. It rejects anything else so the catch-all S3
+// handler can serve unrelated REST URLs without interference.
 func (*Handler) Matches(r *http.Request) bool {
-	if r.URL.Path == pathPrefix {
+	p := r.URL.Path
+
+	switch p {
+	case pathPrefix:
 		return true
+	case pathAccessPolicies, pathAddonVersions, pathAddonSchemas:
+		return r.Method == http.MethodGet
 	}
 
-	return strings.HasPrefix(r.URL.Path, pathPrefix+"/") ||
-		strings.HasPrefix(r.URL.Path, tagsPrefix)
+	return strings.HasPrefix(p, pathPrefix+"/") || strings.HasPrefix(p, tagsPrefix)
 }
 
 // ServeHTTP routes EKS requests by URL shape.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	switch r.URL.Path {
+	case pathAccessPolicies:
+		h.listAccessPolicies(w, r)
+		return
+	case pathAddonVersions:
+		h.describeAddonVersions(w, r)
+		return
+	case pathAddonSchemas:
+		h.describeAddonConfiguration(w, r)
+		return
+	}
+
 	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
 		h.serveTags(w, r, strings.TrimPrefix(r.URL.Path, tagsPrefix))
 		return
 	}
 
-	parts := splitPath(r.URL.Path)
+	parts, ok := splitPath(r.URL.EscapedPath())
+	if !ok {
+		writeError(w, http.StatusBadRequest, "InvalidParameterException", "malformed path: "+r.URL.Path)
+		return
+	}
 
+	h.serveClusterPath(w, r, parts)
+}
+
+// serveClusterPath dispatches /clusters/... by segment count.
+func (h *Handler) serveClusterPath(w http.ResponseWriter, r *http.Request, parts []string) {
 	switch len(parts) {
 	case 0:
 		// /clusters: collection.
@@ -107,6 +142,14 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case pathSegsChildAction:
 		// /clusters/{name}/{kind}/{child}/{action}: child action.
 		h.serveChildAction(w, r, parts[0], parts[1], parts[2], parts[3])
+
+	case pathSegsPolicyAssociation:
+		if parts[1] != segAccessEntries || parts[3] != segAccessPolicies {
+			writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported path: "+r.URL.Path)
+			return
+		}
+
+		h.disassociateAccessPolicy(w, r, parts[0], parts[2], parts[4])
 
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException", "unsupported path: "+r.URL.Path)
@@ -167,6 +210,9 @@ func (h *Handler) serveClusterSubresource(w http.ResponseWriter, r *http.Request
 	case segAddons:
 		h.serveAddonsCollection(w, r, name)
 
+	case segAccessEntries:
+		h.serveAccessEntriesCollection(w, r, name)
+
 	default:
 		writeError(w, http.StatusNotFound, "ResourceNotFoundException",
 			"unknown cluster sub-resource: "+action)
@@ -214,6 +260,8 @@ func (h *Handler) serveChildResource(w http.ResponseWriter, r *http.Request, clu
 		h.serveFargateProfile(w, r, clusterName, child)
 	case segAddons:
 		h.serveAddon(w, r, clusterName, child)
+	case segAccessEntries:
+		h.serveAccessEntry(w, r, clusterName, child)
 	case segUpdates:
 		// /clusters/{name}/updates/{updateId}: DescribeUpdate.
 		if r.Method != http.MethodGet {
@@ -263,6 +311,12 @@ func (h *Handler) serveAddon(w http.ResponseWriter, r *http.Request, clusterName
 }
 
 func (h *Handler) serveChildAction(w http.ResponseWriter, r *http.Request, clusterName, kind, child, action string) {
+	if kind == segAccessEntries && action == segAccessPolicies {
+		h.serveEntryPolicies(w, r, clusterName, child)
+
+		return
+	}
+
 	if r.Method != http.MethodPost {
 		methodNotAllowed(w)
 
@@ -282,17 +336,29 @@ func (h *Handler) serveChildAction(w http.ResponseWriter, r *http.Request, clust
 	}
 }
 
-// splitPath strips the /clusters prefix and splits the remainder. The
-// returned slice is empty for the bare /clusters URL.
-func splitPath(p string) []string {
-	rest := strings.TrimPrefix(p, pathPrefix)
+// splitPath strips the /clusters prefix from an escaped path and splits the
+// rest. Each segment is percent-decoded after the split, so a principal ARN
+// sent as role%2Fname stays one segment. The slice is empty for the bare
+// /clusters URL. ok is false when a segment has a bad escape.
+func splitPath(escaped string) (parts []string, ok bool) {
+	rest := strings.TrimPrefix(escaped, pathPrefix)
 	rest = strings.TrimPrefix(rest, "/")
 
 	if rest == "" {
-		return nil
+		return nil, true
 	}
 
-	return strings.Split(rest, "/")
+	parts = strings.Split(rest, "/")
+	for i, seg := range parts {
+		dec, err := url.PathUnescape(seg)
+		if err != nil {
+			return nil, false
+		}
+
+		parts[i] = dec
+	}
+
+	return parts, true
 }
 
 func methodNotAllowed(w http.ResponseWriter) {

@@ -13,6 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/providers/aws/kmscrypto"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
@@ -175,9 +176,9 @@ func (m *Mock) CreateSecret(ctx context.Context, cfg driver.SecretConfig, value 
 
 	// A customer-supplied KmsKeyId must reference a key that exists; real Secrets
 	// Manager rejects an unknown key with InvalidParameterException rather than
-	// storing a dangling reference. The default aws/secretsmanager key (used when
-	// KmsKeyId is empty) always exists, so only an explicit reference is checked.
-	if cfg.KMSKeyID != "" && m.kmsCrypto != nil {
+	// storing a dangling reference. AWS-managed aliases such as
+	// alias/aws/secretsmanager always exist, so they skip the check.
+	if _, managed := kmscrypto.ReservedAlias(cfg.KMSKeyID); cfg.KMSKeyID != "" && !managed && m.kmsCrypto != nil {
 		if _, err := m.kmsCrypto.DescribeKey(ctx, cfg.KMSKeyID); err != nil {
 			return nil, errors.Newf(errors.InvalidArgument,
 				"KMS key %q does not exist or is not accessible", cfg.KMSKeyID)
