@@ -274,7 +274,7 @@ func TestCreateRouteMissingTargetReturns400(t *testing.T) {
 }
 
 func TestParseIPPermissionsNone(t *testing.T) {
-	if got := parseIPPermissions(url.Values{}); got != nil {
+	if got, _ := parseIPPermissions(url.Values{}); got != nil {
 		t.Errorf("empty form should give nil, got %v", got)
 	}
 }
@@ -287,7 +287,7 @@ func TestParseIPPermissionsSingleCIDR(t *testing.T) {
 		"IpPermissions.1.IpRanges.1.CidrIp": {"10.0.0.0/16"},
 	}
 
-	got := parseIPPermissions(form)
+	got, _ := parseIPPermissions(form)
 	if len(got) != 1 {
 		t.Fatalf("len=%d want 1: %+v", len(got), got)
 	}
@@ -308,7 +308,7 @@ func TestParseIPPermissionsMultipleCIDRs(t *testing.T) {
 		"IpPermissions.1.IpRanges.2.CidrIp": {"192.168.0.0/16"},
 	}
 
-	got := parseIPPermissions(form)
+	got, _ := parseIPPermissions(form)
 	if len(got) != 2 {
 		t.Fatalf("expected 2 flattened rules, got %d: %+v", len(got), got)
 	}
@@ -320,7 +320,7 @@ func TestParseIPPermissionsWithoutCIDRStillEmits(t *testing.T) {
 		"IpPermissions.1.IpProtocol": {"icmp"},
 	}
 
-	got := parseIPPermissions(form)
+	got, _ := parseIPPermissions(form)
 	if len(got) != 1 {
 		t.Fatalf("expected 1 rule with empty CIDR, got %v", got)
 	}

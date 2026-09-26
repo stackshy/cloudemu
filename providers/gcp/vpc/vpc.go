@@ -302,6 +302,10 @@ func describeResources[T any, R any](store *memstore.Store[T], ids []string, toI
 
 // AddIngressRule adds an ingress rule to the specified firewall rule group.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	if err := driver.ValidateSecurityRule(&rule); err != nil {
+		return err
+	}
+
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", groupID)
@@ -314,6 +318,10 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 
 // AddEgressRule adds an egress rule to the specified firewall rule group.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	if err := driver.ValidateSecurityRule(&rule); err != nil {
+		return err
+	}
+
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "firewall rule %q not found", groupID)

@@ -3,9 +3,11 @@ package ec2
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -480,6 +482,7 @@ func (h *Handler) revokeSecurityGroupIngress(w http.ResponseWriter, r *http.Requ
 	h.applyRules(w, r, ruleApply{
 		apply:        tolerateMissingRule(h.vpc.RemoveIngressRule),
 		responseName: "RevokeSecurityGroupIngressResponse",
+		side:         func(sg *netdriver.SecurityGroupInfo) []netdriver.SecurityRule { return sg.IngressRules },
 	})
 }
 
@@ -487,6 +490,7 @@ func (h *Handler) revokeSecurityGroupEgress(w http.ResponseWriter, r *http.Reque
 	h.applyRules(w, r, ruleApply{
 		apply:        tolerateMissingRule(h.vpc.RemoveEgressRule),
 		responseName: "RevokeSecurityGroupEgressResponse",
+		side:         func(sg *netdriver.SecurityGroupInfo) []netdriver.SecurityRule { return sg.EgressRules },
 	})
 }
 
@@ -519,6 +523,9 @@ type ruleApply struct {
 	// egress marks the Authorize path as egress so the returned
 	// SecurityGroupRule items carry isEgress=true.
 	egress bool
+	// side is set only for Revoke. It selects the rule set that
+	// SecurityGroupRuleId.N values are looked up in.
+	side func(*netdriver.SecurityGroupInfo) []netdriver.SecurityRule
 }
 
 // applyRules is the shared Authorize/Revoke path. The driver takes one rule
@@ -531,7 +538,20 @@ func (h *Handler) applyRules(w http.ResponseWriter, r *http.Request, spec ruleAp
 		return
 	}
 
-	rules := parseIPPermissions(r.Form)
+	rules, err := parseIPPermissions(r.Form)
+	if err == nil && len(rules) == 0 && spec.side != nil {
+		rules, err = h.rulesByID(r.Context(), groupID, awsquery.ListStrings(r.Form, "SecurityGroupRuleId"), spec.side)
+	}
+
+	if err == nil {
+		err = validateRules(rules)
+	}
+
+	if err != nil {
+		writeSGRuleErr(w, err)
+		return
+	}
+
 	if len(rules) == 0 {
 		writeSGErr(w, errMissingRule())
 		return
@@ -564,6 +584,52 @@ func (h *Handler) applyRules(w http.ResponseWriter, r *http.Request, spec ruleAp
 	}
 
 	writeSimpleSGResponse(w, spec.responseName)
+}
+
+// validateRules checks every rule before any is stored, so a bad rule
+// rejects the whole request the way EC2 does.
+func validateRules(rules []netdriver.SecurityRule) error {
+	for i := range rules {
+		if err := netdriver.ValidateAWSSecurityRule(&rules[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// rulesByID resolves Revoke's SecurityGroupRuleId.N values to the stored
+// rules on the selected side. An unknown id is a NotFound naming the rule.
+func (h *Handler) rulesByID(
+	ctx context.Context, groupID string, ids []string,
+	side func(*netdriver.SecurityGroupInfo) []netdriver.SecurityRule,
+) ([]netdriver.SecurityRule, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+
+	sgs, err := h.vpc.DescribeSecurityGroups(ctx, []string{groupID})
+	if err != nil {
+		return nil, err
+	}
+
+	if len(sgs) == 0 {
+		return nil, cerrors.Newf(cerrors.NotFound, "security group %q not found", groupID)
+	}
+
+	current := side(&sgs[0])
+	out := make([]netdriver.SecurityRule, 0, len(ids))
+
+	for _, id := range ids {
+		idx := slices.IndexFunc(current, func(r netdriver.SecurityRule) bool { return r.RuleID == id })
+		if idx < 0 {
+			return nil, cerrors.Newf(cerrors.NotFound, "security group rule %q not found", id)
+		}
+
+		out = append(out, current[idx])
+	}
+
+	return out, nil
 }
 
 // applyRuleTagSpecs assigns the TagSpecifications(security-group-rule) tags to
@@ -688,31 +754,127 @@ func (h *Handler) hasDuplicateRule(
 //
 // into a flat []SecurityRule where each (permission, cidr) pair is one rule.
 // This matches how the CloudEmu driver represents rules internally.
-func parseIPPermissions(form url.Values) []netdriver.SecurityRule {
+func parseIPPermissions(form url.Values) ([]netdriver.SecurityRule, error) {
 	const prefix = "IpPermissions"
 
 	indices := awsquery.CollectIndices(form, prefix)
 	if len(indices) == 0 {
-		return nil
+		return legacyPermission(form)
 	}
 
 	var rules []netdriver.SecurityRule
 
 	for _, idx := range indices {
 		base := prefix + "." + strconv.Itoa(idx)
-		rules = append(rules, rulesForPermission(form, base)...)
+
+		perm, err := rulesForPermission(form, base)
+		if err != nil {
+			return nil, err
+		}
+
+		rules = append(rules, perm...)
 	}
 
-	return rules
+	return rules, nil
+}
+
+// legacyPermission reads the older top-level form (IpProtocol, FromPort,
+// ToPort, CidrIp) that EC2 still accepts when IpPermissions is absent. EC2
+// requires CidrIp in this form, so a missing one is MissingParameter. The
+// SourceSecurityGroupName and SourceSecurityGroupOwnerId variant is not
+// handled. It only applies to default VPC groups looked up by name.
+func legacyPermission(form url.Values) ([]netdriver.SecurityRule, error) {
+	proto := form.Get("IpProtocol")
+	if proto == "" {
+		return nil, nil
+	}
+
+	cidr := form.Get("CidrIp")
+	if cidr == "" {
+		return nil, &missingParamError{name: "cidrIp"}
+	}
+
+	from, to, err := parsePortRange(form, "FromPort", "ToPort", proto)
+	if err != nil {
+		return nil, err
+	}
+
+	return []netdriver.SecurityRule{{
+		Protocol: proto, FromPort: from, ToPort: to,
+		CIDR: cidr, RuleID: idgen.GenerateID("sgr-"),
+	}}, nil
+}
+
+// missingParamError is a required request field that was left out. It maps
+// to the MissingParameter wire code.
+type missingParamError struct {
+	name string
+}
+
+func (e *missingParamError) Error() string {
+	return "The request must contain the parameter " + e.name
+}
+
+// errMissingTCPUDPPorts is the error EC2 returns when a TCP or UDP rule
+// leaves out FromPort or ToPort.
+func errMissingTCPUDPPorts() error {
+	return newInvalidParameterErr("Invalid value 'Must specify both from and to ports with TCP/UDP.' for portRange.")
+}
+
+// isTCPOrUDP reports whether proto names TCP or UDP, by name or number.
+func isTCPOrUDP(proto string) bool {
+	switch strings.ToLower(proto) {
+	case "tcp", "udp", "6", "17":
+		return true
+	default:
+		return false
+	}
+}
+
+// parsePortRange reads the fromKey and toKey port fields. A missing field is
+// 0, except that TCP and UDP need both. A value that is not an integer is
+// InvalidParameterValue.
+func parsePortRange(form url.Values, fromKey, toKey, proto string) (from, to int, err error) {
+	if isTCPOrUDP(proto) && (form.Get(fromKey) == "" || form.Get(toKey) == "") {
+		return 0, 0, errMissingTCPUDPPorts()
+	}
+
+	if from, err = parsePort(form, fromKey); err != nil {
+		return 0, 0, err
+	}
+
+	if to, err = parsePort(form, toKey); err != nil {
+		return 0, 0, err
+	}
+
+	return from, to, nil
+}
+
+// parsePort reads one optional integer port field.
+func parsePort(form url.Values, key string) (int, error) {
+	v := form.Get(key)
+	if v == "" {
+		return 0, nil
+	}
+
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, newInvalidParameterErr(fmt.Sprintf("Invalid value '%s' for %s. It must be an integer.", v, key))
+	}
+
+	return n, nil
 }
 
 // rulesForPermission unrolls one IpPermissions.N block into one SecurityRule
 // per target (IpRanges / Ipv6Ranges / PrefixListIds / Groups), minting an
 // "sgr-" id for each. A block with no target yields a single target-less rule.
-func rulesForPermission(form url.Values, base string) []netdriver.SecurityRule {
+func rulesForPermission(form url.Values, base string) ([]netdriver.SecurityRule, error) {
 	proto := form.Get(base + ".IpProtocol")
-	fromPort, _ := strconv.Atoi(form.Get(base + ".FromPort"))
-	toPort, _ := strconv.Atoi(form.Get(base + ".ToPort"))
+
+	fromPort, toPort, err := parsePortRange(form, base+".FromPort", base+".ToPort", proto)
+	if err != nil {
+		return nil, err
+	}
 
 	mk := func(target netdriver.SecurityRule) netdriver.SecurityRule {
 		target.Protocol = proto
@@ -749,7 +911,7 @@ func rulesForPermission(form url.Values, base string) []netdriver.SecurityRule {
 		out = append(out, mk(netdriver.SecurityRule{}))
 	}
 
-	return out
+	return out, nil
 }
 
 // rangeEntry is a single nested range/prefix-list entry with its description.
@@ -909,6 +1071,12 @@ func writeSimpleSGResponse(w http.ResponseWriter, rootName string) {
 }
 
 func writeSGErr(w http.ResponseWriter, err error) {
+	var missing *missingParamError
+	if errors.As(err, &missing) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "MissingParameter", missing.Error())
+		return
+	}
+
 	writeErrWithNotFound(w, err, "InvalidGroup.NotFound", "DependencyViolation")
 }
 
@@ -946,22 +1114,20 @@ func (h *Handler) modifySecurityGroupRules(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	for _, idx := range indices {
-		base := prefix + "." + strconv.Itoa(idx)
+	updates, err := parseRuleUpdates(r.Form, prefix, indices)
+	if err != nil {
+		writeSGErr(w, err)
+		return
+	}
 
-		ruleID := r.Form.Get(base + ".SecurityGroupRuleId")
-		if ruleID == "" {
-			writeSGErr(w, newInvalidParameterErr("SecurityGroupRuleId is required for each update"))
-			return
-		}
+	// Check every rule id first so a bad one leaves the group untouched.
+	if err := h.checkRuleIDs(r.Context(), groupID, updates); err != nil {
+		writeSGRuleErr(w, err)
+		return
+	}
 
-		updated, err := parseSecurityGroupRuleRequest(r.Form, base+".SecurityGroupRule")
-		if err != nil {
-			writeSGErr(w, err)
-			return
-		}
-
-		if err := mutator.ModifySecurityGroupRule(r.Context(), groupID, ruleID, updated); err != nil {
+	for i := range updates {
+		if err := mutator.ModifySecurityGroupRule(r.Context(), groupID, updates[i].ruleID, updates[i].rule); err != nil {
 			writeSGRuleErr(w, err)
 			return
 		}
@@ -970,12 +1136,71 @@ func (h *Handler) modifySecurityGroupRules(w http.ResponseWriter, r *http.Reques
 	writeSimpleSGResponse(w, "ModifySecurityGroupRulesResponse")
 }
 
+// ruleUpdate is one parsed SecurityGroupRule.N entry of ModifySecurityGroupRules.
+type ruleUpdate struct {
+	ruleID string
+	rule   netdriver.SecurityRule
+}
+
+// parseRuleUpdates parses and validates every SecurityGroupRule.N entry.
+func parseRuleUpdates(form url.Values, prefix string, indices []int) ([]ruleUpdate, error) {
+	out := make([]ruleUpdate, 0, len(indices))
+
+	for _, idx := range indices {
+		base := prefix + "." + strconv.Itoa(idx)
+
+		ruleID := form.Get(base + ".SecurityGroupRuleId")
+		if ruleID == "" {
+			return nil, newInvalidParameterErr("SecurityGroupRuleId is required for each update")
+		}
+
+		rule, err := parseSecurityGroupRuleRequest(form, base+".SecurityGroupRule")
+		if err != nil {
+			return nil, err
+		}
+
+		if err := netdriver.ValidateAWSSecurityRule(&rule); err != nil {
+			return nil, err
+		}
+
+		out = append(out, ruleUpdate{ruleID: ruleID, rule: rule})
+	}
+
+	return out, nil
+}
+
+// checkRuleIDs reports NotFound for the first update whose rule id is not in
+// the group.
+func (h *Handler) checkRuleIDs(ctx context.Context, groupID string, updates []ruleUpdate) error {
+	sgs, err := h.vpc.DescribeSecurityGroups(ctx, []string{groupID})
+	if err != nil {
+		return err
+	}
+
+	if len(sgs) == 0 {
+		return cerrors.Newf(cerrors.NotFound, "security group %q not found", groupID)
+	}
+
+	all := append(slices.Clone(sgs[0].IngressRules), sgs[0].EgressRules...)
+
+	for i := range updates {
+		id := updates[i].ruleID
+		if !slices.ContainsFunc(all, func(r netdriver.SecurityRule) bool { return r.RuleID == id }) {
+			return cerrors.Newf(cerrors.NotFound, "security group rule %q not found", id)
+		}
+	}
+
+	return nil
+}
+
 // parseSecurityGroupRuleRequest reads the single nested SecurityGroupRuleRequest
 // object at base into a SecurityRule, enforcing AWS's "exactly one target"
 // rule across CidrIpv4/CidrIpv6/PrefixListId/ReferencedGroupId.
 func parseSecurityGroupRuleRequest(form url.Values, base string) (netdriver.SecurityRule, error) {
-	fromPort, _ := strconv.Atoi(form.Get(base + ".FromPort"))
-	toPort, _ := strconv.Atoi(form.Get(base + ".ToPort"))
+	fromPort, toPort, err := parsePortRange(form, base+".FromPort", base+".ToPort", form.Get(base+".IpProtocol"))
+	if err != nil {
+		return netdriver.SecurityRule{}, err
+	}
 
 	rule := netdriver.SecurityRule{
 		Protocol:          form.Get(base + ".IpProtocol"),
@@ -1023,7 +1248,12 @@ func (h *Handler) updateSecurityGroupRuleDescriptions(w http.ResponseWriter, r *
 	}
 
 	descByID := parseRuleDescriptions(r.Form)
-	perms := parseIPPermissions(r.Form)
+
+	perms, err := parseIPPermissions(r.Form)
+	if err != nil {
+		writeSGErr(w, err)
+		return
+	}
 
 	if len(descByID) == 0 && len(perms) == 0 {
 		writeSGErr(w, newInvalidParameterErr(

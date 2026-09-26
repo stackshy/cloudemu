@@ -20,6 +20,10 @@ import (
 //
 //nolint:gocritic // hugeParam: updated mirrors the driver's by-value SecurityRule shape.
 func (m *Mock) ModifySecurityGroupRule(_ context.Context, groupID, ruleID string, updated driver.SecurityRule) error {
+	if err := driver.ValidateAWSSecurityRule(&updated); err != nil {
+		return err
+	}
+
 	if !m.securityGroups.Has(groupID) {
 		return errors.Newf(errors.NotFound, "security group %q not found", groupID)
 	}

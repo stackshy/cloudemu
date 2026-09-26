@@ -1105,6 +1105,10 @@ func describeResources[T any, R any](store *memstore.Store[T], ids []string, toI
 //
 //nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	if err := driver.ValidateAWSSecurityRule(&rule); err != nil {
+		return err
+	}
+
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
 		return errors.Newf(errors.NotFound, "security group %q not found", groupID)
@@ -1119,6 +1123,10 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 //
 //nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	if err := driver.ValidateAWSSecurityRule(&rule); err != nil {
+		return err
+	}
+
 	sg, ok := m.securityGroups.Get(groupID)
 	if !ok {
 		return errors.Newf(errors.NotFound, "security group %q not found", groupID)

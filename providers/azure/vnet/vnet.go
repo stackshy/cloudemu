@@ -359,6 +359,10 @@ func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.Secu
 //
 //nolint:gocritic // hugeParam: rule mirrors the driver method signature.
 func (m *Mock) addSecurityGroupRule(groupID string, rule driver.SecurityRule, egress bool) error {
+	if err := driver.ValidateSecurityRule(&rule); err != nil {
+		return err
+	}
+
 	if !m.securityGroups.Update(groupID, func(sg *sgData) *sgData {
 		cp := *sg
 		if egress {
