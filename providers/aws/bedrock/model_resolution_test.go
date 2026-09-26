@@ -3,6 +3,7 @@ package bedrock
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -218,6 +219,21 @@ func TestInferenceProfileTypes(t *testing.T) {
 	if !cerrors.IsInvalidArgument(err) {
 		t.Fatalf("bad copyFrom: want InvalidArgument, got %v", err)
 	}
+}
+
+func TestApplicationProfileIDFormat(t *testing.T) {
+	m := newTestMock()
+
+	p, err := m.CreateInferenceProfile(context.Background(), bedrockdriver.InferenceProfileConfig{
+		Name: "fmt", ModelSourceCopyFrom: "arn:aws:bedrock:us-east-1::foundation-model/" + titanModel,
+	})
+	requireNoError(t, err)
+
+	if !regexp.MustCompile(`^[a-z0-9]{12}$`).MatchString(p.ID) {
+		t.Fatalf("profile id %q is not 12 lowercase alphanumerics", p.ID)
+	}
+
+	assertEqual(t, "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/"+p.ID, p.ARN)
 }
 
 func TestSystemProfilesFollowRegion(t *testing.T) {
