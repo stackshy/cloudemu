@@ -33,7 +33,7 @@ func describeOne(t *testing.T, client *awsssm.Client, name string) ssmtypes.Para
 
 // TestSDKSecureStringKeyIDRoundTrip verifies that a SecureString's KeyId is
 // surfaced on DescribeParameters ParameterMetadata (defaulting to alias/aws/ssm
-// when omitted) — and NOT on the GetParameter Parameter shape, matching AWS.
+// when omitted), and NOT on the GetParameter Parameter shape, matching AWS.
 func TestSDKSecureStringKeyIDRoundTrip(t *testing.T) {
 	client := newSSMClient(t)
 	ctx := context.Background()

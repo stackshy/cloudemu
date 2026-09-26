@@ -19,7 +19,7 @@ import (
 
 // TestAsyncSettleWireSFN pins that a real SDK client sees an execution as
 // RUNNING (no stop date) until the settle window elapses, then SUCCEEDED, and
-// that StopExecution during the RUNNING window aborts it — all over the wire.
+// that StopExecution during the RUNNING window aborts it, all over the wire.
 func TestAsyncSettleWireSFN(t *testing.T) {
 	fc := cloudconfig.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
 	cloud := cloudemu.NewAWS(cloudconfig.WithClock(fc), cloudconfig.WithAsyncSettle())

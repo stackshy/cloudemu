@@ -439,7 +439,7 @@ func TestSDKDuplicateStateMachine(t *testing.T) {
 
 	// CreateStateMachine is idempotent: a same-name create with the same
 	// definition/type returns the existing machine (HTTP 200) even when the
-	// roleArn differs — roleArn is ignored for the idempotency check.
+	// roleArn differs, because roleArn is ignored for the idempotency check.
 	out, err := c.CreateStateMachine(ctx, &awssfn.CreateStateMachineInput{
 		Name: aws.String("dup"), Definition: aws.String(definition),
 		RoleArn: aws.String("arn:aws:iam::123456789012:role/other"),

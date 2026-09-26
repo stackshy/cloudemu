@@ -60,8 +60,8 @@ func (h *Handler) createCompartment(w http.ResponseWriter, r *http.Request) {
 }
 
 // listCompartments lists the children of the compartment named by
-// compartmentId, descending the tree only when compartmentIdInSubtree is set —
-// which is the one place OCI resolves ancestry rather than matching exactly.
+// compartmentId, descending the tree only when compartmentIdInSubtree is set.
+// That is the one place OCI resolves ancestry rather than matching exactly.
 func (h *Handler) listCompartments(w http.ResponseWriter, r *http.Request) {
 	parentID, given := ocirest.RequireCompartmentID(w, r)
 	if !given {

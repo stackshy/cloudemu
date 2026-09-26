@@ -28,7 +28,7 @@ const sessionDuration = time.Hour
 // getCallerIdentity reports the configured account and the caller identity
 // resolved from the request's presented credentials (see
 // Handler.resolveCallerIdentity), reflecting an IAM user's own access key, an
-// assumed-role/federated session this handler minted, or — failing those — a
+// assumed-role/federated session this handler minted, or (failing those) a
 // synthetic identity derived from the presented access key id so distinct
 // callers are not all collapsed onto one fake identity.
 func (h *Handler) getCallerIdentity(w http.ResponseWriter, r *http.Request) {
@@ -71,7 +71,7 @@ type callerIdentity struct {
 //
 // cloudemu's wire layer parses SigV4 material but does not verify it unless
 // EnforceAuth is on, so outside that mode this reports who the request claims
-// to be, not a cryptographically proven identity — matching AWS's own
+// to be, not a cryptographically proven identity, matching AWS's own
 // GetCallerIdentity semantics of reflecting the presented credential.
 func (h *Handler) resolveCallerIdentity(r *http.Request) callerIdentity {
 	if p, ok := authctx.PrincipalFrom(r.Context()); ok && p.ARN != "" {
@@ -199,7 +199,7 @@ const assumedRoleIDPrefix = "AROACLOUDEMU0000000000"
 // trustAllows reports whether the caller may assume roleName. With no trust
 // evaluator wired it stays permissive (standalone init-creds behavior). With one
 // wired, a missing role or a trust policy that does not allow the caller both
-// deny. The caller principal is the account-root identity — cloudemu does not
+// deny. The caller principal is the account-root identity because cloudemu does not
 // verify SigV4, so it evaluates trust against a consistent same-account root.
 func (h *Handler) trustAllows(r *http.Request, roleName string) bool {
 	if h.trust == nil {
@@ -348,7 +348,7 @@ func durationFromForm(r *http.Request) time.Duration {
 }
 
 // getSessionToken returns temporary credentials for the caller's own
-// identity — a GetSessionToken session represents the same caller, not a role
+// identity. A GetSessionToken session represents the same caller, not a role
 // or a federated user, so the minted credentials are recorded under the
 // identity resolveCallerIdentity resolves for the request that asked for them.
 func (h *Handler) getSessionToken(w http.ResponseWriter, r *http.Request) {

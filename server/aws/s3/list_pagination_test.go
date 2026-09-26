@@ -398,7 +398,7 @@ func TestSDKListMultipartUploadsZeroMaxUploads(t *testing.T) {
 	}
 
 	// Resuming from the preserved markers (with a real page size) must still
-	// return the remaining upload — the empty page must not skip it.
+	// return the remaining upload; the empty page must not skip it.
 	rest, err := client.ListMultipartUploads(ctx, &awss3.ListMultipartUploadsInput{
 		Bucket:         aws.String(bucket),
 		MaxUploads:     aws.Int32(10),

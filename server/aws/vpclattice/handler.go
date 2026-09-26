@@ -56,7 +56,7 @@ func New(d driver.VPCLattice) *Handler {
 // through to the S3 catch-all handler registered after this one.
 //
 // A residual ambiguity remains for verbs Lattice and S3 share on an identical
-// path (e.g. `GET /services` — list-services vs. S3 list-bucket-"services"),
+// path (e.g. `GET /services`: list-services vs. S3 list-bucket-"services"),
 // which is unavoidable for two REST services co-located on one endpoint.
 func (h *Handler) Matches(r *http.Request) bool {
 	segs := splitPath(r.URL.Path)
@@ -76,7 +76,7 @@ func (h *Handler) Matches(r *http.Request) bool {
 // The resource-scoped forms additionally require the identifier segment to look
 // like a VPC Lattice identifier (a known ID prefix or a vpc-lattice ARN). This
 // is what lets a path-style S3 object op on a bucket named exactly like a
-// Lattice root — e.g. `GET /services/mykey`, `DELETE /targetgroups/mykey` — fall
+// Lattice root (e.g. `GET /services/mykey`, `DELETE /targetgroups/mykey`) fall
 // through to the S3 catch-all instead of being mis-claimed here.
 func latticeClaims(method string, segs []string) bool {
 	rest := segs[1:]
@@ -91,21 +91,21 @@ func latticeClaims(method string, segs []string) bool {
 	}
 }
 
-// claimsPolicyRoot: /authpolicy|/resourcepolicy/{resourceIdentifier} —
+// claimsPolicyRoot: /authpolicy|/resourcepolicy/{resourceIdentifier},
 // PUT/GET/DELETE, identifier required and Lattice-shaped.
 func claimsPolicyRoot(method string, rest []string) bool {
 	return len(rest) >= 1 && isLatticeIdentifier(strings.Join(rest, "/")) &&
 		(method == http.MethodGet || method == http.MethodPut || method == http.MethodDelete)
 }
 
-// claimsTagsRoot: /tags/{resourceArn} — POST/GET/DELETE, ARN required.
+// claimsTagsRoot: /tags/{resourceArn}, POST/GET/DELETE, ARN required.
 func claimsTagsRoot(method string, rest []string) bool {
 	return len(rest) >= 1 && isLatticeIdentifier(strings.Join(rest, "/")) &&
 		(method == http.MethodGet || method == http.MethodPost || method == http.MethodDelete)
 }
 
 // claimsResourceRoot handles the collection/resource roots. A bare collection
-// path is POST create / GET list — `GET /<root>` still overlaps an S3
+// path is POST create / GET list. `GET /<root>` still overlaps an S3
 // list-bucket on a like-named bucket, the one unavoidable residual for two REST
 // services sharing an endpoint. A resource-scoped path is claimed only when the
 // id segment is Lattice-shaped, so an S3 object key (e.g. "mykey") falls
@@ -125,7 +125,7 @@ func isLatticeMethod(m string) bool {
 }
 
 // isLatticeIdentifier reports whether s looks like a VPC Lattice resource
-// identifier — a generated ID prefix or a vpc-lattice ARN — rather than an
+// identifier (a generated ID prefix or a vpc-lattice ARN) rather than an
 // arbitrary S3 object key. Used to keep resource-scoped routes from claiming
 // path-style S3 requests on buckets named like a Lattice root.
 func isLatticeIdentifier(s string) bool {

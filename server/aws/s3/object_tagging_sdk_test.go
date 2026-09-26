@@ -1,4 +1,4 @@
-// object_tagging_sdk_test.go — real aws-sdk-go-v2 tests for the create-time
+// object_tagging_sdk_test.go: real aws-sdk-go-v2 tests for the create-time
 // x-amz-tagging header on PutObject, CopyObject, and CreateMultipartUpload. The
 // tag-set supplied at write time must be retrievable via GetObjectTagging.
 package s3_test

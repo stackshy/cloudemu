@@ -18,7 +18,7 @@ import (
 
 // TestSDKListStateMachinesOrderedNewestFirst pins that ListStateMachines
 // returns state machines most-recently-created first, matching real Step
-// Functions — not alphabetical by name/ARN. The machine names are chosen so
+// Functions, not alphabetical by name/ARN. The machine names are chosen so
 // alphabetical and chronological order disagree.
 func TestSDKListStateMachinesOrderedNewestFirst(t *testing.T) {
 	fc := cloudconfig.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
@@ -57,7 +57,7 @@ func TestSDKListStateMachinesOrderedNewestFirst(t *testing.T) {
 }
 
 // TestSDKListExecutionsOrderedNewestFirst pins that ListExecutions returns
-// executions most-recently-started first, matching real Step Functions — not
+// executions most-recently-started first, matching real Step Functions, not
 // alphabetical by execution name/ARN.
 func TestSDKListExecutionsOrderedNewestFirst(t *testing.T) {
 	fc := cloudconfig.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))

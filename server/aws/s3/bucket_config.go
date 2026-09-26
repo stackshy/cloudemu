@@ -24,7 +24,7 @@ const maxConfigBody = 2 << 20
 // S3 uses to carry PutBucketLifecycleConfiguration's
 // TransitionDefaultMinimumObjectSize setting. Unlike every other lifecycle
 // field it travels as a header rather than XML body, so the byte-for-byte raw
-// echo in writeRawBucketConfig never sees it — it needs separate capture and
+// echo in writeRawBucketConfig never sees it. It needs separate capture and
 // echo alongside the stored document.
 const transitionDefaultMinimumObjectSizeHeader = "X-Amz-Transition-Default-Minimum-Object-Size"
 
@@ -61,7 +61,7 @@ var notConfiguredErr = map[string]string{
 const subEncryption = "encryption"
 
 // configSubresources are the read-only bucket configuration sub-resource query
-// keys the handler answers (order irrelevant — at most one is present).
+// keys the handler answers (order is irrelevant; at most one is present).
 //
 //nolint:gochecknoglobals // static set
 var configSubresources = []string{
@@ -84,7 +84,7 @@ func configSubresourceKey(q url.Values) string {
 
 // bucketConfigOp answers a bucket configuration sub-resource. When the driver
 // implements RawBucketConfig (real S3 semantics), PUT persists the document,
-// GET echoes it back, and DELETE removes it — so aws_s3_bucket_policy,
+// GET echoes it back, and DELETE removes it. That way aws_s3_bucket_policy,
 // _cors_configuration, _server_side_encryption_configuration, _lifecycle_* and
 // _website read back what was written instead of a perpetual "not configured"
 // diff. GET on an unconfigured sub-resource still returns the AWS-correct
@@ -308,7 +308,7 @@ const sseAlgorithmAES256 = "AES256"
 
 // defaultEncryptionConfig returns the SSE-S3 (AES256) base encryption rule that
 // real S3 reports for a bucket with no explicit configuration, with bucket keys
-// disabled — matching a freshly created bucket.
+// disabled, matching a freshly created bucket.
 func defaultEncryptionConfig() serverSideEncryptionConfigXML {
 	return serverSideEncryptionConfigXML{
 		Xmlns: xmlns,

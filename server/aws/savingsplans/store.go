@@ -237,8 +237,8 @@ func (s *store) create(in *createInput) (string, error) {
 // effectiveState resolves a plan's current state from the clock rather than a
 // value frozen at creation: a plan is queued until its Start, active in
 // [Start, End), and retired at or after End. The queued-deleted lifecycle is
-// terminal and sticky — a plan deleted while queued stays queued-deleted and
-// never becomes active — so it (and any other stored non-time state such as a
+// terminal and sticky (a plan deleted while queued stays queued-deleted and
+// never becomes active), so it (and any other stored non-time state such as a
 // payment-pending/failed marker, were one modeled) short-circuits the time rule.
 func effectiveState(p *savingsPlan, now time.Time) string {
 	if p.State == stateQueuedDeleted {

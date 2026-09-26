@@ -208,8 +208,8 @@ func TestSDKListObjectsV2ManyCommonPrefixesTruncate(t *testing.T) {
 }
 
 // TestSDKListObjectsV2KeysOnlyPaginationUnregressed asserts the non-delimited
-// (keys-only) pagination path still returns every key exactly once across pages
-// with correct truncation — the CommonPrefixes fix must not disturb it.
+// (keys-only) pagination path still returns every key once across pages
+// with correct truncation. The CommonPrefixes fix must not disturb it.
 func TestSDKListObjectsV2KeysOnlyPaginationUnregressed(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()

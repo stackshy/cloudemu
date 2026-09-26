@@ -79,7 +79,7 @@ func (h *Handler) getParameter(w http.ResponseWriter, r *http.Request) {
 
 	p, err := h.store.GetParameter(r.Context(), req.Name, req.WithDecryption)
 	if err != nil {
-		// The parameter existed but the requested version/label didn't — AWS
+		// The parameter existed but the requested version/label didn't. AWS
 		// returns the distinct ParameterVersionNotFound, not ParameterNotFound.
 		if errors.Is(err, ssmdriver.ErrVersionNotFound) {
 			wire.WriteJSONError(w, http.StatusBadRequest, "ParameterVersionNotFound", cerrors.Message(err))

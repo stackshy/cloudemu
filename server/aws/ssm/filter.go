@@ -15,7 +15,7 @@ const (
 	optionContains   = "Contains"
 )
 
-// matchesParameterFilters reports whether md satisfies every filter — the
+// matchesParameterFilters reports whether md satisfies every filter, both the
 // modern ParameterFilters ({Key, Option, Values}) and the legacy Filters
 // ({Key, Values}). Values within one filter are OR'd; filters are AND'd. An
 // unsupported filter key is ignored (pass-through) rather than excluding

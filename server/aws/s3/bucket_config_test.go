@@ -205,7 +205,7 @@ func TestSDKBucketEncryptionRoundTrip(t *testing.T) {
 // TestSDKBucketLifecycleRoundTrip covers the config-persistence gap for
 // PutBucketLifecycleConfiguration: the rule must read back instead of
 // NoSuchLifecycleConfiguration. It also covers TransitionDefaultMinimumObjectSize,
-// which real S3 carries as a request/response HEADER rather than XML body — the
+// which real S3 carries as a request/response HEADER rather than XML body. The
 // Terraform AWS provider always sends this header (its schema defaults it to
 // all_storage_classes_128K), and polls GetBucketLifecycleConfiguration
 // comparing the full rule set including this field until it matches. Dropping

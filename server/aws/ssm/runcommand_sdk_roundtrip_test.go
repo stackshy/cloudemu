@@ -61,8 +61,8 @@ func runInstances(t *testing.T, ec2c *awsec2.Client, n int32) []string {
 }
 
 // A caller sends a bootstrap script then polls until the invocation reaches a
-// terminal status and reads the response code. Nothing executes here — an
-// emulated instance has no guest OS — so this pins the orchestration, not the
+// terminal status and reads the response code. Nothing executes here (an
+// emulated instance has no guest OS), so this pins the orchestration, not the
 // script.
 func TestRunCommandSendAndPoll(t *testing.T) {
 	ctx := context.Background()
@@ -101,7 +101,7 @@ func TestRunCommandSendAndPoll(t *testing.T) {
 	}
 }
 
-// One send targeting several instances must register an invocation for each —
+// One send targeting several instances must register an invocation for each;
 // a caller polls per instance and would hang on the ones that were dropped.
 func TestRunCommandRegistersEveryTargetInstance(t *testing.T) {
 	ctx := context.Background()
@@ -172,7 +172,7 @@ func runTaggedInstance(t *testing.T, ec2c *awsec2.Client, nameTag string) string
 	return aws.ToString(out.Instances[0].InstanceId)
 }
 
-// Real SSM accepts SendCommand with tag-based Targets and no InstanceIds — the
+// Real SSM accepts SendCommand with tag-based Targets and no InstanceIds, the
 // mainstream fleet-automation pattern. The command must be accepted and each
 // resolved instance must get an invocation the caller can poll.
 func TestSendCommandTagTargets(t *testing.T) {
@@ -241,7 +241,7 @@ func TestSendCommandTagTargetsNoMatch(t *testing.T) {
 // (resource-groups:Name) must select nothing rather than fanning the command
 // out to every instance in the fleet. Before the fix the raw key was forwarded
 // as an EC2 describe-filter name, which the matcher's default branch treated as
-// an unrestricted match — so the command silently hit unrelated instances.
+// an unrestricted match, so the command silently hit unrelated instances.
 func TestSendCommandUnsupportedTargetKeyMatchesNothing(t *testing.T) {
 	ctx := context.Background()
 	c, ec2c := newRunCommandClient(t)

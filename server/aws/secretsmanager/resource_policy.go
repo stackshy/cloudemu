@@ -147,7 +147,7 @@ type policyStatement struct {
 	Condition json.RawMessage `json:"Condition"`
 }
 
-// policyGrantsPublicAccess reports whether any statement grants public access —
+// policyGrantsPublicAccess reports whether any statement grants public access:
 // Effect Allow, a wildcard ("*") Principal, and no Condition. It mirrors the
 // broad-access check AWS runs for BlockPublicPolicy/ValidateResourcePolicy.
 func policyGrantsPublicAccess(policy string) bool {

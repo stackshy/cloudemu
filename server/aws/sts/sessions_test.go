@@ -10,7 +10,7 @@ import (
 )
 
 // TestMintYieldsDistinctHighEntropyCredentials proves Mint returns unique,
-// well-formed temporary credentials on the crypto/rand success path — the guard
+// well-formed temporary credentials on the crypto/rand success path. This is the guard
 // against the removed predictable fallback, which would have produced identical,
 // forgeable credentials on every call.
 func TestMintYieldsDistinctHighEntropyCredentials(t *testing.T) {

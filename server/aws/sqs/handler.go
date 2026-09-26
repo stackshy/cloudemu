@@ -29,9 +29,9 @@ const targetPrefix = "AmazonSQS."
 // "awsQueryCompatible" trait (it spoke the legacy Query/XML protocol before
 // migrating to AwsJson1_0), so aws-sdk-go-v2 also reads an X-Amzn-Query-Error
 // response header and uses it to override ErrorCode() back to the original
-// Query-protocol code. Tools that match on that legacy code — including
-// terraform-provider-aws's SQS delete/create waiters (errCodeQueueDoesNotExist =
-// "AWS.SimpleQueueService.NonExistentQueue") — need both: the __type for the SDK
+// Query-protocol code. Tools that match on that legacy code (including
+// terraform-provider-aws's SQS delete/create waiters, errCodeQueueDoesNotExist =
+// "AWS.SimpleQueueService.NonExistentQueue") need both: the __type for the SDK
 // to build the typed exception, and the header for ErrorCode() to resolve to the
 // code they actually check. See errQueryCodeNonExistentQueue.
 const errNonExistentQueue = "QueueDoesNotExist"
@@ -367,8 +367,8 @@ func (h *Handler) receiveMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Real SQS omits the Messages field entirely when no messages are returned
 	// (the AwsJson1_0 body is {}), rather than emitting an empty array. Match
-	// that so clients that distinguish an absent field from an empty list — and
-	// wire-level snapshots — see identical bytes.
+	// that so clients that distinguish an absent field from an empty list (and
+	// wire-level snapshots) see identical bytes.
 	if len(msgs) == 0 {
 		wire.WriteJSON(w, map[string]any{})
 		return

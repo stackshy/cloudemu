@@ -1,4 +1,4 @@
-// notification_config_sdk_test.go — real aws-sdk-go-v2 tests for bucket event
+// notification_config_sdk_test.go: real aws-sdk-go-v2 tests for bucket event
 // notification configuration. Queue (SQS), Topic (SNS), and Lambda function
 // destinations, plus an S3Key prefix/suffix filter, must round-trip through
 // PutBucketNotificationConfiguration / GetBucketNotificationConfiguration
@@ -76,13 +76,13 @@ func TestS3BucketNotificationConfigRoundTrip(t *testing.T) {
 	assert.Equal(t, types.FilterRuleNameSuffix, q.Filter.Key.FilterRules[1].Name)
 	assert.Equal(t, ".jpg", aws.ToString(q.Filter.Key.FilterRules[1].Value))
 
-	// Topic (SNS) configuration — previously dropped.
+	// Topic (SNS) configuration, previously dropped.
 	require.Len(t, got.TopicConfigurations, 1)
 	assert.Equal(t, "t1", aws.ToString(got.TopicConfigurations[0].Id))
 	assert.Equal(t, topicARN, aws.ToString(got.TopicConfigurations[0].TopicArn))
 	assert.Equal(t, []types.Event{types.EventS3ObjectCreated}, got.TopicConfigurations[0].Events)
 
-	// Lambda function configuration — previously dropped.
+	// Lambda function configuration, previously dropped.
 	require.Len(t, got.LambdaFunctionConfigurations, 1)
 	assert.Equal(t, "l1", aws.ToString(got.LambdaFunctionConfigurations[0].Id))
 	assert.Equal(t, lambdaARN, aws.ToString(got.LambdaFunctionConfigurations[0].LambdaFunctionArn))

@@ -1,5 +1,4 @@
-// s3_lifecycle_test.go — //
-// Real-user-journey  tests that drive the genuine aws-sdk-go-v2 S3 client
+// s3_lifecycle_test.go holds real-user-journey tests that drive the genuine aws-sdk-go-v2 S3 client
 // against the emulator's HTTP server (httptest). Assertions are made on
 // SDK-decoded responses and SDK-visible error types, not raw HTTP.
 package s3_test
@@ -72,9 +71,9 @@ func newSuiteS3Client(t *testing.T) *s3.Client {
 		// httptest servers under parallel CI load occasionally close the TCP
 		// connection while the SDK is still reading a (200) response body,
 		// surfacing as "use of closed network connection". Retry ONLY that
-		// transient transport error — the retryables list is replaced (not
+		// transient transport error. The retryables list is replaced (not
 		// extended), so API errors and the emulator's 500s are still observed on
-		// exactly one attempt, as the negative-path assertions expect.
+		// one attempt, as the negative-path assertions expect.
 		o.Retryer = retry.NewStandard(func(so *retry.StandardOptions) {
 			so.Retryables = []retry.IsErrorRetryable{retryClosedNetConn{}}
 		})
@@ -682,7 +681,7 @@ func TestS3CopyObjectSemantics(t *testing.T) {
 }
 
 // TestS3OverwriteResetsTags verifies overwriting a key via
-// PutObject replaces the whole object — new body, new content type, and the
+// PutObject replaces the whole object: new body, new content type, and the
 // previous tag set is dropped (fresh object, Tags nil).
 func TestS3OverwriteResetsTags(t *testing.T) {
 	client := newSuiteS3Client(t)

@@ -50,7 +50,7 @@ type topicConfigurationXML struct {
 }
 
 // lambdaConfigurationXML targets a Lambda function. Its wire element is
-// <CloudFunctionConfiguration> with the ARN in <CloudFunction> — the names the
+// <CloudFunctionConfiguration> with the ARN in <CloudFunction>, the names the
 // AWS SDKs marshal LambdaFunctionConfiguration to.
 type lambdaConfigurationXML struct {
 	ID            string                 `xml:"Id,omitempty"`

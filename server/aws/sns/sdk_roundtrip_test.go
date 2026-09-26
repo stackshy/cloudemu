@@ -289,7 +289,7 @@ func TestSNSMatchesScopeGatesListTags(t *testing.T) {
 
 // TestSDKSNSSubscriptionAttributes covers Subscribe carrying FilterPolicy /
 // RawMessageDelivery, GetSubscriptionAttributes surfacing them, and
-// SetSubscriptionAttributes mutating one — none of which the handler modeled
+// SetSubscriptionAttributes mutating one. The handler modeled none of these
 // before (both attribute ops were undispatched → InvalidAction).
 func TestSDKSNSSubscriptionAttributes(t *testing.T) {
 	client := newSDKClient(t)
@@ -423,7 +423,7 @@ func TestSDKSNSPendingConfirmationCounts(t *testing.T) {
 // masks SubscriptionArn as the literal "PendingConfirmation" in
 // ListSubscriptions/ListSubscriptionsByTopic for a still-unconfirmed
 // subscription (distinct from Subscribe's own "pending confirmation" return
-// value) and reports the owning account id in Owner — cloudemu previously
+// value) and reports the owning account id in Owner. cloudemu previously
 // echoed the real internal ARN and left Owner empty for every subscription.
 func TestSDKSNSListSubscriptionsMasksPendingArn(t *testing.T) {
 	client := newSDKClient(t)

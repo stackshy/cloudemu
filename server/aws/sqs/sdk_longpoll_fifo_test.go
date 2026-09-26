@@ -95,7 +95,7 @@ func equalSlices(a, b []string) bool {
 
 // TestSDKFIFOBatchReturnsConsecutiveSameGroup verifies that a single
 // ReceiveMessage(Max=10) over one FIFO group returns ALL its messages, in send
-// order — multiple messages from the same group in one call is correct SQS.
+// order. Multiple messages from the same group in one call is correct SQS.
 func TestSDKFIFOBatchReturnsConsecutiveSameGroup(t *testing.T) {
 	client, _ := newSDKClient(t)
 	queueURL := createFIFOQueueSDK(t, client, "batch.fifo")

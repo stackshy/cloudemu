@@ -372,7 +372,7 @@ func (h *Handler) putSecretValue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Real Secrets Manager requires exactly one of SecretString/SecretBinary —
+	// Real Secrets Manager requires exactly one of SecretString/SecretBinary;
 	// PutSecretValue exists only to add a new version's content.
 	if req.SecretString == "" && len(req.SecretBinary) == 0 {
 		wire.WriteJSONError(w, http.StatusBadRequest,
