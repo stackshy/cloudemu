@@ -16,6 +16,8 @@ type Template struct {
 	FormatVersion string
 	Description   string
 	Parameters    map[string]ParameterDef
+	Mappings      map[string]map[string]map[string]any
+	Conditions    map[string]any
 	Resources     map[string]ResourceDef
 	Outputs       map[string]OutputDef
 	Transform     any
@@ -28,6 +30,13 @@ type ParameterDef struct {
 	Description   string
 	AllowedValues []any
 	NoEcho        bool
+	// AllowedPattern must match the whole value. An empty pattern means none.
+	AllowedPattern        string
+	MinLength             *int
+	MaxLength             *int
+	MinValue              *float64
+	MaxValue              *float64
+	ConstraintDescription string
 }
 
 // ResourceDef is one resource declaration keyed by logical ID in the template.
@@ -35,6 +44,8 @@ type ResourceDef struct {
 	Type       string
 	Properties map[string]any
 	DependsOn  any
+	// Condition names the condition that decides whether the resource exists.
+	Condition string
 }
 
 // OutputDef is one output declaration.
@@ -42,6 +53,8 @@ type OutputDef struct {
 	Value       any
 	Description string
 	Export      *ExportDef
+	// Condition names the condition that decides whether the output exists.
+	Condition string
 }
 
 // ExportDef is an output's Export block.
@@ -79,6 +92,10 @@ func ParseTemplate(body string) (*Template, error) {
 
 	if len(t.Resources) == 0 {
 		return nil, cerrors.New(cerrors.InvalidArgument, formatErrPrefix+"At least one Resources member must be defined.")
+	}
+
+	if vErr := validate(t); vErr != nil {
+		return nil, vErr
 	}
 
 	return t, nil
@@ -167,6 +184,15 @@ func scalarString(v any) string {
 		return wordFalse
 	case json.Number:
 		return t.String()
+	case noValue:
+		return ""
+	case []any:
+		parts := make([]string, len(t))
+		for i, e := range t {
+			parts[i] = scalarString(e)
+		}
+
+		return strings.Join(parts, ",")
 	case float64:
 		// Render integers without a trailing ".0".
 		if t == float64(int64(t)) {

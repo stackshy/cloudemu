@@ -39,6 +39,8 @@ func createInput(form url.Values) cfn.CreateStackInput {
 		Parameters:   parseParameters(form),
 		Tags:         parseTags(form),
 		Capabilities: awsquery.ListStrings(form, "Capabilities.member"),
+
+		NotificationARNs: awsquery.ListStrings(form, "NotificationARNs.member"),
 	}
 }
 
@@ -50,7 +52,20 @@ func updateInput(form url.Values) cfn.UpdateStackInput {
 		Parameters:   parseParameters(form),
 		Tags:         parseTags(form),
 		Capabilities: awsquery.ListStrings(form, "Capabilities.member"),
+
+		NotificationARNs: updateNotificationARNs(form),
 	}
+}
+
+// updateNotificationARNs reads UpdateStack's topics. An empty list, which the
+// SDK sends as a bare "NotificationARNs=", removes them. Absent keeps them.
+func updateNotificationARNs(form url.Values) []string {
+	arns := awsquery.ListStrings(form, "NotificationARNs.member")
+	if arns == nil && form.Has("NotificationARNs") {
+		return []string{}
+	}
+
+	return arns
 }
 
 func parseParameters(form url.Values) []cfn.Parameter {
@@ -124,6 +139,7 @@ type deleteStackResponse struct {
 type parameterXML struct {
 	ParameterKey   string `xml:"ParameterKey"`
 	ParameterValue string `xml:"ParameterValue"`
+	ResolvedValue  string `xml:"ResolvedValue,omitempty"`
 }
 
 type outputXML struct {
@@ -152,6 +168,7 @@ type stackXML struct {
 	Outputs           []outputXML    `xml:"Outputs>member,omitempty"`
 	Tags              []tagXML       `xml:"Tags>member,omitempty"`
 	Capabilities      []string       `xml:"Capabilities>member,omitempty"`
+	NotificationARNs  []string       `xml:"NotificationARNs>member,omitempty"`
 }
 
 type describeStacksResponse struct {
@@ -278,11 +295,13 @@ func toStackXML(s *cfn.Stack) stackXML {
 		StackID: s.ID, StackName: s.Name, Description: s.Description,
 		CreationTime: isoTime(s.CreationTime), LastUpdatedTime: isoTime(s.LastUpdated),
 		StackStatus: s.Status, StackStatusReason: s.StatusReason,
-		Capabilities: s.Capabilities,
+		Capabilities: s.Capabilities, NotificationARNs: s.NotificationARNs,
 	}
 
 	for _, p := range s.Parameters {
-		x.Parameters = append(x.Parameters, parameterXML{ParameterKey: p.Key, ParameterValue: p.Value})
+		x.Parameters = append(x.Parameters, parameterXML{
+			ParameterKey: p.Key, ParameterValue: p.Value, ResolvedValue: p.ResolvedValue,
+		})
 	}
 
 	for _, o := range s.Outputs {

@@ -541,6 +541,7 @@ func wirePostBuildServices(o *config.Options, p *Provider) {
 	p.CloudFormation = cloudformation.New(o)
 	p.CloudFormation.SetRegistry(cloudformationRegistry(p))
 	p.CloudFormation.SetTemplateFetcher(cloudformationTemplateFetcher(p))
+	p.CloudFormation.SetParameterReader(cloudformationParameterReader(p))
 }
 
 // wireLifecycleEvents points each service's native lifecycle events at the

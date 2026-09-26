@@ -59,6 +59,19 @@ func cloudformationTemplateFetcher(p *Provider) cfnprovider.TemplateFetcher {
 	}
 }
 
+// cloudformationParameterReader reads Parameter Store for the
+// AWS::SSM::Parameter::Value<T> parameter types.
+func cloudformationParameterReader(p *Provider) cfnprovider.ParameterReader {
+	return func(ctx context.Context, name string) (value, paramType string, err error) {
+		param, err := p.SSM.GetParameter(ctx, name, false)
+		if err != nil {
+			return "", "", err
+		}
+
+		return param.Value, param.Type, nil
+	}
+}
+
 // physicalName returns an explicit name property when set, otherwise a
 // CloudFormation-style generated name (StackName-LogicalId-<random>).
 func physicalName(req *cfn.ResourceRequest, key string, lower bool) string {

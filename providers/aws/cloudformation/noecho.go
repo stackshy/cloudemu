@@ -14,6 +14,10 @@ func maskParameters(params []cfn.Parameter) []cfn.Parameter {
 	for i, p := range params {
 		if p.NoEcho {
 			p.Value = maskedValue
+
+			if p.ResolvedValue != "" {
+				p.ResolvedValue = maskedValue
+			}
 		}
 
 		out[i] = p
