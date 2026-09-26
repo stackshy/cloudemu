@@ -88,7 +88,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `eventhub` | — | [Eventhub](./azure/eventhub.md) | — | — | 14 |
 | `filestore` | — | — | [Filestore](./gcp/filestore.md) | — | 5 |
 | `fis` | [FIS](./aws/fis.md) | — | — | — | 12 |
-| `frontdoor` | — | [FrontDoor](./azure/frontdoor.md) | — | — | 12 |
+| `frontdoor` | — | [FrontDoor](./azure/frontdoor.md) | — | — | 20 |
 | `gke` | — | — | [GKE](./gcp/gke.md) | — | 18 |
 | `gkebackup` | — | — | [GKEBackup](./gcp/gkebackup.md) | — | 11 |
 | `gkehub` | — | — | [GKEHub](./gcp/gkehub.md) | — | 16 |

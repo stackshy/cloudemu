@@ -12,6 +12,13 @@
 // (resourceGroup, profile, name). Deleting a profile cascades to every endpoint and
 // origin group under it.
 //
+// Two grandchild types hang off those children: origins under an origin group
+// (.../originGroups/{og}/origins/{o}) and routes under an endpoint
+// (.../afdEndpoints/{ep}/routes/{r}). A route references an origin group in the
+// same profile, and the store enforces that reference both ways: a route cannot
+// point at a missing origin group, and an origin group still referenced by a
+// route cannot be deleted.
+//
 // The pieces the server-wide unmodeled-property echo cannot preserve are modeled
 // explicitly: the profile's sku, location, kind and identity are top-level (outside
 // the "properties" object the echo reaches), and the computed frontDoorId and
@@ -74,9 +81,12 @@ type AzureFrontDoorOriginGroup struct {
 // dropped, matching ARM's PUT semantics. Children are addressed by
 // (resourceGroup, profile, name); creating or getting a child under a missing
 // profile returns NotFound. An empty resourceGroup on a profile list means
-// subscription-wide. Deleting a profile cascades to its endpoints and origin
-// groups.
+// subscription-wide. Deleting a profile cascades to its endpoints, origin groups,
+// origins and routes. The origin and route operations are embedded from
+// AzureFrontDoorOriginsRoutes.
 type AzureFrontDoorProfiles interface {
+	AzureFrontDoorOriginsRoutes
+
 	// CreateOrUpdateProfile stores p as a full replace and reports whether it did
 	// not previously exist (created==true → HTTP 201, else 200). The returned value
 	// is a defensive copy.
@@ -100,7 +110,8 @@ type AzureFrontDoorProfiles interface {
 	) (stored *AzureFrontDoorEndpoint, created bool, err error)
 	// GetEndpoint returns the endpoint identified by (rg, profile, name), or NotFound.
 	GetEndpoint(ctx context.Context, rg, profile, name string) (*AzureFrontDoorEndpoint, error)
-	// DeleteEndpoint removes the endpoint, returning NotFound if it does not exist.
+	// DeleteEndpoint removes the endpoint and cascades to its routes, returning
+	// NotFound if it does not exist.
 	DeleteEndpoint(ctx context.Context, rg, profile, name string) error
 	// ListEndpoints returns the endpoints under (rg, profile), ordered by key.
 	ListEndpoints(ctx context.Context, rg, profile string) ([]AzureFrontDoorEndpoint, error)
@@ -114,9 +125,81 @@ type AzureFrontDoorProfiles interface {
 	// GetOriginGroup returns the origin group identified by (rg, profile, name), or
 	// NotFound.
 	GetOriginGroup(ctx context.Context, rg, profile, name string) (*AzureFrontDoorOriginGroup, error)
-	// DeleteOriginGroup removes the origin group, returning NotFound if it does not
-	// exist.
+	// DeleteOriginGroup removes the origin group and cascades to its origins,
+	// returning NotFound if it does not exist and FailedPrecondition if a route in
+	// the profile still references it.
 	DeleteOriginGroup(ctx context.Context, rg, profile, name string) error
 	// ListOriginGroups returns the origin groups under (rg, profile), ordered by key.
 	ListOriginGroups(ctx context.Context, rg, profile string) ([]AzureFrontDoorOriginGroup, error)
+}
+
+// AzureFrontDoorOrigin is the natively-stored origins child of an origin group,
+// addressed .../profiles/{profile}/originGroups/{originGroup}/origins/{name}. It
+// has no location and no tags. Properties holds hostName, originHostHeader,
+// httpPort, httpsPort, priority, weight, enabledState,
+// enforceCertificateNameCheck, azureOrigin, sharedPrivateLinkResource and any
+// deferred keys verbatim.
+type AzureFrontDoorOrigin struct {
+	Name          string
+	ResourceGroup string
+	Profile       string
+	OriginGroup   string
+	Properties    map[string]any
+	ETag          string
+}
+
+// AzureFrontDoorRoute is the natively-stored routes child of an endpoint,
+// addressed .../profiles/{profile}/afdEndpoints/{endpoint}/routes/{name}.
+// OriginGroup is the name of the origin group (in the same profile) the route
+// forwards to, resolved from properties.originGroup.id; the store uses it to
+// enforce referential integrity. Properties holds the full wire properties
+// (originGroup reference, supportedProtocols, patternsToMatch,
+// forwardingProtocol, linkToDefaultDomain, httpsRedirect, ...) verbatim.
+type AzureFrontDoorRoute struct {
+	Name          string
+	ResourceGroup string
+	Profile       string
+	Endpoint      string
+	OriginGroup   string
+	Properties    map[string]any
+	ETag          string
+}
+
+// AzureFrontDoorOriginsRoutes is the Azure-only store for the two grandchild
+// resource types: origins (under an origin group) and routes (under an
+// endpoint). CreateOrUpdate is a full replace. Creating an origin under a missing
+// origin group, or a route under a missing endpoint, returns NotFound; creating a
+// route whose OriginGroup does not exist in the same profile returns
+// InvalidArgument. Deleting an origin group still referenced by a route returns
+// FailedPrecondition (ARM 409 Conflict); deleting an origin group cascades to its
+// origins, deleting an endpoint cascades to its routes, and deleting a profile
+// cascades to both.
+type AzureFrontDoorOriginsRoutes interface {
+	// CreateOrUpdateOrigin stores o under (rg, profile, originGroup, name) as a full
+	// replace, reporting whether it did not previously exist.
+	CreateOrUpdateOrigin(
+		ctx context.Context, rg, profile, originGroup, name string, o AzureFrontDoorOrigin,
+	) (stored *AzureFrontDoorOrigin, created bool, err error)
+	// GetOrigin returns the origin identified by (rg, profile, originGroup, name),
+	// or NotFound.
+	GetOrigin(ctx context.Context, rg, profile, originGroup, name string) (*AzureFrontDoorOrigin, error)
+	// DeleteOrigin removes the origin, returning NotFound if it does not exist.
+	DeleteOrigin(ctx context.Context, rg, profile, originGroup, name string) error
+	// ListOrigins returns the origins under (rg, profile, originGroup), ordered by
+	// key. Returns NotFound if the origin group does not exist.
+	ListOrigins(ctx context.Context, rg, profile, originGroup string) ([]AzureFrontDoorOrigin, error)
+
+	// CreateOrUpdateRoute stores r under (rg, profile, endpoint, name) as a full
+	// replace, reporting whether it did not previously exist.
+	CreateOrUpdateRoute(
+		ctx context.Context, rg, profile, endpoint, name string, r AzureFrontDoorRoute,
+	) (stored *AzureFrontDoorRoute, created bool, err error)
+	// GetRoute returns the route identified by (rg, profile, endpoint, name), or
+	// NotFound.
+	GetRoute(ctx context.Context, rg, profile, endpoint, name string) (*AzureFrontDoorRoute, error)
+	// DeleteRoute removes the route, returning NotFound if it does not exist.
+	DeleteRoute(ctx context.Context, rg, profile, endpoint, name string) error
+	// ListRoutes returns the routes under (rg, profile, endpoint), ordered by key.
+	// Returns NotFound if the endpoint does not exist.
+	ListRoutes(ctx context.Context, rg, profile, endpoint string) ([]AzureFrontDoorRoute, error)
 }

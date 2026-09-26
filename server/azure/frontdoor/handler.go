@@ -23,6 +23,14 @@
 //	GET    .../profiles/{p}/afdEndpoints                       : AFDEndpoints.ListByProfile
 //	PUT/GET/DELETE .../profiles/{p}/originGroups/{og}          : AFDOriginGroups.*
 //	GET    .../profiles/{p}/originGroups                       : AFDOriginGroups.ListByProfile
+//	PUT/GET/PATCH/DELETE .../originGroups/{og}/origins/{o}      : AFDOrigins.* (hostName required)
+//	GET    .../originGroups/{og}/origins                      : AFDOrigins.ListByOriginGroup
+//	PUT/GET/PATCH/DELETE .../afdEndpoints/{ep}/routes/{r}      : Routes.* (originGroup must exist in the profile)
+//	GET    .../afdEndpoints/{ep}/routes                       : Routes.ListByEndpoint
+//
+// An origin group still referenced by a route cannot be deleted (409 Conflict).
+// Deleting an origin group removes its origins; deleting an endpoint removes its
+// routes; deleting a profile removes everything under it.
 //
 // The whole resource arrives in one PUT body and fully replaces the stored state
 // (ARM CreateOrUpdate). The profile's sku, location, kind and identity are modeled
@@ -30,8 +38,8 @@
 // the computed frontDoorId (a stable synthetic GUID) and the endpoint hostName (a
 // stable computed <name>-<hash>.z01.azurefd.net) are derived deterministically so
 // they never drift across GETs. Every other property is preserved verbatim so
-// deferred sub-surfaces (routes, ruleSets, securityPolicies, customDomains,
-// secrets) stay echo-through-safe.
+// deferred sub-surfaces (ruleSets, securityPolicies, customDomains, secrets)
+// stay echo-through-safe.
 package frontdoor
 
 import (
@@ -80,14 +88,44 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A sub-resource segment addresses an independently-addressable child of the
-	// profile (afdEndpoints / originGroups) or a deferred deeper surface.
+	// profile (afdEndpoints / originGroups), a grandchild under one of those
+	// (routes / origins), or a deferred deeper surface.
 	switch {
 	case rp.SubResource == "":
 		h.serveProfile(w, r, &rp)
-	case strings.EqualFold(rp.SubResource, subTypeEndpoints) && rp.SubResourceAction == "":
-		h.serveEndpoint(w, r, &rp)
-	case strings.EqualFold(rp.SubResource, subTypeOrigGroups) && rp.SubResourceAction == "":
-		h.serveOriginGroup(w, r, &rp)
+	case rp.SubResourceAction == "":
+		h.serveChild(w, r, &rp)
+	default:
+		h.serveGrandchild(w, r, &rp)
+	}
+}
+
+// serveChild routes .../profiles/{p}/{afdEndpoints|originGroups}[/{name}].
+func (h *Handler) serveChild(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	switch {
+	case strings.EqualFold(rp.SubResource, subTypeEndpoints):
+		h.serveEndpoint(w, r, rp)
+	case strings.EqualFold(rp.SubResource, subTypeOrigGroups):
+		h.serveOriginGroup(w, r, rp)
+	default:
+		writeSubResourceDeferred(w)
+	}
+}
+
+// serveGrandchild routes .../afdEndpoints/{ep}/routes[/{r}] and
+// .../originGroups/{og}/origins[/{o}]; anything else under a child is deferred.
+func (h *Handler) serveGrandchild(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	np, ok := parseNestedPath(r.URL.Path, rp)
+	if !ok || np.parent == "" {
+		writeSubResourceDeferred(w)
+		return
+	}
+
+	switch {
+	case strings.EqualFold(rp.SubResource, subTypeEndpoints) && strings.EqualFold(rp.SubResourceAction, subTypeRoutes):
+		h.serveRoute(w, r, &np)
+	case strings.EqualFold(rp.SubResource, subTypeOrigGroups) && strings.EqualFold(rp.SubResourceAction, subTypeOrigins):
+		h.serveOrigin(w, r, &np)
 	default:
 		writeSubResourceDeferred(w)
 	}
@@ -147,8 +185,8 @@ func writeMethodNotAllowed(w http.ResponseWriter) {
 	azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 }
 
-// writeSubResourceDeferred rejects an addressable sub-resource path (routes,
-// ruleSets, securityPolicies, customDomains, secrets) that the core control plane
+// writeSubResourceDeferred rejects an addressable sub-resource path (ruleSets,
+// securityPolicies, customDomains, secrets) that the core control plane
 // does not model yet.
 func writeSubResourceDeferred(w http.ResponseWriter) {
 	azurearm.WriteError(w, http.StatusNotFound, "NotFound",
