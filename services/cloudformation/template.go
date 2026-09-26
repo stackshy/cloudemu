@@ -1,8 +1,11 @@
 package cloudformation
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"sort"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
@@ -15,6 +18,7 @@ type Template struct {
 	Parameters    map[string]ParameterDef `json:"Parameters"`
 	Resources     map[string]ResourceDef  `json:"Resources"`
 	Outputs       map[string]OutputDef    `json:"Outputs"`
+	Transform     any                     `json:"Transform"`
 }
 
 // ParameterDef is a template parameter declaration.
@@ -42,33 +46,100 @@ type OutputDef struct {
 	} `json:"Export"`
 }
 
-// ParseTemplate parses a CloudFormation template body. Only JSON is supported;
-// YAML (which additionally needs the short-form intrinsic tags !Ref/!GetAtt) is
-// deferred. An empty body or one with no Resources section is rejected the way
-// CloudFormation rejects a template with no resources.
+// ParseTemplate parses a CloudFormation template body in JSON or YAML. A body
+// whose first non-space character is "{" is JSON. Anything else is YAML, where
+// the short-form tags such as !Ref and !GetAtt expand to their long forms.
+// Numbers decode as json.Number in both formats, so the trees compare equal.
 func ParseTemplate(body string) (*Template, error) {
-	if body == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "template body is empty")
+	if strings.TrimSpace(body) == "" {
+		return nil, cerrors.New(cerrors.InvalidArgument, MsgNoTemplate)
 	}
 
-	var t Template
-	if err := json.Unmarshal([]byte(body), &t); err != nil {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "template format error: %v", err)
+	tree, err := decodeTemplate(body)
+	if err != nil {
+		return nil, err
+	}
+
+	top, ok := tree.(map[string]any)
+	if !ok {
+		return nil, cerrors.New(cerrors.InvalidArgument, formatErrPrefix+"template must be an object")
+	}
+
+	if sectionErr := checkSections(top); sectionErr != nil {
+		return nil, sectionErr
+	}
+
+	t, err := buildTemplate(top)
+	if err != nil {
+		return nil, err
 	}
 
 	if len(t.Resources) == 0 {
-		return nil, cerrors.New(cerrors.InvalidArgument,
-			"template format error: at least one Resources member must be defined")
+		return nil, cerrors.New(cerrors.InvalidArgument, formatErrPrefix+"At least one Resources member must be defined.")
 	}
 
-	for id, r := range t.Resources {
-		if r.Type == "" {
+	for _, id := range sortedKeys(t.Resources) {
+		if t.Resources[id].Type == "" {
 			return nil, cerrors.Newf(cerrors.InvalidArgument,
-				"template format error: resource %q has no Type", id)
+				formatErrPrefix+"[/Resources/%s] Every Resources object must contain a Type member.", id)
 		}
 	}
 
+	return t, nil
+}
+
+// buildTemplate maps the decoded tree onto Template. A JSON round trip keeps
+// one decoding path for both formats.
+func buildTemplate(top map[string]any) (*Template, error) {
+	raw, err := json.Marshal(top)
+	if err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, formatErrPrefix+"%v", err)
+	}
+
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.UseNumber()
+
+	var t Template
+	if err := dec.Decode(&t); err != nil {
+		return nil, cerrors.Newf(cerrors.InvalidArgument, formatErrPrefix+"%v", err)
+	}
+
 	return &t, nil
+}
+
+// templateSections are the top-level keys CloudFormation accepts.
+var templateSections = map[string]bool{ //nolint:gochecknoglobals // static lookup table
+	"AWSTemplateFormatVersion": true, "Description": true, "Metadata": true,
+	"Parameters": true, "Rules": true, "Mappings": true, "Conditions": true,
+	"Transform": true, "Resources": true, "Outputs": true, "Hooks": true,
+}
+
+func checkSections(top map[string]any) error {
+	var bad []string
+
+	for _, k := range sortedKeys(top) {
+		if !templateSections[k] {
+			bad = append(bad, k)
+		}
+	}
+
+	if len(bad) > 0 {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			formatErrPrefix+"Invalid template property or properties [%s]", strings.Join(bad, ", "))
+	}
+
+	return nil
+}
+
+func sortedKeys[V any](m map[string]V) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	return keys
 }
 
 // DependsOnList normalizes a resource's DependsOn (a string or a list of
@@ -120,7 +191,7 @@ func scalarString(v any) string {
 	case json.Number:
 		return t.String()
 	case float64:
-		// JSON numbers decode as float64; render integers without a trailing ".0".
+		// Render integers without a trailing ".0".
 		if t == float64(int64(t)) {
 			return fmt.Sprintf("%d", int64(t))
 		}

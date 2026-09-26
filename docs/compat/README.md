@@ -46,9 +46,10 @@ Each service's summary breaks the verified counts out per SDK/language. Only lan
 | ListStackResources | ✅ |
 | ListStacks | ✅ |
 | UpdateStack | ✅ |
+| ValidateTemplate | ✅ |
 
 **cloudformation verified per language:**
-- Go: AWS 9/9
+- Go: AWS 10/10
 
 ## compute
 
