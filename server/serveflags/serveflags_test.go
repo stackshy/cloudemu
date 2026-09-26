@@ -27,7 +27,7 @@ var commonFlagNames = []string{
 	"endpoints-file", "enforce-auth", "gcp-grpc-port", "gcp-port", "host", "init-dir", "k8s-nodes", "k8s-port",
 	"k8s-progression", "k8s-progression-interval", "latency", "log-requests", "oci-port",
 	"persist", "persist-interval", "persist-metadata-only", "persist-strategy", "project-id",
-	"providers", "quiet", "region", "shutdown-timeout", "state-file", "tls-cert", "tls-host",
+	"providers", "quiet", "region", "shutdown-timeout", "state-file", "tick-interval", "tls-cert", "tls-host",
 	"tls-key", "vcr", "vcr-cassette", "vcr-strict",
 }
 
@@ -73,6 +73,7 @@ func TestRegisterCommonDefaults(t *testing.T) {
 		"providers":                "aws,azure,gcp",
 		"aws-port":                 "4566",
 		"shutdown-timeout":         defaultShutdownTimeout.String(),
+		"tick-interval":            time.Second.String(),
 	}
 
 	for name, want := range cases {
@@ -95,6 +96,7 @@ func TestRegisterCommonEnvFallback(t *testing.T) {
 		"CLOUDEMU_PERSIST_INTERVAL":         "2s",
 		"CLOUDEMU_K8S_PROGRESSION":          "true",
 		"CLOUDEMU_K8S_PROGRESSION_INTERVAL": "5s",
+		"CLOUDEMU_TICK_INTERVAL":            "250ms",
 	}
 	getenv := func(k string) string { return env[k] }
 
@@ -122,6 +124,10 @@ func TestRegisterCommonEnvFallback(t *testing.T) {
 	if c.K8sProgressionInterval != 5*time.Second {
 		t.Fatalf("k8s-progression-interval = %v, want 5s (env)", c.K8sProgressionInterval)
 	}
+
+	if c.TickInterval != 250*time.Millisecond {
+		t.Fatalf("tick-interval = %v, want 250ms (env)", c.TickInterval)
+	}
 }
 
 // TestToServerkitConfigRoundTrip parses a representative arg set and asserts the
@@ -148,6 +154,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 		"--persist-strategy", "manual", "--persist-interval", "7s",
 		"--init-dir", "/seeds",
 		"--k8s-progression", "--k8s-progression-interval", "4s", "--k8s-nodes", "3",
+		"--tick-interval", "2s",
 		"--vcr", "record", "--vcr-cassette", "/c.json", "--vcr-strict=false",
 	}
 	if err := fs.Parse(args); err != nil {
@@ -192,6 +199,7 @@ func TestToServerkitConfigRoundTrip(t *testing.T) {
 	assertEqual(t, "k8s-progression", sk.K8sProgression, true)
 	assertEqual(t, "k8s-progression-interval", sk.K8sProgressionInterval, 4*time.Second)
 	assertEqual(t, "k8s-nodes", sk.K8sNodes, 3)
+	assertEqual(t, "tick-interval", sk.TickInterval, 2*time.Second)
 	assertEqual(t, "vcr", sk.VCRMode, "record")
 	assertEqual(t, "vcr-cassette", sk.VCRCassette, "/c.json")
 	assertEqual(t, "vcr-strict", sk.VCRStrict, false)

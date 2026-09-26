@@ -78,3 +78,11 @@ func (c *FakeClock) Set(t time.Time) {
 
 	c.now = t
 }
+
+// Tickable is a service that does time-driven work, such as evaluating alarms
+// that are due. The serve binary calls Tick on a background interval. Library
+// mode never calls it, so tests stay deterministic and call Tick directly with
+// a FakeClock time. Tick reports whether any state changed.
+type Tickable interface {
+	Tick(now time.Time) bool
+}
