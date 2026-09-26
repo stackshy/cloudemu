@@ -43,7 +43,7 @@ func (m *Mock) evaluateDue(ctx context.Context, now time.Time) bool {
 	m.alarmMu.Lock()
 
 	for _, a := range m.alarms.All() {
-		if !alarmeval.Due(a.LastEvaluatedAt, now, alarmeval.EvaluationInterval(a.Period, a.EvaluationPeriods)) {
+		if !alarmeval.Due(a.LastEvaluatedAt, now, alarmeval.EvaluationInterval(alarmPeriod(a), a.EvaluationPeriods)) {
 			continue
 		}
 
@@ -70,7 +70,7 @@ func (m *Mock) evaluateMetricAlarms(ctx context.Context, keys map[metricKey]bool
 	m.alarmMu.Lock()
 
 	for _, a := range m.alarms.All() {
-		if keys[metricKey{Namespace: a.Namespace, MetricName: a.MetricName}] {
+		if alarmReads(a, keys) {
 			notices = append(notices, m.evaluateLocked(a, now))
 		}
 	}
@@ -83,7 +83,7 @@ func (m *Mock) evaluateMetricAlarms(ctx context.Context, keys map[metricKey]bool
 // alarmParams projects an alarm's thresholds onto the shared evaluator's Params.
 func alarmParams(alarm *alarmData) alarmeval.Params {
 	return alarmeval.Params{
-		Period:                 alarm.Period,
+		Period:                 alarmPeriod(alarm),
 		EvaluationPeriods:      alarm.EvaluationPeriods,
 		DatapointsToAlarm:      alarm.DatapointsToAlarm,
 		Stat:                   alarm.Stat,
@@ -100,9 +100,7 @@ func (m *Mock) evaluateLocked(alarm *alarmData, now time.Time) *alarmNotice {
 	params := alarmParams(alarm)
 	at := params.EvaluationTime(now)
 
-	// Data stored under another unit is not seen, so an alarm with the wrong
-	// unit stays in INSUFFICIENT_DATA like on AWS.
-	filtered := m.collectFilteredDatums(alarm.Namespace, alarm.MetricName, alarm.Dimensions, alarm.Unit, params.WindowStart(at), at)
+	filtered := m.alarmDatums(alarm, &params, at)
 	out := alarmeval.EvaluateWindow(filtered, &params, at)
 
 	alarm.LastEvaluatedAt = now
@@ -121,7 +119,7 @@ func evaluationReasonData(datums []driver.MetricDatum, p *alarmeval.Params, now 
 		Version          string    `json:"version"`
 		QueryDate        string    `json:"queryDate"`
 		StartDate        string    `json:"startDate"`
-		Statistic        string    `json:"statistic"`
+		Statistic        string    `json:"statistic,omitempty"`
 		Period           int       `json:"period"`
 		RecentDatapoints []float64 `json:"recentDatapoints"`
 		Threshold        float64   `json:"threshold"`

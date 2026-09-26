@@ -3,11 +3,13 @@ package cloudwatch
 import (
 	"context"
 	"encoding/json"
+	"regexp"
 	"strings"
 	"unicode/utf8"
 
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/monitoring/metricmath"
 )
 
 // The cores in this file hold the PutMetricAlarm and SetAlarmState logic.
@@ -47,7 +49,107 @@ func (h *Handler) putMetricAlarmCore(ctx context.Context, cfg *mondriver.AlarmCo
 			strings.Join(alarmeval.Units(), ", ")+"]")
 	}
 
+	if err := validateAlarmMetrics(cfg); err != nil {
+		return err
+	}
+
 	return h.monitoring.CreateAlarm(ctx, *cfg)
+}
+
+// metricQueryIDPattern is the MetricDataQuery Id rule from the API reference.
+var metricQueryIDPattern = regexp.MustCompile(`^[a-z][a-zA-Z0-9_]*$`)
+
+// validateAlarmMetrics checks the Metrics list of a metric-math alarm. An
+// expression outside the supported syntax is stored as is, because AWS accepts
+// it. It evaluates to no data.
+func validateAlarmMetrics(cfg *mondriver.AlarmConfig) error {
+	if len(cfg.Metrics) == 0 {
+		if cfg.ThresholdMetricID != "" {
+			return newWireError(errValidation, "ThresholdMetricId can only be used with Metrics.")
+		}
+
+		return nil
+	}
+
+	if hasSingleMetricFields(cfg) {
+		return newWireError(errValidation, "Metrics cannot be used with MetricName, Namespace, Dimensions, Period, Unit, "+
+			"Statistic or ExtendedStatistic.")
+	}
+
+	ids, err := metricQueryIDs(cfg.Metrics)
+	if err != nil {
+		return err
+	}
+
+	if len(metricmath.Watched(cfg.Metrics, cfg.ThresholdMetricID)) != 1 {
+		return newWireError(errValidation, "Exactly one element of the metrics list should return data.")
+	}
+
+	if cfg.ThresholdMetricID != "" && !ids[cfg.ThresholdMetricID] {
+		return newWireError(errValidation, "ThresholdMetricId "+cfg.ThresholdMetricID+" does not match any Id in the metrics list.")
+	}
+
+	if err := expressionRefsKnown(cfg.Metrics, ids); err != nil {
+		return err
+	}
+
+	if id, ok := metricmath.Cycle(cfg.Metrics); ok {
+		return newWireError(errValidation, "Error in expression '"+id+"': Circular dependency in the metrics list.")
+	}
+
+	return nil
+}
+
+// hasSingleMetricFields reports whether any field of a single-metric alarm
+// is set. Metrics replaces all of them.
+func hasSingleMetricFields(cfg *mondriver.AlarmConfig) bool {
+	return cfg.Namespace != "" || cfg.MetricName != "" || len(cfg.Dimensions) > 0 || cfg.Period != 0 ||
+		cfg.Unit != "" || cfg.Stat != "" || cfg.ExtendedStatistic != ""
+}
+
+// metricQueryIDs checks each entry's Id and shape and returns the set of Ids.
+func metricQueryIDs(queries []mondriver.MetricDataQuery) (map[string]bool, error) {
+	ids := make(map[string]bool, len(queries))
+
+	for i := range queries {
+		q := &queries[i]
+
+		if !metricQueryIDPattern.MatchString(q.ID) {
+			return nil, newWireError(errValidation, "Invalid metrics list: the id '"+q.ID+
+				"' must start with a lowercase letter and contain only letters, numbers and underscores.")
+		}
+
+		if ids[q.ID] {
+			return nil, newWireError(errValidation, "Invalid metrics list: the id '"+q.ID+"' is used more than once.")
+		}
+
+		ids[q.ID] = true
+
+		if (q.MetricStat == nil) == (q.Expression == "") {
+			return nil, newWireError(errValidation, "Invalid metrics list: the element '"+q.ID+
+				"' must specify exactly one of MetricStat and Expression.")
+		}
+	}
+
+	return ids, nil
+}
+
+// expressionRefsKnown checks that each expression only reads Ids in the list.
+func expressionRefsKnown(queries []mondriver.MetricDataQuery, ids map[string]bool) error {
+	for i := range queries {
+		refs, ok := metricmath.References(queries[i].Expression)
+		if !ok {
+			continue
+		}
+
+		for _, ref := range refs {
+			if !ids[ref] {
+				return newWireError(errValidation, "Error in expression '"+queries[i].ID+"': Unrecognized metric '"+ref+"'.")
+			}
+		}
+	}
+
+	return nil
 }
 
 // errInvalidFormat is the code for StateReasonData that is not JSON.

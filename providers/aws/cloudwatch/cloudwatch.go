@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/monitoring/metricmath"
 )
 
 // Compile-time check that Mock implements driver.Monitoring.
@@ -112,6 +113,9 @@ type alarmData struct {
 	MetricQueryID string
 	// ConfigUpdatedAt is when the configuration was last put.
 	ConfigUpdatedAt time.Time
+	// Metrics and ThresholdMetricID are set on a metric-math alarm.
+	Metrics           []driver.MetricDataQuery
+	ThresholdMetricID string
 }
 
 // New creates a new CloudWatch mock with the given configuration options.
@@ -160,6 +164,11 @@ func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) err
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*driver.MetricDataResult, error) {
+	return m.readMetric(&input), nil
+}
+
+// readMetric aggregates one metric over the input's periods.
+func (m *Mock) readMetric(input *driver.GetMetricInput) *driver.MetricDataResult {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -168,7 +177,7 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 		MetricName: input.MetricName,
 	}
 
-	filtered := filterDatums(m.metrics[key], &input)
+	filtered := filterDatums(m.metrics[key], input)
 
 	// Sort by timestamp.
 	sort.Slice(filtered, func(i, j int) bool {
@@ -180,7 +189,7 @@ func (m *Mock) GetMetricData(_ context.Context, input driver.GetMetricInput) (*d
 		period = 60
 	}
 
-	return buildMetricResult(filtered, input.StartTime, input.EndTime, period, input.Stat), nil
+	return buildMetricResult(filtered, input.StartTime, input.EndTime, period, input.Stat)
 }
 
 // filterDatums keeps the datums inside the query's time range that match its
@@ -615,5 +624,7 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 		AlarmArn:                   a.AlarmArn,
 		Dimensions:                 dims,
 		Tags:                       tags,
+		Metrics:                    metricmath.Clone(a.Metrics),
+		ThresholdMetricID:          a.ThresholdMetricID,
 	}
 }

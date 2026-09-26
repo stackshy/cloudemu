@@ -52,14 +52,26 @@ func getMetricDataForm(in *awscw.GetMetricDataInput) url.Values {
 		form.Set("MaxDatapoints", strconv.Itoa(int(*in.MaxDatapoints)))
 	}
 
-	for i, q := range in.MetricDataQueries {
-		p := "MetricDataQueries.member." + strconv.Itoa(i+1) + "."
+	addQueriesForm(form, "MetricDataQueries", in.MetricDataQueries)
+
+	return form
+}
+
+// addQueriesForm writes a MetricDataQuery list as <prefix>.member.N fields.
+func addQueriesForm(form url.Values, prefix string, queries []cwtypes.MetricDataQuery) {
+	for i, q := range queries {
+		p := prefix + ".member." + strconv.Itoa(i+1) + "."
 		form.Set(p+"Id", aws.ToString(q.Id))
 		setIfSet(form, p+"Label", q.Label)
 		setIfSet(form, p+"Expression", q.Expression)
+		setIfSet(form, p+"AccountId", q.AccountId)
 
 		if q.ReturnData != nil {
 			form.Set(p+"ReturnData", strconv.FormatBool(*q.ReturnData))
+		}
+
+		if q.Period != nil {
+			form.Set(p+"Period", strconv.Itoa(int(*q.Period)))
 		}
 
 		if ms := q.MetricStat; ms != nil {
@@ -79,8 +91,6 @@ func getMetricDataForm(in *awscw.GetMetricDataInput) url.Values {
 			}
 		}
 	}
-
-	return form
 }
 
 type getMetricDataXML struct {
@@ -121,13 +131,20 @@ func putAlarmForm(in *awscw.PutMetricAlarmInput) url.Values {
 	form := url.Values{
 		"Action":             {"PutMetricAlarm"},
 		"AlarmName":          {aws.ToString(in.AlarmName)},
-		"Namespace":          {aws.ToString(in.Namespace)},
-		"MetricName":         {aws.ToString(in.MetricName)},
 		"ComparisonOperator": {string(in.ComparisonOperator)},
 		"Threshold":          {strconv.FormatFloat(aws.ToFloat64(in.Threshold), 'g', -1, 64)},
-		"Period":             {strconv.Itoa(int(aws.ToInt32(in.Period)))},
 		"EvaluationPeriods":  {strconv.Itoa(int(aws.ToInt32(in.EvaluationPeriods)))},
 	}
+
+	setIfSet(form, "Namespace", in.Namespace)
+	setIfSet(form, "MetricName", in.MetricName)
+	setIfSet(form, "ThresholdMetricId", in.ThresholdMetricId)
+
+	if in.Period != nil {
+		form.Set("Period", strconv.Itoa(int(*in.Period)))
+	}
+
+	addQueriesForm(form, "Metrics", in.Metrics)
 
 	if in.Statistic != "" {
 		form.Set("Statistic", string(in.Statistic))

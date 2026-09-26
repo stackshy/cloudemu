@@ -6,6 +6,7 @@ import (
 	"time"
 
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/monitoring/metricmath"
 )
 
 // The cores in this file hold the GetMetricData and DescribeAlarmsForMetric
@@ -56,19 +57,20 @@ func (h *Handler) getMetricDataCore(ctx context.Context, in *getMetricDataInput)
 		return getMetricDataResult{}, err
 	}
 
-	eval := newMathEvaluator(ctx, h.monitoring, in.MetricDataQueries, timeOrZero(in.StartTime), timeOrZero(in.EndTime))
+	queries := toDriverQueries(in.MetricDataQueries)
+	eval := metricmath.New(queries, h.metricFetcher(ctx, timeOrZero(in.StartTime), timeOrZero(in.EndTime)))
 	rows := make([]metricDataRow, 0, len(in.MetricDataQueries))
 
 	for i := range in.MetricDataQueries {
-		q := in.MetricDataQueries[i]
+		q := &in.MetricDataQueries[i]
 
-		series, err := eval.resolve(q.ID)
+		series, err := eval.Resolve(q.ID)
 		if err != nil {
 			return getMetricDataResult{}, err
 		}
 
 		// ReturnData=false rows only feed other queries and are not returned.
-		if q.ReturnData != nil && !*q.ReturnData {
+		if !metricmath.ReturnsData(&queries[i]) {
 			continue
 		}
 
@@ -78,6 +80,27 @@ func (h *Handler) getMetricDataCore(ctx context.Context, in *getMetricDataInput)
 	page, next := pageMetricData(rows, offset, in.MaxDatapoints, descending)
 
 	return getMetricDataResult{Rows: page, NextToken: next}, nil
+}
+
+// metricFetcher reads one metric from the monitoring driver over [start, end).
+func (h *Handler) metricFetcher(ctx context.Context, start, end time.Time) metricmath.Fetcher {
+	return func(ms *mondriver.MetricStat, period int) (metricmath.Series, error) {
+		res, err := h.monitoring.GetMetricData(ctx, mondriver.GetMetricInput{
+			Namespace:  ms.Namespace,
+			MetricName: ms.MetricName,
+			Dimensions: ms.Dimensions,
+			StartTime:  start,
+			EndTime:    end,
+			Period:     period,
+			Stat:       ms.Stat,
+			Unit:       ms.Unit,
+		})
+		if err != nil || res == nil {
+			return metricmath.Series{}, err
+		}
+
+		return metricmath.Series{Timestamps: res.Timestamps, Values: res.Values}, nil
+	}
 }
 
 // scanByIsDescending validates ScanBy. An empty value means
@@ -96,8 +119,8 @@ func scanByIsDescending(scanBy string) (bool, error) {
 
 // buildMetricDataRow copies the series in ScanBy order. It copies so the
 // evaluator's cached series, which other queries reuse, stay untouched.
-func buildMetricDataRow(q metricDataQueryCBR, series mathSeries, descending bool) metricDataRow {
-	n := len(series.timestamps)
+func buildMetricDataRow(q *metricDataQueryCBR, series metricmath.Series, descending bool) metricDataRow {
+	n := len(series.Timestamps)
 
 	order := make([]int, n)
 	for i := range order {
@@ -105,7 +128,7 @@ func buildMetricDataRow(q metricDataQueryCBR, series mathSeries, descending bool
 	}
 
 	sort.SliceStable(order, func(i, j int) bool {
-		a, b := series.timestamps[order[i]], series.timestamps[order[j]]
+		a, b := series.Timestamps[order[i]], series.Timestamps[order[j]]
 		if descending {
 			return a.After(b)
 		}
@@ -119,8 +142,8 @@ func buildMetricDataRow(q metricDataQueryCBR, series mathSeries, descending bool
 	}
 
 	for i, j := range order {
-		row.Timestamps[i] = series.timestamps[j].UTC()
-		row.Values[i] = series.values[j]
+		row.Timestamps[i] = series.Timestamps[j].UTC()
+		row.Values[i] = series.Values[j]
 	}
 
 	return row
@@ -128,7 +151,7 @@ func buildMetricDataRow(q metricDataQueryCBR, series mathSeries, descending bool
 
 // metricDataLabel resolves the response label for a query: the caller-supplied
 // Label, else the metric name for a MetricStat query, else the query Id.
-func metricDataLabel(q metricDataQueryCBR) string {
+func metricDataLabel(q *metricDataQueryCBR) string {
 	if q.Label != "" {
 		return q.Label
 	}

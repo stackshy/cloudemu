@@ -54,6 +54,8 @@ type cwWire struct {
 	// putCode and putAlarmCode return the error code, or "" on success.
 	putCode      func(t *testing.T, in *awscw.PutMetricDataInput) string
 	putAlarmCode func(t *testing.T, in *awscw.PutMetricAlarmInput) string
+	// describeAlarms returns the named metric alarms.
+	describeAlarms func(t *testing.T, names ...string) []cwtypes.MetricAlarm
 }
 
 type cwProtocol struct {
@@ -223,6 +225,16 @@ func newCBORWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 			_, err := c.PutMetricAlarm(ctx, in)
 			return sdkErrCode(t, err)
 		},
+		describeAlarms: func(t *testing.T, names ...string) []cwtypes.MetricAlarm {
+			t.Helper()
+
+			out, err := c.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{AlarmNames: names})
+			if err != nil {
+				t.Fatalf("DescribeAlarms: %v", err)
+			}
+
+			return out.MetricAlarms
+		},
 	}
 }
 
@@ -384,6 +396,19 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 		putAlarmCode: func(t *testing.T, in *awscw.PutMetricAlarmInput) string {
 			t.Helper()
 			return postCode(t, putAlarmForm(in), nil)
+		},
+		describeAlarms: func(t *testing.T, names ...string) []cwtypes.MetricAlarm {
+			t.Helper()
+
+			form := url.Values{"Action": {"DescribeAlarms"}}
+			for i, n := range names {
+				form.Set("AlarmNames.member."+strconv.Itoa(i+1), n)
+			}
+
+			var x describeAlarmsXML
+			post(t, form, &x)
+
+			return x.toSDK()
 		},
 	}
 }

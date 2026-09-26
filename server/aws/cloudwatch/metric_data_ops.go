@@ -52,6 +52,8 @@ type metricDataQueryCBR struct {
 	MetricStat *metricStatCBR `cbor:"MetricStat,omitempty"`
 	Expression string         `cbor:"Expression,omitempty"`
 	ReturnData *bool          `cbor:"ReturnData,omitempty"`
+	Period     int            `cbor:"Period,omitempty"`
+	AccountID  string         `cbor:"AccountId,omitempty"`
 }
 
 type metricDataResultCBR struct {

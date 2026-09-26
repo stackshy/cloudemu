@@ -144,25 +144,27 @@ type tagCBR struct {
 }
 
 type putMetricAlarmInput struct {
-	AlarmName               string         `cbor:"AlarmName"`
-	AlarmDescription        string         `cbor:"AlarmDescription,omitempty"`
-	Namespace               string         `cbor:"Namespace"`
-	MetricName              string         `cbor:"MetricName"`
-	ComparisonOperator      string         `cbor:"ComparisonOperator"`
-	Threshold               float64        `cbor:"Threshold"`
-	Period                  int            `cbor:"Period"`
-	EvaluationPeriods       int            `cbor:"EvaluationPeriods"`
-	DatapointsToAlarm       int            `cbor:"DatapointsToAlarm,omitempty"`
-	Statistic               string         `cbor:"Statistic,omitempty"`
-	ExtendedStatistic       string         `cbor:"ExtendedStatistic,omitempty"`
-	Unit                    string         `cbor:"Unit,omitempty"`
-	TreatMissingData        string         `cbor:"TreatMissingData,omitempty"`
-	Dimensions              []dimensionCBR `cbor:"Dimensions,omitempty"`
-	AlarmActions            []string       `cbor:"AlarmActions,omitempty"`
-	OKActions               []string       `cbor:"OKActions,omitempty"`
-	InsufficientDataActions []string       `cbor:"InsufficientDataActions,omitempty"`
-	ActionsEnabled          *bool          `cbor:"ActionsEnabled,omitempty"`
-	Tags                    []tagCBR       `cbor:"Tags,omitempty"`
+	AlarmName               string               `cbor:"AlarmName"`
+	AlarmDescription        string               `cbor:"AlarmDescription,omitempty"`
+	Namespace               string               `cbor:"Namespace"`
+	MetricName              string               `cbor:"MetricName"`
+	ComparisonOperator      string               `cbor:"ComparisonOperator"`
+	Threshold               float64              `cbor:"Threshold"`
+	Period                  int                  `cbor:"Period"`
+	EvaluationPeriods       int                  `cbor:"EvaluationPeriods"`
+	DatapointsToAlarm       int                  `cbor:"DatapointsToAlarm,omitempty"`
+	Statistic               string               `cbor:"Statistic,omitempty"`
+	ExtendedStatistic       string               `cbor:"ExtendedStatistic,omitempty"`
+	Unit                    string               `cbor:"Unit,omitempty"`
+	TreatMissingData        string               `cbor:"TreatMissingData,omitempty"`
+	Dimensions              []dimensionCBR       `cbor:"Dimensions,omitempty"`
+	AlarmActions            []string             `cbor:"AlarmActions,omitempty"`
+	OKActions               []string             `cbor:"OKActions,omitempty"`
+	InsufficientDataActions []string             `cbor:"InsufficientDataActions,omitempty"`
+	ActionsEnabled          *bool                `cbor:"ActionsEnabled,omitempty"`
+	Tags                    []tagCBR             `cbor:"Tags,omitempty"`
+	Metrics                 []metricDataQueryCBR `cbor:"Metrics,omitempty"`
+	ThresholdMetricID       string               `cbor:"ThresholdMetricId,omitempty"`
 }
 
 func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -192,6 +194,8 @@ func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []
 		AlarmDescription:        in.AlarmDescription,
 		ActionsEnabled:          in.ActionsEnabled,
 		Tags:                    tagsToMap(in.Tags),
+		Metrics:                 toDriverQueries(in.Metrics),
+		ThresholdMetricID:       in.ThresholdMetricID,
 	}
 
 	if err := h.putMetricAlarmCore(r.Context(), &cfg); err != nil {
@@ -230,30 +234,32 @@ type describeAlarmsInput struct {
 const maxAlarmPageSize = 100
 
 type metricAlarmCBR struct {
-	AlarmName                  string         `cbor:"AlarmName"`
-	AlarmArn                   string         `cbor:"AlarmArn,omitempty"`
-	AlarmDescription           string         `cbor:"AlarmDescription,omitempty"`
-	Namespace                  string         `cbor:"Namespace"`
-	MetricName                 string         `cbor:"MetricName"`
-	Dimensions                 []dimensionCBR `cbor:"Dimensions,omitempty"`
-	StateValue                 string         `cbor:"StateValue"`
-	StateReason                string         `cbor:"StateReason,omitempty"`
-	StateReasonData            string         `cbor:"StateReasonData,omitempty"`
-	StateUpdatedTimestamp      *time.Time     `cbor:"StateUpdatedTimestamp,omitempty"`
-	StateTransitionedTimestamp *time.Time     `cbor:"StateTransitionedTimestamp,omitempty"`
-	ComparisonOperator         string         `cbor:"ComparisonOperator"`
-	Threshold                  float64        `cbor:"Threshold"`
-	Period                     int            `cbor:"Period,omitempty"`
-	EvaluationPeriods          int            `cbor:"EvaluationPeriods,omitempty"`
-	DatapointsToAlarm          int            `cbor:"DatapointsToAlarm,omitempty"`
-	Statistic                  string         `cbor:"Statistic,omitempty"`
-	ExtendedStatistic          string         `cbor:"ExtendedStatistic,omitempty"`
-	Unit                       string         `cbor:"Unit,omitempty"`
-	TreatMissingData           string         `cbor:"TreatMissingData,omitempty"`
-	ActionsEnabled             bool           `cbor:"ActionsEnabled"`
-	AlarmActions               []string       `cbor:"AlarmActions,omitempty"`
-	OKActions                  []string       `cbor:"OKActions,omitempty"`
-	InsufficientDataActions    []string       `cbor:"InsufficientDataActions,omitempty"`
+	AlarmName                  string               `cbor:"AlarmName"`
+	AlarmArn                   string               `cbor:"AlarmArn,omitempty"`
+	AlarmDescription           string               `cbor:"AlarmDescription,omitempty"`
+	Namespace                  string               `cbor:"Namespace,omitempty"`
+	MetricName                 string               `cbor:"MetricName,omitempty"`
+	Dimensions                 []dimensionCBR       `cbor:"Dimensions,omitempty"`
+	StateValue                 string               `cbor:"StateValue"`
+	StateReason                string               `cbor:"StateReason,omitempty"`
+	StateReasonData            string               `cbor:"StateReasonData,omitempty"`
+	StateUpdatedTimestamp      *time.Time           `cbor:"StateUpdatedTimestamp,omitempty"`
+	StateTransitionedTimestamp *time.Time           `cbor:"StateTransitionedTimestamp,omitempty"`
+	ComparisonOperator         string               `cbor:"ComparisonOperator"`
+	Threshold                  float64              `cbor:"Threshold"`
+	Period                     int                  `cbor:"Period,omitempty"`
+	EvaluationPeriods          int                  `cbor:"EvaluationPeriods,omitempty"`
+	DatapointsToAlarm          int                  `cbor:"DatapointsToAlarm,omitempty"`
+	Statistic                  string               `cbor:"Statistic,omitempty"`
+	ExtendedStatistic          string               `cbor:"ExtendedStatistic,omitempty"`
+	Unit                       string               `cbor:"Unit,omitempty"`
+	TreatMissingData           string               `cbor:"TreatMissingData,omitempty"`
+	ActionsEnabled             bool                 `cbor:"ActionsEnabled"`
+	AlarmActions               []string             `cbor:"AlarmActions,omitempty"`
+	OKActions                  []string             `cbor:"OKActions,omitempty"`
+	InsufficientDataActions    []string             `cbor:"InsufficientDataActions,omitempty"`
+	Metrics                    []metricDataQueryCBR `cbor:"Metrics,omitempty"`
+	ThresholdMetricID          string               `cbor:"ThresholdMetricId,omitempty"`
 }
 
 type describeAlarmsOutput struct {
@@ -383,6 +389,8 @@ func toMetricAlarmCBR(a *mondriver.AlarmInfo) metricAlarmCBR {
 		AlarmActions:            a.AlarmActions,
 		OKActions:               a.OKActions,
 		InsufficientDataActions: a.InsufficientDataActions,
+		Metrics:                 toQueriesCBR(a.Metrics),
+		ThresholdMetricID:       a.ThresholdMetricID,
 	}
 
 	if !a.StateUpdatedTimestamp.IsZero() {

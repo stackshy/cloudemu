@@ -60,7 +60,9 @@ func queryMetricDataQueries(r *http.Request, prefix string) []metricDataQueryCBR
 			Label:      r.Form.Get(p + "Label"),
 			Expression: r.Form.Get(p + "Expression"),
 			ReturnData: queryOptBool(r, p+"ReturnData"),
+			AccountID:  r.Form.Get(p + "AccountId"),
 		}
+		q.Period, _ = strconv.Atoi(r.Form.Get(p + "Period"))
 
 		if name := r.Form.Get(p + "MetricStat.Metric.MetricName"); name != "" {
 			period, _ := strconv.Atoi(r.Form.Get(p + "MetricStat.Period"))
