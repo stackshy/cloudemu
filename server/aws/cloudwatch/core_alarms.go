@@ -72,11 +72,21 @@ func validateAlarmMetrics(cfg *mondriver.AlarmConfig) error {
 			"Statistic or ExtendedStatistic.")
 	}
 
+	if err := validateQueryCounts(cfg.Metrics); err != nil {
+		return err
+	}
+
 	ids, err := metricQueryIDs(cfg.Metrics)
 	if err != nil {
 		return err
 	}
 
+	return validateQueryLinks(cfg, ids)
+}
+
+// validateQueryLinks checks how the entries refer to each other: one watched
+// entry, a known ThresholdMetricId, known references and no cycle.
+func validateQueryLinks(cfg *mondriver.AlarmConfig, ids map[string]bool) error {
 	if len(metricmath.Watched(cfg.Metrics, cfg.ThresholdMetricID)) != 1 {
 		return newWireError(errValidation, "Exactly one element of the metrics list should return data.")
 	}
@@ -136,13 +146,86 @@ func metricQueryIDs(queries []mondriver.MetricDataQuery) (map[string]bool, error
 
 		ids[q.ID] = true
 
-		if (q.MetricStat == nil) == (q.Expression == "") {
-			return nil, newWireError(errValidation, "Invalid metrics list: the element '"+q.ID+
-				"' must specify exactly one of MetricStat and Expression.")
+		if err := validateQueryShape(q); err != nil {
+			return nil, err
 		}
 	}
 
 	return ids, nil
+}
+
+// Limits on a PutMetricAlarm Metrics list.
+const (
+	maxAlarmMetricStats  = 10
+	maxAlarmExpressions  = 10
+	secondsPerMinute     = 60
+	highResolutionPeriod = 30
+	highResolutionStep   = 10
+)
+
+// validPeriod reports whether p is 10, 20, 30 or a multiple of 60.
+func validPeriod(p int) bool {
+	if p <= 0 {
+		return false
+	}
+
+	if p <= highResolutionPeriod {
+		return p%highResolutionStep == 0
+	}
+
+	return p%secondsPerMinute == 0
+}
+
+// validateQueryShape checks one Metrics entry. It has exactly one of
+// MetricStat and Expression. A MetricStat needs a valid Period and a Stat.
+// An Expression Period, when set, follows the same Period rule.
+func validateQueryShape(q *mondriver.MetricDataQuery) error {
+	if (q.MetricStat == nil) == (q.Expression == "") {
+		return newWireError(errValidation, "Invalid metrics list: the element '"+q.ID+
+			"' must specify exactly one of MetricStat and Expression.")
+	}
+
+	if ms := q.MetricStat; ms != nil {
+		if !validPeriod(ms.Period) {
+			return newWireError(errValidation, "Invalid metrics list: the element '"+q.ID+
+				"' must have a MetricStat Period of 10, 20, 30 or a multiple of 60.")
+		}
+
+		if ms.Stat == "" {
+			return newWireError(errValidation, "Invalid metrics list: the element '"+q.ID+"' must have a MetricStat Stat.")
+		}
+	}
+
+	if q.Period != 0 && !validPeriod(q.Period) {
+		return newWireError(errValidation, "Invalid metrics list: the element '"+q.ID+
+			"' must have a Period of 10, 20, 30 or a multiple of 60.")
+	}
+
+	return nil
+}
+
+// validateQueryCounts enforces the per-alarm limits on MetricStat and
+// Expression entries.
+func validateQueryCounts(queries []mondriver.MetricDataQuery) error {
+	stats, exprs := 0, 0
+
+	for i := range queries {
+		if queries[i].MetricStat != nil {
+			stats++
+		} else {
+			exprs++
+		}
+	}
+
+	if stats > maxAlarmMetricStats {
+		return newWireError(errValidation, "The metrics list can contain at most 10 MetricStat elements.")
+	}
+
+	if exprs > maxAlarmExpressions {
+		return newWireError(errValidation, "The metrics list can contain at most 10 Expression elements.")
+	}
+
+	return nil
 }
 
 // expressionRefsKnown checks that each expression only reads Ids in the list.

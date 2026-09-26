@@ -1,6 +1,7 @@
 package cloudwatch_test
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -223,6 +224,23 @@ func TestMathAlarmValidation(t *testing.T) {
 				Id: aws.String("loop"), Expression: aws.String("rate+1"), ReturnData: aws.Bool(false),
 			})
 			in.Metrics[2].Expression = aws.String("loop*2")
+		}},
+		{"MetricStat Period 7", func(in *awscw.PutMetricAlarmInput) { in.Metrics[0].MetricStat.Period = aws.Int32(7) }},
+		{"MetricStat Period 90", func(in *awscw.PutMetricAlarmInput) { in.Metrics[0].MetricStat.Period = aws.Int32(90) }},
+		{"MetricStat Period 0", func(in *awscw.PutMetricAlarmInput) { in.Metrics[0].MetricStat.Period = aws.Int32(0) }},
+		{"MetricStat empty Stat", func(in *awscw.PutMetricAlarmInput) { in.Metrics[0].MetricStat.Stat = aws.String("") }},
+		{"expression Period 45", func(in *awscw.PutMetricAlarmInput) { in.Metrics[2].Period = aws.Int32(45) }},
+		{"11 MetricStat entries", func(in *awscw.PutMetricAlarmInput) {
+			for i := range 9 {
+				in.Metrics = append(in.Metrics, mathStat("x"+strconv.Itoa(i), "Errors"))
+			}
+		}},
+		{"11 Expression entries", func(in *awscw.PutMetricAlarmInput) {
+			for i := range 10 {
+				in.Metrics = append(in.Metrics, cwtypes.MetricDataQuery{
+					Id: aws.String("x" + strconv.Itoa(i)), Expression: aws.String("err*2"), ReturnData: aws.Bool(false),
+				})
+			}
 		}},
 		{"neither MetricName nor Metrics", func(in *awscw.PutMetricAlarmInput) { in.Metrics = nil }},
 		{"unknown ThresholdMetricId", func(in *awscw.PutMetricAlarmInput) { in.ThresholdMetricId = aws.String("ad9") }},

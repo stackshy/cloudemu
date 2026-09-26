@@ -3,6 +3,8 @@ package cloudwatch
 import (
 	"context"
 	"encoding/json"
+	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -215,7 +217,7 @@ func TestMathAlarmNotificationTrigger(t *testing.T) {
 	}
 
 	assertEqual(t, 60, tr.Period)
-	assertEqual(t, "missing", tr.TreatMissingData)
+	assertEqual(t, "- TreatMissingData:"+strings.Repeat(" ", 20)+"missing", tr.TreatMissingData)
 	assertEqual(t, 3, len(tr.Metrics))
 	assertEqual(t, "err/req*100", tr.Metrics[2].Expression)
 	assertEqual(t, "ErrorRate", tr.Metrics[2].Label)
@@ -231,6 +233,57 @@ func TestMathAlarmNotificationTrigger(t *testing.T) {
 	assertEqual(t, "Sum", errQ.MetricStat.Stat)
 	assertEqual(t, "api", errQ.MetricStat.Metric.Dimensions[0]["value"])
 	assertEqual(t, "Service", errQ.MetricStat.Metric.Dimensions[0]["name"])
+}
+
+// The single-metric Trigger matches the aws-lambda-go sample payload
+// cloudwatch-alarm-sns-payload-single-metric.json.
+func TestNotificationTriggerSingleMetric(t *testing.T) {
+	m, fc, _ := newClockMock()
+	pub := &messagePublisher{}
+	m.SetSNSPublisher(pub)
+
+	ctx := context.Background()
+	dims := map[string]string{"InstanceId": "TestInstance"}
+
+	requireNoError(t, m.PutMetricData(ctx, []driver.MetricDatum{{
+		Namespace: "AWS/EC2", MetricName: "NetworkOut", Value: 1234, Unit: "Bytes", Timestamp: fc.Now(), Dimensions: dims,
+	}}))
+	fc.Advance(time.Second)
+
+	requireNoError(t, m.CreateAlarm(ctx, driver.AlarmConfig{
+		Name: "net", Namespace: "AWS/EC2", MetricName: "NetworkOut", Dimensions: dims, Unit: "Bytes",
+		Stat: "Average", Period: 60, EvaluationPeriods: 1, Threshold: 0, ComparisonOperator: "GreaterThanThreshold",
+		AlarmActions: []string{alarmTopic},
+	}))
+
+	if len(pub.messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(pub.messages))
+	}
+
+	var body struct {
+		Trigger map[string]any `json:"Trigger"`
+	}
+
+	requireNoError(t, json.Unmarshal([]byte(pub.messages[0]), &body))
+
+	want := map[string]any{
+		"MetricName":                       "NetworkOut",
+		"Namespace":                        "AWS/EC2",
+		"StatisticType":                    "Statistic",
+		"Statistic":                        "AVERAGE",
+		"Unit":                             "Bytes",
+		"Dimensions":                       []any{map[string]any{"value": "TestInstance", "name": "InstanceId"}},
+		"Period":                           float64(60),
+		"EvaluationPeriods":                float64(1),
+		"ComparisonOperator":               "GreaterThanThreshold",
+		"Threshold":                        float64(0),
+		"TreatMissingData":                 "- TreatMissingData:" + strings.Repeat(" ", 20) + "missing",
+		"EvaluateLowSampleCountPercentile": "",
+	}
+
+	if !reflect.DeepEqual(body.Trigger, want) {
+		t.Fatalf("Trigger =\n%v\nwant\n%v", body.Trigger, want)
+	}
 }
 
 // A snapshot keeps the Metrics list and ThresholdMetricID.

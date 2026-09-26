@@ -2,6 +2,7 @@ package cloudwatch
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
@@ -30,17 +31,14 @@ func alarmPeriod(a *alarmData) int {
 		return a.Period
 	}
 
+	// PutMetricAlarm requires a Period on every MetricStat, so a stored list
+	// always has one.
 	if q := watchedQuery(a); q != nil {
-		if p := metricmath.Period(a.Metrics, q); p > 0 {
-			return p
-		}
+		return metricmath.Period(a.Metrics, q)
 	}
 
-	return defaultMathPeriod
+	return 0
 }
-
-// defaultMathPeriod is used when no entry of a math alarm sets a period.
-const defaultMathPeriod = 60
 
 // alarmReads reports whether an alarm reads any of the given metrics.
 func alarmReads(a *alarmData, keys map[metricKey]bool) bool {
@@ -59,33 +57,71 @@ func alarmReads(a *alarmData, keys map[metricKey]bool) bool {
 
 // notificationTrigger is the Trigger block of an SNS alarm notification. A
 // math alarm has no single metric, so it lists its Metrics instead.
+//
+// The shape follows the sample payloads in aws-lambda-go
+// events/testdata/cloudwatch-alarm-sns-payload-{single-metric,multiple-metrics}.json.
 func notificationTrigger(a *alarmData) map[string]any {
-	trigger := map[string]any{
-		"ComparisonOperator": a.ComparisonOperator,
-		"Threshold":          a.Threshold,
-		"EvaluationPeriods":  a.EvaluationPeriods,
-	}
-
-	if len(a.Metrics) == 0 {
-		trigger["MetricName"] = a.MetricName
-		trigger["Namespace"] = a.Namespace
-		trigger["Statistic"] = a.Stat
-		trigger["Period"] = a.Period
-
-		return trigger
-	}
-
 	treat := a.TreatMissingData
 	if treat == "" {
 		treat = treatMissingDefault
 	}
 
-	trigger["Period"] = alarmPeriod(a)
-	trigger["TreatMissingData"] = treat
-	trigger["EvaluateLowSampleCountPercentile"] = ""
-	trigger["Metrics"] = notificationMetrics(a.Metrics)
+	trigger := map[string]any{
+		"Period":                           alarmPeriod(a),
+		"EvaluationPeriods":                a.EvaluationPeriods,
+		"ComparisonOperator":               a.ComparisonOperator,
+		"Threshold":                        a.Threshold,
+		"TreatMissingData":                 treatMissingLabel + treat,
+		"EvaluateLowSampleCountPercentile": "",
+	}
+
+	if len(a.Metrics) > 0 {
+		trigger["Metrics"] = notificationMetrics(a.Metrics)
+
+		return trigger
+	}
+
+	trigger["MetricName"] = a.MetricName
+	trigger["Namespace"] = a.Namespace
+	trigger["Dimensions"] = notificationDimensions(a.Dimensions)
+	trigger["Unit"] = nil
+
+	if a.Unit != "" {
+		trigger["Unit"] = a.Unit
+	}
+
+	if a.ExtendedStatistic != "" {
+		trigger["StatisticType"] = "ExtendedStatistic"
+		trigger["ExtendedStatistic"] = a.ExtendedStatistic
+	} else {
+		trigger["StatisticType"] = "Statistic"
+		trigger["Statistic"] = strings.ToUpper(a.Stat)
+	}
 
 	return trigger
+}
+
+// treatMissingLabel prefixes TreatMissingData in a notification. CloudWatch
+// sends the value as a padded label, for example
+// "- TreatMissingData:                    missing".
+const treatMissingLabel = "- TreatMissingData:                    "
+
+// notificationDimensions renders dimensions sorted by name, with lower-case
+// name and value keys as CloudWatch sends them.
+func notificationDimensions(dims map[string]string) []map[string]string {
+	keys := make([]string, 0, len(dims))
+	for k := range dims {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	out := make([]map[string]string, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, map[string]string{"value": dims[k], "name": k})
+	}
+
+	return out
 }
 
 // notificationMetrics renders a Metrics list in the notification shape.
@@ -106,20 +142,8 @@ func notificationMetrics(queries []driver.MetricDataQuery) []map[string]any {
 		}
 
 		if ms := q.MetricStat; ms != nil {
-			keys := make([]string, 0, len(ms.Dimensions))
-			for k := range ms.Dimensions {
-				keys = append(keys, k)
-			}
-
-			sort.Strings(keys)
-
-			dims := make([]map[string]string, 0, len(keys))
-			for _, k := range keys {
-				dims = append(dims, map[string]string{"value": ms.Dimensions[k], "name": k})
-			}
-
 			entry["MetricStat"] = map[string]any{
-				"Metric": map[string]any{"Dimensions": dims, "MetricName": ms.MetricName, "Namespace": ms.Namespace},
+				"Metric": map[string]any{"Dimensions": notificationDimensions(ms.Dimensions), "MetricName": ms.MetricName, "Namespace": ms.Namespace},
 				"Period": ms.Period,
 				"Stat":   ms.Stat,
 			}
