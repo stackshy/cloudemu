@@ -207,7 +207,7 @@ func (h *Handler) updateClusterVersion(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	upd, err := h.eks.UpdateClusterVersion(r.Context(), name, body.Version)
+	upd, err := h.eks.UpdateClusterVersion(r.Context(), name, body.Version, body.Force)
 	if err != nil {
 		writeErr(w, err)
 

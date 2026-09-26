@@ -211,7 +211,7 @@ func TestSDKEKSNodegroupLifecycle(t *testing.T) {
 	if _, err := client.UpdateNodegroupVersion(ctx, &awseks.UpdateNodegroupVersionInput{
 		ClusterName:   aws.String("c1"),
 		NodegroupName: aws.String("ng1"),
-		Version:       aws.String("1.31"),
+		Version:       aws.String("1.30"),
 	}); err != nil {
 		t.Fatalf("UpdateNodegroupVersion: %v", err)
 	}
@@ -298,7 +298,7 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 	out, err := client.CreateAddon(ctx, &awseks.CreateAddonInput{
 		ClusterName:  aws.String("c1"),
 		AddonName:    aws.String("vpc-cni"),
-		AddonVersion: aws.String("v1.0.0"),
+		AddonVersion: aws.String("v1.20.4-eksbuild.2"),
 	})
 	if err != nil {
 		t.Fatalf("CreateAddon: %v", err)
@@ -316,8 +316,8 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 		t.Fatalf("DescribeAddon: %v", err)
 	}
 
-	if aws.ToString(got.Addon.AddonVersion) != "v1.0.0" {
-		t.Fatalf("got version %q, want v1.0.0", aws.ToString(got.Addon.AddonVersion))
+	if aws.ToString(got.Addon.AddonVersion) != "v1.20.4-eksbuild.2" {
+		t.Fatalf("got version %q, want v1.20.4-eksbuild.2", aws.ToString(got.Addon.AddonVersion))
 	}
 
 	list, err := client.ListAddons(ctx, &awseks.ListAddonsInput{ClusterName: aws.String("c1")})
@@ -332,7 +332,7 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 	if _, err := client.UpdateAddon(ctx, &awseks.UpdateAddonInput{
 		ClusterName:  aws.String("c1"),
 		AddonName:    aws.String("vpc-cni"),
-		AddonVersion: aws.String("v2.0.0"),
+		AddonVersion: aws.String("v1.23.1-eksbuild.1"),
 	}); err != nil {
 		t.Fatalf("UpdateAddon: %v", err)
 	}
@@ -345,7 +345,7 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 		t.Fatalf("DescribeAddon after update: %v", err)
 	}
 
-	if aws.ToString(got.Addon.AddonVersion) != "v2.0.0" {
+	if aws.ToString(got.Addon.AddonVersion) != "v1.23.1-eksbuild.1" {
 		t.Fatalf("update did not apply: got %q", aws.ToString(got.Addon.AddonVersion))
 	}
 

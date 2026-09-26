@@ -91,7 +91,7 @@ func TestClusterLifecycle(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, 1, len(names))
 
-	upd, err := m.UpdateClusterVersion(ctx, "c1", "1.31")
+	upd, err := m.UpdateClusterVersion(ctx, "c1", "1.31", false)
 	requireNoError(t, err)
 	assertEqual(t, "Successful", upd.Status)
 
@@ -122,7 +122,7 @@ func TestUpdateCluster_NotFound(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	if _, err := m.UpdateClusterVersion(ctx, "missing", "1.30"); err == nil {
+	if _, err := m.UpdateClusterVersion(ctx, "missing", "1.30", false); err == nil {
 		t.Fatal("expected error for missing cluster")
 	}
 
@@ -167,12 +167,12 @@ func TestNodegroupLifecycle(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, 3, got.ScalingConfig.DesiredSize)
 
-	_, err = m.UpdateNodegroupVersion(ctx, "c1", "ng1", "1.31", "")
+	_, err = m.UpdateNodegroupVersion(ctx, "c1", "ng1", "1.30", "")
 	requireNoError(t, err)
 
 	got, err = m.DescribeNodegroup(ctx, "c1", "ng1")
 	requireNoError(t, err)
-	assertEqual(t, "1.31", got.Version)
+	assertEqual(t, "1.30", got.Version)
 
 	_, err = m.DeleteNodegroup(ctx, "c1", "ng1")
 	requireNoError(t, err)
@@ -354,7 +354,7 @@ func TestAddonLifecycle(t *testing.T) {
 	ad, err := m.CreateAddon(ctx, eksdriver.AddonConfig{
 		ClusterName:  "c1",
 		AddonName:    "vpc-cni",
-		AddonVersion: "v1.0",
+		AddonVersion: "v1.20.4-eksbuild.2",
 	})
 	requireNoError(t, err)
 	assertEqual(t, "ACTIVE", ad.Status)
@@ -362,21 +362,21 @@ func TestAddonLifecycle(t *testing.T) {
 
 	got, err := m.DescribeAddon(ctx, "c1", "vpc-cni")
 	requireNoError(t, err)
-	assertEqual(t, "v1.0", got.AddonVersion)
+	assertEqual(t, "v1.20.4-eksbuild.2", got.AddonVersion)
 
 	names, err := m.ListAddons(ctx, "c1")
 	requireNoError(t, err)
 	assertEqual(t, 1, len(names))
 
 	upd, err := m.UpdateAddon(ctx, eksdriver.AddonConfig{
-		ClusterName: "c1", AddonName: "vpc-cni", AddonVersion: "v2.0",
+		ClusterName: "c1", AddonName: "vpc-cni", AddonVersion: "v1.23.1-eksbuild.1",
 	})
 	requireNoError(t, err)
 	assertEqual(t, "Successful", upd.Status)
 
 	got, err = m.DescribeAddon(ctx, "c1", "vpc-cni")
 	requireNoError(t, err)
-	assertEqual(t, "v2.0", got.AddonVersion)
+	assertEqual(t, "v1.23.1-eksbuild.1", got.AddonVersion)
 
 	_, err = m.DeleteAddon(ctx, "c1", "vpc-cni")
 	requireNoError(t, err)

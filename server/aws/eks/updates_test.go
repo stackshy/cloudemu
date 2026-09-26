@@ -119,7 +119,7 @@ func TestSDKEKSDescribeAndListUpdates(t *testing.T) {
 
 	upd, err := client.UpdateClusterVersion(ctx, &awseks.UpdateClusterVersionInput{
 		Name:    aws.String("u1"),
-		Version: aws.String("1.30"),
+		Version: aws.String("1.37"),
 	})
 	if err != nil {
 		t.Fatalf("UpdateClusterVersion: %v", err)

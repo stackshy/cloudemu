@@ -256,6 +256,7 @@ type updateClusterConfigRequest struct {
 
 type updateClusterVersionRequest struct {
 	Version string `json:"version,omitempty"`
+	Force   bool   `json:"force,omitempty"`
 }
 
 type createNodegroupRequest struct {
