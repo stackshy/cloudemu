@@ -216,3 +216,26 @@ func TestServiceTickablesCoverEveryRegion(t *testing.T) {
 		t.Fatalf("after reset tickables = %v, want only the new default region", got)
 	}
 }
+
+// panicTickable panics on every Tick.
+type panicTickable struct{}
+
+func (panicTickable) Tick(time.Time) bool { panic("boom") }
+
+// A Tickable that panics is recovered, and the others in the same pass still
+// run and report their change.
+func TestRunOnceRecoversPanickingTick(t *testing.T) {
+	good := &countingTickable{}
+	good.changed.Store(true)
+
+	s := &scheduler{clock: config.RealClock{}}
+
+	changed := s.runOnce(func() []config.Tickable { return []config.Tickable{panicTickable{}, good} })
+	if !changed {
+		t.Fatal("runOnce = false, want true from the healthy Tickable")
+	}
+
+	if good.calls.Load() != 1 {
+		t.Fatalf("healthy Tickable called %d times, want 1", good.calls.Load())
+	}
+}

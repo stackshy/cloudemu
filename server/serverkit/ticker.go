@@ -1,6 +1,7 @@
 package serverkit
 
 import (
+	"log"
 	"sync"
 	"time"
 
@@ -84,12 +85,26 @@ func (s *scheduler) runOnce(source tickSource) bool {
 	changed := false
 
 	for _, t := range source() {
-		if t != nil && t.Tick(now) {
+		if t != nil && safeTick(t, now) {
 			changed = true
 		}
 	}
 
 	return changed
+}
+
+// safeTick runs one Tick and recovers a panic, so a bug in one service's
+// background work cannot take the whole server down.
+func safeTick(t config.Tickable, now time.Time) (changed bool) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("background tick panicked: %v", r)
+
+			changed = false
+		}
+	}()
+
+	return t.Tick(now)
 }
 
 // stop halts every entry and waits for its goroutine to exit. It is safe to

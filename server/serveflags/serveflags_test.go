@@ -233,6 +233,10 @@ func TestValidate(t *testing.T) {
 		t.Fatalf("vcr without cassette: err = %v, want %v", err, ErrVCRCassetteRequired)
 	}
 
+	if err := (&CommonConfig{TickInterval: -time.Second}).Validate(); err != ErrNegativeTickInterval {
+		t.Fatalf("negative tick interval: err = %v, want %v", err, ErrNegativeTickInterval)
+	}
+
 	if err := (&CommonConfig{VCRMode: "bogus", VCRCassette: "/c.json"}).Validate(); err == nil {
 		t.Fatal("invalid vcr mode should be rejected")
 	}

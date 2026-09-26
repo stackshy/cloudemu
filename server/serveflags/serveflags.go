@@ -48,6 +48,8 @@ var (
 	ErrUnknownProvider = errors.New("unknown provider (want aws, azure, gcp, or oci)")
 	// ErrVCRCassetteRequired is returned when --vcr is set without --vcr-cassette.
 	ErrVCRCassetteRequired = errors.New("--vcr requires --vcr-cassette")
+	// ErrNegativeTickInterval is returned for a --tick-interval below zero.
+	ErrNegativeTickInterval = errors.New("--tick-interval must be 0 or more")
 )
 
 // StringList is a repeatable string flag (e.g. --tls-host a --tls-host b).
@@ -222,6 +224,10 @@ func (c *CommonConfig) Validate() error {
 
 	if c.Persist && c.StateFile == "" {
 		return ErrStateFileRequired
+	}
+
+	if c.TickInterval < 0 {
+		return ErrNegativeTickInterval
 	}
 
 	if c.VCRMode != "" {
