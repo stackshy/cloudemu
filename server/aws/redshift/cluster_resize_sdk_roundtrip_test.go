@@ -58,7 +58,7 @@ func TestSDKRedshiftModifyClusterResize(t *testing.T) {
 // AutomatedSnapshotRetentionPeriod and PreferredMaintenanceWindow round-trip
 // through create → describe and a later modify, rather than always reporting
 // the create-time default. Terraform's aws_redshift_cluster reads both back
-// (retention has a non-computed schema default of 1, the window is computed),
+// (retention has a non-computed schema default of 1; the window is computed),
 // so a value that is not stored drifts on the next plan.
 func TestSDKRedshiftRetentionAndMaintenanceRoundTrip(t *testing.T) {
 	client := newSDKClient(t)

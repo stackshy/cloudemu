@@ -86,7 +86,7 @@ type tableData struct {
 // reports CREATING on create and UPDATING on an UpdateTable before reaching
 // ACTIVE; a GSI reports CREATING while it back-fills. The overlay is a read-time
 // window (see internal/settle) gated behind config.Options.AsyncSettle: with the
-// default (off) SettleDuration returns 0, the window is inactive and every read
+// default (off), SettleDuration returns 0, so the window is inactive and every read
 // reports ACTIVE immediately, byte-for-byte the historical behavior.
 const (
 	statusActive   = "ACTIVE"

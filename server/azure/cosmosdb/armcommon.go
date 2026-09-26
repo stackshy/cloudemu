@@ -128,7 +128,7 @@ func armDatabaseResource(
 }
 
 // armCreateOrUpdateDatabase is the create-or-update contract: a re-PUT of an
-// existing database is not an error, it re-applies database-level throughput.
+// existing database is not an error; it re-applies database-level throughput.
 func armCreateOrUpdateDatabase(
 	h *Handler, w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, db string, spec *armAPISpec,
 ) {

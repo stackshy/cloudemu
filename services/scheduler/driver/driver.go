@@ -9,7 +9,7 @@
 // target (HTTP, Pub/Sub, or App Engine); actually firing the job (HTTP
 // delivery, Pub/Sub publish, App Engine routing, OAuth/OIDC token minting) is
 // out of scope. The target config (including token config) is stored and echoed
-// verbatim so it round-trips, it is simply never dispatched.
+// verbatim so it round-trips, but it is never dispatched.
 package driver
 
 import (

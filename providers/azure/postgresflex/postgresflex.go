@@ -4,7 +4,7 @@
 // portable API (relationaldb.DB) and the SDK-compat HTTP layer.
 //
 // Postgres Flex has a flat resource model: each flexible server is a
-// standalone managed Postgres instance, there is no Aurora-style cluster
+// standalone managed Postgres instance; there is no Aurora-style cluster
 // concept. The driver's Cluster*/ClusterSnapshot* methods therefore return
 // InvalidArgument. Snapshots are exposed via the portable API only; there is
 // no ARM endpoint for them in the MVP.
