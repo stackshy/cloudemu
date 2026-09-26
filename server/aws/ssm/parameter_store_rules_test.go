@@ -37,6 +37,16 @@ func TestSDKLabelParameterVersionMissingVersion(t *testing.T) {
 		t.Errorf("missing version: code = %q, want ParameterVersionNotFound", code)
 	}
 
+	const wantMsg = "Systems Manager could not find version 99 of /lbl/p. Verify the version and try again."
+	if !strings.Contains(err.Error(), wantMsg) {
+		t.Errorf("missing version: message = %q, want %q", err.Error(), wantMsg)
+	}
+
+	_, err = client.GetParameter(ctx, &awsssm.GetParameterInput{Name: aws.String("/lbl/p:7")})
+	if !strings.Contains(err.Error(), "Systems Manager could not find version 7 of /lbl/p.") {
+		t.Errorf("GetParameter missing version: message = %q", err.Error())
+	}
+
 	_, err = client.LabelParameterVersion(ctx, &awsssm.LabelParameterVersionInput{
 		Name: aws.String("/lbl/none"), ParameterVersion: aws.Int64(1), Labels: []string{"prod"},
 	})

@@ -79,7 +79,7 @@ func (e *Envelope) resolveKeyID(ctx context.Context, keyRef string) (string, err
 		return md.KeyID, nil
 	}
 
-	alias, ok := reservedAlias(keyRef)
+	alias, ok := ReservedAlias(keyRef)
 	if !ok {
 		return "", errors.Newf(errors.NotFound, "key %q not found", keyRef)
 	}
@@ -181,10 +181,11 @@ func (e *Envelope) Decrypt(ctx context.Context, blob []byte) ([]byte, error) {
 	return pt, nil
 }
 
-// reservedAlias reports whether keyRef names an AWS-managed alias, either as
+// ReservedAlias reports whether keyRef names an AWS-managed alias, either as
 // alias/aws/<name> or as an alias ARN ending in :alias/aws/<name>. It returns
-// the alias/aws/<name> form so both forms share one key.
-func reservedAlias(keyRef string) (string, bool) {
+// the alias/aws/<name> form so both forms share one key. Encrypt always
+// accepts such a reference, so callers need not check it with DescribeKey.
+func ReservedAlias(keyRef string) (string, bool) {
 	if strings.HasPrefix(keyRef, reservedAliasPrefix) {
 		return keyRef, true
 	}

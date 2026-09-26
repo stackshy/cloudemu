@@ -699,7 +699,7 @@ func (m *Mock) GetParameter(ctx context.Context, name string, withDecryption boo
 		// Parameter exists but this version/label doesn't — distinct from the
 		// parameter being absent, so the handler can return the specific
 		// ParameterVersionNotFound wire error.
-		return nil, driver.ErrVersionNotFound
+		return nil, driver.NewVersionNotFound(base, selector)
 	}
 
 	p, err := m.toParameter(ctx, pd, v, selector, withDecryption)
@@ -991,7 +991,7 @@ func labelVersion(pd *paramData, ver int64, labels []string) (labeled int64, inv
 
 	target, ok := pd.versionByNumber(ver)
 	if !ok {
-		return 0, nil, driver.ErrVersionNotFound
+		return 0, nil, driver.NewVersionNotFound(pd.name, strconv.FormatInt(ver, 10))
 	}
 
 	for _, label := range labels {

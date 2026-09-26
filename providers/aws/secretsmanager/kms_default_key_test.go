@@ -56,3 +56,29 @@ func TestKMSKeyResolutionUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	assert.Len(t, keys, 2, "no key minted for the unknown alias")
 }
+
+// TestCreateSecretExplicitManagedAlias checks that naming the AWS-managed key
+// explicitly works like omitting KmsKeyId, in both alias and ARN form.
+func TestCreateSecretExplicitManagedAlias(t *testing.T) {
+	m, k := newEncryptedMock()
+	ctx := context.Background()
+
+	cases := map[string]string{
+		"app/alias": "alias/aws/secretsmanager",
+		"app/arn":   "arn:aws:kms:us-east-1:123456789012:alias/aws/secretsmanager",
+		"app/none":  "",
+	}
+
+	for name, ref := range cases {
+		_, err := m.CreateSecret(ctx, driver.SecretConfig{Name: name, KMSKeyID: ref}, []byte("v"))
+		require.NoError(t, err, "KmsKeyId %q", ref)
+
+		got, err := m.GetSecretValue(ctx, name, "")
+		require.NoError(t, err)
+		assert.Equal(t, []byte("v"), got.Value)
+	}
+
+	keys, err := k.ListKeys(ctx)
+	require.NoError(t, err)
+	assert.Len(t, keys, 1, "explicit and default managed alias share one key")
+}

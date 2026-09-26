@@ -15,6 +15,24 @@ import (
 // ParameterNotFound.
 var ErrVersionNotFound = errors.New(errors.NotFound, "requested parameter version or label not found")
 
+// NewVersionNotFound returns an error that matches ErrVersionNotFound and
+// carries the AWS message for the given parameter name and version or label.
+func NewVersionNotFound(name, version string) error {
+	return &versionNotFound{err: errors.Newf(errors.NotFound,
+		"Systems Manager could not find version %s of %s. Verify the version and try again.", version, name)}
+}
+
+// versionNotFound pairs an AWS-worded message with the ErrVersionNotFound sentinel.
+type versionNotFound struct {
+	err *errors.Error
+}
+
+func (e *versionNotFound) Error() string { return e.err.Error() }
+
+func (e *versionNotFound) Unwrap() error { return e.err }
+
+func (*versionNotFound) Is(target error) bool { return target == ErrVersionNotFound }
+
 // ErrTypeMismatch is returned by PutParameter when an Overwrite=true update
 // specifies a Type that differs from the parameter's existing type. Real
 // Parameter Store rejects this with HierarchyTypeMismatchException: you can't
