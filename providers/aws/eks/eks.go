@@ -892,13 +892,20 @@ func (m *Mock) UpdateClusterConfig(
 
 // UpdateClusterVersion moves a cluster up one minor version. A one-minor
 // rollback is allowed within 7 days of the upgrade that reached the current
-// version. force skips only the nodegroup version check.
-func (m *Mock) UpdateClusterVersion(_ context.Context, name, version string, force bool) (*eksdriver.ClusterUpdate, error) {
+// version. Force skips only the rollback readiness check.
+func (m *Mock) UpdateClusterVersion(
+	_ context.Context, name string, in eksdriver.ClusterVersionUpdate,
+) (*eksdriver.ClusterUpdate, error) {
+	version := in.Version
 	if version == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "version is required")
 	}
 
 	if err := validateKubernetesVersion(version); err != nil {
+		return nil, err
+	}
+
+	if err := validateRollbackConfig(in.RollbackTimeoutMinutes); err != nil {
 		return nil, err
 	}
 
@@ -915,7 +922,7 @@ func (m *Mock) UpdateClusterVersion(_ context.Context, name, version string, for
 			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
 	}
 
-	updateType, err := m.clusterVersionChange(&c, version, force)
+	updateType, err := m.clusterVersionChange(&c, version, in.Force)
 	if err != nil {
 		return nil, err
 	}

@@ -31,6 +31,16 @@ func (e *apiError) EKSException() (exception string, status int) { return e.exce
 // cerrors.GetCode reads the right code.
 func (e *apiError) Unwrap() error { return e.err }
 
+// invalidStateErrf builds an InvalidStateException (HTTP 400). EKS returns it
+// when a readiness check blocks a version change. force overrides it.
+func invalidStateErrf(format string, args ...any) error {
+	return &apiError{
+		err:       cerrors.Newf(cerrors.FailedPrecondition, format, args...),
+		exception: "InvalidStateException",
+		status:    http.StatusBadRequest,
+	}
+}
+
 // resourceInUseErrf builds a ResourceInUseException (HTTP 409) carrying a
 // FailedPrecondition canonical code.
 func resourceInUseErrf(format string, args ...any) error {

@@ -51,7 +51,7 @@ func TestSDKEKSClusterLifecycle(t *testing.T) {
 
 	out, err := client.CreateCluster(ctx, &awseks.CreateClusterInput{
 		Name:    aws.String("c1"),
-		Version: aws.String("1.30"),
+		Version: aws.String("1.32"),
 		RoleArn: aws.String("arn:aws:iam::123456789012:role/eks-cluster"),
 		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{
 			SubnetIds: []string{"subnet-1", "subnet-2"},
@@ -83,7 +83,7 @@ func TestSDKEKSClusterLifecycle(t *testing.T) {
 		t.Fatalf("DescribeCluster: %v", err)
 	}
 
-	if aws.ToString(got.Cluster.Version) != "1.30" {
+	if aws.ToString(got.Cluster.Version) != "1.32" {
 		t.Fatalf("got version %q, want 1.30", aws.ToString(got.Cluster.Version))
 	}
 
@@ -98,7 +98,7 @@ func TestSDKEKSClusterLifecycle(t *testing.T) {
 
 	upd, err := client.UpdateClusterVersion(ctx, &awseks.UpdateClusterVersionInput{
 		Name:    aws.String("c1"),
-		Version: aws.String("1.31"),
+		Version: aws.String("1.33"),
 	})
 	if err != nil {
 		t.Fatalf("UpdateClusterVersion: %v", err)
@@ -113,7 +113,7 @@ func TestSDKEKSClusterLifecycle(t *testing.T) {
 		t.Fatalf("DescribeCluster after update: %v", err)
 	}
 
-	if aws.ToString(got.Cluster.Version) != "1.31" {
+	if aws.ToString(got.Cluster.Version) != "1.33" {
 		t.Fatalf("version did not apply: got %q", aws.ToString(got.Cluster.Version))
 	}
 
@@ -145,7 +145,7 @@ func TestSDKEKSNodegroupLifecycle(t *testing.T) {
 
 	if _, err := client.CreateCluster(ctx, &awseks.CreateClusterInput{
 		Name:    aws.String("c1"),
-		Version: aws.String("1.30"),
+		Version: aws.String("1.32"),
 		RoleArn: aws.String("arn:aws:iam::1:role/r"),
 		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{
 			SubnetIds: []string{"subnet-1"},
@@ -211,7 +211,7 @@ func TestSDKEKSNodegroupLifecycle(t *testing.T) {
 	if _, err := client.UpdateNodegroupVersion(ctx, &awseks.UpdateNodegroupVersionInput{
 		ClusterName:   aws.String("c1"),
 		NodegroupName: aws.String("ng1"),
-		Version:       aws.String("1.30"),
+		Version:       aws.String("1.32"),
 	}); err != nil {
 		t.Fatalf("UpdateNodegroupVersion: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestSDKEKSFargateProfileLifecycle(t *testing.T) {
 
 	if _, err := client.CreateCluster(ctx, &awseks.CreateClusterInput{
 		Name:               aws.String("c1"),
-		Version:            aws.String("1.30"),
+		Version:            aws.String("1.32"),
 		RoleArn:            aws.String("arn:aws:iam::1:role/r"),
 		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{SubnetIds: []string{"subnet-1"}},
 	}); err != nil {
@@ -288,7 +288,7 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 
 	if _, err := client.CreateCluster(ctx, &awseks.CreateClusterInput{
 		Name:               aws.String("c1"),
-		Version:            aws.String("1.30"),
+		Version:            aws.String("1.32"),
 		RoleArn:            aws.String("arn:aws:iam::1:role/r"),
 		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{SubnetIds: []string{"subnet-1"}},
 	}); err != nil {

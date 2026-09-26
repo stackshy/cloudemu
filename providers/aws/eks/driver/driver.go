@@ -147,6 +147,17 @@ type Cluster struct {
 	VersionUpgradedAt time.Time
 }
 
+// ClusterVersionUpdate is the UpdateClusterVersion request.
+type ClusterVersionUpdate struct {
+	Version string
+	// Force overrides readiness checks, such as a nodegroup that is newer
+	// than a rollback target.
+	Force bool
+	// RollbackTimeoutMinutes is rollbackConfig.timeoutMinutes. Nil means
+	// the field was not sent.
+	RollbackTimeoutMinutes *int
+}
+
 // ClusterUpdate is returned by mutating cluster ops; SDKs poll this via
 // DescribeUpdate but Wave 1 returns done=true immediately.
 type ClusterUpdate struct {
@@ -453,7 +464,7 @@ type EKS interface {
 		ctx context.Context, name string, cfg *VPCConfig,
 		logging []ClusterLogging, accessConfig *AccessConfigUpdate, tags map[string]string,
 	) (*ClusterUpdate, error)
-	UpdateClusterVersion(ctx context.Context, name, version string, force bool) (*ClusterUpdate, error)
+	UpdateClusterVersion(ctx context.Context, name string, in ClusterVersionUpdate) (*ClusterUpdate, error)
 	DeleteCluster(ctx context.Context, name string) (*Cluster, error)
 
 	// Updates
