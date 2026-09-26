@@ -127,6 +127,42 @@ type Params struct {
 	// IgnoreMissingByDefault makes an empty TreatMissingData act as "ignore".
 	// AWS sets it for AWS/DynamoDB alarms. An explicit policy still wins.
 	IgnoreMissingByDefault bool
+	// Band is the anomaly band of a band-operator alarm, bucketed like the
+	// datums. A period with data but no band point counts as missing.
+	Band []BandPoint
+}
+
+// BandPoint is one point of an anomaly band.
+type BandPoint struct {
+	Timestamp time.Time
+	Lower     float64
+	Upper     float64
+}
+
+// Anomaly band operators. They compare against a band, not a threshold.
+const (
+	opOutsideBand = "LessThanLowerOrGreaterThanUpperThreshold"
+	opBelowBand   = "LessThanLowerThreshold"
+	opAboveBand   = "GreaterThanUpperThreshold"
+)
+
+// IsBandOperator reports whether op compares against an anomaly band.
+func IsBandOperator(op string) bool {
+	return op == opOutsideBand || op == opBelowBand || op == opAboveBand
+}
+
+// breachesBand reports whether value is outside the band under op.
+func breachesBand(value float64, op string, b BandPoint) bool {
+	switch op {
+	case opOutsideBand:
+		return value < b.Lower || value > b.Upper
+	case opBelowBand:
+		return value < b.Lower
+	case opAboveBand:
+		return value > b.Upper
+	default:
+		return false
+	}
 }
 
 // Outcome is the result of one evaluation. When Retain is true the alarm
@@ -275,15 +311,18 @@ func StatOf(datums []driver.MetricDatum, stat string) float64 {
 func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) Outcome {
 	periodDur, evalPeriods, datapointsToAlarm := p.normalize()
 	buckets := bucketByPeriod(datums, now, periodDur, evalPeriods)
+	band := p.bandBuckets(now, periodDur, evalPeriods)
 
 	breaching, present := 0, 0
 
-	for _, b := range buckets {
+	for i, b := range buckets {
+		has, breach := p.judge(b, band[i])
+
 		switch {
-		case b != nil:
+		case has:
 			present++
 
-			if EvaluateComparison(b.stat(p.Stat), p.ComparisonOperator, p.Threshold) {
+			if breach {
 				breaching++
 			}
 		case p.TreatMissingData == treatMissingBreaching:
@@ -303,6 +342,65 @@ func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) Outco
 	}
 
 	return Outcome{State: StateOK, Reason: "Threshold not crossed"}
+}
+
+// judge reports whether a period has a usable datapoint and whether it
+// breaches. A band alarm needs a band point too.
+func (p *Params) judge(b *statAgg, band *BandPoint) (has, breach bool) {
+	if b == nil {
+		return false, false
+	}
+
+	if !IsBandOperator(p.ComparisonOperator) {
+		return true, EvaluateComparison(b.stat(p.Stat), p.ComparisonOperator, p.Threshold)
+	}
+
+	if band == nil {
+		return false, false
+	}
+
+	return true, breachesBand(b.stat(p.Stat), p.ComparisonOperator, *band)
+}
+
+// bandBuckets places each band point in its period, like bucketByPeriod. The
+// latest point wins when a period has more than one. A nil entry has none.
+func (p *Params) bandBuckets(now time.Time, periodDur time.Duration, evalPeriods int) []*BandPoint {
+	out := make([]*BandPoint, evalPeriods)
+
+	for i := range p.Band {
+		bp := &p.Band[i]
+
+		idx, ok := bucketIndex(bp.Timestamp, now, periodDur, evalPeriods)
+		if !ok {
+			continue
+		}
+
+		if out[idx] == nil || bp.Timestamp.After(out[idx].Timestamp) {
+			out[idx] = bp
+		}
+	}
+
+	return out
+}
+
+// RecentBand returns the band edges of each period that has both a
+// datapoint and a band point, oldest first. CloudWatch reports them in the
+// stateReasonData of an anomaly alarm.
+func RecentBand(datums []driver.MetricDatum, p *Params, now time.Time) (lower, upper []float64) {
+	periodDur, evalPeriods, _ := p.normalize()
+	buckets := bucketByPeriod(datums, now, periodDur, evalPeriods)
+	band := p.bandBuckets(now, periodDur, evalPeriods)
+
+	lower, upper = []float64{}, []float64{}
+
+	for i := len(buckets) - 1; i >= 0; i-- {
+		if buckets[i] != nil && band[i] != nil {
+			lower = append(lower, band[i].Lower)
+			upper = append(upper, band[i].Upper)
+		}
+	}
+
+	return lower, upper
 }
 
 // missingOutcome is the result when every period in the window is empty and
@@ -352,13 +450,8 @@ func bucketByPeriod(datums []driver.MetricDatum, now time.Time, periodDur time.D
 	buckets := make([]*statAgg, evalPeriods)
 
 	for i := range datums {
-		age := now.Sub(datums[i].Timestamp)
-		if age < 0 {
-			continue
-		}
-
-		idx := int(age / periodDur)
-		if idx >= evalPeriods {
+		idx, ok := bucketIndex(datums[i].Timestamp, now, periodDur, evalPeriods)
+		if !ok {
 			continue
 		}
 
@@ -370,6 +463,22 @@ func bucketByPeriod(datums []driver.MetricDatum, now time.Time, periodDur time.D
 	}
 
 	return buckets
+}
+
+// bucketIndex is the age bucket of ts, where 0 is the most recent period.
+// ok is false for a future time or one older than the window.
+func bucketIndex(ts, now time.Time, periodDur time.Duration, evalPeriods int) (int, bool) {
+	age := now.Sub(ts)
+	if age < 0 {
+		return 0, false
+	}
+
+	idx := int(age / periodDur)
+	if idx >= evalPeriods {
+		return 0, false
+	}
+
+	return idx, true
 }
 
 // statAgg accumulates SampleCount / Sum / Minimum / Maximum across a set of

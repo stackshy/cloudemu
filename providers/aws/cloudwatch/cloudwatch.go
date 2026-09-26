@@ -65,10 +65,12 @@ type Mock struct {
 	dashboards      *memstore.Store[*storedDashboard]
 	metricStreams   *memstore.Store[*storedMetricStream]
 	channels        *memstore.Store[*driver.NotificationChannelInfo]
-	history         []driver.AlarmHistoryEntry
-	opts            *config.Options
-	sns             ActionPublisher
-	events          awsevents.Emitter
+	// anomalyDetectors is keyed by detectorKey. Guarded by alarmMu.
+	anomalyDetectors *memstore.Store[*anomalyDetectorData]
+	history          []driver.AlarmHistoryEntry
+	opts             *config.Options
+	sns              ActionPublisher
+	events           awsevents.Emitter
 }
 
 // SetSNSPublisher wires the SNS backend so an alarm state transition delivers
@@ -121,13 +123,14 @@ type alarmData struct {
 // New creates a new CloudWatch mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		metrics:         make(map[metricKey][]driver.MetricDatum),
-		alarms:          memstore.New[*alarmData](),
-		compositeAlarms: memstore.New[*compositeAlarmData](),
-		dashboards:      memstore.New[*storedDashboard](),
-		metricStreams:   memstore.New[*storedMetricStream](),
-		channels:        memstore.New[*driver.NotificationChannelInfo](),
-		opts:            opts,
+		metrics:          make(map[metricKey][]driver.MetricDatum),
+		alarms:           memstore.New[*alarmData](),
+		compositeAlarms:  memstore.New[*compositeAlarmData](),
+		dashboards:       memstore.New[*storedDashboard](),
+		metricStreams:    memstore.New[*storedMetricStream](),
+		channels:         memstore.New[*driver.NotificationChannelInfo](),
+		anomalyDetectors: memstore.New[*anomalyDetectorData](),
+		opts:             opts,
 	}
 }
 
@@ -189,7 +192,7 @@ func (m *Mock) readMetric(input *driver.GetMetricInput) *driver.MetricDataResult
 		period = 60
 	}
 
-	return buildMetricResult(filtered, input.StartTime, input.EndTime, period, input.Stat)
+	return buildMetricResult(filtered, input.StartTime, period, input.Stat)
 }
 
 // filterDatums keeps the datums inside the query's time range that match its
@@ -244,13 +247,13 @@ func (m *Mock) MetricUnits(_ context.Context, in *driver.GetMetricInput) []strin
 	return units
 }
 
-func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Time, period int, stat string) *driver.MetricDataResult {
-	result := &driver.MetricDataResult{}
+// buildMetricResult aggregates datums sorted by time into one value per
+// non-empty period from startTime. It makes one pass over the datums, so a
+// long range with sparse data stays cheap.
+func buildMetricResult(filtered []driver.MetricDatum, startTime time.Time, period int, stat string) *driver.MetricDataResult {
+	result := &driver.MetricDataResult{Timestamps: []time.Time{}, Values: []float64{}}
 
 	if len(filtered) == 0 {
-		result.Timestamps = []time.Time{}
-		result.Values = []float64{}
-
 		return result
 	}
 
@@ -260,24 +263,17 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime, endTime time.Ti
 
 	periodDur := time.Duration(period) * time.Second
 
-	// Walk through periods from StartTime to EndTime.
-	for periodStart := startTime; periodStart.Before(endTime); periodStart = periodStart.Add(periodDur) {
-		periodEnd := periodStart.Add(periodDur)
-		periodDatums := collectPeriodDatums(filtered, periodStart, periodEnd)
+	for from := 0; from < len(filtered); {
+		idx := filtered[from].Timestamp.Sub(startTime) / periodDur
 
-		if len(periodDatums) == 0 {
-			continue
+		to := from + 1
+		for to < len(filtered) && filtered[to].Timestamp.Sub(startTime)/periodDur == idx {
+			to++
 		}
 
-		s := alarmeval.StatOf(periodDatums, stat)
-
-		result.Timestamps = append(result.Timestamps, periodStart)
-		result.Values = append(result.Values, s)
-	}
-
-	if result.Timestamps == nil {
-		result.Timestamps = []time.Time{}
-		result.Values = []float64{}
+		result.Timestamps = append(result.Timestamps, startTime.Add(idx*periodDur))
+		result.Values = append(result.Values, alarmeval.StatOf(filtered[from:to], stat))
+		from = to
 	}
 
 	return result
@@ -293,18 +289,6 @@ func unitOf(data []driver.MetricDatum) string {
 	}
 
 	return ""
-}
-
-func collectPeriodDatums(filtered []driver.MetricDatum, periodStart, periodEnd time.Time) []driver.MetricDatum {
-	var datums []driver.MetricDatum
-
-	for i := range filtered {
-		if !filtered[i].Timestamp.Before(periodStart) && filtered[i].Timestamp.Before(periodEnd) {
-			datums = append(datums, filtered[i])
-		}
-	}
-
-	return datums
 }
 
 // ListMetrics returns unique metric names for the given namespace.

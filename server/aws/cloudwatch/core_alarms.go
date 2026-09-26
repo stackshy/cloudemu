@@ -37,8 +37,9 @@ func comparisonOperatorValid(op string) bool {
 }
 
 // putMetricAlarmCore validates the alarm and then stores it. A rejected
-// request never reaches the driver.
-func (h *Handler) putMetricAlarmCore(ctx context.Context, cfg *mondriver.AlarmConfig) error {
+// request never reaches the driver. thresholdSet reports whether the request
+// carried a Threshold.
+func (h *Handler) putMetricAlarmCore(ctx context.Context, cfg *mondriver.AlarmConfig, thresholdSet bool) error {
 	if !comparisonOperatorValid(cfg.ComparisonOperator) {
 		return newWireError(errValidation, "Invalid ComparisonOperator: "+cfg.ComparisonOperator)
 	}
@@ -53,7 +54,65 @@ func (h *Handler) putMetricAlarmCore(ctx context.Context, cfg *mondriver.AlarmCo
 		return err
 	}
 
+	if err := validateAnomalyThreshold(cfg, thresholdSet); err != nil {
+		return err
+	}
+
 	return h.monitoring.CreateAlarm(ctx, *cfg)
+}
+
+// floatOrZero returns *v, or 0 when v is nil.
+func floatOrZero(v *float64) float64 {
+	if v == nil {
+		return 0
+	}
+
+	return *v
+}
+
+// alarmThreshold is the Threshold DescribeAlarms returns. An anomaly alarm
+// has a band instead, so it has none.
+func alarmThreshold(a *mondriver.AlarmInfo) *float64 {
+	if a.ThresholdMetricID != "" {
+		return nil
+	}
+
+	v := a.Threshold
+
+	return &v
+}
+
+// validateAnomalyThreshold checks the band operators. They compare against
+// the ANOMALY_DETECTION_BAND entry named by ThresholdMetricId, and only they
+// can use it.
+func validateAnomalyThreshold(cfg *mondriver.AlarmConfig, thresholdSet bool) error {
+	band := alarmeval.IsBandOperator(cfg.ComparisonOperator)
+
+	switch {
+	case band && cfg.ThresholdMetricID == "":
+		return newWireError(errValidation, "ComparisonOperator "+cfg.ComparisonOperator+
+			" can only be used with ThresholdMetricId.")
+	case cfg.ThresholdMetricID == "":
+		return nil
+	case !band:
+		return newWireError(errValidation, "ThresholdMetricId can only be used with the LessThanLowerOrGreaterThanUpperThreshold, "+
+			"LessThanLowerThreshold or GreaterThanUpperThreshold comparison operators.")
+	case thresholdSet:
+		return newWireError(errValidation, "Threshold cannot be used with ThresholdMetricId.")
+	}
+
+	for i := range cfg.Metrics {
+		if cfg.Metrics[i].ID != cfg.ThresholdMetricID {
+			continue
+		}
+
+		if _, ok := metricmath.BandInput(cfg.Metrics[i].Expression); !ok {
+			return newWireError(errValidation, "ThresholdMetricId "+cfg.ThresholdMetricID+
+				" must name an ANOMALY_DETECTION_BAND expression.")
+		}
+	}
+
+	return nil
 }
 
 // metricQueryIDPattern is the MetricDataQuery Id rule from the API reference.

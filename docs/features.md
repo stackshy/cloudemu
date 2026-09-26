@@ -75,6 +75,19 @@ Each call to `PutMetricData` makes the monitoring mock evaluate every alarm that
 - `GreaterThanOrEqualToThreshold`
 - `LessThanOrEqualToThreshold`
 
+### Anomaly Detection Bands (AWS)
+
+An AWS alarm can compare its metric with `ANOMALY_DETECTION_BAND(m1, k)` instead of a fixed threshold. It names the band with `ThresholdMetricId` and uses `LessThanLowerOrGreaterThanUpperThreshold`, `LessThanLowerThreshold` or `GreaterThanUpperThreshold`. `GetMetricData` returns a band as two rows with the same Id, the lower edge first.
+
+AWS computes the band with a machine learning model. CloudEmu uses an approximation:
+
+- For each point, the band is the mean plus or minus `k` standard deviations of the metric's points in the two weeks before it. `k` defaults to 2.
+- A point needs at least 3 earlier points. Until then it has no band, and the alarm treats that period as missing data.
+- Points whose period overlaps one of the detector's `ExcludedTimeRanges` are left out.
+- There is no seasonality and no trend. `MetricTimezone` and `PeriodicSpikes` are stored and returned but do not change the band.
+
+`PutAnomalyDetector`, `DescribeAnomalyDetectors` and `DeleteAnomalyDetector` manage detectors. Evaluating an anomaly alarm creates its detector if it is missing, as on AWS. A detector reports `PENDING_TRAINING` until its metric has data in 3 one-minute periods, then `TRAINED`. When its data ages out of the two-week window it reports `TRAINED_INSUFFICIENT_DATA`.
+
 ### Alarm Actions and History
 
 Alarms have three kinds of action channels:

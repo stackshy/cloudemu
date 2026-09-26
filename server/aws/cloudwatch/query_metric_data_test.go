@@ -132,8 +132,12 @@ func putAlarmForm(in *awscw.PutMetricAlarmInput) url.Values {
 		"Action":             {"PutMetricAlarm"},
 		"AlarmName":          {aws.ToString(in.AlarmName)},
 		"ComparisonOperator": {string(in.ComparisonOperator)},
-		"Threshold":          {strconv.FormatFloat(aws.ToFloat64(in.Threshold), 'g', -1, 64)},
 		"EvaluationPeriods":  {strconv.Itoa(int(aws.ToInt32(in.EvaluationPeriods)))},
+	}
+
+	// Like the SDK, send Threshold only when it is set.
+	if in.Threshold != nil {
+		form.Set("Threshold", strconv.FormatFloat(*in.Threshold, 'g', -1, 64))
 	}
 
 	setIfSet(form, "Namespace", in.Namespace)

@@ -2,7 +2,8 @@ package metricmath
 
 // A small recursive-descent parser for the supported metric-math syntax:
 // numbers, references to other entry IDs, the binary operators + - * /,
-// unary minus and parentheses.
+// unary minus and parentheses. ANOMALY_DETECTION_BAND(id[, k]) is also
+// accepted when it is the whole expression.
 
 import (
 	"errors"
@@ -15,7 +16,12 @@ var errMathParse = errors.New("malformed metric math expression")
 // parseExpression parses expr. ok is false when it is not in the supported
 // syntax.
 func parseExpression(expr string) (n node, ok bool) {
-	p := &mathParser{tokens: tokenizeMath(expr)}
+	tokens := tokenizeMath(expr)
+	if band, isBand := parseBand(tokens); isBand {
+		return band, true
+	}
+
+	p := &mathParser{tokens: tokens}
 
 	n, err := p.parse()
 	if err != nil || !p.atEnd() {
@@ -87,7 +93,7 @@ func lexIdent(expr string, start int) (tok mathToken, next int) {
 
 func isSpace(c byte) bool { return c == ' ' || c == '\t' }
 func isOperatorOrParen(c byte) bool {
-	return c == '+' || c == '-' || c == '*' || c == '/' || c == '(' || c == ')'
+	return c == '+' || c == '-' || c == '*' || c == '/' || c == '(' || c == ')' || c == ','
 }
 func isDigit(c byte) bool       { return c >= '0' && c <= '9' }
 func isNumberStart(c byte) bool { return isDigit(c) || c == '.' }
@@ -216,4 +222,46 @@ func (p *mathParser) parsePrimary() (node, error) {
 	default:
 		return nil, errMathParse
 	}
+}
+
+// bandFunction is the metric-math function that returns an anomaly band.
+const bandFunction = "ANOMALY_DETECTION_BAND"
+
+// defaultBandWidth is the number of standard deviations when the call
+// leaves it out.
+const defaultBandWidth = 2
+
+// Token counts of the two band call forms: F ( id ) and F ( id , k ).
+const (
+	bandCallTokens      = 4
+	bandCallTokensWithK = 6
+)
+
+// isBandCall reports whether t starts ANOMALY_DETECTION_BAND(id and ends
+// with a closing parenthesis.
+func isBandCall(t []mathToken) bool {
+	return t[0].kind == 'i' && t[0].ident == bandFunction && t[1].kind == '(' && t[2].kind == 'i' && t[len(t)-1].kind == ')'
+}
+
+// parseBand matches ANOMALY_DETECTION_BAND(id) and ANOMALY_DETECTION_BAND(id, k).
+func parseBand(t []mathToken) (bandNode, bool) {
+	if len(t) != bandCallTokens && len(t) != bandCallTokensWithK {
+		return bandNode{}, false
+	}
+
+	if !isBandCall(t) {
+		return bandNode{}, false
+	}
+
+	n := bandNode{input: t[2].ident, k: defaultBandWidth}
+
+	if len(t) == bandCallTokensWithK {
+		if t[3].kind != ',' || t[4].kind != 'n' {
+			return bandNode{}, false
+		}
+
+		n.k = t[4].num
+	}
+
+	return n, true
 }

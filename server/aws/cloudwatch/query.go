@@ -103,6 +103,12 @@ func (h *Handler) serveQuery(w http.ResponseWriter, r *http.Request) {
 		h.queryUntagResource(w, r)
 	case opListTagsForResource:
 		h.queryListTagsForResource(w, r)
+	case opPutAnomalyDetector:
+		h.queryPutAnomalyDetector(w, r)
+	case opDescribeAnomalyDetectors:
+		h.queryDescribeAnomalyDetectors(w, r)
+	case opDeleteAnomalyDetector:
+		h.queryDeleteAnomalyDetector(w, r)
 	default:
 		writeQueryError(w, http.StatusBadRequest, "InvalidAction", "unsupported CloudWatch action: "+r.Form.Get("Action"))
 	}
@@ -245,7 +251,7 @@ func (h *Handler) queryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		Tags:                    queryTagPairs(r, "Tags.member."),
 		Metrics:                 toDriverQueries(queryMetricDataQueries(r, "Metrics")),
 		ThresholdMetricID:       r.Form.Get("ThresholdMetricId"),
-	})
+	}, r.Form.Has("Threshold"))
 	if err != nil {
 		writeQueryDriverErr(w, err)
 		return
@@ -339,7 +345,7 @@ func toAlarmMemberXML(a *mondriver.AlarmInfo) alarmMemberXML {
 		StateReason:             a.StateReason,
 		StateReasonData:         a.StateReasonData,
 		ComparisonOperator:      a.ComparisonOperator,
-		Threshold:               a.Threshold,
+		Threshold:               alarmThreshold(a),
 		Period:                  a.Period,
 		EvaluationPeriods:       a.EvaluationPeriods,
 		DatapointsToAlarm:       a.DatapointsToAlarm,
@@ -656,7 +662,7 @@ type alarmMemberXML struct {
 	StateUpdatedTimestamp      string               `xml:"StateUpdatedTimestamp,omitempty"`
 	StateTransitionedTimestamp string               `xml:"StateTransitionedTimestamp,omitempty"`
 	ComparisonOperator         string               `xml:"ComparisonOperator"`
-	Threshold                  float64              `xml:"Threshold"`
+	Threshold                  *float64             `xml:"Threshold,omitempty"`
 	Period                     int                  `xml:"Period,omitempty"`
 	EvaluationPeriods          int                  `xml:"EvaluationPeriods,omitempty"`
 	DatapointsToAlarm          int                  `xml:"DatapointsToAlarm,omitempty"`
@@ -737,7 +743,7 @@ func writeQueryError(w http.ResponseWriter, status int, code, msg string) {
 
 func writeQueryDriverErr(w http.ResponseWriter, err error) {
 	if we, ok := asWireError(err); ok {
-		writeQueryError(w, http.StatusBadRequest, we.code, we.msg)
+		writeQueryError(w, we.status, we.code, we.msg)
 		return
 	}
 

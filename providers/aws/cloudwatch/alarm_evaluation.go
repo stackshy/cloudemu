@@ -122,7 +122,9 @@ func evaluationReasonData(datums []driver.MetricDatum, p *alarmeval.Params, now 
 		Statistic        string    `json:"statistic,omitempty"`
 		Period           int       `json:"period"`
 		RecentDatapoints []float64 `json:"recentDatapoints"`
-		Threshold        float64   `json:"threshold"`
+		RecentLower      []float64 `json:"recentLowerThresholds,omitempty"`
+		RecentUpper      []float64 `json:"recentUpperThresholds,omitempty"`
+		Threshold        *float64  `json:"threshold,omitempty"`
 	}{
 		Version:          "1.0",
 		QueryDate:        now.UTC().Format(reasonDataTimeFormat),
@@ -130,7 +132,14 @@ func evaluationReasonData(datums []driver.MetricDatum, p *alarmeval.Params, now 
 		Statistic:        p.Stat,
 		Period:           p.Period,
 		RecentDatapoints: alarmeval.RecentDatapoints(datums, p, now),
-		Threshold:        p.Threshold,
+	}
+
+	// An anomaly alarm reports its band edges instead of a threshold.
+	if alarmeval.IsBandOperator(p.ComparisonOperator) {
+		data.RecentLower, data.RecentUpper = alarmeval.RecentBand(datums, p, now)
+	} else {
+		threshold := p.Threshold
+		data.Threshold = &threshold
 	}
 
 	b, err := json.Marshal(data)

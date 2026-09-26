@@ -58,28 +58,71 @@ func (h *Handler) getMetricDataCore(ctx context.Context, in *getMetricDataInput)
 	}
 
 	queries := toDriverQueries(in.MetricDataQueries)
-	eval := metricmath.New(queries, h.metricFetcher(ctx, timeOrZero(in.StartTime), timeOrZero(in.EndTime)))
+	eval := h.metricDataEvaluator(ctx, queries, timeOrZero(in.StartTime), timeOrZero(in.EndTime))
 	rows := make([]metricDataRow, 0, len(in.MetricDataQueries))
 
 	for i := range in.MetricDataQueries {
 		q := &in.MetricDataQueries[i]
-
-		series, err := eval.Resolve(q.ID)
-		if err != nil {
-			return getMetricDataResult{}, err
-		}
 
 		// ReturnData=false rows only feed other queries and are not returned.
 		if !metricmath.ReturnsData(&queries[i]) {
 			continue
 		}
 
-		rows = append(rows, buildMetricDataRow(q, series, descending))
+		qrows, err := metricDataRows(eval, q, descending)
+		if err != nil {
+			return getMetricDataResult{}, err
+		}
+
+		rows = append(rows, qrows...)
 	}
 
 	page, next := pageMetricData(rows, offset, in.MaxDatapoints, descending)
 
 	return getMetricDataResult{Rows: page, NextToken: next}, nil
+}
+
+// bandExclusionSource is the AWS-local capability that returns the excluded
+// training ranges of the detector behind a band.
+type bandExclusionSource interface {
+	BandExclusions(queries []mondriver.MetricDataQuery, inputID string) []mondriver.TimeRange
+}
+
+// metricDataEvaluator builds the evaluator for one GetMetricData call. A band
+// trains on the two weeks before start as well.
+func (h *Handler) metricDataEvaluator(
+	ctx context.Context, queries []mondriver.MetricDataQuery, start, end time.Time,
+) *metricmath.Evaluator {
+	cfg := metricmath.BandConfig{History: h.metricFetcher(ctx, start.Add(-metricmath.TrainingWindow), end)}
+
+	if src, ok := h.monitoring.(bandExclusionSource); ok {
+		cfg.Excluded = src.BandExclusions
+	}
+
+	return metricmath.New(queries, h.metricFetcher(ctx, start, end)).WithBand(cfg)
+}
+
+// metricDataRows returns the result rows of one query. A band returns two
+// rows with the query's Id, the lower edge and then the upper edge.
+func metricDataRows(eval *metricmath.Evaluator, q *metricDataQueryCBR, descending bool) ([]metricDataRow, error) {
+	band, isBand, err := eval.Band(q.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	if isBand {
+		lower := metricmath.Series{Timestamps: band.Timestamps, Values: band.Lower}
+		upper := metricmath.Series{Timestamps: band.Timestamps, Values: band.Upper}
+
+		return []metricDataRow{buildMetricDataRow(q, lower, descending), buildMetricDataRow(q, upper, descending)}, nil
+	}
+
+	series, err := eval.Resolve(q.ID)
+	if err != nil {
+		return nil, err
+	}
+
+	return []metricDataRow{buildMetricDataRow(q, series, descending)}, nil
 }
 
 // metricFetcher reads one metric from the monitoring driver over [start, end).
