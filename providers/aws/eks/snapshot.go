@@ -24,6 +24,7 @@ type eksSnapshot struct {
 	FargateProfiles json.RawMessage   `json:"fargateProfiles,omitempty"`
 	Addons          json.RawMessage   `json:"addons,omitempty"`
 	Updates         json.RawMessage   `json:"updates,omitempty"`
+	AccessEntries   json.RawMessage   `json:"accessEntries,omitempty"`
 	K8sUIDs         map[string]string `json:"k8sUids,omitempty"`
 }
 
@@ -59,6 +60,7 @@ func (m *Mock) snapshotStores(snap *eksSnapshot) error {
 		{&snap.FargateProfiles, m.fargateProfiles.Snapshot},
 		{&snap.Addons, m.addons.Snapshot},
 		{&snap.Updates, m.updates.Snapshot},
+		{&snap.AccessEntries, m.accessEntries.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -104,6 +106,7 @@ func (m *Mock) restoreStores(snap *eksSnapshot) error {
 		{snap.FargateProfiles, m.fargateProfiles.LoadSnapshot},
 		{snap.Addons, m.addons.LoadSnapshot},
 		{snap.Updates, m.updates.LoadSnapshot},
+		{snap.AccessEntries, m.accessEntries.LoadSnapshot},
 	}
 
 	for _, l := range loads {

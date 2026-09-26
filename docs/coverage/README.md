@@ -80,7 +80,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | - | 16 |
 | `ecs` | [ECS](./aws/ecs.md) | - | - | - | 37 |
 | `efs` | [EFS](./aws/efs.md) | - | - | - | 27 |
-| `eks` | [EKS](./aws/eks.md) | - | - | - | 29 |
+| `eks` | [EKS](./aws/eks.md) | - | - | - | 40 |
 | `elasticsan` | - | [ElasticSan](./azure/elasticsan.md) | - | - | 8 |
 | `emr` | [EMR](./aws/emr.md) | - | - | - | 22 |
 | `eventbridgescheduler` | [Scheduler](./aws/scheduler.md) | - | - | - | 12 |

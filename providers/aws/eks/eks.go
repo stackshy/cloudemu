@@ -81,6 +81,9 @@ type Mock struct {
 	fargateProfiles *memstore.Store[eksdriver.FargateProfile]
 	addons          *memstore.Store[eksdriver.Addon]
 	updates         *memstore.Store[eksdriver.ClusterUpdate]
+	// accessEntries is keyed by accessEntryKey(cluster, principalArn). Each
+	// entry holds its own policy associations.
+	accessEntries *memstore.Store[eksdriver.AccessEntry]
 
 	opts           *config.Options
 	monitoring     mondriver.Monitoring
@@ -115,6 +118,7 @@ func New(opts *config.Options) *Mock {
 		fargateProfiles: memstore.New[eksdriver.FargateProfile](),
 		addons:          memstore.New[eksdriver.Addon](),
 		updates:         memstore.New[eksdriver.ClusterUpdate](),
+		accessEntries:   memstore.New[eksdriver.AccessEntry](),
 		opts:            opts,
 		k8sUIDs:         make(map[string]string),
 		clusterSettle:   settle.NewSet(),
@@ -940,6 +944,7 @@ func (m *Mock) DeleteCluster(_ context.Context, name string) (*eksdriver.Cluster
 
 	m.clusters.Delete(name)
 	m.clusterSettle.Clear(name)
+	m.deleteClusterAccessEntriesLocked(name)
 
 	// Resolve the endpoint before deregistering: the response describes the
 	// cluster as it was, and reading afterwards yields the not-implemented

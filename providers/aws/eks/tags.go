@@ -15,6 +15,7 @@ const (
 	arnNodegroup
 	arnFargate
 	arnAddon
+	arnAccessEntry
 )
 
 // arnParts is the number of colon-separated fields in a full EKS ARN
@@ -39,6 +40,7 @@ const (
 //	nodegroup/<cluster>/<name>[/<uuid>]
 //	fargateprofile/<cluster>/<name>[/<uuid>]
 //	addon/<cluster>/<name>[/<uuid>]
+//	access-entry/<cluster>/<role|user>/<account>/<name>/<uuid>
 //
 // A bare, non-ARN value is treated as a cluster name so direct programmatic
 // callers keep working.
@@ -63,6 +65,9 @@ func parseResourceRef(arn string) (kind arnKind, key string) {
 		if len(segs) >= childSegs {
 			return arnAddon, addonKey(segs[1], segs[2])
 		}
+	case "access-entry":
+		// Access entries are looked up by their full ARN.
+		return arnAccessEntry, arn
 	case "cluster":
 		if len(segs) >= clusterSegs {
 			return arnCluster, segs[1]
@@ -103,6 +108,8 @@ func (m *Mock) resourceTags(arn string) (tags map[string]string, set func(map[st
 		}
 
 		return ad.Tags, func(t map[string]string) { ad.Tags = t; m.addons.Set(key, ad) }, nil
+	case arnAccessEntry:
+		return m.accessEntryTags(arn)
 	default: // arnCluster
 		c, ok := m.clusters.Get(key)
 		if !ok {
@@ -174,4 +181,17 @@ func (m *Mock) ListResourceTags(_ context.Context, arn string) (map[string]strin
 	}
 
 	return out, nil
+}
+
+// accessEntryTags finds an access entry by ARN for the tagging calls.
+// Callers hold m.mu.
+func (m *Mock) accessEntryTags(arn string) (tags map[string]string, set func(map[string]string), err error) {
+	//nolint:gocritic // Store.All copies values out anyway; the per-iter copy here is no extra cost.
+	for key, e := range m.accessEntries.All() {
+		if e.ARN == arn {
+			return e.Tags, func(t map[string]string) { e.Tags = t; m.accessEntries.Set(key, e) }, nil
+		}
+	}
+
+	return nil, nil, cerrors.Newf(cerrors.NotFound, "resource %q not found", arn)
 }

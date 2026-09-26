@@ -307,6 +307,133 @@ type Addon struct {
 	ModifiedAt            time.Time
 }
 
+// Access entry types. Real EKS defaults an omitted type to STANDARD, and the
+// type can't change after creation.
+const (
+	AccessEntryTypeStandard      = "STANDARD"
+	AccessEntryTypeEC2Linux      = "EC2_LINUX"
+	AccessEntryTypeEC2Windows    = "EC2_WINDOWS"
+	AccessEntryTypeFargateLinux  = "FARGATE_LINUX"
+	AccessEntryTypeEC2           = "EC2"
+	AccessEntryTypeHybridLinux   = "HYBRID_LINUX"
+	AccessEntryTypeHyperPodLinux = "HYPERPOD_LINUX"
+)
+
+// Access scope types for an associated access policy.
+const (
+	AccessScopeCluster   = "cluster"
+	AccessScopeNamespace = "namespace"
+)
+
+// AccessEntryConfig configures a new access entry.
+type AccessEntryConfig struct {
+	ClusterName        string
+	PrincipalArn       string
+	Type               string
+	Username           string
+	KubernetesGroups   []string
+	Tags               map[string]string
+	ClientRequestToken string
+}
+
+// AccessEntryUpdate carries the mutable access entry fields. A nil field
+// means the caller left it out, so the stored value stays.
+type AccessEntryUpdate struct {
+	ClusterName      string
+	PrincipalArn     string
+	KubernetesGroups *[]string
+	Username         *string
+}
+
+// AccessScope limits an associated access policy to the whole cluster or to
+// a set of namespaces.
+type AccessScope struct {
+	Type       string
+	Namespaces []string
+}
+
+// AssociatedAccessPolicy is an access policy linked to an access entry.
+type AssociatedAccessPolicy struct {
+	PolicyArn    string
+	AccessScope  AccessScope
+	AssociatedAt time.Time
+	ModifiedAt   time.Time
+}
+
+// AccessEntry grants one IAM principal access to a cluster. Policies holds
+// the associated access policies. Each policy ARN appears at most once.
+type AccessEntry struct {
+	ClusterName        string
+	PrincipalArn       string
+	ARN                string
+	Type               string
+	Username           string
+	KubernetesGroups   []string
+	Tags               map[string]string
+	CreatedAt          time.Time
+	ModifiedAt         time.Time
+	ClientRequestToken string
+	Policies           []AssociatedAccessPolicy
+}
+
+// AccessPolicy is one entry of the fixed EKS access policy catalog.
+type AccessPolicy struct {
+	Name string
+	ARN  string
+}
+
+// AddonVersionFilter narrows DescribeAddonVersions. Empty fields match all.
+type AddonVersionFilter struct {
+	AddonName         string
+	KubernetesVersion string
+	Types             []string
+	Publishers        []string
+	Owners            []string
+}
+
+// AddonCompatibility says which cluster version an add-on version runs on and
+// whether it is the default there.
+type AddonCompatibility struct {
+	ClusterVersion   string
+	PlatformVersions []string
+	DefaultVersion   bool
+}
+
+// AddonVersionInfo is one published version of an add-on.
+type AddonVersionInfo struct {
+	AddonVersion           string
+	Architecture           []string
+	ComputeTypes           []string
+	Compatibilities        []AddonCompatibility
+	RequiresConfiguration  bool
+	RequiresIamPermissions bool
+}
+
+// AddonInfo is one add-on in the catalog with its versions, newest first.
+type AddonInfo struct {
+	AddonName        string
+	Type             string
+	Owner            string
+	Publisher        string
+	DefaultNamespace string
+	AddonVersions    []AddonVersionInfo
+}
+
+// AddonPodIdentityConfiguration names the service account an add-on uses and
+// the managed policies EKS recommends for its pod identity role.
+type AddonPodIdentityConfiguration struct {
+	ServiceAccount             string
+	RecommendedManagedPolicies []string
+}
+
+// AddonConfiguration is the configuration schema of one add-on version.
+type AddonConfiguration struct {
+	AddonName                string
+	AddonVersion             string
+	ConfigurationSchema      string
+	PodIdentityConfiguration []AddonPodIdentityConfiguration
+}
+
 // EKS is the interface implemented by the EKS provider mock. It mirrors the
 // AWS EKS API operations the SDK-compat handler needs to serve real clients.
 type EKS interface {
@@ -350,4 +477,23 @@ type EKS interface {
 	ListAddons(ctx context.Context, clusterName string) ([]string, error)
 	UpdateAddon(ctx context.Context, cfg AddonConfig) (*ClusterUpdate, error)
 	DeleteAddon(ctx context.Context, clusterName, addonName string) (*Addon, error)
+
+	// Add-on catalog
+	DescribeAddonVersions(ctx context.Context, filter AddonVersionFilter) ([]AddonInfo, error)
+	DescribeAddonConfiguration(ctx context.Context, addonName, addonVersion string) (*AddonConfiguration, error)
+
+	// Access entries
+	CreateAccessEntry(ctx context.Context, cfg AccessEntryConfig) (*AccessEntry, error)
+	DescribeAccessEntry(ctx context.Context, clusterName, principalArn string) (*AccessEntry, error)
+	ListAccessEntries(ctx context.Context, clusterName, associatedPolicyArn string) ([]string, error)
+	UpdateAccessEntry(ctx context.Context, upd AccessEntryUpdate) (*AccessEntry, error)
+	DeleteAccessEntry(ctx context.Context, clusterName, principalArn string) error
+
+	// Access policies
+	ListAccessPolicies(ctx context.Context) ([]AccessPolicy, error)
+	AssociateAccessPolicy(
+		ctx context.Context, clusterName, principalArn, policyArn string, scope AccessScope,
+	) (*AssociatedAccessPolicy, error)
+	DisassociateAccessPolicy(ctx context.Context, clusterName, principalArn, policyArn string) error
+	ListAssociatedAccessPolicies(ctx context.Context, clusterName, principalArn string) ([]AssociatedAccessPolicy, error)
 }

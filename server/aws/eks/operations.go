@@ -51,6 +51,33 @@ func paginateNames(
 	return items, page.NextPageToken, true
 }
 
+// paginateItems pages a slice of records by a unique string key, using the
+// same token scheme as paginateNames. Returns ok=false after writing an error.
+func paginateItems[T any](
+	w http.ResponseWriter, r *http.Request, items []T, key func(*T) string,
+) (page []T, next string, ok bool) {
+	byKey := make(map[string]T, len(items))
+	keys := make([]string, 0, len(items))
+
+	for i := range items {
+		k := key(&items[i])
+		keys = append(keys, k)
+		byKey[k] = items[i]
+	}
+
+	pageKeys, next, ok := paginateNames(w, r, keys)
+	if !ok {
+		return nil, "", false
+	}
+
+	page = make([]T, 0, len(pageKeys))
+	for _, k := range pageKeys {
+		page = append(page, byKey[k])
+	}
+
+	return page, next, true
+}
+
 // safeInt32 narrows an int to int32, clamping at math.MaxInt32 / math.MinInt32.
 // EKS scaling and disk-size fields are int32 on the wire; the driver uses int
 // for ergonomics. A direct int->int32 cast would trip gosec G115; explicit
