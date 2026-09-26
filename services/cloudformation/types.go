@@ -46,6 +46,9 @@ type Parameter struct {
 	// ResolvedValue is the Parameter Store value an SSM parameter type
 	// resolved to. It is empty for other types.
 	ResolvedValue string
+	// UsePreviousValue asks UpdateStack to keep the stack's current value.
+	// It is only read from requests and never stored.
+	UsePreviousValue bool `json:"-"`
 }
 
 // Output is a resolved stack output.

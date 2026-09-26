@@ -147,3 +147,76 @@ Resources:
 		t.Fatalf("queue = %v %v", res, err)
 	}
 }
+
+const usePreviousTemplate = `Parameters:
+  Env: {Type: String, AllowedValues: [prod, dev]}
+  Name: {Type: "AWS::SSM::Parameter::Value<String>"}
+Conditions:
+  IsProd: !Equals [!Ref Env, prod]
+Resources:
+  Q: {Type: AWS::SQS::Queue, Properties: {QueueName: !Sub "${Name}-${Env}"}}
+  Audit: {Type: AWS::SQS::Queue, Condition: IsProd}
+`
+
+func cfnParam(k, v string) cfntypes.Parameter {
+	return cfntypes.Parameter{ParameterKey: aws.String(k), ParameterValue: aws.String(v)}
+}
+
+func previousParam(k string) cfntypes.Parameter {
+	return cfntypes.Parameter{ParameterKey: aws.String(k), UsePreviousValue: aws.Bool(true)}
+}
+
+// TestUsePreviousValueRealSDK updates a stack keeping a constrained parameter
+// and an SSM-typed parameter through UsePreviousValue.
+func TestUsePreviousValueRealSDK(t *testing.T) {
+	c := boot(t)
+	ctx := context.Background()
+
+	seed := "Resources:\n  P: {Type: AWS::SSM::Parameter, Properties: {Name: /app/q, Type: String, Value: v1}}\n"
+	if _, err := c.cfn.CreateStack(ctx, &awscfn.CreateStackInput{StackName: aws.String("seed"), TemplateBody: aws.String(seed)}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	if _, err := c.cfn.CreateStack(ctx, &awscfn.CreateStackInput{
+		StackName: aws.String("app"), TemplateBody: aws.String(usePreviousTemplate),
+		Parameters: []cfntypes.Parameter{cfnParam("Env", "prod"), cfnParam("Name", "/app/q")},
+	}); err != nil {
+		t.Fatalf("CreateStack: %v", err)
+	}
+
+	if _, err := c.cfn.UpdateStack(ctx, &awscfn.UpdateStackInput{
+		StackName: aws.String("app"), TemplateBody: aws.String(usePreviousTemplate + "  Extra: {Type: AWS::SQS::Queue}\n"),
+		Parameters: []cfntypes.Parameter{previousParam("Env"), previousParam("Name")},
+	}); err != nil {
+		t.Fatalf("UpdateStack with UsePreviousValue: %v", err)
+	}
+
+	desc, err := c.cfn.DescribeStacks(ctx, &awscfn.DescribeStacksInput{StackName: aws.String("app")})
+	if err != nil {
+		t.Fatalf("DescribeStacks: %v", err)
+	}
+
+	got := map[string]string{}
+	for _, p := range desc.Stacks[0].Parameters {
+		got[aws.ToString(p.ParameterKey)] = aws.ToString(p.ParameterValue) + "|" + aws.ToString(p.ResolvedValue)
+	}
+
+	if got["Env"] != "prod|" || got["Name"] != "/app/q|v1" || desc.Stacks[0].StackStatus != cfntypes.StackStatusUpdateComplete {
+		t.Fatalf("params = %v status = %s", got, desc.Stacks[0].StackStatus)
+	}
+
+	if ids := stackResourceIDs(t, c, "app"); ids != "Audit,Extra,Q" {
+		t.Fatalf("resources = %s", ids)
+	}
+
+	_, err = c.cfn.UpdateStack(ctx, &awscfn.UpdateStackInput{
+		StackName: aws.String("app"), TemplateBody: aws.String(usePreviousTemplate),
+		Parameters: []cfntypes.Parameter{previousParam("Env"), previousParam("Name"), previousParam("Size")},
+	})
+
+	var apiErr smithy.APIError
+	if !errors.As(err, &apiErr) || apiErr.ErrorCode() != "ValidationError" || apiErr.ErrorMessage() !=
+		"Invalid input for parameter key Size. Cannot specify usePreviousValue as true for a parameter key not in the previous template" {
+		t.Fatalf("unknown previous key err = %v", err)
+	}
+}

@@ -1,6 +1,7 @@
 package cloudformation
 
 import (
+	"sort"
 	"strings"
 )
 
@@ -116,8 +117,14 @@ func checkConditionsBlock(t *Template) error {
 	bad := map[string]bool{}
 	graph := make(map[string][]string, len(t.Conditions))
 
+	usesIf := false
+
 	for name, def := range t.Conditions {
 		walkIntrinsics(def, func(fn string, arg any) {
+			if fn == fnIf {
+				usesIf = true
+			}
+
 			if s, ok := arg.(string); ok && fn == fnRef && !pseudoParams[s] {
 				if _, isParam := t.Parameters[s]; !isParam {
 					bad[s] = true
@@ -128,6 +135,10 @@ func checkConditionsBlock(t *Template) error {
 		refs := map[string]bool{}
 		conditionRefs(def, refs)
 		graph[name] = sortedKeys(refs)
+	}
+
+	if usesIf {
+		return templateErr("Fn::If cannot be used in the Conditions block of the template")
 	}
 
 	if len(bad) > 0 {
@@ -166,17 +177,22 @@ func checkConditionGraph(graph map[string][]string) error {
 
 	state := map[string]int{}
 
-	var visit func(name string) error
+	var (
+		stack []string
+		visit func(name string) error
+	)
 
 	visit = func(name string) error {
 		switch state[name] {
 		case visiting:
-			return formatErr("Circular dependency between conditions: [%s]", name)
+			return cycleErr(stack, name)
 		case done:
 			return nil
 		}
 
 		state[name] = visiting
+
+		stack = append(stack, name)
 
 		for _, dep := range graph[name] {
 			if _, ok := graph[dep]; !ok {
@@ -189,6 +205,7 @@ func checkConditionGraph(graph map[string][]string) error {
 		}
 
 		state[name] = done
+		stack = stack[:len(stack)-1]
 
 		return nil
 	}
@@ -200,6 +217,24 @@ func checkConditionGraph(graph map[string][]string) error {
 	}
 
 	return nil
+}
+
+// cycleErr reports a condition cycle, naming every condition in it. stack is
+// the chain being visited and name is the one seen twice.
+func cycleErr(stack []string, name string) error {
+	start := 0
+
+	for i, s := range stack {
+		if s == name {
+			start = i
+			break
+		}
+	}
+
+	members := append([]string(nil), stack[start:]...)
+	sort.Strings(members)
+
+	return formatErr("Circular dependency between conditions: [%s]", strings.Join(members, ", "))
 }
 
 // checkMappingNames checks that each Fn::FindInMap with a literal map name

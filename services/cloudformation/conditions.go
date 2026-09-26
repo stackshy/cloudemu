@@ -1,5 +1,7 @@
 package cloudformation
 
+import "slices"
+
 // Condition function names.
 const (
 	fnEquals     = "Fn::Equals"
@@ -171,7 +173,7 @@ func (r *Resolver) pruneIntrinsic(fn string, arg any) (any, error) {
 
 // evalConditions evaluates every declared condition, as CloudFormation does.
 func (r *Resolver) evalConditions(defs map[string]any) error {
-	ev := &condEval{r: r, defs: defs, visiting: map[string]bool{}}
+	ev := &condEval{r: r, defs: defs}
 
 	for _, name := range sortedKeys(defs) {
 		if _, err := ev.named(name, keyCondition); err != nil {
@@ -184,9 +186,10 @@ func (r *Resolver) evalConditions(defs map[string]any) error {
 
 // condEval evaluates conditions once each, storing results on the resolver.
 type condEval struct {
-	r        *Resolver
-	defs     map[string]any
-	visiting map[string]bool
+	r    *Resolver
+	defs map[string]any
+	// stack is the chain of conditions being evaluated, to report a cycle.
+	stack []string
 }
 
 func (c *condEval) named(name, from string) (bool, error) {
@@ -199,13 +202,13 @@ func (c *condEval) named(name, from string) (bool, error) {
 		return false, templateErr("unresolved condition dependency %s in %s", name, from)
 	}
 
-	if c.visiting[name] {
-		return false, formatErr("Circular dependency between conditions: [%s]", name)
+	if slices.Contains(c.stack, name) {
+		return false, cycleErr(c.stack, name)
 	}
 
-	c.visiting[name] = true
+	c.stack = append(c.stack, name)
 	v, err := c.eval(def)
-	delete(c.visiting, name)
+	c.stack = c.stack[:len(c.stack)-1]
 
 	if err != nil {
 		return false, err

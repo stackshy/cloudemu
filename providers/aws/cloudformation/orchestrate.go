@@ -170,12 +170,19 @@ func (m *Mock) planUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStac
 		return nil, err
 	}
 
-	params, paramValues, err := m.mergeParameters(ctx, newT, in.Parameters)
+	prior := sd.priorState()
+
+	provided, err := previousValues(in.Parameters, prior.params)
 	if err != nil {
 		return nil, err
 	}
 
-	p := &updatePlan{body: body, params: params, description: newT.Description, prior: sd.priorState()}
+	params, paramValues, err := m.mergeParameters(ctx, newT, provided)
+	if err != nil {
+		return nil, err
+	}
+
+	p := &updatePlan{body: body, params: params, description: newT.Description, prior: prior}
 
 	p.notificationARNs = in.NotificationARNs
 	if p.notificationARNs == nil {
@@ -205,6 +212,35 @@ func (m *Mock) planUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStac
 	}
 
 	return p, nil
+}
+
+// previousValues replaces each UsePreviousValue parameter with the value the
+// stack holds now. An SSM parameter keeps its Parameter Store name, so it is
+// fetched again, as CloudFormation does on every update.
+func previousValues(in, stored []cfn.Parameter) ([]cfn.Parameter, error) {
+	current := make(map[string]string, len(stored))
+	for _, p := range stored {
+		current[p.Key] = p.Value
+	}
+
+	out := make([]cfn.Parameter, len(in))
+
+	for i, p := range in {
+		if p.UsePreviousValue {
+			v, ok := current[p.Key]
+			if !ok {
+				return nil, cerrors.Newf(cerrors.InvalidArgument, "Invalid input for parameter key %s. "+
+					"Cannot specify usePreviousValue as true for a parameter key not in the previous template", p.Key)
+			}
+
+			p.Value = v
+			p.UsePreviousValue = false
+		}
+
+		out[i] = p
+	}
+
+	return out, nil
 }
 
 // rollbackUpdate reverses a failed update: it deletes the resources the update

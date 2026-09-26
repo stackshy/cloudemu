@@ -4,6 +4,7 @@ import (
 	"encoding/xml"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
@@ -84,7 +85,10 @@ func parseParameters(form url.Values) []cfn.Parameter {
 			continue
 		}
 
-		out = append(out, cfn.Parameter{Key: key, Value: form.Get(base + ".ParameterValue")})
+		out = append(out, cfn.Parameter{
+			Key: key, Value: form.Get(base + ".ParameterValue"),
+			UsePreviousValue: strings.EqualFold(form.Get(base+".UsePreviousValue"), "true"),
+		})
 	}
 
 	return out

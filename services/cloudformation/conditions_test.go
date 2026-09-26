@@ -214,7 +214,12 @@ func TestStaticValidationErrors(t *testing.T) {
 		{"unknown nested condition", "Conditions:\n  A: !Not [!Condition Nope]\n" + res,
 			"Template error: unresolved condition dependency Nope in Condition"},
 		{"condition cycle", "Conditions:\n  A: !Not [!Condition B]\n  B: !Not [!Condition A]\n" + res,
-			"Template format error: Circular dependency between conditions: [A]"},
+			"Template format error: Circular dependency between conditions: [A, B]"},
+		{"three condition cycle", "Conditions:\n  X: !Not [!Condition C]\n  C: !Not [!Condition A]\n" +
+			"  A: !Not [!Condition B]\n  B: !Not [!Condition C]\n" + res,
+			"Template format error: Circular dependency between conditions: [A, B, C]"},
+		{"If in Conditions", "Conditions:\n  A: !Equals [a, a]\n  B: !Equals [!If [A, x, y], x]\n" + res,
+			"Template error: Fn::If cannot be used in the Conditions block of the template"},
 		{"unknown mapping", "Resources:\n  B: {Type: AWS::S3::Bucket, Properties: {A: !FindInMap [Nope, a, b]}}\n",
 			"Template error: Mapping named 'Nope' is not present in the 'Mappings' section of template."},
 		{"bad mapping shape", "Mappings:\n  M: {a: b}\n" + res,
@@ -253,6 +258,7 @@ func TestConditionOperandErrors(t *testing.T) {
 		{"Or with ten operands", "!Or [" + repeatCond(10) + "]", ""},
 		{"Not with two operands", "!Not [!Equals [a, a], !Equals [a, a]]",
 			"Template error: every Fn::Not object requires a list with exactly 1 boolean parameter."},
+		{"Equals on a later condition", "!Equals [{Condition: Z}, x]\n  Z: !Equals [a, a]", ""},
 		{"literal condition", "yes",
 			"Template format error: Conditions can only be boolean operations on parameters and other conditions"},
 	}
@@ -523,4 +529,21 @@ func TestParameterTypeHelpers(t *testing.T) {
 	inner, ok := SSMValueType("AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>")
 	assert.True(t, ok)
 	assert.Equal(t, "AWS::EC2::Image::Id", inner)
+}
+
+// TestPrepareReportsWholeCycle covers the evaluation-time cycle check, which
+// sees templates that did not come through ParseTemplate.
+func TestPrepareReportsWholeCycle(t *testing.T) {
+	t.Parallel()
+
+	tmpl := &Template{
+		Conditions: map[string]any{
+			"A": map[string]any{fnNot: []any{map[string]any{keyCondition: "B"}}},
+			"B": map[string]any{fnNot: []any{map[string]any{keyCondition: "A"}}},
+		},
+		Resources: map[string]ResourceDef{"R": {Type: "AWS::S3::Bucket"}},
+	}
+
+	_, err := (&Resolver{}).Prepare(tmpl)
+	assert.Equal(t, "Template format error: Circular dependency between conditions: [A, B]", errMessage(err))
 }
