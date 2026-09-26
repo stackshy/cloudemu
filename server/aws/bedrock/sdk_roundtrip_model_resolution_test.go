@@ -174,8 +174,10 @@ func TestSDKRuntimeModelResolution(t *testing.T) {
 		t.Fatalf("profile-only Converse: got %v", err)
 	}
 
-	if _, err = rt.Converse(ctx, &awsruntime.ConverseInput{ModelId: aws.String(usProfileID), Messages: msgs}); err != nil {
-		t.Fatalf("Converse via profile: %v", err)
+	for _, id := range []string{usProfileID, "global.anthropic.claude-sonnet-4-20250514-v1:0"} {
+		if _, err = rt.Converse(ctx, &awsruntime.ConverseInput{ModelId: aws.String(id), Messages: msgs}); err != nil {
+			t.Fatalf("Converse via %s: %v", id, err)
+		}
 	}
 
 	sys, err := ctl.GetInferenceProfile(ctx, &awsbedrock.GetInferenceProfileInput{InferenceProfileIdentifier: aws.String(usProfileID)})

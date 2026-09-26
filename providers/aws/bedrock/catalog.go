@@ -27,7 +27,6 @@ var (
 	mEmbed     = []string{driver.ModalityEmbedding}
 
 	onDemand    = []string{driver.InferenceTypeOnDemand}
-	onDemandIP  = []string{driver.InferenceTypeOnDemand, driver.InferenceTypeInferenceProfile}
 	profileOnly = []string{driver.InferenceTypeInferenceProfile}
 	provisioned = []string{driver.InferenceTypeProvisioned}
 
@@ -37,19 +36,24 @@ var (
 )
 
 // catalogSpecs is the foundation-model catalog, using real Bedrock model IDs,
-// names, providers and inference types.
+// names, providers and inference types. AWS lists INFERENCE_PROFILE only for
+// models with no on-demand throughput. Which models have a profile lives in
+// profileSpecs, not here.
 func catalogSpecs() []modelSpec {
 	return []modelSpec{
-		{"anthropic.claude-3-sonnet-20240229-v1:0", "Claude 3 Sonnet", "Anthropic", mTextImage, mText, true, nil, onDemandIP},
-		{"anthropic.claude-3-haiku-20240307-v1:0", "Claude 3 Haiku", "Anthropic", mTextImage, mText, true, nil, onDemandIP},
+		{"anthropic.claude-3-sonnet-20240229-v1:0", "Claude 3 Sonnet", "Anthropic", mTextImage, mText, true, nil, onDemand},
+		{"anthropic.claude-3-haiku-20240307-v1:0", "Claude 3 Haiku", "Anthropic", mTextImage, mText, true, nil, onDemand},
 		{"anthropic.claude-3-haiku-20240307-v1:0:200k", "Claude 3 Haiku", "Anthropic", mTextImage, mText, true, ft, provisioned},
-		{"anthropic.claude-3-opus-20240229-v1:0", "Claude 3 Opus", "Anthropic", mTextImage, mText, true, nil, onDemandIP},
-		{"anthropic.claude-3-5-sonnet-20240620-v1:0", "Claude 3.5 Sonnet", "Anthropic", mTextImage, mText, true, nil, onDemandIP},
+		{"anthropic.claude-3-opus-20240229-v1:0", "Claude 3 Opus", "Anthropic", mTextImage, mText, true, nil, onDemand},
+		{"anthropic.claude-3-5-sonnet-20240620-v1:0", "Claude 3.5 Sonnet", "Anthropic", mTextImage, mText, true, nil, onDemand},
 		{"anthropic.claude-3-5-sonnet-20241022-v2:0", "Claude 3.5 Sonnet v2", "Anthropic", mTextImage, mText, true, nil, profileOnly},
 		{"anthropic.claude-3-5-haiku-20241022-v1:0", "Claude 3.5 Haiku", "Anthropic", mText, mText, true, nil, profileOnly},
 		{"anthropic.claude-3-7-sonnet-20250219-v1:0", "Claude 3.7 Sonnet", "Anthropic", mTextImage, mText, true, nil, profileOnly},
 		{"anthropic.claude-sonnet-4-20250514-v1:0", "Claude Sonnet 4", "Anthropic", mTextImage, mText, true, nil, profileOnly},
 		{"anthropic.claude-opus-4-20250514-v1:0", "Claude Opus 4", "Anthropic", mTextImage, mText, true, nil, profileOnly},
+		{"anthropic.claude-opus-4-1-20250805-v1:0", "Claude Opus 4.1", "Anthropic", mTextImage, mText, true, nil, profileOnly},
+		{"anthropic.claude-sonnet-4-5-20250929-v1:0", "Claude Sonnet 4.5", "Anthropic", mTextImage, mText, true, nil, profileOnly},
+		{"anthropic.claude-haiku-4-5-20251001-v1:0", "Claude Haiku 4.5", "Anthropic", mTextImage, mText, true, nil, profileOnly},
 
 		{"amazon.titan-text-express-v1", "Titan Text G1 - Express", "Amazon", mText, mText, true, ftCPT, onDemand},
 		{"amazon.titan-text-express-v1:0:8k", "Titan Text G1 - Express", "Amazon", mText, mText, true, ftCPT, provisioned},
@@ -58,15 +62,15 @@ func catalogSpecs() []modelSpec {
 		{"amazon.titan-embed-text-v1", "Titan Embeddings G1 - Text", "Amazon", mText, mEmbed, false, nil, onDemand},
 		{"amazon.titan-embed-text-v2:0", "Titan Text Embeddings V2", "Amazon", mText, mEmbed, false, nil, onDemand},
 		{"amazon.titan-image-generator-v2:0", "Titan Image Generator G1 v2", "Amazon", mTextImage, mImage, false, ft, onDemand},
-		{"amazon.nova-micro-v1:0", "Nova Micro", "Amazon", mText, mText, true, ftDistl, onDemandIP},
-		{"amazon.nova-lite-v1:0", "Nova Lite", "Amazon", mTextImage, mText, true, ftDistl, onDemandIP},
-		{"amazon.nova-pro-v1:0", "Nova Pro", "Amazon", mTextImage, mText, true, ftDistl, onDemandIP},
+		{"amazon.nova-micro-v1:0", "Nova Micro", "Amazon", mText, mText, true, ftDistl, onDemand},
+		{"amazon.nova-lite-v1:0", "Nova Lite", "Amazon", mTextImage, mText, true, ftDistl, onDemand},
+		{"amazon.nova-pro-v1:0", "Nova Pro", "Amazon", mTextImage, mText, true, ftDistl, onDemand},
 		{"amazon.nova-premier-v1:0", "Nova Premier", "Amazon", mTextImage, mText, true, nil, profileOnly},
 
 		{"meta.llama3-8b-instruct-v1:0", "Llama 3 8B Instruct", "Meta", mText, mText, true, ft, onDemand},
 		{"meta.llama3-70b-instruct-v1:0", "Llama 3 70B Instruct", "Meta", mText, mText, true, nil, onDemand},
-		{"meta.llama3-1-8b-instruct-v1:0", "Llama 3.1 8B Instruct", "Meta", mText, mText, true, ft, onDemandIP},
-		{"meta.llama3-1-70b-instruct-v1:0", "Llama 3.1 70B Instruct", "Meta", mText, mText, true, ft, onDemandIP},
+		{"meta.llama3-1-8b-instruct-v1:0", "Llama 3.1 8B Instruct", "Meta", mText, mText, true, ft, onDemand},
+		{"meta.llama3-1-70b-instruct-v1:0", "Llama 3.1 70B Instruct", "Meta", mText, mText, true, ft, onDemand},
 		{"meta.llama3-2-1b-instruct-v1:0", "Llama 3.2 1B Instruct", "Meta", mText, mText, true, nil, profileOnly},
 		{"meta.llama3-2-3b-instruct-v1:0", "Llama 3.2 3B Instruct", "Meta", mText, mText, true, nil, profileOnly},
 		{"meta.llama3-3-70b-instruct-v1:0", "Llama 3.3 70B Instruct", "Meta", mText, mText, true, nil, profileOnly},
@@ -85,6 +89,75 @@ func catalogSpecs() []modelSpec {
 	}
 }
 
+// Geography sets for profileSpec.geos.
+const (
+	geoUS   = "us"
+	geoEU   = "eu"
+	geoAPAC = "apac"
+)
+
+// profileSpec says which system inference profiles AWS publishes for a model:
+// the geographies with a geo profile, and whether a global. profile exists.
+type profileSpec struct {
+	geos   []string
+	global bool
+}
+
+// profileSpecs maps model ID to its published system inference profiles, per
+// the Bedrock model cards. Models absent here have no system profile.
+func profileSpecs() map[string]profileSpec {
+	all := []string{geoUS, geoEU, geoAPAC}
+	usEU := []string{geoUS, geoEU}
+	us := []string{geoUS}
+
+	return map[string]profileSpec{
+		"anthropic.claude-3-sonnet-20240229-v1:0":   {geos: all},
+		"anthropic.claude-3-haiku-20240307-v1:0":    {geos: all},
+		"anthropic.claude-3-opus-20240229-v1:0":     {geos: us},
+		"anthropic.claude-3-5-sonnet-20240620-v1:0": {geos: all},
+		"anthropic.claude-3-5-sonnet-20241022-v2:0": {geos: all},
+		"anthropic.claude-3-5-haiku-20241022-v1:0":  {geos: us},
+		"anthropic.claude-3-7-sonnet-20250219-v1:0": {geos: all},
+		"anthropic.claude-sonnet-4-20250514-v1:0":   {geos: all, global: true},
+		"anthropic.claude-opus-4-20250514-v1:0":     {geos: us},
+		"anthropic.claude-opus-4-1-20250805-v1:0":   {geos: us},
+		"anthropic.claude-sonnet-4-5-20250929-v1:0": {geos: usEU, global: true},
+		"anthropic.claude-haiku-4-5-20251001-v1:0":  {geos: usEU, global: true},
+		"amazon.nova-micro-v1:0":                    {geos: all},
+		"amazon.nova-lite-v1:0":                     {geos: all},
+		"amazon.nova-pro-v1:0":                      {geos: all},
+		"amazon.nova-premier-v1:0":                  {geos: us},
+		"meta.llama3-1-8b-instruct-v1:0":            {geos: us},
+		"meta.llama3-1-70b-instruct-v1:0":           {geos: us},
+		"meta.llama3-2-1b-instruct-v1:0":            {geos: all},
+		"meta.llama3-2-3b-instruct-v1:0":            {geos: all},
+		"meta.llama3-3-70b-instruct-v1:0":           {geos: us},
+		"deepseek.r1-v1:0":                          {geos: us},
+	}
+}
+
+// legacyModels are the catalog models that are not ACTIVE. Claude 3 Haiku,
+// Sonnet 4, Opus 4.1, Command R, Command R+ and Nova Premier are in the
+// Legacy table of the Bedrock model lifecycle page. The older Claude models
+// have left the model cards (past end of life), and LEGACY is the closest
+// status the API has for them.
+func legacyModels() map[string]bool {
+	return map[string]bool{
+		"anthropic.claude-3-haiku-20240307-v1:0":    true,
+		"anthropic.claude-sonnet-4-20250514-v1:0":   true,
+		"anthropic.claude-opus-4-1-20250805-v1:0":   true,
+		"cohere.command-r-v1:0":                     true,
+		"cohere.command-r-plus-v1:0":                true,
+		"amazon.nova-premier-v1:0":                  true,
+		"anthropic.claude-3-sonnet-20240229-v1:0":   true,
+		"anthropic.claude-3-opus-20240229-v1:0":     true,
+		"anthropic.claude-3-5-sonnet-20240620-v1:0": true,
+		"anthropic.claude-3-5-sonnet-20241022-v2:0": true,
+		"anthropic.claude-3-7-sonnet-20250219-v1:0": true,
+		"anthropic.claude-opus-4-20250514-v1:0":     true,
+	}
+}
+
 // fmARN builds a foundation-model ARN (no account component, per AWS).
 func fmARN(region, modelID string) string {
 	return idgen.AWSARN("bedrock", region, "", "foundation-model/"+modelID)
@@ -93,10 +166,17 @@ func fmARN(region, modelID string) string {
 // seedFoundationModels returns the foundation-model catalog for region.
 func seedFoundationModels(region string) []driver.FoundationModel {
 	specs := catalogSpecs()
+	legacy := legacyModels()
 	out := make([]driver.FoundationModel, 0, len(specs))
 
 	for i := range specs {
 		s := &specs[i]
+		status := driver.LifecycleActive
+
+		if legacy[s.id] {
+			status = driver.LifecycleLegacy
+		}
+
 		out = append(out, driver.FoundationModel{
 			ModelARN:                   fmARN(region, s.id),
 			ModelID:                    s.id,
@@ -107,7 +187,7 @@ func seedFoundationModels(region string) []driver.FoundationModel {
 			ResponseStreamingSupported: s.stream,
 			CustomizationsSupported:    s.custom,
 			InferenceTypesSupported:    s.inference,
-			LifecycleStatus:            driver.LifecycleActive,
+			LifecycleStatus:            status,
 		})
 	}
 
@@ -125,51 +205,71 @@ type geoGroup struct {
 func geoFor(region string) geoGroup {
 	switch {
 	case strings.HasPrefix(region, "eu-"):
-		return geoGroup{"eu", "EU", []string{"eu-central-1", "eu-west-1", "eu-west-3"}}
+		return geoGroup{geoEU, "EU", []string{"eu-central-1", "eu-west-1", "eu-west-3"}}
 	case strings.HasPrefix(region, "ap-"):
-		return geoGroup{"apac", "APAC", []string{"ap-northeast-1", "ap-southeast-1", "ap-southeast-2"}}
+		return geoGroup{geoAPAC, "APAC", []string{"ap-northeast-1", "ap-southeast-1", "ap-southeast-2"}}
 	default:
-		return geoGroup{"us", "US", []string{"us-east-1", "us-east-2", "us-west-2"}}
+		return geoGroup{geoUS, "US", []string{"us-east-1", "us-east-2", "us-west-2"}}
 	}
 }
 
-// seedSystemProfiles builds one SYSTEM_DEFINED inference profile for every
-// catalog model that supports INFERENCE_PROFILE. The first model ARN is the
-// caller's own region, so resolution stays local.
+// globalGroup routes to commercial regions worldwide.
+func globalGroup() geoGroup {
+	return geoGroup{"global", "Global", []string{"us-east-1", "us-east-2", "us-west-2", "eu-west-1", "ap-northeast-1"}}
+}
+
+// seedSystemProfiles builds the SYSTEM_DEFINED inference profiles visible from
+// region: a geo profile where the model has one for the region's geography,
+// plus a global profile where AWS publishes one.
 func seedSystemProfiles(region, accountID, now string, catalog []driver.FoundationModel) []driver.InferenceProfile {
 	geo := geoFor(region)
-	regions := append([]string{region}, without(geo.regions, region)...)
+	specs := profileSpecs()
 
 	var out []driver.InferenceProfile
 
 	for i := range catalog {
 		fm := &catalog[i]
-		if !contains(fm.InferenceTypesSupported, driver.InferenceTypeInferenceProfile) {
+		ps, ok := specs[fm.ModelID]
+
+		if !ok {
 			continue
 		}
 
-		id := geo.prefix + "." + fm.ModelID
-		models := make([]string, 0, len(regions))
-
-		for _, r := range regions {
-			models = append(models, fmARN(r, fm.ModelID))
+		if contains(ps.geos, geo.prefix) {
+			out = append(out, systemProfile(region, accountID, now, fm, geo))
 		}
 
-		out = append(out, driver.InferenceProfile{
-			ARN:    idgen.AWSARN("bedrock", region, accountID, "inference-profile/"+id),
-			ID:     id,
-			Name:   geo.label + " " + fm.ProviderName + " " + fm.ModelName,
-			Models: models,
-			Status: driver.InferenceProfileStatusActive,
-			Type:   driver.InferenceProfileTypeSystemDefined,
-			Description: "Routes requests to " + fm.ProviderName + " " + fm.ModelName +
-				" in " + strings.Join(regions, ", ") + ".",
-			CreatedAt: now,
-			UpdatedAt: now,
-		})
+		if ps.global {
+			out = append(out, systemProfile(region, accountID, now, fm, globalGroup()))
+		}
 	}
 
 	return out
+}
+
+// systemProfile builds one system profile for fm in group. The first model
+// ARN is the caller's own region, so resolution stays local.
+func systemProfile(region, accountID, now string, fm *driver.FoundationModel, group geoGroup) driver.InferenceProfile {
+	regions := append([]string{region}, without(group.regions, region)...)
+	id := group.prefix + "." + fm.ModelID
+	models := make([]string, 0, len(regions))
+
+	for _, r := range regions {
+		models = append(models, fmARN(r, fm.ModelID))
+	}
+
+	return driver.InferenceProfile{
+		ARN:    idgen.AWSARN("bedrock", region, accountID, "inference-profile/"+id),
+		ID:     id,
+		Name:   group.label + " " + fm.ProviderName + " " + fm.ModelName,
+		Models: models,
+		Status: driver.InferenceProfileStatusActive,
+		Type:   driver.InferenceProfileTypeSystemDefined,
+		Description: "Routes requests to " + fm.ProviderName + " " + fm.ModelName +
+			" in " + strings.Join(regions, ", ") + ".",
+		CreatedAt: now,
+		UpdatedAt: now,
+	}
 }
 
 // without returns list minus every occurrence of drop.
@@ -220,7 +320,9 @@ func validateFoundationFilter(f driver.FoundationModelFilter) error {
 }
 
 // matchesFoundationFilter reports whether fm passes every set filter. The
-// provider match ignores case; the enum filters are exact.
+// provider match ignores case; the enum filters are exact. byProvider is
+// matched against the full provider name only. The API reference gives it the
+// pattern [A-Za-z0-9- ]{1,63} and documents no short keys such as "mistral".
 func matchesFoundationFilter(fm *driver.FoundationModel, f driver.FoundationModelFilter) bool {
 	switch {
 	case f.ByProvider != "" && !strings.EqualFold(fm.ProviderName, f.ByProvider):

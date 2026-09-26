@@ -36,7 +36,9 @@ func TestListFoundationModels(t *testing.T) {
 	for _, fm := range models {
 		assertNotEmpty(t, fm.ModelARN)
 		assertNotEmpty(t, fm.ModelID)
-		assertEqual(t, bedrockdriver.LifecycleActive, fm.LifecycleStatus)
+		if fm.LifecycleStatus != bedrockdriver.LifecycleActive && fm.LifecycleStatus != bedrockdriver.LifecycleLegacy {
+			t.Fatalf("%s: unexpected lifecycle %q", fm.ModelID, fm.LifecycleStatus)
+		}
 	}
 }
 

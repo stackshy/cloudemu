@@ -1998,8 +1998,17 @@ AWS-only. Backs the real `aws-sdk-go-v2/service/bedrock` and `.../bedrockruntime
 
 | Operation | Signature |
 |-----------|-----------|
-| `ListFoundationModels` | `(ctx) ([]FoundationModel, error)` |
+| `ListFoundationModels` | `(ctx, FoundationModelFilter) ([]FoundationModel, error)` |
 | `GetFoundationModel` | `(ctx, modelID) (*FoundationModel, error)` |
+
+### Inference Profile Operations
+
+| Operation | Signature |
+|-----------|-----------|
+| `CreateInferenceProfile` | `(ctx, InferenceProfileConfig) (*InferenceProfile, error)` |
+| `GetInferenceProfile` | `(ctx, identifier) (*InferenceProfile, error)` |
+| `ListInferenceProfiles` | `(ctx, typeEquals) ([]InferenceProfile, error)` |
+| `DeleteInferenceProfile` | `(ctx, identifier) error` |
 
 ### Model Customization Operations
 

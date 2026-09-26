@@ -199,7 +199,8 @@ func TestInferenceProfileTypes(t *testing.T) {
 	for i := range sys {
 		assertEqual(t, bedrockdriver.InferenceProfileTypeSystemDefined, sys[i].Type)
 
-		if !strings.HasPrefix(sys[i].ID, "us.") || !strings.Contains(sys[i].ARN, ":123456789012:inference-profile/us.") {
+		geo := strings.SplitN(sys[i].ID, ".", 2)[0]
+		if (geo != "us" && geo != "global") || !strings.Contains(sys[i].ARN, ":123456789012:inference-profile/"+geo+".") {
 			t.Fatalf("bad system profile id/arn: %s %s", sys[i].ID, sys[i].ARN)
 		}
 	}
@@ -219,6 +220,77 @@ func TestInferenceProfileTypes(t *testing.T) {
 	if !cerrors.IsInvalidArgument(err) {
 		t.Fatalf("bad copyFrom: want InvalidArgument, got %v", err)
 	}
+}
+
+func TestGlobalProfilesAndNewModels(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	for _, id := range []string{
+		"global.anthropic.claude-sonnet-4-20250514-v1:0",
+		"global.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"global.anthropic.claude-haiku-4-5-20251001-v1:0",
+		"us.anthropic.claude-sonnet-4-5-20250929-v1:0",
+		"us.anthropic.claude-opus-4-1-20250805-v1:0",
+	} {
+		p, err := m.GetInferenceProfile(ctx, id)
+		requireNoError(t, err)
+		assertEqual(t, bedrockdriver.InferenceProfileTypeSystemDefined, p.Type)
+
+		if _, ok := invokeKeys(t, m, id)["content"]; !ok {
+			t.Fatalf("invoke via %s did not return an Anthropic body", id)
+		}
+	}
+
+	// Opus 4.1 has no global profile, and Claude 3 Haiku has no global one.
+	for _, id := range []string{"global.anthropic.claude-opus-4-1-20250805-v1:0", "global.anthropic.claude-3-haiku-20240307-v1:0"} {
+		if _, err := m.GetInferenceProfile(ctx, id); !cerrors.IsNotFound(err) {
+			t.Fatalf("%s: want NotFound, got %v", id, err)
+		}
+	}
+
+	// The 4.5 models have no on-demand throughput.
+	_, err := m.InvokeModel(ctx, bedrockdriver.InvokeModelInput{ModelID: "anthropic.claude-haiku-4-5-20251001-v1:0", Body: []byte(`{}`)})
+	if !cerrors.IsInvalidArgument(err) {
+		t.Fatalf("bare Haiku 4.5: want InvalidArgument, got %v", err)
+	}
+}
+
+func TestCatalogLifecycleAndInferenceTypes(t *testing.T) {
+	m := newTestMock()
+	ctx := context.Background()
+
+	for id, want := range map[string]string{
+		"anthropic.claude-3-sonnet-20240229-v1:0":   bedrockdriver.LifecycleLegacy,
+		"anthropic.claude-3-opus-20240229-v1:0":     bedrockdriver.LifecycleLegacy,
+		"anthropic.claude-3-5-sonnet-20240620-v1:0": bedrockdriver.LifecycleLegacy,
+		"anthropic.claude-3-5-sonnet-20241022-v2:0": bedrockdriver.LifecycleLegacy,
+		"anthropic.claude-sonnet-4-5-20250929-v1:0": bedrockdriver.LifecycleActive,
+		"amazon.nova-pro-v1:0":                      bedrockdriver.LifecycleActive,
+	} {
+		fm, err := m.GetFoundationModel(ctx, id)
+		requireNoError(t, err)
+		assertEqual(t, want, fm.LifecycleStatus)
+	}
+
+	// INFERENCE_PROFILE appears only on models with no on-demand throughput,
+	// even when the model also has a system profile.
+	all, err := m.ListFoundationModels(ctx, bedrockdriver.FoundationModelFilter{})
+	requireNoError(t, err)
+
+	for i := range all {
+		it := all[i].InferenceTypesSupported
+		if contains(it, bedrockdriver.InferenceTypeInferenceProfile) && contains(it, bedrockdriver.InferenceTypeOnDemand) {
+			t.Fatalf("%s lists both ON_DEMAND and INFERENCE_PROFILE", all[i].ModelID)
+		}
+	}
+
+	nova, err := m.GetFoundationModel(ctx, "amazon.nova-pro-v1:0")
+	requireNoError(t, err)
+	assertEqual(t, 1, len(nova.InferenceTypesSupported))
+
+	_, err = m.GetInferenceProfile(ctx, "us.amazon.nova-pro-v1:0")
+	requireNoError(t, err)
 }
 
 func TestApplicationProfileIDFormat(t *testing.T) {
