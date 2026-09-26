@@ -70,7 +70,12 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	m.dataCatalogs.Clear()
 
 	for k := range snap.WorkGroups {
-		m.workGroups.Set(k, copyWorkGroup(snap.WorkGroups[k]))
+		wg := copyWorkGroup(snap.WorkGroups[k])
+		if isLegacySeededPrimary(&wg) {
+			wg.Configuration.EnforceWorkGroupConfiguration = boolPtr(false)
+		}
+
+		m.workGroups.Set(k, wg)
 	}
 
 	for k, v := range snap.NamedQueries {
@@ -109,6 +114,30 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 	return nil
 }
+
+// isLegacySeededPrimary reports whether wg is primary exactly as older builds
+// seeded it: enforcement on, no result configuration and every other setting
+// at its seed value. Such a primary rejects every query that names its own
+// output location, so Restore turns enforcement off to match the current
+// seed. A primary the user changed is left alone.
+func isLegacySeededPrimary(wg *driver.WorkGroup) bool {
+	return wg.Name == driver.DefaultWorkGroup &&
+		wg.State == driver.WorkGroupStateEnabled &&
+		wg.Description == "" &&
+		isLegacySeedConfig(&wg.Configuration)
+}
+
+// isLegacySeedConfig reports whether c is the old primary seed configuration.
+func isLegacySeedConfig(c *driver.WorkGroupConfiguration) bool {
+	return c.ResultConfiguration == nil &&
+		c.BytesScannedCutoffPerQuery == nil &&
+		boolIs(c.EnforceWorkGroupConfiguration, true) &&
+		boolIs(c.PublishCloudWatchMetricsEnabled, true) &&
+		boolIs(c.RequesterPaysEnabled, false) &&
+		c.EngineVersion == resolveEngineVersion(driver.EngineVersion{})
+}
+
+func boolIs(p *bool, v bool) bool { return p != nil && *p == v }
 
 // snapshotDatabases returns the databases Athena itself still owns: the
 // pending legacy imports plus, when no Glue catalog is wired, the fallback

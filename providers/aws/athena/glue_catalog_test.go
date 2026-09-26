@@ -345,11 +345,6 @@ func TestCatalogSeamReentrantConcurrent(t *testing.T) {
 	requireNoError(t, err, "ListDatabases import")
 	m.SetCatalog(&reentrantCatalog{Catalog: g, m: m})
 
-	// The fixture's primary enforces with no location, as old snapshots did.
-	requireNoError(t, m.UpdateWorkGroup(ctx, driver.DefaultWorkGroup, driver.WorkGroupUpdate{
-		ConfigurationUpdates: &driver.WorkGroupConfigurationUpdates{EnforceWorkGroupConfiguration: ptr(false)},
-	}), "UpdateWorkGroup primary")
-
 	const workers = 8
 
 	var wg sync.WaitGroup
