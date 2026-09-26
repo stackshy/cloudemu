@@ -921,7 +921,7 @@
       },
       {
         "name": "ListTableMetadata",
-        "doc": "ListTableMetadata lists the tables of a database. expression is a Hive"
+        "doc": "ListTableMetadata lists the tables of a database. expression is a regex"
       },
       {
         "name": "ListTagsForResource"

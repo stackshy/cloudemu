@@ -49,9 +49,11 @@ type Mock struct {
 	// legacy holds databases from snapshots taken before the Glue unification,
 	// keyed "catalog/name". They are imported into the catalog on the next
 	// catalog call, because Glue restores after Athena and would wipe them.
-	legacyMu   sync.Mutex
-	legacy     map[string]driver.Database
-	legacyBusy atomic.Bool
+	// legacyMu guards the map. importMu serializes the import so a concurrent
+	// caller waits for it to finish.
+	legacyMu sync.Mutex
+	legacy   map[string]driver.Database
+	importMu sync.Mutex
 
 	// mu serializes compound read-modify-write mutations (workgroup update,
 	// recursive delete) that span more than one store operation.
@@ -103,7 +105,7 @@ func (m *Mock) seed() {
 		Description:  "",
 		CreationTime: m.now(),
 		Configuration: driver.WorkGroupConfiguration{
-			EnforceWorkGroupConfiguration:   boolPtr(true),
+			EnforceWorkGroupConfiguration:   boolPtr(false),
 			PublishCloudWatchMetricsEnabled: boolPtr(true),
 			RequesterPaysEnabled:            boolPtr(false),
 			EngineVersion:                   resolveEngineVersion(driver.EngineVersion{}),

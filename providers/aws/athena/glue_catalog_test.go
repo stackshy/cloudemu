@@ -303,7 +303,7 @@ func TestLegacyImportKeepsExistingGlueDatabase(t *testing.T) {
 }
 
 // reentrantCatalog calls back into Athena from inside every catalog call, so
-// a lock held across the seam deadlocks or trips -race.
+// a service lock held across the DDL and list seam deadlocks or trips -race.
 type reentrantCatalog struct {
 	Catalog
 
@@ -337,8 +337,18 @@ func TestCatalogSeamReentrantConcurrent(t *testing.T) {
 	requireNoError(t, err, "read fixture")
 
 	m, g := newGlueMock(t)
-	m.SetCatalog(&reentrantCatalog{Catalog: g, m: m})
 	requireNoError(t, m.Restore(ctx, raw), "Restore")
+
+	// The legacy import holds importMu across catalog calls and may not be
+	// re-entered, so finish it before wiring the re-entrant catalog.
+	_, _, err = m.ListDatabases(ctx, "", driver.Pagination{})
+	requireNoError(t, err, "ListDatabases import")
+	m.SetCatalog(&reentrantCatalog{Catalog: g, m: m})
+
+	// The fixture's primary enforces with no location, as old snapshots did.
+	requireNoError(t, m.UpdateWorkGroup(ctx, driver.DefaultWorkGroup, driver.WorkGroupUpdate{
+		ConfigurationUpdates: &driver.WorkGroupConfigurationUpdates{EnforceWorkGroupConfiguration: ptr(false)},
+	}), "UpdateWorkGroup primary")
 
 	const workers = 8
 
@@ -390,10 +400,10 @@ func TestResultConfigurationPrecedence(t *testing.T) {
 			wantPrefix: "s3://wg/", wantEnc: "SSE_S3",
 		},
 		{
-			name: "enforced without workgroup value uses client", enforce: true,
-			wgRC:       &driver.ResultConfiguration{EncryptionConfiguration: sse},
-			clientRC:   &driver.ResultConfiguration{OutputLocation: "s3://client/", ExpectedBucketOwner: "111111111111"},
-			wantPrefix: "s3://client/", wantEnc: "SSE_S3", wantOwner: "111111111111",
+			name: "enforced ignores client fields the workgroup leaves unset", enforce: true,
+			wgRC:       &driver.ResultConfiguration{OutputLocation: "s3://wg/"},
+			clientRC:   &driver.ResultConfiguration{OutputLocation: "s3://client/", EncryptionConfiguration: kms, ExpectedBucketOwner: "111111111111"},
+			wantPrefix: "s3://wg/",
 		},
 		{
 			name: "not enforced client wins", enforce: false,
@@ -430,8 +440,13 @@ func TestResultConfigurationPrecedence(t *testing.T) {
 				t.Fatalf("OutputLocation = %+v, want %s<id>.csv", rc, tc.wantPrefix)
 			}
 
-			if rc.EncryptionConfiguration == nil || rc.EncryptionConfiguration.EncryptionOption != tc.wantEnc {
-				t.Fatalf("EncryptionConfiguration = %+v, want %s", rc.EncryptionConfiguration, tc.wantEnc)
+			gotEnc := ""
+			if rc.EncryptionConfiguration != nil {
+				gotEnc = rc.EncryptionConfiguration.EncryptionOption
+			}
+
+			if gotEnc != tc.wantEnc {
+				t.Fatalf("EncryptionConfiguration = %+v, want %q", rc.EncryptionConfiguration, tc.wantEnc)
 			}
 
 			if rc.ExpectedBucketOwner != tc.wantOwner {

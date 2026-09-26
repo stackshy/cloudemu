@@ -137,17 +137,20 @@ func (m *Mock) snapshotDatabases() map[string]driver.Database {
 
 // importLegacyDatabases moves restored pre-Glue databases into the catalog.
 // A database Glue already has is kept as is. Entries whose catalog does not
-// resolve stay pending so a later snapshot still carries them. The catalog is
-// called without holding legacyMu, and a re-entrant call is skipped.
+// resolve stay pending so a later snapshot still carries them. importMu is
+// held across the catalog calls so a concurrent caller waits for the import.
+// The catalog must not call back into Athena, as the Catalog contract says.
 func (m *Mock) importLegacyDatabases(ctx context.Context) {
+	m.importMu.Lock()
+	defer m.importMu.Unlock()
+
 	m.legacyMu.Lock()
 	pending := deepCopyMap(m.legacy, copyDatabase)
 	m.legacyMu.Unlock()
 
-	if len(pending) == 0 || !m.legacyBusy.CompareAndSwap(false, true) {
+	if len(pending) == 0 {
 		return
 	}
-	defer m.legacyBusy.Store(false)
 
 	done := make([]string, 0, len(pending))
 

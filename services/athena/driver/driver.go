@@ -79,14 +79,14 @@ type queryExecutionAPI interface {
 // and the ones Athena DDL makes show in Glue.
 type catalogAPI interface {
 	// GetDatabase returns a database in a data catalog, or an error tagged
-	// ResourceNotFoundException when absent.
+	// MetadataException when absent.
 	GetDatabase(ctx context.Context, catalogName, databaseName string) (*Database, error)
 	ListDatabases(ctx context.Context, catalogName string, page Pagination) ([]Database, string, error)
 	// GetTableMetadata returns a table's metadata, or an error tagged
 	// MetadataException when the database or table is absent.
 	GetTableMetadata(ctx context.Context, catalogName, databaseName, tableName string) (*TableMetadata, error)
-	// ListTableMetadata lists the tables of a database. expression is a Hive
-	// style name pattern ("*" wildcard, "|" alternation); empty lists all.
+	// ListTableMetadata lists the tables of a database. expression is a regex
+	// filter on table names where "*" means ".*"; empty lists all.
 	ListTableMetadata(ctx context.Context, catalogName, databaseName, expression string, page Pagination) ([]TableMetadata, string, error)
 	GetDataCatalog(ctx context.Context, name string) (*DataCatalog, error)
 	ListDataCatalogs(ctx context.Context, page Pagination) ([]DataCatalogSummary, string, error)

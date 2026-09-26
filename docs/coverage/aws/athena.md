@@ -22,7 +22,7 @@ AWS's `athena` service · portable interface `driver.Athena` · [AWS index](./RE
 | `ListDatabases` |  |
 | `ListNamedQueries` | ListNamedQueries returns the ids of saved queries in the given workgroup |
 | `ListQueryExecutions` | ListQueryExecutions returns execution ids in the given workgroup |
-| `ListTableMetadata` | ListTableMetadata lists the tables of a database. expression is a Hive |
+| `ListTableMetadata` | ListTableMetadata lists the tables of a database. expression is a regex |
 | `ListTagsForResource` |  |
 | `ListWorkGroups` | ListWorkGroups returns workgroup summaries in a deterministic order. |
 | `StartQueryExecution` | StartQueryExecution runs a query and returns its id. Re-issuing with the |

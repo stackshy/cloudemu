@@ -15,8 +15,8 @@ import (
 // tables live in Glue and both services see the same ones. See
 // https://docs.aws.amazon.com/athena/latest/ug/data-sources-glue.html.
 //
-// The Glue mock satisfies it. Implementations must not call back into Athena
-// while holding their own locks.
+// The Glue mock satisfies it. Implementations must not call back into Athena,
+// because the legacy snapshot import holds a lock across catalog calls.
 type Catalog interface {
 	CreateDatabase(ctx context.Context, catalogID string, db gluedriver.Database) error
 	GetDatabase(ctx context.Context, catalogID, name string) (*gluedriver.Database, error)

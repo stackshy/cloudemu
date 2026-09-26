@@ -11,8 +11,7 @@ import (
 )
 
 // GetDatabase returns a database within a data catalog. A missing database is a
-// ResourceNotFoundException (not InvalidRequestException), matching real
-// Athena's metadata read path.
+// MetadataException "Database <name> not found", like real Athena.
 func (m *Mock) GetDatabase(ctx context.Context, catalogName, databaseName string) (*driver.Database, error) {
 	if catalogName == "" {
 		catalogName = driver.DefaultDataCatalog
@@ -28,7 +27,7 @@ func (m *Mock) GetDatabase(ctx context.Context, catalogName, databaseName string
 	db, err := m.catalog.GetDatabase(ctx, catalogID, databaseName)
 	if err != nil {
 		if cerrors.IsNotFound(err) {
-			return nil, resourceNotFound("Database %s not found in catalog %s", databaseName, catalogName)
+			err = cerrors.Newf(cerrors.NotFound, "Database %s not found", databaseName)
 		}
 
 		return nil, catalogFailure(err)
@@ -41,6 +40,10 @@ func (m *Mock) GetDatabase(ctx context.Context, catalogName, databaseName string
 
 // ListDatabases returns the databases in a data catalog, sorted by name.
 func (m *Mock) ListDatabases(ctx context.Context, catalogName string, page driver.Pagination) ([]driver.Database, string, error) {
+	if err := checkCatalogPage(page); err != nil {
+		return nil, "", err
+	}
+
 	catalogID, err := m.glueCatalogID(catalogName)
 	if err != nil {
 		return nil, "", err
@@ -85,6 +88,10 @@ func (m *Mock) GetTableMetadata(ctx context.Context, catalogName, databaseName, 
 func (m *Mock) ListTableMetadata(
 	ctx context.Context, catalogName, databaseName, expression string, page driver.Pagination,
 ) ([]driver.TableMetadata, string, error) {
+	if err := checkCatalogPage(page); err != nil {
+		return nil, "", err
+	}
+
 	catalogID, err := m.glueCatalogID(catalogName)
 	if err != nil {
 		return nil, "", err
@@ -113,24 +120,41 @@ func (m *Mock) ListTableMetadata(
 	return paginate(all, page)
 }
 
-// tableNameMatcher compiles a Hive table pattern: "*" matches any run of
-// characters, "|" separates alternatives, and matching ignores case.
+// maxCatalogResults is the MaxResults ceiling of ListDatabases and
+// ListTableMetadata.
+const maxCatalogResults = 50
+
+// checkCatalogPage rejects a MaxResults outside 1-50. Zero means unset.
+func checkCatalogPage(page driver.Pagination) error {
+	if page.MaxResults < 0 || page.MaxResults > maxCatalogResults {
+		return invalidRequest("MaxResults must be between 1 and %d", maxCatalogResults)
+	}
+
+	return nil
+}
+
+// tableNameMatcher compiles the ListTableMetadata Expression. It is a regex
+// where a "*" not already after "." means ".*", as in Hive and Glue. Matching
+// ignores case and covers the whole name.
 func tableNameMatcher(expression string) (func(string) bool, error) {
 	if expression == "" {
 		return func(string) bool { return true }, nil
 	}
 
-	alts := strings.Split(expression, "|")
-	for i, alt := range alts {
-		parts := strings.Split(strings.TrimSpace(alt), "*")
-		for j, p := range parts {
-			parts[j] = regexp.QuoteMeta(p)
+	var b strings.Builder
+
+	prev := rune(0)
+
+	for _, r := range expression {
+		if r == '*' && prev != '.' {
+			b.WriteRune('.')
 		}
 
-		alts[i] = strings.Join(parts, ".*")
+		b.WriteRune(r)
+		prev = r
 	}
 
-	re, err := regexp.Compile("(?i)^(?:" + strings.Join(alts, "|") + ")$")
+	re, err := regexp.Compile("(?i)^(?:" + b.String() + ")$")
 	if err != nil {
 		return nil, invalidRequest("invalid Expression %q", expression)
 	}

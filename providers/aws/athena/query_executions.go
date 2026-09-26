@@ -49,10 +49,11 @@ func (m *Mock) StartQueryExecution(ctx context.Context, in driver.StartQueryExec
 	return qe.QueryExecutionID, nil
 }
 
-// effectiveResultConfiguration merges the query's ResultConfiguration with the
-// workgroup's, field by field. When the workgroup enforces its configuration a
-// field the workgroup sets wins. Otherwise the query's field wins and the
-// workgroup's is the fallback. See
+// effectiveResultConfiguration resolves the settings a query runs with. When
+// the workgroup overrides client-side settings, only the workgroup's settings
+// apply, so an enforced workgroup with no output location fails even if the
+// query names one. Otherwise each field comes from the query, with the
+// workgroup as the fallback. See
 // https://docs.aws.amazon.com/athena/latest/ug/workgroups-settings-override.html.
 // A missing output location is rejected like real Athena.
 //
@@ -60,21 +61,21 @@ func (m *Mock) StartQueryExecution(ctx context.Context, in driver.StartQueryExec
 func effectiveResultConfiguration(client *driver.ResultConfiguration, wg driver.WorkGroup) (*driver.ResultConfiguration, error) {
 	enforced := wg.Configuration.EnforceWorkGroupConfiguration == nil || *wg.Configuration.EnforceWorkGroupConfiguration
 
-	cl := client
-	if cl == nil {
-		cl = &driver.ResultConfiguration{}
-	}
-
 	w := wg.Configuration.ResultConfiguration
 	if w == nil {
 		w = &driver.ResultConfiguration{}
 	}
 
+	cl := client
+	if cl == nil || enforced {
+		cl = &driver.ResultConfiguration{}
+	}
+
 	out := &driver.ResultConfiguration{
-		OutputLocation:          pick(enforced, w.OutputLocation, cl.OutputLocation, ""),
-		ExpectedBucketOwner:     pick(enforced, w.ExpectedBucketOwner, cl.ExpectedBucketOwner, ""),
-		EncryptionConfiguration: copyEncryptionConfiguration(pick(enforced, w.EncryptionConfiguration, cl.EncryptionConfiguration, nil)),
-		ACLConfiguration:        copyACLConfiguration(pick(enforced, w.ACLConfiguration, cl.ACLConfiguration, nil)),
+		OutputLocation:          firstSet(cl.OutputLocation, w.OutputLocation, ""),
+		ExpectedBucketOwner:     firstSet(cl.ExpectedBucketOwner, w.ExpectedBucketOwner, ""),
+		EncryptionConfiguration: copyEncryptionConfiguration(firstSet(cl.EncryptionConfiguration, w.EncryptionConfiguration, nil)),
+		ACLConfiguration:        copyACLConfiguration(firstSet(cl.ACLConfiguration, w.ACLConfiguration, nil)),
 	}
 
 	if out.OutputLocation == "" {
@@ -85,13 +86,8 @@ func effectiveResultConfiguration(client *driver.ResultConfiguration, wg driver.
 	return out, nil
 }
 
-// pick returns the workgroup value when enforced and set, else the client
-// value when set, else the workgroup value.
-func pick[T comparable](enforced bool, wgValue, clientValue, zero T) T {
-	if enforced && wgValue != zero {
-		return wgValue
-	}
-
+// firstSet returns the client value when set, else the workgroup value.
+func firstSet[T comparable](clientValue, wgValue, zero T) T {
 	if clientValue != zero {
 		return clientValue
 	}
