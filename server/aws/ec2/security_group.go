@@ -3,6 +3,7 @@ package ec2
 import (
 	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -542,6 +543,10 @@ func (h *Handler) applyRules(w http.ResponseWriter, r *http.Request, spec ruleAp
 		rules, err = h.rulesByID(r.Context(), groupID, awsquery.ListStrings(r.Form, "SecurityGroupRuleId"), spec.side)
 	}
 
+	if err == nil {
+		err = validateRules(rules)
+	}
+
 	if err != nil {
 		writeSGRuleErr(w, err)
 		return
@@ -579,6 +584,18 @@ func (h *Handler) applyRules(w http.ResponseWriter, r *http.Request, spec ruleAp
 	}
 
 	writeSimpleSGResponse(w, spec.responseName)
+}
+
+// validateRules checks every rule before any is stored, so a bad rule
+// rejects the whole request the way EC2 does.
+func validateRules(rules []netdriver.SecurityRule) error {
+	for i := range rules {
+		if err := netdriver.ValidateAWSSecurityRule(&rules[i]); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
 // rulesByID resolves Revoke's SecurityGroupRuleId.N values to the stored
@@ -762,11 +779,19 @@ func parseIPPermissions(form url.Values) ([]netdriver.SecurityRule, error) {
 }
 
 // legacyPermission reads the older top-level form (IpProtocol, FromPort,
-// ToPort, CidrIp) that EC2 still accepts when IpPermissions is absent.
+// ToPort, CidrIp) that EC2 still accepts when IpPermissions is absent. EC2
+// requires CidrIp in this form, so a missing one is MissingParameter. The
+// SourceSecurityGroupName and SourceSecurityGroupOwnerId variant is not
+// handled. It only applies to default VPC groups looked up by name.
 func legacyPermission(form url.Values) ([]netdriver.SecurityRule, error) {
 	proto := form.Get("IpProtocol")
 	if proto == "" {
 		return nil, nil
+	}
+
+	cidr := form.Get("CidrIp")
+	if cidr == "" {
+		return nil, &missingParamError{name: "cidrIp"}
 	}
 
 	from, to, err := parsePortRange(form, "FromPort", "ToPort", proto)
@@ -776,8 +801,18 @@ func legacyPermission(form url.Values) ([]netdriver.SecurityRule, error) {
 
 	return []netdriver.SecurityRule{{
 		Protocol: proto, FromPort: from, ToPort: to,
-		CIDR: form.Get("CidrIp"), RuleID: idgen.GenerateID("sgr-"),
+		CIDR: cidr, RuleID: idgen.GenerateID("sgr-"),
 	}}, nil
+}
+
+// missingParamError is a required request field that was left out. It maps
+// to the MissingParameter wire code.
+type missingParamError struct {
+	name string
+}
+
+func (e *missingParamError) Error() string {
+	return "The request must contain the parameter " + e.name
 }
 
 // errMissingTCPUDPPorts is the error EC2 returns when a TCP or UDP rule
@@ -1036,6 +1071,12 @@ func writeSimpleSGResponse(w http.ResponseWriter, rootName string) {
 }
 
 func writeSGErr(w http.ResponseWriter, err error) {
+	var missing *missingParamError
+	if errors.As(err, &missing) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "MissingParameter", missing.Error())
+		return
+	}
+
 	writeErrWithNotFound(w, err, "InvalidGroup.NotFound", "DependencyViolation")
 }
 
@@ -1073,28 +1114,83 @@ func (h *Handler) modifySecurityGroupRules(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	for _, idx := range indices {
-		base := prefix + "." + strconv.Itoa(idx)
+	updates, err := parseRuleUpdates(r.Form, prefix, indices)
+	if err != nil {
+		writeSGErr(w, err)
+		return
+	}
 
-		ruleID := r.Form.Get(base + ".SecurityGroupRuleId")
-		if ruleID == "" {
-			writeSGErr(w, newInvalidParameterErr("SecurityGroupRuleId is required for each update"))
-			return
-		}
+	// Check every rule id first so a bad one leaves the group untouched.
+	if err := h.checkRuleIDs(r.Context(), groupID, updates); err != nil {
+		writeSGRuleErr(w, err)
+		return
+	}
 
-		updated, err := parseSecurityGroupRuleRequest(r.Form, base+".SecurityGroupRule")
-		if err != nil {
-			writeSGErr(w, err)
-			return
-		}
-
-		if err := mutator.ModifySecurityGroupRule(r.Context(), groupID, ruleID, updated); err != nil {
+	for i := range updates {
+		if err := mutator.ModifySecurityGroupRule(r.Context(), groupID, updates[i].ruleID, updates[i].rule); err != nil {
 			writeSGRuleErr(w, err)
 			return
 		}
 	}
 
 	writeSimpleSGResponse(w, "ModifySecurityGroupRulesResponse")
+}
+
+// ruleUpdate is one parsed SecurityGroupRule.N entry of ModifySecurityGroupRules.
+type ruleUpdate struct {
+	ruleID string
+	rule   netdriver.SecurityRule
+}
+
+// parseRuleUpdates parses and validates every SecurityGroupRule.N entry.
+func parseRuleUpdates(form url.Values, prefix string, indices []int) ([]ruleUpdate, error) {
+	out := make([]ruleUpdate, 0, len(indices))
+
+	for _, idx := range indices {
+		base := prefix + "." + strconv.Itoa(idx)
+
+		ruleID := form.Get(base + ".SecurityGroupRuleId")
+		if ruleID == "" {
+			return nil, newInvalidParameterErr("SecurityGroupRuleId is required for each update")
+		}
+
+		rule, err := parseSecurityGroupRuleRequest(form, base+".SecurityGroupRule")
+		if err != nil {
+			return nil, err
+		}
+
+		if err := netdriver.ValidateAWSSecurityRule(&rule); err != nil {
+			return nil, err
+		}
+
+		out = append(out, ruleUpdate{ruleID: ruleID, rule: rule})
+	}
+
+	return out, nil
+}
+
+// checkRuleIDs reports NotFound for the first update whose rule id is not in
+// the group.
+func (h *Handler) checkRuleIDs(ctx context.Context, groupID string, updates []ruleUpdate) error {
+	sgs, err := h.vpc.DescribeSecurityGroups(ctx, []string{groupID})
+	if err != nil {
+		return err
+	}
+
+	if len(sgs) == 0 {
+		return cerrors.Newf(cerrors.NotFound, "security group %q not found", groupID)
+	}
+
+	all := append(slices.Clone(sgs[0].IngressRules), sgs[0].EgressRules...)
+
+	for i := range updates {
+		id := updates[i].ruleID
+		if !slices.ContainsFunc(all, func(r netdriver.SecurityRule) bool { return r.RuleID == id }) {
+			return cerrors.Newf(cerrors.NotFound, "security group rule %q not found", id)
+		}
+	}
+
+	return nil
 }
 
 // parseSecurityGroupRuleRequest reads the single nested SecurityGroupRuleRequest

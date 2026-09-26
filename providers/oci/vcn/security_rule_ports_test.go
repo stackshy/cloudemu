@@ -29,5 +29,9 @@ func TestSecurityRulePortValidation(t *testing.T) {
 		assert.True(t, cerrors.IsInvalidArgument(m.AddEgressRule(ctx, nsg.ID, r)), "egress %+v", r)
 	}
 
+	// ICMP and all-protocol rules carry no ports, so -1 is fine.
+	require.NoError(t, m.AddEgressRule(ctx, nsg.ID, driver.SecurityRule{Protocol: "icmp", FromPort: -1, ToPort: -1, CIDR: "10.0.0.0/16"}))
+	require.NoError(t, m.AddEgressRule(ctx, nsg.ID, driver.SecurityRule{Protocol: "-1", FromPort: -1, ToPort: -1, CIDR: "10.9.0.0/16"}))
+
 	require.NoError(t, m.AddIngressRule(ctx, nsg.ID, driver.SecurityRule{Protocol: "tcp", FromPort: 22, ToPort: 22, CIDR: "10.0.0.0/16"}))
 }

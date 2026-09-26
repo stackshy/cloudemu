@@ -1105,7 +1105,7 @@ func describeResources[T any, R any](store *memstore.Store[T], ids []string, toI
 //
 //nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
-	if err := validateRule(&rule); err != nil {
+	if err := driver.ValidateAWSSecurityRule(&rule); err != nil {
 		return err
 	}
 
@@ -1123,7 +1123,7 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 //
 //nolint:gocritic // hugeParam: rule is passed by value to satisfy the Networking driver interface.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
-	if err := validateRule(&rule); err != nil {
+	if err := driver.ValidateAWSSecurityRule(&rule); err != nil {
 		return err
 	}
 
