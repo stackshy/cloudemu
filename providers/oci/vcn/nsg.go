@@ -85,6 +85,10 @@ func (m *Mock) DescribeSecurityGroups(_ context.Context, ids []string) ([]driver
 
 // AddIngressRule adds an ingress security rule to an NSG.
 func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	if err := driver.ValidateSecurityRule(&rule); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -102,6 +106,10 @@ func (m *Mock) AddIngressRule(_ context.Context, groupID string, rule driver.Sec
 
 // AddEgressRule adds an egress security rule to an NSG.
 func (m *Mock) AddEgressRule(_ context.Context, groupID string, rule driver.SecurityRule) error {
+	if err := driver.ValidateSecurityRule(&rule); err != nil {
+		return err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 

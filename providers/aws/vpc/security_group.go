@@ -2,6 +2,7 @@ package vpc
 
 import (
 	"context"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -20,6 +21,10 @@ import (
 //
 //nolint:gocritic // hugeParam: updated mirrors the driver's by-value SecurityRule shape.
 func (m *Mock) ModifySecurityGroupRule(_ context.Context, groupID, ruleID string, updated driver.SecurityRule) error {
+	if err := validateRule(&updated); err != nil {
+		return err
+	}
+
 	if !m.securityGroups.Has(groupID) {
 		return errors.Newf(errors.NotFound, "security group %q not found", groupID)
 	}
@@ -100,6 +105,31 @@ func (m *Mock) SetSecurityGroupRuleDescription(_ context.Context, groupID, ruleI
 
 	if !found {
 		return errors.Newf(errors.NotFound, "security group rule %q not found", ruleID)
+	}
+
+	return nil
+}
+
+// ICMP type and code bounds. EC2 uses -1 to mean "any type" or "any code".
+const (
+	minICMPValue = -1
+	maxICMPValue = 255
+)
+
+// validateRule checks a rule's ports the way EC2 does. TCP and UDP use the
+// shared 0..65535 check. For ICMP the ports hold the type and code, each in
+// -1..255. The all-protocols rule and other protocol numbers ignore ports.
+func validateRule(rule *driver.SecurityRule) error {
+	switch strings.ToLower(rule.Protocol) {
+	case "tcp", "udp", "6", "17":
+		return driver.ValidateSecurityRule(rule)
+	case "icmp", "icmpv6", "1", "58":
+		for _, v := range []int{rule.FromPort, rule.ToPort} {
+			if v < minICMPValue || v > maxICMPValue {
+				return errors.Newf(errors.InvalidArgument,
+					"Invalid value '%d' for ICMP type or code. Must be between %d and %d.", v, minICMPValue, maxICMPValue)
+			}
+		}
 	}
 
 	return nil

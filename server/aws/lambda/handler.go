@@ -642,6 +642,10 @@ func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, nam
 		return
 	}
 
+	if !checkModelConstraints(w, req.Role, req.Environment) {
+		return
+	}
+
 	if err := h.validateLayers(r.Context(), req.Layers); err != nil {
 		writeErr(w, err)
 		return
@@ -989,6 +993,10 @@ func (h *Handler) serveInvoke(w http.ResponseWriter, r *http.Request, name strin
 func (h *Handler) create(w http.ResponseWriter, r *http.Request) {
 	var req createFunctionRequest
 	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if !checkModelConstraints(w, req.Role, req.Environment) {
 		return
 	}
 

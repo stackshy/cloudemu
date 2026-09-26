@@ -342,6 +342,10 @@ func (m *Mock) CreateFunction(ctx context.Context, cfg driver.FunctionConfig) (*
 		return nil, err
 	}
 
+	if err := validateEnvironment(cfg.Environment); err != nil {
+		return nil, err
+	}
+
 	arn := idgen.AWSARN("lambda", regionctx.RegionOr(ctx, m.opts.Region), m.opts.AccountID, "function:"+cfg.Name)
 	info := driver.FunctionInfo{
 		Name: cfg.Name, ARN: arn, Runtime: cfg.Runtime, Handler: cfg.Handler,
@@ -453,6 +457,10 @@ func (m *Mock) UpdateFunction(ctx context.Context, name string, cfg driver.Funct
 	}
 
 	if err := validateRuntime(info.Runtime); err != nil {
+		return nil, err
+	}
+
+	if err := validateEnvironment(info.Environment); err != nil {
 		return nil, err
 	}
 
