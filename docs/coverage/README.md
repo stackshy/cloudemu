@@ -76,7 +76,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `datastream` | — | — | [Datastream](./gcp/datastream.md) | — | 11 |
 | `devcenter` | — | [DevCenter](./azure/devcenter.md) | — | — | 8 |
 | `digitaltwins` | — | [DigitalTwins](./azure/digitaltwins.md) | — | — | 8 |
-| `disks` | — | [Disks](./azure/disks.md) | — | — | 7 |
+| `disks` | — | [Disks](./azure/disks.md) | — | — | 8 |
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | — | 16 |
 | `ecs` | [ECS](./aws/ecs.md) | — | — | — | 37 |
 | `efs` | [EFS](./aws/efs.md) | — | — | — | 27 |
