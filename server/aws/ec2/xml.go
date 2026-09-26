@@ -157,7 +157,7 @@ type instanceXML struct {
 	PublicDNSName  string        `xml:"dnsName,omitempty"`
 	KeyName        string        `xml:"keyName,omitempty"`
 	// SourceDestCheck mirrors the primary network interface's flag at the
-	// top level too — real EC2 reports it both places, and
+	// top level too. Real EC2 reports it in both places, and
 	// aws-sdk-go-v2/terraform-provider-aws read the top-level field, not
 	// the nested networkInterfaceSet entry.
 	SourceDestCheck     bool                     `xml:"sourceDestCheck"`
@@ -211,7 +211,7 @@ type stateChangeXML struct {
 	PreviousState instanceState `xml:"previousState"`
 }
 
-// startInstancesResponse — same shape used by StopInstances and
+// startInstancesResponse is the same shape used by StopInstances and
 // TerminateInstances (with different XMLName).
 type startInstancesResponse struct {
 	XMLName   xml.Name         `xml:"StartInstancesResponse"`
@@ -242,7 +242,7 @@ type rebootInstancesResponse struct {
 	Return    bool     `xml:"return"`
 }
 
-// modifyInstanceAttributeResponse — same boolean-return shape as Reboot.
+// modifyInstanceAttributeResponse has the same boolean-return shape as Reboot.
 type modifyInstanceAttributeResponse struct {
 	XMLName   xml.Name `xml:"ModifyInstanceAttributeResponse"`
 	Xmlns     string   `xml:"xmlns,attr"`
@@ -258,8 +258,8 @@ type attributeBooleanValueXML struct {
 
 // attributeValueXML carries a single string instance attribute. Value uses
 // omitempty so an empty attribute (notably userData that was never set) marshals
-// as a bare <userData></userData> with no nested <value> element — matching real
-// EC2, whose XML decoder then leaves the SDK's AttributeValue.Value pointer nil
+// as a bare <userData></userData> with no nested <value> element, as real EC2
+// does. The SDK's XML decoder then leaves the AttributeValue.Value pointer nil
 // rather than pointing at "". Without this, terraform-provider-aws's read path
 // (which only skips re-hashing user_data when Value is nil) re-hashes the
 // already-hashed state value on every refresh, producing a permanent plan diff.

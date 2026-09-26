@@ -161,7 +161,7 @@ func addZookeeperConnect(base map[string]any, c *driver.Cluster) {
 
 // zookeeperConnectStrings builds a plausible three-node ZooKeeper ensemble
 // connect string (plaintext :2181, TLS :2182), synthesized deterministically
-// from the cluster name and region — mirroring how bootstrap brokers are
+// from the cluster name and region, mirroring how bootstrap brokers are
 // synthesized.
 func zookeeperConnectStrings(name, region string) (plain, tls string) {
 	const zkNodes = 3

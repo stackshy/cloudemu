@@ -22,7 +22,7 @@ func newSDKClient(t *testing.T) *awseks.Client {
 	cloud := cloudemu.NewAWS()
 	srv := awsserver.New(awsserver.Drivers{
 		EKS: cloud.EKS,
-		// S3 included so we exercise routing precedence — EKS must claim
+		// S3 included so we exercise routing precedence: EKS must claim
 		// /clusters paths before the catch-all S3 handler sees them.
 		S3: cloud.S3,
 	})
@@ -358,7 +358,7 @@ func TestSDKEKSAddonLifecycle(t *testing.T) {
 }
 
 // Sanity check: when both EKS and S3 are wired, an S3 request still reaches
-// the S3 handler — EKS's Matches must be rooted at /clusters specifically.
+// the S3 handler. EKS's Matches must be rooted at /clusters specifically.
 func TestSDKEKSRoutingDoesNotShadowS3(t *testing.T) {
 	cloud := cloudemu.NewAWS()
 	srv := awsserver.New(awsserver.Drivers{EKS: cloud.EKS, S3: cloud.S3})

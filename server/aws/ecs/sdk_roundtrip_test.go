@@ -857,8 +857,8 @@ func TestSDKTagRoundtrip(t *testing.T) {
 // reflected both on DescribeTasks (which reads the task's own Tags field) and
 // ListTagsForResource (which reads the separate ARN-keyed tag store every
 // other ECS resource's TagResource/UntagResource/ListTagsForResource use).
-// RunTask storing tags only on the Task struct — without also registering
-// them in that store — left ListTagsForResource silently reporting no tags
+// RunTask storing tags only on the Task struct, without also registering
+// them in that store, left ListTagsForResource silently reporting no tags
 // for a task launched with --tags.
 func TestSDKRunTaskTagsRoundtrip(t *testing.T) {
 	client, cloud := newECSServer(t)

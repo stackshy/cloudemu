@@ -153,7 +153,7 @@ func TestSDKDoubleScheduleDeletionRejected(t *testing.T) {
 }
 
 // e2e audit: EnableKeyRotation on an asymmetric key must reject with
-// UnsupportedOperationException, matching real KMS — not a generic
+// UnsupportedOperationException, matching real KMS, not a generic
 // ValidationException.
 func TestSDKEnableRotationOnAsymmetricKeyRejected(t *testing.T) {
 	ctx := context.Background()
@@ -225,7 +225,7 @@ func TestSDKEnableRotationOnImportedKeyRejected(t *testing.T) {
 
 // e2e audit: real KMS key IDs (and ARNs) for multi-Region keys begin with the
 // "mrk-" prefix (the rest of the identifier is the UUID with dashes
-// removed) — callers commonly branch on this prefix to detect multi-Region
+// removed). Callers commonly branch on this prefix to detect multi-Region
 // keys. See https://docs.aws.amazon.com/kms/latest/developerguide/concepts.html#key-id-key-id.
 func TestSDKMultiRegionKeyIDHasMRKPrefix(t *testing.T) {
 	ctx := context.Background()

@@ -1,4 +1,4 @@
-// dead_letter_sdk_test.go — real aws-sdk-go-v2 end-to-end test verifying that a
+// dead_letter_sdk_test.go: real aws-sdk-go-v2 end-to-end test verifying that a
 // target's configured DeadLetterConfig receives the original event when
 // dispatch to the target itself fails (a deleted queue behind a stale target
 // ARN, or a Lambda handler that raises). Real EventBridge routes a failed

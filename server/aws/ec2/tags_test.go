@@ -13,8 +13,8 @@ import (
 
 // TestCreateTagsOnRouteTable pins that CreateTags/DeleteTags reach VPC-family
 // resources that have no dedicated Update*Tags method (route tables here). The
-// tag must be visible on DescribeRouteTables and gone after DeleteTags —
-// previously these id prefixes fell through to the compute tagger and the tag
+// tag must be visible on DescribeRouteTables and gone after DeleteTags.
+// Previously these id prefixes fell through to the compute tagger and the tag
 // was silently dropped.
 func TestCreateTagsOnRouteTable(t *testing.T) {
 	ctx := context.Background()

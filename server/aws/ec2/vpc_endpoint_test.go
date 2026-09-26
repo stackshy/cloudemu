@@ -72,7 +72,7 @@ func TestVPCEndpointGatewayLifecycle(t *testing.T) {
 
 // TestVPCEndpointInterfaceCarriesSubnetsAndGroups pins that an interface
 // endpoint (SSM/ECR style) retains the subnets and security groups it was
-// created with — Terraform reads these back to avoid drift.
+// created with. Terraform reads these back to avoid drift.
 func TestVPCEndpointInterfaceCarriesSubnetsAndGroups(t *testing.T) {
 	ctx := context.Background()
 	client := newEC2(t)

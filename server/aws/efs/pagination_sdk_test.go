@@ -1,4 +1,4 @@
-// pagination_sdk_test.go — real aws-sdk-go-v2 journeys asserting the EFS
+// pagination_sdk_test.go: real aws-sdk-go-v2 journeys asserting the EFS
 // Describe* endpoints paginate: MaxItems/MaxResults caps the page, the
 // Marker/NextToken cursor walks a stable order so the SDK paginator visits
 // every resource exactly once (no duplicate, no skip) and terminates, a single
@@ -214,7 +214,7 @@ func TestSDKDescribeAccessPointsInvalidNextToken(t *testing.T) {
 }
 
 // assertSeenEachOnce checks the paginator visited exactly the wanted ids, each
-// exactly once — proving stable-sorted offset paging neither duplicates nor
+// once, proving stable-sorted offset paging neither duplicates nor
 // skips an item across page boundaries.
 func assertSeenEachOnce(t *testing.T, want map[string]bool, seen map[string]int) {
 	t.Helper()

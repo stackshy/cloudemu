@@ -11,8 +11,8 @@ import (
 )
 
 // Cluster lifecycle states (a subset of the EMR ClusterState enum). RunJobFlow
-// creates a cluster that is immediately WAITING — up, healthy and ready to run
-// steps; TerminateJobFlows moves it to TERMINATED. The emulator runs steps
+// creates a cluster that is immediately WAITING (up, healthy and ready to run
+// steps); TerminateJobFlows moves it to TERMINATED. The emulator runs steps
 // instantly, so a live cluster is always WAITING (idle) rather than lingering
 // in RUNNING.
 const (

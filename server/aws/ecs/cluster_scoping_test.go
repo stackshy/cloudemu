@@ -12,7 +12,7 @@ import (
 // TestSDKStopTaskClusterScoping guards that StopTask honors its cluster
 // argument: a task is scoped to the cluster that owns it, so stopping it against
 // a nonexistent cluster is ClusterNotFoundException and stopping it against a
-// different (existing) cluster is InvalidParameterException — matching the
+// different (existing) cluster is InvalidParameterException, matching the
 // StopTask Errors section. The task must survive both rejected calls.
 func TestSDKStopTaskClusterScoping(t *testing.T) {
 	client, cloud := newECSServer(t)

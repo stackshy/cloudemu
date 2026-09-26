@@ -256,7 +256,7 @@ func volumeMatchesFilter(v *computedriver.VolumeInfo, f awsquery.Filter) bool {
 }
 
 // volumeMatchesAttachmentFilter matches the attachment.* filters, which all
-// share the precondition that the volume must actually be attached — an
+// share the precondition that the volume must be attached, so an
 // unattached volume matches none of them.
 func volumeMatchesAttachmentFilter(v *computedriver.VolumeInfo, f awsquery.Filter) bool {
 	if v.AttachedTo == "" {
@@ -284,7 +284,7 @@ func (h *Handler) attachVolume(w http.ResponseWriter, r *http.Request) {
 
 	if err := h.compute.AttachVolume(r.Context(), volID, instID, device); err != nil {
 		// The target instance not existing is InvalidInstanceID.NotFound, not
-		// InvalidVolume.NotFound — the driver's shared NotFound code doesn't say
+		// InvalidVolume.NotFound. The driver's shared NotFound code doesn't say
 		// which resource is missing, so disambiguate on its clean message text
 		// (no internal code prefix): AttachVolume's instance-lookup miss always
 		// starts with "instance ", distinct from a volume-lookup miss.
@@ -295,7 +295,7 @@ func (h *Handler) attachVolume(w http.ResponseWriter, r *http.Request) {
 
 		// A volume and the instance it attaches to must share an Availability
 		// Zone; real EC2 answers InvalidVolume.ZoneMismatch for a cross-AZ attach.
-		// Matched on the driver's clean message text (no internal code prefix) —
+		// Matched on the driver's clean message text (no internal code prefix):
 		// "is in availability zone" appears only in this case.
 		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "is in availability zone") {
 			awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidVolume.ZoneMismatch", cerrors.Message(err))
@@ -349,7 +349,7 @@ func (h *Handler) detachVolume(w http.ResponseWriter, r *http.Request) {
 	if err := h.compute.DetachVolume(r.Context(), volID, instID, device); err != nil {
 		// The named instance/device did not match the volume's actual
 		// attachment; real EC2 answers InvalidAttachment.NotFound. Matched on
-		// the driver's clean message text — "is not attached to instance"
+		// the driver's clean message text: "is not attached to instance"
 		// appears only in this case (distinct from the plain "is not
 		// attached" DetachVolume uses when the volume isn't attached at all).
 		if cerrors.IsNotFound(err) && strings.Contains(err.Error(), "is not attached to instance") {

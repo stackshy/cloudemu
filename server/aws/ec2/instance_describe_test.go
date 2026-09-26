@@ -11,9 +11,9 @@ import (
 )
 
 // TestDescribeInstanceReportsHardwareDetail pins the static/derived instance
-// facts real EC2 returns on a DescribeInstances item — architecture, hypervisor,
-// virtualization/root-device, placement, monitoring, private DNS name, and a
-// primary network interface — which SDKs and IaC read.
+// facts real EC2 returns on a DescribeInstances item that SDKs and IaC read:
+// architecture, hypervisor, virtualization/root-device, placement, monitoring,
+// private DNS name, and a primary network interface.
 func TestDescribeInstanceReportsHardwareDetail(t *testing.T) {
 	ctx := context.Background()
 	c := newEC2Client(t)

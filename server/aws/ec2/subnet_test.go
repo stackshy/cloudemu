@@ -69,7 +69,7 @@ func TestCreateSubnetReportsArnZoneIDAndUsableIPs(t *testing.T) {
 }
 
 // TestModifySubnetAttributeMakesSubnetPublic pins that MapPublicIpOnLaunch is
-// off by default and that ModifySubnetAttribute flips it — the only way to build
+// off by default and that ModifySubnetAttribute flips it, the only way to build
 // a public subnet. Without the fix the attribute is undispatched and the flag
 // stays false forever.
 func TestModifySubnetAttributeMakesSubnetPublic(t *testing.T) {
@@ -157,7 +157,7 @@ func TestDeleteSubnetBlockedByResidentENI(t *testing.T) {
 		t.Errorf("DeleteSubnet error = %v, want DependencyViolation", err)
 	}
 
-	// Draining the ENI lets the delete through — the refusal must be recoverable.
+	// Draining the ENI lets the delete through; the refusal must be recoverable.
 	if _, err := c.DeleteNetworkInterface(ctx, &ec2.DeleteNetworkInterfaceInput{
 		NetworkInterfaceId: eni.NetworkInterface.NetworkInterfaceId,
 	}); err != nil {

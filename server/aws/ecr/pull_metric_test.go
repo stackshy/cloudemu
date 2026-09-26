@@ -20,7 +20,7 @@ import (
 
 // TestSDKECRBatchGetImageRecordsPull pins that an image pull over the wire
 // (BatchGetImage, the manifest fetch of `docker pull`) publishes the real
-// AWS/ECR RepositoryPullCount metric, and that a push publishes nothing — real
+// AWS/ECR RepositoryPullCount metric, and that a push publishes nothing. Real
 // ECR has no push-count metric.
 func TestSDKECRBatchGetImageRecordsPull(t *testing.T) {
 	cloud := cloudemu.NewAWS()
@@ -74,7 +74,7 @@ func TestSDKECRBatchGetImageRecordsPull(t *testing.T) {
 }
 
 // vanishingRegistry wraps a real registry but reports every image as gone at
-// GetImage time — the race where an image is deleted between BatchGetImage's
+// GetImage time. This models the race where an image is deleted between BatchGetImage's
 // listing and its per-image fetch.
 type vanishingRegistry struct {
 	crdriver.ContainerRegistry
@@ -85,8 +85,8 @@ func (vanishingRegistry) GetImage(context.Context, string, string) (*crdriver.Im
 }
 
 // TestSDKECRBatchGetImageVanishedImageIsFailure pins that an image deleted
-// mid-request becomes a per-image ImageNotFound failure entry — the request
-// itself still succeeds — rather than failing the whole BatchGetImage.
+// mid-request becomes a per-image ImageNotFound failure entry (the request
+// itself still succeeds) rather than failing the whole BatchGetImage.
 func TestSDKECRBatchGetImageVanishedImageIsFailure(t *testing.T) {
 	cloud := cloudemu.NewAWS()
 	ts := httptest.NewServer(awsserver.New(awsserver.Drivers{ECR: vanishingRegistry{cloud.ECR}}))

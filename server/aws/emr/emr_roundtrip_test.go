@@ -94,7 +94,7 @@ func runCluster(t *testing.T, c *emr.Client) string {
 
 // TestSDKVisibleToAllUsersExplicitFalse guards that an explicit
 // VisibleToAllUsers=false round-trips as false rather than being dropped and
-// defaulting back to true — the classic explicit-zero drift a Terraform
+// defaulting back to true, the classic explicit-zero drift a Terraform
 // aws_emr_cluster with visible_to_all_users=false would otherwise hit.
 func TestSDKVisibleToAllUsersExplicitFalse(t *testing.T) {
 	ctx := context.Background()
@@ -505,7 +505,7 @@ func TestSDKEc2AttributesAndSecurityConfigRoundTrip(t *testing.T) {
 	cl := got.Cluster
 
 	// instance_profile round-trip: terraform reads ec2_attributes.instance_profile
-	// from Ec2InstanceAttributes.IamInstanceProfile — a drift source if dropped.
+	// from Ec2InstanceAttributes.IamInstanceProfile, a drift source if dropped.
 	if cl.Ec2InstanceAttributes == nil ||
 		aws.ToString(cl.Ec2InstanceAttributes.IamInstanceProfile) != "EMR_EC2_DefaultRole" {
 		t.Fatalf("IamInstanceProfile = %+v, want EMR_EC2_DefaultRole", cl.Ec2InstanceAttributes)

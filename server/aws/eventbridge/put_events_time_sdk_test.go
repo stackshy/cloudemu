@@ -37,7 +37,7 @@ func TestSDKEventBridgePutEventsEntryTimeHonored(t *testing.T) {
 		t.Fatalf("PutTargets: %v", err)
 	}
 
-	// A timestamp far in the past — nothing close to "now" — so honoring it
+	// A timestamp far in the past, nowhere near "now", so honoring it
 	// is unambiguous even if the server clock drifts.
 	backdated := time.Date(2019, 6, 15, 8, 30, 0, 0, time.UTC)
 

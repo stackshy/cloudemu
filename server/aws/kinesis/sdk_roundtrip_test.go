@@ -359,7 +359,7 @@ func TestSDKListStreamsPaginates(t *testing.T) {
 
 // TestSDKUpdateShardCountResolvesIdentity verifies UpdateShardCount always
 // returns both StreamName and StreamARN, resolved from the stream, regardless
-// of which identifier the caller passed — matching real Kinesis, which never
+// of which identifier the caller passed, matching real Kinesis, which never
 // leaves either field empty in the response.
 func TestSDKUpdateShardCountResolvesIdentity(t *testing.T) {
 	ctx := context.Background()

@@ -131,7 +131,7 @@ func TestRouteKeyPairsDispatch(t *testing.T) {
 }
 
 // TestDeleteUnknownKeyPairIsIdempotent pins that deleting a non-existent key
-// pair succeeds — real EC2 DeleteKeyPair returns <return>true</return> for a
+// pair succeeds: real EC2 DeleteKeyPair returns <return>true</return> for a
 // missing key (idempotent cleanup / Terraform destroy re-runs).
 func TestDeleteUnknownKeyPairIsIdempotent(t *testing.T) {
 	h := newFullHandler()

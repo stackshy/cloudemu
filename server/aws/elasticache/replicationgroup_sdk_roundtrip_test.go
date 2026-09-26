@@ -41,7 +41,7 @@ func newReplicationGroupClient(t *testing.T) *awselasticache.Client {
 // A caller builds its Redis connection string from
 // NodeGroups[0].PrimaryEndpoint.Address. If the node group or endpoint is
 // missing the provision "succeeds" and hands back an unusable cache, so the
-// endpoint — not just the 200 — is what this pins.
+// endpoint, not just the 200, is what this pins.
 func TestReplicationGroupSDKRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	c := newReplicationGroupClient(t)
@@ -162,7 +162,7 @@ func TestReplicationGroupMemberAndReaderFields(t *testing.T) {
 }
 
 // TestDeleteReplicationGroupFinalSnapshot guards that DeleteReplicationGroup
-// with FinalSnapshotIdentifier takes a final snapshot before deletion — real
+// with FinalSnapshotIdentifier takes a final snapshot before deletion. Real
 // ElastiCache does, and the snapshot then shows up in DescribeSnapshots.
 func TestDeleteReplicationGroupFinalSnapshot(t *testing.T) {
 	ctx := context.Background()

@@ -43,7 +43,7 @@ func TestNATGatewayHoldsENIUntilDeleted(t *testing.T) {
 		t.Errorf("NAT ENI should be in-use: %s", descResp.Body.String())
 	}
 
-	// Deleting an attached ENI must fail — that refusal is what tells a
+	// Deleting an attached ENI must fail. That refusal is what tells a
 	// caller its drain is not finished yet.
 	delAttached := do(t, h, http.MethodPost, "/", url.Values{
 		"Action": {"DeleteNetworkInterface"}, "NetworkInterfaceId": {eniID},

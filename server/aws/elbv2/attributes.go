@@ -44,8 +44,8 @@ type describeLBAttributesResponse struct {
 // modifyLoadBalancerAttributes merges the supplied attributes into whatever
 // the load balancer already carries.
 //
-// AWS treats this as a partial update — a caller enabling cross-zone must not
-// silently clear an idle timeout it set earlier — so the existing attributes
+// AWS treats this as a partial update (a caller enabling cross-zone must not
+// silently clear an idle timeout it set earlier), so the existing attributes
 // are read first and only the supplied keys are overwritten.
 func (h *Handler) modifyLoadBalancerAttributes(w http.ResponseWriter, r *http.Request) {
 	arn := r.Form.Get("LoadBalancerArn")

@@ -13,7 +13,7 @@
 // snapshots, DescribeEvents) are claimed only when the request is meant for
 // ElastiCache.
 //
-// Only the cluster/instance control plane is mapped here — the real ElastiCache
+// Only the cluster/instance control plane is mapped here. The real ElastiCache
 // SDK manages cache clusters, not the Redis data plane. The driver's Redis
 // data-plane methods (Set/Get/Incr/…) have no cloud-SDK surface and are
 // intentionally out of scope.

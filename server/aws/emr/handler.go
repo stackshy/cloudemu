@@ -5,7 +5,7 @@
 //
 // EMR uses the AWS JSON 1.1 wire shape (POST + JSON body dispatched on the
 // X-Amz-Target header, prefix "ElasticMapReduce."). Cluster and step state live
-// only in the wire server — no portable driver interface represents them — so
+// only in the wire server (no portable driver interface represents them), so
 // the handler owns a self-contained thread-safe store rather than a three-layer
 // provider driver. Clusters are created WAITING by RunJobFlow and moved to
 // TERMINATED by TerminateJobFlows; steps execute instantly and land COMPLETED.

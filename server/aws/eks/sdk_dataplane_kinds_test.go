@@ -216,7 +216,7 @@ func hasNode(nodes []corev1.Node, name string) bool {
 }
 
 // assertGroupDiscoverable verifies a group-version appears in discovery and
-// advertises the named resource — this is what kubectl and client-go negotiate
+// advertises the named resource. This is what kubectl and client-go negotiate
 // against before ever issuing a typed request.
 func assertGroupDiscoverable(t *testing.T, cs *kubernetes.Clientset, groupVersion, resource string) {
 	t.Helper()

@@ -61,7 +61,7 @@ func pageNetworkingXML[X any](items []X, r *http.Request, idOf func(X) string) (
 // mirroring how real EC2 answers an unmodeled filter with InvalidParameterValue
 // rather than silently matching nothing (which would tell a data-source lookup a
 // resource is absent). The matcher reports (matched, known); only known is
-// consulted here — probing a zero value — so the accepted set can never drift
+// consulted here (probing a zero value), so the accepted set can never drift
 // from what the matcher actually honors.
 func validateNetworkingFilters[T any](
 	filters []awsquery.Filter,

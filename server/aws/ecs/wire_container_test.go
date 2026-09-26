@@ -7,7 +7,7 @@ import (
 )
 
 // TestTaskToWireCarriesEngineFields guards that an engine-backed container's
-// ExitCode/Reason/RuntimeID reach the DescribeTasks wire response — they are
+// ExitCode/Reason/RuntimeID reach the DescribeTasks wire response. They are
 // populated on the driver struct but were previously dropped by taskToWire, so
 // a real `aws ecs describe-tasks` never saw them.
 func TestTaskToWireCarriesEngineFields(t *testing.T) {

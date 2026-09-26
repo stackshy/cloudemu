@@ -51,9 +51,9 @@ func createSGTestVPC(t *testing.T, ctx context.Context, c *ec2.Client, cidr stri
 }
 
 // TestDefaultSecurityGroupOverWire pins that a freshly-created VPC surfaces its
-// auto-created "default" group on DescribeSecurityGroups — allow-all egress and
-// a self-referencing ingress rule (UserIdGroupPairs) — and that the group is
-// non-deletable, answering Client.CannotDelete just like real EC2.
+// auto-created "default" group on DescribeSecurityGroups (allow-all egress and
+// a self-referencing ingress rule via UserIdGroupPairs), and that the group is
+// non-deletable, answering Client.CannotDelete like real EC2.
 func TestDefaultSecurityGroupOverWire(t *testing.T) {
 	ctx := context.Background()
 	c := newSGServer(t)

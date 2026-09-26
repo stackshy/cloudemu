@@ -195,7 +195,7 @@ func TestAssociateAddressUnknownInstance(t *testing.T) {
 }
 
 // TestAssociateAddressInstanceAndENIExclusive pins that specifying both an
-// InstanceId and a NetworkInterfaceId is rejected — real EC2 accepts one or the
+// InstanceId and a NetworkInterfaceId is rejected: real EC2 accepts one or the
 // other, not both.
 func TestAssociateAddressInstanceAndENIExclusive(t *testing.T) {
 	ctx := context.Background()

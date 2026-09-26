@@ -14,7 +14,7 @@ import (
 // formTrue is the query-protocol encoding of a boolean-true flag.
 const formTrue = "true"
 
-// nodeGroupMemberXML mirrors AWS's NodeGroupMember — the per-node membership
+// nodeGroupMemberXML mirrors AWS's NodeGroupMember, the per-node membership
 // record a caller reads to enumerate the primary and replicas of a shard.
 type nodeGroupMemberXML struct {
 	CacheClusterID string `xml:"CacheClusterId"`
@@ -225,7 +225,7 @@ func (h *Handler) modifyReplicationGroup(w http.ResponseWriter, r *http.Request)
 }
 
 // applyReplicaCount is the shared core of Increase/DecreaseReplicaCount. Both
-// carry NewReplicaCount — the desired number of read replicas per node group.
+// carry NewReplicaCount, the desired number of read replicas per node group.
 // The emulator models a single (cluster-mode-disabled) node group, so the total
 // member-cluster count is the primary plus NewReplicaCount. This is the path the
 // Terraform AWS provider uses to scale a replication group's num_cache_clusters
@@ -289,7 +289,7 @@ func (h *Handler) decreaseReplicaCount(w http.ResponseWriter, r *http.Request) {
 }
 
 // deleteReplicationGroup echoes the group back in the response, as real
-// ElastiCache does — the delete is asynchronous there and the caller is handed
+// ElastiCache does. The delete is asynchronous there and the caller is handed
 // the record it just asked to remove.
 func (h *Handler) deleteReplicationGroup(w http.ResponseWriter, r *http.Request) {
 	store, ok := h.replicationGroups()
@@ -372,7 +372,7 @@ func toReplicationGroupXML(rg *cachedriver.ReplicationGroup) replicationGroupXML
 		ARN:                rg.ARN,
 	}
 
-	// The primary endpoint is how a caller reaches the cache at all — it reads
+	// The primary endpoint is how a caller reaches the cache at all. It reads
 	// NodeGroups[0].PrimaryEndpoint.Address to build the connection string, so
 	// the node group has to be present even for a single-node group. The reader
 	// endpoint and per-node membership let clients scale reads and enumerate the
