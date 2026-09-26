@@ -45,6 +45,10 @@ func (m *Mock) CreateAlarm(ctx context.Context, cfg driver.AlarmConfig) error {
 
 	m.alarms.Set(cfg.Name, alarm)
 
+	// A band alarm's model is created with the alarm, including when an
+	// existing alarm is changed into one.
+	m.ensureAlarmDetectorLocked(alarm)
+
 	var (
 		notice *alarmNotice
 		config *alarmStateEvent

@@ -132,6 +132,19 @@ func (m *Mock) ensureDetectorLocked(d *driver.AnomalyDetector) {
 	}
 }
 
+// ensureAlarmDetectorLocked creates the detector a band alarm reads from when
+// it is missing. It does nothing for other alarms. The caller holds alarmMu.
+func (m *Mock) ensureAlarmDetectorLocked(a *alarmData) {
+	_, inputID, isBand := bandThreshold(a)
+	if !isBand {
+		return
+	}
+
+	if d, ok := detectorFor(a.Metrics, inputID); ok {
+		m.ensureDetectorLocked(&d)
+	}
+}
+
 // markTrainedLocked records the first time a detector is seen TRAINED. It does
 // nothing when the detector changed or went away since old was read. The
 // caller holds alarmMu.

@@ -330,3 +330,20 @@ func withTimeout(t *testing.T, fn func()) {
 		t.Fatal("timed out: possible deadlock")
 	}
 }
+
+// Changing an existing alarm into a band alarm creates its detector at once,
+// the same as creating a new band alarm does.
+func TestAnomalyDetectorCreatedWhenAlarmBecomesBand(t *testing.T) {
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC))
+	m := New(config.NewOptions(config.WithClock(fc), config.WithAsyncSettle()))
+	ctx := context.Background()
+
+	requireNoError(t, m.CreateAlarm(ctx, driver.AlarmConfig{
+		Name: "lat", Namespace: bandNS, MetricName: bandMetric, Stat: "Average",
+		Period: 60, EvaluationPeriods: 1, Threshold: 100, ComparisonOperator: "GreaterThanThreshold",
+	}))
+	assertEqual(t, 0, len(describeDetectors(t, m)))
+
+	requireNoError(t, m.CreateAlarm(ctx, bandAlarm("lat", "GreaterThanUpperThreshold")))
+	assertEqual(t, 1, len(describeDetectors(t, m)))
+}

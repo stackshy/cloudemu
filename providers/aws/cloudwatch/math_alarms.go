@@ -189,11 +189,9 @@ func (m *Mock) mathDatums(a *alarmData, p *alarmeval.Params, at time.Time) []dri
 	start, end := p.WindowStart(at).Add(time.Nanosecond), at.Add(time.Nanosecond)
 	ev := metricmath.New(a.Metrics, m.rangeFetcher(start, end))
 
-	bandID, inputID, isBand := bandThreshold(a)
+	bandID, _, isBand := bandThreshold(a)
 	if isBand {
-		if d, ok := detectorFor(a.Metrics, inputID); ok {
-			m.ensureDetectorLocked(&d)
-		}
+		m.ensureAlarmDetectorLocked(a)
 
 		ev.WithBand(metricmath.BandConfig{
 			History:  m.rangeFetcher(start.Add(-metricmath.TrainingWindow), end),
