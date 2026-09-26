@@ -201,6 +201,17 @@ func resolveKeyID(effectiveType, keyID string) (string, error) {
 	return keyID, nil
 }
 
+// resolveOverwriteKeyID is resolveKeyID for an overwrite. An omitted KeyId on
+// a SecureString keeps the key of the latest version, so a value-only update
+// does not move the parameter to alias/aws/ssm.
+func resolveOverwriteKeyID(effectiveType, keyID, prevKeyID string) (string, error) {
+	if keyID == "" && effectiveType == driver.TypeSecureString && prevKeyID != "" {
+		return prevKeyID, nil
+	}
+
+	return resolveKeyID(effectiveType, keyID)
+}
+
 // validateAllowedPattern checks that value satisfies pattern. An empty pattern
 // is a no-op. A pattern that is not a valid regexp is rejected, as is a value
 // that does not match it — matching real Parameter Store validation.
@@ -243,16 +254,21 @@ func resolveOverwriteType(existing *paramData, requested string) (string, error)
 	return "", driver.ErrTypeMismatch
 }
 
-// Parameter tiers, matching AWS SSM Parameter Store.
-// Parameter name limits, per the PutParameter API reference.
+// Parameter name limits, per the PutParameter API reference. The name you
+// specify, plus the ARN prefix before it, can be at most 1011 characters.
 const (
 	maxParameterNameLength = 2048
+	maxNameWithARNLength   = 1011
 	maxHierarchyLevels     = 15
 	maxNamesPerBatch       = 10
 )
 
 var parameterNamePattern = regexp.MustCompile(`^[a-zA-Z0-9_./-]+$`)
 
+// defaultDataType is the DataType a parameter gets when none is sent.
+const defaultDataType = "text"
+
+// Parameter tiers, matching AWS SSM Parameter Store.
 const (
 	tierStandard    = "Standard"
 	tierAdvanced    = "Advanced"
@@ -325,8 +341,24 @@ func validateParameterName(name string) error {
 				"each sub-path can be formed as a mix of letters, numbers and the following 3 symbols .-_")
 	}
 
+	// A name in a hierarchy must start with "/".
+	if strings.Contains(name, "/") && !strings.HasPrefix(name, "/") {
+		return driver.ErrNameNotFullyQualified
+	}
+
 	if strings.Count(strings.TrimPrefix(name, "/"), "/")+1 > maxHierarchyLevels {
 		return driver.ErrHierarchyLevelLimit
+	}
+
+	return nil
+}
+
+// validateNameWithARN applies the 1011-character limit, which counts the ARN
+// prefix (arn:aws:ssm:<region>:<account>:parameter/) as part of the name.
+func (m *Mock) validateNameWithARN(name string) error {
+	if len(m.arn(name)) > maxNameWithARNLength {
+		return errors.Newf(errors.InvalidArgument,
+			"Parameter name must be %d characters or fewer, including the ARN prefix.", maxNameWithARNLength)
 	}
 
 	return nil
@@ -335,10 +367,15 @@ func validateParameterName(name string) error {
 // validateNamesBatch applies the GetParameters and DeleteParameters limit of
 // 1 to 10 names per call.
 func validateNamesBatch(names []string) error {
-	if len(names) < 1 || len(names) > maxNamesPerBatch {
+	switch {
+	case len(names) < 1:
+		return errors.New(errors.InvalidArgument,
+			"1 validation error detected: Value '[]' at 'names' failed to satisfy constraint: "+
+				"Member must have length greater than or equal to 1")
+	case len(names) > maxNamesPerBatch:
 		return errors.Newf(errors.InvalidArgument,
-			"1 validation error detected: Value at 'names' failed to satisfy constraint: "+
-				"Member must have length less than or equal to %d and greater than or equal to 1", maxNamesPerBatch)
+			"1 validation error detected: Value '[%s]' at 'names' failed to satisfy constraint: "+
+				"Member must have length less than or equal to %d", strings.Join(names, ", "), maxNamesPerBatch)
 	}
 
 	return nil
@@ -385,6 +422,10 @@ func validatePutParameter(cfg driver.PutConfig) error {
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) PutParameter(ctx context.Context, cfg driver.PutConfig) (int64, string, error) {
+	// The service removes spaces at the start or end of a name. Inner spaces
+	// still fail the name check.
+	cfg.Name = strings.Trim(cfg.Name, " ")
+
 	ver, tier, err := m.putParameter(ctx, cfg)
 	if err != nil {
 		return 0, "", err
@@ -409,15 +450,19 @@ func (m *Mock) putParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 		return 0, "", err
 	}
 
-	dataType := cfg.DataType
-	if dataType == "" {
-		dataType = "text"
+	if err := m.validateNameWithARN(cfg.Name); err != nil {
+		return 0, "", err
 	}
 
 	now := m.now()
 
 	if existing, ok := m.params.Get(cfg.Name); ok {
-		return m.overwriteParameter(ctx, existing, &cfg, dataType, now)
+		return m.overwriteParameter(ctx, existing, &cfg, now)
+	}
+
+	dataType := cfg.DataType
+	if dataType == "" {
+		dataType = defaultDataType
 	}
 
 	tier := cfg.Tier
@@ -434,9 +479,11 @@ func (m *Mock) putParameter(ctx context.Context, cfg driver.PutConfig) (int64, s
 
 // overwriteParameter appends a new version to an existing parameter (the
 // Overwrite path). Overwrite without the flag is rejected, and changing the
-// type is rejected via resolveOverwriteType.
+// type is rejected via resolveOverwriteType. Fields the request leaves out
+// (Description, KeyId, DataType) keep their stored values, as Terraform relies
+// on when it sends only what changed.
 func (m *Mock) overwriteParameter(
-	ctx context.Context, existing *paramData, cfg *driver.PutConfig, dataType, now string,
+	ctx context.Context, existing *paramData, cfg *driver.PutConfig, now string,
 ) (ver int64, assignedTier string, err error) {
 	existing.mu.Lock()
 	defer existing.mu.Unlock()
@@ -460,7 +507,16 @@ func (m *Mock) overwriteParameter(
 		return 0, "", sizeErr
 	}
 
-	keyID, err := resolveKeyID(newType, cfg.KeyID)
+	prevKeyID, dataType := "", defaultDataType
+	if cur, ok := existing.versionByNumber(existing.latest); ok {
+		prevKeyID, dataType = cur.keyID, cur.dataType
+	}
+
+	if cfg.DataType != "" {
+		dataType = cfg.DataType
+	}
+
+	keyID, err := resolveOverwriteKeyID(newType, cfg.KeyID, prevKeyID)
 	if err != nil {
 		return 0, "", err
 	}
@@ -481,8 +537,11 @@ func (m *Mock) overwriteParameter(
 		allowedPattern: cfg.AllowedPattern,
 	})
 	existing.latest = next
-	existing.description = cfg.Description
 	existing.tier = tier
+
+	if cfg.Description != "" || cfg.DescriptionSet {
+		existing.description = cfg.Description
+	}
 
 	return next, tier, nil
 }
@@ -909,7 +968,7 @@ func (m *Mock) LabelParameterVersion(
 		return 0, nil, errors.Newf(errors.NotFound, "parameter %q not found", name)
 	}
 
-	labeled, invalid, err = labelVersion(pd, name, ver, labels)
+	labeled, invalid, err = labelVersion(pd, ver, labels)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -922,7 +981,7 @@ func (m *Mock) LabelParameterVersion(
 }
 
 // labelVersion is LabelParameterVersion's locked core.
-func labelVersion(pd *paramData, name string, ver int64, labels []string) (labeled int64, invalid []string, err error) {
+func labelVersion(pd *paramData, ver int64, labels []string) (labeled int64, invalid []string, err error) {
 	pd.mu.Lock()
 	defer pd.mu.Unlock()
 
@@ -932,7 +991,7 @@ func labelVersion(pd *paramData, name string, ver int64, labels []string) (label
 
 	target, ok := pd.versionByNumber(ver)
 	if !ok {
-		return 0, nil, errors.Newf(errors.NotFound, "parameter %q version %d not found", name, ver)
+		return 0, nil, driver.ErrVersionNotFound
 	}
 
 	for _, label := range labels {

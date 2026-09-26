@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kms"
 	"github.com/stackshy/cloudemu/v2/providers/aws/kmscrypto"
 	kmsdriver "github.com/stackshy/cloudemu/v2/services/kms/driver"
@@ -98,5 +99,38 @@ func TestEnvelopeDecryptRejectsGarbage(t *testing.T) {
 
 	if _, err := e.Decrypt(context.Background(), []byte("not a blob")); err == nil {
 		t.Fatal("Decrypt(garbage): want error, got nil")
+	}
+}
+
+// TestEnvelopeUnknownKeyIsNotFound checks that only reserved AWS-managed
+// aliases get a key minted. Any other unknown reference is NotFound.
+func TestEnvelopeUnknownKeyIsNotFound(t *testing.T) {
+	e, k := newEnvelope()
+	ctx := context.Background()
+
+	for _, ref := range []string{"bogus", "alias/nope", "arn:aws:kms:us-east-1:123456789012:alias/nope"} {
+		if _, err := e.Encrypt(ctx, ref, []byte("v")); !errors.IsNotFound(err) {
+			t.Errorf("Encrypt(%q): err = %v, want NotFound", ref, err)
+		}
+	}
+
+	keys, err := k.ListKeys(ctx)
+	if err != nil {
+		t.Fatalf("ListKeys: %v", err)
+	}
+
+	if len(keys) != 0 {
+		t.Fatalf("keys after unknown refs = %d, want 0", len(keys))
+	}
+
+	for _, ref := range []string{"alias/aws/ssm", "arn:aws:kms:us-east-1:123456789012:alias/aws/ssm"} {
+		if _, err := e.Encrypt(ctx, ref, []byte("v")); err != nil {
+			t.Errorf("Encrypt(%q): %v", ref, err)
+		}
+	}
+
+	// Both forms of the reserved alias share one key.
+	if keys, _ = k.ListKeys(ctx); len(keys) != 1 {
+		t.Fatalf("keys after reserved alias = %d, want 1", len(keys))
 	}
 }
