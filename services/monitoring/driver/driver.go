@@ -152,6 +152,33 @@ type AlarmInfo struct {
 	ThresholdMetricID string
 }
 
+// TimeRange is a closed span of time, such as an anomaly detector's
+// excluded training range.
+type TimeRange struct {
+	StartTime time.Time
+	EndTime   time.Time
+}
+
+// AnomalyDetector is an anomaly detection model. The single-metric form
+// names one metric and statistic. The metric-math form sets Metrics instead.
+type AnomalyDetector struct {
+	AccountID  string
+	Namespace  string
+	MetricName string
+	Dimensions map[string]string
+	Stat       string
+	// Metrics makes this a metric-math detector. The entry that returns data
+	// is the series the model is trained on.
+	Metrics []MetricDataQuery
+	// ExcludedTimeRanges are left out of training.
+	ExcludedTimeRanges []TimeRange
+	MetricTimezone     string
+	PeriodicSpikes     *bool
+	// StateValue is output only: PENDING_TRAINING, TRAINED_INSUFFICIENT_DATA
+	// or TRAINED.
+	StateValue string
+}
+
 // NotificationChannelConfig describes a notification channel.
 type NotificationChannelConfig struct {
 	Name     string

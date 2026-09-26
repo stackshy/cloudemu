@@ -32,6 +32,7 @@ import (
 // types so one table can run on both the query and the CBOR protocol.
 type cwWire struct {
 	provider    *cwprovider.Mock
+	url         string
 	put         func(t *testing.T, in *awscw.PutMetricDataInput)
 	listMetrics func(t *testing.T, in *awscw.ListMetricsInput) *awscw.ListMetricsOutput
 	getStats    func(t *testing.T, in *awscw.GetMetricStatisticsInput) *awscw.GetMetricStatisticsOutput
@@ -103,6 +104,7 @@ func newCBORWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 
 	return cwWire{
 		provider: p,
+		url:      ts.URL,
 		put: func(t *testing.T, in *awscw.PutMetricDataInput) {
 			t.Helper()
 
@@ -297,6 +299,7 @@ func newQueryWire(t *testing.T, ipam netdriver.IPAMMetrics) cwWire {
 
 	return cwWire{
 		provider: p,
+		url:      ts.URL,
 		put: func(t *testing.T, in *awscw.PutMetricDataInput) {
 			t.Helper()
 			post(t, putMetricDataForm(in), nil)

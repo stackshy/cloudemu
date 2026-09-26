@@ -3,6 +3,10 @@
 // which combine other entries by ID with + - * / and parentheses. GetMetricData
 // and metric-math alarms both use it, so the wire layer and the provider
 // compute the same series.
+//
+// ANOMALY_DETECTION_BAND(id, k) is supported as a whole expression. It is an
+// approximation of the AWS model: mean -/+ k standard deviations of the
+// previous two weeks of the input. See band.go.
 package metricmath
 
 import (
@@ -31,10 +35,13 @@ type memoKey struct {
 // Evaluator resolves the entries of one query list. A shared input is
 // fetched once per period, and a reference cycle resolves to an empty series.
 type Evaluator struct {
+	queries    []driver.MetricDataQuery
 	byID       map[string]*driver.MetricDataQuery
 	fetch      Fetcher
 	memo       map[memoKey]Series
 	inProgress map[string]bool
+	band       BandConfig
+	history    *Evaluator
 }
 
 // New returns an evaluator over queries that reads metrics through fetch.
@@ -45,6 +52,7 @@ func New(queries []driver.MetricDataQuery, fetch Fetcher) *Evaluator {
 	}
 
 	return &Evaluator{
+		queries:    queries,
 		byID:       byID,
 		fetch:      fetch,
 		memo:       make(map[memoKey]Series, len(queries)),

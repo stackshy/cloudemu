@@ -70,9 +70,15 @@ func notificationTrigger(a *alarmData) map[string]any {
 		"Period":                           alarmPeriod(a),
 		"EvaluationPeriods":                a.EvaluationPeriods,
 		"ComparisonOperator":               a.ComparisonOperator,
-		"Threshold":                        a.Threshold,
 		"TreatMissingData":                 treatMissingLabel + treat,
 		"EvaluateLowSampleCountPercentile": "",
+	}
+
+	// An anomaly alarm names its band instead of a threshold.
+	if a.ThresholdMetricID != "" {
+		trigger["ThresholdMetricId"] = a.ThresholdMetricID
+	} else {
+		trigger["Threshold"] = a.Threshold
 	}
 
 	if len(a.Metrics) > 0 {
@@ -169,7 +175,9 @@ func (m *Mock) alarmDatums(a *alarmData, p *alarmeval.Params, at time.Time) []dr
 
 // mathDatums computes the watched series over the window. Each point marks
 // the start of its period, so its datum sits mid-period to land in the right
-// bucket. An expression outside the supported syntax gives no data.
+// bucket. An expression outside the supported syntax gives no data. For an
+// anomaly alarm it also sets p.Band and creates the alarm's detector when it
+// is missing. The caller holds alarmMu.
 func (m *Mock) mathDatums(a *alarmData, p *alarmeval.Params, at time.Time) []driver.MetricDatum {
 	q := watchedQuery(a)
 	if q == nil {
@@ -179,21 +187,34 @@ func (m *Mock) mathDatums(a *alarmData, p *alarmeval.Params, at time.Time) []dri
 	// Reads end before EndTime. Shifting the window by 1ns keeps a datum put
 	// at the evaluation instant, as a plain alarm does.
 	start, end := p.WindowStart(at).Add(time.Nanosecond), at.Add(time.Nanosecond)
-	fetch := func(ms *driver.MetricStat, period int) (metricmath.Series, error) {
-		res := m.readMetric(&driver.GetMetricInput{
-			Namespace: ms.Namespace, MetricName: ms.MetricName, Dimensions: ms.Dimensions,
-			StartTime: start, EndTime: end, Period: period, Stat: ms.Stat, Unit: ms.Unit,
-		})
+	ev := metricmath.New(a.Metrics, m.rangeFetcher(start, end))
 
-		return metricmath.Series{Timestamps: res.Timestamps, Values: res.Values}, nil
+	bandID, _, isBand := bandThreshold(a)
+	if isBand {
+		m.ensureAlarmDetectorLocked(a)
+
+		ev.WithBand(metricmath.BandConfig{
+			History:  m.rangeFetcher(start.Add(-metricmath.TrainingWindow), end),
+			Excluded: m.bandExclusionsLocked,
+		})
 	}
 
-	series, err := metricmath.New(a.Metrics, fetch).ResolveAt(q.ID, p.Period)
+	series, err := ev.ResolveAt(q.ID, p.Period)
 	if err != nil {
 		return nil
 	}
 
 	half := time.Duration(p.Period) * time.Second / 2
+
+	if isBand {
+		band, _, err := ev.BandAt(bandID, p.Period)
+		if err != nil {
+			return nil
+		}
+
+		p.Band = bandPoints(&band, half)
+	}
+
 	datums := make([]driver.MetricDatum, 0, len(series.Values))
 
 	for i, ts := range series.Timestamps {
@@ -206,4 +227,28 @@ func (m *Mock) mathDatums(a *alarmData, p *alarmeval.Params, at time.Time) []dri
 	}
 
 	return datums
+}
+
+// bandPoints turns a band into evaluator points, shifted to mid-period like
+// the datums.
+func bandPoints(b *metricmath.Band, half time.Duration) []alarmeval.BandPoint {
+	out := make([]alarmeval.BandPoint, 0, len(b.Timestamps))
+
+	for i, ts := range b.Timestamps {
+		out = append(out, alarmeval.BandPoint{Timestamp: ts.Add(half), Lower: b.Lower[i], Upper: b.Upper[i]})
+	}
+
+	return out
+}
+
+// rangeFetcher reads metrics over [start, end).
+func (m *Mock) rangeFetcher(start, end time.Time) metricmath.Fetcher {
+	return func(ms *driver.MetricStat, period int) (metricmath.Series, error) {
+		res := m.readMetric(&driver.GetMetricInput{
+			Namespace: ms.Namespace, MetricName: ms.MetricName, Dimensions: ms.Dimensions,
+			StartTime: start, EndTime: end, Period: period, Stat: ms.Stat, Unit: ms.Unit,
+		})
+
+		return metricmath.Series{Timestamps: res.Timestamps, Values: res.Values}, nil
+	}
 }

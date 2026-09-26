@@ -35,32 +35,35 @@ const (
 
 // Operation names shared by the rpc-v2-cbor and query dispatch switches.
 const (
-	opPutMetricData           = "PutMetricData"
-	opGetMetricStatistics     = "GetMetricStatistics"
-	opListMetrics             = "ListMetrics"
-	opPutMetricAlarm          = "PutMetricAlarm"
-	opDescribeAlarms          = "DescribeAlarms"
-	opDescribeAlarmHistory    = "DescribeAlarmHistory"
-	opDeleteAlarms            = "DeleteAlarms"
-	opSetAlarmState           = "SetAlarmState"
-	opPutCompositeAlarm       = "PutCompositeAlarm"
-	opPutDashboard            = "PutDashboard"
-	opGetDashboard            = "GetDashboard"
-	opListDashboards          = "ListDashboards"
-	opDeleteDashboards        = "DeleteDashboards"
-	opPutMetricStream         = "PutMetricStream"
-	opGetMetricStream         = "GetMetricStream"
-	opListMetricStreams       = "ListMetricStreams"
-	opDeleteMetricStream      = "DeleteMetricStream"
-	opStartMetricStreams      = "StartMetricStreams"
-	opStopMetricStreams       = "StopMetricStreams"
-	opTagResource             = "TagResource"
-	opUntagResource           = "UntagResource"
-	opListTagsForResource     = "ListTagsForResource"
-	opEnableAlarmActions      = "EnableAlarmActions"
-	opDisableAlarmActions     = "DisableAlarmActions"
-	opGetMetricData           = "GetMetricData"
-	opDescribeAlarmsForMetric = "DescribeAlarmsForMetric"
+	opPutMetricData            = "PutMetricData"
+	opGetMetricStatistics      = "GetMetricStatistics"
+	opListMetrics              = "ListMetrics"
+	opPutMetricAlarm           = "PutMetricAlarm"
+	opDescribeAlarms           = "DescribeAlarms"
+	opDescribeAlarmHistory     = "DescribeAlarmHistory"
+	opDeleteAlarms             = "DeleteAlarms"
+	opSetAlarmState            = "SetAlarmState"
+	opPutCompositeAlarm        = "PutCompositeAlarm"
+	opPutDashboard             = "PutDashboard"
+	opGetDashboard             = "GetDashboard"
+	opListDashboards           = "ListDashboards"
+	opDeleteDashboards         = "DeleteDashboards"
+	opPutMetricStream          = "PutMetricStream"
+	opGetMetricStream          = "GetMetricStream"
+	opListMetricStreams        = "ListMetricStreams"
+	opDeleteMetricStream       = "DeleteMetricStream"
+	opStartMetricStreams       = "StartMetricStreams"
+	opStopMetricStreams        = "StopMetricStreams"
+	opTagResource              = "TagResource"
+	opUntagResource            = "UntagResource"
+	opListTagsForResource      = "ListTagsForResource"
+	opEnableAlarmActions       = "EnableAlarmActions"
+	opDisableAlarmActions      = "DisableAlarmActions"
+	opGetMetricData            = "GetMetricData"
+	opDescribeAlarmsForMetric  = "DescribeAlarmsForMetric"
+	opPutAnomalyDetector       = "PutAnomalyDetector"
+	opDescribeAnomalyDetectors = "DescribeAnomalyDetectors"
+	opDeleteAnomalyDetector    = "DeleteAnomalyDetector"
 )
 
 // Handler serves CloudWatch rpc-v2-cbor requests against a monitoring driver.
@@ -178,6 +181,12 @@ func (h *Handler) dispatch(w http.ResponseWriter, r *http.Request, op string, bo
 		h.untagResource(w, r, body)
 	case opListTagsForResource:
 		h.listTagsForResource(w, r, body)
+	case opPutAnomalyDetector:
+		h.putAnomalyDetector(w, r, body)
+	case opDescribeAnomalyDetectors:
+		h.describeAnomalyDetectors(w, r, body)
+	case opDeleteAnomalyDetector:
+		h.deleteAnomalyDetector(w, r, body)
 	default:
 		writeCBORError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown operation: "+op)
@@ -240,7 +249,7 @@ func writeCBORResponse(w http.ResponseWriter, payload any) {
 // writeDriverErr maps CloudEmu errors to CloudWatch error responses.
 func writeDriverErr(w http.ResponseWriter, err error) {
 	if we, ok := asWireError(err); ok {
-		writeCBORError(w, http.StatusBadRequest, we.code, we.msg)
+		writeCBORError(w, we.status, we.code, we.msg)
 		return
 	}
 

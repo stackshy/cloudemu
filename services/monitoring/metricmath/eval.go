@@ -152,11 +152,25 @@ func (n binaryNode) evaluate(s scope) (result, error) {
 	return combine(n.op, left, right), nil
 }
 
+// bandNode is ANOMALY_DETECTION_BAND(input, k). The band is two series, so
+// it has no single-series value and evaluates to no data. Evaluator.Band
+// reads it instead.
+type bandNode struct {
+	input string
+	k     float64
+}
+
+func (bandNode) evaluate(scope) (result, error) {
+	return result{series: Series{Timestamps: []time.Time{}, Values: []float64{}}}, nil
+}
+
 // collectRefs appends every ID the node reads to ids.
 func collectRefs(n node, ids *[]string) {
 	switch v := n.(type) {
 	case refNode:
 		*ids = append(*ids, v.id)
+	case bandNode:
+		*ids = append(*ids, v.input)
 	case negNode:
 		collectRefs(v.operand, ids)
 	case binaryNode:

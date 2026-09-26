@@ -14,11 +14,12 @@ import (
 // tests read, including the Metrics list.
 type describeAlarmsXML struct {
 	Alarms []struct {
-		AlarmName         string `xml:"AlarmName"`
-		MetricName        string `xml:"MetricName"`
-		StateValue        string `xml:"StateValue"`
-		Period            int32  `xml:"Period"`
-		ThresholdMetricID string `xml:"ThresholdMetricId"`
+		AlarmName         string   `xml:"AlarmName"`
+		MetricName        string   `xml:"MetricName"`
+		StateValue        string   `xml:"StateValue"`
+		Period            int32    `xml:"Period"`
+		ThresholdMetricID string   `xml:"ThresholdMetricId"`
+		Threshold         *float64 `xml:"Threshold"`
 		Metrics           []struct {
 			ID         string `xml:"Id"`
 			Expression string `xml:"Expression"`
@@ -58,7 +59,7 @@ func (x describeAlarmsXML) toSDK() []cwtypes.MetricAlarm {
 		ma := cwtypes.MetricAlarm{
 			AlarmName: aws.String(a.AlarmName), MetricName: optString(a.MetricName),
 			StateValue: cwtypes.StateValue(a.StateValue), Period: optInt32(a.Period),
-			ThresholdMetricId: optString(a.ThresholdMetricID),
+			ThresholdMetricId: optString(a.ThresholdMetricID), Threshold: a.Threshold,
 		}
 
 		for _, q := range a.Metrics {

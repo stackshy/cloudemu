@@ -149,7 +149,7 @@ type putMetricAlarmInput struct {
 	Namespace               string               `cbor:"Namespace"`
 	MetricName              string               `cbor:"MetricName"`
 	ComparisonOperator      string               `cbor:"ComparisonOperator"`
-	Threshold               float64              `cbor:"Threshold"`
+	Threshold               *float64             `cbor:"Threshold,omitempty"`
 	Period                  int                  `cbor:"Period"`
 	EvaluationPeriods       int                  `cbor:"EvaluationPeriods"`
 	DatapointsToAlarm       int                  `cbor:"DatapointsToAlarm,omitempty"`
@@ -180,7 +180,7 @@ func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []
 		MetricName:              in.MetricName,
 		Dimensions:              toDimensionMap(in.Dimensions),
 		ComparisonOperator:      in.ComparisonOperator,
-		Threshold:               in.Threshold,
+		Threshold:               floatOrZero(in.Threshold),
 		Period:                  in.Period,
 		EvaluationPeriods:       in.EvaluationPeriods,
 		DatapointsToAlarm:       in.DatapointsToAlarm,
@@ -198,7 +198,7 @@ func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []
 		ThresholdMetricID:       in.ThresholdMetricID,
 	}
 
-	if err := h.putMetricAlarmCore(r.Context(), &cfg); err != nil {
+	if err := h.putMetricAlarmCore(r.Context(), &cfg, in.Threshold != nil); err != nil {
 		writeDriverErr(w, err)
 		return
 	}
@@ -246,7 +246,7 @@ type metricAlarmCBR struct {
 	StateUpdatedTimestamp      *time.Time           `cbor:"StateUpdatedTimestamp,omitempty"`
 	StateTransitionedTimestamp *time.Time           `cbor:"StateTransitionedTimestamp,omitempty"`
 	ComparisonOperator         string               `cbor:"ComparisonOperator"`
-	Threshold                  float64              `cbor:"Threshold"`
+	Threshold                  *float64             `cbor:"Threshold,omitempty"`
 	Period                     int                  `cbor:"Period,omitempty"`
 	EvaluationPeriods          int                  `cbor:"EvaluationPeriods,omitempty"`
 	DatapointsToAlarm          int                  `cbor:"DatapointsToAlarm,omitempty"`
@@ -377,7 +377,7 @@ func toMetricAlarmCBR(a *mondriver.AlarmInfo) metricAlarmCBR {
 		StateReason:             a.StateReason,
 		StateReasonData:         a.StateReasonData,
 		ComparisonOperator:      a.ComparisonOperator,
-		Threshold:               a.Threshold,
+		Threshold:               alarmThreshold(a),
 		Period:                  a.Period,
 		EvaluationPeriods:       a.EvaluationPeriods,
 		DatapointsToAlarm:       a.DatapointsToAlarm,

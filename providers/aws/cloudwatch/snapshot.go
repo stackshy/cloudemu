@@ -13,7 +13,8 @@ import (
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
 // cwSnapshot is the full serialized state of the CloudWatch mock. The alarm,
-// composite-alarm, dashboard, metric-stream, and notification-channel stores
+// composite-alarm, dashboard, metric-stream, notification-channel and
+// anomaly-detector stores
 // hold value types whose fields are all exported, so they round-trip through
 // the generic memstore helper. The metric buffer is keyed by a struct
 // (metricKey), which json cannot serialize as a map key, so it is promoted
@@ -21,13 +22,14 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // in order. The mutexes, the wired SNS and EventBridge
 // publishers, and *config.Options are intentionally not captured.
 type cwSnapshot struct {
-	Metrics         []metricEntrySnapshot      `json:"metrics,omitempty"`
-	Alarms          json.RawMessage            `json:"alarms,omitempty"`
-	CompositeAlarms json.RawMessage            `json:"compositeAlarms,omitempty"`
-	Dashboards      json.RawMessage            `json:"dashboards,omitempty"`
-	MetricStreams   json.RawMessage            `json:"metricStreams,omitempty"`
-	Channels        json.RawMessage            `json:"channels,omitempty"`
-	History         []driver.AlarmHistoryEntry `json:"history,omitempty"`
+	Metrics          []metricEntrySnapshot      `json:"metrics,omitempty"`
+	Alarms           json.RawMessage            `json:"alarms,omitempty"`
+	CompositeAlarms  json.RawMessage            `json:"compositeAlarms,omitempty"`
+	Dashboards       json.RawMessage            `json:"dashboards,omitempty"`
+	MetricStreams    json.RawMessage            `json:"metricStreams,omitempty"`
+	Channels         json.RawMessage            `json:"channels,omitempty"`
+	AnomalyDetectors json.RawMessage            `json:"anomalyDetectors,omitempty"`
+	History          []driver.AlarmHistoryEntry `json:"history,omitempty"`
 }
 
 // metricEntrySnapshot promotes one (metricKey -> datapoints) entry to an
@@ -100,6 +102,7 @@ func (m *Mock) snapshotStores(snap *cwSnapshot) error {
 		{&snap.Dashboards, m.dashboards.Snapshot},
 		{&snap.MetricStreams, m.metricStreams.Snapshot},
 		{&snap.Channels, m.channels.Snapshot},
+		{&snap.AnomalyDetectors, m.anomalyDetectors.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -150,6 +153,7 @@ func (m *Mock) restoreStores(snap *cwSnapshot) error {
 		{snap.Dashboards, m.dashboards.LoadSnapshot},
 		{snap.MetricStreams, m.metricStreams.LoadSnapshot},
 		{snap.Channels, m.channels.LoadSnapshot},
+		{snap.AnomalyDetectors, m.anomalyDetectors.LoadSnapshot},
 	}
 
 	for _, l := range loads {
