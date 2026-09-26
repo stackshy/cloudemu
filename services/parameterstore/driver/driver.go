@@ -15,6 +15,24 @@ import (
 // ParameterNotFound.
 var ErrVersionNotFound = errors.New(errors.NotFound, "requested parameter version or label not found")
 
+// NewVersionNotFound returns an error that matches ErrVersionNotFound and
+// carries the AWS message for the given parameter name and version or label.
+func NewVersionNotFound(name, version string) error {
+	return &versionNotFound{err: errors.Newf(errors.NotFound,
+		"Systems Manager could not find version %s of %s. Verify the version and try again.", version, name)}
+}
+
+// versionNotFound pairs an AWS-worded message with the ErrVersionNotFound sentinel.
+type versionNotFound struct {
+	err *errors.Error
+}
+
+func (e *versionNotFound) Error() string { return e.err.Error() }
+
+func (e *versionNotFound) Unwrap() error { return e.err }
+
+func (*versionNotFound) Is(target error) bool { return target == ErrVersionNotFound }
+
 // ErrTypeMismatch is returned by PutParameter when an Overwrite=true update
 // specifies a Type that differs from the parameter's existing type. Real
 // Parameter Store rejects this with HierarchyTypeMismatchException: you can't
@@ -111,6 +129,12 @@ var ErrHierarchyLevelLimit = errors.New(errors.InvalidArgument,
 	"A hierarchy can have a maximum of 15 levels. For more information, see "+
 		"Requirements and constraints for parameter names in the AWS Systems Manager User Guide.")
 
+// ErrNameNotFullyQualified is returned by PutParameter when a name in a
+// hierarchy does not start with "/". It maps to ValidationException.
+//
+//nolint:revive // the message is the AWS wire text, so it keeps its capital and period
+var ErrNameNotFullyQualified = errors.New(errors.InvalidArgument, "Parameter name must be a fully qualified name.")
+
 // ErrValueTooLarge is returned by PutParameter when Value exceeds the size
 // limit of the parameter's tier: 4 KB for Standard, 8 KB for Advanced. Real
 // Parameter Store rejects an over-limit Standard-tier value with
@@ -158,17 +182,25 @@ const (
 
 // PutConfig describes a PutParameter request.
 type PutConfig struct {
-	Name        string
-	Value       string
-	Type        string
-	Description string
-	Overwrite   bool
-	Tier        string
-	DataType    string
+	Name  string
+	Value string
+	Type  string
+	// Description replaces the stored description when non-empty. On an
+	// overwrite, an empty Description keeps the stored one unless
+	// DescriptionSet is true, which clears it. This matches real Parameter
+	// Store, where an omitted Description keeps the old value and "" clears it.
+	Description    string
+	DescriptionSet bool
+	Overwrite      bool
+	Tier           string
+	// DataType defaults to "text" on create. On an overwrite, an empty
+	// DataType keeps the stored one.
+	DataType string
 	// KeyID is the KMS key (id or alias) used to encrypt a SecureString value.
 	// It is only valid for SecureString parameters; supplying it for a
 	// String/StringList is rejected. When omitted for a SecureString it defaults
-	// to DefaultSecureStringKeyID (alias/aws/ssm).
+	// to DefaultSecureStringKeyID (alias/aws/ssm) on create, and keeps the
+	// stored key on an overwrite. A key KMS can't resolve is ErrInvalidKeyID.
 	KeyID string
 	// AllowedPattern is an optional regular expression the Value must match.
 	// A non-empty pattern that is not a valid regexp, or a Value that fails to

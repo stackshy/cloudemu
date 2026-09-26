@@ -27,7 +27,8 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 		Name:           req.Name,
 		Value:          req.Value,
 		Type:           req.Type,
-		Description:    req.Description,
+		Description:    derefString(req.Description),
+		DescriptionSet: req.Description != nil,
 		Overwrite:      req.Overwrite,
 		Tier:           req.Tier,
 		DataType:       req.DataType,
@@ -311,6 +312,12 @@ func (h *Handler) labelParameterVersion(w http.ResponseWriter, r *http.Request) 
 
 	applied, invalid, err := h.store.LabelParameterVersion(r.Context(), req.Name, req.ParameterVersion, req.Labels)
 	if err != nil {
+		// The parameter exists but the version doesn't.
+		if errors.Is(err, ssmdriver.ErrVersionNotFound) {
+			wire.WriteJSONError(w, http.StatusBadRequest, "ParameterVersionNotFound", cerrors.Message(err))
+			return
+		}
+
 		writeErr(w, err)
 		return
 	}
