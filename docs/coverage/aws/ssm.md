@@ -30,6 +30,16 @@ RunCommand is an OPTIONAL capability, discovered by type assertion.
 | `GetCommandInvocation` |  |
 | `SendCommand` |  |
 
+### ServiceSettings
+
+ServiceSettings is an OPTIONAL capability, discovered by type assertion. It
+
+| Operation | Description |
+| --- | --- |
+| `GetServiceSetting` |  |
+| `ResetServiceSetting` |  |
+| `UpdateServiceSetting` |  |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

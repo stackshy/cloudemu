@@ -12334,6 +12334,21 @@
             "name": "SendCommand"
           }
         ]
+      },
+      {
+        "name": "ServiceSettings",
+        "doc": "ServiceSettings is an OPTIONAL capability, discovered by type assertion. It",
+        "operations": [
+          {
+            "name": "GetServiceSetting"
+          },
+          {
+            "name": "ResetServiceSetting"
+          },
+          {
+            "name": "UpdateServiceSetting"
+          }
+        ]
       }
     ],
     "providers": {

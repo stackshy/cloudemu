@@ -139,8 +139,7 @@ var ErrNameNotFullyQualified = errors.New(errors.InvalidArgument, "Parameter nam
 // limit of the parameter's tier: 4 KB for Standard, 8 KB for Advanced. Real
 // Parameter Store rejects an over-limit Standard-tier value with
 // ValidationException instead of silently accepting it or auto-upgrading the
-// tier (auto-upgrade only happens under the Intelligent-Tiering account
-// default, which isn't modeled here).
+// tier. Only Intelligent-Tiering picks Advanced for a larger value.
 //
 //nolint:revive // ValidationException wording, surfaced verbatim to the SDK
 var ErrValueTooLarge = errors.New(errors.InvalidArgument,
@@ -163,6 +162,37 @@ var ErrCannotRevertTier = errors.New(errors.InvalidArgument,
 	"Reverting an advanced parameter to a standard parameter would result in data loss. "+
 		"This is not a supported operation. If you still want to proceed, "+
 		"please remove the parameter and recreate it as a standard parameter.")
+
+// Parameter policy errors. Each carries InvalidArgument, and the SDK-compat
+// layer matches it with errors.Is to return the AWS exception of the same name.
+var (
+	// ErrInvalidPolicyType is InvalidPolicyTypeException.
+	ErrInvalidPolicyType = errors.New(errors.InvalidArgument,
+		"The policy type isn't supported. Parameter Store supports the following policy types: "+
+			"Expiration, ExpirationNotification, and NoChangeNotification.")
+	// ErrInvalidPolicyAttribute is InvalidPolicyAttributeException.
+	//nolint:revive // exact AWS wording, surfaced verbatim to the SDK
+	ErrInvalidPolicyAttribute = errors.New(errors.InvalidArgument, "A policy attribute or its value is invalid.")
+	// ErrIncompatiblePolicy is IncompatiblePolicyException.
+	ErrIncompatiblePolicy = errors.New(errors.InvalidArgument,
+		"There is a conflict in the policies specified for this parameter. You can't, for example, "+
+			"specify two Expiration policies for a parameter. Review your policies, and try again.")
+	// ErrPoliciesLimitExceeded is PoliciesLimitExceededException.
+	//nolint:revive // exact AWS wording, surfaced verbatim to the SDK
+	ErrPoliciesLimitExceeded = errors.New(errors.InvalidArgument,
+		"You specified more than the maximum number of allowed policies for the parameter. The maximum is 10.")
+	// ErrPoliciesRequireAdvanced is the ValidationException for policies on a
+	// Standard-tier parameter.
+	ErrPoliciesRequireAdvanced = errors.New(errors.InvalidArgument,
+		"Parameter policies are only supported for advanced tier parameters. "+
+			"Specify the Advanced or Intelligent-Tiering tier.")
+)
+
+// ErrServiceSettingNotFound is ServiceSettingNotFound: the setting id is not
+// one the service provides.
+var ErrServiceSettingNotFound = errors.New(errors.NotFound,
+	"The specified service setting wasn't found. Either the service name or the setting "+
+		"hasn't been provisioned by the AWS service team.")
 
 // DefaultSecureStringKeyID is the KMS key Parameter Store assigns to a
 // SecureString parameter when PutParameter omits KeyId: the AWS-managed
@@ -210,6 +240,18 @@ type PutConfig struct {
 	// rejects supplying Tags together with Overwrite=true, so Tags are only
 	// meaningful on a create.
 	Tags map[string]string
+	// Policies is the JSON array of parameter policies. Nil keeps the stored
+	// policies on an overwrite (none on a create). "[]" or "[{}]" clears them.
+	// Policies need the Advanced tier.
+	Policies *string
+}
+
+// ParameterPolicy is one policy attached to a parameter, as DescribeParameters
+// and GetParameterHistory report it.
+type ParameterPolicy struct {
+	Text   string
+	Type   string
+	Status string
 }
 
 // Parameter is a single version of a stored parameter.
@@ -235,6 +277,7 @@ type Parameter struct {
 	LastModifiedUser string
 	KeyID            string
 	AllowedPattern   string
+	Policies         []ParameterPolicy
 }
 
 // ParameterMetadata describes a parameter without its value.
@@ -253,6 +296,8 @@ type ParameterMetadata struct {
 	// DescribeParameters reflects both in ParameterMetadata.
 	KeyID          string
 	AllowedPattern string
+	// Policies are the parameter's current policies with their status.
+	Policies []ParameterPolicy
 }
 
 // ParameterStringFilter is a GetParametersByPath filter: a Key, an Option
@@ -335,4 +380,26 @@ type CommandConfig struct {
 type RunCommand interface {
 	SendCommand(ctx context.Context, cfg CommandConfig) (string, error)
 	GetCommandInvocation(ctx context.Context, commandID, instanceID string) (*CommandInvocation, error)
+}
+
+// ServiceSetting is an account-level Parameter Store setting, such as the
+// default parameter tier.
+type ServiceSetting struct {
+	SettingID        string
+	SettingValue     string
+	ARN              string
+	LastModifiedDate string
+	LastModifiedUser string
+	// Status is Default or Customized.
+	Status string
+}
+
+// ServiceSettings is an OPTIONAL capability, discovered by type assertion. It
+// covers the Parameter Store settings /ssm/parameter-store/default-parameter-tier
+// and /ssm/parameter-store/high-throughput-enabled. A setting id may be the
+// path or its full ARN.
+type ServiceSettings interface {
+	GetServiceSetting(ctx context.Context, settingID string) (*ServiceSetting, error)
+	UpdateServiceSetting(ctx context.Context, settingID, value string) error
+	ResetServiceSetting(ctx context.Context, settingID string) (*ServiceSetting, error)
 }

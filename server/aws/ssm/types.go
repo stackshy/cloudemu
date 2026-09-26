@@ -21,17 +21,25 @@ type parameterJSON struct {
 
 // parameterMetadataJSON is the wire shape for ParameterMetadata (DescribeParameters).
 type parameterMetadataJSON struct {
-	AllowedPattern   string  `json:"AllowedPattern,omitempty"`
-	ARN              string  `json:"ARN,omitempty"`
-	DataType         string  `json:"DataType,omitempty"`
-	Description      string  `json:"Description,omitempty"`
-	KeyID            string  `json:"KeyId,omitempty"`
-	LastModifiedDate float64 `json:"LastModifiedDate,omitempty"`
-	LastModifiedUser string  `json:"LastModifiedUser,omitempty"`
-	Name             string  `json:"Name"`
-	Tier             string  `json:"Tier,omitempty"`
-	Type             string  `json:"Type,omitempty"`
-	Version          int64   `json:"Version"`
+	AllowedPattern   string       `json:"AllowedPattern,omitempty"`
+	ARN              string       `json:"ARN,omitempty"`
+	DataType         string       `json:"DataType,omitempty"`
+	Description      string       `json:"Description,omitempty"`
+	KeyID            string       `json:"KeyId,omitempty"`
+	LastModifiedDate float64      `json:"LastModifiedDate,omitempty"`
+	LastModifiedUser string       `json:"LastModifiedUser,omitempty"`
+	Name             string       `json:"Name"`
+	Policies         []policyJSON `json:"Policies"`
+	Tier             string       `json:"Tier,omitempty"`
+	Type             string       `json:"Type,omitempty"`
+	Version          int64        `json:"Version"`
+}
+
+// policyJSON is the wire shape of a ParameterInlinePolicy.
+type policyJSON struct {
+	PolicyStatus string `json:"PolicyStatus,omitempty"`
+	PolicyText   string `json:"PolicyText,omitempty"`
+	PolicyType   string `json:"PolicyType,omitempty"`
 }
 
 // --- request envelopes ---
@@ -47,6 +55,7 @@ type putParameterRequest struct {
 	KeyID          string   `json:"KeyId"`
 	AllowedPattern string   `json:"AllowedPattern"`
 	Tags           []ssmTag `json:"Tags"`
+	Policies       *string  `json:"Policies"`
 }
 
 type getParameterRequest struct {
@@ -152,19 +161,20 @@ type getParameterHistoryResponse struct {
 
 // parameterHistoryJSON is the wire shape for a ParameterHistory entry.
 type parameterHistoryJSON struct {
-	AllowedPattern   string   `json:"AllowedPattern,omitempty"`
-	ARN              string   `json:"ARN,omitempty"`
-	DataType         string   `json:"DataType,omitempty"`
-	Description      string   `json:"Description,omitempty"`
-	KeyID            string   `json:"KeyId,omitempty"`
-	Labels           []string `json:"Labels,omitempty"`
-	LastModifiedDate float64  `json:"LastModifiedDate,omitempty"`
-	LastModifiedUser string   `json:"LastModifiedUser,omitempty"`
-	Name             string   `json:"Name"`
-	Tier             string   `json:"Tier,omitempty"`
-	Type             string   `json:"Type,omitempty"`
-	Value            string   `json:"Value,omitempty"`
-	Version          int64    `json:"Version"`
+	AllowedPattern   string       `json:"AllowedPattern,omitempty"`
+	ARN              string       `json:"ARN,omitempty"`
+	DataType         string       `json:"DataType,omitempty"`
+	Description      string       `json:"Description,omitempty"`
+	KeyID            string       `json:"KeyId,omitempty"`
+	Labels           []string     `json:"Labels,omitempty"`
+	LastModifiedDate float64      `json:"LastModifiedDate,omitempty"`
+	LastModifiedUser string       `json:"LastModifiedUser,omitempty"`
+	Name             string       `json:"Name"`
+	Policies         []policyJSON `json:"Policies"`
+	Tier             string       `json:"Tier,omitempty"`
+	Type             string       `json:"Type,omitempty"`
+	Value            string       `json:"Value,omitempty"`
+	Version          int64        `json:"Version"`
 }
 
 // epochSeconds converts an RFC3339 timestamp to Unix epoch seconds, the form
@@ -207,6 +217,17 @@ func toParameterJSON(p ssmdriver.Parameter) parameterJSON {
 		Value:            p.Value,
 		Version:          p.Version,
 	}
+}
+
+// toPolicyJSON converts driver policies to the wire shape. It is never nil,
+// so the response carries an empty list when there are none.
+func toPolicyJSON(ps []ssmdriver.ParameterPolicy) []policyJSON {
+	out := make([]policyJSON, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, policyJSON{PolicyStatus: p.Status, PolicyText: p.Text, PolicyType: p.Type})
+	}
+
+	return out
 }
 
 // derefString returns *p, or "" when p is nil.

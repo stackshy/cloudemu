@@ -35,8 +35,14 @@ func (h *Handler) putParameter(w http.ResponseWriter, r *http.Request) {
 		KeyID:          req.KeyID,
 		AllowedPattern: req.AllowedPattern,
 		Tags:           tags,
+		Policies:       req.Policies,
 	})
 	if err != nil {
+		if code, ok := policyErrorCode(err); ok {
+			wire.WriteJSONError(w, http.StatusBadRequest, code, cerrors.Message(err))
+			return
+		}
+
 		// Changing a parameter's type on an Overwrite update is rejected by
 		// real Parameter Store with HierarchyTypeMismatchException, not the
 		// generic ValidationException.
@@ -249,6 +255,7 @@ func (h *Handler) describeParameters(w http.ResponseWriter, r *http.Request) {
 			LastModifiedDate: epochSeconds(md.LastModified),
 			LastModifiedUser: md.LastModifiedUser,
 			Name:             md.Name,
+			Policies:         toPolicyJSON(md.Policies),
 			Tier:             md.Tier,
 			Type:             md.Type,
 			Version:          md.Version,
@@ -294,6 +301,7 @@ func (h *Handler) getParameterHistory(w http.ResponseWriter, r *http.Request) {
 			LastModifiedDate: epochSeconds(p.LastModified),
 			LastModifiedUser: p.LastModifiedUser,
 			Name:             p.Name,
+			Policies:         toPolicyJSON(p.Policies),
 			Tier:             p.Tier,
 			Type:             p.Type,
 			Value:            p.Value,
