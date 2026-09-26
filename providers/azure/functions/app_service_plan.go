@@ -28,6 +28,13 @@ type AppServicePlan struct {
 	Kind          string // app / functionapp / linux
 	Capacity      int
 	Tags          map[string]string
+
+	// Plan properties a caller can change after create (armappservice
+	// PlanProperties / PlanPatchResourceProperties).
+	Reserved                  bool // true for a Linux plan
+	PerSiteScaling            bool
+	ZoneRedundant             bool
+	MaximumElasticWorkerCount int // Elastic Premium burst ceiling
 }
 
 // App Service plan pricing tiers, the tier real Azure derives from a SKU name
@@ -223,4 +230,76 @@ func (m *Mock) ListAppServicePlans(_ context.Context, subscription, resourceGrou
 	}
 
 	return out, nil
+}
+
+// AppServicePlanPatch is a partial App Service plan update (ARM PATCH
+// .../serverfarms/{name}). A nil field leaves the stored value untouched; a
+// non-nil Tags map replaces the plan's tags wholesale.
+type AppServicePlanPatch struct {
+	Kind                      *string
+	SKUName                   *string
+	SKUTier                   *string
+	Capacity                  *int
+	Tags                      map[string]string
+	Reserved                  *bool
+	PerSiteScaling            *bool
+	ZoneRedundant             *bool
+	MaximumElasticWorkerCount *int
+}
+
+// PatchAppServicePlan applies a partial update to one App Service plan scoped
+// to the given subscription and resource group, returning the stored result or
+// NotFound. The read-modify-write runs under the store lock. A SKU name change
+// without an explicit tier re-derives the tier, as a create does.
+func (m *Mock) PatchAppServicePlan(
+	_ context.Context, subscription, resourceGroup, name string, patch AppServicePlanPatch,
+) (*AppServicePlan, error) {
+	var out AppServicePlan
+
+	found := m.plans.Update(planKey(subscription, resourceGroup, name), func(p *AppServicePlan) *AppServicePlan {
+		next := *p
+		applyPlanPatch(&next, &patch)
+		out = next
+
+		return &next
+	})
+	if !found {
+		return nil, cerrors.Newf(cerrors.NotFound, "app service plan %s not found", name)
+	}
+
+	return &out, nil
+}
+
+func applyPlanPatch(p *AppServicePlan, patch *AppServicePlanPatch) {
+	setIf(&p.Kind, patch.Kind)
+	setIf(&p.Capacity, patch.Capacity)
+	setIf(&p.Reserved, patch.Reserved)
+	setIf(&p.PerSiteScaling, patch.PerSiteScaling)
+	setIf(&p.ZoneRedundant, patch.ZoneRedundant)
+	setIf(&p.MaximumElasticWorkerCount, patch.MaximumElasticWorkerCount)
+
+	if patch.SKUName != nil && *patch.SKUName != "" && *patch.SKUName != p.SKUName {
+		p.SKUName = *patch.SKUName
+		p.SKUTier = deriveSKUTier(p.SKUName)
+	}
+
+	if patch.SKUTier != nil && *patch.SKUTier != "" {
+		p.SKUTier = *patch.SKUTier
+	}
+
+	if patch.Tags != nil {
+		tags := make(map[string]string, len(patch.Tags))
+		for k, v := range patch.Tags {
+			tags[k] = v
+		}
+
+		p.Tags = tags
+	}
+}
+
+// setIf assigns *src to *dst when src is non-nil.
+func setIf[T any](dst, src *T) {
+	if src != nil {
+		*dst = *src
+	}
 }

@@ -10,6 +10,7 @@
 //	GET    .../sites               : List in resource group / subscription
 //	DELETE .../sites/{name}        : Delete
 //	PUT    .../serverfarms/{name}  : CreateOrUpdate App Service plan
+//	PATCH  .../serverfarms/{name}  : Update App Service plan (partial)
 //	GET    .../serverfarms/{name}  : Get App Service plan
 //	POST   /api/{name}             : Synchronous invoke (non-ARM, mirrors how
 //	                               real Function Apps are hit at
@@ -65,6 +66,9 @@ type appServicePlanStore interface {
 	GetAppServicePlan(ctx context.Context, subscription, resourceGroup, name string) (*azfunctions.AppServicePlan, error)
 	DeleteAppServicePlan(ctx context.Context, subscription, resourceGroup, name string) error
 	ListAppServicePlans(ctx context.Context, subscription, resourceGroup string) ([]azfunctions.AppServicePlan, error)
+	PatchAppServicePlan(
+		ctx context.Context, subscription, resourceGroup, name string, patch azfunctions.AppServicePlanPatch,
+	) (*azfunctions.AppServicePlan, error)
 }
 
 // azureFunctionApps is the Azure-only site surface the handler layers on top of
@@ -669,6 +673,8 @@ func (h *Handler) servePlan(w http.ResponseWriter, r *http.Request, rp azurearm.
 	switch r.Method {
 	case http.MethodPut:
 		createPlan(w, r, rp, store)
+	case http.MethodPatch:
+		patchPlan(w, r, rp, store)
 	case http.MethodGet:
 		getPlan(w, r, rp, store)
 	case http.MethodDelete:
@@ -718,16 +724,25 @@ func createPlan(w http.ResponseWriter, r *http.Request, rp azurearm.ResourcePath
 		return
 	}
 
+	props := req.Properties
+	if props == nil {
+		props = &serverFarmPatchProperties{}
+	}
+
 	plan, err := store.CreateAppServicePlan(r.Context(), azfunctions.AppServicePlan{
-		Name:          rp.ResourceName,
-		Subscription:  rp.Subscription,
-		ResourceGroup: rp.ResourceGroup,
-		Location:      req.Location,
-		SKUName:       req.SKU.Name,
-		SKUTier:       req.SKU.Tier,
-		Kind:          req.Kind,
-		Capacity:      req.SKU.Capacity,
-		Tags:          req.Tags,
+		Name:                      rp.ResourceName,
+		Subscription:              rp.Subscription,
+		ResourceGroup:             rp.ResourceGroup,
+		Location:                  req.Location,
+		SKUName:                   req.SKU.Name,
+		SKUTier:                   req.SKU.Tier,
+		Kind:                      req.Kind,
+		Capacity:                  req.SKU.Capacity,
+		Tags:                      req.Tags,
+		Reserved:                  boolOr(props.Reserved),
+		PerSiteScaling:            boolOr(props.PerSiteScaling),
+		ZoneRedundant:             boolOr(props.ZoneRedundant),
+		MaximumElasticWorkerCount: intOr(props.MaximumElasticWorkerCount),
 	})
 	if err != nil {
 		azurearm.WriteCErr(w, err)
@@ -835,8 +850,12 @@ func toServerFarmResource(rp azurearm.ResourcePath, plan *azfunctions.AppService
 			Capacity: plan.Capacity,
 		},
 		Properties: serverFarmProperties{
-			ProvisioningState: "Succeeded",
-			Status:            "Ready",
+			ProvisioningState:         "Succeeded",
+			Status:                    "Ready",
+			Reserved:                  plan.Reserved,
+			PerSiteScaling:            plan.PerSiteScaling,
+			ZoneRedundant:             plan.ZoneRedundant,
+			MaximumElasticWorkerCount: plan.MaximumElasticWorkerCount,
 		},
 	}
 }
