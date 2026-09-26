@@ -13,9 +13,10 @@ import (
 )
 
 type clusterParameterGroupXML struct {
-	ParameterGroupName   string `xml:"ParameterGroupName"`
-	ParameterGroupFamily string `xml:"ParameterGroupFamily"`
-	Description          string `xml:"Description"`
+	ParameterGroupName   string   `xml:"ParameterGroupName"`
+	ParameterGroupFamily string   `xml:"ParameterGroupFamily"`
+	Description          string   `xml:"Description"`
+	Tags                 *tagsXML `xml:"Tags,omitempty"`
 }
 
 type createClusterParameterGroupResponse struct {
@@ -45,6 +46,7 @@ type clusterSubnetGroupXML struct {
 	VpcID                  string      `xml:"VpcId,omitempty"`
 	SubnetGroupStatus      string      `xml:"SubnetGroupStatus"`
 	Subnets                *subnetsXML `xml:"Subnets,omitempty"`
+	Tags                   *tagsXML    `xml:"Tags,omitempty"`
 }
 
 type createClusterSubnetGroupResponse struct {
@@ -134,7 +136,8 @@ func (h *Handler) createClusterParameterGroup(w http.ResponseWriter, r *http.Req
 	}
 
 	pg, err := mgr.CreateClusterParameterGroup(r.Context(),
-		r.Form.Get("ParameterGroupName"), r.Form.Get("ParameterGroupFamily"), r.Form.Get("Description"))
+		r.Form.Get("ParameterGroupName"), r.Form.Get("ParameterGroupFamily"), r.Form.Get("Description"),
+		parseRedshiftTags(r.Form))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -146,6 +149,7 @@ func (h *Handler) createClusterParameterGroup(w http.ResponseWriter, r *http.Req
 			ParameterGroupName:   pg.Name,
 			ParameterGroupFamily: pg.Family,
 			Description:          pg.Description,
+			Tags:                 toTagsXML(pg.Tags),
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
@@ -286,7 +290,7 @@ func (h *Handler) createClusterSubnetGroup(w http.ResponseWriter, r *http.Reques
 
 	sg, err := mgr.CreateClusterSubnetGroup(r.Context(),
 		r.Form.Get("ClusterSubnetGroupName"), r.Form.Get("Description"),
-		awsquery.ListStrings(r.Form, "SubnetIds.SubnetIdentifier"))
+		awsquery.ListStrings(r.Form, "SubnetIds.SubnetIdentifier"), parseRedshiftTags(r.Form))
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -308,6 +312,7 @@ func toClusterSubnetGroupXML(sg *redshiftprovider.SubnetGroup) clusterSubnetGrou
 		Description:            sg.Description,
 		VpcID:                  sg.VPCID,
 		SubnetGroupStatus:      "Complete",
+		Tags:                   toTagsXML(sg.Tags),
 	}
 
 	if len(sg.Subnets) > 0 {
@@ -357,6 +362,7 @@ func (h *Handler) describeClusterParameterGroups(w http.ResponseWriter, r *http.
 			ParameterGroupName:   page.Items[i].Name,
 			ParameterGroupFamily: page.Items[i].Family,
 			Description:          page.Items[i].Description,
+			Tags:                 toTagsXML(page.Items[i].Tags),
 		})
 	}
 

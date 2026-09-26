@@ -70,7 +70,9 @@ var redshiftActions = map[string]struct{}{ //nolint:gochecknoglobals // static l
 // clusterGroupManager is the AWS-specific parameter/subnet-group surface, not
 // part of the shared relationaldb driver; the handler type-asserts for it.
 type clusterGroupManager interface {
-	CreateClusterParameterGroup(ctx context.Context, name, family, description string) (*redshiftprovider.ParameterGroup, error)
+	CreateClusterParameterGroup(
+		ctx context.Context, name, family, description string, tags map[string]string,
+	) (*redshiftprovider.ParameterGroup, error)
 	DescribeClusterParameterGroups(ctx context.Context, names []string) ([]redshiftprovider.ParameterGroup, error)
 	DeleteClusterParameterGroup(ctx context.Context, name string) error
 	ModifyClusterParameterGroup(
@@ -80,7 +82,9 @@ type clusterGroupManager interface {
 	ResetClusterParameterGroup(
 		ctx context.Context, name string, paramNames []string, resetAll bool,
 	) (*redshiftprovider.ParameterGroup, error)
-	CreateClusterSubnetGroup(ctx context.Context, name, description string, subnetIDs []string) (*redshiftprovider.SubnetGroup, error)
+	CreateClusterSubnetGroup(
+		ctx context.Context, name, description string, subnetIDs []string, tags map[string]string,
+	) (*redshiftprovider.SubnetGroup, error)
 	DescribeClusterSubnetGroups(ctx context.Context, names []string) ([]redshiftprovider.SubnetGroup, error)
 	DeleteClusterSubnetGroup(ctx context.Context, name string) error
 }

@@ -81,6 +81,8 @@ type ParameterGroup struct {
 	// created group is seeded with the family's engine-default values; a
 	// ModifyClusterParameterGroup override flips a parameter's Source to "user".
 	Parameters map[string]rdbdriver.Parameter
+	// Tags is filled from the ARN-keyed tag store on read and never stored.
+	Tags map[string]string `json:"-"`
 }
 
 type SubnetGroup struct {
@@ -93,6 +95,8 @@ type SubnetGroup struct {
 	// Subnets carries each member subnet with its availability zone, resolved at
 	// create time, so DescribeClusterSubnetGroups can emit the full Subnets list.
 	Subnets []Subnet
+	// Tags is filled from the ARN-keyed tag store on read and never stored.
+	Tags map[string]string `json:"-"`
 }
 
 // Subnet is a member subnet of a cluster subnet group with its availability
@@ -147,7 +151,9 @@ func (m *Mock) settleClusterState(id, final string) string {
 }
 
 // CreateClusterParameterGroup registers a redshift cluster parameter group.
-func (m *Mock) CreateClusterParameterGroup(_ context.Context, name, family, description string) (*ParameterGroup, error) {
+func (m *Mock) CreateClusterParameterGroup(
+	_ context.Context, name, family, description string, tags map[string]string,
+) (*ParameterGroup, error) {
 	if name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "parameter group name is required")
 	}
@@ -163,6 +169,11 @@ func (m *Mock) CreateClusterParameterGroup(_ context.Context, name, family, desc
 		Parameters:  defaultRedshiftParameters(),
 	}
 	m.parameterGroups.Set(name, pg)
+
+	m.mu.Lock()
+	m.setTagsLocked(m.parameterGroupARN(name), tags)
+	pg.Tags = m.tagsLocked(m.parameterGroupARN(name))
+	m.mu.Unlock()
 
 	return &pg, nil
 }
@@ -283,19 +294,16 @@ func (m *Mock) ResetClusterParameterGroup(
 // DescribeClusterParameterGroups returns the named parameter groups, or all of
 // them when names is empty. An unknown name is a NotFound error, matching AWS.
 func (m *Mock) DescribeClusterParameterGroups(_ context.Context, names []string) ([]ParameterGroup, error) {
-	if len(names) == 0 {
-		return m.parameterGroups.SortedValues(), nil
+	out, err := getNamed(m.parameterGroups, names, "parameter group")
+	if err != nil {
+		return nil, err
 	}
 
-	out := make([]ParameterGroup, 0, len(names))
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	for _, name := range names {
-		pg, ok := m.parameterGroups.Get(name)
-		if !ok {
-			return nil, cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
-		}
-
-		out = append(out, pg)
+	for i := range out {
+		out[i].Tags = m.tagsLocked(m.parameterGroupARN(out[i].Name))
 	}
 
 	return out, nil
@@ -320,6 +328,8 @@ func (m *Mock) DeleteClusterParameterGroup(_ context.Context, name string) error
 		return cerrors.Newf(cerrors.NotFound, "parameter group %q not found", name)
 	}
 
+	delete(m.tagsByARN, m.parameterGroupARN(name))
+
 	return nil
 }
 
@@ -337,7 +347,9 @@ func (m *Mock) clusterParameterGroupInUseBy(name string) (string, bool) {
 }
 
 // CreateClusterSubnetGroup registers a redshift cluster subnet group.
-func (m *Mock) CreateClusterSubnetGroup(ctx context.Context, name, description string, subnetIDs []string) (*SubnetGroup, error) {
+func (m *Mock) CreateClusterSubnetGroup(
+	ctx context.Context, name, description string, subnetIDs []string, tags map[string]string,
+) (*SubnetGroup, error) {
 	if name == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "subnet group name is required")
 	}
@@ -357,25 +369,27 @@ func (m *Mock) CreateClusterSubnetGroup(ctx context.Context, name, description s
 	}
 	m.subnetGroups.Set(name, sg)
 
+	m.mu.Lock()
+	m.setTagsLocked(m.subnetGroupARN(name), tags)
+	sg.Tags = m.tagsLocked(m.subnetGroupARN(name))
+	m.mu.Unlock()
+
 	return &sg, nil
 }
 
 // DescribeClusterSubnetGroups returns the named subnet groups, or all of them
 // when names is empty. An unknown name is a NotFound error, matching AWS.
 func (m *Mock) DescribeClusterSubnetGroups(_ context.Context, names []string) ([]SubnetGroup, error) {
-	if len(names) == 0 {
-		return m.subnetGroups.SortedValues(), nil
+	out, err := getNamed(m.subnetGroups, names, "subnet group")
+	if err != nil {
+		return nil, err
 	}
 
-	out := make([]SubnetGroup, 0, len(names))
+	m.mu.RLock()
+	defer m.mu.RUnlock()
 
-	for _, name := range names {
-		sg, ok := m.subnetGroups.Get(name)
-		if !ok {
-			return nil, cerrors.Newf(cerrors.NotFound, "subnet group %q not found", name)
-		}
-
-		out = append(out, sg)
+	for i := range out {
+		out[i].Tags = m.tagsLocked(m.subnetGroupARN(out[i].Name))
 	}
 
 	return out, nil
@@ -399,6 +413,8 @@ func (m *Mock) DeleteClusterSubnetGroup(_ context.Context, name string) error {
 	if !m.subnetGroups.Delete(name) {
 		return cerrors.Newf(cerrors.NotFound, "subnet group %q not found", name)
 	}
+
+	delete(m.tagsByARN, m.subnetGroupARN(name))
 
 	return nil
 }
@@ -550,6 +566,7 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg rdbdriver.ClusterConfig) (
 
 	out := cluster
 	out.State = m.settleClusterState(cfg.ID, out.State)
+	out.Tags = m.tags(out.ARN)
 
 	return &out, nil
 }
@@ -640,10 +657,10 @@ func (m *Mock) reserveCluster(cfg rdbdriver.ClusterConfig) (rdbdriver.Cluster, e
 		MaintenanceTrackName:             maintenanceTrack,
 		ElasticIP:                        cfg.ElasticIP,
 		CreatedAt:                        m.opts.Clock.Now().UTC(),
-		Tags:                             copyTags(cfg.Tags),
 	}
 
 	m.clusters.Set(cfg.ID, cluster)
+	m.setTagsLocked(cluster.ARN, cfg.Tags)
 
 	return cluster, nil
 }
@@ -668,6 +685,10 @@ func (m *Mock) finalizeCluster(id, endpoint string, port int) {
 func (m *Mock) rollbackCluster(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if cluster, ok := m.clusters.Get(id); ok {
+		delete(m.tagsByARN, cluster.ARN)
+	}
 
 	m.clusters.Delete(id)
 }
@@ -721,6 +742,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdbdriver.Cl
 		//nolint:gocritic // map values are large structs but we need a flat slice for the API.
 		for _, v := range all {
 			v.State = m.settleClusterState(v.ID, v.State)
+			v.Tags = m.tagsLocked(v.ARN)
 			out = append(out, v)
 		}
 
@@ -736,6 +758,7 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdbdriver.Cl
 		}
 
 		cluster.State = m.settleClusterState(id, cluster.State)
+		cluster.Tags = m.tagsLocked(cluster.ARN)
 		out = append(out, cluster)
 	}
 
@@ -772,6 +795,10 @@ func (m *Mock) ModifyCluster(
 
 	m.clusters.Set(id, cluster)
 
+	if input.Tags != nil {
+		m.replaceTagsLocked(cluster.ARN, input.Tags)
+	}
+
 	// Under AsyncSettle a modified cluster briefly reports modifying before
 	// settling back to available (ModifyCluster → modifying → available); a no-op
 	// when settle is off.
@@ -780,6 +807,7 @@ func (m *Mock) ModifyCluster(
 
 	out := cluster
 	out.State = m.settleClusterState(id, out.State)
+	out.Tags = m.tagsLocked(out.ARN)
 
 	return &out, nil
 }
@@ -813,10 +841,6 @@ func applyClusterModify(cluster *rdbdriver.Cluster, input *rdbdriver.ModifyInsta
 
 	if input.ClusterSecurityGroups != nil {
 		cluster.ClusterSecurityGroups = append([]string(nil), input.ClusterSecurityGroups...)
-	}
-
-	if input.Tags != nil {
-		cluster.Tags = copyTags(input.Tags)
 	}
 
 	applyClusterModifyFlags(cluster, input)
@@ -878,10 +902,13 @@ func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 
-		if !m.clusters.Delete(id) {
+		cluster, ok := m.clusters.Get(id)
+		if !ok {
 			return cerrors.Newf(cerrors.NotFound, "Redshift cluster %q not found", id)
 		}
 
+		m.clusters.Delete(id)
+		delete(m.tagsByARN, cluster.ARN)
 		m.clusterSettle.Clear(id)
 
 		return nil
@@ -905,6 +932,7 @@ func (m *Mock) DeleteCluster(ctx context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.clusters.Delete(id)
+	delete(m.tagsByARN, cluster.ARN)
 	m.clusterSettle.Clear(id)
 
 	return nil
@@ -981,6 +1009,7 @@ func (m *Mock) snapshotCluster(id string) (*rdbdriver.Cluster, error) {
 	}
 
 	out := cluster
+	out.Tags = m.tagsLocked(out.ARN)
 
 	return &out, nil
 }
@@ -1090,12 +1119,13 @@ func (m *Mock) CreateClusterSnapshot(
 		MasterUsername:             cluster.MasterUsername,
 		DatabaseName:               cluster.DatabaseName,
 		CreatedAt:                  m.opts.Clock.Now().UTC(),
-		Tags:                       copyTags(cfg.Tags),
 	}
 
 	m.clusterSnapshots.Set(cfg.ID, snap)
+	m.setTagsLocked(snap.ARN, cfg.Tags)
 
 	out := snap
+	out.Tags = m.tagsLocked(snap.ARN)
 
 	return &out, nil
 }
@@ -1124,6 +1154,7 @@ func (m *Mock) DescribeClusterSnapshots(
 			}
 		}
 
+		snap.Tags = m.tagsLocked(snap.ARN)
 		out = append(out, snap)
 	}
 
@@ -1135,9 +1166,13 @@ func (m *Mock) DeleteClusterSnapshot(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if !m.clusterSnapshots.Delete(id) {
+	snap, ok := m.clusterSnapshots.Get(id)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "Redshift cluster snapshot %q not found", id)
 	}
+
+	m.clusterSnapshots.Delete(id)
+	delete(m.tagsByARN, snap.ARN)
 
 	return nil
 }
@@ -1192,10 +1227,10 @@ func (m *Mock) RestoreClusterFromSnapshot(
 		AutomatedSnapshotRetentionPeriod: defaultSnapshotRetentionDays,
 		PreferredMaintenanceWindow:       defaultMaintenanceWindow,
 		CreatedAt:                        now,
-		Tags:                             copyTags(input.Tags),
 	}
 
 	m.clusters.Set(input.NewClusterID, cluster)
+	m.setTagsLocked(cluster.ARN, input.Tags)
 
 	m.emitClusterMetrics(input.NewClusterID, cpuUtilizationRunning, databaseConnectionsRun,
 		readIOPSRunning, writeIOPSRunning, networkReceiveThroughput)
@@ -1207,6 +1242,7 @@ func (m *Mock) RestoreClusterFromSnapshot(
 
 	out := cluster
 	out.State = m.settleClusterState(input.NewClusterID, out.State)
+	out.Tags = m.tagsLocked(out.ARN)
 
 	return &out, nil
 }
@@ -1244,6 +1280,27 @@ func restoredKMSKeyID(encrypted bool, snapKmsKeyID, overrideKmsKeyID string) str
 	}
 
 	return snapKmsKeyID
+}
+
+// getNamed returns the named records, or all of them sorted by name when names
+// is empty. An unknown name is a NotFound error, matching AWS.
+func getNamed[T any](store *memstore.Store[T], names []string, kind string) ([]T, error) {
+	if len(names) == 0 {
+		return store.SortedValues(), nil
+	}
+
+	out := make([]T, 0, len(names))
+
+	for _, name := range names {
+		v, ok := store.Get(name)
+		if !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "%s %q not found", kind, name)
+		}
+
+		out = append(out, v)
+	}
+
+	return out, nil
 }
 
 func stringSet(values []string) map[string]struct{} {

@@ -14,11 +14,11 @@ func TestSnapshotRoundTripRedshift(t *testing.T) {
 	ctx := context.Background()
 	src := newTestMock()
 
-	if _, err := src.CreateClusterSubnetGroup(ctx, "sng", "sng desc", []string{"subnet-1"}); err != nil {
+	if _, err := src.CreateClusterSubnetGroup(ctx, "sng", "sng desc", []string{"subnet-1"}, nil); err != nil {
 		t.Fatalf("create subnet group: %v", err)
 	}
 
-	if _, err := src.CreateClusterParameterGroup(ctx, "pg", "redshift-1.0", "pg desc"); err != nil {
+	if _, err := src.CreateClusterParameterGroup(ctx, "pg", "redshift-1.0", "pg desc", nil); err != nil {
 		t.Fatalf("create param group: %v", err)
 	}
 

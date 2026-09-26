@@ -346,25 +346,6 @@ func (m *Mock) sourceExists(sourceType, id string) bool {
 	}
 }
 
-// setTagsLocked adds tags to the ARN-keyed tag store. The caller holds m.mu.
-func (m *Mock) setTagsLocked(arn string, tags map[string]string) {
-	if len(tags) == 0 {
-		return
-	}
-
-	if m.tagsByARN == nil {
-		m.tagsByARN = map[string]map[string]string{}
-	}
-
-	if m.tagsByARN[arn] == nil {
-		m.tagsByARN[arn] = map[string]string{}
-	}
-
-	for k, v := range tags {
-		m.tagsByARN[arn][k] = v
-	}
-}
-
 //nolint:gocritic // takes a value on purpose: it returns an independent copy.
 func cloneSubscription(s EventSubscription) EventSubscription {
 	s.SourceIDs = cloneStrings(s.SourceIDs)
