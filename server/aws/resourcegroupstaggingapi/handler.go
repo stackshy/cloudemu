@@ -328,7 +328,7 @@ func toTagList(tags map[string]string) []map[string]string {
 }
 
 // failedResource renders a FailedResourcesMap entry without leaking internal
-// cerrors phrasing — the ErrorMessage is a stable, AWS-plausible string keyed on
+// cerrors phrasing. The ErrorMessage is a stable, AWS-plausible string keyed on
 // the surfaced error code.
 func failedResource(arn string, err error) map[string]string {
 	code := awsErrorCode(err)

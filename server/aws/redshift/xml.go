@@ -132,7 +132,7 @@ type snapshotXML struct {
 	Tags                       *tagsXML `xml:"Tags,omitempty"`
 }
 
-// Result wrappers — one per Action.
+// Result wrappers, one per Action.
 
 type clusterResult struct {
 	Cluster clusterXML `xml:"Cluster"`
@@ -284,7 +284,7 @@ const (
 	// matching schema default does not perpetually drift.
 	defaultManualSnapshotRetainNone = -1
 
-	// multiAZDisabled is the Redshift MultiAZ value for a single-AZ cluster — the
+	// multiAZDisabled is the Redshift MultiAZ value for a single-AZ cluster, the
 	// only mode modeled. The field is an "Enabled"/"Disabled" string (not a bool);
 	// terraform rejects any other value, including an empty one.
 	multiAZDisabled = "Disabled"

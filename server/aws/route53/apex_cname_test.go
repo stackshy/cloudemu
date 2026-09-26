@@ -11,7 +11,7 @@ import (
 )
 
 // TestSDKApexCNAMERejected locks that a CNAME at the zone apex is rejected with
-// InvalidChangeBatch, as real Route 53 does — the apex must use A/AAAA or an
+// InvalidChangeBatch, as real Route 53 does. The apex must use A/AAAA or an
 // ALIAS, since it carries the SOA and NS records.
 func TestSDKApexCNAMERejected(t *testing.T) {
 	client := newRoute53Client(t)

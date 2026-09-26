@@ -51,7 +51,7 @@ func TestSDKUpdateFunctionConfigurationEphemeralStorage(t *testing.T) {
 }
 
 // TestSDKUpdateFunctionCodeArchitectures covers Architectures updates travelling
-// through UpdateFunctionCode (the API that carries them — the code must match the
+// through UpdateFunctionCode (the API that carries them, since the code must match the
 // target instruction set) and persisting on a subsequent GetFunctionConfiguration.
 // Before the fix the field was dropped, so GetFunction kept reporting the
 // create-time architecture and Terraform saw perpetual drift on architectures.

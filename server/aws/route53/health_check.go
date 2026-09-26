@@ -13,11 +13,11 @@ import (
 
 // healthCheckPrefix roots the Route 53 health-check REST URLs:
 //
-//	POST   /2013-04-01/healthcheck        — CreateHealthCheck
-//	GET    /2013-04-01/healthcheck        — ListHealthChecks
-//	GET    /2013-04-01/healthcheck/{id}   — GetHealthCheck
-//	POST   /2013-04-01/healthcheck/{id}   — UpdateHealthCheck
-//	DELETE /2013-04-01/healthcheck/{id}   — DeleteHealthCheck
+//	POST   /2013-04-01/healthcheck          CreateHealthCheck
+//	GET    /2013-04-01/healthcheck          ListHealthChecks
+//	GET    /2013-04-01/healthcheck/{id}     GetHealthCheck
+//	POST   /2013-04-01/healthcheck/{id}     UpdateHealthCheck
+//	DELETE /2013-04-01/healthcheck/{id}     DeleteHealthCheck
 const healthCheckPrefix = "/2013-04-01/healthcheck"
 
 // healthCheckVersion is the version stamped on every health check; the mock
@@ -209,8 +209,8 @@ func (h *Handler) listHealthChecks(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// updateHealthCheck merges the request's mutable fields onto the existing check
-// — real Route 53's UpdateHealthCheck omits the immutable Type and
+// updateHealthCheck merges the request's mutable fields onto the existing check.
+// Real Route 53's UpdateHealthCheck omits the immutable Type and
 // RequestInterval, so those are preserved.
 func (h *Handler) updateHealthCheck(w http.ResponseWriter, r *http.Request, id string) {
 	var req updateHealthCheckRequest

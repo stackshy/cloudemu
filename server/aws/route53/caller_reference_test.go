@@ -11,7 +11,7 @@ import (
 )
 
 // TestSDKCallerReferencePersisted locks that the caller-supplied CallerReference
-// is persisted and returned verbatim on GetHostedZone and ListHostedZones — the
+// is persisted and returned verbatim on GetHostedZone and ListHostedZones. The
 // pre-fix bug returned the zone name instead.
 func TestSDKCallerReferencePersisted(t *testing.T) {
 	client := newRoute53Client(t)

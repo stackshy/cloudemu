@@ -693,7 +693,7 @@ func TestSDKFirewallFullSurface(t *testing.T) {
 		t.Fatalf("BatchDeleteFirewallRule: %v %+v", err, bd.DeletedFirewallRules)
 	}
 
-	// A rule group with live VPC associations cannot be deleted — disassociate
+	// A rule group with live VPC associations cannot be deleted. Disassociate
 	// first, matching real AWS.
 	if _, err = client.DisassociateFirewallRuleGroup(ctx, &awsr53r.DisassociateFirewallRuleGroupInput{
 		FirewallRuleGroupAssociationId: aws.String(assocID),

@@ -154,7 +154,7 @@ type createHostedZoneResponse struct {
 }
 
 // updateHostedZoneCommentResponse carries the updated hosted zone back, the
-// same as GetHostedZone but without a DelegationSet — matching real Route 53's
+// same as GetHostedZone but without a DelegationSet, matching real Route 53's
 // UpdateHostedZoneComment response shape.
 type updateHostedZoneCommentResponse struct {
 	XMLName    xml.Name      `xml:"UpdateHostedZoneCommentResponse"`

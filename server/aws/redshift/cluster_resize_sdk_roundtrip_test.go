@@ -9,7 +9,7 @@ import (
 )
 
 // TestSDKRedshiftModifyClusterResize proves ModifyCluster applies a NodeType /
-// NumberOfNodes resize and that DescribeClusters reflects it — without this a
+// NumberOfNodes resize and that DescribeClusters reflects it. Without this a
 // Terraform aws_redshift_cluster changing node_type/number_of_nodes never
 // converges (perpetual drift).
 func TestSDKRedshiftModifyClusterResize(t *testing.T) {

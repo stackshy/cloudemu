@@ -9,8 +9,8 @@ import (
 
 // paginate returns the slice of items beginning at the offset encoded in token
 // and limited to maxResults, together with the token for the next page (nil
-// when the returned page reaches the end). The token is an opaque base64 offset
-// — stable because the driver returns results in a deterministic order. A
+// when the returned page reaches the end). The token is an opaque base64 offset,
+// stable because the driver returns results in a deterministic order. A
 // malformed token yields an InvalidArgument error.
 func paginate[T any](items []T, maxResults *int32, token *string) (page []T, next *string, err error) {
 	start, err := decodeToken(token)

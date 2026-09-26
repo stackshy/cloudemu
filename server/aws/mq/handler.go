@@ -28,7 +28,7 @@ const apiPrefix = "/v1/"
 
 // credentialScopeMQ is Amazon MQ's SigV4 signing name. Amazon MSK (Kafka) also
 // serves /v1/configurations, so the two are told apart by the credential scope
-// service — otherwise MQ (registered first) shadows every MSK configuration op.
+// service. Otherwise MQ (registered first) shadows every MSK configuration op.
 const credentialScopeMQ = "mq"
 
 // Path roots below the /v1/ prefix.

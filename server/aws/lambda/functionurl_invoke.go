@@ -23,7 +23,7 @@ import (
 const (
 	functionURLPayloadVersion  = "2.0"
 	functionURLDefaultRoute    = "$default"
-	functionURLAnonymousCaller = "anonymous" // AuthType is parsed, never verified — see functionurl.go.
+	functionURLAnonymousCaller = "anonymous" // AuthType is parsed, never verified; see functionurl.go.
 )
 
 // functionURLTimeFormat is the requestContext.time format real API Gateway /
@@ -254,7 +254,7 @@ func newFunctionURLRequestID() string {
 
 // writeFunctionURLInvokeResponse translates the handler's InvokeOutput into
 // the HTTP response a real Function URL sends. A handler error becomes a 502
-// with the fixed body real Lambda returns for a Function URL invoke — unlike
+// with the fixed body real Lambda returns for a Function URL invoke, unlike
 // the raw Invoke API, which reports a handler error via the
 // X-Amz-Function-Error header on an HTTP 200. A response payload with a
 // "statusCode" key is translated per the structured

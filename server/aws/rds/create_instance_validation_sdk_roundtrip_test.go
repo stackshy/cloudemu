@@ -11,8 +11,8 @@ import (
 )
 
 // TestSDKRDSCreateInstanceInvalidEngine: CreateDBInstance with an engine outside
-// the accepted enum is rejected with InvalidParameterValue, matching real RDS —
-// so a typo'd engine fails against cloudemu exactly as it would in production.
+// the accepted enum is rejected with InvalidParameterValue, matching real RDS,
+// so a typo'd engine fails against cloudemu as it would in production.
 func TestSDKRDSCreateInstanceInvalidEngine(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()

@@ -37,7 +37,7 @@ const pathPrefix = "/2015-03-31/functions"
 
 // tagsPrefix is the Lambda tagging API prefix (TagResource / UntagResource /
 // ListTags). It's a different version prefix than the function control plane,
-// so it needs its own Matches clause — otherwise tag requests fall through to
+// so it needs its own Matches clause. Otherwise tag requests fall through to
 // the S3 catch-all and return a 405 HTML body the SDK can't deserialize.
 const tagsPrefix = "/2017-03-31/tags"
 
@@ -47,7 +47,7 @@ const esmPrefix = "/2015-03-31/event-source-mappings"
 
 // Reserved-concurrency prefixes. AWS versions Put/DeleteFunctionConcurrency
 // under 2017-10-31 and GetFunctionConcurrency under 2019-09-30, all on the
-// {name}/concurrency sub-resource — each needs its own Matches clause.
+// {name}/concurrency sub-resource. Each needs its own Matches clause.
 const (
 	concurrencyWritePrefix = "/2017-10-31/functions" // Put + Delete
 	concurrencyReadPrefix  = "/2019-09-30/functions" // Get
@@ -89,7 +89,7 @@ func requestHost(host string) string {
 
 // Function code-signing-config sub-resource (GetFunctionCodeSigningConfig et al).
 // Versioned under 2020-06-30 on the {name}/code-signing-config sub-resource, so
-// it needs its own Matches clause — otherwise the REST-JSON request falls through
+// it needs its own Matches clause. Otherwise the REST-JSON request falls through
 // to the S3 catch-all, which returns XML the Lambda client can't parse. Terraform
 // reads it on every function refresh.
 const (
@@ -125,13 +125,13 @@ const invocationTypeDryRun = "DryRun"
 
 // lastUpdateStatusSuccessful is the terminal LastUpdateStatus real AWS reports
 // once a create/update completes. cloudemu settles synchronously, so every
-// config response carries it — this is the value the FunctionUpdatedV2 waiter
+// config response carries it. This is the value the FunctionUpdatedV2 waiter
 // (SAM/CDK/Terraform) polls for.
 const lastUpdateStatusSuccessful = "Successful"
 
 const (
 	contentTypeJSON = "application/json"
-	maxBodyBytes    = 6 << 20 // 6 MiB — Lambda's sync invocation payload limit.
+	maxBodyBytes    = 6 << 20 // 6 MiB, Lambda's sync invocation payload limit.
 )
 
 // AWS Lambda configuration defaults the handler emits when the client omitted
@@ -143,7 +143,7 @@ const (
 	defaultEphemeralStorageMB = 512
 )
 
-// EphemeralStorage accepted range: real Lambda rejects a size outside 512–10240
+// EphemeralStorage accepted range: real Lambda rejects a size outside 512 to 10240
 // with InvalidParameterValueException.
 const (
 	minEphemeralStorageMB = 512
@@ -157,7 +157,7 @@ const defaultLayerCodeSize int64 = 1024
 
 // policyManager is the AWS-specific resource-policy surface (AddPermission /
 // GetPolicy / RemovePermission). It's not part of the portable Serverless
-// driver — resource policies are a Lambda concept — so the handler type-asserts
+// driver (resource policies are a Lambda concept), so the handler type-asserts
 // for it rather than requiring every cloud's function provider to implement it.
 type policyManager interface {
 	AddPermission(ctx context.Context, functionName, qualifier string, stmt sdrv.PermissionStatement) error
@@ -168,7 +168,7 @@ type policyManager interface {
 // layerPolicyManager is the AWS-specific layer-version resource-policy surface
 // (AddLayerVersionPermission / GetLayerVersionPolicy /
 // RemoveLayerVersionPermission). Like policyManager, it's not part of the
-// portable Serverless driver — layer version permissions are a Lambda concept —
+// portable Serverless driver (layer version permissions are a Lambda concept),
 // so the handler type-asserts for it rather than requiring every cloud's
 // function provider to implement it.
 type layerPolicyManager interface {
@@ -248,8 +248,8 @@ func New(fn sdrv.Serverless, opts ...Option) *Handler {
 	return h
 }
 
-// Matches returns true for any URL under /2015-03-31/functions — that's the
-// Lambda control-plane prefix the SDK uses for every operation in our MVP —
+// Matches returns true for any URL under /2015-03-31/functions (the
+// Lambda control-plane prefix the SDK uses for every operation in our MVP),
 // plus a request addressed to a generated Function URL host.
 func (*Handler) Matches(r *http.Request) bool {
 	return isFunctionURLHost(r.Host) ||
@@ -461,9 +461,9 @@ func splitFunctionNameQualifier(raw string) (name, qualifier string) {
 // explicit ?Qualifier= query parameter.
 const qualifierMismatchMessage = "The derived qualifier from the function name does not match the specified qualifier."
 
-// resolveFunctionRef normalizes a FunctionName path segment — which real Lambda
+// resolveFunctionRef normalizes a FunctionName path segment (which real Lambda
 // accepts as a bare name, "name:qualifier", an unqualified function ARN, or a
-// qualified function ARN (".../function:name:qualifier") — into a bare function
+// qualified function ARN (".../function:name:qualifier")) into a bare function
 // name, reconciling any qualifier embedded in the reference with an explicit
 // ?Qualifier= query parameter. When both are present and differ it writes a
 // ValidationException and returns ok=false; when they agree, or only one is
@@ -617,7 +617,7 @@ func (h *Handler) serveRemovePermission(w http.ResponseWriter, r *http.Request, 
 
 // serveConfiguration handles .../{name}/configuration: GET is
 // GetFunctionConfiguration (the op FunctionActiveV2 / FunctionUpdatedV2 waiters
-// poll — a 405 here hangs every Terraform/SAM/CDK deploy), PUT is
+// poll; a 405 here hangs every Terraform/SAM/CDK deploy), PUT is
 // UpdateFunctionConfiguration.
 func (h *Handler) serveConfiguration(w http.ResponseWriter, r *http.Request, name string) {
 	if r.Method == http.MethodGet {
@@ -699,9 +699,9 @@ func (h *Handler) writePublished(
 }
 
 // serveCode handles PUT .../{name}/code (UpdateFunctionCode). It resolves the
-// new deployment package the same way create does — an inline ZipFile or an
+// new deployment package the same way create does (an inline ZipFile or an
 // S3-sourced artifact fetched from the in-process S3 backend, with any layer
-// content overlaid — then redeploys it to the engine via the provider so
+// content overlaid), then redeploys it to the engine via the provider so
 // update-function-code runs the new real code instead of leaving the stale
 // deployment in place. A request with no usable source is a hard error.
 func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string) {
@@ -757,7 +757,7 @@ func (h *Handler) serveCode(w http.ResponseWriter, r *http.Request, name string)
 }
 
 // codeAWSConfig returns the function's stored AWS-only config, first persisting
-// any Architectures change carried on the UpdateFunctionCode request — that is
+// any Architectures change carried on the UpdateFunctionCode request. That is
 // the API that carries the instruction set (the code must match the target
 // architecture), so without this GetFunction keeps reporting the create-time
 // architecture and Terraform re-plans it forever. It falls back to the current
@@ -1095,7 +1095,7 @@ func validateArchitectures(arch []string) error {
 	return nil
 }
 
-// validateEphemeralStorage rejects a /tmp size outside the AWS 512–10240 MB range.
+// validateEphemeralStorage rejects a /tmp size outside the AWS 512 to 10240 MB range.
 func validateEphemeralStorage(e *ephemeralStorageEnvelope) error {
 	if e == nil {
 		return nil
@@ -1325,7 +1325,7 @@ func (h *Handler) list(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, name string) {
 	// A Qualifier (from ?Qualifier= or a "name:qualifier" FunctionName, already
 	// reconciled onto the query by resolveFunctionRef) scopes DeleteFunction to a
-	// single published version — real Lambda deletes only that version and leaves
+	// single published version. Real Lambda deletes only that version and leaves
 	// $LATEST and the other versions/aliases intact. Without a qualifier the whole
 	// function (all versions and aliases) is deleted.
 	if qualifier := r.URL.Query().Get("Qualifier"); qualifier != "" {
@@ -1366,7 +1366,7 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	}
 
 	// FunctionName may carry its own ":<qualifier>" suffix (bare name, full ARN,
-	// or partial ARN all accept one — see the Invoke API's FunctionName pattern);
+	// or partial ARN all accept one; see the Invoke API's FunctionName pattern);
 	// the Qualifier query parameter is the other place AWS accepts one and, when
 	// both are present, wins.
 	functionName, qualifier := splitFunctionNameQualifier(name)
@@ -1409,7 +1409,7 @@ func (h *Handler) invoke(w http.ResponseWriter, r *http.Request, name string) {
 	}
 
 	// An asynchronous (Event) invocation is fire-and-forget: AWS queues it and
-	// returns HTTP 202 with an empty body — no payload, no function-error header.
+	// returns HTTP 202 with an empty body: no payload, no function-error header.
 	if invokeType == invocationTypeEvent {
 		w.WriteHeader(http.StatusAccepted)
 		return
@@ -1553,7 +1553,7 @@ func applyAWSConfigToResponse(cfg *functionConfiguration, awsCfg *sdrv.AWSFuncti
 
 // reservedConcurrency returns the function's reserved-concurrency envelope for
 // the GetFunction Concurrency field, or nil when no reserved concurrency has
-// been set (GetFunctionConcurrency reports NotFound) — matching AWS, which omits
+// been set (GetFunctionConcurrency reports NotFound). AWS also omits
 // the object until PutFunctionConcurrency has run.
 func (h *Handler) reservedConcurrency(ctx context.Context, name string) *concurrencyEnvelope {
 	cfg, err := h.fn.GetFunctionConcurrency(ctx, name)
@@ -1708,7 +1708,7 @@ func writeErr(w http.ResponseWriter, err error) {
 }
 
 // reservedConcurrencyReason is the Reason a reserved-concurrency throttle
-// carries in the TooManyRequestsException body — the value real Lambda returns
+// carries in the TooManyRequestsException body, the value real Lambda returns
 // when a function's ReservedConcurrentExecutions limit is exhausted.
 const reservedConcurrencyReason = "ReservedFunctionConcurrentInvocationLimitExceeded"
 

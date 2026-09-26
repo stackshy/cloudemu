@@ -13,7 +13,7 @@ import (
 // ClusterParameterGroupName, AllowVersionUpgrade, PubliclyAccessible,
 // Encrypted, MaintenanceTrackName and ElasticIp; a second call that only
 // changes NumberOfNodes must not revert any of them. Before this fix,
-// ModifyCluster silently dropped every one of these fields — a caller that
+// ModifyCluster silently dropped every one of these fields: a caller that
 // set them via ModifyCluster saw the change accepted but never applied.
 func TestSDKRedshiftModifyClusterFieldLevelMerge(t *testing.T) {
 	client := newSDKClient(t)

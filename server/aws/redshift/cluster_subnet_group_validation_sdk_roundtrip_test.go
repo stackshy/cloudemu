@@ -12,7 +12,7 @@ import (
 
 // TestSDKRedshiftCreateClusterMissingSubnetGroup proves CreateCluster rejects a
 // reference to a non-existent cluster subnet group with
-// ClusterSubnetGroupNotFoundFault instead of silently succeeding — masking an
+// ClusterSubnetGroupNotFoundFault instead of silently succeeding and masking an
 // IaC ordering error (cluster created before its subnet group).
 func TestSDKRedshiftCreateClusterMissingSubnetGroup(t *testing.T) {
 	client := newSDKClient(t)

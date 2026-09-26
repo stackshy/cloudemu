@@ -9,7 +9,7 @@ import (
 )
 
 // TestSDKRedshiftClusterAttributes asserts a created cluster reports the node
-// shape Terraform and the console read — NodeType, NumberOfNodes, Encrypted,
+// shape Terraform and the console read: NodeType, NumberOfNodes, Encrypted,
 // PubliclyAccessible, AvailabilityZone, the parameter-group membership and the
 // synthesized LEADER/COMPUTE node list.
 func TestSDKRedshiftClusterAttributes(t *testing.T) {

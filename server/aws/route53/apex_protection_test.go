@@ -14,7 +14,7 @@ import (
 // that would delete the zone's mandatory apex SOA or NS record set outright,
 // matching real Route 53's "A HostedZone must contain exactly one SOA record"
 // / "...must contain at least one NS record for the zone itself"
-// InvalidChangeBatch errors — while still allowing an in-place edit (a DELETE
+// InvalidChangeBatch errors, while still allowing an in-place edit (a DELETE
 // paired with a CREATE of the same record set in one batch) since the batch's
 // net effect still leaves the apex record standing.
 func TestSDKApexSOANSProtected(t *testing.T) {
@@ -59,8 +59,8 @@ func TestSDKApexSOANSProtected(t *testing.T) {
 		t.Fatalf("record set count after rejected apex deletes = %d, want 2 (SOA+NS)", got)
 	}
 
-	// An in-place edit — DELETE the current SOA and CREATE its replacement in
-	// the same batch — is allowed: the batch's net effect still leaves an SOA
+	// An in-place edit (DELETE the current SOA and CREATE its replacement in
+	// the same batch) is allowed: the batch's net effect still leaves an SOA
 	// record standing.
 	edited := *soa
 	edited.ResourceRecords = []r53types.ResourceRecord{{

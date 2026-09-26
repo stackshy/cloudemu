@@ -7,7 +7,7 @@ import (
 )
 
 // serveUserCollection handles GET /v1/brokers/{id}/users (ListUsers). There is
-// no create on the collection path — CreateUser carries the username in the URI.
+// no create on the collection path; CreateUser carries the username in the URI.
 func (h *Handler) serveUserCollection(w http.ResponseWriter, r *http.Request, brokerID string) {
 	if r.Method != http.MethodGet {
 		methodNotAllowed(w)

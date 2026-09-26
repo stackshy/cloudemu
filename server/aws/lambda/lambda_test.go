@@ -238,7 +238,7 @@ func TestInvokeReturnsHandlerPayload(t *testing.T) {
 // TestInvokeNoHandlerEchoesStub is a regression guard for issue #319: with no
 // Go handler registered, invoke used to return a FunctionError ("no handler
 // registered"). The emulator can't run an uploaded zip, so it now returns a
-// successful stub that echoes the request payload — invoke is testable.
+// successful stub that echoes the request payload, so invoke is testable.
 func TestInvokeNoHandlerEchoesStub(t *testing.T) {
 	srv, _ := newServer(t)
 

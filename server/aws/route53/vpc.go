@@ -11,7 +11,7 @@ import (
 )
 
 // defaultOwningAccount is the account id reported as the owner of a private
-// hosted zone in ListHostedZonesByVPC — cloudemu's single default account.
+// hosted zone in ListHostedZonesByVPC: cloudemu's single default account.
 const defaultOwningAccount = "123456789012"
 
 // vpcAssociator is the AWS-only extension a Route 53 backend implements to

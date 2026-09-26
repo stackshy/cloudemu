@@ -90,7 +90,7 @@ func TestSDKGetFunctionConfigurationQualifier(t *testing.T) {
 		t.Fatalf("v1 FunctionArn = %q, want a :1-qualified ARN", got)
 	}
 
-	// Unqualified GetFunctionConfiguration is $LATEST — unchanged.
+	// Unqualified GetFunctionConfiguration is $LATEST, unchanged.
 	latest, err := client.GetFunctionConfiguration(ctx, &awslambda.GetFunctionConfigurationInput{
 		FunctionName: aws.String("cfgqual"),
 	})
@@ -249,7 +249,7 @@ func TestSDKAddPermissionQualifierScoped(t *testing.T) {
 		t.Fatalf("alias policy missing statement: %s", aws.ToString(livePolicy.Policy))
 	}
 
-	// The unqualified ($LATEST) policy does not — a separate policy per qualifier.
+	// The unqualified ($LATEST) policy does not; each qualifier has its own policy.
 	if _, err := client.GetPolicy(ctx, &awslambda.GetPolicyInput{
 		FunctionName: aws.String("permqual"),
 	}); errorCode(err) != "ResourceNotFoundException" {
@@ -271,7 +271,7 @@ func TestSDKAddPermissionQualifierScoped(t *testing.T) {
 }
 
 // TestSDKGetPolicyPrincipalShapes is a regression guard for F4: the Principal is
-// rendered per its type — Service for a service domain, AWS root ARN for an
+// rendered per its type: Service for a service domain, AWS root ARN for an
 // account id, and a bare "*" wildcard.
 func TestSDKGetPolicyPrincipalShapes(t *testing.T) {
 	client, _ := newSDKClient(t)
