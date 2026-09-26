@@ -114,6 +114,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `location` | [Location](./aws/location.md) | — | — | — | 28 |
 | `locks` | — | [Locks](./azure/locks.md) | — | — | 4 |
 | `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | — | 17 |
+| `logic` | — | [Logic](./azure/logic.md) | — | — | 11 |
 | `lro` | — | — | [LRO](./gcp/lro.md) | — | 1 |
 | `managedcassandra` | — | [ManagedCassandra](./azure/managedcassandra.md) | — | — | 15 |
 | `managedgrafana` | — | [ManagedGrafana](./azure/managedgrafana.md) | — | — | 8 |
