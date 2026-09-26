@@ -27,6 +27,36 @@ const (
 	ModelFailed   = "Failed"
 )
 
+// Inference types a foundation model can report. InferenceProfile marks a model
+// that is reachable only through an inference profile.
+const (
+	InferenceTypeOnDemand         = "ON_DEMAND"
+	InferenceTypeProvisioned      = "PROVISIONED"
+	InferenceTypeInferenceProfile = "INFERENCE_PROFILE"
+)
+
+// Model customization types.
+const (
+	CustomizationFineTuning           = "FINE_TUNING"
+	CustomizationContinuedPreTraining = "CONTINUED_PRE_TRAINING"
+	CustomizationDistillation         = "DISTILLATION"
+)
+
+// Model modalities.
+const (
+	ModalityText      = "TEXT"
+	ModalityImage     = "IMAGE"
+	ModalityEmbedding = "EMBEDDING"
+)
+
+// FoundationModelFilter narrows ListFoundationModels. Empty fields match all.
+type FoundationModelFilter struct {
+	ByProvider          string
+	ByCustomizationType string
+	ByOutputModality    string
+	ByInferenceType     string
+}
+
 // FoundationModel describes a base model offered by the provider.
 type FoundationModel struct {
 	ModelARN                   string
@@ -282,7 +312,7 @@ type ApplyGuardrailOutput struct {
 // custom models, guardrails, provisioned throughput, invocation logging) and
 // the runtime (InvokeModel, Converse).
 type Bedrock interface {
-	ListFoundationModels(ctx context.Context) ([]FoundationModel, error)
+	ListFoundationModels(ctx context.Context, filter FoundationModelFilter) ([]FoundationModel, error)
 	GetFoundationModel(ctx context.Context, modelID string) (*FoundationModel, error)
 
 	CreateModelCustomizationJob(ctx context.Context, cfg CustomizationJobConfig) (*CustomizationJob, error)
@@ -337,7 +367,7 @@ type Bedrock interface {
 
 	CreateInferenceProfile(ctx context.Context, cfg InferenceProfileConfig) (*InferenceProfile, error)
 	GetInferenceProfile(ctx context.Context, identifier string) (*InferenceProfile, error)
-	ListInferenceProfiles(ctx context.Context) ([]InferenceProfile, error)
+	ListInferenceProfiles(ctx context.Context, typeEquals string) ([]InferenceProfile, error)
 	DeleteInferenceProfile(ctx context.Context, identifier string) error
 
 	CreatePromptRouter(ctx context.Context, cfg PromptRouterConfig) (*PromptRouter, error)

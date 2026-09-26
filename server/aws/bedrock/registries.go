@@ -230,19 +230,24 @@ func (h *Handler) getInferenceProfile(w http.ResponseWriter, r *http.Request, id
 }
 
 func (h *Handler) listInferenceProfiles(w http.ResponseWriter, r *http.Request) {
-	profiles, err := h.bedrock.ListInferenceProfiles(r.Context())
+	profiles, err := h.bedrock.ListInferenceProfiles(r.Context(), r.URL.Query().Get("type"))
 	if err != nil {
 		writeErr(w, err)
 
 		return
 	}
 
-	out := make([]inferenceProfileJSON, 0, len(profiles))
-	for i := range profiles {
-		out = append(out, toInferenceProfileJSON(&profiles[i]))
+	page, next, ok := paginate(w, r, profiles)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, listInferenceProfilesResponse{InferenceProfileSummaries: out})
+	out := make([]inferenceProfileJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toInferenceProfileJSON(&page[i]))
+	}
+
+	writeJSON(w, listInferenceProfilesResponse{InferenceProfileSummaries: out, NextToken: next})
 }
 
 func (h *Handler) deleteInferenceProfile(w http.ResponseWriter, r *http.Request, id string) {
@@ -326,12 +331,17 @@ func (h *Handler) listPromptRouters(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]promptRouterJSON, 0, len(routers))
-	for i := range routers {
-		out = append(out, toPromptRouterJSON(&routers[i]))
+	page, next, ok := paginate(w, r, routers)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, listPromptRoutersResponse{PromptRouterSummaries: out})
+	out := make([]promptRouterJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toPromptRouterJSON(&page[i]))
+	}
+
+	writeJSON(w, listPromptRoutersResponse{PromptRouterSummaries: out, NextToken: next})
 }
 
 func (h *Handler) deletePromptRouter(w http.ResponseWriter, r *http.Request, arn string) {
@@ -424,12 +434,17 @@ func (h *Handler) listARPolicies(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]arPolicySummaryJSON, 0, len(policies))
-	for i := range policies {
-		out = append(out, toARPolicySummaryJSON(&policies[i]))
+	page, next, ok := paginate(w, r, policies)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, listARPoliciesResponse{AutomatedReasoningPolicySummaries: out})
+	out := make([]arPolicySummaryJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toARPolicySummaryJSON(&page[i]))
+	}
+
+	writeJSON(w, listARPoliciesResponse{AutomatedReasoningPolicySummaries: out, NextToken: next})
 }
 
 func (h *Handler) updateARPolicy(w http.ResponseWriter, r *http.Request, arn string) {

@@ -151,12 +151,17 @@ func (h *Handler) listAsyncInvokes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]asyncInvokeSummaryJSON, 0, len(invs))
-	for i := range invs {
-		out = append(out, toAsyncInvokeSummaryJSON(&invs[i]))
+	page, next, ok := paginate(w, r, invs)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, listAsyncInvokesResponse{AsyncInvokeSummaries: out})
+	out := make([]asyncInvokeSummaryJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toAsyncInvokeSummaryJSON(&page[i]))
+	}
+
+	writeJSON(w, listAsyncInvokesResponse{AsyncInvokeSummaries: out, NextToken: next})
 }
 
 // --- converters ---

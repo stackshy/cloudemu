@@ -199,7 +199,7 @@ func TestFoundationModelAgreementValidation(t *testing.T) {
 	assertError(t, err, true)
 
 	// A real catalog model (fetched from ListFoundationModels) succeeds.
-	models, err := m.ListFoundationModels(ctx)
+	models, err := m.ListFoundationModels(ctx, bedrockdriver.FoundationModelFilter{})
 	requireNoError(t, err)
 
 	if len(models) == 0 {

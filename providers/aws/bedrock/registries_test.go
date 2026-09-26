@@ -11,7 +11,7 @@ func TestInferenceProfileLifecycle(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	src := "arn:aws:bedrock:us-east-1:123456789012:foundation-model/" + titanModel
+	src := "arn:aws:bedrock:us-east-1::foundation-model/" + titanModel
 	profile, err := m.CreateInferenceProfile(ctx, bedrockdriver.InferenceProfileConfig{
 		Name:                "profile-1",
 		ModelSourceCopyFrom: src,
@@ -34,7 +34,7 @@ func TestInferenceProfileLifecycle(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, "profile-1", byARN.Name)
 
-	list, err := m.ListInferenceProfiles(ctx)
+	list, err := m.ListInferenceProfiles(ctx, bedrockdriver.InferenceProfileTypeApplication)
 	requireNoError(t, err)
 	assertEqual(t, 1, len(list))
 
@@ -69,7 +69,7 @@ func TestInferenceProfileDuplicateName(t *testing.T) {
 
 	cfg := bedrockdriver.InferenceProfileConfig{
 		Name:                "dup-profile",
-		ModelSourceCopyFrom: "arn:aws:bedrock:us-east-1:123456789012:foundation-model/" + titanModel,
+		ModelSourceCopyFrom: "arn:aws:bedrock:us-east-1::foundation-model/" + titanModel,
 	}
 
 	_, err := m.CreateInferenceProfile(ctx, cfg)
