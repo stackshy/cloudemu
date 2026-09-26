@@ -249,15 +249,7 @@ func (m *Mock) alarmNotification(a *alarmData, oldState, newState string, now ti
 		"NewStateReason":   a.StateReason,
 		"OldStateValue":    oldState,
 		"StateChangeTime":  now.UTC().Format(time.RFC3339),
-		"Trigger": map[string]any{
-			"MetricName":         a.MetricName,
-			"Namespace":          a.Namespace,
-			"Statistic":          a.Stat,
-			"ComparisonOperator": a.ComparisonOperator,
-			"Threshold":          a.Threshold,
-			"Period":             a.Period,
-			"EvaluationPeriods":  a.EvaluationPeriods,
-		},
+		"Trigger":          notificationTrigger(a),
 	}
 
 	body, err := json.Marshal(payload)

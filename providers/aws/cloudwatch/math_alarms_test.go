@@ -2,6 +2,7 @@ package cloudwatch
 
 import (
 	"context"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -141,6 +142,95 @@ func TestMathAlarmStoresCopy(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, "err/req*100", alarms[0].Metrics[2].Expression)
 	assertEqual(t, false, *alarms[0].Metrics[0].ReturnData)
+}
+
+// messagePublisher keeps every SNS message body.
+type messagePublisher struct {
+	mu       sync.Mutex
+	messages []string
+}
+
+func (p *messagePublisher) PublishExternal(_ context.Context, _, message string) error {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+
+	p.messages = append(p.messages, message)
+
+	return nil
+}
+
+// The SNS notification of a math alarm lists its Metrics in the Trigger,
+// with no single MetricName. Before, the Trigger had an empty MetricName and
+// no Metrics.
+func TestMathAlarmNotificationTrigger(t *testing.T) {
+	m, fc, _ := newClockMock()
+	pub := &messagePublisher{}
+	m.SetSNSPublisher(pub)
+
+	ctx := context.Background()
+
+	requireNoError(t, m.PutMetricData(ctx, []driver.MetricDatum{{
+		Namespace: mathNS, MetricName: "Errors", Value: 30, Timestamp: fc.Now(), Dimensions: map[string]string{"Service": "api"},
+	}}))
+	putMath(t, m, fc, "Requests", 100)
+	fc.Advance(time.Second)
+
+	cfg := rateAlarm("rate")
+	cfg.AlarmActions = []string{alarmTopic}
+	cfg.Metrics[0].MetricStat.Dimensions = map[string]string{"Service": "api"}
+	requireNoError(t, m.CreateAlarm(ctx, cfg))
+
+	if len(pub.messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(pub.messages))
+	}
+
+	var body struct {
+		Trigger struct {
+			MetricName       *string `json:"MetricName"`
+			Period           int     `json:"Period"`
+			TreatMissingData string  `json:"TreatMissingData"`
+			Metrics          []struct {
+				ID         string `json:"Id"`
+				Expression string `json:"Expression"`
+				Label      string `json:"Label"`
+				ReturnData bool   `json:"ReturnData"`
+				MetricStat *struct {
+					Metric struct {
+						Dimensions []map[string]string `json:"Dimensions"`
+						MetricName string              `json:"MetricName"`
+						Namespace  string              `json:"Namespace"`
+					} `json:"Metric"`
+					Period int    `json:"Period"`
+					Stat   string `json:"Stat"`
+				} `json:"MetricStat"`
+			} `json:"Metrics"`
+		} `json:"Trigger"`
+	}
+
+	requireNoError(t, json.Unmarshal([]byte(pub.messages[0]), &body))
+
+	tr := body.Trigger
+	if tr.MetricName != nil {
+		t.Fatalf("math Trigger has MetricName %q", *tr.MetricName)
+	}
+
+	assertEqual(t, 60, tr.Period)
+	assertEqual(t, "missing", tr.TreatMissingData)
+	assertEqual(t, 3, len(tr.Metrics))
+	assertEqual(t, "err/req*100", tr.Metrics[2].Expression)
+	assertEqual(t, "ErrorRate", tr.Metrics[2].Label)
+	assertEqual(t, true, tr.Metrics[2].ReturnData)
+
+	errQ := tr.Metrics[0]
+	if errQ.MetricStat == nil {
+		t.Fatalf("err entry has no MetricStat")
+	}
+
+	assertEqual(t, false, errQ.ReturnData)
+	assertEqual(t, "Errors", errQ.MetricStat.Metric.MetricName)
+	assertEqual(t, "Sum", errQ.MetricStat.Stat)
+	assertEqual(t, "api", errQ.MetricStat.Metric.Dimensions[0]["value"])
+	assertEqual(t, "Service", errQ.MetricStat.Metric.Dimensions[0]["name"])
 }
 
 // A snapshot keeps the Metrics list and ThresholdMetricID.

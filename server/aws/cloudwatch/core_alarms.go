@@ -64,11 +64,7 @@ var metricQueryIDPattern = regexp.MustCompile(`^[a-z][a-zA-Z0-9_]*$`)
 // it. It evaluates to no data.
 func validateAlarmMetrics(cfg *mondriver.AlarmConfig) error {
 	if len(cfg.Metrics) == 0 {
-		if cfg.ThresholdMetricID != "" {
-			return newWireError(errValidation, "ThresholdMetricId can only be used with Metrics.")
-		}
-
-		return nil
+		return validateSingleMetric(cfg)
 	}
 
 	if hasSingleMetricFields(cfg) {
@@ -95,6 +91,21 @@ func validateAlarmMetrics(cfg *mondriver.AlarmConfig) error {
 
 	if id, ok := metricmath.Cycle(cfg.Metrics); ok {
 		return newWireError(errValidation, "Error in expression '"+id+"': Circular dependency in the metrics list.")
+	}
+
+	return nil
+}
+
+// validateSingleMetric checks an alarm without Metrics. It must name a
+// metric and cannot use ThresholdMetricId.
+func validateSingleMetric(cfg *mondriver.AlarmConfig) error {
+	if cfg.ThresholdMetricID != "" {
+		return newWireError(errValidation, "ThresholdMetricId can only be used with Metrics.")
+	}
+
+	if cfg.MetricName == "" {
+		return newWireError(errValidation, "For each PutMetricAlarm operation, you must specify either MetricName, "+
+			"a Metrics array, or an EvaluationCriteria.")
 	}
 
 	return nil

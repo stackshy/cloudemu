@@ -224,6 +224,7 @@ func TestMathAlarmValidation(t *testing.T) {
 			})
 			in.Metrics[2].Expression = aws.String("loop*2")
 		}},
+		{"neither MetricName nor Metrics", func(in *awscw.PutMetricAlarmInput) { in.Metrics = nil }},
 		{"unknown ThresholdMetricId", func(in *awscw.PutMetricAlarmInput) { in.ThresholdMetricId = aws.String("ad9") }},
 		{"ThresholdMetricId without Metrics", func(in *awscw.PutMetricAlarmInput) {
 			in.Metrics = nil

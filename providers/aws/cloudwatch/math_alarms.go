@@ -1,6 +1,7 @@
 package cloudwatch
 
 import (
+	"sort"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
@@ -54,6 +55,80 @@ func alarmReads(a *alarmData, keys map[metricKey]bool) bool {
 	}
 
 	return false
+}
+
+// notificationTrigger is the Trigger block of an SNS alarm notification. A
+// math alarm has no single metric, so it lists its Metrics instead.
+func notificationTrigger(a *alarmData) map[string]any {
+	trigger := map[string]any{
+		"ComparisonOperator": a.ComparisonOperator,
+		"Threshold":          a.Threshold,
+		"EvaluationPeriods":  a.EvaluationPeriods,
+	}
+
+	if len(a.Metrics) == 0 {
+		trigger["MetricName"] = a.MetricName
+		trigger["Namespace"] = a.Namespace
+		trigger["Statistic"] = a.Stat
+		trigger["Period"] = a.Period
+
+		return trigger
+	}
+
+	treat := a.TreatMissingData
+	if treat == "" {
+		treat = treatMissingDefault
+	}
+
+	trigger["Period"] = alarmPeriod(a)
+	trigger["TreatMissingData"] = treat
+	trigger["EvaluateLowSampleCountPercentile"] = ""
+	trigger["Metrics"] = notificationMetrics(a.Metrics)
+
+	return trigger
+}
+
+// notificationMetrics renders a Metrics list in the notification shape.
+// Dimensions use lower-case name and value keys, as CloudWatch sends them.
+func notificationMetrics(queries []driver.MetricDataQuery) []map[string]any {
+	out := make([]map[string]any, 0, len(queries))
+
+	for i := range queries {
+		q := &queries[i]
+		entry := map[string]any{"Id": q.ID, "ReturnData": metricmath.ReturnsData(q)}
+
+		if q.Expression != "" {
+			entry["Expression"] = q.Expression
+		}
+
+		if q.Label != "" {
+			entry["Label"] = q.Label
+		}
+
+		if ms := q.MetricStat; ms != nil {
+			keys := make([]string, 0, len(ms.Dimensions))
+			for k := range ms.Dimensions {
+				keys = append(keys, k)
+			}
+
+			sort.Strings(keys)
+
+			dims := make([]map[string]string, 0, len(keys))
+			for _, k := range keys {
+				dims = append(dims, map[string]string{"value": ms.Dimensions[k], "name": k})
+			}
+
+			entry["MetricStat"] = map[string]any{
+				"Metric": map[string]any{"Dimensions": dims, "MetricName": ms.MetricName, "Namespace": ms.Namespace},
+				"Period": ms.Period,
+				"Stat":   ms.Stat,
+			}
+		}
+
+		out = append(out, entry)
+	}
+
+	return out
 }
 
 // alarmDatums returns the data an evaluation at `at` looks at. The caller
