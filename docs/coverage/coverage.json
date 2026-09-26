@@ -6663,6 +6663,10 @@
         "doc": "CreateOrUpdateEndpoint stores e under (rg, profile, name) as a full replace,"
       },
       {
+        "name": "CreateOrUpdateOrigin",
+        "doc": "CreateOrUpdateOrigin stores o under (rg, profile, originGroup, name) as a full"
+      },
+      {
         "name": "CreateOrUpdateOriginGroup",
         "doc": "CreateOrUpdateOriginGroup stores g under (rg, profile, name) as a full"
       },
@@ -6671,20 +6675,36 @@
         "doc": "CreateOrUpdateProfile stores p as a full replace and reports whether it did"
       },
       {
+        "name": "CreateOrUpdateRoute",
+        "doc": "CreateOrUpdateRoute stores r under (rg, profile, endpoint, name) as a full"
+      },
+      {
         "name": "DeleteEndpoint",
-        "doc": "DeleteEndpoint removes the endpoint, returning NotFound if it does not exist."
+        "doc": "DeleteEndpoint removes the endpoint and cascades to its routes, returning"
+      },
+      {
+        "name": "DeleteOrigin",
+        "doc": "DeleteOrigin removes the origin, returning NotFound if it does not exist."
       },
       {
         "name": "DeleteOriginGroup",
-        "doc": "DeleteOriginGroup removes the origin group, returning NotFound if it does not"
+        "doc": "DeleteOriginGroup removes the origin group and cascades to its origins,"
       },
       {
         "name": "DeleteProfile",
         "doc": "DeleteProfile removes the profile and cascades to every endpoint and origin"
       },
       {
+        "name": "DeleteRoute",
+        "doc": "DeleteRoute removes the route, returning NotFound if it does not exist."
+      },
+      {
         "name": "GetEndpoint",
         "doc": "GetEndpoint returns the endpoint identified by (rg, profile, name), or NotFound."
+      },
+      {
+        "name": "GetOrigin",
+        "doc": "GetOrigin returns the origin identified by (rg, profile, originGroup, name),"
       },
       {
         "name": "GetOriginGroup",
@@ -6695,6 +6715,10 @@
         "doc": "GetProfile returns the profile identified by (resourceGroup, name), or NotFound."
       },
       {
+        "name": "GetRoute",
+        "doc": "GetRoute returns the route identified by (rg, profile, endpoint, name), or"
+      },
+      {
         "name": "ListEndpoints",
         "doc": "ListEndpoints returns the endpoints under (rg, profile), ordered by key."
       },
@@ -6703,8 +6727,56 @@
         "doc": "ListOriginGroups returns the origin groups under (rg, profile), ordered by key."
       },
       {
+        "name": "ListOrigins",
+        "doc": "ListOrigins returns the origins under (rg, profile, originGroup), ordered by"
+      },
+      {
         "name": "ListProfiles",
         "doc": "ListProfiles returns the profiles in rg, or all when rg is empty"
+      },
+      {
+        "name": "ListRoutes",
+        "doc": "ListRoutes returns the routes under (rg, profile, endpoint), ordered by key."
+      }
+    ],
+    "optionalCapabilities": [
+      {
+        "name": "AzureFrontDoorOriginsRoutes",
+        "doc": "AzureFrontDoorOriginsRoutes is the Azure-only store for the two grandchild",
+        "operations": [
+          {
+            "name": "CreateOrUpdateOrigin",
+            "doc": "CreateOrUpdateOrigin stores o under (rg, profile, originGroup, name) as a full"
+          },
+          {
+            "name": "CreateOrUpdateRoute",
+            "doc": "CreateOrUpdateRoute stores r under (rg, profile, endpoint, name) as a full"
+          },
+          {
+            "name": "DeleteOrigin",
+            "doc": "DeleteOrigin removes the origin, returning NotFound if it does not exist."
+          },
+          {
+            "name": "DeleteRoute",
+            "doc": "DeleteRoute removes the route, returning NotFound if it does not exist."
+          },
+          {
+            "name": "GetOrigin",
+            "doc": "GetOrigin returns the origin identified by (rg, profile, originGroup, name),"
+          },
+          {
+            "name": "GetRoute",
+            "doc": "GetRoute returns the route identified by (rg, profile, endpoint, name), or"
+          },
+          {
+            "name": "ListOrigins",
+            "doc": "ListOrigins returns the origins under (rg, profile, originGroup), ordered by"
+          },
+          {
+            "name": "ListRoutes",
+            "doc": "ListRoutes returns the routes under (rg, profile, endpoint), ordered by key."
+          }
+        ]
       }
     ],
     "providers": {

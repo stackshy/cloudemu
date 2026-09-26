@@ -79,3 +79,23 @@ func cloneStringMap(in map[string]string) map[string]string {
 
 	return out
 }
+
+// cloneOrigin deep-copies an origin.
+//
+//nolint:gocritic // hugeParam: clone by value is the intent.
+func cloneOrigin(o driver.AzureFrontDoorOrigin) driver.AzureFrontDoorOrigin {
+	out := o
+	out.Properties = cloneAnyMap(o.Properties)
+
+	return out
+}
+
+// cloneRoute deep-copies a route.
+//
+//nolint:gocritic // hugeParam: clone by value is the intent.
+func cloneRoute(r driver.AzureFrontDoorRoute) driver.AzureFrontDoorRoute {
+	out := r
+	out.Properties = cloneAnyMap(r.Properties)
+
+	return out
+}

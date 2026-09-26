@@ -1,14 +1,16 @@
 // Package frontdoor provides an in-memory implementation of the Azure Front Door
-// Standard/Premium (Microsoft.Cdn/profiles) store and its two independently-
-// addressable child types (afdEndpoints, originGroups). Each type is stored
+// Standard/Premium (Microsoft.Cdn/profiles) store, its two independently-
+// addressable child types (afdEndpoints, originGroups) and their grandchildren
+// (routes under an endpoint, origins under an origin group). Each type is stored
 // natively; profiles are keyed by (resourceGroup, name) and children by
 // (resourceGroup, profile, name), matching ARM addressing. Deleting a profile
-// cascades to its children.
+// cascades to its children and grandchildren.
 package frontdoor
 
 import (
 	"context"
 	"strings"
+	"sync"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -19,12 +21,18 @@ import (
 // Compile-time check that Mock implements the Azure Front Door store.
 var _ driver.AzureFrontDoorProfiles = (*Mock)(nil)
 
-// Mock is an in-memory Azure Front Door store: a parent profile store plus two
-// child stores (endpoints, origin groups).
+// Mock is an in-memory Azure Front Door store: a parent profile store, two
+// child stores (endpoints, origin groups) and two grandchild stores (origins,
+// routes). Each memstore is individually thread-safe; mu serializes the
+// operations that check or cascade across stores (parent-exists checks, the
+// route-to-origin-group reference, cascading deletes) so they are atomic.
 type Mock struct {
+	mu           sync.RWMutex
 	profiles     *memstore.Store[driver.AzureFrontDoorProfile]
 	endpoints    *memstore.Store[driver.AzureFrontDoorEndpoint]
 	originGroups *memstore.Store[driver.AzureFrontDoorOriginGroup]
+	origins      *memstore.Store[driver.AzureFrontDoorOrigin]
+	routes       *memstore.Store[driver.AzureFrontDoorRoute]
 	opts         *config.Options
 }
 
@@ -34,6 +42,8 @@ func New(opts *config.Options) *Mock {
 		profiles:     memstore.New[driver.AzureFrontDoorProfile](),
 		endpoints:    memstore.New[driver.AzureFrontDoorEndpoint](),
 		originGroups: memstore.New[driver.AzureFrontDoorOriginGroup](),
+		origins:      memstore.New[driver.AzureFrontDoorOrigin](),
+		routes:       memstore.New[driver.AzureFrontDoorRoute](),
 		opts:         opts,
 	}
 }
@@ -86,9 +96,12 @@ func (m *Mock) GetProfile(_ context.Context, rg, name string) (*driver.AzureFron
 	return &out, nil
 }
 
-// DeleteProfile removes the profile and cascades to its endpoints and origin
-// groups.
+// DeleteProfile removes the profile and cascades to its endpoints, origin
+// groups, origins and routes.
 func (m *Mock) DeleteProfile(_ context.Context, rg, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.profiles.Delete(profileKey(rg, name)) {
 		return cerrors.Newf(cerrors.NotFound, "front door profile %q not found", name)
 	}
@@ -98,8 +111,12 @@ func (m *Mock) DeleteProfile(_ context.Context, rg, name string) error {
 	return nil
 }
 
-// purgeChildren deletes every endpoint and origin group under (rg, profile).
+// purgeChildren deletes every endpoint, origin group, origin and route under
+// (rg, profile). Callers hold m.mu.
 func (m *Mock) purgeChildren(rg, profile string) {
+	m.purgeRoutes(rg, profile, "")
+	m.purgeOrigins(rg, profile, "")
+
 	for _, e := range m.endpoints.SortedValues() {
 		if strings.EqualFold(e.ResourceGroup, rg) && strings.EqualFold(e.Profile, profile) {
 			m.endpoints.Delete(childKey(e.ResourceGroup, e.Profile, e.Name))
@@ -140,6 +157,9 @@ func (m *Mock) CreateOrUpdateEndpoint(
 		return nil, false, cerrors.New(cerrors.InvalidArgument, "front door endpoint name is required")
 	}
 
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.profiles.Has(profileKey(rg, profile)) {
 		return nil, false, cerrors.Newf(cerrors.NotFound, "front door profile %q not found", profile)
 	}
@@ -170,11 +190,16 @@ func (m *Mock) GetEndpoint(_ context.Context, rg, profile, name string) (*driver
 	return &out, nil
 }
 
-// DeleteEndpoint removes the stored endpoint.
+// DeleteEndpoint removes the stored endpoint and cascades to its routes.
 func (m *Mock) DeleteEndpoint(_ context.Context, rg, profile, name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if !m.endpoints.Delete(childKey(rg, profile, name)) {
 		return cerrors.Newf(cerrors.NotFound, "front door endpoint %q not found", name)
 	}
+
+	m.purgeRoutes(rg, profile, name)
 
 	return nil
 }
@@ -203,6 +228,9 @@ func (m *Mock) CreateOrUpdateOriginGroup(
 	if name == "" {
 		return nil, false, cerrors.New(cerrors.InvalidArgument, "front door origin group name is required")
 	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if !m.profiles.Has(profileKey(rg, profile)) {
 		return nil, false, cerrors.Newf(cerrors.NotFound, "front door profile %q not found", profile)
@@ -234,11 +262,24 @@ func (m *Mock) GetOriginGroup(_ context.Context, rg, profile, name string) (*dri
 	return &out, nil
 }
 
-// DeleteOriginGroup removes the stored origin group.
+// DeleteOriginGroup removes the stored origin group and cascades to its origins.
+// Like Azure, it refuses (FailedPrecondition, ARM 409) while a route in the
+// profile still forwards to the group.
 func (m *Mock) DeleteOriginGroup(_ context.Context, rg, profile, name string) error {
-	if !m.originGroups.Delete(childKey(rg, profile, name)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if !m.originGroups.Has(childKey(rg, profile, name)) {
 		return cerrors.Newf(cerrors.NotFound, "front door origin group %q not found", name)
 	}
+
+	if route := m.routeReferencing(rg, profile, name); route != "" {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"front door origin group %q is in use by route %q; delete or repoint the route first", name, route)
+	}
+
+	m.originGroups.Delete(childKey(rg, profile, name))
+	m.purgeOrigins(rg, profile, name)
 
 	return nil
 }

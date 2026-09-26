@@ -3,22 +3,49 @@
 
 Azure's `frontdoor` service · portable interface `driver.AzureFrontDoorProfiles` · [Azure index](./README.md)
 
-## Operations (12)
+## Operations (20)
 
 | Operation | Description |
 | --- | --- |
 | `CreateOrUpdateEndpoint` | CreateOrUpdateEndpoint stores e under (rg, profile, name) as a full replace, |
+| `CreateOrUpdateOrigin` | CreateOrUpdateOrigin stores o under (rg, profile, originGroup, name) as a full |
 | `CreateOrUpdateOriginGroup` | CreateOrUpdateOriginGroup stores g under (rg, profile, name) as a full |
 | `CreateOrUpdateProfile` | CreateOrUpdateProfile stores p as a full replace and reports whether it did |
-| `DeleteEndpoint` | DeleteEndpoint removes the endpoint, returning NotFound if it does not exist. |
-| `DeleteOriginGroup` | DeleteOriginGroup removes the origin group, returning NotFound if it does not |
+| `CreateOrUpdateRoute` | CreateOrUpdateRoute stores r under (rg, profile, endpoint, name) as a full |
+| `DeleteEndpoint` | DeleteEndpoint removes the endpoint and cascades to its routes, returning |
+| `DeleteOrigin` | DeleteOrigin removes the origin, returning NotFound if it does not exist. |
+| `DeleteOriginGroup` | DeleteOriginGroup removes the origin group and cascades to its origins, |
 | `DeleteProfile` | DeleteProfile removes the profile and cascades to every endpoint and origin |
+| `DeleteRoute` | DeleteRoute removes the route, returning NotFound if it does not exist. |
 | `GetEndpoint` | GetEndpoint returns the endpoint identified by (rg, profile, name), or NotFound. |
+| `GetOrigin` | GetOrigin returns the origin identified by (rg, profile, originGroup, name), |
 | `GetOriginGroup` | GetOriginGroup returns the origin group identified by (rg, profile, name), or |
 | `GetProfile` | GetProfile returns the profile identified by (resourceGroup, name), or NotFound. |
+| `GetRoute` | GetRoute returns the route identified by (rg, profile, endpoint, name), or |
 | `ListEndpoints` | ListEndpoints returns the endpoints under (rg, profile), ordered by key. |
 | `ListOriginGroups` | ListOriginGroups returns the origin groups under (rg, profile), ordered by key. |
+| `ListOrigins` | ListOrigins returns the origins under (rg, profile, originGroup), ordered by |
 | `ListProfiles` | ListProfiles returns the profiles in rg, or all when rg is empty |
+| `ListRoutes` | ListRoutes returns the routes under (rg, profile, endpoint), ordered by key. |
+
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### AzureFrontDoorOriginsRoutes
+
+AzureFrontDoorOriginsRoutes is the Azure-only store for the two grandchild
+
+| Operation | Description |
+| --- | --- |
+| `CreateOrUpdateOrigin` | CreateOrUpdateOrigin stores o under (rg, profile, originGroup, name) as a full |
+| `CreateOrUpdateRoute` | CreateOrUpdateRoute stores r under (rg, profile, endpoint, name) as a full |
+| `DeleteOrigin` | DeleteOrigin removes the origin, returning NotFound if it does not exist. |
+| `DeleteRoute` | DeleteRoute removes the route, returning NotFound if it does not exist. |
+| `GetOrigin` | GetOrigin returns the origin identified by (rg, profile, originGroup, name), |
+| `GetRoute` | GetRoute returns the route identified by (rg, profile, endpoint, name), or |
+| `ListOrigins` | ListOrigins returns the origins under (rg, profile, originGroup), ordered by |
+| `ListRoutes` | ListRoutes returns the routes under (rg, profile, endpoint), ordered by key. |
 
 ## Not in scope
 

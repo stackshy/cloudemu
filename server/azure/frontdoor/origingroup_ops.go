@@ -3,6 +3,7 @@ package frontdoor
 import (
 	"net/http"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	fddriver "github.com/stackshy/cloudemu/v2/services/frontdoor/driver"
 )
@@ -101,7 +102,14 @@ func (h *Handler) updateOriginGroup(w http.ResponseWriter, r *http.Request, rp *
 }
 
 func (h *Handler) deleteOriginGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if derr := h.fd.DeleteOriginGroup(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName); derr != nil {
+	derr := h.fd.DeleteOriginGroup(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName)
+	if cerrors.IsFailedPrecondition(derr) {
+		// Azure answers 409 Conflict while a route still forwards to the group.
+		azurearm.WriteError(w, http.StatusConflict, "Conflict", cerrors.Message(derr))
+		return
+	}
+
+	if derr != nil {
 		azurearm.WriteCErr(w, derr)
 		return
 	}
