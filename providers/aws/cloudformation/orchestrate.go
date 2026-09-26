@@ -484,7 +484,7 @@ func mergeParameters(t *cfn.Template, provided []cfn.Parameter) ([]cfn.Parameter
 			continue
 		}
 
-		out = append(out, cfn.Parameter{Key: name, Value: values[name]})
+		out = append(out, cfn.Parameter{Key: name, Value: values[name], NoEcho: def.NoEcho})
 	}
 
 	if len(missing) > 0 {

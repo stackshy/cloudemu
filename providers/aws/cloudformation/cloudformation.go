@@ -258,7 +258,7 @@ func (sd *stackData) snapshotStack() cfn.Stack {
 	defer sd.mu.RUnlock()
 
 	s := sd.stack
-	s.Parameters = append([]cfn.Parameter(nil), sd.stack.Parameters...)
+	s.Parameters = maskParameters(sd.stack.Parameters)
 	s.Outputs = append([]cfn.Output(nil), sd.stack.Outputs...)
 	s.Resources = append([]cfn.StackResource(nil), sd.stack.Resources...)
 	s.Capabilities = append([]string(nil), sd.stack.Capabilities...)

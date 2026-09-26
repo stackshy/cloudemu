@@ -41,6 +41,8 @@ const (
 type Parameter struct {
 	Key   string
 	Value string
+	// NoEcho marks a value that stack reads show masked.
+	NoEcho bool
 }
 
 // Output is a resolved stack output.
