@@ -261,6 +261,61 @@ func (p sqsQueueProvisioner) Delete(ctx context.Context, physicalID string, _ ma
 	return p.sqs.DeleteQueue(ctx, physicalID)
 }
 
+// sqsAttributeDefaults are the values SQS restores when a template drops the
+// property, keyed by the CloudFormation property name, which is also the
+// SQS attribute name.
+func sqsAttributeDefaults() map[string]int {
+	return map[string]int{
+		"DelaySeconds":           0,
+		"VisibilityTimeout":      sqsDefaultVisibilityTimeout,
+		"MaximumMessageSize":     sqsDefaultMaxMessageSize,
+		"MessageRetentionPeriod": sqsDefaultRetention,
+	}
+}
+
+// SQS attribute defaults.
+const (
+	sqsDefaultVisibilityTimeout = 30
+	sqsDefaultMaxMessageSize    = 262144
+	sqsDefaultRetention         = 345600
+)
+
+// RequiresReplacement reports the queue properties CloudFormation cannot
+// change in place.
+func (sqsQueueProvisioner) RequiresReplacement(property string) bool {
+	return property == "QueueName" || property == "FifoQueue"
+}
+
+// Update sets the changed queue attributes. A dropped attribute goes back to
+// its SQS default. Other properties are not modeled by the queue backend.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
+func (p sqsQueueProvisioner) Update(
+	ctx context.Context, physicalID string, previous map[string]any, req cfn.ResourceRequest,
+) (*cfn.ProvisionedResource, error) {
+	attrs := map[string]int{}
+
+	for name, def := range sqsAttributeDefaults() {
+		_, had := previous[name]
+		_, has := req.Properties[name]
+
+		switch {
+		case has:
+			attrs[name] = propInt(req.Properties, name)
+		case had:
+			attrs[name] = def
+		}
+	}
+
+	if len(attrs) > 0 {
+		if err := p.sqs.SetQueueAttributes(ctx, physicalID, attrs); err != nil {
+			return nil, err
+		}
+	}
+
+	return &cfn.ProvisionedResource{PhysicalID: physicalID}, nil
+}
+
 // --- AWS::SNS::Topic ---
 
 type snsTopicProvisioner struct{ sns notifdriver.Notification }
@@ -439,6 +494,43 @@ func (p ssmParameterProvisioner) Create(ctx context.Context, req cfn.ResourceReq
 
 func (p ssmParameterProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
 	return p.ssm.DeleteParameter(ctx, physicalID)
+}
+
+// RequiresReplacement reports that only a new Name replaces a parameter.
+func (ssmParameterProvisioner) RequiresReplacement(property string) bool {
+	return property == "Name"
+}
+
+// Update overwrites the parameter with the new value, type, description and
+// tier. A dropped Description is cleared.
+//
+//nolint:gocritic // hugeParam: interface method signature is fixed.
+func (p ssmParameterProvisioner) Update(
+	ctx context.Context, physicalID string, _ map[string]any, req cfn.ResourceRequest,
+) (*cfn.ProvisionedResource, error) {
+	ptype := cfn.PropString(req.Properties, "Type")
+	if ptype == "" {
+		ptype = "String"
+	}
+
+	value := cfn.PropString(req.Properties, "Value")
+
+	if _, _, err := p.ssm.PutParameter(ctx, psdriver.PutConfig{
+		Name:           physicalID,
+		Value:          value,
+		Type:           ptype,
+		Description:    cfn.PropString(req.Properties, "Description"),
+		DescriptionSet: true,
+		Overwrite:      true,
+		Tier:           cfn.PropString(req.Properties, "Tier"),
+	}); err != nil {
+		return nil, err
+	}
+
+	return &cfn.ProvisionedResource{
+		PhysicalID: physicalID,
+		Attributes: map[string]string{"Type": ptype, "Value": value, "Arn": ssmParameterARN(&req, physicalID)},
+	}, nil
 }
 
 func ssmParameterARN(req *cfn.ResourceRequest, name string) string {

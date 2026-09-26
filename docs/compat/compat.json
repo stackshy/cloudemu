@@ -318,6 +318,19 @@
   },
   {
     "service": "cloudformation",
+    "operation": "ContinueUpdateRollback",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
+    "service": "cloudformation",
     "operation": "CreateStack",
     "providers": {
       "aws": {

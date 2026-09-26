@@ -64,14 +64,14 @@ func TestNoEchoParameterMasked(t *testing.T) {
 	assertParams(&all[0], "DescribeStacks all")
 
 	updated, err := m.UpdateStack(ctx, &cfn.UpdateStackInput{
-		StackName: "secret", TemplateBody: noEchoTemplate + "\n",
-		Parameters: []cfn.Parameter{{Key: "Secret", Value: "hunter2"}},
+		StackName: "secret", TemplateBody: noEchoTemplate,
+		Parameters: []cfn.Parameter{{Key: "Secret", Value: "hunter3"}},
 	})
 	requireNoError(t, err)
 	assertParams(updated, "UpdateStack")
 
 	for _, e := range updated.Events {
-		if e.StatusReason == "hunter2" || e.PhysicalID == "hunter2" {
+		if e.StatusReason == "hunter2" || e.PhysicalID == "hunter2" || e.StatusReason == "hunter3" {
 			t.Fatalf("an event leaks the NoEcho value: %+v", e)
 		}
 	}

@@ -24,6 +24,8 @@ type stackSnapshot struct {
 	ProvisionOrder []string                        `json:"provisionOrder,omitempty"`
 	Resolved       map[string]cfn.ResolvedResource `json:"resolved,omitempty"`
 	DeleteIDs      map[string]string               `json:"deleteIds,omitempty"`
+	Props          map[string]map[string]any       `json:"props,omitempty"`
+	RollbackFailed []string                        `json:"rollbackFailed,omitempty"`
 }
 
 // Snapshot captures every stack's state under its own name so a restore
@@ -38,6 +40,8 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 			ProvisionOrder: append([]string(nil), sd.provisionOrder...),
 			Resolved:       cloneResolved(sd.resolved),
 			DeleteIDs:      cloneStringMap(sd.deleteIDs),
+			Props:          cloneProps(sd.props),
+			RollbackFailed: append([]string(nil), sd.rollbackFailed...),
 		}
 		sd.mu.RUnlock()
 	}
@@ -58,6 +62,8 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 			provisionOrder: ss.ProvisionOrder,
 			resolved:       ss.Resolved,
 			deleteIDs:      ss.DeleteIDs,
+			props:          ss.Props,
+			rollbackFailed: ss.RollbackFailed,
 		}
 
 		if sd.resolved == nil {
@@ -66,6 +72,10 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 		if sd.deleteIDs == nil {
 			sd.deleteIDs = map[string]string{}
+		}
+
+		if sd.props == nil {
+			sd.props = map[string]map[string]any{}
 		}
 
 		m.stacks.Set(name, sd)
@@ -85,6 +95,17 @@ func cloneResolved(in map[string]cfn.ResolvedResource) map[string]cfn.ResolvedRe
 
 func cloneStringMap(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+
+	return out
+}
+
+// cloneProps copies the outer map. The property trees are never mutated in
+// place, so sharing them is safe.
+func cloneProps(in map[string]map[string]any) map[string]map[string]any {
+	out := make(map[string]map[string]any, len(in))
 	for k, v := range in {
 		out[k] = v
 	}

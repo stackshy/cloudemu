@@ -292,11 +292,11 @@ func TestNotificationARNsPseudoParameter(t *testing.T) {
 
 	assertEqual(t, strings.Join(st.NotificationARNs, ","), "arn:a,arn:b", "stored topics")
 
-	up, err := m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: body})
-	requireNoError(t, err)
-	assertEqual(t, strings.Join(up.NotificationARNs, ","), "arn:a,arn:b", "nil keeps the topics")
+	// Nil keeps the topics, so nothing changes.
+	_, err = m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: body})
+	assertErrMsg(t, err, "No updates are to be performed.")
 
-	up, err = m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: body, NotificationARNs: []string{}})
+	up, err := m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: body, NotificationARNs: []string{}})
 	requireNoError(t, err)
 	assertEqual(t, len(up.NotificationARNs), 0, "an empty list removes them")
 }

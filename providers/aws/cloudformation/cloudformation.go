@@ -46,6 +46,12 @@ type stackData struct {
 	// needs, when that differs from the physical id (SNS/Secrets delete by name
 	// but expose an ARN as the physical id).
 	deleteIDs map[string]string
+	// props maps a logical ID to the resolved properties it was last created
+	// or updated with. The update diff compares new properties against it.
+	props map[string]map[string]any
+	// rollbackFailed lists the resources a failed update rollback could not
+	// restore. It is set only while the stack is UPDATE_ROLLBACK_FAILED.
+	rollbackFailed []string
 }
 
 // New builds a CloudFormation mock with an empty provisioner registry. Callers

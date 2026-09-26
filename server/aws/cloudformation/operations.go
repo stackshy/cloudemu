@@ -35,6 +35,19 @@ func (h *Handler) updateStack(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func (h *Handler) continueUpdateRollback(w http.ResponseWriter, r *http.Request) {
+	err := h.api.ContinueUpdateRollback(r.Context(), &cfn.ContinueUpdateRollbackInput{
+		StackName:       r.Form.Get("StackName"),
+		ResourcesToSkip: awsquery.ListStrings(r.Form, "ResourcesToSkip.member"),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, continueUpdateRollbackResponse{Xmlns: Namespace, Meta: meta()})
+}
+
 func (h *Handler) deleteStack(w http.ResponseWriter, r *http.Request) {
 	if err := h.api.DeleteStack(r.Context(), r.Form.Get("StackName")); err != nil {
 		writeErr(w, err)
