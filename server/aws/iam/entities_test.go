@@ -11,7 +11,7 @@ import (
 )
 
 // TestSDKRoleDescriptionRoundTrips proves CreateRole persists Description and
-// GetRole echoes it (previously dropped — GetRole returned "").
+// GetRole echoes it (previously dropped; GetRole returned "").
 func TestSDKRoleDescriptionRoundTrips(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()

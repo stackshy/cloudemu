@@ -162,7 +162,7 @@ func writeNatErr(w http.ResponseWriter, err error) {
 }
 
 // writeCreateNatErr maps CreateNatGateway's create-only codes. A not-found on
-// create is the target subnet — InvalidSubnetID.NotFound, not the NatGatewayNotFound
+// create is the target subnet: InvalidSubnetID.NotFound, not the NatGatewayNotFound
 // the generic mapper would emit. The Elastic IP pairing errors carry a marker so a
 // missing or mismatched AllocationId surfaces the resource-specific EC2 code
 // (MissingParameter / InvalidAllocationID.NotFound) rather than a bare

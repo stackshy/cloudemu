@@ -6,12 +6,12 @@
 // connection and tagging operations work end-to-end against an in-memory driver.
 //
 // CodeArtifact routes by HTTP verb + a fixed path under the /v1/ prefix, with the
-// resource identity carried in the QUERY STRING rather than the path — for
+// resource identity carried in the QUERY STRING rather than the path, for
 // example POST /v1/domain?domain=my-domain (CreateDomain),
 // GET /v1/repository?domain=d&repository=r (DescribeRepository),
 // POST /v1/repositories (ListRepositories). There is no X-Amz-Target header.
-// Matches claims the /v1/domain(s) and /v1/repository(ies) trees — which are
-// distinctive to CodeArtifact — and the shared /v1/tag, /v1/tags and /v1/untag
+// Matches claims the /v1/domain(s) and /v1/repository(ies) trees (distinctive
+// to CodeArtifact) and the shared /v1/tag, /v1/tags and /v1/untag
 // paths only when their ?resourceArn= query names a CodeArtifact (:codeartifact:)
 // ARN, so it runs before the S3 catch-all and never shadows a sibling service's
 // tag operations. (CodeArtifact's /v1/tags carries no path segment and takes

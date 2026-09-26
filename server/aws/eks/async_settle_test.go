@@ -47,7 +47,7 @@ func newAsyncSDKClient(t *testing.T) (*awseks.Client, *cloudconfig.FakeClock) {
 
 // TestAsyncSettleWireEKSClusterAndNodegroup pins that a real SDK client sees a
 // cluster as CREATING (then ACTIVE), rejects a nodegroup on a cluster that
-// isn't ACTIVE yet, and sees a nodegroup as CREATING (then ACTIVE) too — all
+// isn't ACTIVE yet, and sees a nodegroup as CREATING (then ACTIVE) too, all
 // over the wire, driven purely by a FakeClock.
 func TestAsyncSettleWireEKSClusterAndNodegroup(t *testing.T) {
 	client, fc := newAsyncSDKClient(t)
@@ -76,7 +76,7 @@ func TestAsyncSettleWireEKSClusterAndNodegroup(t *testing.T) {
 	}
 
 	// A managed node group cannot be created while the cluster is still
-	// CREATING — real EKS requires ACTIVE.
+	// CREATING; real EKS requires ACTIVE.
 	_, err = client.CreateNodegroup(ctx, &awseks.CreateNodegroupInput{
 		ClusterName:   aws.String("c1"),
 		NodegroupName: aws.String("ng1"),

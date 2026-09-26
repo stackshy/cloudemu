@@ -122,7 +122,7 @@ func TestSDKIAMEntityAlreadyExistsIsTyped(t *testing.T) {
 }
 
 // TestSDKIAMErrorMessagesHaveNoInternalPrefix pins that IAM wire error messages
-// carry only the human sentence — not the internal "NotFound:" / "AlreadyExists:"
+// carry only the human sentence, not the internal "NotFound:" / "AlreadyExists:"
 // / "FailedPrecondition:" code prefix from cerrors.Error.Error().
 func TestSDKIAMErrorMessagesHaveNoInternalPrefix(t *testing.T) {
 	client := newClient(t)
@@ -158,7 +158,7 @@ func TestSDKIAMErrorMessagesHaveNoInternalPrefix(t *testing.T) {
 // TestSDKIAMClaimsActionsBeforeEC2 verifies the dispatch precedence
 // documented in handler.go: with both IAM and EC2 wired, an IAM request
 // must be claimed by the IAM handler before EC2 sees it. We assert this by
-// observing that CreateUser succeeds end-to-end — if EC2 claimed the request
+// observing that CreateUser succeeds end-to-end. If EC2 claimed the request
 // first, it would return InvalidAction (CreateUser is not an EC2 action) or
 // otherwise mangle the response. The test stays meaningful even if other
 // query-protocol handlers are added later, as long as IAM stays before EC2.

@@ -235,7 +235,7 @@ func (h *Handler) deleteTable(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) restoreTable(w http.ResponseWriter, r *http.Request) {
 	// restoreTimestamp arrives as an AWS-JSON epoch number, which can't decode
-	// into the SDK input's time.Time. Pull it out (it's optional — default to
+	// into the SDK input's time.Time. Pull it out (it's optional; default to
 	// now) and decode the rest of the body normally.
 	restoreAt, body, ok := extractRestoreTimestamp(w, r)
 	if !ok {

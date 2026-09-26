@@ -36,7 +36,7 @@ func stsClientWithCreds(t *testing.T, url, akid, secret string) *awssts.Client {
 }
 
 // TestGetCallerIdentityReflectsIAMUser proves GetCallerIdentity reports the
-// IAM user owning the presented access key — not a hardcoded identity —  by
+// IAM user owning the presented access key, not a hardcoded identity, by
 // creating a real user + access key through the IAM driver and calling
 // GetCallerIdentity with the real aws-sdk-go-v2 STS client signed with that
 // key.
@@ -128,7 +128,7 @@ func TestGetCallerIdentityReflectsAssumedRole(t *testing.T) {
 }
 
 // TestGetCallerIdentityDistinctForDistinctKeys proves two different presented
-// access keys resolve to two different identities — GetCallerIdentity is not
+// access keys resolve to two different identities. GetCallerIdentity is not
 // collapsing every caller onto one constant.
 func TestGetCallerIdentityDistinctForDistinctKeys(t *testing.T) {
 	ctx := context.Background()

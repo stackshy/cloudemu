@@ -1,5 +1,5 @@
 // End-to-end runtime test: a real client-go drives a full workload stack
-// against a cloudemu-emulated EKS cluster and observes minikube-like behavior —
+// against a cloudemu-emulated EKS cluster and observes minikube-like behavior:
 // Deployments and StatefulSets materialize Running Pods, Services get
 // Endpoints, /scale changes the Pod count, and deleting a controller cascades
 // to its Pods. The data plane is shared, so the same behavior holds for AKS and

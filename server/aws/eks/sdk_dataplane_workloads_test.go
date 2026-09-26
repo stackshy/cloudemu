@@ -1,6 +1,6 @@
 // Wave 2 Phase 2 end-to-end test: real client-go deploys an entire workload
-// stack — Namespace, ServiceAccount, Secret, ConfigMap, Deployment, Service,
-// Pod — against an EKS cluster's data-plane endpoint, then deletes the
+// stack (Namespace, ServiceAccount, Secret, ConfigMap, Deployment, Service,
+// Pod) against an EKS cluster's data-plane endpoint, then deletes the
 // cluster and verifies cascade tear-down.
 
 package eks_test
@@ -70,14 +70,14 @@ func TestSDKEKSDataPlane_FullWorkloadStack(t *testing.T) {
 	endpoint := aws.ToString(out.Cluster.Endpoint)
 	clientset := mustClientset(t, endpoint)
 
-	// 1. Custom namespace — auto-creates a "default" ServiceAccount.
+	// 1. Custom namespace, which auto-creates a "default" ServiceAccount.
 	if _, err := clientset.CoreV1().Namespaces().Create(ctx,
 		&corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: "shop"}},
 		metav1.CreateOptions{}); err != nil {
 		t.Fatalf("CreateNamespace: %v", err)
 	}
 
-	// 2. ServiceAccount "deployer" — explicit beside the auto "default".
+	// 2. ServiceAccount "deployer", explicit beside the auto "default".
 	if _, err := clientset.CoreV1().ServiceAccounts("shop").Create(ctx,
 		&corev1.ServiceAccount{ObjectMeta: metav1.ObjectMeta{Name: "deployer"}},
 		metav1.CreateOptions{}); err != nil {
@@ -93,7 +93,7 @@ func TestSDKEKSDataPlane_FullWorkloadStack(t *testing.T) {
 		t.Fatalf("SAs in shop: got %d, want 2 (default + deployer)", len(saList.Items))
 	}
 
-	// 3. Secret with StringData — server should merge into Data.
+	// 3. Secret with StringData; the server should merge it into Data.
 	sec, err := clientset.CoreV1().Secrets("shop").Create(ctx, &corev1.Secret{
 		ObjectMeta: metav1.ObjectMeta{Name: "db-creds"},
 		StringData: map[string]string{"user": "shop", "pass": "rotated"},
@@ -118,7 +118,7 @@ func TestSDKEKSDataPlane_FullWorkloadStack(t *testing.T) {
 		t.Fatalf("CreateConfigMap: %v", err)
 	}
 
-	// 5. Deployment (apps/v1) — replicas mirrored onto status.
+	// 5. Deployment (apps/v1), with replicas mirrored onto status.
 	var replicas int32 = 3
 	dep, err := clientset.AppsV1().Deployments("shop").Create(ctx, &appsv1.Deployment{
 		ObjectMeta: metav1.ObjectMeta{Name: "web"},
@@ -142,7 +142,7 @@ func TestSDKEKSDataPlane_FullWorkloadStack(t *testing.T) {
 			dep.Status.Replicas, dep.Status.ReadyReplicas)
 	}
 
-	// 6. Service — ClusterIP should be allocated from 10.96.0.0/12.
+	// 6. Service. ClusterIP should be allocated from 10.96.0.0/12.
 	svc, err := clientset.CoreV1().Services("shop").Create(ctx, &corev1.Service{
 		ObjectMeta: metav1.ObjectMeta{Name: "web"},
 		Spec: corev1.ServiceSpec{
@@ -158,7 +158,7 @@ func TestSDKEKSDataPlane_FullWorkloadStack(t *testing.T) {
 		t.Fatalf("ClusterIP: got %q, want 10.96.x.x", svc.Spec.ClusterIP)
 	}
 
-	// 7. Pod — explicit, separate from the Deployment.
+	// 7. Pod, explicit and separate from the Deployment.
 	pod, err := clientset.CoreV1().Pods("shop").Create(ctx, &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{Name: "side-job"},
 		Spec: corev1.PodSpec{

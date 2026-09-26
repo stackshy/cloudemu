@@ -37,8 +37,8 @@ func ddbStr(v string) ddbtypes.AttributeValue { return &ddbtypes.AttributeValueM
 
 // TestDDBConditionalPutIfAbsentRace drives the real aws-sdk-go-v2 client: many
 // concurrent PutItem(attribute_not_exists) calls race to create the same key.
-// Real DynamoDB guarantees exactly one succeeds and the rest get
-// ConditionalCheckFailedException — asserted across many rounds so the (logical)
+// Real DynamoDB guarantees one succeeds and the rest get
+// ConditionalCheckFailedException, asserted across many rounds so the (logical)
 // TOCTOU that let two writers both succeed cannot pass.
 func TestDDBConditionalPutIfAbsentRace(t *testing.T) {
 	const (
@@ -135,7 +135,7 @@ func TestDDBConditionalOptimisticLock(t *testing.T) {
 }
 
 // TestDDBTransactWriteAllOrNothing drives TransactWriteItems over the wire: a
-// transaction whose middle Put fails its condition is entirely canceled — the
+// transaction whose middle Put fails its condition is entirely canceled: the
 // CancellationReasons name the failing op and NEITHER unconditional put is
 // applied.
 func TestDDBTransactWriteAllOrNothing(t *testing.T) {

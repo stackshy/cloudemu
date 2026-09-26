@@ -3,7 +3,7 @@ package aws_test
 // REST-JSON top-level path-prefix collision test (Architecture Theme 2, #590).
 //
 // Every AWS REST-JSON handler claims traffic by the first (top-level) segment
-// of the request path — either a dated API-version segment (Route 53's
+// of the request path: either a dated API-version segment (Route 53's
 // "2013-04-01", EFS's "2015-02-01", …) or a bare resource root (GuardDuty's
 // "detector", EKS's "clusters", …). Because server.Server is first-match-wins,
 // two handlers that claim the SAME top-level segment collide: whichever
@@ -18,7 +18,7 @@ package aws_test
 // shadow into a test failure.
 //
 // This registry must be kept in sync when a REST-JSON handler is added or its
-// claimed roots change; that upkeep is the point — it forces the collision
+// claimed roots change; that upkeep is the point: it forces the collision
 // question to be answered explicitly.
 
 import (

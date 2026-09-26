@@ -37,7 +37,7 @@ func TestMatchesDeclinesForeignCredentialScope(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// A plain REST path with no X-Amz-Target / ?Action — the shape that
+			// A plain REST path with no X-Amz-Target / ?Action, the shape that
 			// previously made S3 a catch-all regardless of the signed-for service.
 			r := httptest.NewRequest(http.MethodGet, "/2016-08-19/account-settings/", nil)
 			if tc.auth != "" {

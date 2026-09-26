@@ -70,7 +70,7 @@ func mkSubnets(t *testing.T, ec2c *awsec2.Client) (vpcID string, subnetIDs []str
 
 // The real SDK encodes SubnetIds as SubnetIds.SubnetIdentifier.N. Driving this
 // through the actual client is the only way to prove the server reads the same
-// shape the client writes — a hand-rolled form would just re-assert my guess.
+// shape the client writes; a hand-rolled form would just re-assert my guess.
 func TestSubnetGroupSDKRoundTrip(t *testing.T) {
 	ctx := context.Background()
 	rdsc, ec2c := newSubnetGroupClients(t)

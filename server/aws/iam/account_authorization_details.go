@@ -78,7 +78,7 @@ type managedPolicyDetailXML struct {
 	AttachmentCount  int    `xml:"AttachmentCount"`
 	// PermissionsBoundaryUsageCount is the number of principals using this policy
 	// as a permissions boundary. The emulator does not model permissions
-	// boundaries, so it is always 0 — but real GAAD always emits the element.
+	// boundaries, so it is always 0, but real GAAD always emits the element.
 	PermissionsBoundaryUsageCount int                   `xml:"PermissionsBoundaryUsageCount"`
 	IsAttachable                  bool                  `xml:"IsAttachable"`
 	CreateDate                    string                `xml:"CreateDate,omitempty"`

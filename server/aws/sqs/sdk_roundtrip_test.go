@@ -161,7 +161,7 @@ func TestSDKSQSDeleteQueue(t *testing.T) {
 	}
 
 	// The SDK only deserializes the typed QueueDoesNotExist error when the wire
-	// __type is the modeled shape name "QueueDoesNotExist" — the shape the
+	// __type is the modeled shape name "QueueDoesNotExist", the shape the
 	// Terraform / aws-sdk-go-v2 delete waiter matches (errs.IsA) to treat a queue
 	// as gone. The legacy query code would drop back to a generic error here.
 	var qdne *sqstypes.QueueDoesNotExist

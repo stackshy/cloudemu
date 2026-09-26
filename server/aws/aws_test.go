@@ -975,7 +975,7 @@ func TestDDBQueryWithExpression(t *testing.T) {
 	assert.Len(t, result.Items, 3)
 }
 
-// S3: full lifecycle — create, put, list, get, head, copy, delete object, delete bucket.
+// S3 full lifecycle: create, put, list, get, head, copy, delete object, delete bucket.
 func TestS3FullLifecycle(t *testing.T) {
 	client := newS3Client(t)
 	ctx := context.Background()
@@ -1058,7 +1058,7 @@ func TestS3FullLifecycle(t *testing.T) {
 	}
 }
 
-// DynamoDB: full lifecycle — create table, put items, query, delete items, delete table.
+// DynamoDB full lifecycle: create table, put items, query, delete items, delete table.
 func TestDDBFullLifecycle(t *testing.T) {
 	client := newDDBClient(t)
 	ctx := context.Background()
@@ -1125,7 +1125,7 @@ func TestDDBFullLifecycle(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	// Query again — should be 1 now.
+	// Query again: should be 1 now.
 	qResult, err = client.Query(ctx, &dynamodb.QueryInput{
 		TableName:              aws.String("products"),
 		KeyConditionExpression: aws.String("category = :cat"),

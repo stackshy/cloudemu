@@ -2,7 +2,7 @@
 // cluster against the in-memory EKS control plane; a real
 // k8s.io/client-go client then talks to the in-memory Kubernetes
 // data-plane through the cluster's Endpoint. The kubeconfig path is the
-// missing piece v1.6.2 stubbed out — this test proves it now works.
+// missing piece v1.6.2 stubbed out, and this test proves it now works.
 
 package eks_test
 
@@ -36,7 +36,7 @@ import (
 //     (not the *-DATAPLANE-NOT-IMPLEMENTED sentinel).
 //   - client-go uses that Endpoint as its rest.Config.Host and creates a
 //     Namespace + ConfigMap, then lists them back.
-//   - DeleteCluster tears the K8s state down — subsequent client-go calls
+//   - DeleteCluster tears the K8s state down; later client-go calls
 //     against the same Endpoint return 404 from the unknown-cluster route.
 //
 //nolint:funlen // single end-to-end test; splitting hurts readability.
@@ -91,7 +91,7 @@ func TestSDKEKSDataPlane_NamespaceAndConfigMap(t *testing.T) {
 		t.Fatalf("Endpoint should start with %q/k8s/, got %q", ts.URL, endpoint)
 	}
 
-	// Build a client-go config that talks plain HTTP — cloudemu's K8s API
+	// Build a client-go config that talks plain HTTP. cloudemu's K8s API
 	// server is unauthenticated and uses no TLS.
 	clientset := mustClientset(t, endpoint)
 
@@ -120,7 +120,7 @@ func TestSDKEKSDataPlane_NamespaceAndConfigMap(t *testing.T) {
 		t.Fatalf("ConfigMap.Data.log_level: got %q, want debug", cm.Data["log_level"])
 	}
 
-	// List them — must include our app ns and the settings configmap.
+	// List them; the result must include our app ns and the settings configmap.
 	nsList, err := clientset.CoreV1().Namespaces().List(ctx, metav1.ListOptions{})
 	if err != nil {
 		t.Fatalf("client-go ListNamespaces: %v", err)
@@ -139,7 +139,7 @@ func TestSDKEKSDataPlane_NamespaceAndConfigMap(t *testing.T) {
 		t.Fatalf("configmaps list: got %+v", cmList.Items)
 	}
 
-	// Delete the cluster — the K8s state must go with it.
+	// Delete the cluster. The K8s state must go with it.
 	_, err = awsClient.DeleteCluster(ctx, &awseks.DeleteClusterInput{Name: aws.String(clusterName)})
 	if err != nil {
 		t.Fatalf("DeleteCluster: %v", err)
@@ -177,7 +177,7 @@ func mustClientset(t *testing.T, host string) *kubernetes.Clientset {
 	cfg := &rest.Config{
 		Host:        host,
 		BearerToken: "cloudemu-anonymous",
-		// Force JSON wire format — the in-memory K8s server does not
+		// Force JSON wire format. The in-memory K8s server does not
 		// negotiate the application/vnd.kubernetes.protobuf type that
 		// real apiservers advertise.
 		ContentConfig: rest.ContentConfig{

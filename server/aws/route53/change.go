@@ -38,7 +38,7 @@ func nowRFC3339() string {
 }
 
 // getChange answers GetChange. Every change the mock returns is applied
-// synchronously, so any change id is reported INSYNC — this unblocks the SDK's
+// synchronously, so any change id is reported INSYNC. This unblocks the SDK's
 // ResourceRecordSetsChanged waiter and propagation polling.
 func (h *Handler) getChange(w http.ResponseWriter, r *http.Request, id string) {
 	if r.Method != http.MethodGet {

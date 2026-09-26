@@ -3,8 +3,8 @@ package cloudwatch
 // This file implements the CloudWatch dashboard operations (PutDashboard,
 // GetDashboard, ListDashboards, DeleteDashboards) over the rpc-v2-cbor
 // protocol, backing the aws_cloudwatch_dashboard Terraform resource. The store
-// is an AWS-local optional capability so the shared Monitoring interface — and
-// the Azure/GCP providers — stay unchanged.
+// is an AWS-local optional capability so the shared Monitoring interface (and
+// the Azure/GCP providers) stay unchanged.
 
 import (
 	"context"

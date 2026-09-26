@@ -86,7 +86,7 @@ type updateFunctionConfigurationRequest struct {
 	DeadLetterConfig *deadLetterConfigEnvelope `json:"DeadLetterConfig"`
 	TracingConfig    *tracingConfigEnvelope    `json:"TracingConfig"`
 	// EphemeralStorage updates the function's /tmp size. UpdateFunctionConfiguration
-	// (not UpdateFunctionCode) is the API that carries it — dropping it here leaves
+	// (not UpdateFunctionCode) is the API that carries it. Dropping it here leaves
 	// GetFunction reporting the create-time size, so Terraform sees perpetual drift
 	// on every ephemeral_storage change.
 	EphemeralStorage *ephemeralStorageEnvelope `json:"EphemeralStorage"`
@@ -107,7 +107,7 @@ type updateFunctionCodeRequest struct {
 	Layers          []string `json:"Layers"`
 	// Architectures updates the function's instruction set (["x86_64"] or
 	// ["arm64"]). UpdateFunctionCode (not UpdateFunctionConfiguration) is the API
-	// that carries it — the code must match the target architecture — so dropping
+	// that carries it (the code must match the target architecture), so dropping
 	// it here leaves GetFunction reporting the create-time architecture and
 	// Terraform sees perpetual drift on every architectures change.
 	Architectures []string `json:"Architectures"`

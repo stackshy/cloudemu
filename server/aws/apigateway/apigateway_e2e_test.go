@@ -208,8 +208,8 @@ func TestE2E_UndefinedRouteForbidden(t *testing.T) {
 
 // TestE2E_DeleteLifecycle drives the full destroy path a Terraform
 // `terraform destroy` performs against a REST API: delete the integration, the
-// method, the stage, the deployment, and finally the resource — verifying each
-// step over the wire and that a re-GET afterward 404s.
+// method, the stage, the deployment, and finally the resource. Each step is
+// verified over the wire, and a re-GET afterward must 404.
 func TestE2E_DeleteLifecycle(t *testing.T) {
 	srv := newE2E(t)
 	base := srv.URL

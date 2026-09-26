@@ -49,7 +49,7 @@ type deleteCacheSubnetGroupResponse struct {
 }
 
 // subnetGroups reports whether the configured driver models cache subnet
-// groups — an AWS-only resource, so a driver for another cloud legitimately
+// groups. They are an AWS-only resource, so a driver for another cloud legitimately
 // does not.
 func (h *Handler) subnetGroups() (cachedriver.SubnetGroups, bool) {
 	sg, ok := h.cache.(cachedriver.SubnetGroups)
@@ -148,7 +148,7 @@ func toCacheSubnetGroupXML(sg *cachedriver.SubnetGroup) cacheSubnetGroupXML {
 // writeUnsupported reports a capability this driver does not implement.
 //
 // The code is InvalidAction because that is what the service answers for an
-// operation it does not serve — and because a caller matching on the code sees
+// operation it does not serve, and because a caller matching on the code sees
 // this, not the message. Routing it through the generic error mapping would
 // have produced InvalidParameterValue while the message claimed otherwise.
 func writeUnsupported(w http.ResponseWriter, what string) {

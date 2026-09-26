@@ -11,7 +11,7 @@ import (
 
 // AWS-managed policies used to carry an empty placeholder document, so
 // attaching one and then simulating an action against it always came back
-// implicitDeny — the policy granted nothing. These tests attach a real
+// implicitDeny because the policy granted nothing. These tests attach a real
 // AWS-managed policy through the SDK and simulate against it, the way a real
 // caller checking "can my role do X" would, to confirm the curated documents
 // actually grant what they say they grant.

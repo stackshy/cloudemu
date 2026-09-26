@@ -201,7 +201,7 @@ func (h *Handler) deleteSecurityGroup(w http.ResponseWriter, r *http.Request) {
 	if err := h.vpc.DeleteSecurityGroup(r.Context(), id); err != nil {
 		// The default security group is non-deletable: EC2 answers a distinct
 		// Client.CannotDelete code rather than the generic DependencyViolation.
-		// Matched on the driver's clean message text — "cannot be deleted"
+		// Matched on the driver's clean message text: "cannot be deleted"
 		// appears only in this case (the in-use/referenced case says "is in
 		// use by", not "cannot be deleted").
 		if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "cannot be deleted") {
@@ -491,7 +491,7 @@ func (h *Handler) revokeSecurityGroupEgress(w http.ResponseWriter, r *http.Reque
 }
 
 // tolerateMissingRule makes a Revoke idempotent: real EC2 does not fail when a
-// revoked rule is absent, and IaC tools depend on it — Terraform strips the
+// revoked rule is absent, and IaC tools depend on it. Terraform strips the
 // default egress rules (IPv4 and IPv6) from a new group, but a v4-only VPC has
 // no IPv6 default to remove.
 func tolerateMissingRule(remove ruleFunc) ruleFunc {
@@ -597,8 +597,8 @@ func (h *Handler) writeAuthorizeSGResponse(w http.ResponseWriter, name, groupID 
 	})
 }
 
-// permPortPtr returns nil for the all-protocols ("-1") rule — whose port range
-// the IpPermission shape (DescribeSecurityGroups) omits — and a pointer to p for
+// permPortPtr returns nil for the all-protocols ("-1") rule, whose port range
+// the IpPermission shape (DescribeSecurityGroups) omits, and a pointer to p for
 // every other protocol, so a real port (including 0) is still emitted.
 func permPortPtr(protocol string, p int) *int {
 	if protocol == allProtocols {
@@ -612,8 +612,8 @@ func permPortPtr(protocol string, p int) *int {
 
 // rulePortValue returns the fromPort/toPort value the flat SecurityGroupRule
 // shape (DescribeSecurityGroupRules / Authorize) reports. AWS reports -1 for the
-// all-protocols ("-1") rule there — unlike the IpPermission shape, which omits
-// the ports entirely — so translate the stored value accordingly.
+// all-protocols ("-1") rule there (unlike the IpPermission shape, which omits
+// the ports entirely), so translate the stored value accordingly.
 func rulePortValue(protocol string, p int) int {
 	if protocol == allProtocols {
 		return -1

@@ -15,7 +15,7 @@ import (
 )
 
 // DocumentDB ships its own aws-sdk-go-v2 client but speaks the exact same
-// query-protocol wire shape as RDS — only the Engine value ("docdb") and
+// query-protocol wire shape as RDS. Only the Engine value ("docdb") and
 // default port (27017) differ. The tests below drive the real DocDB client
 // against the cloudemu RDS handler to prove the shared surface holds.
 
@@ -103,7 +103,7 @@ func TestSDKDocDBInstanceLifecycle(t *testing.T) {
 	client := newDocDBSDKClient(t)
 	ctx := context.Background()
 
-	// DocumentDB instances must be created inside a cluster — the SDK enforces
+	// DocumentDB instances must be created inside a cluster; the SDK enforces
 	// DBClusterIdentifier as a required field for CreateDBInstance.
 	if _, err := client.CreateDBCluster(ctx, &awsdocdb.CreateDBClusterInput{
 		DBClusterIdentifier: aws.String("doc-host"),

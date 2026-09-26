@@ -40,7 +40,7 @@ func TestSDKCountTokensConverse(t *testing.T) {
 }
 
 // TestSDKCountTokensInvokeModel exercises the invokeModel union member, whose
-// body the SDK serializes as a base64 blob — the server must decode it back to
+// body the SDK serializes as a base64 blob. The server must decode it back to
 // the model-native payload before counting tokens.
 func TestSDKCountTokensInvokeModel(t *testing.T) {
 	client := newRuntimeClient(t)

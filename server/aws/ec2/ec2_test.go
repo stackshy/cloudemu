@@ -141,7 +141,7 @@ func TestServeHTTPUnknownActionReturns400(t *testing.T) {
 
 func TestServeHTTPEveryActionRoutes(t *testing.T) {
 	// Prove every switch arm in ServeHTTP is exercised. We don't assert on
-	// the response here — we just verify it doesn't hit the default case.
+	// the response here; we just verify it doesn't hit the default case.
 	h := newHandler()
 
 	run := do(t, h, http.MethodPost, "/", url.Values{
@@ -366,8 +366,8 @@ func TestStateChangesFrom(t *testing.T) {
 func TestStripInstancePrefix(t *testing.T) {
 	cases := []struct{ in, want string }{
 		{"i-abc", "abc"},
-		{"i-", "i-"},   // too short — unchanged
-		{"foo", "foo"}, // no prefix — unchanged
+		{"i-", "i-"},   // too short: unchanged
+		{"foo", "foo"}, // no prefix: unchanged
 		{"", ""},
 	}
 
@@ -462,7 +462,7 @@ func TestModifyInstanceAttributeNoopReturnsOK(t *testing.T) {
 		t.Fatal("no instance id from RunInstances")
 	}
 
-	// Modify with no InstanceType.Value — should noop with 200.
+	// Modify with no InstanceType.Value: should noop with 200.
 	rr := do(t, h, http.MethodPost, "/", url.Values{
 		"Action":     {"ModifyInstanceAttribute"},
 		"InstanceId": {id},

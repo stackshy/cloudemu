@@ -21,8 +21,8 @@ const concurrentContenders = 25
 // ChangeResourceRecordSets is atomic even when two batches race against the
 // same zone: every batch either applies in full or leaves no trace, never
 // partially. Each of concurrentContenders goroutines submits a two-change
-// batch — CREATE a goroutine-unique record, then DELETE a single shared
-// record that only one batch can win — against the same zone at once. Without
+// batch (CREATE a goroutine-unique record, then DELETE a single shared
+// record that only one batch can win) against the same zone at once. Without
 // serializing a batch's validate-then-apply against concurrent writers, a
 // losing goroutine could have its CREATE applied before its DELETE fails on
 // the now-missing shared record, returning an error to the caller while

@@ -7,7 +7,7 @@ import (
 
 // page resolves the [from,to) window and the next PaginationToken for a slice of
 // the given length, resuming from token and chunking in size-element pages. A
-// size <= 0 means "no client-imposed page size" — the rest of the slice is
+// size <= 0 means "no client-imposed page size", so the rest of the slice is
 // returned in one page. next is "" when no further page remains.
 func page(total int, token string, size int) (from, to int, next string) {
 	start := decodeOffsetToken(token)

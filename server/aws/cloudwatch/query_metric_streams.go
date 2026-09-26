@@ -3,9 +3,9 @@ package cloudwatch
 // This file adds the classic AWS query-protocol path (form-encoded POST,
 // Action=..., XML responses) for the CloudWatch metric-stream operations and
 // their tags, so `aws cloudwatch ...` and Terraform's aws_cloudwatch_metric_stream
-// resource — both of which still speak query protocol for CloudWatch, unlike
-// the modern rpc-v2-cbor path used by current aws-sdk-go-v2 — work against the
-// emulator. See query.go for the shared query-protocol plumbing.
+// resource work against the emulator. Both still speak query protocol for
+// CloudWatch, unlike current aws-sdk-go-v2, which uses rpc-v2-cbor. See query.go
+// for the shared query-protocol plumbing.
 
 import (
 	"context"
@@ -192,7 +192,7 @@ var errTaggingUnsupported = errors.New("tagging not supported")
 
 // queryTagResource, queryUntagResource, and queryListTagsForResource route to
 // the metric-stream tagger when ResourceARN names a metric stream, and to the
-// alarm tagger otherwise — mirroring the rpc-v2-cbor tagResource/untagResource/
+// alarm tagger otherwise, mirroring the rpc-v2-cbor tagResource/untagResource/
 // listTagsForResource dispatch in metric_data_ops.go. Each delegates to a
 // small ARN-routing helper so the two resource kinds' near-identical bodies
 // aren't duplicated per operation.
@@ -407,9 +407,9 @@ func toTagMemberXMLs(tags map[string]string) []tagMemberXML {
 
 // emptyQueryResult renders a nameless <XxxResult/> element for an operation
 // whose response carries no fields. The query-protocol deserializer still
-// requires that element to be present — e.g. DeleteMetricStream fails to
-// deserialize a response with no DeleteMetricStreamResult node at all — even
-// though the operation returns no data.
+// requires that element to be present even though the operation returns no
+// data; DeleteMetricStream, for example, fails to deserialize a response with no
+// DeleteMetricStreamResult node.
 func emptyQueryResult(name string) any {
 	return struct {
 		XMLName xml.Name

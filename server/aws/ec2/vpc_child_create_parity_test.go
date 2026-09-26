@@ -13,7 +13,7 @@ const missingVPC = "vpc-00000000"
 
 // TestCreateChildMissingVPCCode pins that creating a subnet, security group, or
 // route table against a VpcId that does not exist reports InvalidVpcID.NotFound
-// — the VPC is the missing resource — rather than the created resource's own
+// (the VPC is the missing resource) rather than the created resource's own
 // NotFound code (InvalidSubnetID/InvalidGroup/InvalidRouteTableID.NotFound),
 // which would wrongly claim the not-yet-created child is absent. A user pointing
 // a subnet/SG/route table at a typo'd or wrong VPC must get the VPC error.

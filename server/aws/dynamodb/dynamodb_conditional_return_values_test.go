@@ -1,4 +1,4 @@
-// dynamodb_conditional_return_values_test.go — real aws-sdk-go-v2 journeys
+// dynamodb_conditional_return_values_test.go: real aws-sdk-go-v2 journeys
 // asserting ReturnValuesOnConditionCheckFailure=ALL_OLD returns the conflicting
 // item in ConditionalCheckFailedException.Item for PutItem, UpdateItem and
 // DeleteItem, and that omitting it leaves Item empty.
@@ -115,7 +115,7 @@ func TestDDBDeleteItemConditionFailureReturnsItem(t *testing.T) {
 	require.NotEmpty(t, ccf.Item)
 	assert.Equal(t, "green", attrS(t, ccf.Item, "color"))
 
-	// The item is still present — a failed conditional delete does not remove it.
+	// The item is still present; a failed conditional delete does not remove it.
 	got := suiteDDBGet(t, client, "widgets", map[string]ddbtypes.AttributeValue{"id": sAttr("w1")})
 	require.NotEmpty(t, got.Item)
 	assert.Equal(t, "green", attrS(t, got.Item, "color"))

@@ -306,7 +306,7 @@ func TestSDKSynthesizedOpReturnsEmpty(t *testing.T) {
 	c := newGlueClient(t)
 
 	// A synthesized read-only op should succeed with an empty page rather than
-	// erroring — the wire contract is preserved.
+	// erroring, so the wire contract is preserved.
 	out, err := c.ListMLTransforms(ctx, &awsglue.ListMLTransformsInput{})
 	if err != nil {
 		t.Fatalf("ListMLTransforms: %v", err)

@@ -35,7 +35,7 @@ const (
 // the operation, e.g. "DynamoDB_20120810." or "TrentService.") to the IAM
 // service the operation belongs to. The X-Amz-Target header is the value the
 // dispatcher itself routes on, so a service derived from it is bound to the
-// handler that actually runs — unlike the SigV4 credential scope, which the
+// handler that actually runs, unlike the SigV4 credential scope, which the
 // client controls independently of the operation. Every JSON-RPC service the
 // wire server serves must appear here; an unmapped target fails closed.
 //
@@ -86,7 +86,7 @@ var jsonRPCServiceByTarget = map[string]string{
 // header both routes the request and names the service, so the service the gate
 // authorizes is the one the handler runs. The query and REST protocols are
 // authenticated only: there the executed operation's IAM service is not bound to
-// any pre-dispatch signal the gate can trust — query dispatch routes on the
+// any pre-dispatch signal the gate can trust. Query dispatch routes on the
 // action name (a single handler, e.g. EC2, serves several IAM services such as
 // ec2/vpc/autoscaling), and the SigV4 credential scope is client-controlled and
 // decoupled from the operation. Authorizing query/REST on that scope would let a
@@ -174,7 +174,7 @@ func requestConditionContext(r *http.Request, p authctx.Principal) map[string]st
 }
 
 // clientIP extracts the caller's source IP for the aws:SourceIp condition key.
-// It uses ONLY the connection's RemoteAddr (port stripped) — never the
+// It uses ONLY the connection's RemoteAddr (port stripped), never the
 // caller-controlled X-Forwarded-For header. The wire server has no trusted
 // reverse proxy in front of it, so honoring X-Forwarded-For would let any
 // client spoof its source IP and defeat the IpAddress/NotIpAddress conditions.

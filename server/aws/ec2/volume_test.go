@@ -417,7 +417,7 @@ func TestAttachAlreadyAttachedVolumeReturnsVolumeInUse(t *testing.T) {
 
 // TestAttachVolumeToTerminatedInstanceRejected pins that attaching a volume to
 // a terminated instance is rejected with IncorrectInstanceState (a volume can
-// only attach to a running or stopped instance), with a clean message — no
+// only attach to a running or stopped instance), with a clean message and no
 // "IncorrectInstanceState:" prefix leaked from the internal error type.
 func TestAttachVolumeToTerminatedInstanceRejected(t *testing.T) {
 	ctx := context.Background()
@@ -467,7 +467,7 @@ func TestAttachVolumeToTerminatedInstanceRejected(t *testing.T) {
 
 // TestDetachVolumeWrongInstanceRejected pins that detaching a volume while
 // naming an instance it isn't actually attached to is rejected with
-// InvalidAttachment.NotFound, with a clean message — no
+// InvalidAttachment.NotFound, with a clean message and no
 // "InvalidAttachment.NotFound:" prefix leaked from the internal error type.
 func TestDetachVolumeWrongInstanceRejected(t *testing.T) {
 	ctx := context.Background()

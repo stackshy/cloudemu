@@ -214,7 +214,7 @@ func TestDescribeTagsReturnsLoadBalancerTags(t *testing.T) {
 
 // A caller waiting for a delete to settle polls DescribeLoadBalancers with the
 // ARN until it errors. An empty list with no error leaves it polling to its
-// timeout over a load balancer that is already gone — which is exactly what a
+// timeout over a load balancer that is already gone, which is what a
 // teardown reports as "still present".
 func TestDescribeDeletedLoadBalancerIsNotFound(t *testing.T) {
 	ctx := context.Background()

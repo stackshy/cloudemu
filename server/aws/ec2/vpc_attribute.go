@@ -84,8 +84,8 @@ func (h *Handler) describeVpcAttribute(w http.ResponseWriter, r *http.Request) {
 // modifyVpcAttribute sets one DNS attribute of a VPC.
 //
 // The real API accepts exactly one attribute per call and leaves the other
-// untouched, so an absent parameter must mean "unchanged" rather than "false"
-// — a caller enabling DNS hostnames would otherwise silently turn DNS support
+// untouched, so an absent parameter must mean "unchanged" rather than "false".
+// Otherwise a caller enabling DNS hostnames would silently turn DNS support
 // off.
 func (h *Handler) modifyVpcAttribute(w http.ResponseWriter, r *http.Request) {
 	support := boolAttributeValue(r, "EnableDnsSupport")

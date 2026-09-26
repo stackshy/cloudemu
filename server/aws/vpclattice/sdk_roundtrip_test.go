@@ -475,7 +475,7 @@ func TestSDKAssociations(t *testing.T) {
 	}
 
 	// ResourceEndpointAssociations aren't synthesized by the emulator, so a
-	// delete resolves to NotFound — exercises the otherwise-unreachable handler.
+	// delete resolves to NotFound. This exercises the otherwise-unreachable handler.
 	_, e := client.DeleteResourceEndpointAssociation(ctx, &awsvpcl.DeleteResourceEndpointAssociationInput{
 		ResourceEndpointAssociationIdentifier: aws.String("rea-none"),
 	})

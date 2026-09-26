@@ -136,7 +136,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 	// S3 shares the single wire endpoint with every other REST service and has no
 	// distinguishing path prefix (bucket names are arbitrary), so it must not act
-	// as a blind REST catch-all — otherwise another service's unrouted op is
+	// as a blind REST catch-all. Otherwise another service's unrouted op is
 	// swallowed here and answered with a bogus NoSuchBucket (or a false 200). The
 	// SigV4 credential scope names the service the caller signed for, so decline a
 	// request explicitly signed for a different service; it then reaches that
@@ -246,7 +246,7 @@ func (h *Handler) bucketOp(w http.ResponseWriter, r *http.Request, bucket string
 		return
 	case q.Has("acl"):
 		// GET returns a canned ACL; a PUT is a no-op so it does NOT fall through
-		// to createBucket (which 409s) — see aclOp.
+		// to createBucket (which 409s); see aclOp.
 		h.aclOp(w, r)
 		return
 	}
@@ -426,7 +426,7 @@ func (h *Handler) createBucket(w http.ResponseWriter, r *http.Request, bucket st
 		// In us-east-1 (the global endpoint) re-creating a bucket you already own
 		// is idempotent and returns 200; every other region returns 409
 		// BucketAlreadyOwnedByYou. cloudemu models a single account, so an existing
-		// bucket is always same-owner — the region alone decides.
+		// bucket is always same-owner and the region alone decides.
 		if cerrors.IsAlreadyExists(err) && h.bucketRegion(r.Context(), bucket) == usEast1 {
 			w.Header().Set("Location", "/"+bucket)
 			w.WriteHeader(http.StatusOK)
@@ -737,7 +737,7 @@ func (h *Handler) storePut(
 	// Real S3 always returns the object's ETag. Read it back from the driver so
 	// there is a single source of truth for the ETag algorithm; if a concurrent
 	// delete races the read-back, fall back to computing it from the body we
-	// just stored — a successful PUT must never answer 404.
+	// just stored. A successful PUT must never answer 404.
 	etag = hex.EncodeToString(md5Sum(data))
 	if info, err := h.bucket.HeadObject(r.Context(), bucket, key); err == nil {
 		etag = info.ETag
@@ -1407,7 +1407,7 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key
 	replace := strings.EqualFold(r.Header.Get("X-Amz-Metadata-Directive"), "REPLACE")
 
 	// Copying an object onto itself with the default COPY directive, the current
-	// version, and no metadata change is illegal — S3 answers 400 InvalidRequest.
+	// version, and no metadata change is illegal; S3 answers 400 InvalidRequest.
 	if isIllegalSelfCopy(replace, srcVersionID, srcBucket, srcKey, bucket, key) {
 		writeError(w, http.StatusBadRequest, "InvalidRequest",
 			"This copy request is illegal because it is trying to copy an object to itself without "+
@@ -1433,7 +1433,7 @@ func (h *Handler) copyObject(w http.ResponseWriter, r *http.Request, bucket, key
 }
 
 // isIllegalSelfCopy reports whether a copy is a no-op self-copy: same key, the
-// default COPY directive, and the current source version — which S3 rejects.
+// default COPY directive, and the current source version. S3 rejects it.
 func isIllegalSelfCopy(replace bool, srcVersionID, srcBucket, srcKey, dstBucket, dstKey string) bool {
 	return !replace && srcVersionID == "" && srcBucket == dstBucket && srcKey == dstKey
 }
@@ -1552,9 +1552,9 @@ func applyCopyConditions(req *driver.CopyObjectRequest, hdr http.Header) {
 // evalCopySourceConditions evaluates the x-amz-copy-source-if-* request headers
 // against a resolved source object, returning a FailedPrecondition error (mapped
 // to 412 by writeCopyErr) when a precondition is not satisfied. UploadPartCopy
-// honors the same four copy-source conditions — and the same documented
-// combined-precedence override, where a true if-match overrides a false
-// if-unmodified-since — as CopyObject.
+// honors the same four copy-source conditions as CopyObject, including the
+// documented combined-precedence override where a true if-match overrides a
+// false if-unmodified-since.
 func evalCopySourceConditions(hdr http.Header, etag, lastModified string) error {
 	etag = strings.Trim(etag, `"`)
 	ifMatch := hdr.Get("X-Amz-Copy-Source-If-Match")
@@ -1672,7 +1672,7 @@ func (h *Handler) uploadPartCopy(w http.ResponseWriter, r *http.Request, bucket,
 	})
 }
 
-// parsePartNumber reads and validates the partNumber query parameter (1–10000).
+// parsePartNumber reads and validates the partNumber query parameter (1 to 10000).
 func parsePartNumber(q url.Values) (int, bool) {
 	n, err := strconv.Atoi(q.Get("partNumber"))
 	if err != nil || n < 1 || n > maxUploadPartNumber {
@@ -1992,7 +1992,7 @@ func (h *Handler) listMultipartUploads(w http.ResponseWriter, r *http.Request, b
 		resp.IsTruncated = true
 		// S3 reports the last upload returned as the next markers; the resumed
 		// request lists uploads strictly after that key/upload-id pair. Capture
-		// the resume position BEFORE slicing — with max-uploads=0 no uploads are
+		// the resume position BEFORE slicing. With max-uploads=0 no uploads are
 		// returned, so fall back to the incoming markers rather than losing the
 		// caller's position (which would silently restart pagination).
 		if resp.MaxUploads > 0 {
@@ -2309,7 +2309,7 @@ func (h *Handler) collectObjectVersions(
 		return result.Versions, result.CommonPrefixes, nil
 	}
 
-	// Fallback: no version history — list current objects as the "null" version.
+	// Fallback: with no version history, list current objects as the "null" version.
 	result, lerr := h.bucket.ListObjects(ctx, bucket, opts)
 	if lerr != nil {
 		return nil, nil, lerr
@@ -2333,7 +2333,7 @@ func (h *Handler) collectObjectVersions(
 // version-id-marker pair so a resumed listing starts at the first not-yet-
 // returned version. With only a key-marker, listing resumes at keys strictly
 // greater than it; with both, it resumes at the entry matching the pair
-// (inclusive) — the values S3 reports as NextKeyMarker/NextVersionIdMarker.
+// (inclusive), which are the values S3 reports as NextKeyMarker/NextVersionIdMarker.
 func skipToVersionMarker(entries []driver.ObjectVersion, keyMarker, versionIDMarker string) []driver.ObjectVersion {
 	if keyMarker == "" {
 		return entries
@@ -2376,7 +2376,7 @@ func extractSystemProps(h http.Header) driver.ObjectSystemProps {
 	}
 }
 
-// storageClassOrDefault returns sc, or STANDARD when sc is empty — the value S3
+// storageClassOrDefault returns sc, or STANDARD when sc is empty, the value S3
 // reports in a listing's <StorageClass> element for a default-class object.
 func storageClassOrDefault(sc string) string {
 	if sc == "" {
@@ -2433,7 +2433,7 @@ func parseTaggingHeader(header string) map[string]string {
 }
 
 // writeDeleteMarker answers a version-addressed GET/HEAD of a delete marker
-// with 405 MethodNotAllowed and x-amz-delete-marker: true, as S3 does — a
+// with 405 MethodNotAllowed and x-amz-delete-marker: true, as S3 does, since a
 // delete marker has no retrievable content. It returns false when err is not a
 // delete marker, leaving the caller to handle it normally.
 func writeDeleteMarker(w http.ResponseWriter, err error, versionID string) bool {
@@ -2494,7 +2494,7 @@ func writeCompleteMultipartErr(w http.ResponseWriter, err error) {
 // than an object. The driver formats object misses as `object ... not
 // found in bucket ...` and bucket misses as `[source |destination ]bucket
 // ... not found`, so exclude the object form first, then require the word
-// bucket — robust to the source/destination copy variants.
+// bucket. That is robust to the source/destination copy variants.
 func bucketMissing(err error) bool {
 	var ce *cerrors.Error
 	if !errors.As(err, &ce) {
@@ -2526,7 +2526,7 @@ func writeErr(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusForbidden, "AccessDenied", msg)
 	case cerrors.IsFailedPrecondition(err):
 		// Deleting a non-empty bucket is a client error in real S3, not a
-		// server fault — and a 5xx would trigger SDK retry backoff.
+		// server fault, and a 5xx would trigger SDK retry backoff.
 		writeError(w, http.StatusConflict, "BucketNotEmpty", msg)
 	default:
 		writeError(w, http.StatusInternalServerError, "InternalError", msg)

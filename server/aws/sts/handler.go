@@ -52,7 +52,7 @@ var stsActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 // decide whether the caller may assume a role. It is not part of the portable
 // IAM driver, so the handler type-asserts the injected IAM driver for it. When
 // the driver does not implement it (or none was wired), AssumeRole stays
-// permissive — the standalone behavior for callers that only need init creds.
+// permissive, the standalone behavior for callers that only need init creds.
 type roleTrustEvaluator interface {
 	EvaluateAssumeRoleTrust(ctx context.Context, roleName, callerPrincipal string) (roleExists, allowed bool)
 }
@@ -82,7 +82,7 @@ type Handler struct {
 	// that minted it rather than a constant. It is populated regardless of
 	// EnforceAuth. With EnforceAuth off every mint shares cloudemu's one fixed
 	// synthetic access key id (see mintCredentials), so this map holds a single
-	// entry that reflects whichever operation minted most recently — a known
+	// entry that reflects whichever operation minted most recently. That is a known
 	// limitation of the unauthenticated default. With EnforceAuth on each mint
 	// gets a unique key, so entries never collide.
 	identMu    sync.RWMutex

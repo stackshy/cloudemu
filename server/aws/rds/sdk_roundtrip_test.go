@@ -300,7 +300,7 @@ func TestSDKRDSAuroraCluster(t *testing.T) {
 }
 
 // Sanity check: when both RDS and EC2 handlers are wired, an EC2 request still
-// reaches the EC2 handler — the RDS handler's Matches must reject non-RDS
+// reaches the EC2 handler. The RDS handler's Matches must reject non-RDS
 // actions despite parsing the form first.
 func TestSDKRDSRoutingDoesNotShadowEC2(t *testing.T) {
 	cloud := cloudemu.NewAWS()

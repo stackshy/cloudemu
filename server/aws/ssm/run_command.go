@@ -81,7 +81,7 @@ func (h *Handler) sendCommand(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		// A rejected target is InvalidInstanceId, not the parameter-store
 		// not-found the generic mapping would produce. Callers branch on this
-		// code — it is the ordinary Run Command bring-up failure — and
+		// code (it is the ordinary Run Command bring-up failure), and
 		// ParameterNotFound would send them looking at the wrong subsystem.
 		if cerrors.IsNotFound(err) {
 			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidInstanceId", cerrors.Message(err))
@@ -93,8 +93,8 @@ func (h *Handler) sendCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Real SSM reports the command as Pending here — it has been accepted, not
-	// finished — and the caller learns the outcome from GetCommandInvocation.
+	// Real SSM reports the command as Pending here (it has been accepted, not
+	// finished), and the caller learns the outcome from GetCommandInvocation.
 	// Reporting Success would invite a caller to skip the poll it would need
 	// against the real service.
 	wire.WriteJSON(w, sendCommandResponse{Command: commandJSON{

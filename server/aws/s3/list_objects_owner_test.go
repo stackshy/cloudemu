@@ -57,7 +57,7 @@ func TestListObjectsV2FetchOwner(t *testing.T) {
 }
 
 // TestListObjectsV1AlwaysOwner pins that ListObjects (v1) always returns an
-// <Owner> element for each object — v1 has no fetch-owner parameter, so the
+// <Owner> element for each object. v1 has no fetch-owner parameter, so the
 // element is unconditional, unlike ListObjectsV2.
 func TestListObjectsV1AlwaysOwner(t *testing.T) {
 	ctx := context.Background()

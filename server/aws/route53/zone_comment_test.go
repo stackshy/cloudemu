@@ -10,7 +10,7 @@ import (
 )
 
 // TestSDKZoneCommentPersisted locks that HostedZoneConfig.Comment is persisted
-// and returned on both Create and Get — a perpetual-diff risk for Terraform's
+// and returned on both Create and Get. Dropping it is a perpetual-diff risk for Terraform's
 // aws_route53_zone, which reads the comment back after setting it.
 func TestSDKZoneCommentPersisted(t *testing.T) {
 	client := newRoute53Client(t)

@@ -481,7 +481,7 @@ func (h *Handler) terminateInstances(w http.ResponseWriter, r *http.Request) {
 // changes route through the portable driver (which enforces the stopped
 // precondition); DisableApiTermination / SourceDestCheck route through the
 // AWS-specific instanceAttributer so they take effect (previously accepted and
-// silently discarded — a false success dangerous for IaC).
+// silently discarded, a false success that is dangerous for IaC).
 func (h *Handler) modifyInstanceAttribute(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("InstanceId")
 
@@ -1004,8 +1004,8 @@ func metadataOptionsXMLFor(o *computedriver.MetadataOptions) *metadataOptionsXML
 // device index, private IP, subnet and attachment id. Interfaces are ordered by
 // device index so eth0 comes first.
 //
-// When the store holds no interface for the instance — a launch with no subnet,
-// or a networking backend that does not model ENIs — it falls back to a single
+// When the store holds no interface for the instance (a launch with no subnet,
+// or a networking backend that does not model ENIs), it falls back to a single
 // synthesized primary interface from the instance's own subnet/VPC/private-IP so
 // those instances still describe an interface.
 func instanceENIs(inst *computedriver.Instance, groups []groupItem, enis []netdriver.NetworkInterface) []instanceENIXML {

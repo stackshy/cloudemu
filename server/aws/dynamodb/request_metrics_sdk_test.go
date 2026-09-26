@@ -15,8 +15,8 @@ import (
 )
 
 // TestDDBRequestMetricsPerWireOperation pins that every wire operation is
-// metered once per request (per table) under its own Operation name —
-// BatchWriteItem, BatchGetItem, TransactWriteItems, TransactGetItems — rather
+// metered once per request (per table) under its own Operation name
+// (BatchWriteItem, BatchGetItem, TransactWriteItems, TransactGetItems) rather
 // than as the per-item PutItem/GetItem calls it fans out into, and that a
 // GetItem miss (HTTP 200, no Item) is still a metered successful request.
 func TestDDBRequestMetricsPerWireOperation(t *testing.T) {

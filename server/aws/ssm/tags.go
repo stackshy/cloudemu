@@ -23,7 +23,7 @@ type ssmTag struct {
 }
 
 // writeTagErr maps a tagging-operation error to its SSM JSON error response. A
-// missing resource is InvalidResourceId here — distinct from writeErr's
+// missing resource is InvalidResourceId here, distinct from writeErr's
 // ParameterNotFound, which real SSM reserves for parameter-specific reads
 // (GetParameter/DeleteParameter/…); the tagging API names its target by
 // ResourceType+ResourceId and can point at any taggable SSM resource, not only

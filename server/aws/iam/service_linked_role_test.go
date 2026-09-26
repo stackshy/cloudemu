@@ -88,7 +88,7 @@ func TestSDKCreateServiceLinkedRoleCanonicalNames(t *testing.T) {
 }
 
 // TestSDKCreateServiceLinkedRoleDuplicate asserts a duplicate service-linked-role
-// name surfaces as InvalidInput (400) — EntityAlreadyExists is not in this
+// name surfaces as InvalidInput (400). EntityAlreadyExists is not in this
 // action's AWS error set at all.
 func TestSDKCreateServiceLinkedRoleDuplicate(t *testing.T) {
 	client := newSDKClient(t)

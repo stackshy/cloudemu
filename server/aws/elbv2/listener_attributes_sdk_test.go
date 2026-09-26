@@ -50,8 +50,8 @@ func mkListenerOfType(t *testing.T, client *elb.Client, lbType elbtypes.LoadBala
 	return aws.ToString(liOut.Listeners[0].ListenerArn)
 }
 
-// TestDescribeListenerAttributesDefaults proves DescribeListenerAttributes —
-// entirely unsupported before this fix — now returns the ELBv2 defaults
+// TestDescribeListenerAttributesDefaults proves DescribeListenerAttributes
+// (entirely unsupported before this fix) now returns the ELBv2 defaults
 // derived from the parent load balancer's type: a Network Load Balancer
 // listener defaults tcp.idle_timeout.seconds to 350, matching the
 // ListenerAttribute API reference.

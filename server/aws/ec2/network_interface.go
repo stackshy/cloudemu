@@ -77,7 +77,7 @@ type deleteNetworkInterfaceResponseXML struct {
 
 // describeNetworkInterfaces answers by id and by the filters listed in
 // eniFilterField. Filters it does not implement are rejected rather than
-// ignored — see validateENIFilters.
+// ignored; see validateENIFilters.
 func (h *Handler) describeNetworkInterfaces(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "NetworkInterfaceId")
 	filters := awsquery.Filters(r.Form)
@@ -162,7 +162,7 @@ func eniAttachmentFilterField(eni *netdriver.NetworkInterface, name string) (str
 		return eni.AttachmentID, true
 	case "attachment.status":
 		// CloudEmu attaches synchronously, so an interface with an instance
-		// attachment is always "attached" — there is no transient
+		// attachment is always "attached". There is no transient
 		// attaching/detaching window to report.
 		if eni.InstanceID == "" {
 			return "", true
@@ -180,7 +180,7 @@ func eniAttachmentFilterField(eni *netdriver.NetworkInterface, name string) (str
 // is the safe behavior to copy: silently returning nothing would tell a
 // caller draining a VPC that there is nothing left to drain, so it would
 // proceed to a VPC delete that then fails with DependencyViolation. Matching
-// everything instead is equally bad — it hands back interfaces the caller
+// everything instead is equally bad: it hands back interfaces the caller
 // never asked for and may delete. An explicit error is the only answer that
 // cannot be mistaken for a result.
 func validateENIFilters(filters []awsquery.Filter) error {
@@ -249,8 +249,8 @@ func (h *Handler) createNetworkInterface(w http.ResponseWriter, r *http.Request)
 
 // attachNetworkInterface attaches an existing ENI to an instance
 // (ec2:AttachNetworkInterface). The instance's existence is verified against
-// the compute driver here — the networking provider does not model instances —
-// so an unknown instance answers InvalidInstanceID.NotFound.
+// the compute driver here, because the networking provider does not model
+// instances. An unknown instance answers InvalidInstanceID.NotFound.
 func (h *Handler) attachNetworkInterface(w http.ResponseWriter, r *http.Request) {
 	attacher, ok := h.vpc.(netdriver.NetworkInterfaceAttacher)
 	if !ok {
@@ -287,7 +287,7 @@ func (h *Handler) attachNetworkInterface(w http.ResponseWriter, r *http.Request)
 
 // writeENIAttachErr maps an already-attached interface to InvalidNetworkInterface.InUse
 // (real EC2's code), falling back to the shared ENI error mapping otherwise.
-// Matched on the driver's clean message text — "is already attached to
+// Matched on the driver's clean message text: "is already attached to
 // instance" appears only in this case.
 func writeENIAttachErr(w http.ResponseWriter, err error) {
 	if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "is already attached to instance") {
@@ -378,7 +378,7 @@ func (h *Handler) modifyNetworkInterfaceAttribute(w http.ResponseWriter, r *http
 
 // writeENIDeleteErr maps a delete-while-attached interface to
 // InvalidNetworkInterface.InUse (real EC2's code), falling back to the shared ENI
-// error mapping otherwise. Matched on the driver's clean message text —
+// error mapping otherwise. Matched on the driver's clean message text:
 // "is currently in use and cannot be deleted" appears only in this case.
 func writeENIDeleteErr(w http.ResponseWriter, err error) {
 	if cerrors.IsFailedPrecondition(err) && strings.Contains(err.Error(), "is currently in use and cannot be deleted") {

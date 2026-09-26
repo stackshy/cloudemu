@@ -14,7 +14,7 @@ import (
 
 // TestSDKDisabledKMSKeyIsDecryptionAndEncryptionFailure covers that once a
 // secret's KMS key is disabled, reads answer DecryptionFailure and writes
-// answer EncryptionFailure — the dedicated Secrets Manager exceptions, not the
+// answer EncryptionFailure, the dedicated Secrets Manager exceptions, not the
 // generic InvalidRequestException.
 // Real Secrets Manager's fixed KMS failure messages.
 const (

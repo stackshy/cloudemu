@@ -29,7 +29,7 @@ type describeEndpointsResponse struct {
 // the data operations; the emulator returns a single endpoint pointing at the
 // request's own host, so a discovering client routes subsequent operations back
 // here rather than at a real AWS cell. Clients configured with a custom
-// endpoint (the emulator's endpoint override — how terraform-provider-aws and
+// endpoint (the emulator's endpoint override, which is how terraform-provider-aws and
 // the aws-sdk-go-v2 client reach the emulator) skip discovery entirely and
 // never call this; it is served for completeness and for discovering clients.
 func (*Handler) describeEndpoints(w http.ResponseWriter, r *http.Request) {

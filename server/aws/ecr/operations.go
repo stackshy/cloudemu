@@ -111,7 +111,7 @@ func (h *Handler) deleteRepository(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A stale lifecycle-policy-preview result must not survive the repository
-	// it was computed against — clear it so a later Get on a same-named
+	// it was computed against. Clear it so a later Get on a same-named
 	// repository (recreated after this delete) cannot replay it.
 	h.previewMu.Lock()
 	delete(h.previews, req.RepositoryName)

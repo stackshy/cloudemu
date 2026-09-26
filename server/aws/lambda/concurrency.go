@@ -55,7 +55,7 @@ func (h *Handler) serveConcurrency(w http.ResponseWriter, r *http.Request, name 
 	case http.MethodGet:
 		// GetFunctionConcurrency 404s only when the FUNCTION is missing. A function
 		// with no reserved concurrency set is HTTP 200 with an empty body, matching
-		// AWS — the provider reports NotFound for both cases, so the function's
+		// AWS. The provider reports NotFound for both cases, so the function's
 		// existence is checked separately here.
 		if _, err := h.fn.GetFunction(r.Context(), name); err != nil {
 			writeErr(w, err)

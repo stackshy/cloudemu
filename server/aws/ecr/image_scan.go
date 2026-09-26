@@ -85,7 +85,7 @@ func (h *Handler) describeImageScanFindings(w http.ResponseWriter, r *http.Reque
 }
 
 // registryIDFor returns the owning registryId (real ECR echoes it on every
-// image-scanning response), or "" if the repository lookup fails — which
+// image-scanning response), or "" if the repository lookup fails, which
 // cannot happen here since StartImageScan/GetImageScanResults above already
 // succeeded against the same repository.
 func (h *Handler) registryIDFor(r *http.Request, repositoryName string) string {

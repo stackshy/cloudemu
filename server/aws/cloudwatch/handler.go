@@ -1,8 +1,8 @@
 // Package cloudwatch implements AWS CloudWatch's Smithy RPC-v2-CBOR protocol
 // as a server.Handler.
 //
-// Modern aws-sdk-go-v2 CloudWatch clients no longer use the AWS query protocol
-// — they send CBOR-encoded request bodies to URLs like
+// Modern aws-sdk-go-v2 CloudWatch clients no longer use the AWS query protocol.
+// They send CBOR-encoded request bodies to URLs like
 // /service/GraniteServiceVersion20100801/operation/<Operation>, with headers:
 //
 //	Smithy-Protocol: rpc-v2-cbor

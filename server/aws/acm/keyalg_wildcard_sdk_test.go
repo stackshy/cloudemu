@@ -19,7 +19,7 @@ import (
 	acmtypes "github.com/aws/aws-sdk-go-v2/service/acm/types"
 )
 
-// F1 — RequestCertificate honors the documented EC/RSA KeyAlgorithm set.
+// F1: RequestCertificate honors the documented EC/RSA KeyAlgorithm set.
 func TestSDKRequestECKeyAlgorithm(t *testing.T) {
 	ctx := context.Background()
 	c := newACMClient(t)
@@ -95,7 +95,7 @@ func TestSDKRequestBogusKeyAlgorithmRejected(t *testing.T) {
 	assertAPIErrorCode(t, err, "InvalidParameterException")
 }
 
-// F2 — wildcard DNS validation record is rooted at the base domain (no literal
+// F2: the wildcard DNS validation record is rooted at the base domain (no literal
 // '*') and a wildcard + its apex share a single validation record.
 func TestSDKWildcardValidationRecordRooted(t *testing.T) {
 	ctx := context.Background()
@@ -177,7 +177,7 @@ func TestSDKNonWildcardValidationRecordUnchanged(t *testing.T) {
 	}
 }
 
-// F4 — RequestCertificate validates the DomainName (and each SAN) as an FQDN.
+// F4: RequestCertificate validates the DomainName (and each SAN) as an FQDN.
 func TestSDKRequestMalformedDomainRejected(t *testing.T) {
 	ctx := context.Background()
 	c := newACMClient(t)
@@ -207,7 +207,7 @@ func TestSDKRequestMalformedDomainRejected(t *testing.T) {
 	}
 }
 
-// F5 — default ListCertificates returns only RSA_2048; Includes.keyTypes widens
+// F5: default ListCertificates returns only RSA_2048; Includes.keyTypes widens
 // it, and MaxItems/NextToken paginate.
 func TestSDKListDefaultRSAFilterAndIncludes(t *testing.T) {
 	ctx := context.Background()

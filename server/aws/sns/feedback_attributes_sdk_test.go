@@ -51,7 +51,7 @@ func TestSDKSetTopicAttributesSignatureVersionAndTracingConfig(t *testing.T) {
 // TestSDKSetTopicAttributesSQSFeedbackFamily guards the delivery-status
 // feedback attributes Terraform's aws_sns_topic exposes as
 // sqs_success_feedback_role_arn / sqs_success_feedback_sample_rate /
-// sqs_failure_feedback_role_arn — previously dropped silently.
+// sqs_failure_feedback_role_arn, which were previously dropped silently.
 func TestSDKSetTopicAttributesSQSFeedbackFamily(t *testing.T) {
 	client := newSDKClient(t)
 	ctx := context.Background()

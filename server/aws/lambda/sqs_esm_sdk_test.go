@@ -1,4 +1,4 @@
-// sqs_esm_sdk_test.go — real aws-sdk-go-v2 end-to-end test for the SQS ->
+// sqs_esm_sdk_test.go: real aws-sdk-go-v2 end-to-end test for the SQS ->
 // Lambda event-source-mapping delivery path. Creating a mapping from a queue
 // to a function, then sending a message, must synchronously invoke the mapped
 // function with a real SQS event batch and delete the message on success

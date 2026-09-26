@@ -13,8 +13,8 @@ import (
 // GetPolicyVersion, GetRolePolicy/GetUserPolicy/GetGroupPolicy,
 // GetAccountAuthorizationDetails, ...): RFC 3986 percent-encoding with the
 // space character escaped as %20 rather than "+". url.QueryEscape already
-// percent-encodes every byte outside the unreserved set, but — being tuned
-// for "application/x-www-form-urlencoded" query strings — represents space
+// percent-encodes every byte outside the unreserved set, but because it is tuned
+// for "application/x-www-form-urlencoded" query strings it represents space
 // as "+"; the trailing replace corrects that one divergence. Client SDKs
 // (e.g. botocore's json_decode_policies) undo this with a plain percent
 // decode, which does not treat "+" as space, so leaving it unescaped would

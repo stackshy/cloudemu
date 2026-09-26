@@ -11,7 +11,7 @@ import (
 )
 
 // paginateRDS stable-sorts items by the identifier that key returns, then slices a
-// Marker/MaxRecords page out of them — the shared body behind every RDS
+// Marker/MaxRecords page out of them. It is the shared body behind every RDS
 // Describe* list handler. On an invalid Marker it writes the RDS
 // InvalidParameterValue wire error and returns ok=false so the caller returns
 // without emitting a result.
@@ -82,10 +82,10 @@ func autoMinorVersionUpgradeFromForm(form url.Values) bool {
 
 // backupRetentionPeriodFromForm mirrors autoMinorVersionUpgradeFromForm: real
 // CreateDBInstance defaults BackupRetentionPeriod to 1 when the caller omits
-// the parameter entirely. An explicit "0" is meaningful — it disables
-// automated backups, and terraform-provider-aws's schema default is 0, so it
-// ALWAYS sends an explicit 0 rather than omitting the parameter — and must be
-// preserved rather than coerced to the default.
+// the parameter entirely. An explicit "0" is meaningful and must be preserved
+// rather than coerced to the default: it disables automated backups, and
+// terraform-provider-aws's schema default is 0, so it ALWAYS sends an explicit 0
+// rather than omitting the parameter.
 func backupRetentionPeriodFromForm(form url.Values) int {
 	if v := form.Get("BackupRetentionPeriod"); v != "" {
 		return formInt(v)
@@ -370,7 +370,7 @@ func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 	// A standalone instance takes a final snapshot unless SkipFinalSnapshot is
 	// set. When a final snapshot is requested, FinalDBSnapshotIdentifier is
 	// mandatory (InvalidParameterCombination otherwise). Cluster members carry no
-	// final-snapshot semantics — that belongs to DeleteDBCluster.
+	// final-snapshot semantics; that belongs to DeleteDBCluster.
 	var finalID string
 
 	if last.ClusterID == "" && !formBool(r.Form.Get("SkipFinalSnapshot")) {
@@ -393,7 +393,7 @@ func (h *Handler) deleteDBInstance(w http.ResponseWriter, r *http.Request) {
 		// The delete precondition (live read replicas, invalid state) is enforced
 		// inside DeleteInstance, so a rejection can land after the final snapshot
 		// was already written. Roll that snapshot back so a rejected delete leaves
-		// no phantom snapshot behind — real RDS validates before taking it.
+		// no phantom snapshot behind. Real RDS validates before taking it.
 		if finalID != "" {
 			_ = h.db.DeleteSnapshot(r.Context(), finalID)
 		}

@@ -41,7 +41,7 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A VPC in the request associates the new zone with that VPC and makes it a
-	// private hosted zone — the presence of a VPC implies PrivateZone whether or
+	// private hosted zone. The presence of a VPC implies PrivateZone whether or
 	// not HostedZoneConfig said so.
 	if req.VPC != nil {
 		cfg.Private = true
@@ -55,7 +55,7 @@ func (h *Handler) createHostedZone(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// A new hosted zone starts with its authoritative SOA and NS records, just
-	// like real Route 53 — so RRSetCount is 2 and downstream record management
+	// like real Route 53, so RRSetCount is 2 and downstream record management
 	// (and the NS delegation the registrar needs) works.
 	nameServers := nameServersFor(info.ID)
 	h.seedZoneRecords(r, info.ID, info.Name, nameServers)
@@ -99,7 +99,7 @@ func (h *Handler) seedZoneRecords(r *http.Request, zoneID, zoneName string, name
 	})
 }
 
-// dottedNameServers returns nameServers as FQDNs (trailing dot) — the form real
+// dottedNameServers returns nameServers as FQDNs (trailing dot), the form real
 // Route 53 stores an NS record set's ResourceRecord VALUES in. This is distinct
 // from DelegationSet.NameServers (and the CreateHostedZone/GetHostedZone
 // response), which real Route 53 returns without a trailing dot for a public
@@ -208,7 +208,7 @@ func (h *Handler) listHostedZones(w http.ResponseWriter, r *http.Request) {
 }
 
 // markerPage sorts items by id (stable), resumes at the marker id (inclusive),
-// and returns the page of up to maxItems items plus the next marker — the id the
+// and returns the page of up to maxItems items plus the next marker: the id the
 // following page resumes from, or "" when this page is the last. It implements
 // Route 53's Marker-style pagination shared by ListHostedZones and
 // ListHealthChecks.
@@ -296,8 +296,8 @@ func extraRecordName(zoneName string, records []dnsdriver.RecordInfo) string {
 // changeResourceRecordSets applies a CREATE/UPSERT/DELETE batch against the
 // zone. Route 53 validates the whole batch and applies nothing if any change is
 // invalid (InvalidChangeBatch), so we validate every change against the zone's
-// current state — tracking intra-batch effects so a DELETE followed by a CREATE
-// of the same record set is allowed — before mutating anything. The batch then
+// current state before mutating anything, tracking intra-batch effects so a
+// DELETE followed by a CREATE of the same record set is allowed. The batch then
 // shares one INSYNC ChangeInfo for the SDK's change poller.
 func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Request, id string) {
 	var req changeResourceRecordSetsRequest
@@ -317,7 +317,7 @@ func (h *Handler) changeResourceRecordSets(w http.ResponseWriter, r *http.Reques
 
 	// Hold the zone lock across validation and apply: two concurrent batches
 	// against the same zone must not interleave between "validated against
-	// current records" and "applied" — that would let a batch that was valid
+	// current records" and "applied". That would let a batch that was valid
 	// against a stale snapshot partially apply alongside another writer,
 	// breaking the all-or-nothing guarantee this handler documents. It also
 	// serializes against DeleteHostedZone's own check-then-delete.
@@ -376,7 +376,7 @@ func validateRecordSet(rr *resourceRecordSetXML, apex string) error {
 		return err
 	}
 
-	// A CNAME is not permitted at the zone apex — the apex must carry the SOA and
+	// A CNAME is not permitted at the zone apex. The apex must carry the SOA and
 	// NS records, so it can only use an A/AAAA or an ALIAS. Real Route 53 rejects
 	// an apex CNAME as an InvalidChangeBatch (FailedPrecondition maps to that).
 	if strings.EqualFold(rr.Type, "CNAME") && sameDNSName(rr.Name, apex) {
@@ -404,7 +404,7 @@ func sameDNSName(a, b string) bool {
 }
 
 // deleteMatchesRecord reports whether a DELETE request's TTL and values exactly
-// match the stored record set — Route 53's rule that a DELETE must repeat the
+// match the stored record set, per Route 53's rule that a DELETE must repeat the
 // record's current values. Alias records match on their alias target instead of
 // a TTL and resource records.
 func deleteMatchesRecord(cur *dnsdriver.RecordInfo, rr *resourceRecordSetXML) bool {
@@ -486,8 +486,8 @@ func (h *Handler) validateChangeBatch(r *http.Request, zone *dnsdriver.ZoneInfo,
 // validateApexRecordsSurvive checks the batch's net effect (present, folded by
 // validateChange over every change) still leaves the zone's mandatory apex SOA
 // and NS record sets standing. Real Route 53 rejects a batch that would delete
-// either outright — "A HostedZone must contain exactly one SOA record" and "...
-// must contain at least one NS record for the zone itself" — while still
+// either outright ("A HostedZone must contain exactly one SOA record" and "...
+// must contain at least one NS record for the zone itself") while still
 // allowing a DELETE+CREATE (or UPSERT) of either within the same batch, since
 // that nets to present. present only holds keys touched by CreateZone's seeded
 // SOA/NS or by this batch, so an apex key absent from present means it was
@@ -590,7 +590,7 @@ func (h *Handler) deleteRecordSet(r *http.Request, zoneID string, rr *resourceRe
 }
 
 // upsertRecord creates the record set, and on an exact-key conflict updates it
-// instead — Route 53's UPSERT semantics keyed by name+type+SetIdentifier. Going
+// instead, following Route 53's UPSERT semantics keyed by name+type+SetIdentifier. Going
 // through CreateRecord first keeps a new weighted/geo sibling from being
 // misrouted into an update of a different SetIdentifier's record.
 func (h *Handler) upsertRecord(r *http.Request, cfg dnsdriver.RecordConfig) error {
@@ -613,7 +613,7 @@ func (h *Handler) listResourceRecordSets(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	// Real Route 53 returns record sets in DNS name order — sorted first by DNS
+	// Real Route 53 returns record sets in DNS name order: sorted first by DNS
 	// name with the labels reversed (so the zone apex sorts before its
 	// subdomains: com.order. < com.order.a.), then by record type, then by
 	// SetIdentifier so weighted/latency/failover/geo siblings at the same name+type
@@ -701,7 +701,7 @@ func recordAtOrAfter(rec *dnsdriver.RecordInfo, start, startType, startID string
 
 // compareDNSName orders two DNS names the way Route 53's ListResourceRecordSets
 // does: by the name with its labels reversed (TLD first), compared as a flat
-// ASCII string with the dots — including the trailing dot — kept in place. The
+// ASCII string with the dots (including the trailing dot) kept in place. The
 // trailing dot matters: a character whose ASCII value is below '.' (0x2e), such
 // as '-' (0x2d) or the wildcard '*' (0x2a), sorts a longer label before the
 // terminator, so "com.order.api-v2." < "com.order.api." (api-v2 sorts first).
@@ -712,7 +712,7 @@ func compareDNSName(a, b string) int {
 }
 
 // reversedDotted lower-cases a DNS name, drops the trailing dot, reverses the
-// LABEL order, and rejoins with dots plus a trailing dot — the flat key Route 53
+// LABEL order, and rejoins with dots plus a trailing dot, the flat key Route 53
 // sorts on: "api-v2.Order.com." → "com.order.api-v2.". Comparing these keys as
 // plain strings (dots included) reproduces Route 53's ordering exactly.
 func reversedDotted(name string) string {
@@ -889,7 +889,7 @@ func writeErr(w http.ResponseWriter, err error) {
 
 // writeChangeErr maps a driver error from a ChangeResourceRecordSets batch. The
 // zone is known to exist here, so a missing/duplicate *record* is a bad change
-// batch — real Route 53 returns InvalidChangeBatch (400), not the zone-level
+// batch. Real Route 53 returns InvalidChangeBatch (400), not the zone-level
 // NoSuchHostedZone/HostedZoneAlreadyExists codes.
 func writeChangeErr(w http.ResponseWriter, err error) {
 	switch {

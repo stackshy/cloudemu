@@ -262,7 +262,7 @@ func statusEnvelope(options any, created, updated int64) map[string]any {
 }
 
 // domainConfigToWire renders a driver domain config as the DomainConfig wire
-// shape, wrapping every block — modeled and raw-passthrough alike — in the
+// shape, wrapping every block (modeled and raw-passthrough alike) in the
 // {Options, Status} envelope the DescribeDomainConfig/UpdateDomainConfig API
 // requires. (DomainStatus, in contrast, emits the raw blocks flat; see
 // domainStatusToWire.)

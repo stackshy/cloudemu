@@ -113,7 +113,7 @@ func New(d ctdriver.CloudTrail) *Handler {
 // Matches returns true for CloudTrail-shaped requests. The aws-sdk-go-v2
 // client sends the short X-Amz-Target form ("CloudTrail_20131101.<Operation>"),
 // while botocore (AWS CLI/boto3) sends the fully-qualified form
-// ("com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.<Operation>") — both
+// ("com.amazonaws.cloudtrail.v20131101.CloudTrail_20131101.<Operation>"). Both
 // must dispatch here.
 func (*Handler) Matches(r *http.Request) bool {
 	target := r.Header.Get("X-Amz-Target")

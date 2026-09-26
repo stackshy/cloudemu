@@ -21,7 +21,7 @@ import (
 
 // newSSMAndKMSClients wires SSM and KMS from the same provider instance, so
 // SSM's SecureString values are sealed through real KMS envelope encryption
-// (matching how cmd/cloudemu wires them) — needed to exercise a KMS key
+// (matching how cmd/cloudemu wires them). That is needed to exercise a KMS key
 // becoming unusable underneath an already-created SecureString parameter.
 func newSSMAndKMSClients(t *testing.T) (*awsssm.Client, *awskms.Client) {
 	t.Helper()

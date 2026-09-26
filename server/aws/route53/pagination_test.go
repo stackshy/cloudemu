@@ -133,7 +133,7 @@ func TestSDKListHealthChecksPaginates(t *testing.T) {
 // TestSDKListResourceRecordSetsIdentifierNoDupSkip creates a weighted record set
 // whose siblings share one name+type but carry distinct SetIdentifiers, then
 // paginates with a MaxItems that forces a page boundary inside that group. It
-// asserts every sibling is returned exactly once — no duplicate (the old bug,
+// asserts every sibling is returned once, with no duplicate (the old bug,
 // which re-emitted the whole group) and no skip.
 func TestSDKListResourceRecordSetsIdentifierNoDupSkip(t *testing.T) {
 	client := newRoute53Client(t)

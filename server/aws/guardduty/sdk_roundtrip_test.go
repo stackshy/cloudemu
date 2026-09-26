@@ -40,7 +40,7 @@ func newGDClient(t *testing.T) *awsgd.Client {
 }
 
 // newGDClientFullStack registers every AWS handler (not just GuardDuty), so the
-// GuardDuty handler competes with the others for shared REST paths — notably
+// GuardDuty handler competes with the others for shared REST paths, notably
 // /tags/{ResourceArn}, which EKS also claims. This is the realistic wiring and
 // guards against a handler shadowing GuardDuty's tag operations.
 func newGDClientFullStack(t *testing.T) *awsgd.Client {

@@ -301,7 +301,7 @@ func TestSDKSecretErrors(t *testing.T) {
 
 // TestSDKPutSecretValueRequiresPayload guards a real-user e2e finding:
 // PutSecretValue with neither SecretString nor SecretBinary set must be
-// rejected — real Secrets Manager requires exactly one, since the whole point
+// rejected. Real Secrets Manager requires exactly one, since the whole point
 // of the call is to add a new version's content.
 func TestSDKPutSecretValueRequiresPayload(t *testing.T) {
 	client := newSecretsClient(t)

@@ -12,7 +12,7 @@ import (
 // TestSDKGetAccountAuthorizationDetailsInlineAndAttached verifies GAAD reports a
 // user's inline policies (UserPolicyList), a group's inline policies
 // (GroupPolicyList), and a group's attached managed policies
-// (AttachedManagedPolicies) — the same surfaces ListUserPolicies,
+// (AttachedManagedPolicies), the same surfaces ListUserPolicies,
 // ListGroupPolicies, and ListAttachedGroupPolicies expose individually.
 func TestSDKGetAccountAuthorizationDetailsInlineAndAttached(t *testing.T) {
 	client := newSDKClient(t)

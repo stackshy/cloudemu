@@ -63,7 +63,7 @@ func TestSDKEventBridgeBusARNAcceptedByPutRule(t *testing.T) {
 	}
 
 	// The rule must be visible when listing rules on the bus by its plain
-	// name — i.e. it resolved to the same bus, not a distinct one keyed by
+	// name, i.e. it resolved to the same bus, not a distinct one keyed by
 	// the literal ARN string.
 	rules, err := client.ListRules(ctx, &awseb.ListRulesInput{EventBusName: aws.String("rule-arn-param-bus")})
 	if err != nil {

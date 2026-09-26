@@ -129,8 +129,8 @@ func TestDescribeNetworkAclsPaginatesAllOnce(t *testing.T) {
 		}
 	}
 
-	// The expected set is every ACL in the account — the 3 just created plus the
-	// VPC's auto-created default ACL — captured via an unpaginated describe.
+	// The expected set is every ACL in the account (the 3 just created plus the
+	// VPC's auto-created default ACL), captured via an unpaginated describe.
 	all, err := c.DescribeNetworkAcls(ctx, &ec2.DescribeNetworkAclsInput{})
 	if err != nil {
 		t.Fatalf("DescribeNetworkAcls(all): %v", err)

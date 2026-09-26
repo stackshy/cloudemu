@@ -89,23 +89,23 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	switch len(parts) {
 	case 0:
-		// /clusters — collection.
+		// /clusters: collection.
 		h.serveClustersCollection(w, r)
 
 	case pathSegsCluster:
-		// /clusters/{name} — cluster resource.
+		// /clusters/{name}: cluster resource.
 		h.serveCluster(w, r, parts[0])
 
 	case pathSegsClusterSubresource:
-		// /clusters/{name}/{action} — cluster sub-resource.
+		// /clusters/{name}/{action}: cluster sub-resource.
 		h.serveClusterSubresource(w, r, parts[0], parts[1])
 
 	case pathSegsChildResource:
-		// /clusters/{name}/{kind}/{child} — child resource.
+		// /clusters/{name}/{kind}/{child}: child resource.
 		h.serveChildResource(w, r, parts[0], parts[1], parts[2])
 
 	case pathSegsChildAction:
-		// /clusters/{name}/{kind}/{child}/{action} — child action.
+		// /clusters/{name}/{kind}/{child}/{action}: child action.
 		h.serveChildAction(w, r, parts[0], parts[1], parts[2], parts[3])
 
 	default:
@@ -215,7 +215,7 @@ func (h *Handler) serveChildResource(w http.ResponseWriter, r *http.Request, clu
 	case segAddons:
 		h.serveAddon(w, r, clusterName, child)
 	case segUpdates:
-		// /clusters/{name}/updates/{updateId} — DescribeUpdate.
+		// /clusters/{name}/updates/{updateId}: DescribeUpdate.
 		if r.Method != http.MethodGet {
 			methodNotAllowed(w)
 

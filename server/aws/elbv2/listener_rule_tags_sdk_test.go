@@ -61,7 +61,7 @@ func mkListenerWithRule(t *testing.T, client *elb.Client) (listenerARN, ruleARN 
 // listener ARN returns the tags supplied at CreateListener time. Before this
 // fix ListenerInfo carried no Tags field at all, so a listener's tags were
 // dropped at create time and DescribeTags reported ListenerNotFound for its
-// ARN — breaking Terraform's aws_lb_listener resource, whose Read always
+// ARN. That broke Terraform's aws_lb_listener resource, whose Read always
 // fetches tags after create/refresh.
 func TestDescribeTagsResolvesListenerTags(t *testing.T) {
 	client := newSDKClient(t)
@@ -123,8 +123,8 @@ func TestDescribeTagsResolvesRuleTags(t *testing.T) {
 	}
 }
 
-// TestAddAndRemoveTagsOnListenerAndRule proves AddTags/RemoveTags — the
-// mutating counterpart to DescribeTags — also reach listener and rule ARNs,
+// TestAddAndRemoveTagsOnListenerAndRule proves AddTags/RemoveTags (the
+// mutating counterpart to DescribeTags) also reach listener and rule ARNs,
 // not just load balancers and target groups.
 func TestAddAndRemoveTagsOnListenerAndRule(t *testing.T) {
 	client := newSDKClient(t)
@@ -184,7 +184,7 @@ func TestAddAndRemoveTagsOnListenerAndRule(t *testing.T) {
 }
 
 // TestDescribeRulesByRuleArnsWithoutListenerArn proves DescribeRules resolves
-// rules directly by RuleArns when called without a ListenerArn — the shape
+// rules directly by RuleArns when called without a ListenerArn, the shape
 // Terraform's aws_lb_listener_rule data source and resource refresh use.
 // Before this fix an empty ListenerArn fell through to the listener-exists
 // check and errored instead of resolving the requested rules.

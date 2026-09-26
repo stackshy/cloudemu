@@ -128,7 +128,7 @@ type describeCacheClustersResponse struct {
 	Metadata responseMetadata            `xml:"ResponseMetadata"`
 }
 
-// nodeSnapshotXML mirrors AWS's NodeSnapshot — the per-node backup record a
+// nodeSnapshotXML mirrors AWS's NodeSnapshot, the per-node backup record a
 // caller reads to size a restore.
 type nodeSnapshotXML struct {
 	CacheNodeID         string `xml:"CacheNodeId,omitempty"`
@@ -279,8 +279,8 @@ func toCacheClusterXML(info *cachedriver.CacheInfo) cacheClusterXML {
 
 	// Defensive clamp to the real ElastiCache ceiling (Memcached tops out at 40
 	// nodes; Redis reports 1). The stored count is validated on create, but bound
-	// it here too — with an explicit comparison immediately before the node
-	// allocation below — so a tainted value can never size an unbounded allocation.
+	// it here too, with an explicit comparison right before the node
+	// allocation below, so a tainted value can never size an unbounded allocation.
 	if numNodes > maxCacheNodesPerCluster {
 		numNodes = maxCacheNodesPerCluster
 	}

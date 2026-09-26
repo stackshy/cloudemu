@@ -4,8 +4,8 @@ package cloudwatch
 // GetMetricStream, ListMetricStreams, DeleteMetricStream, StartMetricStreams,
 // StopMetricStreams) over the rpc-v2-cbor protocol, backing the
 // aws_cloudwatch_metric_stream Terraform resource. The store is an AWS-local
-// optional capability so the shared Monitoring interface — and the Azure/GCP
-// providers — stay unchanged.
+// optional capability so the shared Monitoring interface (and the Azure/GCP
+// providers) stay unchanged.
 
 import (
 	"context"
@@ -242,7 +242,7 @@ type deleteMetricStreamInput struct {
 
 // deleteMetricStream is structurally identical to deleteDashboards (unmarshal
 // a single-field input, call the matching AWS-local store method, write an
-// empty success response) — the two resources' delete semantics genuinely
+// empty success response). The two resources' delete semantics really do
 // share this shape, so the duplication is inherent rather than a missed
 // abstraction.
 //
@@ -309,9 +309,9 @@ func (h *Handler) setMetricStreamsRunning(w http.ResponseWriter, r *http.Request
 }
 
 // writeMetricStreamDriverErr maps a metric-stream driver error to the real
-// CloudWatch error shape names these operations document — ResourceNotFoundException
-// (GetMetricStream) and InvalidParameterValueException (PutMetricStream) —
-// which carry the "Exception" suffix that the shared writeDriverErr's shorter
+// CloudWatch error shape names these operations document: ResourceNotFoundException
+// (GetMetricStream) and InvalidParameterValueException (PutMetricStream). These
+// carry the "Exception" suffix that the shared writeDriverErr's shorter
 // names (used by the older alarm operations) drop. The exact name matters: an
 // SDK/Terraform delete-waiter matches on the deserialized error code, and a
 // mismatched name looks like an unexpected failure rather than a signal that

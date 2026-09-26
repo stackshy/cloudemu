@@ -230,7 +230,7 @@ func TestAuthorizeSecurityGroupMissingGroupReturns400(t *testing.T) {
 func TestAuthorizeSecurityGroupEmptyRulesReturns400(t *testing.T) {
 	h := newFullHandler()
 
-	// Create a real VPC + SG first so GroupId is valid — only rules are missing.
+	// Create a real VPC + SG first so GroupId is valid; only rules are missing.
 	vpc := do(t, h, http.MethodPost, "/", url.Values{
 		"Action": {"CreateVpc"}, "CidrBlock": {"10.0.0.0/16"},
 	})

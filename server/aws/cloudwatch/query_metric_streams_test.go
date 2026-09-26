@@ -17,8 +17,8 @@ import (
 var arnResultPattern = regexp.MustCompile(`<Arn>([^<]+)</Arn>`)
 
 // TestQueryMetricStreamLifecycle drives the classic AWS query protocol
-// (form-encoded POST, Action=..., XML response) — what aws-cli and
-// terraform-provider-aws actually speak for CloudWatch — through the full
+// (form-encoded POST, Action=..., XML response), which is what aws-cli and
+// terraform-provider-aws speak for CloudWatch, through the full
 // metric-stream lifecycle: PutMetricStream, GetMetricStream, ListMetricStreams,
 // Stop/StartMetricStreams, Tag/ListTags/UntagResource, and DeleteMetricStream.
 //
@@ -119,7 +119,7 @@ func TestQueryMetricStreamLifecycle(t *testing.T) {
 		t.Fatalf("ListMetricStreams: missing an entry, body=%s", body)
 	}
 
-	// StopMetricStreams — the empty-result response must deserialize: assert
+	// StopMetricStreams: the empty-result response must deserialize. Assert
 	// the explicit <StopMetricStreamsResult> element (wire fix #1), not just a
 	// bare ResponseMetadata envelope.
 	code, body = post(url.Values{"Action": {"StopMetricStreams"}, "Names.member.1": {"my-stream"}})
@@ -135,7 +135,7 @@ func TestQueryMetricStreamLifecycle(t *testing.T) {
 		t.Fatalf("GetMetricStream after stop: code=%d body=%s", code, body)
 	}
 
-	// StartMetricStreams — same empty-result assertion.
+	// StartMetricStreams: same empty-result assertion.
 	code, body = post(url.Values{"Action": {"StartMetricStreams"}, "Names.member.1": {"my-stream"}})
 	if code != http.StatusOK {
 		t.Fatalf("StartMetricStreams: code=%d body=%s", code, body)
@@ -184,7 +184,7 @@ func TestQueryMetricStreamLifecycle(t *testing.T) {
 		t.Fatalf("ListTagsForResource after untag: want only team tag, body=%s", body)
 	}
 
-	// DeleteMetricStream — empty-result assertion again.
+	// DeleteMetricStream: empty-result assertion again.
 	code, body = post(url.Values{"Action": {"DeleteMetricStream"}, "Name": {"my-stream"}})
 	if code != http.StatusOK {
 		t.Fatalf("DeleteMetricStream: code=%d body=%s", code, body)
@@ -193,7 +193,7 @@ func TestQueryMetricStreamLifecycle(t *testing.T) {
 		t.Fatalf("DeleteMetricStream: missing explicit empty result element (emptyQueryResult regression), body=%s", body)
 	}
 
-	// GetMetricStream on the now-deleted name — the exact wire fix: the error
+	// GetMetricStream on the now-deleted name. This is the wire fix: the error
 	// code must be the full "ResourceNotFoundException", not the shorter
 	// "ResourceNotFound" the older alarm operations return.
 	code, body = post(url.Values{"Action": {"GetMetricStream"}, "Name": {"my-stream"}})

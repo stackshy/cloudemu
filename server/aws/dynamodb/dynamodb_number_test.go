@@ -1,4 +1,4 @@
-// dynamodb_number_test.go — real aws-sdk-go-v2 round-trip proving the DynamoDB
+// dynamodb_number_test.go: real aws-sdk-go-v2 round-trip proving the DynamoDB
 // Number type preserves its exact decimal string. Values beyond float64's
 // mantissa must not be corrupted by parsing through float64 on the wire.
 package dynamodb_test

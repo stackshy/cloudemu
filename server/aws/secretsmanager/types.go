@@ -115,7 +115,7 @@ type listSecretVersionIDsRequest struct {
 type deleteSecretRequest struct {
 	SecretID string `json:"SecretId"`
 	// RecoveryWindowInDays is a pointer so an absent field (nil) is
-	// distinguishable from an explicit 0 — the latter is an invalid value AWS
+	// distinguishable from an explicit 0. The latter is an invalid value AWS
 	// rejects, while nil applies the default recovery window.
 	RecoveryWindowInDays       *int64 `json:"RecoveryWindowInDays"`
 	ForceDeleteWithoutRecovery bool   `json:"ForceDeleteWithoutRecovery"`
@@ -336,8 +336,8 @@ func epochSeconds(iso string) float64 {
 }
 
 // resolveSecretID accepts either a plain secret name or a full ARN
-// ("arn:aws:secretsmanager:<region>:<account>:secret:<name>-<suffix>") — real
-// Secrets Manager accepts both forms for SecretId — and returns the bare name
+// ("arn:aws:secretsmanager:<region>:<account>:secret:<name>-<suffix>"), as real
+// Secrets Manager accepts both forms for SecretId, and returns the bare name
 // the driver keys on. For an ARN, the trailing 6-char "-<suffix>" AWS appends is
 // stripped so a lookup by the suffixed ARN resolves to the same secret as the
 // friendly name. A plain name is returned untouched (its own hyphens are kept).
@@ -385,7 +385,7 @@ func isAlphaNum(c rune) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9')
 }
 
-// secretValue picks the string payload if present, else the binary one — the
+// secretValue picks the string payload if present, else the binary one. The
 // driver stores raw bytes either way.
 func secretValue(secretString string, secretBinary []byte) []byte {
 	if secretString != "" {

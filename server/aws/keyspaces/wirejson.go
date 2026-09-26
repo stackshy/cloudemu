@@ -14,8 +14,8 @@ import (
 // Keyspaces members in lowerCamelCase and its awsjson1.0 deserializer matches
 // keys case-sensitively, but encoding/json emits the SDK structs' Go field
 // names (UpperCamelCase). This lowercases the first letter of every object key
-// so the real client decodes the response — the smithy member name for a
-// generated field is exactly its Go name with the leading letter lowered.
+// so the real client decodes the response. The smithy member name for a
+// generated field is its Go name with the leading letter lowered.
 func writeJSON(w http.ResponseWriter, v any) {
 	raw, err := json.Marshal(v)
 	if err != nil {
