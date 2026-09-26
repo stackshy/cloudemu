@@ -502,6 +502,16 @@ func (h *Handler) checkAdditions(w http.ResponseWriter, r *http.Request, id, dns
 			return false
 		}
 
+		// An A or AAAA rrdata must be an address of the right family. One bad
+		// rrdata fails the whole change before anything applies.
+		if j, bad := dnsdriver.InvalidAddressIndex(a.Type, a.Rrdatas); bad {
+			gcprest.WriteError(w, http.StatusBadRequest, "invalid",
+				"Invalid value for 'entity.change.additions["+strconv.Itoa(i)+"].rrdata["+strconv.Itoa(j)+"]': '"+
+					a.Rrdatas[j]+"'")
+
+			return false
+		}
+
 		// Cloud DNS requires every record set's name to be the zone's own DNS
 		// name or a subdomain of it; a name from an unrelated domain is rejected.
 		if !isWithinZone(a.Name, dnsName) {

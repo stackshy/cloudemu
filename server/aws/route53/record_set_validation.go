@@ -1,10 +1,10 @@
 package route53
 
 import (
-	"net"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
 
 // recordTypes is the RRType enum real Route 53 accepts.
@@ -77,20 +77,23 @@ func validateRecordValues(rr *resourceRecordSetXML) error {
 // checkAddresses reports the first value that is not an address of the wanted
 // family.
 func checkAddresses(rr *resourceRecordSetXML, v4 bool) error {
-	for _, v := range rr.ResourceRecords {
-		ip := net.ParseIP(v.Value)
-		if v4 && (ip == nil || ip.To4() == nil) {
-			return cerrors.Newf(cerrors.FailedPrecondition,
-				"[Invalid Resource Record: 'FATAL problem: ARRDATAIllegalIPv4Address "+
-					"(Value is not a valid IPv4 address) encountered with '%s'']", v.Value)
-		}
-
-		if !v4 && (ip == nil || ip.To4() != nil) {
-			return cerrors.Newf(cerrors.FailedPrecondition,
-				"[Invalid Resource Record: 'FATAL problem: AAAARRDATAIllegalIPv6Address "+
-					"(Value is not a valid IPv6 address) encountered with '%s'']", v.Value)
-		}
+	values := make([]string, len(rr.ResourceRecords))
+	for i, v := range rr.ResourceRecords {
+		values[i] = v.Value
 	}
 
-	return nil
+	i, bad := dnsdriver.InvalidAddressIndex(rr.Type, values)
+	if !bad {
+		return nil
+	}
+
+	if v4 {
+		return cerrors.Newf(cerrors.FailedPrecondition,
+			"[Invalid Resource Record: 'FATAL problem: ARRDATAIllegalIPv4Address "+
+				"(Value is not a valid IPv4 address) encountered with '%s'']", values[i])
+	}
+
+	return cerrors.Newf(cerrors.FailedPrecondition,
+		"[Invalid Resource Record: 'FATAL problem: AAAARRDATAIllegalIPv6Address "+
+			"(Value is not a valid IPv6 address) encountered with '%s'']", values[i])
 }

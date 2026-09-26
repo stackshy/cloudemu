@@ -176,6 +176,10 @@ func (h *Handler) createOrUpdateRecordSet(w http.ResponseWriter, r *http.Request
 		SOA:    soaConfigFromProps(body.Properties),
 	}
 
+	if writeInvalidAddress(w, recordType, body.Properties) {
+		return
+	}
+
 	ifMatch := r.Header.Get(headerIfMatch)
 	ifNoneMatch := r.Header.Get(headerIfNoneMatch)
 
@@ -294,6 +298,10 @@ func (h *Handler) patchRecordSet(w http.ResponseWriter, r *http.Request, rp *azu
 
 	recordType := recordTypeSegment(rp.SubResource)
 	name := rp.SubResourceName
+
+	if writeInvalidAddress(w, recordType, body.Properties) {
+		return
+	}
 
 	existing, err := h.dns.GetRecord(r.Context(), zoneID, name, recordType)
 	if err != nil {
