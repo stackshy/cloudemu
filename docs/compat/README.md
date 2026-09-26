@@ -2,9 +2,9 @@
 
 # Compatibility matrix
 
-Does a **real cloud SDK** call for each operation succeed against CloudEmu's wire server? Every cell below is backed by a live round-trip through the official SDK — not a hand-maintained checkbox.
+Does a **real cloud SDK** call for each operation succeed against CloudEmu's wire server? Every cell below is backed by a live round-trip through the official SDK, not a hand-maintained checkbox.
 
-Legend: ✅ verified via a real SDK · `·` supported but not yet compat-tested · `—` not offered by that provider.
+Legend: ✅ verified via a real SDK · `·` supported but not yet compat-tested · `-` not offered by that provider.
 
 Each service's summary breaks the verified counts out per SDK/language. Only languages with compat tests today appear; more rows land as their suites are added.
 

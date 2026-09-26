@@ -7,7 +7,7 @@
 // This is the job control plane only: create/get/list/patch/delete plus the
 // pause/resume/run verbs. Firing a job (HTTP delivery, Pub/Sub publish, App
 // Engine routing, OAuth/OIDC token minting) is out of scope; a job's target and
-// token config are stored and echoed verbatim, they are simply never dispatched.
+// token config are stored and echoed verbatim but never dispatched.
 package scheduler
 
 import (

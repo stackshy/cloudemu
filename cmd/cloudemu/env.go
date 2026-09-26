@@ -44,7 +44,7 @@ func runEnv(args []string) error {
 	fmt.Fprintf(w, "export AWS_DEFAULT_REGION=%s\n", *region)
 	fmt.Fprintf(w, "export AWS_REGION=%s\n", *region)
 	fmt.Fprintf(w, "# GCP:   option.WithEndpoint(%q) + option.WithoutAuthentication()\n", gcp)
-	fmt.Fprintf(w, "# Azure: ResourceManager endpoint = %q (self-signed TLS — trust the cert or skip verify)\n", azure)
+	fmt.Fprintf(w, "# Azure: ResourceManager endpoint = %q (self-signed TLS: trust the cert or skip verify)\n", azure)
 
 	return nil
 }

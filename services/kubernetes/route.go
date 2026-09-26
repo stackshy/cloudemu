@@ -78,7 +78,7 @@ func parseRoute(path string) *Route {
 
 // parseCoreRoute handles /api/v1/... after "api" has been stripped.
 //
-// parts[0] is the version, the rest is the resource path.
+// parts[0] is the version and the rest is the resource path.
 func parseCoreRoute(parts []string) *Route {
 	if len(parts) < pathSegsCoreCollection {
 		return nil

@@ -253,7 +253,7 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	// restoreStores merges the snapshot into each store's existing entries (see
-	// memstore.Store.LoadSnapshot), it does not replace them. New() already
+	// memstore.Store.LoadSnapshot) rather than replacing them. New() already
 	// seeded this fresh Mock with an account/region default VPC (and its default
 	// subnets/SG/ACL/route table/IGW) before Restore is ever called, so without
 	// clearing that seed first, restoring a snapshot that itself carries a

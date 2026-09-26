@@ -80,7 +80,7 @@ func dockerLine(lookPath func(string) (string, error)) string {
 		return fmt.Sprintf("%s docker found at %s (only needed for the :engines image)", markPass, path)
 	}
 
-	return fmt.Sprintf("%s docker not found on PATH — only needed if you run the :engines image", markWarn)
+	return fmt.Sprintf("%s docker not found on PATH (only needed if you run the :engines image)", markWarn)
 }
 
 // writeDoctorReport writes the preflight report to w and returns the number of
@@ -93,7 +93,7 @@ func writeDoctorReport(
 	portFree func(string) bool,
 	lookPath func(string) (string, error),
 ) int {
-	fmt.Fprintln(w, "cloudemu doctor — preflight check")
+	fmt.Fprintln(w, "cloudemu doctor: preflight check")
 	fmt.Fprintln(w)
 
 	fmt.Fprintf(w, "%s version %s (commit %s, built %s by %s)\n", markPass, version, commit, date, builtBy)
@@ -115,7 +115,7 @@ func writeDoctorReport(
 		if p.required {
 			blockers++
 
-			fmt.Fprintf(w, "  %s %-14s %s  in use — free it or pass a different --%s-port to serve\n",
+			fmt.Fprintf(w, "  %s %-14s %s  in use: free it or pass a different --%s-port to serve\n",
 				markFail, p.label, hostPort, portFlagHint(p.label))
 
 			continue
@@ -134,9 +134,9 @@ func writeDoctorReport(
 	fmt.Fprintln(w)
 
 	if blockers == 0 {
-		fmt.Fprintf(w, "%s all preflight checks passed — ready to `cloudemu serve`.\n", markPass)
+		fmt.Fprintf(w, "%s all preflight checks passed, ready to `cloudemu serve`.\n", markPass)
 	} else {
-		fmt.Fprintf(w, "%s %d required port(s) in use — free them before `cloudemu serve`.\n", markFail, blockers)
+		fmt.Fprintf(w, "%s %d required port(s) in use. Free them before `cloudemu serve`.\n", markFail, blockers)
 	}
 
 	return blockers

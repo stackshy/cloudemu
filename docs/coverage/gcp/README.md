@@ -20,10 +20,10 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [CloudLogging](./cloudlogging.md) | `logging` | 17 |
 | [CloudMonitoring](./cloudmonitoring.md) | `monitoring` | 12 |
 | [CloudRun](./cloudrun.md) | `cloudrun` | 18 |
-| [CloudSQL](./cloudsql.md) | — (provider-native) | 21 |
+| [CloudSQL](./cloudsql.md) | (provider-native) | 21 |
 | [CloudTasks](./cloudtasks.md) | `cloudtasks` | 11 |
-| [Cloudasset](./cloudasset.md) | — (provider-native) | 11 |
-| [Cloudbilling](./cloudbilling.md) | — (provider-native) | 14 |
+| [Cloudasset](./cloudasset.md) | (provider-native) | 11 |
+| [Cloudbilling](./cloudbilling.md) | (provider-native) | 14 |
 | [Composer](./composer.md) | `composer` | 6 |
 | [DataCatalog](./datacatalog.md) | `datacatalog` | 21 |
 | [DataFusion](./datafusion.md) | `datafusion` | 9 |
@@ -33,28 +33,28 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [Datastream](./datastream.md) | `datastream` | 11 |
 | [Eventarc](./eventarc.md) | `eventbus` | 16 |
 | [FCM](./fcm.md) | `notification` | 9 |
-| [Filestore](./filestore.md) | — (provider-native) | 5 |
+| [Filestore](./filestore.md) | (provider-native) | 5 |
 | [Firestore](./firestore.md) | `database` | 24 |
 | [GCE](./gce.md) | `compute` | 37 |
 | [GCS](./gcs.md) | `storage` | 35 |
-| [GKE](./gke.md) | — (provider-native) | 18 |
+| [GKE](./gke.md) | (provider-native) | 18 |
 | [GKEBackup](./gkebackup.md) | `gkebackup` | 11 |
 | [GKEHub](./gkehub.md) | `gkehub` | 16 |
 | [IAM](./iam.md) | `iam` | 40 |
-| [KMS](./kms.md) | — (provider-native) | 17 |
+| [KMS](./kms.md) | (provider-native) | 17 |
 | [LB](./lb.md) | `loadbalancer` | 19 |
-| [LRO](./lro.md) | — (provider-native) | 1 |
+| [LRO](./lro.md) | (provider-native) | 1 |
 | [Memorystore](./memorystore.md) | `cache` | 17 |
 | [Metastore](./metastore.md) | `metastore` | 6 |
 | [NetworkConnectivity](./networkconnectivity.md) | `networkconnectivity` | 11 |
 | [PrivateCA](./privateca.md) | `privateca` | 26 |
 | [PubSub](./pubsub.md) | `messagequeue` | 14 |
-| [Resourcemanager](./resourcemanager.md) | — (provider-native) | 3 |
+| [Resourcemanager](./resourcemanager.md) | (provider-native) | 3 |
 | [Scheduler](./scheduler.md) | `scheduler` | 8 |
 | [SecretManager](./secretmanager.md) | `secrets` | 7 |
 | [SecureSourceManager](./securesourcemanager.md) | `securesourcemanager` | 10 |
 | [ServiceDirectory](./servicedirectory.md) | `servicedirectory` | 15 |
-| [Servicenetworking](./servicenetworking.md) | — (provider-native) | 3 |
+| [Servicenetworking](./servicenetworking.md) | (provider-native) | 3 |
 | [Spanner](./spanner.md) | `spanner` | 12 |
 | [VPC](./vpc.md) | `networking` | 57 |
 | [VPCAccess](./vpcaccess.md) | `vpcaccess` | 6 |

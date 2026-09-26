@@ -865,7 +865,7 @@ func generateEventID(event *driver.Event, now time.Time, index int) string {
 // compactPattern strips insignificant whitespace from an event pattern JSON
 // string, matching real EventBridge's normalization of the stored pattern
 // (DescribeRule/ListRules echo it back compacted, not verbatim). Key order is
-// preserved; json.Compact only removes whitespace, it does not re-encode or
+// preserved; json.Compact only removes whitespace and does not re-encode or
 // reorder. Falls back to the original string if it isn't valid JSON.
 func compactPattern(pattern string) string {
 	var buf bytes.Buffer

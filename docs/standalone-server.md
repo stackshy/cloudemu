@@ -74,7 +74,7 @@ ctr.Reset(ctx)                      // clean slate between tests
 On start the server prints its endpoints:
 
 ```
-cloudemu — standalone server
+cloudemu (standalone server)
 ────────────────────────────
   AWS         http://127.0.0.1:4566
   Azure       https://127.0.0.1:4568   (self-signed TLS)
@@ -283,7 +283,7 @@ cloudemu doctor --host 0.0.0.0  # check the interface you'll bind serve to
 ```
 
 ```text
-cloudemu doctor — preflight check
+cloudemu doctor: preflight check
 
 [ ok ] version 2.x.y (commit abc1234, built 2026-08-30 by goreleaser)
 
@@ -296,7 +296,7 @@ Ports on 127.0.0.1 (free = free at check time; a port can still be taken before 
 
 [ ok ] docker found at /usr/bin/docker (only needed for the :engines image)
 ...
-[ ok ] all preflight checks passed — ready to `cloudemu serve`.
+[ ok ] all preflight checks passed, ready to `cloudemu serve`.
 ```
 
 An in-use required port (AWS/Azure/GCP/Kubernetes) is a blocker: the line is
@@ -433,7 +433,7 @@ generated cert's SANs with `--tls-host <name>` and trust that cert in your clien
 | `--k8s-nodes` | `1` | synthetic nodes per Kubernetes cluster; >1 adds a tainted control-plane node plus workers (env `CLOUDEMU_K8S_NODES`) |
 | `--k8s-progression` | `false` | client-created Pods start Pending and move to Running on a ticker (env `CLOUDEMU_K8S_PROGRESSION`) |
 | `--k8s-progression-interval` | (built-in) | tick interval for `--k8s-progression` (env `CLOUDEMU_K8S_PROGRESSION_INTERVAL`) |
-| `--enforce-auth` | `false` | require authentication: SigV4 verification for AWS, Bearer-token claim checks for Azure (see `cloudemu serve -h` for the exact scope) |
+| `--enforce-auth` | `false` | require authentication: SigV4 verification for AWS (long-term IAM keys and STS temporary credentials), Bearer-token claim checks for Azure (see `cloudemu serve -h` for the exact scope) |
 | `--vcr` | (off) | record or replay the wire protocol: `record` \| `replay` (requires `--vcr-cassette`) |
 | `--vcr-cassette` | (none) | path to the cassette file to record into / replay from |
 | `--vcr-strict` | `true` | in `replay`, return `501` for a request with no recorded match (rather than passing through) |

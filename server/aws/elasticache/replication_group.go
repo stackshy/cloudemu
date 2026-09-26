@@ -396,7 +396,7 @@ func toReplicationGroupXML(rg *cachedriver.ReplicationGroup) replicationGroupXML
 }
 
 // nodeGroupMembers builds the per-node membership list from the group's member
-// cluster ids: the first is the primary, the rest are replicas.
+// cluster ids: the first is the primary and the rest are replicas.
 func nodeGroupMembers(members []string) []nodeGroupMemberXML {
 	out := make([]nodeGroupMemberXML, 0, len(members))
 

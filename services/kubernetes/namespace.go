@@ -324,7 +324,7 @@ func (s *ClusterState) deleteNamespaceLocked(ns *corev1.Namespace) {
 
 // cascadeRegistryStoresLocked deletes every registry-backed namespaced object in
 // the named namespace, mirroring the typed cascade above (finalizer-gated:
-// finalizer-bearing objects go Terminating, the rest are removed with a DELETED
+// finalizer-bearing objects go Terminating and the rest are removed with a DELETED
 // event). Cluster-scoped registry objects (PVs, Nodes, CRDs) carry an empty
 // namespace and never match. Callers hold s.mu, and the set of stores only changes
 // under s.mu, so ranging s.reg.stores directly is safe (see garbageCollectLocked).

@@ -10,7 +10,7 @@
 // google_project_iam_audit_config drive via read-modify-write with an etag,
 // and the ones google.golang.org/api/cloudresourcemanager/v1 clients call.
 //
-// The project policy has no portable driver, like the SA-level policy in the
+// The project policy has no portable driver. Like the SA-level policy in the
 // iam handler, it is a wire-only concern tracked here in memory, keyed by
 // project id. Bindings (with conditions) and audit configs are stored verbatim
 // so a get→modify→set round-trips unchanged.
