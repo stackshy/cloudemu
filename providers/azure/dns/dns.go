@@ -240,6 +240,10 @@ func (m *Mock) validateRecordCfg(cfg *driver.RecordConfig) error {
 		return cerrors.New(cerrors.InvalidArgument, "record type is required")
 	}
 
+	if err := driver.ValidateAddresses(cfg.Type, cfg.Values); err != nil {
+		return err
+	}
+
 	if m.hasCNAMEConflict(cfg.ZoneID, cfg.Name, cfg.Type) {
 		return cerrors.Newf(cerrors.InvalidArgument,
 			"a CNAME record set cannot coexist with another record set of a different type at name %q", cfg.Name)
@@ -433,6 +437,10 @@ func (m *Mock) UpdateRecord(_ context.Context, cfg driver.RecordConfig) (*driver
 
 	if _, ok := m.records.Get(key); !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "record %q of type %q not found in zone %q", cfg.Name, cfg.Type, cfg.ZoneID)
+	}
+
+	if err := driver.ValidateAddresses(cfg.Type, cfg.Values); err != nil {
+		return nil, err
 	}
 
 	rec := m.buildRecordInfo(&cfg, key)

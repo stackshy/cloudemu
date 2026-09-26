@@ -1,10 +1,13 @@
 package privatedns
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
+	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 	pddriver "github.com/stackshy/cloudemu/v2/services/privatedns/driver"
 )
 
@@ -23,7 +26,7 @@ func (h *Handler) createOrUpdateRecord(w http.ResponseWriter, r *http.Request, r
 	stored, created, err := h.pdns.CreateOrUpdateRecordSet(
 		r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResource, rp.SubResourceName, rs)
 	if err != nil {
-		azurearm.WriteCErr(w, err)
+		writeRecordErr(w, err)
 		return
 	}
 
@@ -132,4 +135,16 @@ func toRecordJSON(rp *azurearm.ResourcePath, rs *pddriver.RecordSet) recordJSON 
 		Etag:       azurearm.ETag(id),
 		Properties: props,
 	}
+}
+
+// writeRecordErr writes a record set write error. A bad A or AAAA value is the
+// 400 BadRequest real Azure returns. Anything else maps as usual.
+func writeRecordErr(w http.ResponseWriter, err error) {
+	var ae *dnsdriver.InvalidAddressError
+	if errors.As(err, &ae) {
+		azurearm.WriteError(w, http.StatusBadRequest, "BadRequest", cerrors.Message(err))
+		return
+	}
+
+	azurearm.WriteCErr(w, err)
 }

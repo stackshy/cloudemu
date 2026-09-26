@@ -45,7 +45,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cloudasset` | - | - | [Cloudasset](./gcp/cloudasset.md) | - | 11 |
 | `cloudbilling` | - | - | [Cloudbilling](./gcp/cloudbilling.md) | - | 14 |
 | `clouddeploy` | - | - | [CloudDeploy](./gcp/clouddeploy.md) | - | 11 |
-| `cloudformation` | [CloudFormation](./aws/cloudformation.md) | - | - | - | 9 |
+| `cloudformation` | [CloudFormation](./aws/cloudformation.md) | - | - | - | 10 |
 | `cloudfront` | [CloudFront](./aws/cloudfront.md) | - | - | - | 11 |
 | `cloudids` | - | - | [CloudIDS](./gcp/cloudids.md) | - | 6 |
 | `cloudrun` | - | - | [CloudRun](./gcp/cloudrun.md) | - | 18 |
@@ -80,7 +80,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | - | 16 |
 | `ecs` | [ECS](./aws/ecs.md) | - | - | - | 37 |
 | `efs` | [EFS](./aws/efs.md) | - | - | - | 27 |
-| `eks` | [EKS](./aws/eks.md) | - | - | - | 29 |
+| `eks` | [EKS](./aws/eks.md) | - | - | - | 40 |
 | `elasticsan` | - | [ElasticSan](./azure/elasticsan.md) | - | - | 8 |
 | `emr` | [EMR](./aws/emr.md) | - | - | - | 22 |
 | `eventbridgescheduler` | [Scheduler](./aws/scheduler.md) | - | - | - | 12 |

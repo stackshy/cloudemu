@@ -434,6 +434,19 @@
     "status": "green"
   },
   {
+    "service": "cloudformation",
+    "operation": "ValidateTemplate",
+    "providers": {
+      "aws": {
+        "native": "CloudFormation",
+        "clients": {
+          "sdkGo": "pass"
+        }
+      }
+    },
+    "status": "green"
+  },
+  {
     "service": "compute",
     "operation": "AttachVolume",
     "providers": {

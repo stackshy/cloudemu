@@ -3129,6 +3129,9 @@
       },
       {
         "name": "UpdateStack"
+      },
+      {
+        "name": "ValidateTemplate"
       }
     ],
     "providers": {
@@ -6225,6 +6228,12 @@
     "interface": "provider-native",
     "operations": [
       {
+        "name": "AssociateAccessPolicy"
+      },
+      {
+        "name": "CreateAccessEntry"
+      },
+      {
         "name": "CreateAddon"
       },
       {
@@ -6235,6 +6244,9 @@
       },
       {
         "name": "CreateNodegroup"
+      },
+      {
+        "name": "DeleteAccessEntry"
       },
       {
         "name": "DeleteAddon"
@@ -6249,7 +6261,16 @@
         "name": "DeleteNodegroup"
       },
       {
+        "name": "DescribeAccessEntry"
+      },
+      {
         "name": "DescribeAddon"
+      },
+      {
+        "name": "DescribeAddonConfiguration"
+      },
+      {
+        "name": "DescribeAddonVersions"
       },
       {
         "name": "DescribeCluster"
@@ -6264,13 +6285,25 @@
         "name": "DescribeUpdate"
       },
       {
+        "name": "DisassociateAccessPolicy"
+      },
+      {
         "name": "EKSException"
       },
       {
         "name": "Error"
       },
       {
+        "name": "ListAccessEntries"
+      },
+      {
+        "name": "ListAccessPolicies"
+      },
+      {
         "name": "ListAddons"
+      },
+      {
+        "name": "ListAssociatedAccessPolicies"
       },
       {
         "name": "ListClusters"
@@ -6295,6 +6328,9 @@
       },
       {
         "name": "Unwrap"
+      },
+      {
+        "name": "UpdateAccessEntry"
       },
       {
         "name": "UpdateAddon"

@@ -3,9 +3,11 @@ package aws
 import (
 	"context"
 	"encoding/json"
+	"strconv"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	cfnprovider "github.com/stackshy/cloudemu/v2/providers/aws/cloudformation"
 	cfn "github.com/stackshy/cloudemu/v2/services/cloudformation"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
@@ -32,6 +34,28 @@ func cloudformationRegistry(p *Provider) cfn.Registry {
 		"AWS::IAM::Role":              iamRoleProvisioner{p.IAM},
 		"AWS::SecretsManager::Secret": secretProvisioner{p.SecretsManager},
 		"AWS::SSM::Parameter":         ssmParameterProvisioner{p.SSM},
+	}
+}
+
+// cloudformationTemplateFetcher reads a TemplateURL object from the emulated S3.
+func cloudformationTemplateFetcher(p *Provider) cfnprovider.TemplateFetcher {
+	return func(ctx context.Context, bucket, key, versionID string) ([]byte, error) {
+		var (
+			obj *storagedriver.Object
+			err error
+		)
+
+		if versionID != "" {
+			obj, err = p.S3.GetObjectVersion(ctx, bucket, key, versionID)
+		} else {
+			obj, err = p.S3.GetObject(ctx, bucket, key)
+		}
+
+		if err != nil {
+			return nil, err
+		}
+
+		return obj.Data, nil
 	}
 }
 
@@ -435,7 +459,9 @@ func propInt(props map[string]any, key string) int {
 		n, _ := v.Int64()
 		return int(n)
 	case string:
-		return 0
+		// CloudFormation accepts numbers written as strings, such as "60".
+		n, _ := strconv.Atoi(strings.TrimSpace(v))
+		return n
 	default:
 		return 0
 	}
@@ -446,7 +472,7 @@ func propBool(props map[string]any, key string) bool {
 	case bool:
 		return v
 	case string:
-		return v == "true"
+		return strings.EqualFold(v, "true")
 	default:
 		return false
 	}

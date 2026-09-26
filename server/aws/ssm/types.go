@@ -40,7 +40,7 @@ type putParameterRequest struct {
 	Name           string   `json:"Name"`
 	Value          string   `json:"Value"`
 	Type           string   `json:"Type"`
-	Description    string   `json:"Description"`
+	Description    *string  `json:"Description"`
 	Overwrite      bool     `json:"Overwrite"`
 	Tier           string   `json:"Tier"`
 	DataType       string   `json:"DataType"`
@@ -207,4 +207,13 @@ func toParameterJSON(p ssmdriver.Parameter) parameterJSON {
 		Value:            p.Value,
 		Version:          p.Version,
 	}
+}
+
+// derefString returns *p, or "" when p is nil.
+func derefString(p *string) string {
+	if p == nil {
+		return ""
+	}
+
+	return *p
 }

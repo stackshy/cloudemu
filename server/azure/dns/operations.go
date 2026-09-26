@@ -180,6 +180,10 @@ func (h *Handler) createOrUpdateRecordSet(w http.ResponseWriter, r *http.Request
 	ifNoneMatch := r.Header.Get(headerIfNoneMatch)
 
 	info, created, err := h.upsertRecord(r, &cfg, ifMatch, ifNoneMatch)
+	if writeAddressError(w, err) {
+		return
+	}
+
 	if err != nil {
 		if cerrors.IsFailedPrecondition(err) {
 			// A record-set ETag precondition (If-Match/If-None-Match) failure is
@@ -327,6 +331,10 @@ func (h *Handler) patchRecordSet(w http.ResponseWriter, r *http.Request, rp *azu
 	}
 
 	info, err := h.dns.UpdateRecord(r.Context(), cfg)
+	if writeAddressError(w, err) {
+		return
+	}
+
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return

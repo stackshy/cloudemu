@@ -19,7 +19,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [Bedrock](./bedrock.md) | `bedrock` | 65 |
 | [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 29 |
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |
-| [CloudFormation](./cloudformation.md) | (provider-native) | 9 |
+| [CloudFormation](./cloudformation.md) | (provider-native) | 10 |
 | [CloudFront](./cloudfront.md) | `cloudfront` | 11 |
 | [CloudTrail](./cloudtrail.md) | `cloudtrail` | 60 |
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |
@@ -33,7 +33,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [ECR](./ecr.md) | `containerregistry` | 15 |
 | [ECS](./ecs.md) | `ecs` | 37 |
 | [EFS](./efs.md) | `efs` | 27 |
-| [EKS](./eks.md) | (provider-native) | 29 |
+| [EKS](./eks.md) | (provider-native) | 40 |
 | [ELB](./elb.md) | `loadbalancer` | 19 |
 | [EMR](./emr.md) | (provider-native) | 22 |
 | [ElastiCache](./elasticache.md) | `cache` | 17 |

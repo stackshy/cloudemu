@@ -134,6 +134,8 @@ func TestRESTHandlersWinBeforeS3(t *testing.T) {
 		{"route53_before_s3", "/2013-04-01/hostedzone", "ListHostedZonesResponse"},
 		{"efs_before_s3", "/2015-02-01/file-systems", "FileSystems"},
 		{"eks_before_s3", "/clusters", "clusters"},
+		{"eks_access_policies_before_s3", "/access-policies", "accessPolicies"},
+		{"eks_addon_versions_before_s3", "/addons/supported-versions", "addonVersions"},
 		{"apigateway_before_s3", "/restapis", "item"},
 		{"apigatewayv2_before_s3", "/v2/apis", "items"},
 	}

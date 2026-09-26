@@ -540,6 +540,7 @@ func wirePostBuildServices(o *config.Options, p *Provider) {
 	// live mocks rather than a store of its own.
 	p.CloudFormation = cloudformation.New(o)
 	p.CloudFormation.SetRegistry(cloudformationRegistry(p))
+	p.CloudFormation.SetTemplateFetcher(cloudformationTemplateFetcher(p))
 }
 
 // wireLifecycleEvents points each service's native lifecycle events at the

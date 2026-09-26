@@ -26,7 +26,12 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 		return nil, cerrors.New(cerrors.InvalidArgument, "stack name is required")
 	}
 
-	t, err := cfn.ParseTemplate(in.TemplateBody)
+	body, err := m.templateBody(ctx, in.TemplateBody, in.TemplateURL)
+	if err != nil {
+		return nil, err
+	}
+
+	t, err := cfn.ParseTemplate(body)
 	if err != nil {
 		return nil, err
 	}
@@ -44,7 +49,7 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 		stack: cfn.Stack{
 			ID: stackID, Name: in.StackName, Status: cfn.StatusCreateInProgress,
 			Description: t.Description, Parameters: params, Tags: in.Tags,
-			Capabilities: in.Capabilities, TemplateBody: in.TemplateBody,
+			Capabilities: in.Capabilities, TemplateBody: body,
 			CreationTime: now, LastUpdated: now,
 		},
 	}
@@ -112,7 +117,12 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 		return nil, err
 	}
 
-	newT, err := cfn.ParseTemplate(in.TemplateBody)
+	body, err := m.templateBody(ctx, in.TemplateBody, in.TemplateURL)
+	if err != nil {
+		return nil, err
+	}
+
+	newT, err := cfn.ParseTemplate(body)
 	if err != nil {
 		return nil, err
 	}
@@ -135,7 +145,7 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 	}
 
 	m.emitStackEvent(sd, cfn.StatusUpdateInProgress, "User Initiated")
-	m.applyStackMeta(sd, in, params, newT.Description)
+	m.applyStackMeta(sd, in, body, params, newT.Description)
 
 	if rerr := m.reconcile(ctx, sd, newT, paramValues, keep, create, remove); rerr != nil {
 		m.rollbackUpdate(ctx, sd, oldT, &prior, create, remove, cerrors.Message(rerr))
@@ -179,7 +189,7 @@ func (m *Mock) rollbackUpdate(
 // marks it DELETE_COMPLETE. Deleting an absent or already-deleted stack is a
 // no-op success, matching CloudFormation's idempotent delete.
 func (m *Mock) DeleteStack(ctx context.Context, name string) error {
-	sd, ok := m.stacks.Get(name)
+	sd, _, ok := m.findStack(name)
 	if !ok || sd.status() == cfn.StatusDeleteComplete {
 		return nil
 	}
@@ -474,7 +484,7 @@ func mergeParameters(t *cfn.Template, provided []cfn.Parameter) ([]cfn.Parameter
 			continue
 		}
 
-		out = append(out, cfn.Parameter{Key: name, Value: values[name]})
+		out = append(out, cfn.Parameter{Key: name, Value: values[name], NoEcho: def.NoEcho})
 	}
 
 	if len(missing) > 0 {
@@ -583,11 +593,11 @@ func (m *Mock) tick() time.Time {
 	return m.clock.Now()
 }
 
-func (m *Mock) applyStackMeta(sd *stackData, in *cfn.UpdateStackInput, params []cfn.Parameter, desc string) {
+func (m *Mock) applyStackMeta(sd *stackData, in *cfn.UpdateStackInput, body string, params []cfn.Parameter, desc string) {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	sd.stack.TemplateBody = in.TemplateBody
+	sd.stack.TemplateBody = body
 	sd.stack.Parameters = params
 	sd.stack.Description = desc
 	sd.stack.LastUpdated = m.clock.Now()
