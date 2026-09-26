@@ -1,6 +1,7 @@
 package route53
 
 import (
+	"errors"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -82,18 +83,18 @@ func checkAddresses(rr *resourceRecordSetXML, v4 bool) error {
 		values[i] = v.Value
 	}
 
-	i, bad := dnsdriver.InvalidAddressIndex(rr.Type, values)
-	if !bad {
+	var ae *dnsdriver.InvalidAddressError
+	if !errors.As(dnsdriver.ValidateAddresses(rr.Type, values), &ae) {
 		return nil
 	}
 
 	if v4 {
 		return cerrors.Newf(cerrors.FailedPrecondition,
 			"[Invalid Resource Record: 'FATAL problem: ARRDATAIllegalIPv4Address "+
-				"(Value is not a valid IPv4 address) encountered with '%s'']", values[i])
+				"(Value is not a valid IPv4 address) encountered with '%s'']", ae.Value)
 	}
 
 	return cerrors.Newf(cerrors.FailedPrecondition,
 		"[Invalid Resource Record: 'FATAL problem: AAAARRDATAIllegalIPv6Address "+
-			"(Value is not a valid IPv6 address) encountered with '%s'']", values[i])
+			"(Value is not a valid IPv6 address) encountered with '%s'']", ae.Value)
 }

@@ -261,9 +261,9 @@ func recordValues(recordType string, props *recordSetProperties) []string {
 
 	switch strings.ToUpper(recordType) {
 	case recTypeA:
-		return mapStrings(props.ARecords, func(a aRecordJSON) string { return a.IPv4Address })
+		return addressValues(props.ARecords, func(a aRecordJSON) string { return a.IPv4Address })
 	case recTypeAAAA:
-		return mapStrings(props.AaaaRecords, func(a aaaaRecordJSON) string { return a.IPv6Address })
+		return addressValues(props.AaaaRecords, func(a aaaaRecordJSON) string { return a.IPv6Address })
 	case recTypeCNAME:
 		if props.CnameRecord != nil && props.CnameRecord.Cname != "" {
 			return []string{props.CnameRecord.Cname}

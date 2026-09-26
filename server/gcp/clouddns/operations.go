@@ -1,6 +1,7 @@
 package clouddns
 
 import (
+	"errors"
 	"net/http"
 	"sort"
 	"strconv"
@@ -502,12 +503,14 @@ func (h *Handler) checkAdditions(w http.ResponseWriter, r *http.Request, id, dns
 			return false
 		}
 
-		// An A or AAAA rrdata must be an address of the right family. One bad
-		// rrdata fails the whole change before anything applies.
-		if j, bad := dnsdriver.InvalidAddressIndex(a.Type, a.Rrdatas); bad {
+		// The provider also rejects a bad A or AAAA rrdata, but only when the
+		// addition applies, which is after the deletions. Check here first so
+		// one bad rrdata fails the whole change and the error names its index.
+		var ae *dnsdriver.InvalidAddressError
+		if errors.As(dnsdriver.ValidateAddresses(a.Type, a.Rrdatas), &ae) {
 			gcprest.WriteError(w, http.StatusBadRequest, "invalid",
-				"Invalid value for 'entity.change.additions["+strconv.Itoa(i)+"].rrdata["+strconv.Itoa(j)+"]': '"+
-					a.Rrdatas[j]+"'")
+				"Invalid value for 'entity.change.additions["+strconv.Itoa(i)+"].rrdata["+strconv.Itoa(ae.Index)+"]': '"+
+					ae.Value+"'")
 
 			return false
 		}
