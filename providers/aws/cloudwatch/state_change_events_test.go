@@ -41,11 +41,24 @@ func (b *capturingBus) PublishServiceEvent(_ context.Context, source, detailType
 	b.events = append(b.events, capturedEvent{source: source, detailType: detailType, detail: d, resources: resources})
 }
 
+// all returns the state change events.
 func (b *capturingBus) all() []capturedEvent {
+	return b.ofType(eventAlarmStateChange)
+}
+
+func (b *capturingBus) ofType(detailType string) []capturedEvent {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	return append([]capturedEvent{}, b.events...)
+	var out []capturedEvent
+
+	for _, ev := range b.events {
+		if ev.detailType == detailType {
+			out = append(out, ev)
+		}
+	}
+
+	return out
 }
 
 func newEventMock() (*Mock, *capturingBus, *config.FakeClock) {

@@ -14,7 +14,8 @@ import (
 const initialStateReason = "Unchecked: Initial alarm creation"
 
 // CreateAlarm creates or updates an alarm. A new alarm starts in
-// INSUFFICIENT_DATA and is evaluated at once. An update keeps the current
+// INSUFFICIENT_DATA and is evaluated at once. Both publish a configuration
+// change event. An update keeps the current
 // state and tags and overwrites the rest of the configuration. Its state is
 // left unchanged, as PutMetricAlarm documents, and the next due evaluation
 // uses the new configuration.
@@ -43,13 +44,21 @@ func (m *Mock) CreateAlarm(ctx context.Context, cfg driver.AlarmConfig) error {
 
 	m.alarms.Set(cfg.Name, alarm)
 
-	var notice *alarmNotice
-	if !update {
+	var (
+		notice *alarmNotice
+		config *alarmStateEvent
+	)
+
+	if update {
+		config = configEventLocked(operationUpdate, alarm, existing)
+	} else {
+		config = configEventLocked(operationCreate, alarm, nil)
 		notice = m.evaluateLocked(alarm, now)
 	}
 
 	m.alarmMu.Unlock()
 
+	m.emitEvent(ctx, config)
 	m.publish(ctx, notice)
 
 	return nil
@@ -88,6 +97,7 @@ func (m *Mock) newAlarmData(cfg *driver.AlarmConfig, now time.Time) *alarmData {
 		AlarmArn:                   idgen.AWSARN("cloudwatch", m.opts.Region, m.opts.AccountID, "alarm:"+cfg.Name),
 		Tags:                       copyMap(cfg.Tags),
 		MetricQueryID:              idgen.UUID(),
+		ConfigUpdatedAt:            now,
 	}
 }
 
@@ -101,14 +111,24 @@ func copyMap(in map[string]string) map[string]string {
 	return out
 }
 
-// DeleteAlarm deletes the alarm with the given name.
-func (m *Mock) DeleteAlarm(_ context.Context, name string) error {
+// DeleteAlarm deletes the alarm with the given name and publishes a
+// configuration change event.
+func (m *Mock) DeleteAlarm(ctx context.Context, name string) error {
 	m.alarmMu.Lock()
-	defer m.alarmMu.Unlock()
 
-	if !m.alarms.Delete(name) {
+	a, ok := m.alarms.Get(name)
+	if !ok {
+		m.alarmMu.Unlock()
+
 		return errors.Newf(errors.NotFound, "alarm %q not found", name)
 	}
+
+	config := configEventLocked(operationDelete, a, nil)
+
+	m.alarms.Delete(name)
+	m.alarmMu.Unlock()
+
+	m.emitEvent(ctx, config)
 
 	return nil
 }

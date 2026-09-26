@@ -230,9 +230,7 @@ func (m *Mock) publish(ctx context.Context, notices ...*alarmNotice) {
 			continue
 		}
 
-		if n.event != nil {
-			m.emitStateEvent(ctx, n.event)
-		}
+		m.emitEvent(ctx, n.event)
 
 		for _, arn := range n.topics {
 			_ = m.sns.PublishExternal(context.Background(), arn, n.message)

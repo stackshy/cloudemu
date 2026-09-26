@@ -110,6 +110,8 @@ type alarmData struct {
 	// MetricQueryID is the id of the alarm's metric query in its state change
 	// events. A new configuration gets a new id, as on AWS.
 	MetricQueryID string
+	// ConfigUpdatedAt is when the configuration was last put.
+	ConfigUpdatedAt time.Time
 }
 
 // New creates a new CloudWatch mock with the given configuration options.
