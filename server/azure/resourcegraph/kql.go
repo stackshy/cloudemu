@@ -100,6 +100,7 @@ const (
 	azureTypeStreamAnl  = "microsoft.streamanalytics/streamingjobs"
 	azureTypeRecovery   = "microsoft.recoveryservices/vaults"
 	azureTypeIoTHub     = "microsoft.devices/iothubs"
+	azureTypeLogicWf    = "microsoft.logic/workflows"
 )
 
 // Portable service identifiers as emitted by the resourcediscovery walkers.
@@ -145,6 +146,7 @@ const (
 	portableStreamAnl    = "streamanalytics"
 	portableRecovery     = "recoveryservices"
 	portableIoTHub       = "iothub"
+	portableLogic        = "logic"
 )
 
 // parsedKQL is the result of KQL parsing: an engine Query plus the limit
@@ -445,6 +447,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeStreamAnl:  {portableStreamAnl, "StreamingJob"},
 	azureTypeRecovery:   {portableRecovery, "Vault"},
 	azureTypeIoTHub:     {portableIoTHub, "IotHub"},
+	azureTypeLogicWf:    {portableLogic, "Workflow"},
 }
 
 // mapAzureType translates a fully-qualified Azure resource type to the

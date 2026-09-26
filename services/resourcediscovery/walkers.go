@@ -111,6 +111,9 @@ const (
 	// ServiceIoTHub buckets Azure IoT Hub resources
 	// (Microsoft.Devices/IotHubs).
 	ServiceIoTHub = "iothub"
+	// ServiceLogic buckets Azure Logic Apps resources
+	// (Microsoft.Logic/workflows).
+	ServiceLogic = "logic"
 )
 
 // Resource type constants emitted by the walkers.
@@ -265,6 +268,10 @@ const TypeRecoveryVault = "Vault"
 // TypeIoTHub is the portable type for an Azure IoT Hub
 // (Microsoft.Devices/IotHubs). Azure-only, so it lives in its own line.
 const TypeIoTHub = "IotHub"
+
+// TypeLogicWorkflow is the portable type for an Azure Logic Apps (Consumption)
+// workflow (Microsoft.Logic/workflows). Azure-only, so it lives in its own line.
+const TypeLogicWorkflow = "Workflow"
 
 // sqlVMOptInTagKey and sqlVMOptInTagValue mark a compute VM as opting in to a
 // paired Microsoft.SqlVirtualMachine overlay row in discovery. Only Azure VMs
