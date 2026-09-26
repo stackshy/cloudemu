@@ -107,6 +107,10 @@ type Config struct {
 	K8sProgression         bool
 	K8sProgressionInterval time.Duration // ticker cadence for staged progression (default 1s)
 
+	// TickInterval is how often serve calls the services' Tick, for example
+	// to evaluate CloudWatch alarms that are due. Zero or less turns it off.
+	TickInterval time.Duration
+
 	// K8sNodes is the number of synthetic Nodes each cluster seeds, fixed at
 	// creation. Default (0 or 1) is a single node. >1 opts clusters into the
 	// multi-node first-fit scheduler (nodeSelector/taints/resource requests).
@@ -165,10 +169,9 @@ type App struct {
 	// k8s is the current Kubernetes data-plane server (rebuilt on reset, guarded
 	// by rebuildMu). The progression ticker reads it each tick.
 	k8s *kubernetes.APIServer
-	// k8sTickStop/k8sTickDone manage the opt-in real-time progression ticker
-	// goroutine (started in Serve, stopped in shutdown, like the persist flusher).
-	k8sTickStop chan struct{}
-	k8sTickDone chan struct{}
+	// ticker runs the background ticks: the opt-in Kubernetes progression and
+	// the services' Tick. Built in New, started in Serve, stopped in shutdown.
+	ticker *scheduler
 
 	// flusher owns every automatic persistence save (nil unless --persist). Its
 	// dirty flag is flipped by the request-boundary seam and the mutating admin
@@ -264,6 +267,8 @@ func New(cfg *Config) (*App, error) {
 	}
 
 	a.Rebuild() // populate the backends before serving
+
+	a.ticker = a.newTicker()
 
 	// The registry captures/restores whole-emulator state through the same funcs
 	// the snapshot endpoint uses, so rewind/fork reuse persist.ExportAll/RestoreAll.
@@ -998,9 +1003,9 @@ func (a *App) Serve(ctx context.Context) error {
 	// scheduled/on-request saves run for the whole serving lifetime.
 	a.flusher.Start()
 
-	// Start the opt-in Kubernetes staged-lifecycle ticker (default off). Like the
-	// flusher, it is lifecycle-managed: started here, stopped in shutdown.
-	a.startK8sTicker()
+	// Start the background ticks. Like the flusher, they are started here and
+	// stopped in shutdown.
+	a.ticker.start()
 
 	if !a.cfg.Quiet {
 		printBanner(a.out, &eps, a.cfg.Admin, a.persistBanner())
@@ -1180,8 +1185,9 @@ func (a *App) shutdown(servers []listenerServer) error {
 	// so manual genuinely never saves and no stale tick can rename over the final
 	// write. The final save runs while the providers are still live (closed
 	// below), keeping the engines readable through the export.
+	// Stop the ticks first so none can change state after the final save.
+	a.ticker.stop()
 	a.flusher.Stop(ctx)
-	a.stopK8sTicker()
 
 	a.rebuildMu.Lock()
 	cur := a.providers
@@ -1191,60 +1197,57 @@ func (a *App) shutdown(servers []listenerServer) error {
 	return shutErr
 }
 
-// startK8sTicker launches the real-time staged-lifecycle ticker when progression
-// is enabled. Each tick snapshots the current data-plane server under rebuildMu
-// (a reset swaps it) and advances every cluster's Pods. No-op when progression
-// is off or the data plane is disabled.
-func (a *App) startK8sTicker() {
-	if !a.cfg.K8sProgression || a.k8sBackend == nil {
-		return
-	}
+// newTicker builds the background tick scheduler. The Kubernetes entry runs
+// only with --k8s-progression and the data plane on. The services entry runs
+// on TickInterval. Both sources read the current state on each tick, since a
+// reset swaps it.
+func (a *App) newTicker() *scheduler {
+	s := newScheduler(config.RealClock{}, a.markDirty)
 
-	interval := a.cfg.K8sProgressionInterval
-	if interval <= 0 {
-		interval = defaultK8sProgressionInterval
-	}
-
-	a.k8sTickStop = make(chan struct{})
-	a.k8sTickDone = make(chan struct{})
-
-	go func() {
-		defer close(a.k8sTickDone)
-
-		t := time.NewTicker(interval)
-		defer t.Stop()
-
-		for {
-			select {
-			case <-a.k8sTickStop:
-				return
-			case <-t.C:
-				a.rebuildMu.Lock()
-				k8s := a.k8s
-				a.rebuildMu.Unlock()
-
-				// The ticker mutates Pods from this background goroutine, bypassing
-				// the HTTP dirty seam, so mark dirty here when a Pod actually
-				// advanced a stage, otherwise a --k8s-progression save could lag
-				// the live staged state. Only on real change, never on an idle tick.
-				if k8s != nil && k8s.TickAll() {
-					a.markDirty()
-				}
-			}
+	if a.cfg.K8sProgression && a.k8sBackend != nil {
+		interval := a.cfg.K8sProgressionInterval
+		if interval <= 0 {
+			interval = defaultK8sProgressionInterval
 		}
-	}()
+
+		s.add(interval, a.k8sTickables)
+	}
+
+	s.add(a.cfg.TickInterval, a.serviceTickables)
+
+	return s
 }
 
-// stopK8sTicker stops the progression ticker and waits for it to drain.
-// Idempotent: a no-op when the ticker was never started.
-func (a *App) stopK8sTicker() {
-	if a.k8sTickStop == nil {
-		return
+// k8sTickables returns the current data plane as a Tickable.
+func (a *App) k8sTickables() []config.Tickable {
+	a.rebuildMu.Lock()
+	k8s := a.k8s
+	a.rebuildMu.Unlock()
+
+	if k8s == nil {
+		return nil
 	}
 
-	close(a.k8sTickStop)
-	<-a.k8sTickDone
-	a.k8sTickStop = nil
+	return []config.Tickable{tickFunc(func(time.Time) bool { return k8s.TickAll() })}
+}
+
+// serviceTickables returns the Tickables of every live AWS region.
+func (a *App) serviceTickables() []config.Tickable {
+	a.rebuildMu.Lock()
+	mux := a.awsMux
+	a.rebuildMu.Unlock()
+
+	if mux == nil {
+		return nil
+	}
+
+	var out []config.Tickable
+
+	for _, prov := range mux.LiveProviders() {
+		out = append(out, prov.Tickables()...)
+	}
+
+	return out
 }
 
 // listenerServer is one endpoint's serve/shutdown lifecycle, independent of the
