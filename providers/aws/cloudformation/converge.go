@@ -74,23 +74,9 @@ func (m *Mock) converge(
 		return []applyFailure{{verb: verbCreate, err: err}}, nil
 	}
 
-	var (
-		failures []applyFailure
-		replaced []replacement
-	)
-
-	for _, id := range order {
-		if o.skip[id] {
-			continue
-		}
-
-		if f := m.applyOne(ctx, sd, res, id, t.Resources[id], &replaced); f != nil {
-			failures = append(failures, *f)
-
-			if o.stopOnFailure {
-				return failures, replaced
-			}
-		}
+	failures, replaced := m.applyAll(ctx, sd, t, res, order, o)
+	if len(failures) > 0 && o.stopOnFailure {
+		return failures, replaced
 	}
 
 	if len(failures) == 0 {
@@ -107,6 +93,33 @@ func (m *Mock) converge(
 	m.cleanup(ctx, sd, t, o.skip, replaced)
 
 	return failures, nil
+}
+
+// applyAll applies each resource of t in order. A forward pass stops at the
+// first failure.
+func (m *Mock) applyAll(
+	ctx context.Context, sd *stackData, t *cfn.Template, res *cfn.Resolver, order []string, o convergeOpts,
+) ([]applyFailure, []replacement) {
+	var (
+		failures []applyFailure
+		replaced []replacement
+	)
+
+	for _, id := range order {
+		if o.skip[id] {
+			continue
+		}
+
+		if f := m.applyOne(ctx, sd, res, id, t.Resources[id], &replaced); f != nil {
+			failures = append(failures, *f)
+
+			if o.stopOnFailure {
+				break
+			}
+		}
+	}
+
+	return failures, replaced
 }
 
 // setOutputs resolves and stores the template outputs.
