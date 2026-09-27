@@ -24,6 +24,7 @@ const (
 	paramRecordFunction   = "record-function"
 	paramConnectionARN    = "connection-arn"
 	paramConnectionType   = "connection-type"
+	paramConnectionProps  = "connection-properties"
 )
 
 // federatedTagKey is the tag Athena puts on every FEDERATED catalog.
@@ -93,6 +94,10 @@ func (m *Mock) CreateDataCatalog(ctx context.Context, in driver.CreateDataCatalo
 
 		tags[federatedTagKey] = "true"
 	}
+
+	// m.mu covers the insert and its tags, so a Delete cannot run between them.
+	m.mu.Lock()
+	defer m.mu.Unlock()
 
 	if isDefaultCatalog(in.Name) || !m.dataCatalogs.SetIfAbsent(in.Name, dc) {
 		return nil, &driver.APIError{
@@ -261,20 +266,27 @@ func validateCatalogName(name, catalogType string) error {
 		limit = maxFederatedCatalogNameLen
 	}
 
-	if name == "" || len(name) > limit || strings.IndexFunc(name, badCatalogNameRune) >= 0 {
+	federated := catalogType == driver.DataCatalogTypeFederated
+	bad := func(r rune) bool { return !catalogNameRune(r, federated) }
+
+	if name == "" || len(name) > limit || strings.IndexFunc(name, bad) >= 0 {
 		return invalidRequest("Name must be 1-%d alphanumeric, underscore, at sign or hyphen characters", limit)
 	}
 
 	return nil
 }
 
-// badCatalogNameRune reports a rune outside [A-Za-z0-9_@-].
-func badCatalogNameRune(r rune) bool {
+// catalogNameRune reports whether r may appear in a catalog name. The API
+// docs allow alphanumerics, "_", "@" and "-", and a backslash too for
+// FEDERATED names.
+func catalogNameRune(r rune, federated bool) bool {
 	switch {
 	case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9':
-		return false
+		return true
+	case r == '_', r == '@', r == '-':
+		return true
 	default:
-		return r != '_' && r != '@' && r != '-'
+		return federated && r == '\\'
 	}
 }
 
@@ -325,8 +337,8 @@ func validateLambdaParams(params map[string]string) error {
 	return nil
 }
 
-// validateFederatedParams needs either connection-arn or a known
-// connection-type, but not both.
+// validateFederatedParams needs either connection-arn, or a known
+// connection-type with connection-properties, but not both.
 func validateFederatedParams(params map[string]string) error {
 	connARN := params[paramConnectionARN]
 	connType := params[paramConnectionType]
@@ -335,8 +347,16 @@ func validateFederatedParams(params map[string]string) error {
 		return invalidRequest("FEDERATED data catalogs require one of %s or %s", paramConnectionARN, paramConnectionType)
 	}
 
-	if connType != "" && !connectionTypes()[connType] {
+	if connType == "" {
+		return nil
+	}
+
+	if !connectionTypes()[connType] {
 		return invalidRequest("unsupported %s %s", paramConnectionType, connType)
+	}
+
+	if params[paramConnectionProps] == "" {
+		return invalidRequest("%s requires %s", paramConnectionType, paramConnectionProps)
 	}
 
 	return nil

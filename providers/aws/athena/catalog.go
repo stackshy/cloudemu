@@ -64,7 +64,7 @@ func (m *Mock) glueCatalogID(name string) (string, error) {
 
 	dc, ok := m.dataCatalogs.Get(name)
 	if !ok {
-		return "", notFoundRequest("Catalog %s not found", name)
+		return "", catalogNotFound(name)
 	}
 
 	if !strings.EqualFold(dc.Type, driver.DataCatalogTypeGlue) {

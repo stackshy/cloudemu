@@ -77,13 +77,17 @@ func TestCreateDataCatalogValidation(t *testing.T) {
 		}},
 		"federated none":     {Name: "a", Type: "FEDERATED"},
 		"federated bad type": {Name: "a", Type: "FEDERATED", Parameters: map[string]string{"connection-type": "NOPE"}},
-		"federated long":     {Name: strings.Repeat("f", 42), Type: "FEDERATED", Parameters: map[string]string{"connection-type": "MYSQL"}},
-		"bad type":           {Name: "a", Type: "S3", Parameters: fn},
-		"no name":            {Type: "LAMBDA", Parameters: fn},
-		"bad name":           {Name: "a b", Type: "LAMBDA", Parameters: fn},
-		"long name":          {Name: strings.Repeat("n", 128), Type: "LAMBDA", Parameters: fn},
-		"long description":   {Name: "a", Type: "LAMBDA", Parameters: fn, Description: strings.Repeat("d", 1025)},
-		"default name":       {Name: "awsdatacatalog", Type: "GLUE", Parameters: map[string]string{"catalog-id": "1"}},
+		"federated long": {Name: strings.Repeat("f", 42), Type: "FEDERATED", Parameters: map[string]string{
+			"connection-type": "MYSQL", "connection-properties": "{}",
+		}},
+		"federated no properties": {Name: "a", Type: "FEDERATED", Parameters: map[string]string{"connection-type": "MYSQL"}},
+		"backslash not federated": {Name: `a\b`, Type: "LAMBDA", Parameters: fn},
+		"bad type":                {Name: "a", Type: "S3", Parameters: fn},
+		"no name":                 {Type: "LAMBDA", Parameters: fn},
+		"bad name":                {Name: "a b", Type: "LAMBDA", Parameters: fn},
+		"long name":               {Name: strings.Repeat("n", 128), Type: "LAMBDA", Parameters: fn},
+		"long description":        {Name: "a", Type: "LAMBDA", Parameters: fn, Description: strings.Repeat("d", 1025)},
+		"default name":            {Name: "awsdatacatalog", Type: "GLUE", Parameters: map[string]string{"catalog-id": "1"}},
 	}
 
 	for name, in := range cases {
@@ -201,7 +205,7 @@ func TestDeleteDataCatalogRules(t *testing.T) {
 	}
 
 	_, err = m.CreateDataCatalog(ctx, driver.CreateDataCatalogInput{
-		Name: "fed", Type: "FEDERATED", Parameters: map[string]string{"connection-type": "MYSQL"},
+		Name: "fed", Type: "FEDERATED", Parameters: map[string]string{"connection-type": "MYSQL", "connection-properties": "{}"},
 	})
 	requireNoError(t, err, "create fed")
 
@@ -332,5 +336,68 @@ func TestDataCatalogSnapshotRoundTrip(t *testing.T) {
 	tags, _ := fresh.ListTagsForResource(ctx, fresh.dataCatalogARN("fed"))
 	if tags["env"] != "dev" {
 		t.Fatalf("restored tags = %v", tags)
+	}
+}
+
+func TestFederatedNameAllowsBackslash(t *testing.T) {
+	m := newMock(t)
+
+	dc, err := m.CreateDataCatalog(context.Background(), driver.CreateDataCatalogInput{
+		Name: `fed\x`, Type: "FEDERATED",
+		Parameters: map[string]string{"connection-type": "MYSQL", "connection-properties": "{}"},
+	})
+	requireNoError(t, err, "create")
+
+	if dc.Name != `fed\x` {
+		t.Fatalf("name = %q", dc.Name)
+	}
+}
+
+func TestCatalogOpsMissingCatalogWasNotFound(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	_, _, err := m.ListDatabases(ctx, "ghost", driver.Pagination{})
+	requireException(t, err, driver.ExInvalidRequest)
+
+	if !strings.Contains(err.Error(), "Catalog ghost was not found") {
+		t.Fatalf("ListDatabases error = %v", err)
+	}
+
+	_, err = m.GetTableMetadata(ctx, "ghost", "db", "t")
+	if err == nil || !strings.Contains(err.Error(), "was not found") {
+		t.Fatalf("GetTableMetadata error = %v", err)
+	}
+}
+
+// TestCreateDeleteDataCatalogRaceLeavesNoTags runs Create and Delete of one
+// name side by side. Once both finish, tags may exist only if the catalog does.
+func TestCreateDeleteDataCatalogRaceLeavesNoTags(t *testing.T) {
+	m := newMock(t)
+	ctx := context.Background()
+
+	for i := 0; i < 200; i++ {
+		done := make(chan struct{})
+
+		go func() {
+			defer close(done)
+
+			_, _ = m.CreateDataCatalog(ctx, driver.CreateDataCatalogInput{
+				Name: "race", Type: "LAMBDA", Parameters: map[string]string{"function": testLambdaARN},
+				Tags: map[string]string{"k": "v"},
+			})
+		}()
+
+		_, _ = m.DeleteDataCatalog(ctx, "race", false)
+		<-done
+
+		_, getErr := m.GetDataCatalog(ctx, "race")
+		tags, _ := m.ListTagsForResource(ctx, m.dataCatalogARN("race"))
+
+		if getErr != nil && len(tags) != 0 {
+			t.Fatalf("iteration %d: orphan tags %v", i, tags)
+		}
+
+		_, _ = m.DeleteDataCatalog(ctx, "race", false)
 	}
 }
