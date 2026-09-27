@@ -233,16 +233,24 @@ func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *
 		}
 
 		initial := watchSendInitialEvents(r)
+		resume := watchResume(r) && !initial
 
 		s.mu.RLock()
 		sub := st.watch.subscribe(namespace)
 		items := st.snapshotLocked(namespace, r)
 		rv := s.clusterRVLocked()
+		expired := s.watchExpiredLocked(r, resume)
 		s.mu.RUnlock()
-		streamWatch(r.Context(), w, sub, items, keep, watchOpts{
-			resume:      watchResume(r) && !initial,
+
+		ctx, cancel := watchContext(r)
+		defer cancel()
+
+		streamWatch(ctx, w, sub, items, keep, watchOpts{
+			resume:      resume,
+			expired:     expired,
 			bookmarks:   watchBookmarksEnabled(r) || initial,
 			bookmarkObj: registryBookmark(st, rv, initial),
+			table:       newWatchTable(s, r, st.def.kind, st.def.tableColumns),
 		})
 
 		return

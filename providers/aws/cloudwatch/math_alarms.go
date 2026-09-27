@@ -71,7 +71,7 @@ func notificationTrigger(a *alarmData) map[string]any {
 		"EvaluationPeriods":                a.EvaluationPeriods,
 		"ComparisonOperator":               a.ComparisonOperator,
 		"TreatMissingData":                 treatMissingLabel + treat,
-		"EvaluateLowSampleCountPercentile": "",
+		"EvaluateLowSampleCountPercentile": a.EvaluateLowSampleCountPercentile,
 	}
 
 	// An anomaly alarm names its band instead of a threshold.

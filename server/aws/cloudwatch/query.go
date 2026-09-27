@@ -169,9 +169,10 @@ func (h *Handler) queryListMetrics(w http.ResponseWriter, r *http.Request) {
 
 func queryListMetricsInput(r *http.Request) listMetricsInput {
 	in := listMetricsInput{
-		Namespace:  r.Form.Get("Namespace"),
-		MetricName: r.Form.Get("MetricName"),
-		NextToken:  r.Form.Get("NextToken"),
+		Namespace:      r.Form.Get("Namespace"),
+		MetricName:     r.Form.Get("MetricName"),
+		NextToken:      r.Form.Get("NextToken"),
+		RecentlyActive: r.Form.Get("RecentlyActive"),
 	}
 
 	// Value is optional on a DimensionFilter, so the list ends at the first
@@ -204,6 +205,7 @@ func (h *Handler) queryGetMetricStatistics(w http.ResponseWriter, r *http.Reques
 		points = append(points, datapointXML{
 			Timestamp: dp.Timestamp.Format(time.RFC3339), SampleCount: dp.SampleCount, Average: dp.Average,
 			Sum: dp.Sum, Minimum: dp.Minimum, Maximum: dp.Maximum, Unit: dp.Unit,
+			ExtendedStatistics: extendedStatisticsXML(dp.ExtendedStatistics),
 		})
 	}
 
@@ -217,6 +219,8 @@ func queryGetMetricStatisticsInput(r *http.Request) getMetricStatisticsInput {
 		Statistics: queryStringList(r, "Statistics.member."),
 		Dimensions: dimsToCBR(queryDimensions(r, "Dimensions.member.")),
 		Unit:       r.Form.Get("Unit"),
+
+		ExtendedStatistics: queryStringList(r, "ExtendedStatistics.member."),
 	}
 
 	in.Period, _ = strconv.Atoi(r.Form.Get("Period"))
@@ -251,13 +255,52 @@ func (h *Handler) queryPutMetricAlarm(w http.ResponseWriter, r *http.Request) {
 		Tags:                    queryTagPairs(r, "Tags.member."),
 		Metrics:                 toDriverQueries(queryMetricDataQueries(r, "Metrics")),
 		ThresholdMetricID:       r.Form.Get("ThresholdMetricId"),
-	}, r.Form.Has("Threshold"))
+
+		EvaluateLowSampleCountPercentile: r.Form.Get("EvaluateLowSampleCountPercentile"),
+	}, r.Form.Has("Threshold"), queryEvaluationWindow(r))
 	if err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}
 
 	writeQueryResponse(w, "PutMetricAlarmResponse", nil)
+}
+
+// Form keys of the EvaluationWindow union.
+const (
+	evaluationWindowKey = "EvaluationWindow"
+	slidingWindowKey    = evaluationWindowKey + ".SlidingWindow"
+	wallClockWindowKey  = evaluationWindowKey + ".WallClockWindow"
+)
+
+// queryEvaluationWindow decodes EvaluationWindow from the form. An empty
+// structure member sends no key of its own, so a member counts as set when any
+// key starts with its name. Nil means no EvaluationWindow key was sent.
+func queryEvaluationWindow(r *http.Request) *evaluationWindowInput {
+	var in *evaluationWindowInput
+
+	for key := range r.Form {
+		if key != evaluationWindowKey && !strings.HasPrefix(key, evaluationWindowKey+".") {
+			continue
+		}
+
+		if in == nil {
+			in = &evaluationWindowInput{}
+		}
+
+		switch {
+		case key == slidingWindowKey || strings.HasPrefix(key, slidingWindowKey+"."):
+			in.sliding = true
+		case key == wallClockWindowKey || strings.HasPrefix(key, wallClockWindowKey+"."):
+			in.wall = true
+		}
+	}
+
+	if in != nil {
+		in.timezone = r.Form.Get(wallClockWindowKey + ".Timezone")
+	}
+
+	return in
 }
 
 // queryDescribeAlarms mirrors the rpc-v2-cbor describeAlarms: it renders the
@@ -339,6 +382,9 @@ func toAlarmMemberXML(a *mondriver.AlarmInfo) alarmMemberXML {
 		InsufficientDataActions: a.InsufficientDataActions,
 		Metrics:                 toQueriesXML(a.Metrics),
 		ThresholdMetricID:       a.ThresholdMetricID,
+
+		EvaluateLowSampleCountPercentile: a.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                 toEvaluationWindowXML(a.EvaluationWindow),
 	}
 
 	if !a.StateUpdatedTimestamp.IsZero() {
@@ -628,6 +674,35 @@ type datapointXML struct {
 	Minimum     *float64 `xml:"Minimum,omitempty"`
 	Maximum     *float64 `xml:"Maximum,omitempty"`
 	Unit        string   `xml:"Unit,omitempty"`
+
+	ExtendedStatistics []extendedStatisticXML `xml:"ExtendedStatistics>entry,omitempty"`
+}
+
+// extendedStatisticXML is one entry of the Datapoint ExtendedStatistics map.
+type extendedStatisticXML struct {
+	Key   string  `xml:"key"`
+	Value float64 `xml:"value"`
+}
+
+// extendedStatisticsXML renders the map sorted by key for stable output.
+func extendedStatisticsXML(m map[string]float64) []extendedStatisticXML {
+	if len(m) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	out := make([]extendedStatisticXML, 0, len(keys))
+	for _, k := range keys {
+		out = append(out, extendedStatisticXML{Key: k, Value: m[k]})
+	}
+
+	return out
 }
 
 type getStatsResultXML struct {
@@ -668,6 +743,9 @@ type alarmMemberXML struct {
 	InsufficientDataActions    []string             `xml:"InsufficientDataActions>member,omitempty"`
 	Metrics                    []metricDataQueryXML `xml:"Metrics>member,omitempty"`
 	ThresholdMetricID          string               `xml:"ThresholdMetricId,omitempty"`
+
+	EvaluateLowSampleCountPercentile string               `xml:"EvaluateLowSampleCountPercentile,omitempty"`
+	EvaluationWindow                 *evaluationWindowXML `xml:"EvaluationWindow,omitempty"`
 }
 
 type compositeAlarmMemberXML struct {

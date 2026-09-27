@@ -104,6 +104,13 @@ func kubeletPatch(version string) int {
 	return firstPatch + patchesPerMinor*(catalogMaxMinor-minor)
 }
 
+// serverPatchVersion is the "1.<minor>.<patch>" the control plane reports on
+// /version. It uses the same patch as the nodes' kubelet, so a cluster and its
+// nodegroups at one minor agree on the patch release.
+func serverPatchVersion(version string) string {
+	return fmt.Sprintf("%s.%d", version, kubeletPatch(version))
+}
+
 // k8sStateLocked returns the data-plane state of a cluster, or nil when no data
 // plane is wired or the cluster is not registered. Caller holds m.mu.
 func (m *Mock) k8sStateLocked(clusterName string) *kubernetes.ClusterState {

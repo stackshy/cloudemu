@@ -27,10 +27,33 @@ type dimensionFilterCBR struct {
 // listMetricsInput is the shared ListMetrics request. The CBOR codec decodes
 // straight into it and the query codec fills it from the form.
 type listMetricsInput struct {
-	Namespace  string               `cbor:"Namespace,omitempty"`
-	MetricName string               `cbor:"MetricName,omitempty"`
-	Dimensions []dimensionFilterCBR `cbor:"Dimensions,omitempty"`
-	NextToken  string               `cbor:"NextToken,omitempty"`
+	Namespace      string               `cbor:"Namespace,omitempty"`
+	MetricName     string               `cbor:"MetricName,omitempty"`
+	Dimensions     []dimensionFilterCBR `cbor:"Dimensions,omitempty"`
+	NextToken      string               `cbor:"NextToken,omitempty"`
+	RecentlyActive string               `cbor:"RecentlyActive,omitempty"`
+}
+
+// ListMetrics visibility windows from API_ListMetrics. A metric that has not
+// had data for two weeks is not listed. RecentlyActive=PT3H, its only valid
+// value, narrows that to three hours.
+const (
+	recentlyActivePT3H = "PT3H"
+	recentlyActiveSpan = 3 * time.Hour
+	listMetricsSpan    = 14 * 24 * time.Hour
+)
+
+// listMetricsWindow is how far back a series must have had data to be
+// listed.
+func listMetricsWindow(recentlyActive string) (time.Duration, error) {
+	switch recentlyActive {
+	case "":
+		return listMetricsSpan, nil
+	case recentlyActivePT3H:
+		return recentlyActiveSpan, nil
+	default:
+		return 0, newWireError(errInvalidParameterValue, "The parameter RecentlyActive must be a value in the set [PT3H].")
+	}
 }
 
 type listMetricsResult struct {
@@ -45,13 +68,18 @@ func (h *Handler) listMetricsCore(ctx context.Context, in listMetricsInput) (lis
 		return listMetricsResult{}, err
 	}
 
+	within, err := listMetricsWindow(in.RecentlyActive)
+	if err != nil {
+		return listMetricsResult{}, err
+	}
+
 	var rows []mondriver.MetricIdentifier
 
 	// An exact AWS/IPAM request returns only the synthetic IPAM metrics.
 	if h.ipam != nil && in.Namespace == netdriver.IpamMetricNamespace {
 		rows = h.ipamMetricRows(ctx)
 	} else {
-		all, err := h.allMetricRows(ctx)
+		all, err := h.allMetricRows(ctx, within)
 		if err != nil {
 			return listMetricsResult{}, err
 		}
@@ -137,9 +165,20 @@ type detailedMetricLister interface {
 	ListMetricsDetailed(ctx context.Context) ([]mondriver.MetricIdentifier, error)
 }
 
-// allMetricRows falls back to the names-only driver list when the provider
-// cannot enumerate dimensions.
-func (h *Handler) allMetricRows(ctx context.Context) ([]mondriver.MetricIdentifier, error) {
+// activeMetricLister is the AWS-local capability that lists only the metrics
+// that had data put within a recent span.
+type activeMetricLister interface {
+	ListMetricsActive(ctx context.Context, within time.Duration) ([]mondriver.MetricIdentifier, error)
+}
+
+// allMetricRows lists the metrics that had data within the span. It falls
+// back to every metric when the provider keeps no receipt times, and to the
+// names-only driver list when it cannot enumerate dimensions.
+func (h *Handler) allMetricRows(ctx context.Context, within time.Duration) ([]mondriver.MetricIdentifier, error) {
+	if al, ok := h.monitoring.(activeMetricLister); ok {
+		return al.ListMetricsActive(ctx, within)
+	}
+
 	if dl, ok := h.monitoring.(detailedMetricLister); ok {
 		return dl.ListMetricsDetailed(ctx)
 	}
@@ -183,6 +222,8 @@ type getMetricStatisticsInput struct {
 	Statistics []string       `cbor:"Statistics,omitempty"`
 	Dimensions []dimensionCBR `cbor:"Dimensions,omitempty"`
 	Unit       string         `cbor:"Unit,omitempty"`
+
+	ExtendedStatistics []string `cbor:"ExtendedStatistics,omitempty"`
 }
 
 // datapoint is one GetMetricStatistics datapoint. A nil statistic was not
@@ -195,6 +236,8 @@ type datapoint struct {
 	Minimum     *float64
 	Maximum     *float64
 	Unit        string
+	// ExtendedStatistics maps each requested percentile to its value.
+	ExtendedStatistics map[string]float64
 }
 
 type getMetricStatisticsResult struct {
@@ -208,16 +251,64 @@ type metricUnitLister interface {
 	MetricUnits(ctx context.Context, in *mondriver.GetMetricInput) []string
 }
 
+// maxExtendedStatistics is the most ExtendedStatistics one request may ask for.
+const maxExtendedStatistics = 10
+
+// validateStatistics applies the GetMetricStatistics rule: "you must specify
+// either Statistics or ExtendedStatistics, but not both". ExtendedStatistics
+// holds percentiles from p0.0 to p100 only.
+func validateStatistics(in *getMetricStatisticsInput) error {
+	switch {
+	case len(in.Statistics) > 0 && len(in.ExtendedStatistics) > 0:
+		return newWireError(errInvalidParameterCombo,
+			"Must specify either Statistics or ExtendedStatistics, but not both.")
+	case len(in.Statistics) == 0 && len(in.ExtendedStatistics) == 0:
+		return newWireError(errMissingParameter, "Must specify either Statistics or ExtendedStatistics.")
+	case len(in.ExtendedStatistics) > maxExtendedStatistics:
+		return newWireError(errInvalidParameterValue, "The collection ExtendedStatistics must not have more than "+
+			strconv.Itoa(maxExtendedStatistics)+" members.")
+	}
+
+	for _, s := range in.ExtendedStatistics {
+		if !alarmeval.IsPercentile(s) {
+			return newWireError(errInvalidParameterValue, "The value "+s+
+				" for parameter ExtendedStatistics is not supported. Specify a percentile between p0.0 and p100.")
+		}
+	}
+
+	return nil
+}
+
+// requestedStat is one statistic a GetMetricStatistics request asks for.
+type requestedStat struct {
+	name     string
+	extended bool
+}
+
+func requestedStats(in *getMetricStatisticsInput) []requestedStat {
+	out := make([]requestedStat, 0, len(in.Statistics)+len(in.ExtendedStatistics))
+
+	for _, s := range in.Statistics {
+		out = append(out, requestedStat{name: s})
+	}
+
+	for _, s := range in.ExtendedStatistics {
+		out = append(out, requestedStat{name: s, extended: true})
+	}
+
+	return out
+}
+
 func (h *Handler) getMetricStatisticsCore(
 	ctx context.Context, in *getMetricStatisticsInput,
 ) (getMetricStatisticsResult, error) {
-	// Callers often ask for several statistics at once and expect all of them
-	// on each datapoint. Average is used only when none was requested.
-	stats := in.Statistics
-	if len(stats) == 0 {
-		stats = []string{statAverage}
+	if err := validateStatistics(in); err != nil {
+		return getMetricStatisticsResult{}, err
 	}
 
+	// Callers often ask for several statistics at once and expect all of them
+	// on each datapoint.
+	stats := requestedStats(in)
 	dims := toDimensionMap(in.Dimensions)
 
 	if h.ipam != nil && in.Namespace == netdriver.IpamMetricNamespace {
@@ -240,7 +331,7 @@ func (h *Handler) getMetricStatisticsCore(
 		q.Unit = unit
 
 		for _, stat := range stats {
-			q.Stat = stat
+			q.Stat = stat.name
 
 			res, err := h.monitoring.GetMetricData(ctx, q)
 			if err != nil {
@@ -272,7 +363,7 @@ func (h *Handler) statisticUnits(ctx context.Context, q *mondriver.GetMetricInpu
 // ipamMetricStatistics returns one datapoint for a derived AWS/IPAM metric.
 // IPAM metrics are point-in-time values, so every statistic equals the value.
 func (h *Handler) ipamMetricStatistics(
-	ctx context.Context, name string, dims map[string]string, unit string, stats []string,
+	ctx context.Context, name string, dims map[string]string, unit string, stats []requestedStat,
 ) getMetricStatisticsResult {
 	for _, mtr := range h.ipam.IpamMetrics(ctx) {
 		if mtr.MetricName != name || !dimensionsMatch(mtr.Dimensions, dims) || !alarmeval.MatchUnit(mtr.Unit, unit) {
@@ -321,7 +412,7 @@ func newDatapointAcc() *datapointAcc {
 
 // add merges one statistic's result. unit is the unit that was asked for. When
 // it is empty the result's own unit is used.
-func (a *datapointAcc) add(res *mondriver.MetricDataResult, stat, unit string) {
+func (a *datapointAcc) add(res *mondriver.MetricDataResult, stat requestedStat, unit string) {
 	if res == nil {
 		return
 	}
@@ -363,10 +454,20 @@ func (a *datapointAcc) datapoints() []datapoint {
 	return out
 }
 
-func setStat(dp *datapoint, stat string, value float64) {
+func setStat(dp *datapoint, stat requestedStat, value float64) {
 	v := value
 
-	switch stat {
+	if stat.extended {
+		if dp.ExtendedStatistics == nil {
+			dp.ExtendedStatistics = map[string]float64{}
+		}
+
+		dp.ExtendedStatistics[stat.name] = v
+
+		return
+	}
+
+	switch stat.name {
 	case statSum:
 		dp.Sum = &v
 	case statMinimum:

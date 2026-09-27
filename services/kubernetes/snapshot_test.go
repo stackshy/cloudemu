@@ -37,6 +37,7 @@ var clusterStatePersistedFields = map[string]struct{}{
 	"pdbs":            {}, // typed store (clusterSnapshot.PDBs)
 	"endpoints":       {}, // typed store (clusterSnapshot.Endpoints)
 	"reg":             {}, // registry store items (clusterSnapshot.Registry)
+	"serverVersion":   {}, // /version body (clusterSnapshot.ServerVersion)
 }
 
 // clusterStateRuntimeFields lists the ClusterState fields deliberately NOT
@@ -60,6 +61,7 @@ var clusterStateRuntimeFields = map[string]struct{}{
 	"wServices":            {}, // watch broadcaster, rebuilt fresh
 	"wDeployments":         {}, // watch broadcaster, rebuilt fresh
 	"wEndpoints":           {}, // watch broadcaster, rebuilt fresh
+	"watchFloor":           {}, // derived: set to the restored rv
 }
 
 // apiServerPersistedFields / apiServerRuntimeFields do the same classification
