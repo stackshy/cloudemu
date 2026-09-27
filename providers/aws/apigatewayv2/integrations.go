@@ -29,6 +29,10 @@ func (m *Mock) CreateIntegration(
 		Description:          in.Description,
 		RequestParameters:    copyStrMap(in.RequestParameters),
 		CredentialsArn:       in.CredentialsArn,
+
+		RequestTemplates:            copyStrMap(in.RequestTemplates),
+		TemplateSelectionExpression: in.TemplateSelectionExpression,
+		PassthroughBehavior:         in.PassthroughBehavior,
 	}
 
 	if err := validateIntegration(ad.api.ProtocolType, ig); err != nil {
@@ -110,6 +114,12 @@ func (m *Mock) UpdateIntegration(
 	setString(&next.PayloadFormatVersion, in.PayloadFormatVersion)
 	setString(&next.Description, in.Description)
 	setString(&next.CredentialsArn, in.CredentialsArn)
+	setString(&next.TemplateSelectionExpression, in.TemplateSelectionExpression)
+	setString(&next.PassthroughBehavior, in.PassthroughBehavior)
+
+	if in.RequestTemplates != nil {
+		next.RequestTemplates = copyStrMap(in.RequestTemplates)
+	}
 
 	if in.TimeoutInMillis != nil {
 		next.TimeoutInMillis = *in.TimeoutInMillis
@@ -161,6 +171,7 @@ func (m *Mock) DeleteIntegration(_ context.Context, apiID, integrationID string)
 func copyIntegration(i *driver.Integration) driver.Integration {
 	out := *i
 	out.RequestParameters = copyStrMap(i.RequestParameters)
+	out.RequestTemplates = copyStrMap(i.RequestTemplates)
 
 	return out
 }

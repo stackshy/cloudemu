@@ -93,6 +93,10 @@ type Integration struct {
 	RequestParameters    map[string]string
 	CredentialsArn       string
 	APIGatewayManaged    bool
+
+	RequestTemplates            map[string]string
+	TemplateSelectionExpression string
+	PassthroughBehavior         string
 }
 
 // Stage is a named deployment stage of an API (e.g. "$default", "prod").
@@ -213,6 +217,10 @@ type CreateIntegrationInput struct {
 	Description          string
 	RequestParameters    map[string]string
 	CredentialsArn       string
+
+	RequestTemplates            map[string]string
+	TemplateSelectionExpression string
+	PassthroughBehavior         string
 }
 
 // UpdateIntegrationInput carries the mutable fields UpdateIntegration accepts.
@@ -226,6 +234,10 @@ type UpdateIntegrationInput struct {
 	Description          *string
 	RequestParameters    map[string]string
 	CredentialsArn       *string
+
+	RequestTemplates            map[string]string
+	TemplateSelectionExpression *string
+	PassthroughBehavior         *string
 }
 
 // CreateStageInput carries the fields CreateStage accepts.

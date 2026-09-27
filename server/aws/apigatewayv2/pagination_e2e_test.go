@@ -81,13 +81,14 @@ func TestE2E_PaginationAcrossCollections(t *testing.T) {
 func TestE2E_PaginationBounds(t *testing.T) {
 	ts := newE2E(t)
 
-	for _, q := range []string{"maxResults=abc", "maxResults=0", "maxResults=501"} {
+	for _, q := range []string{"maxResults=abc", "maxResults=0", "maxResults=-1"} {
 		wantErr(t, http.MethodGet, ts.URL+"/v2/apis?"+q, "",
-			http.StatusBadRequest, "BadRequestException", "MaxResults must be an integer between 1 and 500")
+			http.StatusBadRequest, "BadRequestException", "MaxResults must be a positive integer")
 	}
 
 	wantErr(t, http.MethodGet, ts.URL+"/v2/apis?nextToken=%21%21bad", "",
 		http.StatusBadRequest, "BadRequestException", "Invalid NextToken specified")
 
 	mustDo(t, http.MethodGet, ts.URL+"/v2/apis?maxResults=500", "", http.StatusOK)
+	mustDo(t, http.MethodGet, ts.URL+"/v2/apis?maxResults=5000", "", http.StatusOK)
 }

@@ -183,11 +183,20 @@ func checkStageUpdate(ad *apiData, st *driver.Stage, in *driver.UpdateStageInput
 		return badRequest("Description must be at most %d characters", maxDescriptionLen)
 	}
 
-	if in.DeploymentID != nil {
-		return checkDeploymentID(ad, *in.DeploymentID)
+	if in.DeploymentID == nil || *in.DeploymentID == "" {
+		return nil
 	}
 
-	return nil
+	autoDeploy := st.AutoDeploy
+	if in.AutoDeploy != nil {
+		autoDeploy = *in.AutoDeploy
+	}
+
+	if autoDeploy {
+		return badRequest("DeploymentId can't be updated if autoDeploy is enabled")
+	}
+
+	return checkDeploymentID(ad, *in.DeploymentID)
 }
 
 // checkDeploymentID rejects a stage deploymentId that names no deployment of

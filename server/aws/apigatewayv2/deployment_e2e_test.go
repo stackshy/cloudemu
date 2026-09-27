@@ -112,4 +112,13 @@ func TestE2E_AutoDeployStageRedeploysOnChange(t *testing.T) {
 	if second, _ := stage["deploymentId"].(string); second == "" || second == first {
 		t.Fatalf("autoDeploy stage not redeployed: first=%s now=%v", first, stage["deploymentId"])
 	}
+
+	wantErr(t, http.MethodPatch, apiBase+"/stages/$default", `{"deploymentId":"`+first+`"}`,
+		http.StatusBadRequest, "BadRequestException", "DeploymentId can't be updated if autoDeploy is enabled")
+
+	// Switching autoDeploy off in the same call lets the stage pin a deployment.
+	pinned := mustDo(t, http.MethodPatch, apiBase+"/stages/$default", `{"autoDeploy":false,"deploymentId":"`+first+`"}`, http.StatusOK)
+	if pinned["deploymentId"] != first || pinned["autoDeploy"] != false {
+		t.Fatalf("pin deployment = %v", pinned)
+	}
 }

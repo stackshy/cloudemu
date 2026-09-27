@@ -35,6 +35,10 @@ func (h *Handler) createIntegration(w http.ResponseWriter, r *http.Request, apiI
 		PayloadFormatVersion: req.PayloadFormatVersion, TimeoutInMillis: req.TimeoutInMillis,
 		Description: req.Description, RequestParameters: req.RequestParameters,
 		CredentialsArn: req.CredentialsArn,
+
+		RequestTemplates:            req.RequestTemplates,
+		TemplateSelectionExpression: req.TemplateSelectionExpression,
+		PassthroughBehavior:         req.PassthroughBehavior,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -67,6 +71,10 @@ func (h *Handler) updateIntegration(w http.ResponseWriter, r *http.Request, apiI
 		PayloadFormatVersion: req.PayloadFormatVersion, TimeoutInMillis: req.TimeoutInMillis,
 		Description: req.Description, RequestParameters: req.RequestParameters,
 		CredentialsArn: req.CredentialsArn,
+
+		RequestTemplates:            req.RequestTemplates,
+		TemplateSelectionExpression: req.TemplateSelectionExpression,
+		PassthroughBehavior:         req.PassthroughBehavior,
 	})
 	if err != nil {
 		writeErr(w, err)

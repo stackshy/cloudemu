@@ -7,9 +7,6 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/apigatewayv2/driver"
 )
 
-// maxPageSize is the largest MaxResults a list call accepts.
-const maxPageSize = 500
-
 // listPage reads one of an API's sub-collections under its read lock and
 // returns the page that in selects.
 func listPage[V, T any](
@@ -45,8 +42,8 @@ func pageOf[T any](items []T, less func(a, b T) bool, in *driver.PageInput) (pag
 
 	if maxResults != "" {
 		n, convErr := strconv.Atoi(maxResults)
-		if convErr != nil || n < 1 || n > maxPageSize {
-			return nil, "", badRequest("MaxResults must be an integer between 1 and %d", maxPageSize)
+		if convErr != nil || n < 1 {
+			return nil, "", badRequest("MaxResults must be a positive integer")
 		}
 
 		size = n

@@ -100,8 +100,74 @@ func TestE2E_APIAndStageValidation(t *testing.T) {
 
 	apiBase := ts.URL + "/v2/apis/" + newHTTPAPI(t, ts.URL)
 
-	wantErr(t, http.MethodPost, apiBase+"/stages", `{"stageName":"bad name!"}`,
-		http.StatusBadRequest, "BadRequestException", "Stage name only allows a-zA-Z0-9._- or $default")
+	for _, name := range []string{"bad name!", "prod.v1"} {
+		wantErr(t, http.MethodPost, apiBase+"/stages", `{"stageName":"`+name+`"}`,
+			http.StatusBadRequest, "BadRequestException", "Stage name only allows a-zA-Z0-9_- or $default")
+	}
 
-	mustDo(t, http.MethodPost, apiBase+"/stages", `{"stageName":"prod.v1_a-b"}`, http.StatusCreated)
+	mustDo(t, http.MethodPost, apiBase+"/stages", `{"stageName":"prod_v1-b"}`, http.StatusCreated)
+}
+
+// TestE2E_SelectionExpressionForms proves both the bare and the braced forms
+// of the HTTP route and API key selection expressions are accepted, the way
+// CDK sends them.
+func TestE2E_SelectionExpressionForms(t *testing.T) {
+	ts := newE2E(t)
+
+	api := mustDo(t, http.MethodPost, ts.URL+"/v2/apis", `{"name":"cdk","protocolType":"HTTP",`+
+		`"routeSelectionExpression":"${request.method} ${request.path}",`+
+		`"apiKeySelectionExpression":"${request.header.x-api-key}"}`, http.StatusCreated)
+
+	if api["routeSelectionExpression"] != "${request.method} ${request.path}" ||
+		api["apiKeySelectionExpression"] != "${request.header.x-api-key}" {
+		t.Fatalf("braced expressions not stored as sent: %v", api)
+	}
+
+	mustDo(t, http.MethodPost, ts.URL+"/v2/apis", `{"name":"ws","protocolType":"WEBSOCKET",`+
+		`"routeSelectionExpression":"$request.body.action",`+
+		`"apiKeySelectionExpression":"${context.authorizer.usageIdentifierKey}"}`, http.StatusCreated)
+
+	wantErr(t, http.MethodPost, ts.URL+"/v2/apis", `{"name":"h","protocolType":"HTTP","apiKeySelectionExpression":"$request.header.foo"}`,
+		http.StatusBadRequest, "BadRequestException", "Invalid API key selection expression specified: $request.header.foo")
+}
+
+// TestE2E_WebSocketRejectsCORS covers CORS on create and update of a WebSocket API.
+func TestE2E_WebSocketRejectsCORS(t *testing.T) {
+	ts := newE2E(t)
+	const msg = "CORS configuration is not supported for WEBSOCKET protocol"
+
+	wantErr(t, http.MethodPost, ts.URL+"/v2/apis", `{"name":"ws","protocolType":"WEBSOCKET",`+
+		`"routeSelectionExpression":"$request.body.action","corsConfiguration":{"allowOrigins":["*"]}}`,
+		http.StatusBadRequest, "BadRequestException", msg)
+
+	wsID := newAPI(t, ts.URL, `{"name":"ws","protocolType":"WEBSOCKET","routeSelectionExpression":"$request.body.action"}`)
+
+	wantErr(t, http.MethodPatch, ts.URL+"/v2/apis/"+wsID, `{"corsConfiguration":{"allowOrigins":["*"]}}`,
+		http.StatusBadRequest, "BadRequestException", msg)
+}
+
+// TestE2E_IntegrationTemplatesRoundTrip proves request templates, the template
+// selection expression and passthrough behavior are stored and echoed.
+func TestE2E_IntegrationTemplatesRoundTrip(t *testing.T) {
+	ts := newE2E(t)
+	wsBase := ts.URL + "/v2/apis/" + newAPI(t, ts.URL,
+		`{"name":"ws","protocolType":"WEBSOCKET","routeSelectionExpression":"$request.body.action"}`)
+
+	ig := mustDo(t, http.MethodPost, wsBase+"/integrations", `{"integrationType":"MOCK",`+
+		`"requestTemplates":{"200":"{\"statusCode\":200}"},"templateSelectionExpression":"200",`+
+		`"passthroughBehavior":"WHEN_NO_MATCH"}`, http.StatusCreated)
+
+	igID, _ := ig["integrationId"].(string)
+
+	got := mustDo(t, http.MethodGet, wsBase+"/integrations/"+igID, "", http.StatusOK)
+	tpl, _ := got["requestTemplates"].(map[string]any)
+
+	if tpl["200"] != `{"statusCode":200}` || got["templateSelectionExpression"] != "200" || got["passthroughBehavior"] != "WHEN_NO_MATCH" {
+		t.Fatalf("GetIntegration templates = %v", got)
+	}
+
+	upd := mustDo(t, http.MethodPatch, wsBase+"/integrations/"+igID, `{"requestTemplates":{"201":"x"}}`, http.StatusOK)
+	if tpl, _ := upd["requestTemplates"].(map[string]any); tpl["201"] != "x" || len(tpl) != 1 {
+		t.Fatalf("UpdateIntegration templates = %v", upd)
+	}
 }

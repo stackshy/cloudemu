@@ -13,6 +13,9 @@ const (
 	defaultKey            = "$default"
 	integrationsPrefix    = "integrations/"
 	usageIdentifierKeyExp = "$context.authorizer.usageIdentifierKey"
+	httpRouteSelectionAlt = "${request.method} ${request.path}"
+	apiKeyHeaderAlt       = "${request.header.x-api-key}"
+	usageIdentifierAlt    = "${context.authorizer.usageIdentifierKey}"
 	payloadFormatV2       = "2.0"
 )
 
@@ -27,13 +30,13 @@ const (
 const (
 	maxTags        = 50
 	maxTagKeyLen   = 128
-	maxTagValueLen = 1600
+	maxTagValueLen = 256
 	reservedTagPfx = "aws:"
 )
 
 // stageNameRe is the character set a stage name may use; "$default" is the
 // only other accepted value.
-var stageNameRe = regexp.MustCompile(`^[a-zA-Z0-9._-]+$`)
+var stageNameRe = regexp.MustCompile(`^[a-zA-Z0-9_-]+$`)
 
 // httpRouteMethods are the methods an HTTP API route key may start with.
 //
@@ -74,19 +77,25 @@ func validateAPIFields(a *driver.API) error {
 		return badRequest("Description must be at most %d characters", maxDescriptionLen)
 	}
 
-	if a.APIKeySelectionExpression != defaultAPIKeySelectionExpr && a.APIKeySelectionExpression != usageIdentifierKeyExp {
+	switch a.APIKeySelectionExpression {
+	case defaultAPIKeySelectionExpr, apiKeyHeaderAlt, usageIdentifierKeyExp, usageIdentifierAlt:
+	default:
 		return badRequest("Invalid API key selection expression specified: %s", a.APIKeySelectionExpression)
+	}
+
+	if a.ProtocolType == driver.ProtocolWebSocket && a.CorsConfiguration != nil {
+		return badRequest("CORS configuration is not supported for WEBSOCKET protocol")
 	}
 
 	return validateRouteSelection(a.ProtocolType, a.RouteSelectionExpression)
 }
 
 // validateRouteSelection enforces the route selection expression rules: HTTP
-// APIs accept only the fixed method-and-path form, and WebSocket APIs need a
-// $request expression.
+// APIs accept only the method-and-path expression (with or without braces),
+// and WebSocket APIs need a $request expression.
 func validateRouteSelection(protocol, expr string) error {
 	if protocol == driver.ProtocolHTTP {
-		if expr != defaultRouteSelectionExpr {
+		if expr != defaultRouteSelectionExpr && expr != httpRouteSelectionAlt {
 			return badRequest("Only %s is supported for HTTP APIs", defaultRouteSelectionExpr)
 		}
 
@@ -227,7 +236,7 @@ func validateStageName(name string) error {
 	}
 
 	if name != defaultKey && (len(name) > maxNameLen || !stageNameRe.MatchString(name)) {
-		return badRequest("Stage name only allows a-zA-Z0-9._- or $default")
+		return badRequest("Stage name only allows a-zA-Z0-9_- or $default")
 	}
 
 	return nil

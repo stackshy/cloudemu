@@ -167,6 +167,10 @@ type integrationRequest struct {
 	Description          string            `json:"description"`
 	RequestParameters    map[string]string `json:"requestParameters"`
 	CredentialsArn       string            `json:"credentialsArn"`
+
+	RequestTemplates            map[string]string `json:"requestTemplates"`
+	TemplateSelectionExpression string            `json:"templateSelectionExpression"`
+	PassthroughBehavior         string            `json:"passthroughBehavior"`
 }
 
 // updateIntegrationRequest is the UpdateIntegration (PATCH) request body.
@@ -180,6 +184,10 @@ type updateIntegrationRequest struct {
 	Description          *string           `json:"description"`
 	RequestParameters    map[string]string `json:"requestParameters"`
 	CredentialsArn       *string           `json:"credentialsArn"`
+
+	RequestTemplates            map[string]string `json:"requestTemplates"`
+	TemplateSelectionExpression *string           `json:"templateSelectionExpression"`
+	PassthroughBehavior         *string           `json:"passthroughBehavior"`
 }
 
 // integrationResponse is the Integration wire object.
@@ -195,6 +203,10 @@ type integrationResponse struct {
 	RequestParameters    map[string]string `json:"requestParameters,omitempty"`
 	CredentialsArn       string            `json:"credentialsArn,omitempty"`
 	APIGatewayManaged    bool              `json:"apiGatewayManaged,omitempty"`
+
+	RequestTemplates            map[string]string `json:"requestTemplates,omitempty"`
+	TemplateSelectionExpression string            `json:"templateSelectionExpression,omitempty"`
+	PassthroughBehavior         string            `json:"passthroughBehavior,omitempty"`
 }
 
 func toIntegrationResponse(i *driver.Integration) integrationResponse {
@@ -205,6 +217,10 @@ func toIntegrationResponse(i *driver.Integration) integrationResponse {
 		TimeoutInMillis: i.TimeoutInMillis, Description: i.Description,
 		RequestParameters: i.RequestParameters, CredentialsArn: i.CredentialsArn,
 		APIGatewayManaged: i.APIGatewayManaged,
+
+		RequestTemplates:            i.RequestTemplates,
+		TemplateSelectionExpression: i.TemplateSelectionExpression,
+		PassthroughBehavior:         i.PassthroughBehavior,
 	}
 }
 
