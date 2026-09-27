@@ -249,8 +249,12 @@ func asUnstructuredList(list any) (*unstructured.UnstructuredList, error) {
 // asUnstructured coerces a single typed or unstructured object into an
 // *unstructured.Unstructured.
 func asUnstructured(obj any) (*unstructured.Unstructured, error) {
-	if u, ok := obj.(*unstructured.Unstructured); ok {
+	switch u := obj.(type) {
+	case *unstructured.Unstructured:
 		return u, nil
+	case unstructured.Unstructured:
+		// A value's MarshalJSON (pointer receiver) would not run below.
+		return &u, nil
 	}
 
 	b, err := json.Marshal(obj)

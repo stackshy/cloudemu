@@ -725,6 +725,7 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 	if m.k8sAPI != nil {
 		uid, _ := m.k8sAPI.RegisterCluster()
 		m.k8sUIDs[cfg.Name] = uid
+		m.k8sAPI.SetClusterVersion(uid, kubernetes.DistributionEKS, serverPatchVersion(version))
 	}
 
 	m.clusters.Set(cfg.Name, cluster)
@@ -988,6 +989,11 @@ func (m *Mock) UpdateClusterVersion(
 
 	c.Version = version
 	m.clusters.Set(name, c)
+
+	// The API server now reports the new version on /version.
+	if uid, ok := m.k8sUIDs[name]; ok && m.k8sAPI != nil {
+		m.k8sAPI.SetClusterVersion(uid, kubernetes.DistributionEKS, serverPatchVersion(version))
+	}
 
 	m.clusterSettle.Begin(name, eksdriver.ClusterStatusUpdating, m.opts.Clock.Now(),
 		m.opts.SettleDuration(settle.DefaultClusterSettle))

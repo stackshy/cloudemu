@@ -494,6 +494,7 @@ func (m *Mock) CreateCluster(_ context.Context, input *CreateClusterInput) (*Clu
 	if m.k8sAPI != nil {
 		uid, _ := m.k8sAPI.RegisterCluster()
 		m.k8sUIDs[key] = uid
+		m.syncK8sVersionLocked(key, cluster.MasterVersion)
 	}
 
 	m.clusters.Set(key, cluster)
@@ -657,6 +658,7 @@ func (m *Mock) UpdateCluster(
 
 		if input.MasterVersion != "" {
 			c.MasterVersion = input.MasterVersion
+			m.syncK8sVersionLocked(clusterKey(location, name), c.MasterVersion)
 		}
 
 		if input.NodeVersion != "" {
@@ -699,6 +701,22 @@ func (m *Mock) rollNodePoolVersions(location, clusterName, nodePoolID, version s
 		np.Version = version
 		m.nodePools.Set(k, np)
 	}
+}
+
+// syncK8sVersionLocked points the cluster's /version at its master version,
+// the stub default when none was set. A version the data plane can't parse,
+// such as "latest", leaves /version as it was. Caller holds m.mu.
+func (m *Mock) syncK8sVersionLocked(key, masterVersion string) {
+	uid, ok := m.k8sUIDs[key]
+	if !ok || m.k8sAPI == nil {
+		return
+	}
+
+	if masterVersion == "" {
+		masterVersion = StubMasterVer
+	}
+
+	m.k8sAPI.SetClusterVersion(uid, kubernetes.DistributionGKE, masterVersion)
 }
 
 // DeleteCluster removes a cluster and its node pools.
