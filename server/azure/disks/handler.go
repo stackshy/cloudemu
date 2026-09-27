@@ -4,6 +4,7 @@
 // Supported operations:
 //
 //	PUT    .../disks/{name}  : CreateOrUpdate (returns 202 + Azure-AsyncOperation)
+//	PATCH  .../disks/{name}  : Update (returns 202 + Azure-AsyncOperation)
 //	GET    .../disks/{name}  : Get
 //	GET    .../disks         : List in resource group
 //	DELETE .../disks/{name}  : Delete (returns 202 + Azure-AsyncOperation)
@@ -97,6 +98,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodPut:
 		h.createOrUpdate(w, r, rp)
+	case http.MethodPatch:
+		h.update(w, r, rp)
 	case http.MethodGet:
 		h.get(w, r, rp)
 	case http.MethodDelete:
@@ -269,10 +272,14 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 	// attachment, rather than delete+recreate, which would leave a duplicate
 	// phantom volume when the disk is attached (DeleteVolume rejects an attached
 	// disk) and churn the uniqueId/timeCreated on every re-PUT.
+	// sku.tier is read-only in the ARM contract, so an update takes the
+	// performance tier from properties.tier alone.
 	if existing, err := findDiskByName(r.Context(), h.compute, rp.ResourceGroup, rp.ResourceName); err == nil {
+		cfg.Tier = req.Properties.Tier
+
 		vol, err := h.updateExistingDisk(r.Context(), existing, cfg)
 		if err != nil {
-			azurearm.WriteCErr(w, err)
+			writeDiskErr(w, err)
 			return
 		}
 

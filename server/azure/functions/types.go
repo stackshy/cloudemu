@@ -167,8 +167,12 @@ type serverFarmSKU struct {
 }
 
 type serverFarmProperties struct {
-	ProvisioningState string `json:"provisioningState,omitempty"`
-	Status            string `json:"status,omitempty"`
+	ProvisioningState         string `json:"provisioningState,omitempty"`
+	Status                    string `json:"status,omitempty"`
+	Reserved                  bool   `json:"reserved"`
+	PerSiteScaling            bool   `json:"perSiteScaling"`
+	ZoneRedundant             bool   `json:"zoneRedundant"`
+	MaximumElasticWorkerCount int    `json:"maximumElasticWorkerCount,omitempty"`
 }
 
 // serverFarmListResponse is the {value:[...]} envelope for the serverfarms
@@ -179,10 +183,37 @@ type serverFarmListResponse struct {
 
 // createServerFarmRequest captures the fields read from a serverfarms PUT body.
 type createServerFarmRequest struct {
-	Kind     string            `json:"kind"`
-	Location string            `json:"location"`
-	Tags     map[string]string `json:"tags"`
-	SKU      serverFarmSKU     `json:"sku"`
+	Kind       string                     `json:"kind"`
+	Location   string                     `json:"location"`
+	Tags       map[string]string          `json:"tags"`
+	SKU        serverFarmSKU              `json:"sku"`
+	Properties *serverFarmPatchProperties `json:"properties"`
+}
+
+// patchServerFarmRequest captures a serverfarms PATCH body
+// (armappservice.PlanPatchResource plus the sku/tags the ARM REST API also
+// accepts). Every field is optional: a nil pointer or map leaves the stored
+// value unchanged, and a present tags map replaces the tags wholesale.
+type patchServerFarmRequest struct {
+	Kind       *string                    `json:"kind"`
+	Tags       map[string]string          `json:"tags"`
+	SKU        *serverFarmPatchSKU        `json:"sku"`
+	Properties *serverFarmPatchProperties `json:"properties"`
+}
+
+type serverFarmPatchSKU struct {
+	Name     *string `json:"name"`
+	Tier     *string `json:"tier"`
+	Capacity *int    `json:"capacity"`
+}
+
+// serverFarmPatchProperties are the mutable plan properties read from a PUT
+// or PATCH body.
+type serverFarmPatchProperties struct {
+	Reserved                  *bool `json:"reserved"`
+	PerSiteScaling            *bool `json:"perSiteScaling"`
+	ZoneRedundant             *bool `json:"zoneRedundant"`
+	MaximumElasticWorkerCount *int  `json:"maximumElasticWorkerCount"`
 }
 
 // stringDictionary is the ARM StringDictionary shape returned by

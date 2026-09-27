@@ -66,6 +66,14 @@ AzureDiskDeleteOptioner is an optional Azure-only capability that records a
 | --- | --- |
 | `SetDiskDeleteOnTermination` | SetDiskDeleteOnTermination records whether the volume is deleted (true) or |
 
+### AzureDiskPatcher
+
+AzureDiskPatcher is an optional Azure-only capability for a partial managed
+
+| Operation | Description |
+| --- | --- |
+| `PatchVolume` | PatchVolume applies patch to the volume id and returns the stored |
+
 ### AzureDiskUpdater
 
 AzureDiskUpdater is an optional Azure-only capability for an in-place managed

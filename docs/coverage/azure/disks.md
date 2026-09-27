@@ -3,7 +3,7 @@
 
 provider-native `disks` wire service (Azure-only) · no portable driver · [Azure index](./README.md)
 
-## Operations (7)
+## Operations (8)
 
 | Operation | Description |
 | --- | --- |
@@ -14,6 +14,7 @@ provider-native `disks` wire service (Azure-only) · no portable driver · [Azur
 | `List` |  |
 | `ListByResourceGroup` |  |
 | `RevokeAccess` |  |
+| `Update` |  |
 
 ## Not in scope
 

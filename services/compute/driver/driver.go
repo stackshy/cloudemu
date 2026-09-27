@@ -821,6 +821,55 @@ type AzureDiskUpdater interface {
 	UpdateVolume(ctx context.Context, id string, cfg VolumeConfig) (*VolumeInfo, error)
 }
 
+// AzureDiskPatch is a partial managed-disk update (ARM Disks Update, the
+// PATCH of a DiskUpdate body). A nil field leaves the stored value unchanged.
+type AzureDiskPatch struct {
+	// Size is the new diskSizeGB. Azure only grows a disk.
+	Size *int
+	// VolumeType is the new sku.name (storage account type).
+	VolumeType *string
+	// Tier is the new Premium SSD performance tier (properties.tier, e.g. P30).
+	Tier *string
+	// IOPS / Throughput are the provisioned diskIOPSReadWrite /
+	// diskMBpsReadWrite, settable only on UltraSSD_LRS and PremiumV2_LRS.
+	IOPS       *int
+	Throughput *int
+	// Tags, when non-nil, replaces the tag set wholesale (ARM resource-level
+	// PATCH semantics). KeepTags names existing keys that survive the
+	// replacement: the wire layer's own bookkeeping tags.
+	Tags     map[string]string
+	KeepTags []string
+}
+
+// AzureDiskPatcher is an optional Azure-only capability for a partial managed
+// disk update. The merge and every Azure rule (grow-only, SKU conversion,
+// performance tier, attached-disk and active-SAS restrictions) run inside the
+// provider's store lock, so a concurrent attach/detach or another update is
+// never overwritten with a stale copy. Only the Azure VM mock implements it.
+type AzureDiskPatcher interface {
+	// PatchVolume applies patch to the volume id and returns the stored
+	// result. NotFound when id is unknown, InvalidArgument for a request Azure
+	// rejects with 400, and an *AzureDiskError for one it rejects with a
+	// specific ARM error code.
+	PatchVolume(ctx context.Context, id string, patch AzureDiskPatch) (*VolumeInfo, error)
+}
+
+// AzureDiskError is a managed-disk update refusal that real Azure reports with
+// a specific ARM error code (e.g. OperationNotAllowed,
+// ChangeDiskSizeWhileActiveSasNotAllowed). It unwraps to the canonical cloudemu
+// error, so a caller that only checks the code (FailedPrecondition → 409,
+// InvalidArgument → 400) still sees it; the Azure wire layer echoes Code.
+type AzureDiskError struct {
+	Code string
+	Err  error
+}
+
+// Error implements the error interface.
+func (e *AzureDiskError) Error() string { return e.Err.Error() }
+
+// Unwrap returns the canonical cloudemu error this one stands for.
+func (e *AzureDiskError) Unwrap() error { return e.Err }
+
 // AzureDiskDeleteOptioner is an optional Azure-only capability that records a
 // disk attachment's ARM deleteOption on the attached volume, mapped onto the
 // shared VolumeInfo.DeleteOnTermination (deleteOption "Delete" ⟷ true). The

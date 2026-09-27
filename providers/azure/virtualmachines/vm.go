@@ -35,6 +35,7 @@ var (
 	_ driver.ConsoleReader           = (*Mock)(nil)
 	_ driver.AzureVMController       = (*Mock)(nil)
 	_ driver.AzureDiskUpdater        = (*Mock)(nil)
+	_ driver.AzureDiskPatcher        = (*Mock)(nil)
 	_ driver.KeyPairGenerator        = (*Mock)(nil)
 	_ driver.AzureDiskAccessor       = (*Mock)(nil)
 	_ driver.AzureSSHKeyUpdater      = (*Mock)(nil)
@@ -1152,40 +1153,38 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 // uniqueId and timeCreated stay stable and an attached disk is not duplicated,
 // while updating the mutable cost fields from cfg. A non-zero Size, non-empty
 // VolumeType/Tier are applied; IOPS/Throughput and Tags are replaced from cfg
-// (PUT is a full resource replacement).
+// (PUT is a full resource replacement). The same Azure rules as PatchVolume
+// apply (a re-PUT cannot shrink a disk), and the merge runs under the store
+// lock with copy-on-write.
 //
 //nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
 func (m *Mock) UpdateVolume(_ context.Context, id string, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
-	vol, ok := m.volumes.Get(id)
-	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "disk %q not found", id)
+	tags := copyTags(cfg.Tags)
+	if tags == nil {
+		tags = map[string]string{}
 	}
 
+	patch := driver.AzureDiskPatch{IOPS: &cfg.IOPS, Throughput: &cfg.Throughput, Tags: tags}
+
 	if cfg.Size != 0 {
-		vol.Size = cfg.Size
+		patch.Size = &cfg.Size
 	}
 
 	if cfg.VolumeType != "" {
-		vol.VolumeType = cfg.VolumeType
+		patch.VolumeType = &cfg.VolumeType
 	}
 
 	if cfg.Tier != "" {
-		vol.Tier = cfg.Tier
+		patch.Tier = &cfg.Tier
 	}
 
-	if cfg.Location != "" {
-		vol.Location = cfg.Location
-	}
+	return m.patchVolume(id, &patch, cfg.Location)
+}
 
-	vol.IOPS = cfg.IOPS
-	vol.Throughput = cfg.Throughput
-	vol.Tags = copyTags(cfg.Tags)
-
-	m.volumes.Set(id, vol)
-
-	result := *vol
-
-	return &result, nil
+// PatchVolume applies a partial managed-disk update (ARM Disks Update). See
+// driver.AzureDiskPatcher.
+func (m *Mock) PatchVolume(_ context.Context, id string, patch driver.AzureDiskPatch) (*driver.VolumeInfo, error) {
+	return m.patchVolume(id, &patch, "")
 }
 
 func (m *Mock) DeleteVolume(_ context.Context, id string) error {
