@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/authctx"
 	stssrv "github.com/stackshy/cloudemu/v2/server/aws/sts"
 	"github.com/stackshy/cloudemu/v2/server/wire"
@@ -28,8 +29,12 @@ const tempCredentialPrefix = "ASIA"
 // the STS session store (temporary ASIA credentials), verifies the signature,
 // and either attaches the resolved principal to the request context (proceed)
 // or writes a 403 AWS error (stop). clock drives timestamp-expiry evaluation.
+// match is the dispatcher's handler lookup. It binds the public-operation
+// exemption (see exemptPublic) to the handler that will actually serve the
+// request.
 func newAuthGate(
 	iamDriver iamdriver.IAM, accountID string, sessions *stssrv.SessionStore, clock config.Clock,
+	match func(*http.Request) server.Handler,
 ) func(http.ResponseWriter, *http.Request) (*http.Request, bool) {
 	resolver, _ := iamDriver.(iamdriver.AccessKeyResolver)
 
@@ -40,6 +45,19 @@ func newAuthGate(
 	return func(w http.ResponseWriter, r *http.Request) (*http.Request, bool) {
 		body := drainBody(r)
 		restore := func() { r.Body = io.NopCloser(bytes.NewReader(body)) }
+
+		// Operations AWS serves without SigV4 (noAuth) skip authentication and
+		// authorization. The handler lookup may read the body, so restore it
+		// before and after.
+		restore()
+
+		public := exemptPublic(r, body, match)
+
+		restore()
+
+		if public {
+			return r, true
+		}
 
 		akid := sigv4.AccessKeyID(r)
 		if akid == "" {
