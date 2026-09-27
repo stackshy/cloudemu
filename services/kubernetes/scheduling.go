@@ -42,10 +42,14 @@ func (s *ClusterState) feasibleNodesLocked(pod *corev1.Pod, nodes []schedNode) [
 }
 
 // nodeFitsPodLocked reports whether n satisfies every required predicate for
-// pod: nodeSelector, taint tolerations, request feasibility, required
+// pod: not cordoned, nodeSelector, taint tolerations, request feasibility, required
 // nodeAffinity, required inter-pod (anti)affinity, and DoNotSchedule topology
 // spread. Callers hold s.mu.
 func (s *ClusterState) nodeFitsPodLocked(pod *corev1.Pod, n *schedNode, nodes []schedNode) bool {
+	if n.unschedulable {
+		return false
+	}
+
 	if !labelsMatch(pod.Spec.NodeSelector, n.labels) {
 		return false
 	}

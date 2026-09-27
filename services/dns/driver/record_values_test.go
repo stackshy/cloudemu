@@ -22,7 +22,10 @@ func TestValidateAddresses(t *testing.T) {
 		{"lower-case type", "a", []string{"not-an-ip"}, 0, true},
 		{"valid AAAA", "AAAA", []string{"2001:db8::1"}, 0, false},
 		{"AAAA holding IPv4", "AAAA", []string{"192.0.2.1"}, 0, true},
-		{"AAAA mapped IPv4", "AAAA", []string{"::ffff:192.0.2.1"}, 0, true},
+		{"AAAA mapped IPv4", "AAAA", []string{"::ffff:192.0.2.1"}, 0, false},
+		{"A mapped IPv4", "A", []string{"::ffff:192.0.2.1"}, 0, true},
+		{"AAAA zoned", "AAAA", []string{"2001:db8::1", "fe80::1%eth0"}, 1, true},
+		{"A zoned", "A", []string{"fe80::1%eth0"}, 0, true},
 		{"CNAME ignored", "CNAME", []string{"not-an-ip"}, 0, false},
 		{"TXT ignored", "TXT", []string{"hello"}, 0, false},
 	}

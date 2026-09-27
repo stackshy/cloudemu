@@ -1178,6 +1178,7 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 
 	m.nodegroups.Set(key, ng)
 	m.addNodeEntryLocked(&parent, ng.NodeRole, nodegroupEntryType(ng.AmiType))
+	m.syncNodegroupNodesLocked(&ng, ng.ScalingConfig.DesiredSize)
 
 	// Under AsyncSettle a fresh nodegroup reports CREATING until the window
 	// elapses, matching real EKS. With the default (AsyncSettle off)
@@ -1277,6 +1278,7 @@ func (m *Mock) UpdateNodegroupConfig(
 	ng.ModifiedAt = m.opts.Clock.Now().UTC()
 
 	m.nodegroups.Set(key, ng)
+	m.syncNodegroupNodesLocked(&ng, ng.ScalingConfig.DesiredSize)
 
 	m.nodegroupSettle.Begin(key, eksdriver.NodegroupStatusUpdating, m.opts.Clock.Now(),
 		m.opts.SettleDuration(settle.DefaultClusterSettle))
@@ -1337,6 +1339,7 @@ func (m *Mock) UpdateNodegroupVersion(
 	ng.ModifiedAt = m.opts.Clock.Now().UTC()
 
 	m.nodegroups.Set(key, ng)
+	m.syncNodegroupNodesLocked(&ng, ng.ScalingConfig.DesiredSize)
 
 	m.nodegroupSettle.Begin(key, eksdriver.NodegroupStatusUpdating, m.opts.Clock.Now(),
 		m.opts.SettleDuration(settle.DefaultClusterSettle))
@@ -1369,6 +1372,7 @@ func (m *Mock) DeleteNodegroup(_ context.Context, clusterName, nodegroupName str
 	m.nodegroups.Delete(key)
 	m.nodegroupSettle.Clear(key)
 	m.removeNodeEntryLocked(clusterName, ng.NodeRole)
+	m.syncNodegroupNodesLocked(&ng, 0)
 
 	out := ng
 
