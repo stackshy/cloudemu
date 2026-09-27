@@ -314,7 +314,10 @@ func TestListQueryExecutionsMostRecentFirst(t *testing.T) {
 	m := newMock(t)
 	ctx := context.Background()
 
-	requireNoError(t, m.CreateWorkGroup(ctx, driver.WorkGroup{Name: "wg"}), "CreateWorkGroup")
+	requireNoError(t, m.CreateWorkGroup(ctx, driver.WorkGroup{
+		Name:          "wg",
+		Configuration: driver.WorkGroupConfiguration{EnforceWorkGroupConfiguration: ptr(false)},
+	}), "CreateWorkGroup")
 
 	var ids []string
 

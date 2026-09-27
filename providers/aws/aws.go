@@ -423,6 +423,7 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.SFN.SetMonitoring(p.CloudWatch)
 	p.APIGateway.SetMonitoring(p.CloudWatch)
 	p.Athena.SetMonitoring(p.CloudWatch)
+	p.Athena.SetCatalog(p.Glue)
 	p.RDS.SetSubnetResolver(p.VPC)
 	p.ElastiCache.SetSubnetResolver(p.VPC)
 	p.EC2.SetSubnetResolver(p.VPC)
@@ -599,7 +600,7 @@ func awsDrivers(p *Provider) *resourcediscovery.Drivers {
 // background ticker calls each one on its interval. New time-driven services
 // register here.
 func (p *Provider) Tickables() []config.Tickable {
-	return []config.Tickable{p.CloudWatch}
+	return []config.Tickable{p.CloudWatch, p.SSM}
 }
 
 // Close tears down any real engines wired into the provider via

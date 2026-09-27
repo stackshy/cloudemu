@@ -1,12 +1,12 @@
 // Package driver defines the interface and types for AWS Athena
 // implementations. It models the interactive-query control plane: workgroups
 // (with their result/engine configuration), saved (named) queries, query
-// executions, and the read side of the Data Catalog (databases and data
-// catalogs) that the query-execution DDL path populates.
+// executions, and the read side of the Data Catalog (databases, tables and data
+// catalogs). AwsDataCatalog is backed by the Glue Data Catalog.
 //
 // There is no real Presto/Trino compute plane behind the emulator, so a started
 // query execution settles to SUCCEEDED synchronously and DDL statements
-// (CREATE/DROP DATABASE) mutate the in-memory catalog directly. Statement types
+// (CREATE/DROP DATABASE) mutate the Glue Data Catalog directly. Statement types
 // are classified from the query text (DDL/DML/UTILITY) so callers that branch on
 // StatementType behave as they would against real Athena.
 package driver
@@ -74,12 +74,20 @@ type queryExecutionAPI interface {
 	ListQueryExecutions(ctx context.Context, workGroup string, page Pagination) ([]string, string, error)
 }
 
-// catalogAPI covers the read side of the Data Catalog that the DDL path fills.
+// catalogAPI covers the read side of the Data Catalog. AwsDataCatalog is the
+// AWS Glue Data Catalog, so databases and tables made through Glue show here
+// and the ones Athena DDL makes show in Glue.
 type catalogAPI interface {
 	// GetDatabase returns a database in a data catalog, or an error tagged
-	// ResourceNotFoundException when absent.
+	// MetadataException when absent.
 	GetDatabase(ctx context.Context, catalogName, databaseName string) (*Database, error)
 	ListDatabases(ctx context.Context, catalogName string, page Pagination) ([]Database, string, error)
+	// GetTableMetadata returns a table's metadata, or an error tagged
+	// MetadataException when the database or table is absent.
+	GetTableMetadata(ctx context.Context, catalogName, databaseName, tableName string) (*TableMetadata, error)
+	// ListTableMetadata lists the tables of a database. expression is a regex
+	// filter on table names where "*" means ".*"; empty lists all.
+	ListTableMetadata(ctx context.Context, catalogName, databaseName, expression string, page Pagination) ([]TableMetadata, string, error)
 	GetDataCatalog(ctx context.Context, name string) (*DataCatalog, error)
 	ListDataCatalogs(ctx context.Context, page Pagination) ([]DataCatalogSummary, string, error)
 }

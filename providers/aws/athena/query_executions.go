@@ -2,11 +2,14 @@ package athena
 
 import (
 	"context"
+	"fmt"
 	"sort"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/athena/driver"
+	gluedriver "github.com/stackshy/cloudemu/v2/services/glue/driver"
 )
 
 // StartQueryExecution runs a query synchronously (there is no real compute
@@ -31,12 +34,13 @@ func (m *Mock) StartQueryExecution(ctx context.Context, in driver.StartQueryExec
 		return id, nil
 	}
 
-	if _, err := effectiveOutputLocation(in.ResultConfiguration, wg); err != nil {
+	rc, err := effectiveResultConfiguration(in.ResultConfiguration, wg)
+	if err != nil {
 		return "", err
 	}
 
-	qe := m.buildExecution(in, workGroup, wg)
-	m.executeStatement(&qe)
+	qe := m.buildExecution(in, workGroup, wg, rc)
+	m.executeStatement(ctx, &qe)
 
 	m.queryExecutions.Set(qe.QueryExecutionID, copyQueryExecution(qe))
 	m.recordToken(in.ClientRequestToken, qe.QueryExecutionID)
@@ -45,31 +49,72 @@ func (m *Mock) StartQueryExecution(ctx context.Context, in driver.StartQueryExec
 	return qe.QueryExecutionID, nil
 }
 
-// effectiveOutputLocation resolves the query results location from the
-// client-side ResultConfiguration or, when the workgroup enforces its
-// configuration, from the workgroup. An empty result is an error, matching real
-// Athena's "No output location provided" rejection.
+// effectiveResultConfiguration resolves the settings a query runs with. When
+// the workgroup overrides client-side settings, only the workgroup's settings
+// apply, so an enforced workgroup with no output location fails even if the
+// query names one. Otherwise each field comes from the query, with the
+// workgroup as the fallback. See
+// https://docs.aws.amazon.com/athena/latest/ug/workgroups-settings-override.html.
+// A missing output location is rejected like real Athena.
 //
 //nolint:gocritic // hugeParam: wg passed by value, read-only here
-func effectiveOutputLocation(rc *driver.ResultConfiguration, wg driver.WorkGroup) (string, error) {
-	if rc != nil && rc.OutputLocation != "" {
-		return rc.OutputLocation, nil
+func effectiveResultConfiguration(client *driver.ResultConfiguration, wg driver.WorkGroup) (*driver.ResultConfiguration, error) {
+	enforced := wg.Configuration.EnforceWorkGroupConfiguration == nil || *wg.Configuration.EnforceWorkGroupConfiguration
+
+	w := wg.Configuration.ResultConfiguration
+	if w == nil {
+		w = &driver.ResultConfiguration{}
 	}
 
-	wgRC := wg.Configuration.ResultConfiguration
-	if wgRC != nil && wgRC.OutputLocation != "" {
-		return wgRC.OutputLocation, nil
+	cl := client
+	if cl == nil || enforced {
+		cl = &driver.ResultConfiguration{}
 	}
 
-	return "", invalidRequest("No output location provided. An output location is required either through " +
-		"the Workgroup result configuration setting or as an API input.")
+	out := &driver.ResultConfiguration{
+		OutputLocation:          firstSet(cl.OutputLocation, w.OutputLocation, ""),
+		ExpectedBucketOwner:     firstSet(cl.ExpectedBucketOwner, w.ExpectedBucketOwner, ""),
+		EncryptionConfiguration: copyEncryptionConfiguration(firstSet(cl.EncryptionConfiguration, w.EncryptionConfiguration, nil)),
+		ACLConfiguration:        copyACLConfiguration(firstSet(cl.ACLConfiguration, w.ACLConfiguration, nil)),
+	}
+
+	if out.OutputLocation == "" {
+		return nil, invalidRequest("No output location provided. An output location is required either through " +
+			"the Workgroup result configuration setting or as an API input.")
+	}
+
+	return out, nil
+}
+
+// firstSet returns the client value when set, else the workgroup value.
+func firstSet[T comparable](clientValue, wgValue, zero T) T {
+	if clientValue != zero {
+		return clientValue
+	}
+
+	return wgValue
+}
+
+// resultObjectPath is the S3 object a query's results land in: the output
+// location plus "<QueryId>.csv", or ".txt" for DDL and utility statements.
+// See https://docs.aws.amazon.com/athena/latest/ug/querying-finding-output-files.html.
+func resultObjectPath(location, id, statementType string) string {
+	ext := ".csv"
+	if statementType != driver.StatementTypeDML {
+		ext = ".txt"
+	}
+
+	return strings.TrimRight(location, "/") + "/" + id + ext
 }
 
 // buildExecution assembles a QueryExecution in the QUEUED-then-terminal shape
 // with a fresh id, sequence, and engine version inherited from the workgroup.
+// rc is the effective result configuration.
 //
 //nolint:gocritic // hugeParam: wg passed by value, read-only here
-func (m *Mock) buildExecution(in driver.StartQueryExecutionInput, workGroup string, wg driver.WorkGroup) driver.QueryExecution {
+func (m *Mock) buildExecution(
+	in driver.StartQueryExecutionInput, workGroup string, wg driver.WorkGroup, rc *driver.ResultConfiguration,
+) driver.QueryExecution {
 	now := m.now()
 
 	ctx := in.QueryExecutionContext
@@ -81,11 +126,15 @@ func (m *Mock) buildExecution(in driver.StartQueryExecutionInput, workGroup stri
 		ctx.Catalog = driver.DefaultDataCatalog
 	}
 
+	id := idgen.UUID()
+	statementType := classifyStatement(in.QueryString)
+	rc.OutputLocation = resultObjectPath(rc.OutputLocation, id, statementType)
+
 	return driver.QueryExecution{
-		QueryExecutionID:      idgen.UUID(),
+		QueryExecutionID:      id,
 		Query:                 in.QueryString,
-		StatementType:         classifyStatement(in.QueryString),
-		ResultConfiguration:   copyResultConfiguration(in.ResultConfiguration),
+		StatementType:         statementType,
+		ResultConfiguration:   rc,
 		QueryExecutionContext: copyQueryExecutionContext(ctx),
 		WorkGroup:             workGroup,
 		EngineVersion:         wg.Configuration.EngineVersion,
@@ -102,7 +151,7 @@ func (m *Mock) buildExecution(in driver.StartQueryExecutionInput, workGroup stri
 // DATABASE) and settles the execution's terminal state. A DDL failure flips the
 // state to FAILED with a reason, mirroring how real Athena surfaces a query that
 // was accepted but failed to run.
-func (m *Mock) executeStatement(qe *driver.QueryExecution) {
+func (m *Mock) executeStatement(ctx context.Context, qe *driver.QueryExecution) {
 	effect := parseDatabaseDDL(qe.Query)
 	if effect.action == "" {
 		return
@@ -113,33 +162,94 @@ func (m *Mock) executeStatement(qe *driver.QueryExecution) {
 		catalog = qe.QueryExecutionContext.Catalog
 	}
 
-	if err := m.applyDatabaseDDL(catalog, effect); err != nil {
+	if reason := m.applyDatabaseDDL(ctx, catalog, &effect); reason != "" {
 		qe.Status.State = driver.QueryStateFailed
-		qe.Status.StateChangeReason = cerrors.Message(err)
+		qe.Status.StateChangeReason = reason
 	}
 }
 
-// applyDatabaseDDL mutates the databases store for a CREATE/DROP DATABASE
-// statement, honoring the IF [NOT] EXISTS clause.
-func (m *Mock) applyDatabaseDDL(catalog string, effect ddlEffect) error {
-	if effect.database == "" {
-		return invalidRequest("database name is required")
+// applyDatabaseDDL runs a CREATE/DROP DATABASE statement against the Glue
+// catalog, honoring IF [NOT] EXISTS and RESTRICT/CASCADE. It returns the
+// failure reason, or "" on success.
+func (m *Mock) applyDatabaseDDL(ctx context.Context, catalog string, effect *ddlEffect) string {
+	if effect.syntaxErr != "" {
+		return "SYNTAX_ERROR: " + effect.syntaxErr
 	}
 
-	key := databaseKey(catalog, effect.database)
+	catalogID, err := m.glueCatalogID(catalog)
+	if err != nil {
+		return catalogReason(catalog, err)
+	}
 
-	switch effect.action {
-	case "createDatabase":
-		if !m.databases.SetIfAbsent(key, driver.Database{Name: effect.database}) && !effect.ifClause {
-			return invalidRequest("Database %s already exists", effect.database)
+	m.importLegacyDatabases(ctx)
+
+	if effect.action == actionCreateDatabase {
+		return m.createDatabase(ctx, catalogID, effect)
+	}
+
+	return m.dropDatabase(ctx, catalogID, effect)
+}
+
+// catalogReason is the StateChangeReason for a catalog that does not resolve.
+func catalogReason(catalog string, err error) string {
+	if cerrors.IsNotFound(err) {
+		return fmt.Sprintf("CATALOG_NOT_FOUND: Catalog '%s' does not exist", catalog)
+	}
+
+	return cerrors.Message(err)
+}
+
+func (m *Mock) createDatabase(ctx context.Context, catalogID string, effect *ddlEffect) string {
+	err := m.catalog.CreateDatabase(ctx, catalogID, gluedriver.Database{
+		Name:        effect.database,
+		Description: effect.comment,
+		LocationURI: effect.location,
+		Parameters:  effect.properties,
+	})
+
+	switch {
+	case err == nil:
+		return ""
+	case cerrors.GetCode(err) == cerrors.AlreadyExists:
+		if effect.ifClause {
+			return ""
 		}
-	case "dropDatabase":
-		if !m.databases.Delete(key) && !effect.ifClause {
-			return invalidRequest("Database does not exist: %s", effect.database)
+
+		return fmt.Sprintf("Database %s already exists", effect.database)
+	default:
+		return cerrors.Message(err)
+	}
+}
+
+func (m *Mock) dropDatabase(ctx context.Context, catalogID string, effect *ddlEffect) string {
+	if _, err := m.catalog.GetDatabase(ctx, catalogID, effect.database); err != nil {
+		if !cerrors.IsNotFound(err) {
+			return cerrors.Message(err)
+		}
+
+		if effect.ifClause {
+			return ""
+		}
+
+		return "Database does not exist: " + effect.database
+	}
+
+	if !effect.cascade {
+		tables, _, err := m.catalog.GetTables(ctx, catalogID, effect.database, gluedriver.TablePagination{MaxResults: 1})
+		if err != nil {
+			return cerrors.Message(err)
+		}
+
+		if len(tables) > 0 {
+			return fmt.Sprintf("InvalidOperationException: Database %s is not empty. One or more tables exist.", effect.database)
 		}
 	}
 
-	return nil
+	if err := m.catalog.DeleteDatabase(ctx, catalogID, effect.database); err != nil && !cerrors.IsNotFound(err) {
+		return cerrors.Message(err)
+	}
+
+	return ""
 }
 
 // dedupToken returns the existing execution id for a client-request token, if

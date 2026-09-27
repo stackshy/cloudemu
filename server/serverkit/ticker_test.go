@@ -192,10 +192,11 @@ func TestServiceTickablesCoverEveryRegion(t *testing.T) {
 	app := newTestApp(t, Config{Providers: []string{"aws"}, Host: "127.0.0.1", Ports: map[string]string{"aws": "0"}})
 
 	west := app.awsMux.GetOrCreate("us-west-2")
+	perRegion := len(west.Tickables())
 
 	got := app.serviceTickables()
-	if len(got) != 2 {
-		t.Fatalf("tickables = %d, want 2 (default region and us-west-2)", len(got))
+	if len(got) != 2*perRegion {
+		t.Fatalf("tickables = %d, want %d (default region and us-west-2)", len(got), 2*perRegion)
 	}
 
 	found := false
@@ -212,8 +213,15 @@ func TestServiceTickablesCoverEveryRegion(t *testing.T) {
 
 	app.Rebuild()
 
-	if got := app.serviceTickables(); len(got) != 1 || got[0] == config.Tickable(west.CloudWatch) {
+	got = app.serviceTickables()
+	if len(got) != perRegion {
 		t.Fatalf("after reset tickables = %v, want only the new default region", got)
+	}
+
+	for _, tk := range got {
+		if tk == config.Tickable(west.CloudWatch) {
+			t.Fatal("after reset the old us-west-2 CloudWatch is still ticked")
+		}
 	}
 }
 

@@ -1,12 +1,12 @@
 // Package athena provides an in-memory mock implementation of AWS Athena: the
 // interactive-query control plane. It models workgroups (with their result and
 // engine configuration and usage controls), saved (named) queries, query
-// executions, and the read side of the Data Catalog (databases and data
-// catalogs) that the query-execution DDL path populates.
+// executions, and the read side of the Data Catalog (databases, tables and
+// data catalogs). AwsDataCatalog is the Glue Data Catalog wired via SetCatalog.
 //
 // There is no real Presto/Trino compute plane behind the emulator, so a started
 // query execution settles to SUCCEEDED synchronously and CREATE/DROP DATABASE
-// DDL statements mutate the in-memory catalog directly. Statement types are
+// DDL statements mutate the Glue catalog directly. Statement types are
 // classified from the query text. The implicit "primary" workgroup and the
 // default "AwsDataCatalog" data catalog are seeded on construction, matching
 // real Athena.
@@ -28,7 +28,7 @@ import (
 // Compile-time check that Mock implements driver.Athena.
 var _ driver.Athena = (*Mock)(nil)
 
-// keySep separates the catalog and database segments in the databases store.
+// keySep separates the catalog and database segments of a database key.
 const keySep = "/"
 
 // minBytesScannedCutoff is Athena's floor for BytesScannedCutoffPerQuery.
@@ -39,8 +39,21 @@ type Mock struct {
 	workGroups      *memstore.Store[driver.WorkGroup]
 	namedQueries    *memstore.Store[driver.NamedQuery]
 	queryExecutions *memstore.Store[driver.QueryExecution]
-	databases       *memstore.Store[driver.Database]
 	dataCatalogs    *memstore.Store[driver.DataCatalog]
+
+	// catalog backs AwsDataCatalog. It is the wired Glue catalog, or local when
+	// nothing is wired.
+	catalog Catalog
+	local   *localCatalog
+
+	// legacy holds databases from snapshots taken before the Glue unification,
+	// keyed "catalog/name". They are imported into the catalog on the next
+	// catalog call, because Glue restores after Athena and would wipe them.
+	// legacyMu guards the map. importMu serializes the import so a concurrent
+	// caller waits for it to finish.
+	legacyMu sync.Mutex
+	legacy   map[string]driver.Database
+	importMu sync.Mutex
 
 	// mu serializes compound read-modify-write mutations (workgroup update,
 	// recursive delete) that span more than one store operation.
@@ -72,12 +85,13 @@ func New(opts *config.Options) *Mock {
 		workGroups:      memstore.New[driver.WorkGroup](),
 		namedQueries:    memstore.New[driver.NamedQuery](),
 		queryExecutions: memstore.New[driver.QueryExecution](),
-		databases:       memstore.New[driver.Database](),
 		dataCatalogs:    memstore.New[driver.DataCatalog](),
+		local:           newLocalCatalog(opts.AccountID),
 		tokens:          map[string]string{},
 		tags:            map[string]map[string]string{},
 		opts:            opts,
 	}
+	m.catalog = m.local
 	m.seed()
 
 	return m
@@ -91,7 +105,7 @@ func (m *Mock) seed() {
 		Description:  "",
 		CreationTime: m.now(),
 		Configuration: driver.WorkGroupConfiguration{
-			EnforceWorkGroupConfiguration:   boolPtr(true),
+			EnforceWorkGroupConfiguration:   boolPtr(false),
 			PublishCloudWatchMetricsEnabled: boolPtr(true),
 			RequesterPaysEnabled:            boolPtr(false),
 			EngineVersion:                   resolveEngineVersion(driver.EngineVersion{}),
@@ -106,9 +120,6 @@ func (m *Mock) seed() {
 }
 
 func (m *Mock) now() time.Time { return m.opts.Clock.Now().UTC() }
-
-// databaseKey builds the composite key for a database within a data catalog.
-func databaseKey(catalog, name string) string { return catalog + keySep + name }
 
 // workGroupARN builds the ARN a workgroup's tags are keyed under, matching the
 // ARN the Terraform AWS provider computes for ListTagsForResource.

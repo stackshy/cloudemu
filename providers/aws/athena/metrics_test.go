@@ -27,7 +27,7 @@ func TestQueryMetricsPublishedPerWorkGroup(t *testing.T) {
 
 	requireNoError(t, m.CreateWorkGroup(ctx, driver.WorkGroup{
 		Name:          "quiet",
-		Configuration: driver.WorkGroupConfiguration{PublishCloudWatchMetricsEnabled: ptr(false)},
+		Configuration: driver.WorkGroupConfiguration{PublishCloudWatchMetricsEnabled: ptr(false), EnforceWorkGroupConfiguration: ptr(false)},
 	}), "CreateWorkGroup")
 
 	for _, in := range []driver.StartQueryExecutionInput{
