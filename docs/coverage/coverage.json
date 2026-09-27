@@ -3174,6 +3174,9 @@
         "name": "DeleteStack"
       },
       {
+        "name": "DescribeAccountLimits"
+      },
+      {
         "name": "DescribeChangeSet"
       },
       {
@@ -3184,6 +3187,9 @@
       },
       {
         "name": "DescribeStacks"
+      },
+      {
+        "name": "EstimateTemplateCost"
       },
       {
         "name": "ExecuteChangeSet"
@@ -3198,6 +3204,12 @@
         "name": "ListChangeSets"
       },
       {
+        "name": "ListExports"
+      },
+      {
+        "name": "ListImports"
+      },
+      {
         "name": "ListStackResources"
       },
       {
@@ -3205,6 +3217,9 @@
       },
       {
         "name": "UpdateStack"
+      },
+      {
+        "name": "UpdateTerminationProtection"
       },
       {
         "name": "ValidateTemplate"

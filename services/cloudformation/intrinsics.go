@@ -28,6 +28,8 @@ type Resolver struct {
 	StackID   string
 	// NotificationARNs is what Ref AWS::NotificationARNs returns.
 	NotificationARNs []string
+	// Exports maps each export name the stack can import to its value.
+	Exports map[string]string
 
 	// Prepare fills these from the template.
 	listParams map[string]bool
@@ -52,6 +54,8 @@ const (
 	fnBase64    = "Fn::Base64"
 	fnCidr      = "Fn::Cidr"
 	fnGetAZs    = "Fn::GetAZs"
+
+	fnImportValue = "Fn::ImportValue"
 )
 
 // Pseudo parameter names.
@@ -109,6 +113,8 @@ func lookupListIntrinsic(fn string) (intrinsicFn, bool) {
 		return (*Resolver).cidr, true
 	case fnGetAZs:
 		return (*Resolver).getAZs, true
+	case fnImportValue:
+		return (*Resolver).importValue, true
 	default:
 		return nil, false
 	}

@@ -22,6 +22,14 @@ func validate(t *Template) error {
 		return err
 	}
 
+	if len(t.Outputs) > MaxOutputs {
+		return formatErr("Outputs count %d is greater than max allowed %d", len(t.Outputs), MaxOutputs)
+	}
+
+	if err := checkImportValues(t); err != nil {
+		return err
+	}
+
 	return checkReferences(t)
 }
 

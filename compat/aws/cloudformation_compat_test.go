@@ -117,6 +117,7 @@ func TestAWSCloudFormationCompat(t *testing.T) {
 	})
 
 	changeSetOps(ctx, sess, client)
+	exportOps(ctx, sess, client)
 
 	sess.Op(svc, "DeleteStack", func() error {
 		_, err := client.DeleteStack(ctx, &awscfn.DeleteStackInput{StackName: aws.String(stack)})
@@ -205,6 +206,100 @@ func changeSetOps(ctx context.Context, sess *compat.AWSSession, client *awscfn.C
 		return err
 	})
 }
+
+// exportOps exports a bucket name from one stack, imports it into another,
+// then protects the importer and checks the account operations.
+func exportOps(ctx context.Context, sess *compat.AWSSession, client *awscfn.Client) {
+	const svc = "cloudformation"
+
+	sess.Op(svc, "ListExports", func() error {
+		if _, err := client.CreateStack(ctx, &awscfn.CreateStackInput{
+			StackName: aws.String("compat-exporter"), TemplateBody: aws.String(exporterTemplate),
+		}); err != nil {
+			return err
+		}
+
+		out, err := client.ListExports(ctx, &awscfn.ListExportsInput{})
+		if err != nil {
+			return err
+		}
+
+		if len(out.Exports) != 1 || aws.ToString(out.Exports[0].Value) != "compat-exported" {
+			return errCompat("expected 1 export")
+		}
+
+		return nil
+	})
+
+	sess.Op(svc, "ListImports", func() error {
+		if _, err := client.CreateStack(ctx, &awscfn.CreateStackInput{
+			StackName: aws.String("compat-importer"), TemplateBody: aws.String(importerTemplate),
+		}); err != nil {
+			return err
+		}
+
+		out, err := client.ListImports(ctx, &awscfn.ListImportsInput{ExportName: aws.String("compat-export")})
+		if err != nil {
+			return err
+		}
+
+		if len(out.Imports) != 1 || out.Imports[0] != "compat-importer" {
+			return errCompat("expected 1 import")
+		}
+
+		return nil
+	})
+
+	sess.Op(svc, "UpdateTerminationProtection", func() error {
+		_, err := client.UpdateTerminationProtection(ctx, &awscfn.UpdateTerminationProtectionInput{
+			StackName: aws.String("compat-importer"), EnableTerminationProtection: aws.Bool(true),
+		})
+		if err != nil {
+			return err
+		}
+
+		if _, err = client.DeleteStack(ctx, &awscfn.DeleteStackInput{StackName: aws.String("compat-importer")}); err == nil {
+			return errCompat("protected stack deleted")
+		}
+
+		return nil
+	})
+
+	sess.Op(svc, "DescribeAccountLimits", func() error {
+		out, err := client.DescribeAccountLimits(ctx, &awscfn.DescribeAccountLimitsInput{})
+		if err != nil {
+			return err
+		}
+
+		if len(out.AccountLimits) != 3 {
+			return errCompat("expected 3 limits")
+		}
+
+		return nil
+	})
+
+	sess.Op(svc, "EstimateTemplateCost", func() error {
+		out, err := client.EstimateTemplateCost(ctx, &awscfn.EstimateTemplateCostInput{TemplateBody: aws.String(exporterTemplate)})
+		if err != nil {
+			return err
+		}
+
+		if aws.ToString(out.Url) == "" {
+			return errCompat("empty url")
+		}
+
+		return nil
+	})
+}
+
+const exporterTemplate = `{
+  "Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"compat-exported"}}},
+  "Outputs":{"Name":{"Value":{"Ref":"Bucket"},"Export":{"Name":"compat-export"}}}
+}`
+
+const importerTemplate = `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{
+  "BucketName":{"Fn::Join":["-",[{"Fn::ImportValue":"compat-export"},"copy"]]}
+}}}}`
 
 const changeSetTemplate = `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"compat-cs-bucket"}}}}`
 

@@ -41,6 +41,13 @@ const (
 	ResourceDeleteInProgress = "DELETE_IN_PROGRESS"
 	ResourceDeleteComplete   = "DELETE_COMPLETE"
 	ResourceDeleteFailed     = "DELETE_FAILED"
+	ResourceDeleteSkipped    = "DELETE_SKIPPED"
+)
+
+// DeleteStack DeletionMode values.
+const (
+	DeletionModeStandard    = "STANDARD"
+	DeletionModeForceDelete = "FORCE_DELETE_STACK"
 )
 
 // Parameter is a name/value pair supplied to (or resolved for) a stack.
@@ -116,6 +123,13 @@ type Stack struct {
 	// DisableRollback records that a failed operation leaves the stack as it
 	// is instead of rolling it back.
 	DisableRollback bool
+	// EnableTerminationProtection blocks DeleteStack while it is set.
+	EnableTerminationProtection bool
+	// RetainExceptOnCreate has the rollback of the last operation delete the
+	// resources it created, even those whose DeletionPolicy is Retain.
+	RetainExceptOnCreate bool
+	// DeletionMode is the mode of the last DeleteStack call.
+	DeletionMode string
 }
 
 // StackSummary is the condensed stack view ListStacks returns.
@@ -141,6 +155,73 @@ type CreateStackInput struct {
 	Capabilities []string
 
 	NotificationARNs []string
+	// OnFailure is ROLLBACK (the default), DO_NOTHING or DELETE. It cannot
+	// be combined with DisableRollback, which means DO_NOTHING.
+	OnFailure       string
+	DisableRollback bool
+	// EnableTerminationProtection protects the new stack from DeleteStack.
+	EnableTerminationProtection bool
+	// RetainExceptOnCreate deletes the created resources on a rollback,
+	// even those whose DeletionPolicy is Retain.
+	RetainExceptOnCreate bool
+}
+
+// DeleteStackInput is the request to delete a stack.
+type DeleteStackInput struct {
+	StackName string
+	// RetainResources names resources to leave in place. It is valid only
+	// for a stack in DELETE_FAILED.
+	RetainResources []string
+	// DeletionMode is STANDARD (the default) or FORCE_DELETE_STACK, which
+	// deletes a DELETE_FAILED stack and keeps the resources it cannot
+	// delete.
+	DeletionMode string
+}
+
+// UpdateTerminationProtectionInput turns a stack's termination protection
+// on or off.
+type UpdateTerminationProtectionInput struct {
+	StackName string
+	Enable    bool
+}
+
+// Export is one exported output value.
+type Export struct {
+	ExportingStackID string
+	Name             string
+	Value            string
+}
+
+// ExportList is one page of ListExports.
+type ExportList struct {
+	Exports   []Export
+	NextToken string
+}
+
+// ListImportsInput names the export whose importing stacks to list.
+type ListImportsInput struct {
+	ExportName string
+	NextToken  string
+}
+
+// ImportList is one page of ListImports: the names of the stacks that
+// import the export.
+type ImportList struct {
+	Imports   []string
+	NextToken string
+}
+
+// AccountLimit is one CloudFormation quota of the account.
+type AccountLimit struct {
+	Name  string
+	Value int
+}
+
+// EstimateTemplateCostInput names the template to price.
+type EstimateTemplateCostInput struct {
+	TemplateBody string
+	TemplateURL  string
+	Parameters   []Parameter
 }
 
 // UpdateStackInput is the request to update an existing stack.
@@ -156,6 +237,9 @@ type UpdateStackInput struct {
 	// DisableRollback leaves a failed update UPDATE_FAILED instead of
 	// rolling it back.
 	DisableRollback bool
+	// RetainExceptOnCreate deletes the resources the update created when it
+	// rolls back, even those whose DeletionPolicy is Retain.
+	RetainExceptOnCreate bool
 
 	// NotificationARNs replaces the stack's topics. Nil keeps them.
 	NotificationARNs []string
@@ -213,7 +297,7 @@ type API interface {
 	CreateStack(ctx context.Context, in *CreateStackInput) (*Stack, error)
 	UpdateStack(ctx context.Context, in *UpdateStackInput) (*Stack, error)
 	ContinueUpdateRollback(ctx context.Context, in *ContinueUpdateRollbackInput) error
-	DeleteStack(ctx context.Context, stackName string) error
+	DeleteStack(ctx context.Context, in *DeleteStackInput) error
 	DescribeStacks(ctx context.Context, stackName string) ([]Stack, error)
 	DescribeStackEvents(ctx context.Context, stackName string) ([]StackEvent, error)
 	ListStacks(ctx context.Context, statusFilter []string) ([]StackSummary, error)
@@ -228,4 +312,10 @@ type API interface {
 	ListChangeSets(ctx context.Context, in *ListChangeSetsInput) (*ChangeSetList, error)
 	ExecuteChangeSet(ctx context.Context, in *ExecuteChangeSetInput) error
 	DeleteChangeSet(ctx context.Context, in *DeleteChangeSetInput) error
+
+	ListExports(ctx context.Context, nextToken string) (*ExportList, error)
+	ListImports(ctx context.Context, in *ListImportsInput) (*ImportList, error)
+	UpdateTerminationProtection(ctx context.Context, in *UpdateTerminationProtectionInput) (string, error)
+	DescribeAccountLimits(ctx context.Context, nextToken string) ([]AccountLimit, error)
+	EstimateTemplateCost(ctx context.Context, in *EstimateTemplateCostInput) (string, error)
 }

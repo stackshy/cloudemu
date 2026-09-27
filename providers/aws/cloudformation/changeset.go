@@ -215,6 +215,10 @@ func (m *Mock) planCreateChangeSet(ctx context.Context, in *cfn.CreateChangeSetI
 		return nil, nil, err
 	}
 
+	if lerr := m.checkStackLimit(); lerr != nil {
+		return nil, nil, lerr
+	}
+
 	sd = &stackData{
 		resolved:  map[string]cfn.ResolvedResource{},
 		deleteIDs: map[string]string{},
@@ -604,7 +608,10 @@ func (m *Mock) ExecuteChangeSet(ctx context.Context, in *cfn.ExecuteChangeSetInp
 		return err
 	}
 
-	run := execution{rec: rec, onFailure: onFailure, token: in.ClientRequestToken}
+	run := execution{
+		rec: rec, onFailure: onFailure, token: in.ClientRequestToken,
+		retainExceptOnCreate: in.RetainExceptOnCreate != nil && *in.RetainExceptOnCreate,
+	}
 
 	if rec.ChangeSet.Type == cfn.ChangeSetTypeCreate {
 		return m.executeCreate(ctx, sd, &run)
@@ -615,9 +622,10 @@ func (m *Mock) ExecuteChangeSet(ctx context.Context, in *cfn.ExecuteChangeSetInp
 
 // execution is one ExecuteChangeSet call.
 type execution struct {
-	rec       *changeSetRecord
-	onFailure string
-	token     string
+	rec                  *changeSetRecord
+	onFailure            string
+	token                string
+	retainExceptOnCreate bool
 }
 
 // executable rejects a change set that cannot run. The caller holds the
@@ -741,6 +749,7 @@ func (m *Mock) beginExecute(
 
 	sd.stack.ChangeSetID = rec.ChangeSet.ID
 	sd.stack.DisableRollback = run.onFailure == cfn.OnStackFailureDoNothing
+	sd.stack.RetainExceptOnCreate = run.retainExceptOnCreate
 	sd.stack.Status = status
 	sd.stack.StatusReason = reasonUserInitiated
 	sd.stack.Events = append(sd.stack.Events,
