@@ -255,5 +255,5 @@ type Backup interface {
 	// Tagging.
 	TagResource(ctx context.Context, resourceArn string, tags map[string]string) error
 	UntagResource(ctx context.Context, resourceArn string, tagKeys []string) error
-	ListTags(ctx context.Context, resourceArn string) (map[string]string, error)
+	ListTags(ctx context.Context, resourceArn string, page Page) (tags map[string]string, nextToken string, err error)
 }

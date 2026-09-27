@@ -16,9 +16,11 @@ const (
 )
 
 // errorBody is the restJson1 error body. The SDK reads the X-Amzn-Errortype
-// header to select a typed exception.
+// header to select a typed exception. Type is the fault side (Client or
+// Server) that the Backup exception shapes carry.
 type errorBody struct {
 	Message string `json:"Message"`
+	Type    string `json:"Type"`
 }
 
 // writeError writes a restJson1 error response with the given exception type.
@@ -27,7 +29,12 @@ func writeError(w http.ResponseWriter, status int, errType, msg string) {
 	w.Header().Set("X-Amzn-Errortype", errType)
 	w.WriteHeader(status)
 
-	_ = json.NewEncoder(w).Encode(errorBody{Message: msg})
+	fault := "Client"
+	if status >= http.StatusInternalServerError {
+		fault = "Server"
+	}
+
+	_ = json.NewEncoder(w).Encode(errorBody{Message: msg, Type: fault})
 }
 
 // statusForException returns the HTTP status for an AWS Backup exception name.

@@ -216,7 +216,7 @@ func TestTagsRoundTrip(t *testing.T) {
 
 	requireNoError(t, m.TagResource(ctx, v.Arn, map[string]string{"a": "1", "b": "2"}))
 
-	tags, err := m.ListTags(ctx, v.Arn)
+	tags, _, err := m.ListTags(ctx, v.Arn, driver.Page{})
 	requireNoError(t, err)
 
 	if tags["a"] != "1" || tags["b"] != "2" {
@@ -225,7 +225,7 @@ func TestTagsRoundTrip(t *testing.T) {
 
 	requireNoError(t, m.UntagResource(ctx, v.Arn, []string{"a"}))
 
-	tags, _ = m.ListTags(ctx, v.Arn)
+	tags, _, _ = m.ListTags(ctx, v.Arn, driver.Page{})
 	if _, ok := tags["a"]; ok {
 		t.Fatalf("tag a should be removed")
 	}
