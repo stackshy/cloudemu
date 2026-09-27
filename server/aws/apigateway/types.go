@@ -77,10 +77,11 @@ type createDeploymentRequest struct {
 
 // createStageRequest is the CreateStage request body.
 type createStageRequest struct {
-	StageName    string            `json:"stageName"`
-	DeploymentID string            `json:"deploymentId"`
-	Description  string            `json:"description"`
-	Variables    map[string]string `json:"variables"`
+	StageName            string            `json:"stageName"`
+	DeploymentID         string            `json:"deploymentId"`
+	Description          string            `json:"description"`
+	Variables            map[string]string `json:"variables"`
+	DocumentationVersion string            `json:"documentationVersion"`
 }
 
 // apiStatusAvailable is the RestApi apiStatus of a ready API.
@@ -164,11 +165,13 @@ type listDeploymentsResponse struct {
 
 // stageResponse is the Stage wire object.
 type stageResponse struct {
-	StageName    string            `json:"stageName"`
-	DeploymentID string            `json:"deploymentId,omitempty"`
-	Description  string            `json:"description,omitempty"`
-	CreatedDate  int64             `json:"createdDate"`
-	Variables    map[string]string `json:"variables,omitempty"`
+	StageName            string            `json:"stageName"`
+	DeploymentID         string            `json:"deploymentId,omitempty"`
+	Description          string            `json:"description,omitempty"`
+	CreatedDate          int64             `json:"createdDate"`
+	Variables            map[string]string `json:"variables,omitempty"`
+	ClientCertificateID  string            `json:"clientCertificateId,omitempty"`
+	DocumentationVersion string            `json:"documentationVersion,omitempty"`
 }
 
 // listStagesResponse is the GetStages wire object.
@@ -271,5 +274,6 @@ func toStageResponse(s *driver.Stage) stageResponse {
 	return stageResponse{
 		StageName: s.StageName, DeploymentID: s.DeploymentID, Description: s.Description,
 		CreatedDate: s.CreatedDate, Variables: s.Variables,
+		ClientCertificateID: s.ClientCertificateID, DocumentationVersion: s.DocumentationVersion,
 	}
 }

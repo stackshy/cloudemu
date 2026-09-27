@@ -3,22 +3,35 @@
 
 AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS index](./README.md)
 
-## Operations (29)
+## Operations (50)
 
 | Operation | Description |
 | --- | --- |
 | `CreateDeployment` |  |
+| `CreateDocumentationPart` |  |
+| `CreateDocumentationVersion` | CreateDocumentationVersion snapshots the API's current documentation |
 | `CreateResource` |  |
 | `CreateRestAPI` |  |
 | `CreateStage` |  |
+| `DeleteClientCertificate` | DeleteClientCertificate removes a certificate. It fails while a stage |
 | `DeleteDeployment` | DeleteDeployment removes a deployment. It fails with a FailedPrecondition |
+| `DeleteDocumentationPart` |  |
+| `DeleteDocumentationVersion` | DeleteDocumentationVersion removes a version. It fails while a stage |
 | `DeleteIntegration` |  |
 | `DeleteMethod` |  |
 | `DeleteResource` | DeleteResource removes a resource and its whole descendant subtree, as |
 | `DeleteRestAPI` |  |
 | `DeleteStage` |  |
+| `GenerateClientCertificate` | GenerateClientCertificate creates a self-signed client certificate valid |
+| `GetAccount` |  |
+| `GetClientCertificate` |  |
+| `GetClientCertificates` |  |
 | `GetDeployment` |  |
 | `GetDeployments` |  |
+| `GetDocumentationPart` |  |
+| `GetDocumentationParts` |  |
+| `GetDocumentationVersion` |  |
+| `GetDocumentationVersions` |  |
 | `GetIntegration` |  |
 | `GetMethod` |  |
 | `GetResource` |  |
@@ -27,10 +40,18 @@ AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS ind
 | `GetRestAPIs` |  |
 | `GetStage` |  |
 | `GetStages` |  |
+| `GetTags` |  |
+| `ImportDocumentationParts` |  |
 | `InvokeRoute` | InvokeRoute routes req through the tree its stage's deployment captured. |
 | `PutIntegration` |  |
 | `PutMethod` |  |
+| `TagResource` | TagResource, UntagResource and GetTags manage tags on a REST API or client |
+| `UntagResource` |  |
+| `UpdateAccount` | UpdateAccount applies a patchOperations document (/cloudwatchRoleArn |
+| `UpdateClientCertificate` | UpdateClientCertificate applies a patchOperations document (only |
 | `UpdateDeployment` | UpdateDeployment applies a patchOperations document to a deployment |
+| `UpdateDocumentationPart` | UpdateDocumentationPart applies a patchOperations document (only |
+| `UpdateDocumentationVersion` | UpdateDocumentationVersion applies a patchOperations document (only |
 | `UpdateIntegration` | UpdateIntegration applies a patchOperations document to an integration. |
 | `UpdateMethod` | UpdateMethod applies a patchOperations document to a method. |
 | `UpdateResource` | UpdateResource applies a patchOperations document to a resource (rename via |

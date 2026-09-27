@@ -270,6 +270,13 @@
         "name": "CreateDeployment"
       },
       {
+        "name": "CreateDocumentationPart"
+      },
+      {
+        "name": "CreateDocumentationVersion",
+        "doc": "CreateDocumentationVersion snapshots the API's current documentation"
+      },
+      {
         "name": "CreateResource"
       },
       {
@@ -279,8 +286,19 @@
         "name": "CreateStage"
       },
       {
+        "name": "DeleteClientCertificate",
+        "doc": "DeleteClientCertificate removes a certificate. It fails while a stage"
+      },
+      {
         "name": "DeleteDeployment",
         "doc": "DeleteDeployment removes a deployment. It fails with a FailedPrecondition"
+      },
+      {
+        "name": "DeleteDocumentationPart"
+      },
+      {
+        "name": "DeleteDocumentationVersion",
+        "doc": "DeleteDocumentationVersion removes a version. It fails while a stage"
       },
       {
         "name": "DeleteIntegration"
@@ -299,10 +317,35 @@
         "name": "DeleteStage"
       },
       {
+        "name": "GenerateClientCertificate",
+        "doc": "GenerateClientCertificate creates a self-signed client certificate valid"
+      },
+      {
+        "name": "GetAccount"
+      },
+      {
+        "name": "GetClientCertificate"
+      },
+      {
+        "name": "GetClientCertificates"
+      },
+      {
         "name": "GetDeployment"
       },
       {
         "name": "GetDeployments"
+      },
+      {
+        "name": "GetDocumentationPart"
+      },
+      {
+        "name": "GetDocumentationParts"
+      },
+      {
+        "name": "GetDocumentationVersion"
+      },
+      {
+        "name": "GetDocumentationVersions"
       },
       {
         "name": "GetIntegration"
@@ -329,6 +372,12 @@
         "name": "GetStages"
       },
       {
+        "name": "GetTags"
+      },
+      {
+        "name": "ImportDocumentationParts"
+      },
+      {
         "name": "InvokeRoute",
         "doc": "InvokeRoute routes req through the tree its stage's deployment captured."
       },
@@ -339,8 +388,31 @@
         "name": "PutMethod"
       },
       {
+        "name": "TagResource",
+        "doc": "TagResource, UntagResource and GetTags manage tags on a REST API or client"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAccount",
+        "doc": "UpdateAccount applies a patchOperations document (/cloudwatchRoleArn"
+      },
+      {
+        "name": "UpdateClientCertificate",
+        "doc": "UpdateClientCertificate applies a patchOperations document (only"
+      },
+      {
         "name": "UpdateDeployment",
         "doc": "UpdateDeployment applies a patchOperations document to a deployment"
+      },
+      {
+        "name": "UpdateDocumentationPart",
+        "doc": "UpdateDocumentationPart applies a patchOperations document (only"
+      },
+      {
+        "name": "UpdateDocumentationVersion",
+        "doc": "UpdateDocumentationVersion applies a patchOperations document (only"
       },
       {
         "name": "UpdateIntegration",

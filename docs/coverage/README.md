@@ -15,7 +15,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `acm` | [ACM](./aws/acm.md) | - | - | - | 17 |
 | `aks` | - | [AKS](./azure/aks.md) | - | - | 18 |
 | `aoss` | [AOSS](./aws/aoss.md) | - | - | - | 18 |
-| `apigateway` | [APIGateway](./aws/apigateway.md) | - | - | - | 29 |
+| `apigateway` | [APIGateway](./aws/apigateway.md) | - | - | - | 50 |
 | `apigatewaygcp` | - | - | [APIGateway](./gcp/apigateway.md) | - | 16 |
 | `apigatewayv2` | [APIGatewayV2](./aws/apigatewayv2.md) | - | - | - | 20 |
 | `appconfiguration` | - | [AppConfiguration](./azure/appconfiguration.md) | - | - | 9 |

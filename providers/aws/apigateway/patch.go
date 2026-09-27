@@ -283,6 +283,11 @@ func (m *Mock) UpdateStage(
 		return nil, err
 	}
 
+	// regionMu first (the documented lock order), so a certificate cannot be
+	// deleted between the existence check and the attach.
+	m.regionMu.RLock()
+	defer m.regionMu.RUnlock()
+
 	ad.mu.Lock()
 	defer ad.mu.Unlock()
 
@@ -291,20 +296,24 @@ func (m *Mock) UpdateStage(
 		return nil, cerrors.Newf(cerrors.NotFound, "Invalid stage identifier specified %s", stageName)
 	}
 
+	// Patch a copy so a failing op leaves the stage untouched.
+	next := copyStage(st)
 	for _, op := range ops {
-		if err := applyStagePatch(ad, st, op); err != nil {
+		if err := m.applyStagePatch(ad, &next, op); err != nil {
 			return nil, err
 		}
 	}
 
+	*st = next
 	out := copyStage(st)
 
 	return &out, nil
 }
 
-// applyStagePatch applies one patch op to a Stage, validating a /deploymentId
-// re-point against the API's deployments.
-func applyStagePatch(ad *apiData, st *driver.Stage, op driver.PatchOperation) error {
+// applyStagePatch applies one patch op to a Stage, validating a /deploymentId,
+// /clientCertificateId or /documentationVersion reference. The caller holds
+// regionMu and ad.mu.
+func (m *Mock) applyStagePatch(ad *apiData, st *driver.Stage, op driver.PatchOperation) error {
 	switch {
 	case op.Path == pathDescription:
 		st.Description = op.Value
@@ -314,6 +323,8 @@ func applyStagePatch(ad *apiData, st *driver.Stage, op driver.PatchOperation) er
 		}
 
 		st.DeploymentID = op.Value
+	case op.Path == pathClientCertificateID || op.Path == pathDocumentationVersion:
+		return m.applyStageRefPatch(ad, st, op)
 	case strings.HasPrefix(op.Path, "/variables/"):
 		key := unescapePointer(strings.TrimPrefix(op.Path, "/variables/"))
 		if op.Op == opRemove {
@@ -330,6 +341,45 @@ func applyStagePatch(ad *apiData, st *driver.Stage, op driver.PatchOperation) er
 	}
 
 	return nil
+}
+
+// Stage patch paths that reference other resources.
+const (
+	pathClientCertificateID  = "/clientCertificateId"
+	pathDocumentationVersion = "/documentationVersion"
+)
+
+// applyStageRefPatch sets or clears the stage's client certificate or
+// documentation version, which must exist. The caller holds regionMu and ad.mu.
+func (m *Mock) applyStageRefPatch(ad *apiData, st *driver.Stage, op driver.PatchOperation) error {
+	ref := patchRef(op)
+
+	if op.Path == pathClientCertificateID {
+		if _, ok := m.certs[ref]; ref != "" && !ok {
+			return cerrors.New(cerrors.NotFound, msgCertNotFound)
+		}
+
+		st.ClientCertificateID = ref
+
+		return nil
+	}
+
+	if _, ok := ad.docVersions[ref]; ref != "" && !ok {
+		return cerrors.New(cerrors.NotFound, msgDocVersionNotFound)
+	}
+
+	st.DocumentationVersion = ref
+
+	return nil
+}
+
+// patchRef is the reference id a replace/add op sets; a remove op clears it.
+func patchRef(op driver.PatchOperation) string {
+	if op.Op == opRemove {
+		return ""
+	}
+
+	return op.Value
 }
 
 // patchStringSlice adds or removes v from a string slice (used for the
