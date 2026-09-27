@@ -54,7 +54,8 @@ func TestLazyEvalPolicyFallsBackToInsufficientData(t *testing.T) {
 	putErrors(t, m, clk, 10)
 	require.NoError(t, m.CreateAlarm(context.Background(), lazyPolicy("stale", "")))
 
-	clk.Advance(2 * time.Minute)
+	// Past the evaluation range of N+2 periods, so every point is missing.
+	clk.Advance(4 * time.Minute)
 
 	assert.Equal(t, "INSUFFICIENT_DATA", policyState(t, m, "stale"))
 
@@ -83,6 +84,20 @@ func TestLazyEvalPolicySetStateReverts(t *testing.T) {
 	clk.Advance(time.Minute)
 	assert.True(t, m.Tick(clk.Now()))
 	assert.Equal(t, "INSUFFICIENT_DATA", policyState(t, m, "forced"))
+}
+
+// The shared evaluator's premature-alarm rule: one breaching point followed
+// by silence ("- - X - -") alarms a 3 of 3 policy.
+func TestLazyEvalPolicyPrematureAlarm(t *testing.T) {
+	m, clk := newTestMock()
+	policy := lazyPolicy("prem", "")
+	policy.Stat, policy.EvaluationPeriods, policy.DatapointsToAlarm = "Maximum", 3, 3
+	require.NoError(t, m.CreateAlarm(context.Background(), policy))
+
+	putErrors(t, m, clk, 10)
+	clk.Advance(150 * time.Second)
+
+	assert.Equal(t, "ALARM", policyState(t, m, "prem"))
 }
 
 func TestLazyEvalPolicyConcurrency(t *testing.T) {

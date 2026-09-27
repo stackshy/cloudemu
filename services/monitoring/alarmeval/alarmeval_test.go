@@ -140,10 +140,11 @@ func TestEvaluateWindowTreatMissingData(t *testing.T) {
 
 func TestWindowStart(t *testing.T) {
 	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	// The evaluation range reaches two periods past EvaluationPeriods.
 	p := alarmeval.Params{Period: 60, EvaluationPeriods: 5}
-	assert.Equal(t, now.Add(-5*time.Minute), p.WindowStart(now))
+	assert.Equal(t, now.Add(-7*time.Minute), p.WindowStart(now))
 
 	// Defaults: period 60, evalPeriods 1.
 	def := alarmeval.Params{}
-	assert.Equal(t, now.Add(-time.Minute), def.WindowStart(now))
+	assert.Equal(t, now.Add(-3*time.Minute), def.WindowStart(now))
 }
