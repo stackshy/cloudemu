@@ -49,12 +49,17 @@ func (h *Handler) describeJobQueues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	details := make([]jobQueueDetail, 0, len(queues))
-	for i := range queues {
-		details = append(details, toJQDetail(&queues[i]))
+	page, next, ok := paginate(w, queues, req.MaxResults, req.NextToken)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, describeJobQueuesResponse{JobQueues: details})
+	details := make([]jobQueueDetail, 0, len(page))
+	for i := range page {
+		details = append(details, toJQDetail(&page[i]))
+	}
+
+	writeJSON(w, describeJobQueuesResponse{JobQueues: details, NextToken: next})
 }
 
 func (h *Handler) updateJobQueue(w http.ResponseWriter, r *http.Request) {
