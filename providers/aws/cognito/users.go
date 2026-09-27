@@ -88,6 +88,10 @@ func (m *Mock) AdminCreateUser(_ context.Context, in driver.AdminCreateUserInput
 		return nil, err
 	}
 
+	if err := m.claimSignIns(&pool, userKey(pool.ID, username), attrs, in.ForceAliasCreation, true); err != nil {
+		return nil, err
+	}
+
 	now := m.now()
 	rec := userRecord{
 		PoolID: pool.ID,
@@ -163,13 +167,6 @@ func (m *Mock) newUsername(
 	attr, err := usernameAttributeFor(pool.UsernameAttributes, username)
 	if err != nil {
 		return "", nil, err
-	}
-
-	users := m.poolUsers(pool.ID)
-	for i := range users {
-		if attrValue(users[i].User.Attributes, attr) == username {
-			return "", nil, usernameExists("An account with the given " + attr + " already exists.")
-		}
 	}
 
 	return sub, mergeAttributes(attrs, []driver.Attribute{{Name: attr, Value: username}}), nil
@@ -286,16 +283,23 @@ func (m *Mock) AdminDeleteUser(_ context.Context, userPoolID, username string) e
 
 // AdminUpdateUserAttributes sets attribute values. Changing email or phone
 // number without also setting its verified flag marks it unverified, as Cognito
-// does.
+// does. A sign-in value another user already holds fails with
+// AliasExistsException.
 func (m *Mock) AdminUpdateUserAttributes(_ context.Context, userPoolID, username string, attrs []driver.Attribute) error {
-	return m.updateUser(userPoolID, username, func(pool *driver.UserPool, rec *userRecord) error {
+	return m.updateUser(userPoolID, username, func(pool *driver.UserPool, key string, rec *userRecord) error {
 		if err := validateAttributes(pool, attrs, true); err != nil {
 			return err
 		}
 
 		updates := slices.Clone(attrs)
 		updates = append(updates, unverifyChanged(rec.User.Attributes, attrs)...)
-		rec.User.Attributes = mergeAttributes(rec.User.Attributes, updates)
+		merged := mergeAttributes(rec.User.Attributes, updates)
+
+		if err := m.claimSignIns(pool, key, merged, false, false); err != nil {
+			return err
+		}
+
+		rec.User.Attributes = merged
 
 		return nil
 	})
@@ -322,7 +326,7 @@ func unverifyChanged(current, updates []driver.Attribute) []driver.Attribute {
 
 // AdminDeleteUserAttributes removes attributes from a user.
 func (m *Mock) AdminDeleteUserAttributes(_ context.Context, userPoolID, username string, names []string) error {
-	return m.updateUser(userPoolID, username, func(pool *driver.UserPool, rec *userRecord) error {
+	return m.updateUser(userPoolID, username, func(pool *driver.UserPool, _ string, rec *userRecord) error {
 		for _, name := range names {
 			a, ok := schemaAttribute(pool, name)
 			if !ok {
@@ -344,7 +348,7 @@ func (m *Mock) AdminDeleteUserAttributes(_ context.Context, userPoolID, username
 
 // AdminSetUserPassword sets a user's password.
 func (m *Mock) AdminSetUserPassword(_ context.Context, userPoolID, username, password string, permanent bool) error {
-	return m.updateUser(userPoolID, username, func(pool *driver.UserPool, rec *userRecord) error {
+	return m.updateUser(userPoolID, username, func(pool *driver.UserPool, _ string, rec *userRecord) error {
 		if err := checkPassword(password, pool.Policies.PasswordPolicy); err != nil {
 			return err
 		}
@@ -362,7 +366,7 @@ func (m *Mock) AdminSetUserPassword(_ context.Context, userPoolID, username, pas
 
 // AdminEnableUser enables a user.
 func (m *Mock) AdminEnableUser(_ context.Context, userPoolID, username string) error {
-	return m.updateUser(userPoolID, username, func(_ *driver.UserPool, rec *userRecord) error {
+	return m.updateUser(userPoolID, username, func(_ *driver.UserPool, _ string, rec *userRecord) error {
 		rec.User.Enabled = true
 
 		return nil
@@ -371,7 +375,7 @@ func (m *Mock) AdminEnableUser(_ context.Context, userPoolID, username string) e
 
 // AdminDisableUser disables a user.
 func (m *Mock) AdminDisableUser(_ context.Context, userPoolID, username string) error {
-	return m.updateUser(userPoolID, username, func(_ *driver.UserPool, rec *userRecord) error {
+	return m.updateUser(userPoolID, username, func(_ *driver.UserPool, _ string, rec *userRecord) error {
 		rec.User.Enabled = false
 
 		return nil
@@ -381,7 +385,7 @@ func (m *Mock) AdminDisableUser(_ context.Context, userPoolID, username string) 
 // AdminResetUserPassword moves a user to RESET_REQUIRED. A user who has not
 // yet replaced the temporary password cannot be reset.
 func (m *Mock) AdminResetUserPassword(_ context.Context, userPoolID, username string) error {
-	return m.updateUser(userPoolID, username, func(_ *driver.UserPool, rec *userRecord) error {
+	return m.updateUser(userPoolID, username, func(_ *driver.UserPool, _ string, rec *userRecord) error {
 		if rec.User.UserStatus == driver.UserStatusForceChangePassword {
 			return notAuthorized("User password cannot be reset in the current state.")
 		}
@@ -394,7 +398,7 @@ func (m *Mock) AdminResetUserPassword(_ context.Context, userPoolID, username st
 
 // updateUser runs fn on a copy of the resolved user under the mutation lock and
 // stores the result with a fresh last-modified time.
-func (m *Mock) updateUser(userPoolID, username string, fn func(*driver.UserPool, *userRecord) error) error {
+func (m *Mock) updateUser(userPoolID, username string, fn func(pool *driver.UserPool, key string, rec *userRecord) error) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -409,7 +413,7 @@ func (m *Mock) updateUser(userPoolID, username string, fn func(*driver.UserPool,
 	}
 
 	rec = copyUserRecord(rec)
-	if err := fn(&pool, &rec); err != nil {
+	if err := fn(&pool, key, &rec); err != nil {
 		return err
 	}
 
@@ -435,31 +439,6 @@ func (m *Mock) resolveUser(pool *driver.UserPool, name string) (string, userReco
 	}
 
 	return "", userRecord{}, false
-}
-
-func signInMatches(pool *driver.UserPool, u *driver.User, name string) bool {
-	for _, attr := range pool.UsernameAttributes {
-		if attrValue(u.Attributes, attr) == name {
-			return true
-		}
-	}
-
-	for _, attr := range pool.AliasAttributes {
-		if attrValue(u.Attributes, attr) != name {
-			continue
-		}
-
-		switch attr {
-		case attrEmail:
-			return attrValue(u.Attributes, attrEmailVerified) == attrTrue
-		case attrPhoneNumber:
-			return attrValue(u.Attributes, attrPhoneNumberVerified) == attrTrue
-		default:
-			return true
-		}
-	}
-
-	return false
 }
 
 // poolUserKeys returns the store keys of a pool's users, sorted. Pool ids never

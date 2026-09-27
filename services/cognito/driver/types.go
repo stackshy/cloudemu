@@ -304,6 +304,9 @@ type AdminCreateUserInput struct {
 	TemporaryPassword      string
 	MessageAction          string
 	DesiredDeliveryMediums []string
+	// ForceAliasCreation moves a verified email or phone alias that another
+	// user already holds to the new user instead of failing.
+	ForceAliasCreation bool
 }
 
 // ListUsersInput is the input to ListUsers. A nil AttributesToGet returns every

@@ -16,6 +16,7 @@ const (
 const (
 	ExUserNotFound         = "UserNotFoundException"
 	ExUsernameExists       = "UsernameExistsException"
+	ExAliasExists          = "AliasExistsException"
 	ExInvalidPassword      = "InvalidPasswordException"
 	ExNotAuthorized        = "NotAuthorizedException"
 	ExUnsupportedUserState = "UnsupportedUserStateException"

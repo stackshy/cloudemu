@@ -2,6 +2,8 @@ package cognito
 
 import (
 	"context"
+	"slices"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/services/cognito/driver"
 )
@@ -219,12 +221,16 @@ func orDefault(v, def string) string {
 
 // mergeSchema returns the 20 default attributes followed by any caller-supplied
 // custom attributes (prefixed "dev:" for developer-only, else "custom:"),
-// matching how Cognito names non-standard attributes.
+// matching how Cognito names non-standard attributes. An entry naming a
+// standard attribute adjusts that attribute instead of adding one.
 func mergeSchema(custom []driver.SchemaAttribute) []driver.SchemaAttribute {
 	attrs := defaultSchemaAttributes()
+	n := len(attrs)
 
 	for _, a := range custom {
-		if isStandardAttribute(a.Name) {
+		if i := slices.IndexFunc(attrs[:n], func(s driver.SchemaAttribute) bool { return s.Name == a.Name }); i >= 0 {
+			overrideStandard(&attrs[i], &a)
+
 			continue
 		}
 
@@ -234,14 +240,45 @@ func mergeSchema(custom []driver.SchemaAttribute) []driver.SchemaAttribute {
 	return attrs
 }
 
+// overrideStandard applies the caller's Required flag and length or value
+// constraints to a standard attribute. sub is fixed. Mutable keeps its default:
+// the wire cannot tell an omitted Mutable from false.
+func overrideStandard(std, in *driver.SchemaAttribute) {
+	if std.Name == attrSub {
+		return
+	}
+
+	std.Required = in.Required
+
+	if c := in.StringAttributeConstraints; c != nil && std.StringAttributeConstraints != nil {
+		std.StringAttributeConstraints = copyStringConstraints(c)
+	}
+
+	if c := in.NumberAttributeConstraints; c != nil && std.NumberAttributeConstraints != nil {
+		std.NumberAttributeConstraints = copyNumberConstraints(c)
+	}
+}
+
 // customAttribute returns a caller-supplied attribute with its custom: or dev:
 // prefix applied and its constraints deep-copied.
 func customAttribute(a driver.SchemaAttribute) driver.SchemaAttribute {
-	a.Name = customPrefix(a.DeveloperOnlyAttribute) + a.Name
+	a.Name = customPrefix(a.DeveloperOnlyAttribute) + bareCustomName(a.Name)
 	a.StringAttributeConstraints = copyStringConstraints(a.StringAttributeConstraints)
 	a.NumberAttributeConstraints = copyNumberConstraints(a.NumberAttributeConstraints)
 
 	return a
+}
+
+// bareCustomName strips a custom: or dev: prefix the caller already supplied,
+// so "custom:tier" and "tier" name the same attribute.
+func bareCustomName(name string) string {
+	for _, p := range []string{customPrefix(false), customPrefix(true)} {
+		if rest, ok := strings.CutPrefix(name, p); ok {
+			return rest
+		}
+	}
+
+	return name
 }
 
 // customPrefix returns the attribute-name prefix Cognito applies to a
@@ -252,15 +289,4 @@ func customPrefix(developerOnly bool) string {
 	}
 
 	return "custom:"
-}
-
-// isStandardAttribute reports whether name is one of the 20 default attributes.
-func isStandardAttribute(name string) bool {
-	for _, a := range defaultSchemaAttributes() {
-		if a.Name == name {
-			return true
-		}
-	}
-
-	return false
 }

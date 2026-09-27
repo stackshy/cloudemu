@@ -73,6 +73,7 @@ type adminCreateUserRequest struct {
 	TemporaryPassword      string          `json:"TemporaryPassword"`
 	MessageAction          string          `json:"MessageAction"`
 	DesiredDeliveryMediums []string        `json:"DesiredDeliveryMediums"`
+	ForceAliasCreation     bool            `json:"ForceAliasCreation"`
 }
 
 type adminCreateUserResponse struct {
@@ -88,6 +89,7 @@ func (h *Handler) adminCreateUser(w http.ResponseWriter, r *http.Request) {
 			TemporaryPassword:      req.TemporaryPassword,
 			MessageAction:          req.MessageAction,
 			DesiredDeliveryMediums: req.DesiredDeliveryMediums,
+			ForceAliasCreation:     req.ForceAliasCreation,
 		})
 		if err != nil {
 			return nil, err

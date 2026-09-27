@@ -35,6 +35,15 @@ func usernameExists(msg string) error {
 	return &driver.APIError{Exception: driver.ExUsernameExists, Err: errors.New(errors.AlreadyExists, msg)}
 }
 
+// aliasExists builds the AliasExistsException for a sign-in value (email, phone
+// number or preferred username) that another user already holds.
+func aliasExists(attr string) error {
+	return &driver.APIError{
+		Exception: driver.ExAliasExists,
+		Err:       errors.New(errors.AlreadyExists, "An account with the given "+attr+" already exists."),
+	}
+}
+
 // invalidPassword builds an InvalidPasswordException for a password that breaks
 // the pool's policy.
 func invalidPassword(reason string) error {

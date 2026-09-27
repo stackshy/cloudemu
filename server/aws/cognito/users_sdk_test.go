@@ -160,6 +160,56 @@ func TestSDKAdminUserLifecycle(t *testing.T) {
 	}
 }
 
+func TestSDKAliasExistsAndForceAliasCreation(t *testing.T) {
+	ctx := context.Background()
+	c := newCognitoClient(t)
+
+	created, err := c.CreateUserPool(ctx, &cip.CreateUserPoolInput{
+		PoolName:        aws.String("alias"),
+		AliasAttributes: []ciptypes.AliasAttributeType{ciptypes.AliasAttributeTypeEmail},
+	})
+	if err != nil {
+		t.Fatalf("CreateUserPool: %v", err)
+	}
+
+	pool := created.UserPool.Id
+	verified := []ciptypes.AttributeType{
+		{Name: aws.String("email"), Value: aws.String("dup@example.com")},
+		{Name: aws.String("email_verified"), Value: aws.String("true")},
+	}
+
+	newUser := func(name string, force bool) error {
+		_, err := c.AdminCreateUser(ctx, &cip.AdminCreateUserInput{
+			UserPoolId: pool, Username: aws.String(name), UserAttributes: verified,
+			MessageAction: ciptypes.MessageActionTypeSuppress, ForceAliasCreation: force,
+		})
+
+		return err
+	}
+
+	if err := newUser("first", false); err != nil {
+		t.Fatalf("AdminCreateUser first: %v", err)
+	}
+
+	var aee *ciptypes.AliasExistsException
+	if err := newUser("second", false); !errors.As(err, &aee) {
+		t.Fatalf("expected typed AliasExistsException, got %v", err)
+	}
+
+	if err := newUser("second", true); err != nil {
+		t.Fatalf("AdminCreateUser ForceAliasCreation: %v", err)
+	}
+
+	first, err := c.AdminGetUser(ctx, &cip.AdminGetUserInput{UserPoolId: pool, Username: aws.String("first")})
+	if err != nil {
+		t.Fatalf("AdminGetUser: %v", err)
+	}
+
+	if attr(first.UserAttributes, "email_verified") != "false" {
+		t.Fatalf("old alias owner still verified: %+v", first.UserAttributes)
+	}
+}
+
 func TestSDKListUsersPaginatorAndFilterErrors(t *testing.T) {
 	ctx := context.Background()
 	c := newCognitoClient(t)

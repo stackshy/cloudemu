@@ -7,13 +7,18 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/cognito/driver"
 )
 
-// maxCustomAttributes is the per-pool ceiling on custom attributes.
-const maxCustomAttributes = 50
+// Custom attribute limits: at most 50 per pool, and a name (without its
+// custom: prefix) of 1 to 20 characters.
+const (
+	maxCustomAttributes = 50
+	maxCustomNameLen    = 20
+)
 
 // AddCustomAttributes appends custom attributes to a pool's schema. Each name
 // gets the custom: prefix (dev: for developer-only). Cognito never changes or
 // removes an attribute once added, so a name already in the schema, or repeated
-// in the request, is rejected and nothing is added.
+// in the request, is rejected and nothing is added. A name may be given with or
+// without its custom: prefix.
 func (m *Mock) AddCustomAttributes(_ context.Context, userPoolID string, attrs []driver.SchemaAttribute) error {
 	if len(attrs) == 0 {
 		return invalidParameter("1 validation error detected: Value null at 'customAttributes' failed to satisfy constraint: " +
@@ -31,10 +36,10 @@ func (m *Mock) AddCustomAttributes(_ context.Context, userPoolID string, attrs [
 	pool = copyUserPool(pool)
 	schema := pool.SchemaAttributes
 
-	for _, a := range attrs {
-		if a.Name == "" {
-			return invalidParameter("1 validation error detected: Value null at 'customAttributes.member.name' " +
-				"failed to satisfy constraint: Member must not be null")
+	for i, a := range attrs {
+		if n := len(bareCustomName(a.Name)); n < 1 || n > maxCustomNameLen {
+			return invalidParameter("1 validation error detected: Value '%s' at 'customAttributes.%d.member.name' "+
+				"failed to satisfy constraint: Member must have length between 1 and %d", a.Name, i+1, maxCustomNameLen)
 		}
 
 		if a.AttributeDataType == "" {
