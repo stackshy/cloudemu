@@ -276,44 +276,34 @@ func (h *Handler) queryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 
 		ChildrenOfAlarmName: r.Form.Get("ChildrenOfAlarmName"),
 		ParentsOfAlarmName:  r.Form.Get("ParentsOfAlarmName"),
+		NextToken:           r.Form.Get("NextToken"),
 	}
 
-	res, err := h.queryAlarmsCore(r.Context(), &in)
+	if v, err := strconv.Atoi(r.Form.Get("MaxRecords")); err == nil {
+		in.MaxRecords = v
+	}
+
+	page, err := h.describeAlarmsPage(r.Context(), &in)
 	if err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}
 
-	members := make([]alarmMemberXML, 0, len(res.MetricAlarms))
-	for i := range res.MetricAlarms {
-		members = append(members, toAlarmMemberXML(&res.MetricAlarms[i]))
-	}
+	if familyQuery(&in) {
+		metric, composite := familyRows(page)
+		writeQueryResponse(w, "DescribeAlarmsResponse", describeFamilyResultXML{
+			MetricAlarms: familyXML(metric), CompositeAlarms: familyXML(composite), NextToken: page.next,
+		})
 
-	sort.SliceStable(members, func(i, j int) bool { return members[i].AlarmName < members[j].AlarmName })
-
-	size := maxAlarmPageSize
-	if v, _ := strconv.Atoi(r.Form.Get("MaxRecords")); v > 0 {
-		size = v
-	}
-
-	offset, err := offsetFromToken(r.Form.Get("NextToken"), errInvalidNextToken)
-	if err != nil {
-		writeQueryDriverErr(w, err)
 		return
 	}
 
-	from, to, next := pageWindow(len(members), offset, size)
-
-	result := describeAlarmsResultXML{MetricAlarms: members[from:to]}
-	if next > 0 {
-		result.NextToken = encodeOffsetToken(next)
+	result := describeAlarmsResultXML{MetricAlarms: make([]alarmMemberXML, 0, len(page.metric)), NextToken: page.next}
+	for i := range page.metric {
+		result.MetricAlarms = append(result.MetricAlarms, toAlarmMemberXML(&page.metric[i]))
 	}
 
-	// Composite alarms are a small, separate collection returned in full on the
-	// first page so they aren't duplicated across metric-alarm pages.
-	if offset == 0 {
-		result.CompositeAlarms = toCompositeAlarmMemberXMLs(compositeRows(res.CompositeAlarms))
-	}
+	result.CompositeAlarms = toCompositeAlarmMemberXMLs(compositeRows(page.composite))
 
 	writeQueryResponse(w, "DescribeAlarmsResponse", result)
 }
@@ -710,6 +700,30 @@ func xmlTime(t *time.Time) string {
 	}
 
 	return t.UTC().Format(time.RFC3339)
+}
+
+// familyAlarmXML is an alarm row of a children or parents query.
+type familyAlarmXML struct {
+	AlarmName             string `xml:"AlarmName"`
+	AlarmArn              string `xml:"AlarmArn,omitempty"`
+	StateValue            string `xml:"StateValue,omitempty"`
+	StateUpdatedTimestamp string `xml:"StateUpdatedTimestamp,omitempty"`
+}
+
+type describeFamilyResultXML struct {
+	XMLName         xml.Name         `xml:"DescribeAlarmsResult"`
+	MetricAlarms    []familyAlarmXML `xml:"MetricAlarms>member"`
+	CompositeAlarms []familyAlarmXML `xml:"CompositeAlarms>member"`
+	NextToken       string           `xml:"NextToken,omitempty"`
+}
+
+func familyXML(rows []familyAlarmCBR) []familyAlarmXML {
+	out := make([]familyAlarmXML, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, familyAlarmXML{r.AlarmName, r.AlarmArn, r.StateValue, xmlTime(r.StateUpdatedTimestamp)})
+	}
+
+	return out
 }
 
 type describeAlarmsResultXML struct {

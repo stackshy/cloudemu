@@ -11,8 +11,9 @@ import (
 
 // QueryAlarms answers a DescribeAlarms call. With no AlarmTypes only metric
 // alarms are returned, as the DescribeAlarms API documents. ChildrenOf returns
-// the alarms a composite's rule references, and ParentsOf the composites that
-// reference an alarm. Due alarms are evaluated first.
+// the metric and composite alarms a composite's rule references, and ParentsOf
+// the composites that reference an alarm. Both take no other filter. Due
+// alarms are evaluated first.
 func (m *Mock) QueryAlarms(ctx context.Context, q *driver.AlarmQuery) (*driver.AlarmQueryResult, error) {
 	if err := validateAlarmQuery(q); err != nil {
 		return nil, err
@@ -36,11 +37,13 @@ func (m *Mock) QueryAlarms(ctx context.Context, q *driver.AlarmQuery) (*driver.A
 
 	out := &driver.AlarmQueryResult{MetricAlarms: []driver.AlarmInfo{}, CompositeAlarms: []driver.CompositeAlarmInfo{}}
 
-	if wantsType(q.AlarmTypes, driver.AlarmTypeMetric) {
+	family := q.ChildrenOf != "" || q.ParentsOf != ""
+
+	if family || wantsType(q.AlarmTypes, driver.AlarmTypeMetric) {
 		out.MetricAlarms = m.metricRowsLocked(metrics, q)
 	}
 
-	if wantsType(q.AlarmTypes, driver.AlarmTypeComposite) {
+	if family || wantsType(q.AlarmTypes, driver.AlarmTypeComposite) {
 		out.CompositeAlarms = m.compositeRowsLocked(composites, q)
 	}
 
@@ -57,7 +60,9 @@ func validateAlarmQuery(q *driver.AlarmQuery) error {
 		return errors.New(errors.InvalidArgument, "ChildrenOfAlarmName and ParentsOfAlarmName cannot be used together")
 	}
 
-	if len(q.Names) > 0 || q.NamePrefix != "" || q.StateValue != "" || q.ActionPrefix != "" {
+	// "you cannot specify any other parameters in the request except for
+	// MaxRecords and NextToken" (DescribeAlarms), so AlarmTypes is refused too.
+	if len(q.Names) > 0 || q.NamePrefix != "" || q.StateValue != "" || q.ActionPrefix != "" || len(q.AlarmTypes) > 0 {
 		return errors.New(errors.InvalidArgument,
 			"ChildrenOfAlarmName and ParentsOfAlarmName cannot be used with other filters except MaxRecords and NextToken")
 	}

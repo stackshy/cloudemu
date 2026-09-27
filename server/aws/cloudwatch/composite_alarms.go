@@ -186,6 +186,84 @@ func (h *Handler) queryAlarmsCore(ctx context.Context, in *describeAlarmsInput) 
 	return res, nil
 }
 
+// alarmsPage is one DescribeAlarms page.
+type alarmsPage struct {
+	metric    []mondriver.AlarmInfo
+	composite []mondriver.CompositeAlarmInfo
+	next      string
+}
+
+// describeAlarmsPage runs the query and pages metric alarms and then
+// composite alarms as one list, so MaxRecords and NextToken cover both.
+func (h *Handler) describeAlarmsPage(ctx context.Context, in *describeAlarmsInput) (*alarmsPage, error) {
+	res, err := h.queryAlarmsCore(ctx, in)
+	if err != nil {
+		return nil, err
+	}
+
+	size := in.MaxRecords
+	if size <= 0 {
+		size = maxAlarmPageSize
+	}
+
+	offset, err := offsetFromToken(in.NextToken, errInvalidNextToken)
+	if err != nil {
+		return nil, err
+	}
+
+	nm := len(res.MetricAlarms)
+	from, to, next := pageWindow(nm+len(res.CompositeAlarms), offset, size)
+
+	page := &alarmsPage{
+		metric:    res.MetricAlarms[min(from, nm):min(to, nm)],
+		composite: res.CompositeAlarms[max(from-nm, 0):max(to-nm, 0)],
+	}
+
+	if next > 0 {
+		page.next = encodeOffsetToken(next)
+	}
+
+	return page, nil
+}
+
+// familyQuery reports whether a request uses ChildrenOfAlarmName or
+// ParentsOfAlarmName. Those answer with only the alarm name, ARN, state and
+// state timestamp.
+func familyQuery(in *describeAlarmsInput) bool {
+	return in.ChildrenOfAlarmName != "" || in.ParentsOfAlarmName != ""
+}
+
+// familyAlarmCBR is an alarm row of a children or parents query.
+type familyAlarmCBR struct {
+	AlarmName             string     `cbor:"AlarmName"`
+	AlarmArn              string     `cbor:"AlarmArn,omitempty"`
+	StateValue            string     `cbor:"StateValue,omitempty"`
+	StateUpdatedTimestamp *time.Time `cbor:"StateUpdatedTimestamp,omitempty"`
+}
+
+type describeFamilyOutput struct {
+	MetricAlarms    []familyAlarmCBR `cbor:"MetricAlarms"`
+	CompositeAlarms []familyAlarmCBR `cbor:"CompositeAlarms"`
+	NextToken       string           `cbor:"NextToken,omitempty"`
+}
+
+// familyRows renders a family page with the brief rows.
+func familyRows(page *alarmsPage) (metric, composite []familyAlarmCBR) {
+	metric = make([]familyAlarmCBR, 0, len(page.metric))
+	for i := range page.metric {
+		a := &page.metric[i]
+		metric = append(metric, familyAlarmCBR{a.Name, a.AlarmArn, a.State, optTime(a.StateUpdatedTimestamp)})
+	}
+
+	composite = make([]familyAlarmCBR, 0, len(page.composite))
+	for i := range page.composite {
+		c := &page.composite[i]
+		composite = append(composite, familyAlarmCBR{c.Name, c.ARN, c.State, optTime(c.StateUpdatedTimestamp)})
+	}
+
+	return metric, composite
+}
+
 // compositeRows renders composite alarms for the wire.
 func compositeRows(alarms []mondriver.CompositeAlarmInfo) []compositeAlarmCBR {
 	rows := make([]compositeAlarmCBR, 0, len(alarms))

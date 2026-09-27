@@ -44,10 +44,10 @@ func TestQueryAlarms(t *testing.T) {
 	}{
 		{"types omitted", driver.AlarmQuery{}, "a,b", ""},
 		{"composite only", driver.AlarmQuery{AlarmTypes: compositeOnly}, "", "mid,top"},
-		{"children", driver.AlarmQuery{ChildrenOf: "top", AlarmTypes: both}, "b", "mid"},
-		{"children types omitted", driver.AlarmQuery{ChildrenOf: "top"}, "b", ""},
-		{"parents", driver.AlarmQuery{ParentsOf: "a", AlarmTypes: both}, "", "mid"},
-		{"parents of composite", driver.AlarmQuery{ParentsOf: "mid", AlarmTypes: compositeOnly}, "", "top"},
+		// Children and parents take no AlarmTypes and return both types.
+		{"children", driver.AlarmQuery{ChildrenOf: "top"}, "b", "mid"},
+		{"parents", driver.AlarmQuery{ParentsOf: "a"}, "", "mid"},
+		{"parents of composite", driver.AlarmQuery{ParentsOf: "mid"}, "", "top"},
 		{"prefix", driver.AlarmQuery{NamePrefix: "t", AlarmTypes: both}, "", "top"},
 	}
 
@@ -63,7 +63,7 @@ func TestQueryAlarms(t *testing.T) {
 	}
 
 	// A parents query returns only the name and ARN.
-	res, err := m.QueryAlarms(ctx, &driver.AlarmQuery{ParentsOf: "a", AlarmTypes: compositeOnly})
+	res, err := m.QueryAlarms(ctx, &driver.AlarmQuery{ParentsOf: "a"})
 	requireNoError(t, err)
 	assertEqual(t, "", res.CompositeAlarms[0].AlarmRule)
 	assertEqual(t, "arn:aws:cloudwatch:us-east-1:123456789012:alarm:mid", res.CompositeAlarms[0].ARN)
@@ -72,6 +72,8 @@ func TestQueryAlarms(t *testing.T) {
 		{ChildrenOf: "top", ParentsOf: "a"},
 		{ChildrenOf: "top", StateValue: stateOK},
 		{ParentsOf: "a", Names: []string{"mid"}},
+		{ParentsOf: "a", AlarmTypes: compositeOnly},
+		{ChildrenOf: "top", AlarmTypes: both},
 	} {
 		if _, err := m.QueryAlarms(ctx, &q); !errors.IsInvalidArgument(err) {
 			t.Fatalf("%+v: want InvalidArgument, got %v", q, err)

@@ -149,7 +149,8 @@ func TestSDKDescribeAlarmsFamilyFilters(t *testing.T) {
 
 	types := []cwtypes.AlarmType{cwtypes.AlarmTypeMetricAlarm, cwtypes.AlarmTypeCompositeAlarm}
 
-	kids, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{ChildrenOfAlarmName: aws.String("top"), AlarmTypes: types})
+	// The CLI shape: no AlarmTypes, and both types come back.
+	kids, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{ChildrenOfAlarmName: aws.String("top")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ func TestSDKDescribeAlarmsFamilyFilters(t *testing.T) {
 		t.Fatalf("children of top = %d metric, %d composite", len(kids.MetricAlarms), len(kids.CompositeAlarms))
 	}
 
-	parents, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{ParentsOfAlarmName: aws.String("a"), AlarmTypes: types})
+	parents, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{ParentsOfAlarmName: aws.String("a")})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -167,6 +168,13 @@ func TestSDKDescribeAlarmsFamilyFilters(t *testing.T) {
 	if len(parents.MetricAlarms) != 0 || len(parents.CompositeAlarms) != 1 || aws.ToString(parents.CompositeAlarms[0].AlarmName) != "mid" {
 		t.Fatalf("parents of a = %d metric, %d composite", len(parents.MetricAlarms), len(parents.CompositeAlarms))
 	}
+
+	if kids.CompositeAlarms[0].AlarmRule != nil || kids.MetricAlarms[0].Namespace != nil || kids.MetricAlarms[0].StateValue == "" {
+		t.Fatal("children rows must carry only name, ARN, state and state timestamp")
+	}
+
+	_, err = client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{ChildrenOfAlarmName: aws.String("top"), AlarmTypes: types})
+	requireValidationError(t, err, "cannot be used with other filters")
 
 	_, err = client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{ChildrenOfAlarmName: aws.String("top"), StateValue: cwtypes.StateValueOk})
 	requireValidationError(t, err, "cannot be used with other filters")
@@ -195,19 +203,69 @@ func TestQueryDescribeAlarmsFamilyFilters(t *testing.T) {
 		t.Fatalf("composite returned without AlarmTypes: %s", body)
 	}
 
-	_, body = post(url.Values{"Action": {"DescribeAlarms"}, "ChildrenOfAlarmName": {"top"}, "AlarmTypes.member.1": {"MetricAlarm"},
-		"AlarmTypes.member.2": {"CompositeAlarm"}})
-	if !strings.Contains(body, "<AlarmName>a</AlarmName>") || strings.Contains(body, "<AlarmName>top</AlarmName>") {
+	_, body = post(url.Values{"Action": {"DescribeAlarms"}, "ChildrenOfAlarmName": {"top"}})
+	if !strings.Contains(body, "<AlarmName>a</AlarmName>") || strings.Contains(body, "<AlarmName>top</AlarmName>") ||
+		strings.Contains(body, "<Namespace>") {
 		t.Fatalf("children of top: %s", body)
 	}
 
-	_, body = post(url.Values{"Action": {"DescribeAlarms"}, "ParentsOfAlarmName": {"a"}, "AlarmTypes.member.1": {"CompositeAlarm"}})
-	if !strings.Contains(body, "<AlarmName>top</AlarmName>") {
+	_, body = post(url.Values{"Action": {"DescribeAlarms"}, "ParentsOfAlarmName": {"a"}})
+	if !strings.Contains(body, "<CompositeAlarms><member><AlarmName>top</AlarmName>") || strings.Contains(body, "<AlarmRule>") {
 		t.Fatalf("parents of a: %s", body)
 	}
 
 	code, body := post(url.Values{"Action": {"DescribeAlarms"}, "ParentsOfAlarmName": {"a"}, "AlarmNamePrefix": {"t"}})
 	if code != 400 || !strings.Contains(body, "<Code>ValidationError</Code>") {
 		t.Fatalf("parents with prefix: %d %s", code, body)
+	}
+}
+
+// MaxRecords and NextToken page metric and composite alarms as one list.
+// Before, every composite came back on the first page.
+func TestSDKDescribeAlarmsPagesCompositesToo(t *testing.T) {
+	client, ctx := newCWClient(t)
+	putChildAlarms(t, client, "m1", "m2")
+
+	for _, name := range []string{"c1", "c2", "c3"} {
+		if _, err := client.PutCompositeAlarm(ctx, &awscw.PutCompositeAlarmInput{
+			AlarmName: aws.String(name), AlarmRule: aws.String("ALARM(m1)"),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	types := []cwtypes.AlarmType{cwtypes.AlarmTypeMetricAlarm, cwtypes.AlarmTypeCompositeAlarm}
+
+	var (
+		pages []string
+		token *string
+	)
+
+	for {
+		out, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{AlarmTypes: types, MaxRecords: aws.Int32(2), NextToken: token})
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		var names []string
+		for _, a := range out.MetricAlarms {
+			names = append(names, aws.ToString(a.AlarmName))
+		}
+
+		for _, c := range out.CompositeAlarms {
+			names = append(names, aws.ToString(c.AlarmName))
+		}
+
+		pages = append(pages, strings.Join(names, ","))
+
+		if out.NextToken == nil {
+			break
+		}
+
+		token = out.NextToken
+	}
+
+	if got := strings.Join(pages, "|"); got != "m1,m2|c1,c2|c3" {
+		t.Fatalf("pages = %s, want m1,m2|c1,c2|c3", got)
 	}
 }

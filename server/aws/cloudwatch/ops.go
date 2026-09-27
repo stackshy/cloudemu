@@ -277,47 +277,25 @@ func (h *Handler) describeAlarms(w http.ResponseWriter, r *http.Request, body []
 		return
 	}
 
-	res, err := h.queryAlarmsCore(r.Context(), &in)
+	page, err := h.describeAlarmsPage(r.Context(), &in)
 	if err != nil {
 		writeDriverErr(w, err)
 		return
 	}
 
-	matched := make([]metricAlarmCBR, 0, len(res.MetricAlarms))
-	for i := range res.MetricAlarms {
-		matched = append(matched, toMetricAlarmCBR(&res.MetricAlarms[i]))
-	}
+	if familyQuery(&in) {
+		metric, composite := familyRows(page)
+		writeCBORResponse(w, describeFamilyOutput{MetricAlarms: metric, CompositeAlarms: composite, NextToken: page.next})
 
-	// Always paginate: real CloudWatch caps a page at 100 alarms and returns a
-	// NextToken for the rest, so an unpaged "return everything" reply would drop
-	// alarms past 100 for callers that don't pass paging inputs.
-	sort.SliceStable(matched, func(i, j int) bool {
-		return matched[i].AlarmName < matched[j].AlarmName
-	})
-
-	size := in.MaxRecords
-	if size <= 0 {
-		size = maxAlarmPageSize
-	}
-
-	offset, err := offsetFromToken(in.NextToken, errInvalidNextToken)
-	if err != nil {
-		writeDriverErr(w, err)
 		return
 	}
 
-	from, to, next := pageWindow(len(matched), offset, size)
-
-	resp := describeAlarmsOutput{MetricAlarms: matched[from:to]}
-	if next > 0 {
-		resp.NextToken = encodeOffsetToken(next)
+	resp := describeAlarmsOutput{MetricAlarms: make([]metricAlarmCBR, 0, len(page.metric)), NextToken: page.next}
+	for i := range page.metric {
+		resp.MetricAlarms = append(resp.MetricAlarms, toMetricAlarmCBR(&page.metric[i]))
 	}
 
-	// Composite alarms are a small, separate collection; return them all on the
-	// first page (offset 0) so they aren't duplicated across metric-alarm pages.
-	if offset == 0 {
-		resp.CompositeAlarms = compositeRows(res.CompositeAlarms)
-	}
+	resp.CompositeAlarms = compositeRows(page.composite)
 
 	writeCBORResponse(w, resp)
 }
