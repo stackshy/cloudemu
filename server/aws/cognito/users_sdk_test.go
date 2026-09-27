@@ -191,10 +191,9 @@ func TestSDKAliasExistsAndForceAliasCreation(t *testing.T) {
 		t.Fatalf("AdminCreateUser first: %v", err)
 	}
 
-	var aee *ciptypes.AliasExistsException
-	if err := newUser("second", false); !errors.As(err, &aee) {
-		t.Fatalf("expected typed AliasExistsException, got %v", err)
-	}
+	// AdminCreateUser does not model AliasExistsException, so the SDK surfaces
+	// it as a generic API error carrying the code.
+	requireErrorCode(t, newUser("second", false), "AliasExistsException", "An account with the given email already exists.")
 
 	if err := newUser("second", true); err != nil {
 		t.Fatalf("AdminCreateUser ForceAliasCreation: %v", err)
