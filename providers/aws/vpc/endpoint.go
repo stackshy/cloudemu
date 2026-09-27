@@ -12,6 +12,10 @@ import (
 // each specified subnet. Gateway-type endpoints hold no interfaces.
 const vpcEndpointTypeInterface = "Interface"
 
+// vpcEndpointTypeGateway is the endpoint type that routes to the service
+// through a prefix-list route in each of its route tables.
+const vpcEndpointTypeGateway = "Gateway"
+
 // endpointENIDescription is the description stamped on the ENIs an Interface
 // endpoint occupies, so DeleteVpcEndpoint can release exactly this endpoint's set.
 func endpointENIDescription(endpointID string) string {
@@ -80,16 +84,19 @@ func (m *Mock) CreateVPCEndpoint(
 	}
 
 	m.endpoints.Set(id, ep)
+	m.syncEndpointRoutes(ep)
 
 	return copyEndpoint(ep), nil
 }
 
 // DeleteVPCEndpoint deletes the VPC endpoint with the given ID, releasing any
-// backing ENIs an Interface endpoint provisioned.
+// backing ENIs an Interface endpoint provisioned and the prefix-list routes a
+// Gateway endpoint added.
 func (m *Mock) DeleteVPCEndpoint(
 	_ context.Context, id string,
 ) error {
-	if !m.endpoints.Has(id) {
+	ep, ok := m.endpoints.Get(id)
+	if !ok {
 		return errors.Newf(
 			errors.NotFound,
 			"vpc endpoint %q not found", id,
@@ -98,6 +105,10 @@ func (m *Mock) DeleteVPCEndpoint(
 
 	m.endpoints.Delete(id)
 	m.releaseManagedENIs(endpointENIDescription(id))
+
+	gone := *ep
+	gone.RouteTableIDs = nil
+	m.syncEndpointRoutes(&gone)
 
 	return nil
 }
@@ -145,8 +156,11 @@ func (m *Mock) ModifyVPCEndpoint(
 		ep.SecurityGroupIDs = copyStringSlice(cfg.SecurityGroupIDs)
 	}
 
-	if len(cfg.RouteTableIDs) > 0 {
+	// A non-nil empty set removes every route table, which is how
+	// ModifyVpcEndpoint with only RemoveRouteTableId arrives here.
+	if cfg.RouteTableIDs != nil {
 		ep.RouteTableIDs = copyStringSlice(cfg.RouteTableIDs)
+		m.syncEndpointRoutes(ep)
 	}
 
 	if len(cfg.Tags) > 0 {

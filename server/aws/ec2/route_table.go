@@ -17,6 +17,9 @@ const (
 	targetTypeNatGateway = "nat-gateway"
 	targetTypePeering    = "peering"
 	targetTypeLocal      = "local"
+	// targetTypeVPCEndpoint is the route a Gateway VPC endpoint adds; its
+	// target is reported as gatewayId.
+	targetTypeVPCEndpoint = "vpc-endpoint"
 
 	// routeOriginCreateRouteTable is the origin AWS reports for the implicit
 	// local route created with the table; routeOriginCreateRoute is what it
@@ -30,12 +33,13 @@ const (
 )
 
 type routeXML struct {
-	DestinationCIDR      string `xml:"destinationCidrBlock"`
-	GatewayID            string `xml:"gatewayId,omitempty"`
-	NatGatewayID         string `xml:"natGatewayId,omitempty"`
-	VpcPeeringConnection string `xml:"vpcPeeringConnectionId,omitempty"`
-	State                string `xml:"state"`
-	Origin               string `xml:"origin,omitempty"`
+	DestinationCIDR       string `xml:"destinationCidrBlock,omitempty"`
+	DestinationPrefixList string `xml:"destinationPrefixListId,omitempty"`
+	GatewayID             string `xml:"gatewayId,omitempty"`
+	NatGatewayID          string `xml:"natGatewayId,omitempty"`
+	VpcPeeringConnection  string `xml:"vpcPeeringConnectionId,omitempty"`
+	State                 string `xml:"state"`
+	Origin                string `xml:"origin,omitempty"`
 }
 
 type rtAssociationStateXML struct {
@@ -432,13 +436,14 @@ func (h *Handler) toRouteTableXML(rt *netdriver.RouteTable) routeTableXML {
 
 	for _, route := range rt.Routes {
 		rx := routeXML{
-			DestinationCIDR: route.DestinationCIDR,
-			State:           nonEmpty(route.State, "active"),
-			Origin:          routeOrigin(route.TargetType),
+			DestinationCIDR:       route.DestinationCIDR,
+			DestinationPrefixList: route.DestinationPrefixListID,
+			State:                 nonEmpty(route.State, "active"),
+			Origin:                routeOrigin(route.TargetType),
 		}
 
 		switch route.TargetType {
-		case targetTypeGateway:
+		case targetTypeGateway, targetTypeVPCEndpoint:
 			rx.GatewayID = route.TargetID
 		case targetTypeNatGateway:
 			rx.NatGatewayID = route.TargetID

@@ -167,6 +167,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeTransitGateways,
 		h.routeVPN,
 		h.routeDHCPOptions,
+		h.routeServicePrefixLists,
 		h.routePrefixLists,
 		h.routeEgressOnlyIGW,
 		h.routeEndpointServices,

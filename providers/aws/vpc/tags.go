@@ -11,7 +11,8 @@ import (
 // UpdateResourceTags merges tags onto a VPC-family resource that has no
 // dedicated Update*Tags method: route tables, internet gateways, NAT
 // gateways, network ACLs, DHCP option sets, peering connections, managed
-// prefix lists, and egress-only internet gateways. An unknown or missing id
+// prefix lists, VPC endpoints and endpoint services, and egress-only internet
+// gateways. An unknown or missing id
 // is NotFound, so the wire layer can map it to the InvalidID.NotFound code
 // real EC2 returns for CreateTags on a non-existent resource.
 func (m *Mock) UpdateResourceTags(_ context.Context, id string, tags map[string]string) error {
@@ -56,6 +57,13 @@ func (m *Mock) mutateResourceTags(id string, transform func(map[string]string) m
 		return m.peerings.Update(id, func(v *peeringData) *peeringData { v.Tags = transform(v.Tags); return v })
 	case strings.HasPrefix(id, "pl-"):
 		return m.prefixLists.Update(id, func(v *driver.PrefixList) *driver.PrefixList { v.Tags = transform(v.Tags); return v })
+	case strings.HasPrefix(id, "vpce-svc-"):
+		return m.endpointServices.Update(id, func(v *driver.EndpointService) *driver.EndpointService {
+			v.Tags = transform(v.Tags)
+			return v
+		})
+	case strings.HasPrefix(id, "vpce-"):
+		return m.endpoints.Update(id, func(v *driver.VPCEndpoint) *driver.VPCEndpoint { v.Tags = transform(v.Tags); return v })
 	case strings.HasPrefix(id, "eigw-"):
 		return m.egressOnlyIGWs.Update(id, func(v *driver.EgressOnlyInternetGateway) *driver.EgressOnlyInternetGateway {
 			v.Tags = transform(v.Tags)

@@ -77,3 +77,32 @@ func TestGatewayEndpointHasNoENIs(t *testing.T) {
 	assertEqual(t, 0, len(ep.NetworkInterfaceIDs))
 	assertEqual(t, 0, countENIsInSubnet(m, sub.ID))
 }
+
+// TestVPCEndpointResourceTags pins that the generic CreateTags/DeleteTags path
+// reaches VPC endpoints and endpoint services.
+func TestVPCEndpointResourceTags(t *testing.T) {
+	ctx := context.Background()
+	m := newTestMock()
+	v := createTestVPC(m)
+
+	ep, err := m.CreateVPCEndpoint(ctx, driver.VPCEndpointConfig{VPCID: v.ID, ServiceName: "com.amazonaws.us-east-1.s3"})
+	requireNoError(t, err)
+
+	requireNoError(t, m.UpdateResourceTags(ctx, ep.ID, map[string]string{"env": "prod", "team": "net"}))
+	requireNoError(t, m.RemoveResourceTags(ctx, ep.ID, []string{"team"}))
+
+	got, err := m.DescribeVPCEndpoints(ctx, []string{ep.ID})
+	requireNoError(t, err)
+	assertEqual(t, 1, len(got[0].Tags))
+	assertEqual(t, "prod", got[0].Tags["env"])
+
+	svc, err := m.CreateVPCEndpointServiceConfiguration(ctx, driver.EndpointServiceConfig{
+		NetworkLoadBalancerARNs: []string{"arn:aws:elasticloadbalancing:us-east-1:123456789012:loadbalancer/net/n/1"},
+	})
+	requireNoError(t, err)
+	requireNoError(t, m.UpdateResourceTags(ctx, svc.ID, map[string]string{"env": "prod"}))
+
+	if err := m.UpdateResourceTags(ctx, "vpce-missing", map[string]string{"a": "b"}); err == nil {
+		t.Fatal("tagging an unknown vpce- id should fail")
+	}
+}

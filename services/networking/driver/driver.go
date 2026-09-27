@@ -239,9 +239,12 @@ type RouteTable struct {
 // Route represents a route in a route table.
 type Route struct {
 	DestinationCIDR string
-	TargetID        string // gateway ID, NAT gateway ID, peering connection ID, etc.
-	TargetType      string // "gateway", "nat-gateway", "peering", "local"
-	State           string // "active", "blackhole"
+	// DestinationPrefixListID is set instead of DestinationCIDR on the routes a
+	// Gateway VPC endpoint adds (AWS only).
+	DestinationPrefixListID string
+	TargetID                string // gateway ID, NAT gateway ID, peering connection ID, etc.
+	TargetType              string // "gateway", "nat-gateway", "peering", "local"
+	State                   string // "active", "blackhole"
 }
 
 // RouteTableConfig configures a route table.

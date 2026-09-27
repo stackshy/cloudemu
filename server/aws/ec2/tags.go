@@ -332,7 +332,7 @@ func tagNotFoundCode(id string) string {
 // their own methods and are handled separately.
 //
 //nolint:gochecknoglobals // static id-prefix routing table
-var networkResourceTagPrefixes = []string{"rtb-", "igw-", "nat-", "acl-", "dopt-", "pcx-", "pl-", "eigw-", "sgr-"}
+var networkResourceTagPrefixes = []string{"rtb-", "igw-", "nat-", "acl-", "dopt-", "pcx-", "pl-", "eigw-", "sgr-", "vpce-"}
 
 // networkTaggableID reports whether id belongs to a resource tagged via the
 // NetworkResourceTagger optional interface.
