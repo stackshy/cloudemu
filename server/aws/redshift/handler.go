@@ -40,6 +40,7 @@ var redshiftActions = map[string]struct{}{ //nolint:gochecknoglobals // static l
 	"DeleteCluster":                  {},
 	"RebootCluster":                  {},
 	"CreateClusterSnapshot":          {},
+	"ModifyClusterSnapshot":          {},
 	"DescribeClusterSnapshots":       {},
 	"DeleteClusterSnapshot":          {},
 	"RestoreFromClusterSnapshot":     {},
@@ -95,6 +96,11 @@ type clusterGroupManager interface {
 type clusterPauser interface {
 	PauseCluster(ctx context.Context, id string) (*rdbdriver.Cluster, error)
 	ResumeCluster(ctx context.Context, id string) (*rdbdriver.Cluster, error)
+}
+
+// snapshotModifier is the AWS-only ModifyClusterSnapshot surface.
+type snapshotModifier interface {
+	ModifyClusterSnapshot(ctx context.Context, id string, retention *int, force bool) (*rdbdriver.ClusterSnapshot, error)
 }
 
 // resourceTagger is the AWS-specific Redshift tagging surface.
@@ -197,6 +203,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createClusterSnapshot(w, r)
 	case "DescribeClusterSnapshots":
 		h.describeClusterSnapshots(w, r)
+	case "ModifyClusterSnapshot":
+		h.modifyClusterSnapshot(w, r)
 	case "DeleteClusterSnapshot":
 		h.deleteClusterSnapshot(w, r)
 	case "RestoreFromClusterSnapshot":
@@ -261,12 +269,22 @@ func writeErr(w http.ResponseWriter, err error) {
 	case cerrors.IsAlreadyExists(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, alreadyExistsCode(err), msg)
 	case cerrors.IsInvalidArgument(err):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidParameterValue", msg)
+		awsquery.WriteXMLError(w, http.StatusBadRequest, invalidArgumentCode(err), msg)
 	case cerrors.IsFailedPrecondition(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, invalidStateCode(err), msg)
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
+}
+
+// invalidArgumentCode picks the AWS fault code for a bad-input error by its
+// message. A bad snapshot retention period has its own fault.
+func invalidArgumentCode(err error) string {
+	if strings.Contains(err.Error(), "snapshot retention period") {
+		return "InvalidRetentionPeriodFault"
+	}
+
+	return "InvalidParameterValue"
 }
 
 // notFoundCode picks the AWS-shaped error code based on the error message.

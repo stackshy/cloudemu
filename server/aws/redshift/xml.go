@@ -117,19 +117,21 @@ type clusterNodesXML struct {
 }
 
 type snapshotXML struct {
-	SnapshotIdentifier         string   `xml:"SnapshotIdentifier"`
-	SnapshotArn                string   `xml:"SnapshotArn"`
-	ClusterIdentifier          string   `xml:"ClusterIdentifier"`
-	ClusterVersion             string   `xml:"ClusterVersion,omitempty"`
-	Status                     string   `xml:"Status"`
-	SnapshotType               string   `xml:"SnapshotType,omitempty"`
-	SnapshotCreateTime         string   `xml:"SnapshotCreateTime,omitempty"`
-	NodeType                   string   `xml:"NodeType,omitempty"`
-	NumberOfNodes              int      `xml:"NumberOfNodes,omitempty"`
-	Encrypted                  bool     `xml:"Encrypted"`
-	KmsKeyID                   string   `xml:"KmsKeyId,omitempty"`
-	TotalBackupSizeInMegaBytes float64  `xml:"TotalBackupSizeInMegaBytes,omitempty"`
-	Tags                       *tagsXML `xml:"Tags,omitempty"`
+	SnapshotIdentifier         string  `xml:"SnapshotIdentifier"`
+	SnapshotArn                string  `xml:"SnapshotArn"`
+	ClusterIdentifier          string  `xml:"ClusterIdentifier"`
+	ClusterVersion             string  `xml:"ClusterVersion,omitempty"`
+	Status                     string  `xml:"Status"`
+	SnapshotType               string  `xml:"SnapshotType,omitempty"`
+	SnapshotCreateTime         string  `xml:"SnapshotCreateTime,omitempty"`
+	NodeType                   string  `xml:"NodeType,omitempty"`
+	NumberOfNodes              int     `xml:"NumberOfNodes,omitempty"`
+	Encrypted                  bool    `xml:"Encrypted"`
+	KmsKeyID                   string  `xml:"KmsKeyId,omitempty"`
+	TotalBackupSizeInMegaBytes float64 `xml:"TotalBackupSizeInMegaBytes,omitempty"`
+	// ManualSnapshotRetentionPeriod is always sent: -1 means kept forever.
+	ManualSnapshotRetentionPeriod int      `xml:"ManualSnapshotRetentionPeriod"`
+	Tags                          *tagsXML `xml:"Tags,omitempty"`
 }
 
 // Result wrappers, one per Action.
@@ -213,6 +215,13 @@ type describeClusterSnapshotsResponse struct {
 	XMLName  xml.Name         `xml:"DescribeClusterSnapshotsResponse"`
 	Xmlns    string           `xml:"xmlns,attr"`
 	Result   snapshotsResult  `xml:"DescribeClusterSnapshotsResult"`
+	Metadata responseMetadata `xml:"ResponseMetadata"`
+}
+
+type modifyClusterSnapshotResponse struct {
+	XMLName  xml.Name         `xml:"ModifyClusterSnapshotResponse"`
+	Xmlns    string           `xml:"xmlns,attr"`
+	Result   snapshotResult   `xml:"ModifyClusterSnapshotResult"`
 	Metadata responseMetadata `xml:"ResponseMetadata"`
 }
 
@@ -399,19 +408,20 @@ func toClusterNodesXML(numberOfNodes int) *clusterNodesXML {
 
 func toSnapshotXML(snap *rdbdriver.ClusterSnapshot) snapshotXML {
 	return snapshotXML{
-		SnapshotIdentifier:         snap.ID,
-		SnapshotArn:                snap.ARN,
-		ClusterIdentifier:          snap.ClusterID,
-		ClusterVersion:             snap.EngineVersion,
-		Status:                     snap.State,
-		SnapshotType:               "manual",
-		SnapshotCreateTime:         snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
-		NodeType:                   snap.NodeType,
-		NumberOfNodes:              snap.NumberOfNodes,
-		Encrypted:                  snap.Encrypted,
-		KmsKeyID:                   snap.KmsKeyID,
-		TotalBackupSizeInMegaBytes: snap.TotalBackupSizeInMegaBytes,
-		Tags:                       toTagsXML(snap.Tags),
+		SnapshotIdentifier:            snap.ID,
+		SnapshotArn:                   snap.ARN,
+		ClusterIdentifier:             snap.ClusterID,
+		ClusterVersion:                snap.EngineVersion,
+		Status:                        snap.State,
+		SnapshotType:                  "manual",
+		SnapshotCreateTime:            snap.CreatedAt.UTC().Format("2006-01-02T15:04:05.000Z"),
+		NodeType:                      snap.NodeType,
+		NumberOfNodes:                 snap.NumberOfNodes,
+		Encrypted:                     snap.Encrypted,
+		KmsKeyID:                      snap.KmsKeyID,
+		TotalBackupSizeInMegaBytes:    snap.TotalBackupSizeInMegaBytes,
+		ManualSnapshotRetentionPeriod: snap.ManualSnapshotRetentionPeriod,
+		Tags:                          toTagsXML(snap.Tags),
 	}
 }
 

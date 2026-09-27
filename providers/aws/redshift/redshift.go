@@ -1092,6 +1092,14 @@ func (m *Mock) CreateClusterSnapshot(
 		return nil, cerrors.New(cerrors.InvalidArgument, "SnapshotIdentifier is required")
 	}
 
+	retention := manualRetentionIndefinite
+	if cfg.ManualSnapshotRetentionPeriod != nil {
+		retention = *cfg.ManualSnapshotRetentionPeriod
+		if err := validateManualRetention(retention); err != nil {
+			return nil, err
+		}
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1105,27 +1113,27 @@ func (m *Mock) CreateClusterSnapshot(
 	}
 
 	snap := rdbdriver.ClusterSnapshot{
-		ID:                         cfg.ID,
-		ARN:                        clusterSnapshotARN(m.opts.Region, m.opts.AccountID, cfg.ID),
-		ClusterID:                  cfg.ClusterID,
-		Engine:                     cluster.Engine,
-		EngineVersion:              cluster.EngineVersion,
-		State:                      rdbdriver.SnapshotAvailable,
-		NodeType:                   cluster.NodeType,
-		NumberOfNodes:              cluster.NumberOfNodes,
-		Encrypted:                  cluster.Encrypted,
-		KmsKeyID:                   cluster.KmsKeyID,
-		TotalBackupSizeInMegaBytes: snapshotBackupSizeMB,
-		MasterUsername:             cluster.MasterUsername,
-		DatabaseName:               cluster.DatabaseName,
-		CreatedAt:                  m.opts.Clock.Now().UTC(),
+		ID:                            cfg.ID,
+		ARN:                           clusterSnapshotARN(m.opts.Region, m.opts.AccountID, cfg.ID),
+		ClusterID:                     cfg.ClusterID,
+		Engine:                        cluster.Engine,
+		EngineVersion:                 cluster.EngineVersion,
+		State:                         rdbdriver.SnapshotAvailable,
+		NodeType:                      cluster.NodeType,
+		NumberOfNodes:                 cluster.NumberOfNodes,
+		Encrypted:                     cluster.Encrypted,
+		KmsKeyID:                      cluster.KmsKeyID,
+		TotalBackupSizeInMegaBytes:    snapshotBackupSizeMB,
+		MasterUsername:                cluster.MasterUsername,
+		DatabaseName:                  cluster.DatabaseName,
+		CreatedAt:                     m.opts.Clock.Now().UTC(),
+		ManualSnapshotRetentionPeriod: retention,
 	}
 
 	m.clusterSnapshots.Set(cfg.ID, snap)
 	m.setTagsLocked(snap.ARN, cfg.Tags)
 
-	out := snap
-	out.Tags = m.tagsLocked(snap.ARN)
+	out := m.readSnapshotLocked(snap)
 
 	return &out, nil
 }
@@ -1154,8 +1162,7 @@ func (m *Mock) DescribeClusterSnapshots(
 			}
 		}
 
-		snap.Tags = m.tagsLocked(snap.ARN)
-		out = append(out, snap)
+		out = append(out, m.readSnapshotLocked(snap))
 	}
 
 	return out, nil
