@@ -32,6 +32,14 @@ func TestSDKChangesCreateRejectsBadAddress(t *testing.T) {
 			name: "AAAA holding IPv4", rtype: "AAAA", rrdatas: []string{"192.0.2.1"},
 			wantMsg: "Invalid value for 'entity.change.additions[1].rrdata[0]': '192.0.2.1'",
 		},
+		{
+			name: "A holding mapped IPv4", rtype: "A", rrdatas: []string{"::ffff:1.2.3.4"},
+			wantMsg: "Invalid value for 'entity.change.additions[1].rrdata[0]': '::ffff:1.2.3.4'",
+		},
+		{
+			name: "AAAA zoned", rtype: "AAAA", rrdatas: []string{"2001:db8::1", "fe80::1%eth0"},
+			wantMsg: "Invalid value for 'entity.change.additions[1].rrdata[1]': 'fe80::1%eth0'",
+		},
 	}
 
 	for _, tt := range tests {
@@ -85,6 +93,7 @@ func TestSDKChangesCreateAcceptsGoodAddresses(t *testing.T) {
 		Additions: []*dns.ResourceRecordSet{
 			{Name: "v4.okip.example.com.", Type: "A", Ttl: 300, Rrdatas: []string{"192.0.2.1", "198.51.100.1"}},
 			{Name: "v6.okip.example.com.", Type: "AAAA", Ttl: 300, Rrdatas: []string{"2001:db8::1"}},
+			{Name: "mapped.okip.example.com.", Type: "AAAA", Ttl: 300, Rrdatas: []string{"::ffff:1.2.3.4"}},
 		},
 	}).Context(context.Background()).Do()
 	if err != nil {

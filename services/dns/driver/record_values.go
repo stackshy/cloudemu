@@ -1,7 +1,7 @@
 package driver
 
 import (
-	"net"
+	"net/netip"
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -44,8 +44,11 @@ func (e *InvalidAddressError) Unwrap() error {
 }
 
 // ValidateAddresses checks the values of an A or AAAA record. An A value must
-// be IPv4 and an AAAA value must be IPv6. It returns an *InvalidAddressError
-// for the first bad value, or nil. Other record types always pass.
+// be dotted IPv4 text and an AAAA value must be IPv6 text with no zone. The
+// clouds go by the text form, so an IPv4-mapped address like ::ffff:1.2.3.4
+// is a valid AAAA value and not a valid A value. It returns an
+// *InvalidAddressError for the first bad value, or nil. Other record types
+// always pass.
 func ValidateAddresses(recordType string, values []string) error {
 	rtype := strings.ToUpper(recordType)
 	if rtype != recordTypeA && rtype != recordTypeAAAA {
@@ -53,11 +56,24 @@ func ValidateAddresses(recordType string, values []string) error {
 	}
 
 	for i, v := range values {
-		ip := net.ParseIP(v)
-		if ip == nil || (ip.To4() != nil) != (rtype == recordTypeA) {
+		if !validAddress(rtype, v) {
 			return &InvalidAddressError{RecordType: rtype, Index: i, Value: v}
 		}
 	}
 
 	return nil
+}
+
+// validAddress reports whether v is an address of the family rtype wants.
+func validAddress(rtype, v string) bool {
+	ip, err := netip.ParseAddr(v)
+	if err != nil {
+		return false
+	}
+
+	if rtype == recordTypeA {
+		return ip.Is4() && !strings.Contains(v, ":")
+	}
+
+	return strings.Contains(v, ":") && ip.Zone() == ""
 }

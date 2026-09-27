@@ -55,6 +55,16 @@ type ClusterState struct {
 	// APIServer.SetNodeCount).
 	nodeCount int
 
+	// managedNodes turns true the first time a managed node pool (SyncNodePool)
+	// adds a Node. The bootstrap nodes are retired at that point and scheduling
+	// becomes strict: the single-node place-anywhere shortcut no longer applies,
+	// so a Pod no node accepts stays Pending, even with zero nodes.
+	managedNodes bool
+
+	// nextNodeOrdinal is the launch ordinal (and IP) allocator for managed pool
+	// Nodes, so a node launched after a scale down never reuses an address.
+	nextNodeOrdinal uint32
+
 	// namespaces is cluster-scoped, keyed by namespace name.
 	namespaces map[string]*corev1.Namespace
 

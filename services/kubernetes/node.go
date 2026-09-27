@@ -179,6 +179,8 @@ type schedNode struct {
 	taints     []corev1.Taint
 	allocCPU   resource.Quantity
 	allocMem   resource.Quantity
+	// unschedulable is spec.unschedulable: a cordoned node takes no new Pods.
+	unschedulable bool
 }
 
 // nodesLocked returns every synthetic Node parsed for scheduling, sorted by
@@ -203,6 +205,7 @@ func (s *ClusterState) nodesLocked() []schedNode {
 // parseSchedNode extracts the scheduling-relevant fields from a Node object.
 func parseSchedNode(obj *unstructured.Unstructured) schedNode {
 	labels, _, _ := unstructured.NestedStringMap(obj.Object, "metadata", "labels")
+	unschedulable, _, _ := unstructured.NestedBool(obj.Object, "spec", "unschedulable")
 
 	n := schedNode{
 		name:       obj.GetName(),
@@ -211,6 +214,8 @@ func parseSchedNode(obj *unstructured.Unstructured) schedNode {
 		taints:     nodeTaintsOf(obj),
 		allocCPU:   nodeAllocatableQuantity(obj, "cpu"),
 		allocMem:   nodeAllocatableQuantity(obj, "memory"),
+
+		unschedulable: unschedulable,
 	}
 
 	return n
@@ -316,8 +321,9 @@ func (s *ClusterState) scheduleNodeLocked(pod *corev1.Pod) bool {
 
 	// Single-node (default) is unconditionally back-compat: no request-
 	// feasibility or taint gating, regardless of the manifest's requests, so
-	// every existing single-node test schedules exactly as before.
-	if len(nodes) <= 1 {
+	// every existing single-node test schedules exactly as before. A cluster
+	// whose nodes come from a managed pool always schedules strictly.
+	if !s.managedNodes && len(nodes) <= 1 {
 		name := nodeName
 		if len(nodes) == 1 {
 			name = nodes[0].name
