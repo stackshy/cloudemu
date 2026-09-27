@@ -49,6 +49,7 @@ import (
 	cgrpc "github.com/stackshy/cloudemu/v2/server/grpc"
 	bigtableadmingrpc "github.com/stackshy/cloudemu/v2/server/grpc/bigtableadmin"
 	ociserver "github.com/stackshy/cloudemu/v2/server/oci"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsidentity"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	"github.com/stackshy/cloudemu/v2/services/resourcediscovery"
@@ -683,6 +684,10 @@ func (a *App) buildAWSMux(k8s *kubernetes.APIServer) *awsserver.RegionMux {
 	// region verifies in another (real STS tokens are global).
 	sharedSTS := stssrv.NewSessionStore(awsAuthClock(base.Clock))
 
+	// One identity resolver too, so a session minted in one region resolves
+	// to the same caller in every region.
+	sharedIdentities := awsidentity.New(base.AccountID, base.IAM)
+
 	var mux *awsserver.RegionMux
 
 	// The aggregator fans cost / Resource-Explorer queries out over every live
@@ -700,6 +705,7 @@ func (a *App) buildAWSMux(k8s *kubernetes.APIServer) *awsserver.RegionMux {
 		d := awsserver.DriversFrom(prov)
 		d.K8sAPI = k8s
 		d.STSSessions = sharedSTS
+		d.Identities = sharedIdentities
 		d.CostExplorer = aggregator
 		d.ResourceExplorerLister = aggregator
 

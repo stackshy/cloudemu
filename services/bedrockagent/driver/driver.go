@@ -77,6 +77,7 @@ type AgentAliasConfig struct {
 	AgentID     string
 	Name        string
 	Description string
+	Tags        map[string]string
 }
 
 // AgentAlias describes an alias of an agent.
@@ -156,6 +157,7 @@ type FlowConfig struct {
 	Description              string
 	CustomerEncryptionKeyArn string
 	Definition               json.RawMessage
+	Tags                     map[string]string
 }
 
 // Flow describes a Bedrock flow.
@@ -180,6 +182,7 @@ type PromptConfig struct {
 	DefaultVariant           string
 	CustomerEncryptionKeyArn string
 	Variants                 json.RawMessage
+	Tags                     map[string]string
 }
 
 // Prompt describes a Bedrock prompt.
@@ -196,13 +199,20 @@ type Prompt struct {
 	UpdatedAt                string
 }
 
+// Page is the maxResults/nextToken cursor every List operation takes. A nil
+// MaxResults means the caller sent none; a set value must be within 1..1000.
+type Page struct {
+	MaxResults *int32
+	NextToken  string
+}
+
 // BedrockAgent is the interface that Bedrock Agent authoring implementations
 // must satisfy: agents (and aliases), knowledge bases, data sources, ingestion
-// jobs, flows, and prompts.
+// jobs, flows, prompts, and ARN-keyed tagging.
 type BedrockAgent interface {
 	CreateAgent(ctx context.Context, cfg AgentConfig) (*Agent, error)
 	GetAgent(ctx context.Context, agentID string) (*Agent, error)
-	ListAgents(ctx context.Context) ([]Agent, error)
+	ListAgents(ctx context.Context, page Page) ([]Agent, string, error)
 	UpdateAgent(ctx context.Context, agentID string, cfg AgentConfig) (*Agent, error)
 	DeleteAgent(ctx context.Context, agentID string) (string, error)
 	PrepareAgent(ctx context.Context, agentID string) (*Agent, error)
@@ -210,27 +220,31 @@ type BedrockAgent interface {
 
 	CreateKnowledgeBase(ctx context.Context, cfg KnowledgeBaseConfig) (*KnowledgeBase, error)
 	GetKnowledgeBase(ctx context.Context, id string) (*KnowledgeBase, error)
-	ListKnowledgeBases(ctx context.Context) ([]KnowledgeBase, error)
+	ListKnowledgeBases(ctx context.Context, page Page) ([]KnowledgeBase, string, error)
 	UpdateKnowledgeBase(ctx context.Context, id string, cfg KnowledgeBaseConfig) (*KnowledgeBase, error)
 	DeleteKnowledgeBase(ctx context.Context, id string) (string, error)
 
 	CreateDataSource(ctx context.Context, cfg DataSourceConfig) (*DataSource, error)
 	GetDataSource(ctx context.Context, kbID, dsID string) (*DataSource, error)
-	ListDataSources(ctx context.Context, kbID string) ([]DataSource, error)
+	ListDataSources(ctx context.Context, kbID string, page Page) ([]DataSource, string, error)
 	UpdateDataSource(ctx context.Context, cfg DataSourceConfig, dsID string) (*DataSource, error)
 	DeleteDataSource(ctx context.Context, kbID, dsID string) (string, error)
 	StartIngestionJob(ctx context.Context, kbID, dsID, description string) (*IngestionJob, error)
 
 	CreateFlow(ctx context.Context, cfg FlowConfig) (*Flow, error)
 	GetFlow(ctx context.Context, id string) (*Flow, error)
-	ListFlows(ctx context.Context) ([]Flow, error)
+	ListFlows(ctx context.Context, page Page) ([]Flow, string, error)
 	UpdateFlow(ctx context.Context, id string, cfg FlowConfig) (*Flow, error)
 	DeleteFlow(ctx context.Context, id string) (string, error)
 	PrepareFlow(ctx context.Context, id string) (*Flow, error)
 
 	CreatePrompt(ctx context.Context, cfg PromptConfig) (*Prompt, error)
 	GetPrompt(ctx context.Context, id string) (*Prompt, error)
-	ListPrompts(ctx context.Context) ([]Prompt, error)
+	ListPrompts(ctx context.Context, page Page) ([]Prompt, string, error)
 	UpdatePrompt(ctx context.Context, id string, cfg PromptConfig) (*Prompt, error)
 	DeletePrompt(ctx context.Context, id string) (string, error)
+
+	TagResource(ctx context.Context, resourceARN string, tags map[string]string) error
+	UntagResource(ctx context.Context, resourceARN string, tagKeys []string) error
+	ListTagsForResource(ctx context.Context, resourceARN string) (map[string]string, error)
 }

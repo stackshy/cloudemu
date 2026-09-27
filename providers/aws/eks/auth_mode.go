@@ -50,7 +50,8 @@ func validateAuthMode(mode string) error {
 }
 
 // validateAuthModeUpdate allows only the next mode in the one-way order.
-// Asking for the current mode is not a change.
+// Real EKS also rejects a request for the current mode, with the same
+// message.
 func validateAuthModeUpdate(from, to string) error {
 	if err := validateAuthMode(to); err != nil {
 		return err
@@ -65,18 +66,17 @@ func validateAuthModeUpdate(from, to string) error {
 
 // creatorPrincipalArn maps the cluster creator to the IAM principal EKS puts
 // in the bootstrap access entry. An assumed-role session maps to its role,
-// as real EKS does. Without an ARN it falls back to a user named after the
-// access key, like STS does, or to the default user.
+// as real EKS does. Any other ARN is kept as it is. A federated user can't be
+// an access entry principal, so its bootstrap entry is skipped later, as on
+// AWS. Without an ARN it falls back to a user named after the access key,
+// like STS does, or to the default user.
 //
 //nolint:gocritic // cfg matches the driver interface signature.
 func (m *Mock) creatorPrincipalArn(cfg eksdriver.ClusterConfig) string {
 	arn := cfg.CreatorPrincipalArn
 
-	if rest, ok := strings.CutPrefix(arn, "arn:aws:sts::"); ok {
-		account, path, _ := strings.Cut(rest, ":assumed-role/")
-		role, _, _ := strings.Cut(path, "/")
-
-		return "arn:aws:iam::" + account + ":role/" + role
+	if role, ok := assumedRoleToRole(arn); ok {
+		return role
 	}
 
 	if arn != "" {
@@ -91,22 +91,47 @@ func (m *Mock) creatorPrincipalArn(cfg eksdriver.ClusterConfig) string {
 	return "arn:aws:iam::" + m.opts.AccountID + ":user/" + name
 }
 
+// assumedRoleToRole turns arn:<partition>:sts::<account>:assumed-role/<role>/<session>
+// into arn:<partition>:iam::<account>:role/<role>. ok is false for any other
+// ARN. An assumed-role ARN carries no role path, so none can be kept.
+func assumedRoleToRole(arn string) (string, bool) {
+	fields := strings.SplitN(arn, ":", arnParts)
+	if len(fields) != arnParts || fields[0] != "arn" || fields[2] != "sts" || fields[3] != "" {
+		return "", false
+	}
+
+	rest, ok := strings.CutPrefix(fields[5], "assumed-role/")
+	if !ok {
+		return "", false
+	}
+
+	role, session, ok := strings.Cut(rest, "/")
+	if !ok || role == "" || session == "" {
+		return "", false
+	}
+
+	return "arn:" + fields[1] + ":iam::" + fields[4] + ":role/" + role, true
+}
+
 // bootstrapCreatorEntryLocked gives the cluster creator a STANDARD access
 // entry with AmazonEKSClusterAdminPolicy at cluster scope. Real EKS does this
 // when bootstrapClusterCreatorAdminPermissions is true and the mode includes
-// the API. A creator ARN EKS can't use as a principal is skipped. Callers
-// hold m.mu.
-//
-//nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) bootstrapCreatorEntryLocked(c *eksdriver.Cluster, cfg eksdriver.ClusterConfig) {
+// the API, either at create time or when a CONFIG_MAP cluster first moves to
+// an API mode. A creator ARN EKS can't use as a principal is skipped, and an
+// existing entry for the creator is kept. Callers hold m.mu.
+func (m *Mock) bootstrapCreatorEntryLocked(c *eksdriver.Cluster) {
 	if !c.AccessConfig.BootstrapClusterCreatorAdminPermissions || !apiAuthMode(c.AccessConfig.AuthenticationMode) {
 		return
 	}
 
-	principalArn := m.creatorPrincipalArn(cfg)
+	principalArn := c.CreatorPrincipalArn
 
 	p, err := parsePrincipal(principalArn)
 	if err != nil {
+		return
+	}
+
+	if _, ok := m.accessEntries.Get(accessEntryKey(c.Name, principalArn)); ok {
 		return
 	}
 

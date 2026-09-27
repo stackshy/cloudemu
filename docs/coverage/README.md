@@ -34,7 +34,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `batch` | [Batch](./aws/batch.md) | - | - | - | 14 |
 | `batch-azure` | - | [Batch](./azure/batch.md) | - | - | 17 |
 | `bedrock` | [Bedrock](./aws/bedrock.md) | - | - | - | 65 |
-| `bedrockagent` | [BedrockAgent](./aws/bedrockagent.md) | - | - | - | 29 |
+| `bedrockagent` | [BedrockAgent](./aws/bedrockagent.md) | - | - | - | 32 |
 | `bedrockagentruntime` | [BedrockAgentRuntime](./aws/bedrockagentruntime.md) | - | - | - | 3 |
 | `bigquery` | - | - | [BigQuery](./gcp/bigquery.md) | - | 12 |
 | `bigtable` | - | - | [Bigtable](./gcp/bigtable.md) | - | 38 |

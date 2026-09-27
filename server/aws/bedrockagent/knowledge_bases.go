@@ -132,7 +132,12 @@ func (h *Handler) getKnowledgeBase(w http.ResponseWriter, r *http.Request, id st
 }
 
 func (h *Handler) listKnowledgeBases(w http.ResponseWriter, r *http.Request) {
-	kbs, err := h.agent.ListKnowledgeBases(r.Context())
+	page, ok := decodeListBody(w, r)
+	if !ok {
+		return
+	}
+
+	kbs, next, err := h.agent.ListKnowledgeBases(r.Context(), page)
 	if err != nil {
 		writeErr(w, err)
 
@@ -144,7 +149,7 @@ func (h *Handler) listKnowledgeBases(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toKnowledgeBaseSummaryJSON(&kbs[i]))
 	}
 
-	writeJSON(w, listKnowledgeBasesResponse{KnowledgeBaseSummaries: out})
+	writeJSON(w, listKnowledgeBasesResponse{KnowledgeBaseSummaries: out, NextToken: next})
 }
 
 func (h *Handler) updateKnowledgeBase(w http.ResponseWriter, r *http.Request, id string) {
@@ -217,7 +222,12 @@ func (h *Handler) getDataSource(w http.ResponseWriter, r *http.Request, kbID, ds
 }
 
 func (h *Handler) listDataSources(w http.ResponseWriter, r *http.Request, kbID string) {
-	dss, err := h.agent.ListDataSources(r.Context(), kbID)
+	page, ok := decodeListBody(w, r)
+	if !ok {
+		return
+	}
+
+	dss, next, err := h.agent.ListDataSources(r.Context(), kbID, page)
 	if err != nil {
 		writeErr(w, err)
 
@@ -229,7 +239,7 @@ func (h *Handler) listDataSources(w http.ResponseWriter, r *http.Request, kbID s
 		out = append(out, toDataSourceSummaryJSON(&dss[i]))
 	}
 
-	writeJSON(w, listDataSourcesResponse{DataSourceSummaries: out})
+	writeJSON(w, listDataSourcesResponse{DataSourceSummaries: out, NextToken: next})
 }
 
 func (h *Handler) updateDataSource(w http.ResponseWriter, r *http.Request, kbID, dsID string) {

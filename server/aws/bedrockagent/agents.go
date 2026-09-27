@@ -1,6 +1,7 @@
 package bedrockagent
 
 import (
+	"encoding/json"
 	"net/http"
 
 	badriver "github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
@@ -95,7 +96,12 @@ func (h *Handler) getAgent(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
-	agents, err := h.agent.ListAgents(r.Context())
+	page, ok := decodeListBody(w, r)
+	if !ok {
+		return
+	}
+
+	agents, next, err := h.agent.ListAgents(r.Context(), page)
 	if err != nil {
 		writeErr(w, err)
 
@@ -107,7 +113,7 @@ func (h *Handler) listAgents(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toAgentSummaryJSON(&agents[i]))
 	}
 
-	writeJSON(w, listAgentsResponse{AgentSummaries: out})
+	writeJSON(w, listAgentsResponse{AgentSummaries: out, NextToken: next})
 }
 
 func (h *Handler) updateAgent(w http.ResponseWriter, r *http.Request, id string) {
@@ -170,6 +176,7 @@ func (h *Handler) createAgentAlias(w http.ResponseWriter, r *http.Request, agent
 		AgentID:     agentID,
 		Name:        in.AgentAliasName,
 		Description: in.Description,
+		Tags:        in.Tags,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -197,6 +204,9 @@ func toAgentJSON(a *badriver.Agent) agentJSON {
 		CreatedAt:               a.CreatedAt,
 		UpdatedAt:               a.UpdatedAt,
 		PreparedAt:              a.PreparedAt,
+		PromptOverrideConfiguration: promptOverrideJSON{
+			PromptConfigurations: []json.RawMessage{},
+		},
 	}
 }
 

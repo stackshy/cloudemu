@@ -167,7 +167,7 @@ func TestNodegroupLifecycle(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, 3, got.ScalingConfig.DesiredSize)
 
-	_, err = m.UpdateNodegroupVersion(ctx, "c1", "ng1", "1.32", "")
+	_, err = m.UpdateNodegroupVersion(ctx, "c1", "ng1", eksdriver.NodegroupVersionUpdate{Version: "1.32"})
 	requireNoError(t, err)
 
 	got, err = m.DescribeNodegroup(ctx, "c1", "ng1")

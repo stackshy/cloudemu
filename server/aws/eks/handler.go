@@ -25,6 +25,7 @@ import (
 	"strings"
 
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsidentity"
 )
 
 const (
@@ -68,12 +69,20 @@ const (
 // Handler serves AWS EKS REST/JSON requests against an EKS driver.
 type Handler struct {
 	eks eksdriver.EKS
+	// identities, when set, resolves the cluster creator the way STS
+	// GetCallerIdentity reports the caller.
+	identities *awsidentity.Resolver
 }
 
 // New returns an EKS handler backed by the supplied driver.
 func New(eks eksdriver.EKS) *Handler {
 	return &Handler{eks: eks}
 }
+
+// SetIdentities wires the resolver CreateCluster uses to find the creator.
+// Without one the creator comes from the verified principal or the access
+// key alone, so sessions STS minted are not recognized.
+func (h *Handler) SetIdentities(r *awsidentity.Resolver) { h.identities = r }
 
 // Matches claims requests rooted at /clusters or /tags/, plus the exact
 // GET paths for ListAccessPolicies, DescribeAddonVersions and

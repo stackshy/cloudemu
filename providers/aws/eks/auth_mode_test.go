@@ -2,6 +2,7 @@ package eks
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -56,10 +57,17 @@ func TestAuthModeTransitions(t *testing.T) {
 	}
 }
 
-func TestAuthModeSameValueIsNoOp(t *testing.T) {
-	m := newAPICluster(t, "API")
-	if err := updateAuthMode(m, "API"); err != nil {
-		t.Fatalf("same mode: %v", err)
+// Real EKS rejects a request for the mode the cluster already has with the
+// same message as a backward move.
+func TestAuthModeSameValueRejected(t *testing.T) {
+	for _, mode := range []string{"CONFIG_MAP", "API_AND_CONFIG_MAP", "API"} {
+		m := newAPICluster(t, mode)
+
+		err := updateAuthMode(m, mode)
+		if !cerrors.IsInvalidArgument(err) ||
+			!strings.HasSuffix(err.Error(), "Unsupported authentication mode update from "+mode+" to "+mode) {
+			t.Fatalf("%s: want InvalidArgument with the EKS message, got %v", mode, err)
+		}
 	}
 }
 
@@ -97,6 +105,12 @@ func TestBootstrapCreatorAdminEntry(t *testing.T) {
 		{"assumed role maps to the role", eksdriver.ClusterConfig{
 			CreatorPrincipalArn: "arn:aws:sts::123456789012:assumed-role/admin/session-1",
 		}, "arn:aws:iam::123456789012:role/admin"},
+		{"assumed role in another partition", eksdriver.ClusterConfig{
+			CreatorPrincipalArn: "arn:aws-us-gov:sts::123456789012:assumed-role/ops/s",
+		}, "arn:aws-us-gov:iam::123456789012:role/ops"},
+		{"federated user gets no entry", eksdriver.ClusterConfig{
+			CreatorPrincipalArn: "arn:aws:sts::123456789012:federated-user/bob",
+		}, ""},
 		{"iam user kept", eksdriver.ClusterConfig{
 			CreatorPrincipalArn: "arn:aws:iam::123456789012:user/bob",
 		}, "arn:aws:iam::123456789012:user/bob"},
@@ -155,5 +169,30 @@ func TestNoBootstrapEntryOnConfigMapCluster(t *testing.T) {
 
 	if entries, _ := m.ListAccessEntries(ctx, "c1", ""); len(entries) != 0 {
 		t.Fatalf("entries = %v, want none", entries)
+	}
+}
+
+// The creator ARN is stored as the caller sent it, except that an assumed
+// role session becomes its role. Nothing else gets rewritten.
+func TestCreatorPrincipalStoredUnmangled(t *testing.T) {
+	tests := map[string]string{
+		"arn:aws:sts::123456789012:federated-user/bob":         "arn:aws:sts::123456789012:federated-user/bob",
+		"arn:aws:sts::123456789012:assumed-role/admin/sess":    "arn:aws:iam::123456789012:role/admin",
+		"arn:aws:sts::123456789012:assumed-role/admin":         "arn:aws:sts::123456789012:assumed-role/admin",
+		"arn:aws:iam::123456789012:role/team/deployer":         "arn:aws:iam::123456789012:role/team/deployer",
+		"arn:aws:sts::123456789012:assumed-role/admin/a/b/c/d": "arn:aws:iam::123456789012:role/admin",
+	}
+
+	for in, want := range tests {
+		m := newTestMock()
+
+		if _, err := m.CreateCluster(context.Background(), eksdriver.ClusterConfig{Name: "c1", CreatorPrincipalArn: in}); err != nil {
+			t.Fatalf("%s: create: %v", in, err)
+		}
+
+		c, _ := m.clusters.Get("c1")
+		if c.CreatorPrincipalArn != want {
+			t.Fatalf("%s: stored %q, want %q", in, c.CreatorPrincipalArn, want)
+		}
 	}
 }

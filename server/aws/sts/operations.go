@@ -1,20 +1,14 @@
 package sts
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
-	"github.com/stackshy/cloudemu/v2/server/authctx"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsidentity"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
-	"github.com/stackshy/cloudemu/v2/server/wire/sigv4"
 )
-
-// callerUserName is the synthetic IAM user name reported by GetCallerIdentity.
-const callerUserName = "cloudemu"
 
 // defaultSessionName is the RoleSessionName baked into assumed-role responses
 // when the request omits one.
@@ -38,109 +32,17 @@ func (h *Handler) getCallerIdentity(w http.ResponseWriter, r *http.Request) {
 		Xmlns: Namespace,
 		Result: getCallerIdentityResult{
 			Account: h.accountID,
-			Arn:     id.arn,
-			UserID:  id.userID,
+			Arn:     id.ARN,
+			UserID:  id.UserID,
 		},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
 }
 
-// callerIdentity is the Arn/UserId pair GetCallerIdentity reports for a
-// caller, and what a minted temporary credential set is remembered under (see
-// Handler.identities) so a later GetCallerIdentity call made with those
-// credentials reflects it.
-type callerIdentity struct {
-	arn    string
-	userID string
-}
-
-// resolveCallerIdentity derives the caller identity for r, in priority order:
-//
-//  1. A principal the SigV4 authentication gate already verified (EnforceAuth
-//     on) and resolved to a real IAM user's ARN.
-//  2. No presented credentials at all: the fixed placeholder identity (keeps
-//     an unsigned/anonymous call's response unchanged).
-//  3. A temporary access key id this handler itself minted (AssumeRole,
-//     AssumeRoleWithWebIdentity, AssumeRoleWithSAML, GetFederationToken, or
-//     GetSessionToken): the identity recorded for it at mint time.
-//  4. A long-term access key id a wired IAM driver recognizes: that key's
-//     owning user.
-//  5. Otherwise: a synthetic-but-stable identity derived from the presented
-//     access key id, so distinct callers are not all collapsed onto one fake
-//     identity even when cloudemu cannot resolve who they are.
-//
-// cloudemu's wire layer parses SigV4 material but does not verify it unless
-// EnforceAuth is on, so outside that mode this reports who the request claims
-// to be, not a cryptographically proven identity, matching AWS's own
-// GetCallerIdentity semantics of reflecting the presented credential.
-func (h *Handler) resolveCallerIdentity(r *http.Request) callerIdentity {
-	if p, ok := authctx.PrincipalFrom(r.Context()); ok && p.ARN != "" {
-		return callerIdentity{arn: p.ARN, userID: firstNonEmpty(p.UserID, syntheticUserID(p.AccessKeyID))}
-	}
-
-	akid := sigv4.AccessKeyID(r)
-	if akid == "" {
-		return h.defaultCallerIdentity()
-	}
-
-	if id, ok := h.identityFor(akid); ok {
-		return id
-	}
-
-	if h.resolver != nil {
-		if info, ok := h.resolver.AccessKeyByID(r.Context(), akid); ok && info.UserARN != "" {
-			return callerIdentity{arn: info.UserARN, userID: firstNonEmpty(info.UserID, syntheticUserID(akid))}
-		}
-	}
-
-	return h.syntheticCallerIdentity(akid)
-}
-
-// defaultCallerIdentity is the well-formed placeholder GetCallerIdentity
-// reports for a request that presents no SigV4 credentials at all, preserving
-// the prior fixed response for that case.
-func (h *Handler) defaultCallerIdentity() callerIdentity {
-	return callerIdentity{
-		arn:    "arn:aws:iam::" + h.accountID + ":user/" + callerUserName,
-		userID: "AIDACLOUDEMU0000000000",
-	}
-}
-
-// syntheticCallerIdentity derives a stable identity from a presented access
-// key id cloudemu cannot otherwise resolve, so distinct callers still get
-// distinct (if fake) identities instead of all collapsing onto one constant.
-func (h *Handler) syntheticCallerIdentity(akid string) callerIdentity {
-	return callerIdentity{
-		arn:    "arn:aws:iam::" + h.accountID + ":user/" + strings.ReplaceAll(akid, "/", "-"),
-		userID: syntheticUserID(akid),
-	}
-}
-
-// syntheticUserIDHexLen is the number of hex characters (from a SHA-256 digest
-// of the access key id) appended after the AIDA prefix, matching real IAM
-// unique ids' length.
-const syntheticUserIDHexLen = 16
-
-// syntheticUserID deterministically derives an AIDA-style unique id from an
-// access key id, so the same presented key always reports the same synthetic
-// UserId and two different keys practically never collide.
-func syntheticUserID(akid string) string {
-	if akid == "" {
-		return "AIDACLOUDEMU0000000000"
-	}
-
-	sum := sha256.Sum256([]byte(akid))
-
-	return "AIDA" + strings.ToUpper(hex.EncodeToString(sum[:]))[:syntheticUserIDHexLen]
-}
-
-// firstNonEmpty returns a if non-empty, else b.
-func firstNonEmpty(a, b string) string {
-	if a != "" {
-		return a
-	}
-
-	return b
+// resolveCallerIdentity returns the caller of r as the shared identity
+// resolver sees it. See awsidentity.Resolver.Resolve for the order.
+func (h *Handler) resolveCallerIdentity(r *http.Request) awsidentity.Identity {
+	return h.identities.Resolve(r)
 }
 
 // assumeRole returns synthetic temporary credentials and an AssumedRoleUser
@@ -172,7 +74,7 @@ func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
 	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r), callerIdentity{arn: assumedArn, userID: assumedRoleID})
+	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID})
 	if !ok {
 		return
 	}
@@ -231,7 +133,7 @@ func (h *Handler) assumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Reque
 
 	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r), callerIdentity{arn: assumedArn, userID: assumedRoleID})
+	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID})
 	if !ok {
 		return
 	}
@@ -260,7 +162,7 @@ func (h *Handler) assumeRoleWithSAML(w http.ResponseWriter, r *http.Request) {
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
 	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r), callerIdentity{arn: assumedArn, userID: assumedRoleID})
+	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID})
 	if !ok {
 		return
 	}
@@ -294,7 +196,7 @@ func (h *Handler) getFederationToken(w http.ResponseWriter, r *http.Request) {
 	fedArn := "arn:aws:sts::" + h.accountID + ":federated-user/" + name
 	fedUserID := h.accountID + ":" + name
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r), callerIdentity{arn: fedArn, userID: fedUserID})
+	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: fedArn, UserID: fedUserID})
 	if !ok {
 		return
 	}
@@ -371,7 +273,7 @@ func (h *Handler) getSessionToken(w http.ResponseWriter, r *http.Request) {
 // always has (default, auth-off behavior is byte-for-byte unchanged). Either
 // way, the returned access key id is recorded under identity so a later
 // GetCallerIdentity call made with these credentials reflects it.
-func (h *Handler) synthCredentials(dur time.Duration, identity callerIdentity) (credentials, error) {
+func (h *Handler) synthCredentials(dur time.Duration, identity awsidentity.Identity) (credentials, error) {
 	if dur <= 0 {
 		dur = sessionDuration
 	}
@@ -382,7 +284,7 @@ func (h *Handler) synthCredentials(dur time.Duration, identity callerIdentity) (
 			return credentials{}, err
 		}
 
-		h.rememberIdentity(sess.AccessKeyID, identity)
+		h.identities.Remember(sess.AccessKeyID, identity)
 
 		return credentials{
 			AccessKeyID:     sess.AccessKeyID,
@@ -394,7 +296,7 @@ func (h *Handler) synthCredentials(dur time.Duration, identity callerIdentity) (
 
 	const fixedAccessKeyID = "ASIACLOUDEMU000000000"
 
-	h.rememberIdentity(fixedAccessKeyID, identity)
+	h.identities.Remember(fixedAccessKeyID, identity)
 
 	return credentials{
 		AccessKeyID:     fixedAccessKeyID,
@@ -407,7 +309,7 @@ func (h *Handler) synthCredentials(dur time.Duration, identity callerIdentity) (
 // mintCredentials builds temporary credentials representing identity for a
 // handler, writing an InternalFailure error response and reporting ok=false
 // when credential generation fails closed (a crypto/rand read error).
-func (h *Handler) mintCredentials(w http.ResponseWriter, dur time.Duration, identity callerIdentity) (credentials, bool) {
+func (h *Handler) mintCredentials(w http.ResponseWriter, dur time.Duration, identity awsidentity.Identity) (credentials, bool) {
 	creds, err := h.synthCredentials(dur, identity)
 	if err != nil {
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure",

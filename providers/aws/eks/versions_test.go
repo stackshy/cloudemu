@@ -155,7 +155,7 @@ func TestUpdateClusterVersionNeedsNodegroupsAtClusterVersion(t *testing.T) {
 		t.Fatalf("expected FailedPrecondition naming the cluster version, got %v", err)
 	}
 
-	_, err = m.UpdateNodegroupVersion(ctx, "c1", "old", "", "")
+	_, err = m.UpdateNodegroupVersion(ctx, "c1", "old", eksdriver.NodegroupVersionUpdate{})
 	requireNoError(t, err)
 
 	_, err = m.UpdateClusterVersion(ctx, "c1", toVersion("1.34"))
@@ -259,11 +259,11 @@ func TestNodegroupVersionCappedByCluster(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, "1.32", old.Version)
 
-	_, err = m.UpdateNodegroupVersion(ctx, "c1", "old", "1.34", "")
+	_, err = m.UpdateNodegroupVersion(ctx, "c1", "old", eksdriver.NodegroupVersionUpdate{Version: "1.34"})
 	requireInvalidArg(t, err, "cannot be newer than cluster c1 version 1.33")
 
 	// No version means the cluster version.
-	_, err = m.UpdateNodegroupVersion(ctx, "c1", "old", "", "")
+	_, err = m.UpdateNodegroupVersion(ctx, "c1", "old", eksdriver.NodegroupVersionUpdate{})
 	requireNoError(t, err)
 
 	got, err := m.DescribeNodegroup(ctx, "c1", "old")
