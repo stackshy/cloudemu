@@ -308,20 +308,18 @@ func (h *Handler) setMetricStreamsRunning(w http.ResponseWriter, r *http.Request
 	writeCBORResponse(w, struct{}{})
 }
 
-// writeMetricStreamDriverErr maps a metric-stream driver error to the real
-// CloudWatch error shape names these operations document: ResourceNotFoundException
-// (GetMetricStream) and InvalidParameterValueException (PutMetricStream). These
-// carry the "Exception" suffix that the shared writeDriverErr's shorter
-// names (used by the older alarm operations) drop. The exact name matters: an
-// SDK/Terraform delete-waiter matches on the deserialized error code, and a
-// mismatched name looks like an unexpected failure rather than a signal that
-// the resource is gone.
+// writeMetricStreamDriverErr maps a metric-stream driver error to the error
+// codes these operations return: ResourceNotFoundException (GetMetricStream)
+// and InvalidParameterValue (PutMetricStream). The code is the shape's query
+// error code, so ResourceNotFoundException keeps its suffix while
+// InvalidParameterValueException goes on the wire as InvalidParameterValue.
+// The exact code matters: an SDK/Terraform delete-waiter matches on it.
 func writeMetricStreamDriverErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
 		writeCBORError(w, http.StatusNotFound, "ResourceNotFoundException", err.Error())
 	case cerrors.IsInvalidArgument(err):
-		writeCBORError(w, http.StatusBadRequest, "InvalidParameterValueException", err.Error())
+		writeCBORError(w, http.StatusBadRequest, errInvalidParameterValue, cerrors.Message(err))
 	default:
 		writeDriverErr(w, err)
 	}

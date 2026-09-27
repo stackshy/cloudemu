@@ -93,7 +93,7 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 	}
 
 	sd.obsoleteChangeSets()
-	sd.setDisableRollback(in.DisableRollback)
+	sd.setRollbackFlags(in.DisableRollback, in.RetainExceptOnCreate)
 	m.runUpdate(ctx, sd, in, plan, onFailure)
 
 	out := sd.snapshotStack()
@@ -114,9 +114,22 @@ func (m *Mock) runUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStack
 		stopOnFailure: true, cleanupStatus: cfn.StatusUpdateCompleteCleanupInProgress, cleanRetained: true,
 	}
 
-	failures, replaced := m.converge(ctx, sd, plan.newT, plan.newRes, forward)
+	var (
+		failures []applyFailure
+		replaced []replacement
+	)
+
+	imports, f := m.bindImports(sd, plan.newT, plan.newRes, sd.importList())
+	if f != nil {
+		failures = []applyFailure{*f}
+	} else {
+		failures, replaced = m.converge(ctx, sd, plan.newT, plan.newRes, forward)
+	}
+
 	if len(failures) == 0 {
+		sd.setImports(imports)
 		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
+
 		return true
 	}
 
@@ -260,11 +273,20 @@ func appliedTemplate(sd *stackData, t *cfn.Template, res *cfn.Resolver) *cfn.Tem
 	return &out
 }
 
-func (sd *stackData) setDisableRollback(v bool) {
+// setRollbackFlags records how the operation that starts handles a failure.
+func (sd *stackData) setRollbackFlags(disableRollback, retainExceptOnCreate bool) {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	sd.stack.DisableRollback = v
+	sd.stack.DisableRollback = disableRollback
+	sd.stack.RetainExceptOnCreate = retainExceptOnCreate
+}
+
+func (sd *stackData) retainExceptOnCreate() bool {
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	return sd.stack.RetainExceptOnCreate
 }
 
 // checkTypesKept rejects a template that gives a live logical ID a new type.
@@ -357,7 +379,7 @@ func (*Mock) noChanges(sd *stackData, p *updatePlan, in *cfn.UpdateStackInput) b
 		live, _ := sd.live(id)
 
 		props, err := resolveProps(p.newRes, rdef.Properties)
-		if err != nil || !cfn.SameProperties(live.props, props) {
+		if err != nil || !cfn.SameProperties(live.props, props) || sd.policy(id) != policyOf(&rdef) {
 			return false
 		}
 	}
@@ -447,9 +469,13 @@ func (m *Mock) finishRollback(
 	ctx context.Context, sd *stackData, t *cfn.Template, res *cfn.Resolver, skip map[string]bool, reason string,
 ) {
 	failures, _ := m.converge(ctx, sd, t, res, convergeOpts{
-		skip: skip, cleanupStatus: cfn.StatusUpdateRollbackCompleteCleanupInProgress,
+		skip: skip, cleanupStatus: cfn.StatusUpdateRollbackCompleteCleanupInProgress, rollback: true,
 	})
 	if len(failures) == 0 {
+		if imports, err := res.ImportNames(t); err == nil {
+			sd.setImports(imports)
+		}
+
 		sd.setRollbackFailed(nil)
 		m.emitTerminalEvent(sd, cfn.StatusUpdateRollbackComplete, reason)
 
@@ -584,26 +610,14 @@ func (sd *stackData) rowType(id string) string {
 	return ""
 }
 
-// DeleteStack tears down the stack's resources in reverse creation order and
-// marks it DELETE_COMPLETE. Deleting an absent or already-deleted stack is a
-// no-op success, matching CloudFormation's idempotent delete. A stack in
-// UPDATE_ROLLBACK_FAILED can be deleted.
-func (m *Mock) DeleteStack(ctx context.Context, name string) error {
-	sd, _, ok := m.findStack(name)
-	if !ok || sd.status() == cfn.StatusDeleteComplete {
-		return nil
-	}
-
-	m.emitStackEvent(sd, cfn.StatusDeleteInProgress, reasonUserInitiated)
-	m.finishDelete(ctx, sd)
-
-	return nil
-}
-
 // finishDelete tears down a stack in DELETE_IN_PROGRESS, drops its change
-// sets and marks it DELETE_COMPLETE.
-func (m *Mock) finishDelete(ctx context.Context, sd *stackData) {
-	m.teardown(ctx, sd)
+// sets and marks it DELETE_COMPLETE. When a resource fails to delete the
+// stack ends DELETE_FAILED with that resource still in it.
+func (m *Mock) finishDelete(ctx context.Context, sd *stackData, o teardownOpts) {
+	if failures := m.teardown(ctx, sd, o); len(failures) > 0 {
+		m.emitStackEvent(sd, cfn.StatusDeleteFailed, failureSummary(failures))
+		return
+	}
 
 	sd.mu.Lock()
 	sd.stack.DeletionTime = m.clock.Now()

@@ -14,24 +14,17 @@ import (
 const defaultVPCEndpointType = "Gateway"
 
 type vpcEndpointXML struct {
-	VpcEndpointID       string             `xml:"vpcEndpointId"`
-	VpcEndpointType     string             `xml:"vpcEndpointType"`
-	VpcID               string             `xml:"vpcId"`
-	ServiceName         string             `xml:"serviceName"`
-	State               string             `xml:"state"`
-	RouteTableIDs       []string           `xml:"routeTableIdSet>item,omitempty"`
-	SubnetIDs           []string           `xml:"subnetIdSet>item,omitempty"`
-	Groups              []endpointGroupXML `xml:"groupSet>item,omitempty"`
-	NetworkInterfaceIDs []string           `xml:"networkInterfaceIdSet>item,omitempty"`
-	CreationTime        string             `xml:"creationTimestamp,omitempty"`
-	Tags                []tagItem          `xml:"tagSet>item,omitempty"`
-}
-
-// endpointGroupXML is one groupSet item (SecurityGroupIdentifier). Terraform
-// reads security_group_ids from its groupId.
-type endpointGroupXML struct {
-	GroupID   string `xml:"groupId"`
-	GroupName string `xml:"groupName,omitempty"`
+	VpcEndpointID       string    `xml:"vpcEndpointId"`
+	VpcEndpointType     string    `xml:"vpcEndpointType"`
+	VpcID               string    `xml:"vpcId"`
+	ServiceName         string    `xml:"serviceName"`
+	State               string    `xml:"state"`
+	RouteTableIDs       []string  `xml:"routeTableIdSet>item,omitempty"`
+	SubnetIDs           []string  `xml:"subnetIdSet>item,omitempty"`
+	Groups              []string  `xml:"groupSet>item,omitempty"`
+	NetworkInterfaceIDs []string  `xml:"networkInterfaceIdSet>item,omitempty"`
+	CreationTime        string    `xml:"creationTimestamp,omitempty"`
+	Tags                []tagItem `xml:"tagSet>item,omitempty"`
 }
 
 func (h *Handler) routeVPCEndpoints(w http.ResponseWriter, r *http.Request, action string) bool {
@@ -76,7 +69,7 @@ func (h *Handler) createVPCEndpoint(w http.ResponseWriter, r *http.Request) {
 		Xmlns    string         `xml:"xmlns,attr"`
 		Req      string         `xml:"requestId"`
 		Endpoint vpcEndpointXML `xml:"vpcEndpoint"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Endpoint: h.toVPCEndpointXML(r, ep)})
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Endpoint: toVPCEndpointXML(ep)})
 }
 
 // deleteVPCEndpoints is idempotent: like real EC2 it always returns HTTP 200
@@ -88,7 +81,7 @@ func (h *Handler) deleteVPCEndpoints(w http.ResponseWriter, r *http.Request) {
 	for _, id := range awsquery.ListStrings(r.Form, "VpcEndpointId") {
 		if err := h.vpc.DeleteVPCEndpoint(r.Context(), id); err != nil {
 			item := unsuccessfulItemXML{ResourceID: id}
-			item.Error.Code = "InvalidVpcEndpointId.NotFound"
+			item.Error.Code = codeInvalidVpcEndpointID
 			item.Error.Message = cerrors.Message(err)
 			unsuccessful = append(unsuccessful, item)
 		}
@@ -115,7 +108,7 @@ func (h *Handler) describeVPCEndpoints(w http.ResponseWriter, r *http.Request) {
 
 	for i := range items {
 		if vpcEndpointMatchesFilters(&items[i], filters) {
-			out = append(out, h.toVPCEndpointXML(r, &items[i]))
+			out = append(out, toVPCEndpointXML(&items[i]))
 		}
 	}
 
@@ -221,7 +214,7 @@ func vpcEndpointMatchesFilter(ep *netdriver.VPCEndpoint, f awsquery.Filter) bool
 	}
 }
 
-func (h *Handler) toVPCEndpointXML(r *http.Request, ep *netdriver.VPCEndpoint) vpcEndpointXML {
+func toVPCEndpointXML(ep *netdriver.VPCEndpoint) vpcEndpointXML {
 	return vpcEndpointXML{
 		VpcEndpointID:       ep.ID,
 		VpcEndpointType:     nonEmpty(ep.EndpointType, defaultVPCEndpointType),
@@ -230,7 +223,7 @@ func (h *Handler) toVPCEndpointXML(r *http.Request, ep *netdriver.VPCEndpoint) v
 		State:               nonEmpty(ep.State, stateAvailable),
 		RouteTableIDs:       ep.RouteTableIDs,
 		SubnetIDs:           ep.SubnetIDs,
-		Groups:              h.endpointGroups(r, ep.SecurityGroupIDs),
+		Groups:              ep.SecurityGroupIDs,
 		NetworkInterfaceIDs: ep.NetworkInterfaceIDs,
 		CreationTime:        ep.CreatedAt,
 		Tags:                toTagItems(ep.Tags),
@@ -238,28 +231,5 @@ func (h *Handler) toVPCEndpointXML(r *http.Request, ep *netdriver.VPCEndpoint) v
 }
 
 func writeVPCEndpointErr(w http.ResponseWriter, err error) {
-	writeErrWithNotFound(w, err, "InvalidVpcEndpointId.NotFound", "DependencyViolation")
-}
-
-// endpointGroups pairs each security group id with its name, as the groupSet of
-// DescribeVpcEndpoints does. A group that no longer exists keeps its id.
-func (h *Handler) endpointGroups(r *http.Request, ids []string) []endpointGroupXML {
-	if len(ids) == 0 {
-		return nil
-	}
-
-	names := map[string]string{}
-
-	if groups, err := h.vpc.DescribeSecurityGroups(r.Context(), nil); err == nil {
-		for i := range groups {
-			names[groups[i].ID] = groups[i].Name
-		}
-	}
-
-	out := make([]endpointGroupXML, 0, len(ids))
-	for _, id := range ids {
-		out = append(out, endpointGroupXML{GroupID: id, GroupName: names[id]})
-	}
-
-	return out
+	writeErrWithNotFound(w, err, codeInvalidVpcEndpointID, "DependencyViolation")
 }

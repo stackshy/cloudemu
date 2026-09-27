@@ -1,7 +1,7 @@
 // Package apigatewayv2 implements the Amazon API Gateway v2 (HTTP/WebSocket
 // APIs) control-plane protocol as a server.Handler. It serves the restJson1
-// management API rooted at /v2/apis: Api CRUD plus its Route, Integration and
-// Stage sub-collections.
+// management API rooted at /v2/apis: Api CRUD plus its Route, Integration,
+// Stage and Deployment sub-collections, and resource tagging at /v2/tags.
 //
 // This is a distinct service from API Gateway REST v1 (server/aws/apigateway,
 // rooted at /restapis): the two share no path prefix, so registering this
@@ -20,6 +20,7 @@ import (
 
 const (
 	controlPrefix   = "/v2/apis"
+	tagsPrefix      = "/v2/tags/"
 	contentTypeJSON = "application/json"
 	maxBodyBytes    = 6 << 20
 )
@@ -29,6 +30,7 @@ const (
 	subRoutes       = "routes"
 	subIntegrations = "integrations"
 	subStages       = "stages"
+	subDeployments  = "deployments"
 )
 
 // Path segment counts after the /v2/apis prefix is stripped.
@@ -48,15 +50,23 @@ func New(d driver.APIGatewayV2) *Handler {
 	return &Handler{ag: d}
 }
 
-// Matches claims control-plane requests under /v2/apis. This prefix is disjoint
-// from API Gateway REST v1 (/restapis) and every other AWS handler; it must
-// register before S3's permissive REST catch-all.
+// Matches claims control-plane requests under /v2/apis and the tagging API
+// under /v2/tags/{arn}. No other AWS service uses these prefixes, and they are
+// disjoint from API Gateway REST v1 (/restapis, /tags); they must register
+// before S3's permissive REST catch-all.
 func (*Handler) Matches(r *http.Request) bool {
-	return r.URL.Path == "/v2/apis" || strings.HasPrefix(r.URL.Path, controlPrefix+"/")
+	return r.URL.Path == "/v2/apis" || strings.HasPrefix(r.URL.Path, controlPrefix+"/") ||
+		strings.HasPrefix(r.URL.Path, tagsPrefix)
 }
 
-// ServeHTTP routes the restJson1 management API under /v2/apis by segment count.
+// ServeHTTP routes the restJson1 management API under /v2/apis by segment
+// count, and /v2/tags/{arn} to the tagging API.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, tagsPrefix) {
+		h.serveTags(w, r)
+		return
+	}
+
 	rest := strings.Trim(strings.TrimPrefix(r.URL.Path, controlPrefix), "/")
 
 	if rest == "" {
@@ -81,7 +91,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		serveList(w, func() ([]driver.API, error) { return h.ag.GetAPIs(r.Context()) }, toAPIResponse)
+		serveList(w, func() ([]driver.API, string, error) { return h.ag.GetAPIs(r.Context(), pageInput(r)) }, toAPIResponse)
 	case http.MethodPost:
 		h.createAPI(w, r)
 	default:
@@ -103,6 +113,7 @@ func (h *Handler) createAPI(w http.ResponseWriter, r *http.Request) {
 		DisableExecuteAPIEndpoint: req.DisableExecuteAPIEndpoint,
 		Tags:                      req.Tags,
 		CorsConfiguration:         corsToDriver(req.CorsConfiguration),
+		Target:                    req.Target, RouteKey: req.RouteKey, CredentialsArn: req.CredentialsArn,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -149,6 +160,7 @@ func (h *Handler) updateAPI(w http.ResponseWriter, r *http.Request, apiID string
 		APIKeySelectionExpression: req.APIKeySelectionExpression,
 		DisableExecuteAPIEndpoint: req.DisableExecuteAPIEndpoint,
 		CorsConfiguration:         corsToDriver(req.CorsConfiguration),
+		Target:                    req.Target, RouteKey: req.RouteKey, CredentialsArn: req.CredentialsArn,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -167,6 +179,8 @@ func (h *Handler) serveSubCollection(w http.ResponseWriter, r *http.Request, api
 		h.serveIntegrations(w, r, apiID)
 	case subStages:
 		h.serveStages(w, r, apiID)
+	case subDeployments:
+		h.serveDeployments(w, r, apiID)
 	default:
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported apigatewayv2 path")
 	}
@@ -181,21 +195,31 @@ func (h *Handler) serveSubItem(w http.ResponseWriter, r *http.Request, apiID, su
 		h.serveIntegrationItem(w, r, apiID, item)
 	case subStages:
 		h.serveStageItem(w, r, apiID, item)
+	case subDeployments:
+		h.serveDeploymentItem(w, r, apiID, item)
 	default:
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported apigatewayv2 path")
 	}
 }
 
-// collectionResponse is the {"items":[...]} envelope every apigatewayv2 list
-// operation (GetApis/GetRoutes/GetIntegrations/GetStages) returns.
+// collectionResponse is the {"items":[...],"nextToken":...} envelope every
+// apigatewayv2 list operation returns.
 type collectionResponse[R any] struct {
-	Items []R `json:"items"`
+	Items     []R    `json:"items"`
+	NextToken string `json:"nextToken,omitempty"`
+}
+
+// pageInput reads the maxResults and nextToken query parameters.
+func pageInput(r *http.Request) *driver.PageInput {
+	q := r.URL.Query()
+
+	return &driver.PageInput{MaxResults: q.Get("maxResults"), NextToken: q.Get("nextToken")}
 }
 
 // serveList renders a GET list: it runs list, maps each element through render
-// and writes the {"items":[...]} envelope.
-func serveList[T, R any](w http.ResponseWriter, list func() ([]T, error), render func(*T) R) {
-	items, err := list()
+// and writes the {"items":[...]} envelope with the next page token.
+func serveList[T, R any](w http.ResponseWriter, list func() ([]T, string, error), render func(*T) R) {
+	items, next, err := list()
 	if err != nil {
 		writeErr(w, err)
 		return
@@ -206,7 +230,7 @@ func serveList[T, R any](w http.ResponseWriter, list func() ([]T, error), render
 		out = append(out, render(&items[i]))
 	}
 
-	writeJSON(w, http.StatusOK, collectionResponse[R]{Items: out})
+	writeJSON(w, http.StatusOK, collectionResponse[R]{Items: out, NextToken: next})
 }
 
 // serveItem dispatches the GET/PATCH/DELETE shape shared by every apigatewayv2

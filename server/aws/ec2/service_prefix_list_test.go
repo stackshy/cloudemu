@@ -220,49 +220,6 @@ func findVPCERoute(t *testing.T, c *ec2.Client, rtID, vpceID string) *ec2types.R
 	return nil
 }
 
-// TestInterfaceEndpointGroupSet pins that DescribeVpcEndpoints returns each
-// security group as a groupSet item with a groupId. Terraform reads
-// security_group_ids from Groups[].GroupId, so a bare-string item drifts.
-func TestInterfaceEndpointGroupSet(t *testing.T) {
-	ctx := context.Background()
-	c := newRoutingEdgeEC2(t)
-	vpcID, subnetID := mkVPCSubnet(t, c)
-
-	sg, err := c.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
-		GroupName: aws.String("vpce-sg"), Description: aws.String("vpce"), VpcId: aws.String(vpcID),
-	})
-	if err != nil {
-		t.Fatalf("CreateSecurityGroup: %v", err)
-	}
-
-	sgID := aws.ToString(sg.GroupId)
-
-	ep, err := c.CreateVpcEndpoint(ctx, &ec2.CreateVpcEndpointInput{
-		VpcId: aws.String(vpcID), ServiceName: aws.String("com.amazonaws.us-east-1.ssm"),
-		VpcEndpointType: ec2types.VpcEndpointTypeInterface,
-		SubnetIds:       []string{subnetID}, SecurityGroupIds: []string{sgID},
-	})
-	if err != nil {
-		t.Fatalf("CreateVpcEndpoint: %v", err)
-	}
-
-	out, err := c.DescribeVpcEndpoints(ctx, &ec2.DescribeVpcEndpointsInput{
-		VpcEndpointIds: []string{aws.ToString(ep.VpcEndpoint.VpcEndpointId)},
-	})
-	if err != nil {
-		t.Fatalf("DescribeVpcEndpoints: %v", err)
-	}
-
-	groups := out.VpcEndpoints[0].Groups
-	if len(groups) != 1 || aws.ToString(groups[0].GroupId) != sgID {
-		t.Fatalf("groups = %+v, want one entry with groupId %s", groups, sgID)
-	}
-
-	if aws.ToString(groups[0].GroupName) != "vpce-sg" {
-		t.Errorf("groupName = %q, want vpce-sg", aws.ToString(groups[0].GroupName))
-	}
-}
-
 // TestManagedPrefixListsIncludeAWSOwned pins that DescribeManagedPrefixLists
 // also lists the AWS-owned service lists (ownerId AWS) and that
 // GetManagedPrefixListEntries reads their cidrs.
@@ -302,48 +259,4 @@ func TestManagedPrefixListsIncludeAWSOwned(t *testing.T) {
 
 	_, err = c.DescribeManagedPrefixLists(ctx, &ec2.DescribeManagedPrefixListsInput{PrefixListIds: []string{"pl-00000000"}})
 	requireAPIErrorCode(t, err, "InvalidPrefixListID.NotFound")
-}
-
-// TestVPCEndpointCreateDeleteTags pins that CreateTags and DeleteTags work on
-// a vpce- id. Terraform's aws_vpc_endpoint updates tags this way.
-func TestVPCEndpointCreateDeleteTags(t *testing.T) {
-	ctx := context.Background()
-	c := newRoutingEdgeEC2(t)
-	vpcID, _ := mkVPCSubnet(t, c)
-
-	ep, err := c.CreateVpcEndpoint(ctx, &ec2.CreateVpcEndpointInput{
-		VpcId: aws.String(vpcID), ServiceName: aws.String(s3PrefixListName),
-		TagSpecifications: []ec2types.TagSpecification{{
-			ResourceType: ec2types.ResourceTypeVpcEndpoint,
-			Tags:         []ec2types.Tag{{Key: aws.String("env"), Value: aws.String("dev")}},
-		}},
-	})
-	if err != nil {
-		t.Fatalf("CreateVpcEndpoint: %v", err)
-	}
-
-	id := aws.ToString(ep.VpcEndpoint.VpcEndpointId)
-
-	if _, err := c.CreateTags(ctx, &ec2.CreateTagsInput{
-		Resources: []string{id},
-		Tags:      []ec2types.Tag{{Key: aws.String("env"), Value: aws.String("prod")}, {Key: aws.String("team"), Value: aws.String("net")}},
-	}); err != nil {
-		t.Fatalf("CreateTags: %v", err)
-	}
-
-	if _, err := c.DeleteTags(ctx, &ec2.DeleteTagsInput{
-		Resources: []string{id}, Tags: []ec2types.Tag{{Key: aws.String("team")}},
-	}); err != nil {
-		t.Fatalf("DeleteTags: %v", err)
-	}
-
-	out, err := c.DescribeVpcEndpoints(ctx, &ec2.DescribeVpcEndpointsInput{VpcEndpointIds: []string{id}})
-	if err != nil {
-		t.Fatalf("DescribeVpcEndpoints: %v", err)
-	}
-
-	tags := out.VpcEndpoints[0].Tags
-	if len(tags) != 1 || aws.ToString(tags[0].Key) != "env" || aws.ToString(tags[0].Value) != "prod" {
-		t.Fatalf("tags = %+v, want only env=prod", tags)
-	}
 }

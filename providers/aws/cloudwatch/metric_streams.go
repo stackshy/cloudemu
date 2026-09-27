@@ -9,6 +9,7 @@ package cloudwatch
 import (
 	"context"
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/errors"
@@ -111,6 +112,12 @@ func validateMetricStreamConfig(cfg *driver.MetricStreamConfig) error {
 		return errors.Newf(errors.InvalidArgument, "RoleArn is required")
 	}
 
+	for _, p := range [...]struct{ name, arn string }{{"FirehoseArn", cfg.FirehoseARN}, {"RoleArn", cfg.RoleARN}} {
+		if !validARN(p.arn) {
+			return errors.Newf(errors.InvalidArgument, "The value %s for parameter %s is not a valid ARN.", p.arn, p.name)
+		}
+	}
+
 	if !validMetricStreamOutputFormats[cfg.OutputFormat] {
 		return errors.Newf(errors.InvalidArgument, "invalid OutputFormat %q", cfg.OutputFormat)
 	}
@@ -121,6 +128,17 @@ func validateMetricStreamConfig(cfg *driver.MetricStreamConfig) error {
 
 	return nil
 }
+
+// validARN reports whether s has the arn:partition:service:region:account:resource
+// shape, with the partition, service and resource set.
+func validARN(s string) bool {
+	parts := strings.SplitN(s, ":", arnParts)
+
+	return len(parts) == arnParts && parts[0] == "arn" && parts[1] != "" && parts[2] != "" && parts[5] != ""
+}
+
+// arnParts is the number of colon-separated fields in an ARN.
+const arnParts = 6
 
 // GetMetricStream returns the named metric stream, or NotFound (the
 // CloudWatch ResourceNotFoundException) when it does not exist.

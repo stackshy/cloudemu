@@ -156,7 +156,7 @@ func (m *Mock) DescribeAWSManagedPrefixLists(
 // syncEndpointRoutes makes the prefix-list routes of a Gateway endpoint match
 // its route table set: one route per table to the service's pl- id, removed
 // from tables the endpoint no longer uses. Tables that do not exist are
-// skipped. Other endpoint types hold no routes.
+// skipped. Other endpoint types hold no routes. The caller holds m.mu.
 func (m *Mock) syncEndpointRoutes(ep *driver.VPCEndpoint) {
 	var plID string
 	if ep.EndpointType == "" || ep.EndpointType == vpcEndpointTypeGateway {
@@ -170,9 +170,6 @@ func (m *Mock) syncEndpointRoutes(ep *driver.VPCEndpoint) {
 			want[id] = true
 		}
 	}
-
-	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	for _, rt := range m.routeTables.All() {
 		rt.Routes = endpointRoutes(rt.Routes, ep.ID, plID, want[rt.ID])

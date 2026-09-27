@@ -10,7 +10,9 @@ import (
 func (h *Handler) serveRoutes(w http.ResponseWriter, r *http.Request, apiID string) {
 	switch r.Method {
 	case http.MethodGet:
-		serveList(w, func() ([]driver.Route, error) { return h.ag.GetRoutes(r.Context(), apiID) }, toRouteResponse)
+		serveList(w, func() ([]driver.Route, string, error) {
+			return h.ag.GetRoutes(r.Context(), apiID, pageInput(r))
+		}, toRouteResponse)
 	case http.MethodPost:
 		h.createRoute(w, r, apiID)
 	default:
@@ -58,6 +60,7 @@ func (h *Handler) updateRoute(w http.ResponseWriter, r *http.Request, apiID, rou
 		RouteKey: req.RouteKey, Target: req.Target,
 		AuthorizationType: req.AuthorizationType, APIKeyRequired: req.APIKeyRequired,
 		AuthorizerID: req.AuthorizerID, OperationName: req.OperationName,
+		AuthorizationScopes: req.AuthorizationScopes,
 	})
 	if err != nil {
 		writeErr(w, err)

@@ -65,6 +65,10 @@ func (h *Handler) putMetricAlarmCore(
 		return err
 	}
 
+	if err := validateAlarmPeriods(cfg); err != nil {
+		return err
+	}
+
 	if err := validateLowSample(cfg.EvaluateLowSampleCountPercentile); err != nil {
 		return err
 	}

@@ -9,6 +9,7 @@ package cloudwatch
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 	"time"
@@ -344,31 +345,8 @@ func (h *Handler) tagResource(w http.ResponseWriter, r *http.Request, body []byt
 		return
 	}
 
-	if name, ok := metricStreamNameFromARN(in.ResourceARN); ok {
-		tagger, ok := h.monitoring.(metricStreamTagger)
-		if !ok {
-			writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", "tagging not supported")
-			return
-		}
-
-		if err := tagger.AddMetricStreamTags(r.Context(), name, tagsToMap(in.Tags)); err != nil {
-			writeDriverErr(w, err)
-			return
-		}
-
-		writeCBORResponse(w, struct{}{})
-
-		return
-	}
-
-	tagger, ok := h.monitoring.(alarmTagger)
-	if !ok {
-		writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", "tagging not supported")
-		return
-	}
-
-	if err := tagger.AddAlarmTags(r.Context(), alarmNameFromARN(in.ResourceARN), tagsToMap(in.Tags)); err != nil {
-		writeDriverErr(w, err)
+	if err := h.addResourceTagsByARN(r.Context(), in.ResourceARN, tagsToMap(in.Tags)); err != nil {
+		writeTagRouteErr(w, err)
 		return
 	}
 
@@ -382,31 +360,8 @@ func (h *Handler) untagResource(w http.ResponseWriter, r *http.Request, body []b
 		return
 	}
 
-	if name, ok := metricStreamNameFromARN(in.ResourceARN); ok {
-		tagger, ok := h.monitoring.(metricStreamTagger)
-		if !ok {
-			writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", "tagging not supported")
-			return
-		}
-
-		if err := tagger.RemoveMetricStreamTags(r.Context(), name, in.TagKeys); err != nil {
-			writeDriverErr(w, err)
-			return
-		}
-
-		writeCBORResponse(w, struct{}{})
-
-		return
-	}
-
-	tagger, ok := h.monitoring.(alarmTagger)
-	if !ok {
-		writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", "tagging not supported")
-		return
-	}
-
-	if err := tagger.RemoveAlarmTags(r.Context(), alarmNameFromARN(in.ResourceARN), in.TagKeys); err != nil {
-		writeDriverErr(w, err)
+	if err := h.removeResourceTagsByARN(r.Context(), in.ResourceARN, in.TagKeys); err != nil {
+		writeTagRouteErr(w, err)
 		return
 	}
 
@@ -420,37 +375,24 @@ func (h *Handler) listTagsForResource(w http.ResponseWriter, r *http.Request, bo
 		return
 	}
 
-	if name, ok := metricStreamNameFromARN(in.ResourceARN); ok {
-		tagger, ok := h.monitoring.(metricStreamTagger)
-		if !ok {
-			writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", "tagging not supported")
-			return
-		}
-
-		tags, err := tagger.MetricStreamTags(r.Context(), name)
-		if err != nil {
-			writeDriverErr(w, err)
-			return
-		}
-
-		writeCBORResponse(w, listTagsForResourceOutput{Tags: mapToTags(tags)})
-
-		return
-	}
-
-	tagger, ok := h.monitoring.(alarmTagger)
-	if !ok {
-		writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", "tagging not supported")
-		return
-	}
-
-	tags, err := tagger.AlarmTags(r.Context(), alarmNameFromARN(in.ResourceARN))
+	tags, err := h.resourceTagsByARN(r.Context(), in.ResourceARN)
 	if err != nil {
-		writeDriverErr(w, err)
+		writeTagRouteErr(w, err)
 		return
 	}
 
 	writeCBORResponse(w, listTagsForResourceOutput{Tags: mapToTags(tags)})
+}
+
+// writeTagRouteErr is the rpc-v2-cbor and JSON counterpart of
+// writeTagRouteQueryErr.
+func writeTagRouteErr(w http.ResponseWriter, err error) {
+	if errors.Is(err, errTaggingUnsupported) {
+		writeCBORError(w, http.StatusBadRequest, "UnknownOperationException", err.Error())
+		return
+	}
+
+	writeDriverErr(w, tagRouteErr(err))
 }
 
 // alarmNameFromARN extracts the alarm name from a CloudWatch alarm ARN of the

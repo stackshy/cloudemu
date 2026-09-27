@@ -13,6 +13,7 @@ import (
 const (
 	verbCreate = "create"
 	verbUpdate = "update"
+	verbDelete = "delete"
 )
 
 // convergeOpts tunes one converge pass.
@@ -28,6 +29,9 @@ type convergeOpts struct {
 	// cleanRetained has the cleanup phase also delete the old resources
 	// retained from earlier replacements.
 	cleanRetained bool
+	// rollback marks a pass that rolls an update back. Its cleanup deletes
+	// the resources the update created, and it does not check exports.
+	rollback bool
 }
 
 // applyFailure is one resource a converge pass could not bring to its target.
@@ -54,6 +58,8 @@ type replacement struct {
 	// the retained old resources. A rollback retains it again instead of
 	// deleting it.
 	reclaimed bool
+	// policy is the UpdateReplacePolicy the cleanup applies to old.
+	policy string
 }
 
 // Resource status reasons CloudFormation records on a replacement.
@@ -87,7 +93,7 @@ func (m *Mock) converge(
 	}
 
 	if len(failures) == 0 {
-		failures = m.setOutputs(sd, res, t)
+		failures = m.setOutputs(sd, res, t, !o.rollback)
 		if len(failures) > 0 && o.stopOnFailure {
 			return failures, replaced
 		}
@@ -102,7 +108,7 @@ func (m *Mock) converge(
 		retained = sd.drainRetained()
 	}
 
-	m.cleanup(ctx, sd, t, o.skip, append(retained, replaced...))
+	m.cleanup(ctx, sd, t, &o, append(retained, replaced...))
 
 	return failures, nil
 }
@@ -122,23 +128,40 @@ func (m *Mock) applyAll(
 			continue
 		}
 
-		if f := m.applyOne(ctx, sd, res, id, t.Resources[id], &replaced); f != nil {
+		rdef := t.Resources[id]
+
+		if f := m.applyOne(ctx, sd, res, id, rdef, &replaced); f != nil {
 			failures = append(failures, *f)
 
 			if o.stopOnFailure {
 				break
 			}
+
+			continue
 		}
+
+		sd.setPolicy(id, policyOf(&rdef))
 	}
 
 	return failures, replaced
 }
 
-// setOutputs resolves and stores the template outputs.
-func (*Mock) setOutputs(sd *stackData, res *cfn.Resolver, t *cfn.Template) []applyFailure {
+// setOutputs resolves and stores the template outputs. With checkExports
+// set, an export another stack owns, or a change to an export another stack
+// imports, fails instead.
+func (m *Mock) setOutputs(sd *stackData, res *cfn.Resolver, t *cfn.Template, checkExports bool) []applyFailure {
 	outputs, err := resolveOutputs(res, t)
 	if err != nil {
 		return []applyFailure{{verb: verbUpdate, err: err}}
+	}
+
+	m.exportMu.Lock()
+	defer m.exportMu.Unlock()
+
+	if checkExports {
+		if cerr := m.checkExports(sd, outputs); cerr != nil {
+			return []applyFailure{{verb: verbUpdate, err: cerr}}
+		}
 	}
 
 	sd.mu.Lock()
@@ -233,7 +256,7 @@ func (m *Mock) replaceOne(
 		return f
 	}
 
-	*replaced = append(*replaced, replacement{id: id, old: *live})
+	*replaced = append(*replaced, replacement{id: id, old: *live, policy: rdef.EffectiveReplacePolicy()})
 
 	return nil
 }
@@ -340,7 +363,7 @@ func (m *Mock) reclaimRetained(
 		m.recordCreated(sd, res, id, rdef.Type, out, props, cfn.ResourceUpdateComplete)
 	case cerrors.IsAlreadyExists(err):
 		m.record(sd, res, id, old.resolved, old.props, old.deleteID)
-		*replaced = append(*replaced, replacement{id: id, old: *live, reclaimed: true})
+		*replaced = append(*replaced, replacement{id: id, old: *live, reclaimed: true, policy: rdef.EffectiveReplacePolicy()})
 
 		return m.updateOne(ctx, sd, res, id, rdef, &old, props), true
 	default:
@@ -350,7 +373,7 @@ func (m *Mock) reclaimRetained(
 		return &applyFailure{logicalID: id, verb: verbUpdate, err: err}, true
 	}
 
-	*replaced = append(*replaced, replacement{id: id, old: *live})
+	*replaced = append(*replaced, replacement{id: id, old: *live, policy: rdef.EffectiveReplacePolicy()})
 
 	return nil, true
 }
@@ -418,13 +441,17 @@ func (*Mock) record(
 // cleanup deletes the old resources of replacements, then, newest first,
 // the live resources t no longer declares. A failed delete is reported in the
 // events. A dropped resource whose delete fails is kept, so a later update
-// retries it.
+// retries it. UpdateReplacePolicy Retain keeps an old resource, and
+// DeletionPolicy decides whether a dropped one is deleted or only removed
+// from the stack.
 func (m *Mock) cleanup(
-	ctx context.Context, sd *stackData, t *cfn.Template, skip map[string]bool, replaced []replacement,
+	ctx context.Context, sd *stackData, t *cfn.Template, o *convergeOpts, replaced []replacement,
 ) {
 	for i := len(replaced) - 1; i >= 0; i-- {
-		_ = m.deletePhysical(ctx, sd, replaced[i].id, &replaced[i].old)
+		m.dropReplaced(ctx, sd, &replaced[i])
 	}
+
+	flag := sd.retainExceptOnCreate()
 
 	sd.mu.RLock()
 	order := append([]string(nil), sd.provisionOrder...)
@@ -432,23 +459,63 @@ func (m *Mock) cleanup(
 
 	for i := len(order) - 1; i >= 0; i-- {
 		id := order[i]
-		if _, keep := t.Resources[id]; keep || skip[id] {
+		if _, keep := t.Resources[id]; keep || o.skip[id] {
 			continue
 		}
 
-		if live, ok := sd.live(id); ok {
-			_ = m.deleteOne(ctx, sd, id, &live)
+		live, ok := sd.live(id)
+		if !ok {
+			continue
 		}
+
+		if cfn.KeepsOnDelete(sd.policy(id).Deletion, o.rollback, flag) {
+			m.skipDelete(sd, id, &live)
+			continue
+		}
+
+		_ = m.deleteOne(ctx, sd, id, &live)
 	}
 }
 
+// dropReplaced deletes the old resource of a replacement, or with
+// UpdateReplacePolicy Retain leaves it in place outside the stack.
+func (m *Mock) dropReplaced(ctx context.Context, sd *stackData, r *replacement) {
+	if r.policy == cfn.PolicyValueRetain {
+		m.emitResourceEvent(sd, r.id, r.old.resolved.RefValue, r.old.typ, cfn.ResourceDeleteSkipped, "")
+		return
+	}
+
+	_ = m.deletePhysical(ctx, sd, r.id, &r.old)
+}
+
+// skipDelete removes a resource from the stack without deleting it.
+func (m *Mock) skipDelete(sd *stackData, id string, live *liveResource) {
+	m.emitResourceEvent(sd, id, live.resolved.RefValue, live.typ, cfn.ResourceDeleteSkipped, "")
+	m.forget(sd, id)
+}
+
+// teardownOpts tunes one teardown.
+type teardownOpts struct {
+	// rollbackOfCreate marks the rollback of the create that made the
+	// resources, where RetainExceptOnCreate deletes.
+	rollbackOfCreate bool
+	// retain names resources DeleteStack's RetainResources keeps.
+	retain map[string]bool
+	// force keeps a resource whose delete fails instead of failing the
+	// stack, as DeletionMode FORCE_DELETE_STACK does.
+	force bool
+}
+
 // teardown deletes every provisioned resource in reverse creation order,
-// then any old resources retained from replacements.
-func (m *Mock) teardown(ctx context.Context, sd *stackData) {
+// then any old resources retained from replacements. A resource its
+// DeletionPolicy or RetainResources keeps is removed from the stack without
+// being deleted. It returns the resources that failed to delete, which stay
+// in the stack as DELETE_FAILED.
+func (m *Mock) teardown(ctx context.Context, sd *stackData, o teardownOpts) []applyFailure {
 	defer func() {
 		retained := sd.drainRetained()
 		for i := len(retained) - 1; i >= 0; i-- {
-			_ = m.deletePhysical(ctx, sd, retained[i].id, &retained[i].old)
+			m.dropReplaced(ctx, sd, &retained[i])
 		}
 	}()
 
@@ -456,13 +523,43 @@ func (m *Mock) teardown(ctx context.Context, sd *stackData) {
 	order := append([]string(nil), sd.provisionOrder...)
 	sd.mu.RUnlock()
 
+	flag := sd.retainExceptOnCreate()
+
+	var failures []applyFailure
+
 	for i := len(order) - 1; i >= 0; i-- {
-		if live, ok := sd.live(order[i]); ok {
-			_ = m.deleteOne(ctx, sd, order[i], &live)
+		id := order[i]
+
+		live, ok := sd.live(id)
+		if !ok {
+			continue
+		}
+
+		if o.retain[id] || cfn.KeepsOnDelete(sd.policy(id).Deletion, o.rollbackOfCreate, flag) {
+			m.skipDelete(sd, id, &live)
+			continue
+		}
+
+		err := m.deleteOne(ctx, sd, id, &live)
+
+		switch {
+		case err == nil:
+		case o.force:
+			m.skipDelete(sd, id, &live)
+		default:
+			failures = append(failures, applyFailure{logicalID: id, verb: verbDelete, err: err})
+			m.upsertResource(sd, &cfn.StackResource{
+				LogicalID: id, PhysicalID: live.resolved.RefValue, Type: live.typ,
+				Status: cfn.ResourceDeleteFailed, StatusReason: cerrors.Message(err), Timestamp: m.clock.Now(),
+			})
 		}
 	}
 
-	m.forgetAll(sd)
+	if len(failures) == 0 {
+		m.forgetAll(sd)
+	}
+
+	return failures
 }
 
 // deleteOne deletes one live resource and drops its bookkeeping.
@@ -534,6 +631,7 @@ func (m *Mock) forget(sd *stackData, id string) {
 	delete(sd.resolved, id)
 	delete(sd.deleteIDs, id)
 	delete(sd.props, id)
+	delete(sd.policies, id)
 	sd.provisionOrder = slices.DeleteFunc(sd.provisionOrder, func(s string) bool { return s == id })
 }
 
@@ -571,7 +669,7 @@ func failureSummary(failures []applyFailure) string {
 
 	var parts []string
 
-	for _, verb := range []string{verbCreate, verbUpdate} {
+	for _, verb := range []string{verbCreate, verbUpdate, verbDelete} {
 		if ids := byVerb[verb]; len(ids) > 0 {
 			parts = append(parts, "The following resource(s) failed to "+verb+": ["+strings.Join(ids, ", ")+"].")
 		}

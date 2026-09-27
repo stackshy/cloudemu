@@ -270,8 +270,9 @@ type metricAlarmCBR struct {
 	Metrics                    []metricDataQueryCBR `cbor:"Metrics,omitempty"`
 	ThresholdMetricID          string               `cbor:"ThresholdMetricId,omitempty"`
 
-	EvaluateLowSampleCountPercentile string               `cbor:"EvaluateLowSampleCountPercentile,omitempty"`
-	EvaluationWindow                 *evaluationWindowCBR `cbor:"EvaluationWindow,omitempty"`
+	EvaluateLowSampleCountPercentile   string               `cbor:"EvaluateLowSampleCountPercentile,omitempty"`
+	EvaluationWindow                   *evaluationWindowCBR `cbor:"EvaluationWindow,omitempty"`
+	AlarmConfigurationUpdatedTimestamp *time.Time           `cbor:"AlarmConfigurationUpdatedTimestamp,omitempty"`
 }
 
 type describeAlarmsOutput struct {
@@ -381,6 +382,8 @@ func toMetricAlarmCBR(a *mondriver.AlarmInfo) metricAlarmCBR {
 		ts := a.StateTransitionedTimestamp.UTC()
 		m.StateTransitionedTimestamp = &ts
 	}
+
+	m.AlarmConfigurationUpdatedTimestamp = optTime(a.AlarmConfigurationUpdatedTimestamp)
 
 	return m
 }

@@ -3,27 +3,35 @@
 
 AWS's `apigatewayv2` service · portable interface `driver.APIGatewayV2` · [AWS index](./README.md)
 
-## Operations (20)
+## Operations (28)
 
 | Operation | Description |
 | --- | --- |
 | `CreateAPI` |  |
+| `CreateDeployment` |  |
 | `CreateIntegration` |  |
 | `CreateRoute` |  |
 | `CreateStage` |  |
 | `DeleteAPI` |  |
+| `DeleteDeployment` |  |
 | `DeleteIntegration` |  |
 | `DeleteRoute` |  |
 | `DeleteStage` |  |
 | `GetAPI` |  |
 | `GetAPIs` |  |
+| `GetDeployment` |  |
+| `GetDeployments` |  |
 | `GetIntegration` |  |
 | `GetIntegrations` |  |
 | `GetRoute` |  |
 | `GetRoutes` |  |
 | `GetStage` |  |
 | `GetStages` |  |
+| `GetTags` |  |
+| `TagResource` |  |
+| `UntagResource` |  |
 | `UpdateAPI` |  |
+| `UpdateDeployment` |  |
 | `UpdateIntegration` |  |
 | `UpdateRoute` |  |
 | `UpdateStage` |  |

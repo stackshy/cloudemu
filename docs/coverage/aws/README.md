@@ -8,7 +8,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [ACM](./acm.md) | `acm` | 17 |
 | [AOSS](./aoss.md) | `aoss` | 18 |
 | [APIGateway](./apigateway.md) | `apigateway` | 29 |
-| [APIGatewayV2](./apigatewayv2.md) | `apigatewayv2` | 20 |
+| [APIGatewayV2](./apigatewayv2.md) | `apigatewayv2` | 28 |
 | [APS](./aps.md) | `aps` | 21 |
 | [AppFlow](./appflow.md) | `appflow` | 14 |
 | [AppRunner](./apprunner.md) | `apprunner` | 29 |
@@ -19,7 +19,7 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [Bedrock](./bedrock.md) | `bedrock` | 65 |
 | [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 32 |
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |
-| [CloudFormation](./cloudformation.md) | (provider-native) | 17 |
+| [CloudFormation](./cloudformation.md) | (provider-native) | 22 |
 | [CloudFront](./cloudfront.md) | `cloudfront` | 11 |
 | [CloudTrail](./cloudtrail.md) | `cloudtrail` | 60 |
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |
