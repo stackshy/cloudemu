@@ -21,6 +21,9 @@ const (
 	StatusUpdateRollbackComplete   = "UPDATE_ROLLBACK_COMPLETE"
 	StatusUpdateRollbackFailed     = "UPDATE_ROLLBACK_FAILED"
 
+	StatusUpdateCompleteCleanupInProgress         = "UPDATE_COMPLETE_CLEANUP_IN_PROGRESS"
+	StatusUpdateRollbackCompleteCleanupInProgress = "UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS"
+
 	StatusDeleteInProgress = "DELETE_IN_PROGRESS"
 	StatusDeleteComplete   = "DELETE_COMPLETE"
 	StatusDeleteFailed     = "DELETE_FAILED"

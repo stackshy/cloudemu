@@ -88,8 +88,9 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 
 	m.applyStackMeta(sd, in, plan)
 
-	if failures := m.converge(ctx, sd, plan.newT, plan.newRes, convergeOpts{stopOnFailure: true}); len(failures) > 0 {
-		m.rollbackUpdate(ctx, sd, plan, failureSummary(failures))
+	forward := convergeOpts{stopOnFailure: true, cleanupStatus: cfn.StatusUpdateCompleteCleanupInProgress}
+	if failures, replaced := m.converge(ctx, sd, plan.newT, plan.newRes, forward); len(failures) > 0 {
+		m.rollbackUpdate(ctx, sd, plan, failureSummary(failures), replaced)
 	} else {
 		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
 	}
@@ -350,8 +351,11 @@ func previousValues(in, stored []cfn.Parameter) ([]cfn.Parameter, error) {
 // rollbackUpdate brings the stack back to its previous template after a
 // failed update, restoring what the update changed or deleted and deleting
 // what it created.
-func (m *Mock) rollbackUpdate(ctx context.Context, sd *stackData, p *updatePlan, reason string) {
+func (m *Mock) rollbackUpdate(
+	ctx context.Context, sd *stackData, p *updatePlan, reason string, replaced []replacement,
+) {
 	m.emitStackEvent(sd, cfn.StatusUpdateRollbackInProgress, reason)
+	m.restoreReplaced(ctx, sd, replaced)
 	m.revertStackMeta(sd, &p.prior)
 	m.finishRollback(ctx, sd, p.oldT, p.oldRes, nil, reason)
 }
@@ -363,7 +367,9 @@ func (m *Mock) rollbackUpdate(ctx context.Context, sd *stackData, p *updatePlan,
 func (m *Mock) finishRollback(
 	ctx context.Context, sd *stackData, t *cfn.Template, res *cfn.Resolver, skip map[string]bool, reason string,
 ) {
-	failures := m.converge(ctx, sd, t, res, convergeOpts{skip: skip})
+	failures, _ := m.converge(ctx, sd, t, res, convergeOpts{
+		skip: skip, cleanupStatus: cfn.StatusUpdateRollbackCompleteCleanupInProgress,
+	})
 	if len(failures) == 0 {
 		sd.setRollbackFailed(nil)
 		m.emitTerminalEvent(sd, cfn.StatusUpdateRollbackComplete, reason)

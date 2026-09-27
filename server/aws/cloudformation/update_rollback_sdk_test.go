@@ -144,27 +144,23 @@ const paramStackV1 = `Resources:
       Name: /app/p
       Type: String
       Value: v1
+      Tier: Standard
 `
 
-// paramStackV2 renames Old, gives its old name to New, then fails on an
-// unsupported type. Rolling Old back to /app/p collides with New.
+// paramStackV2 moves Old to the Advanced tier in place, then fails on an
+// unsupported type. Parameter Store refuses to move it back to Standard, so
+// the rollback fails.
 const paramStackV2 = `Resources:
   Old:
     Type: AWS::SSM::Parameter
     Properties:
-      Name: /app/q
-      Type: String
-      Value: v1
-  New:
-    Type: AWS::SSM::Parameter
-    DependsOn: Old
-    Properties:
       Name: /app/p
       Type: String
-      Value: new
+      Value: v1
+      Tier: Advanced
   Bad:
     Type: AWS::Unknown::Thing
-    DependsOn: New
+    DependsOn: Old
 `
 
 func TestUpdateRollbackFailedRealSDK(t *testing.T) {
@@ -187,13 +183,21 @@ func TestUpdateRollbackFailedRealSDK(t *testing.T) {
 
 		st := describeStack(t, c, "p")
 		if st.StackStatus != cfntypes.StackStatusUpdateRollbackFailed ||
-			!strings.HasPrefix(aws.ToString(st.StackStatusReason), "The following resource(s) failed to create: [Old].") {
+			!strings.HasPrefix(aws.ToString(st.StackStatusReason), "The following resource(s) failed to update: [Old].") {
 			t.Fatalf("status = %s (%s)", st.StackStatus, aws.ToString(st.StackStatusReason))
 		}
 
 		_, err := c.UpdateStack(ctx, &awscfn.UpdateStackInput{StackName: aws.String("p"), UsePreviousTemplate: aws.Bool(true)})
 		if code, _ := apiErrorCode(t, err); code != "ValidationError" {
 			t.Fatalf("update in UPDATE_ROLLBACK_FAILED: %v", err)
+		}
+
+		// Without a skip, the cause is fixed first: the Advanced parameter is
+		// deleted so the rollback can put back a Standard one.
+		if skip == nil {
+			if err = cloud.SSM.DeleteParameter(ctx, "/app/p"); err != nil {
+				t.Fatalf("DeleteParameter: %v", err)
+			}
 		}
 
 		if _, err = c.ContinueUpdateRollback(ctx, &awscfn.ContinueUpdateRollbackInput{
@@ -206,9 +210,8 @@ func TestUpdateRollbackFailedRealSDK(t *testing.T) {
 			t.Fatalf("after continue: %s", got)
 		}
 
-		_, getErr := cloud.SSM.GetParameter(ctx, "/app/p", false)
-		if restored := getErr == nil; restored != (skip == nil) {
-			t.Fatalf("skip=%v: /app/p restored=%v", skip, restored)
+		if _, getErr := cloud.SSM.GetParameter(ctx, "/app/p", false); getErr != nil {
+			t.Fatalf("skip=%v: /app/p must exist after the rollback: %v", skip, getErr)
 		}
 
 		_, err = c.ContinueUpdateRollback(ctx, &awscfn.ContinueUpdateRollbackInput{StackName: aws.String("p")})

@@ -54,6 +54,21 @@ func cfnReplacementProperties() map[string][]string {
 	}
 }
 
+// cfnNameProperties maps each resource type to the property that gives it a
+// custom physical name.
+func cfnNameProperties() map[string]string {
+	return map[string]string{
+		"AWS::S3::Bucket":             "BucketName",
+		"AWS::DynamoDB::Table":        "TableName",
+		"AWS::SQS::Queue":             "QueueName",
+		"AWS::SNS::Topic":             "TopicName",
+		"AWS::Lambda::Function":       "FunctionName",
+		"AWS::IAM::Role":              "RoleName",
+		"AWS::SecretsManager::Secret": "Name",
+		"AWS::SSM::Parameter":         "Name",
+	}
+}
+
 // requiresReplacement reports whether changing property replaces a resource
 // of type rtype.
 func requiresReplacement(rtype, property string) bool {
@@ -188,6 +203,11 @@ func (s3BucketProvisioner) RequiresReplacement(property string) bool {
 	return requiresReplacement("AWS::S3::Bucket", property)
 }
 
+// NameProperty names the property that sets a custom physical name.
+func (s3BucketProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::S3::Bucket"]
+}
+
 func (p s3BucketProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
 	return p.s3.DeleteBucket(ctx, physicalID)
 }
@@ -221,6 +241,11 @@ func (p dynamoTableProvisioner) Create(ctx context.Context, req cfn.ResourceRequ
 // changes are recorded without touching the backend.
 func (dynamoTableProvisioner) RequiresReplacement(property string) bool {
 	return requiresReplacement("AWS::DynamoDB::Table", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (dynamoTableProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::DynamoDB::Table"]
 }
 
 func (p dynamoTableProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
@@ -321,6 +346,11 @@ func (sqsQueueProvisioner) RequiresReplacement(property string) bool {
 	return requiresReplacement("AWS::SQS::Queue", property)
 }
 
+// NameProperty names the property that sets a custom physical name.
+func (sqsQueueProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::SQS::Queue"]
+}
+
 // Update sets the changed queue attributes. A dropped attribute goes back to
 // its SQS default. Other properties are not modeled by the queue backend.
 //
@@ -382,6 +412,11 @@ func (snsTopicProvisioner) RequiresReplacement(property string) bool {
 	return requiresReplacement("AWS::SNS::Topic", property)
 }
 
+// NameProperty names the property that sets a custom physical name.
+func (snsTopicProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::SNS::Topic"]
+}
+
 func (p snsTopicProvisioner) Delete(ctx context.Context, deleteID string, _ map[string]any) error {
 	return p.sns.DeleteTopic(ctx, deleteID)
 }
@@ -421,6 +456,11 @@ func (p lambdaFunctionProvisioner) Create(ctx context.Context, req cfn.ResourceR
 // changes are recorded without touching the backend.
 func (lambdaFunctionProvisioner) RequiresReplacement(property string) bool {
 	return requiresReplacement("AWS::Lambda::Function", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (lambdaFunctionProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::Lambda::Function"]
 }
 
 func (p lambdaFunctionProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
@@ -481,6 +521,11 @@ func (iamRoleProvisioner) RequiresReplacement(property string) bool {
 	return requiresReplacement("AWS::IAM::Role", property)
 }
 
+// NameProperty names the property that sets a custom physical name.
+func (iamRoleProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::IAM::Role"]
+}
+
 func (p iamRoleProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
 	return p.iam.DeleteRole(ctx, physicalID)
 }
@@ -514,6 +559,11 @@ func (p secretProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) 
 // changes are recorded without touching the backend.
 func (secretProvisioner) RequiresReplacement(property string) bool {
 	return requiresReplacement("AWS::SecretsManager::Secret", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (secretProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::SecretsManager::Secret"]
 }
 
 func (p secretProvisioner) Delete(ctx context.Context, deleteID string, _ map[string]any) error {
@@ -558,6 +608,11 @@ func (p ssmParameterProvisioner) Delete(ctx context.Context, physicalID string, 
 // RequiresReplacement reports that only a new Name replaces a parameter.
 func (ssmParameterProvisioner) RequiresReplacement(property string) bool {
 	return requiresReplacement("AWS::SSM::Parameter", property)
+}
+
+// NameProperty names the property that sets a custom physical name.
+func (ssmParameterProvisioner) NameProperty() string {
+	return cfnNameProperties()["AWS::SSM::Parameter"]
 }
 
 // Update overwrites the parameter with the new value, type, description and

@@ -72,7 +72,7 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 
 	m.emitStackEvent(sd, cfn.StatusCreateInProgress, "User Initiated")
 
-	if failures := m.converge(ctx, sd, effective, resolver, convergeOpts{stopOnFailure: true}); len(failures) > 0 {
+	if failures, _ := m.converge(ctx, sd, effective, resolver, convergeOpts{stopOnFailure: true}); len(failures) > 0 {
 		reason := failureSummary(failures) + " Rollback requested by user."
 		m.emitStackEvent(sd, cfn.StatusRollbackInProgress, reason)
 		m.teardown(ctx, sd)

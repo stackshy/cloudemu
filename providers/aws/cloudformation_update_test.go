@@ -119,3 +119,48 @@ func TestCFNDynamoTableKeepsItemsOnInPlaceChange(t *testing.T) {
 		t.Fatalf("a TableName change replaces the table, got %v %v", tables, err)
 	}
 }
+
+// A failed table replacement leaves the old table and its items in place, and
+// a replacement that keeps the custom TableName is refused without touching it.
+func TestCFNDynamoTableReplacementNeverLosesItems(t *testing.T) {
+	ctx := context.Background()
+	p := New()
+
+	table := func(name, key string) string {
+		return `{"Resources":{"T":{"Type":"AWS::DynamoDB::Table","Properties":{
+			"TableName":"` + name + `","BillingMode":"PAY_PER_REQUEST",
+			"AttributeDefinitions":[{"AttributeName":"` + key + `","AttributeType":"S"}],
+			"KeySchema":[{"AttributeName":"` + key + `","KeyType":"HASH"}]}}}}`
+	}
+
+	create := func(stack, name string) {
+		t.Helper()
+
+		if _, err := p.CloudFormation.CreateStack(ctx, &cfn.CreateStackInput{StackName: stack, TemplateBody: table(name, "id")}); err != nil {
+			t.Fatalf("CreateStack %s: %v", stack, err)
+		}
+	}
+
+	create("t", "keep2")
+	create("other", "taken")
+
+	if err := p.DynamoDB.PutItem(ctx, "keep2", map[string]any{"id": "1"}); err != nil {
+		t.Fatalf("PutItem: %v", err)
+	}
+
+	cases := map[string]string{
+		"rename onto a taken name": table("taken", "id"),
+		"same name, new key":       table("keep2", "pk"),
+	}
+
+	for name, body := range cases {
+		st, err := p.CloudFormation.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "t", TemplateBody: body})
+		if err != nil || st.Status != cfn.StatusUpdateRollbackComplete {
+			t.Fatalf("%s: %v %v", name, st, err)
+		}
+
+		if item, gerr := p.DynamoDB.GetItem(ctx, "keep2", map[string]any{"id": "1"}); gerr != nil || item == nil {
+			t.Fatalf("%s lost the item: %v %v", name, item, gerr)
+		}
+	}
+}

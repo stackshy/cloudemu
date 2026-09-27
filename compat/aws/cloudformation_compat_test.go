@@ -109,7 +109,7 @@ func TestAWSCloudFormationCompat(t *testing.T) {
 }
 
 // continueUpdateRollback drives a stack into UPDATE_ROLLBACK_FAILED, where
-// restoring the renamed bucket collides with the bucket that took its name,
+// Parameter Store refuses to move a parameter back from the Advanced tier,
 // then continues the rollback skipping it.
 func continueUpdateRollback(ctx context.Context, client *awscfn.Client) error {
 	const name = "compat-rollback"
@@ -145,13 +145,12 @@ func continueUpdateRollback(ctx context.Context, client *awscfn.Client) error {
 }
 
 const rollbackTemplate = `{"Resources":{
-  "Old":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"compat-old"}}
+  "Old":{"Type":"AWS::SSM::Parameter","Properties":{"Name":"/compat/p","Type":"String","Value":"v","Tier":"Standard"}}
 }}`
 
 const rollbackTemplateFailing = `{"Resources":{
-  "Old":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"compat-renamed"}},
-  "New":{"Type":"AWS::S3::Bucket","DependsOn":"Old","Properties":{"BucketName":"compat-old"}},
-  "Bad":{"Type":"AWS::Unknown::Thing","DependsOn":"New"}
+  "Old":{"Type":"AWS::SSM::Parameter","Properties":{"Name":"/compat/p","Type":"String","Value":"v","Tier":"Advanced"}},
+  "Bad":{"Type":"AWS::Unknown::Thing","DependsOn":"Old"}
 }}`
 
 type errCompat string

@@ -46,6 +46,12 @@ type ReplacementSchema interface {
 	RequiresReplacement(property string) bool
 }
 
+// NamedResource is implemented by a Provisioner whose resources take a custom
+// physical name from one property, such as BucketName or TableName.
+type NamedResource interface {
+	NameProperty() string
+}
+
 // Updater is implemented by a Provisioner that can update its backend in
 // place. A ReplacementSchema without an Updater only records the new
 // properties on an in-place change, so the backend resource is kept.
