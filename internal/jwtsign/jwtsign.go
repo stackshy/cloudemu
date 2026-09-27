@@ -32,6 +32,10 @@ const algRS256 = "RS256"
 const (
 	keyBits     = 2048
 	jwtSegments = 3
+
+	// iatLeewaySeconds tolerates an issuer clock slightly ahead of the
+	// verifier: a token whose iat is at most this far in the future passes.
+	iatLeewaySeconds = 60
 )
 
 // Errors returned by Verify. ErrExpired is kept apart from ErrInvalidToken so a
@@ -117,8 +121,8 @@ func Sign(k *Key, claims map[string]any) (string, error) {
 
 // Verify checks token against keys and the clock and returns its claims. It
 // requires alg RS256, a kid present in keys, a valid signature, and an exp
-// claim. It rejects a token at or after exp, before nbf, or with iat in the
-// future. Numeric claims come back as json.Number.
+// claim. It rejects a token at or after exp, before nbf, or with iat more than
+// 60 seconds in the future. Numeric claims come back as json.Number.
 func Verify(token string, keys []*Key, clock config.Clock) (map[string]any, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != jwtSegments {
@@ -177,7 +181,7 @@ func checkTimes(claims map[string]any, now time.Time) error {
 		return ErrNotYetValid
 	}
 
-	if iat, ok := numericDate(claims, "iat"); ok && unix < iat {
+	if iat, ok := numericDate(claims, "iat"); ok && unix+iatLeewaySeconds < iat {
 		return ErrNotYetValid
 	}
 

@@ -73,21 +73,20 @@ func newAuthGate(
 
 		// Temporary STS credentials are verified against the secret STS recorded
 		// when it minted them (resolved from the session store), so a forged ASIA
-		// credential and an expired session are both rejected.
+		// credential and an expired session are both rejected. The session is
+		// then authorized as its owner: a role session strictly against the
+		// role's policies, a GetSessionToken session as the user that minted it.
+		var (
+			principal   authctx.Principal
+			roleSession bool
+			aerr        *sigv4.AuthError
+		)
+
 		if strings.HasPrefix(akid, tempCredentialPrefix) {
-			principal, aerr := verifyTempCredential(r, body, akid, accountID, sessions, clock)
-
-			restore()
-
-			if aerr != nil {
-				writeAuthError(w, r, aerr)
-				return r, false
-			}
-
-			return withPrincipal(r, principal), true
+			principal, roleSession, aerr = verifyTempCredential(r, body, akid, accountID, sessions, clock)
+		} else {
+			principal, aerr = sigv4.Verify(r, body, resolverLookup(r, resolver), clock)
 		}
-
-		principal, aerr := sigv4.Verify(r, body, resolverLookup(r, resolver), clock)
 
 		restore()
 
@@ -96,7 +95,7 @@ func newAuthGate(
 			return r, false
 		}
 
-		if !authorize(w, r, principal, iamDriver, body, accountID) {
+		if !authorize(w, r, principal, iamDriver, body, accountID, roleSession) {
 			return r, false
 		}
 
@@ -108,10 +107,12 @@ func newAuthGate(
 // resolves the secret STS recorded for the presented access key id, rejects an
 // unknown key (InvalidClientTokenId) or an expired session (ExpiredToken), then
 // SigV4-verifies the signature against that secret. When no session store is
-// wired the credential is unverifiable, so it fails closed.
+// wired the credential is unverifiable, so it fails closed. The principal is
+// the session's owner (see stssrv.SessionOwner), and roleSession reports
+// whether it is a role session.
 func verifyTempCredential(
 	r *http.Request, body []byte, akid, accountID string, sessions *stssrv.SessionStore, clock config.Clock,
-) (authctx.Principal, *sigv4.AuthError) {
+) (principal authctx.Principal, roleSession bool, aerr *sigv4.AuthError) {
 	invalid := &sigv4.AuthError{
 		Code:       "InvalidClientTokenId",
 		Message:    "The security token included in the request is invalid.",
@@ -119,16 +120,16 @@ func verifyTempCredential(
 	}
 
 	if sessions == nil {
-		return authctx.Principal{}, invalid
+		return authctx.Principal{}, false, invalid
 	}
 
 	sess, ok := sessions.Lookup(akid)
 	if !ok {
-		return authctx.Principal{}, invalid
+		return authctx.Principal{}, false, invalid
 	}
 
 	if clock.Now().UTC().After(sess.Expiration) {
-		return authctx.Principal{}, &sigv4.AuthError{
+		return authctx.Principal{}, false, &sigv4.AuthError{
 			Code:       "ExpiredToken",
 			Message:    "The security token included in the request is expired.",
 			HTTPStatus: http.StatusForbidden,
@@ -136,10 +137,18 @@ func verifyTempCredential(
 	}
 
 	lookup := func(id string) (string, authctx.Principal, bool) {
-		return sess.SecretAccessKey, authctx.Principal{AccessKeyID: id, AccountID: accountID}, true
+		return sess.SecretAccessKey, authctx.Principal{
+			AccessKeyID: id,
+			AccountID:   accountID,
+			UserName:    sess.Owner.PolicyEntity,
+			ARN:         sess.Owner.ARN,
+			UserID:      sess.Owner.UserID,
+		}, true
 	}
 
-	return sigv4.Verify(r, body, lookup, clock)
+	principal, aerr = sigv4.Verify(r, body, lookup, clock)
+
+	return principal, sess.Owner.Role, aerr
 }
 
 // resolverLookup adapts the IAM access-key resolver to sigv4.LookupFunc,

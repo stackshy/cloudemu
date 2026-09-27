@@ -153,12 +153,21 @@ func TestVerifyNotBeforeAndIssuedInFuture(t *testing.T) {
 	}
 
 	iat := claimsAt(epoch, time.Hour)
-	iat["iat"] = future.Unix()
 	delete(iat, "nbf")
+
+	iat["iat"] = epoch.Add(2 * time.Minute).Unix()
 	tok, _ = Sign(k, iat)
 
 	if _, err := Verify(tok, []*Key{k}, config.NewFakeClock(epoch)); !errors.Is(err, ErrNotYetValid) {
-		t.Fatalf("iat in future: err = %v, want ErrNotYetValid", err)
+		t.Fatalf("iat 2m in future: err = %v, want ErrNotYetValid", err)
+	}
+
+	// A small issuer clock skew is tolerated.
+	iat["iat"] = epoch.Add(time.Minute).Unix()
+	tok, _ = Sign(k, iat)
+
+	if _, err := Verify(tok, []*Key{k}, config.NewFakeClock(epoch)); err != nil {
+		t.Fatalf("iat within the 60s leeway: %v", err)
 	}
 }
 
