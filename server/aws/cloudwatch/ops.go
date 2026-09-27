@@ -75,6 +75,8 @@ type datapointCBR struct {
 	Minimum     *float64  `cbor:"Minimum,omitempty"`
 	Maximum     *float64  `cbor:"Maximum,omitempty"`
 	Unit        string    `cbor:"Unit,omitempty"`
+
+	ExtendedStatistics map[string]float64 `cbor:"ExtendedStatistics,omitempty"`
 }
 
 type getMetricStatisticsOutput struct {
@@ -164,6 +166,9 @@ type putMetricAlarmInput struct {
 	Tags                    []tagCBR             `cbor:"Tags,omitempty"`
 	Metrics                 []metricDataQueryCBR `cbor:"Metrics,omitempty"`
 	ThresholdMetricID       string               `cbor:"ThresholdMetricId,omitempty"`
+
+	EvaluateLowSampleCountPercentile string               `cbor:"EvaluateLowSampleCountPercentile,omitempty"`
+	EvaluationWindow                 *evaluationWindowCBR `cbor:"EvaluationWindow,omitempty"`
 }
 
 func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -195,9 +200,11 @@ func (h *Handler) putMetricAlarm(w http.ResponseWriter, r *http.Request, body []
 		Tags:                    tagsToMap(in.Tags),
 		Metrics:                 toDriverQueries(in.Metrics),
 		ThresholdMetricID:       in.ThresholdMetricID,
+
+		EvaluateLowSampleCountPercentile: in.EvaluateLowSampleCountPercentile,
 	}
 
-	if err := h.putMetricAlarmCore(r.Context(), &cfg, in.Threshold != nil); err != nil {
+	if err := h.putMetricAlarmCore(r.Context(), &cfg, in.Threshold != nil, in.EvaluationWindow.input()); err != nil {
 		writeDriverErr(w, err)
 		return
 	}
@@ -262,6 +269,9 @@ type metricAlarmCBR struct {
 	InsufficientDataActions    []string             `cbor:"InsufficientDataActions,omitempty"`
 	Metrics                    []metricDataQueryCBR `cbor:"Metrics,omitempty"`
 	ThresholdMetricID          string               `cbor:"ThresholdMetricId,omitempty"`
+
+	EvaluateLowSampleCountPercentile string               `cbor:"EvaluateLowSampleCountPercentile,omitempty"`
+	EvaluationWindow                 *evaluationWindowCBR `cbor:"EvaluationWindow,omitempty"`
 }
 
 type describeAlarmsOutput struct {
@@ -357,6 +367,9 @@ func toMetricAlarmCBR(a *mondriver.AlarmInfo) metricAlarmCBR {
 		InsufficientDataActions: a.InsufficientDataActions,
 		Metrics:                 toQueriesCBR(a.Metrics),
 		ThresholdMetricID:       a.ThresholdMetricID,
+
+		EvaluateLowSampleCountPercentile: a.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                 toEvaluationWindowCBR(a.EvaluationWindow),
 	}
 
 	if !a.StateUpdatedTimestamp.IsZero() {

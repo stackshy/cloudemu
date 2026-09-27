@@ -50,7 +50,7 @@ type GetMetricInput struct {
 	StartTime  time.Time
 	EndTime    time.Time
 	Period     int    // seconds
-	Stat       string // "Average", "Sum", "Minimum", "Maximum", "SampleCount"
+	Stat       string // "Average", "Sum", "Minimum", "Maximum", "SampleCount", or an extended statistic such as "p99"
 	Unit       string // only data stored with this unit; "" means any unit
 }
 
@@ -115,6 +115,20 @@ type AlarmConfig struct {
 	// ThresholdMetricID names the Metrics entry that supplies the threshold
 	// band of an anomaly detection alarm.
 	ThresholdMetricID string
+	// EvaluateLowSampleCountPercentile is "evaluate" (the default when empty)
+	// or "ignore" for a percentile alarm.
+	EvaluateLowSampleCountPercentile string
+	// EvaluationWindow selects a sliding or wall clock window. Nil means the
+	// default sliding window.
+	EvaluationWindow *EvaluationWindow
+}
+
+// EvaluationWindow is the PutMetricAlarm EvaluationWindow union.
+type EvaluationWindow struct {
+	// WallClock is true for a WallClockWindow and false for a SlidingWindow.
+	WallClock bool
+	// Timezone is the WallClockWindow time zone. Empty means UTC.
+	Timezone string
 }
 
 // AlarmInfo describes an alarm.
@@ -150,6 +164,10 @@ type AlarmInfo struct {
 	// Metrics and ThresholdMetricID echo a metric-math alarm's query list.
 	Metrics           []MetricDataQuery
 	ThresholdMetricID string
+	// EvaluateLowSampleCountPercentile and EvaluationWindow echo the alarm's
+	// configuration.
+	EvaluateLowSampleCountPercentile string
+	EvaluationWindow                 *EvaluationWindow
 }
 
 // TimeRange is a closed span of time, such as an anomaly detector's

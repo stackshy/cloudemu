@@ -98,19 +98,37 @@ func (m *Mock) evaluateMetricAlarms(ctx context.Context, keys map[metricKey]bool
 	m.publish(ctx, notices...)
 }
 
+// lowSampleIgnore is the EvaluateLowSampleCountPercentile value that keeps a
+// percentile alarm's state while samples are few.
+const lowSampleIgnore = "ignore"
+
 // alarmParams projects an alarm's thresholds onto the shared evaluator's Params.
 func alarmParams(alarm *alarmData) alarmeval.Params {
-	return alarmeval.Params{
+	p := alarmeval.Params{
 		Period:                 alarmPeriod(alarm),
 		EvaluationPeriods:      alarm.EvaluationPeriods,
 		DatapointsToAlarm:      alarm.DatapointsToAlarm,
 		Stat:                   alarm.Stat,
+		ExtendedStatistic:      alarm.ExtendedStatistic,
+		LowSampleIgnore:        alarm.EvaluateLowSampleCountPercentile == lowSampleIgnore,
 		ComparisonOperator:     alarm.ComparisonOperator,
 		Threshold:              alarm.Threshold,
 		TreatMissingData:       alarm.TreatMissingData,
 		IgnoreMissingByDefault: alarm.Namespace == dynamoDBNamespace,
 		ExtendedRange:          true,
 	}
+
+	// PutMetricAlarm checks the time zone, so a failure here can only come
+	// from an edited snapshot. UTC is the documented default.
+	if w := alarm.EvaluationWindow; w != nil && w.WallClock {
+		p.WallClock = true
+
+		if loc, err := alarmeval.ParseTimezone(w.Timezone); err == nil {
+			p.Location = loc
+		}
+	}
+
+	return p
 }
 
 // evaluateLocked evaluates one alarm at now and applies the result. The
@@ -148,7 +166,7 @@ func evaluationReasonData(datums []driver.MetricDatum, p *alarmeval.Params, now 
 		Version:          "1.0",
 		QueryDate:        now.UTC().Format(reasonDataTimeFormat),
 		StartDate:        alarmeval.EvaluatedStart(datums, p, now).UTC().Format(reasonDataTimeFormat),
-		Statistic:        p.Stat,
+		Statistic:        reasonStatistic(p),
 		Period:           p.Period,
 		RecentDatapoints: alarmeval.RecentDatapoints(datums, p, now),
 	}
@@ -167,6 +185,16 @@ func evaluationReasonData(datums []driver.MetricDatum, p *alarmeval.Params, now 
 	}
 
 	return string(b)
+}
+
+// reasonStatistic is the statistic stateReasonData names: the extended
+// statistic when the alarm uses one.
+func reasonStatistic(p *alarmeval.Params) string {
+	if p.ExtendedStatistic != "" {
+		return p.ExtendedStatistic
+	}
+
+	return p.Stat
 }
 
 // transitionLocked moves an alarm to newState. Nothing happens when the state

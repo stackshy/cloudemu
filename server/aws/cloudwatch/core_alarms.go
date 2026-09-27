@@ -38,8 +38,11 @@ func comparisonOperatorValid(op string) bool {
 
 // putMetricAlarmCore validates the alarm and then stores it. A rejected
 // request never reaches the driver. thresholdSet reports whether the request
-// carried a Threshold.
-func (h *Handler) putMetricAlarmCore(ctx context.Context, cfg *mondriver.AlarmConfig, thresholdSet bool) error {
+// carried a Threshold. window is the decoded EvaluationWindow, nil when the
+// request left it out.
+func (h *Handler) putMetricAlarmCore(
+	ctx context.Context, cfg *mondriver.AlarmConfig, thresholdSet bool, window *evaluationWindowInput,
+) error {
 	if !comparisonOperatorValid(cfg.ComparisonOperator) {
 		return newWireError(errValidation, "Invalid ComparisonOperator: "+cfg.ComparisonOperator)
 	}
@@ -55,6 +58,18 @@ func (h *Handler) putMetricAlarmCore(ctx context.Context, cfg *mondriver.AlarmCo
 	}
 
 	if err := validateAnomalyThreshold(cfg, thresholdSet); err != nil {
+		return err
+	}
+
+	if err := validateAlarmStatistic(cfg); err != nil {
+		return err
+	}
+
+	if err := validateLowSample(cfg.EvaluateLowSampleCountPercentile); err != nil {
+		return err
+	}
+
+	if err := applyEvaluationWindow(cfg, window); err != nil {
 		return err
 	}
 

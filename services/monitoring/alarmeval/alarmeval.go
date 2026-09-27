@@ -7,17 +7,19 @@
 // A CloudWatch alarm (Params.ExtendedRange) looks back over an evaluation
 // range that is longer than EvaluationPeriods, so a few missing recent points
 // do not hide older real ones. The range length is a calibrated
-// approximation, see evaluationRangeExtra.
+// approximation, see evaluationRangeExtra. A wall clock window
+// (Params.WallClock) has no range and looks back exactly EvaluationPeriods.
 //
 // Evaluation is lazy and clock based. A provider evaluates an alarm when data
 // arrives, when the alarm is created or updated, and on any read that shows
 // state once EvaluationInterval has passed since the last evaluation. There is
 // no background ticker.
 //
-// The window slides. It ends at the evaluation instant and is not aligned to
-// the wall clock, which is the documented CloudWatch default: "the boundaries
-// of the window are not aligned to the wall clock"
+// By default the window slides. It ends at the evaluation instant and is not
+// aligned to the wall clock, which is the documented CloudWatch default: "the
+// boundaries of the window are not aligned to the wall clock"
 // (https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/alarm-evaluation.html).
+// Params.WallClock aligns the periods to the clock instead, see wall_clock.go.
 // One difference is kept on purpose. AWS evaluates on its own minute ticks,
 // while cloudemu evaluates at the moment it looks.
 package alarmeval
@@ -140,6 +142,17 @@ type Params struct {
 	// Band is the anomaly band of a band-operator alarm, bucketed like the
 	// datums. A period with data but no band point counts as missing.
 	Band []BandPoint
+	// ExtendedStatistic, when set, is evaluated in place of Stat, for example
+	// p99 or tm90. A period where it is not available counts as missing.
+	ExtendedStatistic string
+	// LowSampleIgnore is EvaluateLowSampleCountPercentile=ignore: a
+	// percentile alarm keeps its state while an evaluated period has too few
+	// samples, see LowSample.
+	LowSampleIgnore bool
+	// WallClock aligns each period to the clock in Location, which is UTC
+	// when nil. It turns off the evaluation range of ExtendedRange.
+	WallClock bool
+	Location  *time.Location
 }
 
 // BandPoint is one point of an anomaly band.
@@ -247,23 +260,23 @@ func (p *Params) normalize() (periodDur time.Duration, evalPeriods, datapointsTo
 // start of the evaluation range, which reaches back past EvaluationPeriods in
 // case recent points are missing.
 func (p *Params) WindowStart(now time.Time) time.Time {
-	periodDur, _, _ := p.normalize()
+	loc := p.locate(now)
 
-	return now.Add(-periodDur * time.Duration(p.span()))
+	return loc.start(loc.span - 1)
 }
 
 // EvaluatedStart is the start of the oldest period an evaluation at now uses.
 // That is EvaluationPeriods back, or further when the evaluation reaches back
 // into the range for older real points.
 func EvaluatedStart(datums []driver.MetricDatum, p *Params, now time.Time) time.Time {
-	periodDur, evalPeriods, _ := p.normalize()
+	_, evalPeriods, _ := p.normalize()
 
 	oldest := evalPeriods - 1
 	if pts := evaluated(p.realPoints(datums, now), evalPeriods); len(pts) > 0 && pts[0].age > oldest {
 		oldest = pts[0].age
 	}
 
-	return now.Add(-periodDur * time.Duration(oldest+1))
+	return p.locate(now).start(oldest)
 }
 
 // MatchDimensions reports whether a datum belongs to the metric series a query
@@ -319,11 +332,14 @@ func EvaluateComparison(value float64, operator string, threshold float64) bool 
 	}
 }
 
-// StatOf aggregates every datum in the slice and returns the requested statistic,
-// or 0 when the slice is empty. It folds a plain Value, a StatisticValues set,
-// and paired Values/Counts arrays uniformly.
+// StatOf aggregates every datum in the slice and returns the requested
+// statistic, standard or extended, or 0 when it is not available. It folds a
+// plain Value, a StatisticValues set, and paired Values/Counts arrays
+// uniformly.
 func StatOf(datums []driver.MetricDatum, stat string) float64 {
-	return aggregate(datums).stat(stat)
+	v, _ := StatValue(datums, stat)
+
+	return v
 }
 
 // evaluationRangeExtra is how many periods past EvaluationPeriods an
@@ -339,38 +355,140 @@ const evaluationRangeExtra = 2
 // evaluation range with ExtendedRange, otherwise EvaluationPeriods.
 func (p *Params) span() int {
 	_, evalPeriods, _ := p.normalize()
-	if p.ExtendedRange {
+	if p.extendedRange() {
 		return evalPeriods + evaluationRangeExtra
 	}
 
 	return evalPeriods
 }
 
+// extendedRange reports whether the CloudWatch evaluation range and the
+// premature rule apply. A wall clock window looks back exactly N periods.
+func (p *Params) extendedRange() bool {
+	return p.ExtendedRange && !p.WallClock
+}
+
+// locator places timestamps in the periods of one evaluation. Period 0 is the
+// most recent. A sliding period i holds (now-(i+1)p, now-ip]. A wall clock
+// period i holds [edges[i+1], edges[i]).
+type locator struct {
+	now    time.Time
+	period time.Duration
+	span   int
+	edges  []time.Time
+}
+
+func (p *Params) locate(now time.Time) *locator {
+	periodDur, _, _ := p.normalize()
+	l := &locator{now: now, period: periodDur, span: p.span()}
+
+	if p.WallClock {
+		zone := p.Location
+		if zone == nil {
+			zone = time.UTC
+		}
+
+		l.edges = wallEdges(now, periodDur, l.span, zone)
+	}
+
+	return l
+}
+
+// index is the period of ts. ok is false for a time outside the span.
+func (l *locator) index(ts time.Time) (int, bool) {
+	if l.edges != nil {
+		return wallIndex(l.edges, ts)
+	}
+
+	return bucketIndex(ts, l.now, l.period, l.span)
+}
+
+// start is the start of period i.
+func (l *locator) start(i int) time.Time {
+	if l.edges != nil {
+		return l.edges[i+1]
+	}
+
+	return l.now.Add(-l.period * time.Duration(i+1))
+}
+
 // slot is one real datapoint of the evaluation range. age 0 is the most
-// recent period.
+// recent period. samples is its SampleCount.
 type slot struct {
-	age    int
-	value  float64
-	breach bool
+	age     int
+	value   float64
+	breach  bool
+	samples float64
+}
+
+// extStat is the parsed ExtendedStatistic, or nil when the alarm uses Stat.
+// A value that does not parse also gives nil, so the alarm falls back to Stat.
+func (p *Params) extStat() *ExtStat {
+	if p.ExtendedStatistic == "" {
+		return nil
+	}
+
+	e, err := ParseExtendedStatistic(p.ExtendedStatistic)
+	if err != nil {
+		return nil
+	}
+
+	return &e
 }
 
 // realPoints returns the periods of the evaluation range that hold a usable
 // datapoint, newest first.
 func (p *Params) realPoints(datums []driver.MetricDatum, now time.Time) []slot {
-	periodDur, _, _ := p.normalize()
-	span := p.span()
-	buckets := bucketByPeriod(datums, now, periodDur, span)
-	band := p.bandBuckets(now, periodDur, span)
+	loc := p.locate(now)
+	ext := p.extStat()
+	buckets := bucketByPeriod(datums, loc, ext != nil)
+	band := p.bandBuckets(loc)
 
 	var out []slot
 
 	for i, b := range buckets {
-		if has, breach := p.judge(b, band[i]); has {
-			out = append(out, slot{age: i, value: b.stat(p.Stat), breach: breach})
+		if b == nil {
+			continue
+		}
+
+		value, ok := b.value(p.Stat, ext)
+		if !ok {
+			continue
+		}
+
+		if has, breach := p.judge(value, band[i]); has {
+			out = append(out, slot{age: i, value: value, breach: breach, samples: b.count})
 		}
 	}
 
 	return out
+}
+
+// lowSampleRetain reports whether EvaluateLowSampleCountPercentile=ignore
+// keeps the state because an evaluated period has too few samples for the
+// percentile.
+func (p *Params) lowSampleRetain(points []slot, evalPeriods int) bool {
+	if !p.LowSampleIgnore {
+		return false
+	}
+
+	ext := p.extStat()
+	if ext == nil {
+		return false
+	}
+
+	frac, ok := ext.percentileFraction()
+	if !ok {
+		return false
+	}
+
+	for _, pt := range evaluated(points, evalPeriods) {
+		if LowSample(frac, pt.samples) {
+			return true
+		}
+	}
+
+	return false
 }
 
 // treatment is the TreatMissingData policy in force. An empty or unknown
@@ -412,6 +530,10 @@ func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) Outco
 	_, evalPeriods, datapointsToAlarm := p.normalize()
 	points := p.realPoints(datums, now)
 
+	if p.lowSampleRetain(points, evalPeriods) {
+		return Outcome{Retain: true}
+	}
+
 	if len(points) >= evalPeriods {
 		return thresholdOutcome(countBreaching(points[:evalPeriods]), datapointsToAlarm)
 	}
@@ -444,7 +566,7 @@ func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) Outco
 // prematureApplies reports whether the premature rule decides a CloudWatch
 // evaluation. Enough real breaching points alarm first, whatever the policy.
 func (p *Params) prematureApplies(points []slot, breaching, datapointsToAlarm int) bool {
-	return p.ExtendedRange && breaching < datapointsToAlarm && premature(points, datapointsToAlarm)
+	return p.extendedRange() && breaching < datapointsToAlarm && premature(points, datapointsToAlarm)
 }
 
 // premature is the rule from "Avoiding premature transitions to alarm state":
@@ -493,33 +615,29 @@ func thresholdOutcome(breaching, datapointsToAlarm int) Outcome {
 	return Outcome{State: StateOK, Reason: "Threshold not crossed"}
 }
 
-// judge reports whether a period has a usable datapoint and whether it
-// breaches. A band alarm needs a band point too.
-func (p *Params) judge(b *statAgg, band *BandPoint) (has, breach bool) {
-	if b == nil {
-		return false, false
-	}
-
+// judge reports whether a period's value is a usable datapoint and whether
+// it breaches. A band alarm needs a band point too.
+func (p *Params) judge(value float64, band *BandPoint) (has, breach bool) {
 	if !IsBandOperator(p.ComparisonOperator) {
-		return true, EvaluateComparison(b.stat(p.Stat), p.ComparisonOperator, p.Threshold)
+		return true, EvaluateComparison(value, p.ComparisonOperator, p.Threshold)
 	}
 
 	if band == nil {
 		return false, false
 	}
 
-	return true, breachesBand(b.stat(p.Stat), p.ComparisonOperator, *band)
+	return true, breachesBand(value, p.ComparisonOperator, *band)
 }
 
 // bandBuckets places each band point in its period, like bucketByPeriod. The
 // latest point wins when a period has more than one. A nil entry has none.
-func (p *Params) bandBuckets(now time.Time, periodDur time.Duration, span int) []*BandPoint {
-	out := make([]*BandPoint, span)
+func (p *Params) bandBuckets(loc *locator) []*BandPoint {
+	out := make([]*BandPoint, loc.span)
 
 	for i := range p.Band {
 		bp := &p.Band[i]
 
-		idx, ok := bucketIndex(bp.Timestamp, now, periodDur, span)
+		idx, ok := loc.index(bp.Timestamp)
 		if !ok {
 			continue
 		}
@@ -536,8 +654,8 @@ func (p *Params) bandBuckets(now time.Time, periodDur time.Duration, span int) [
 // These are the periods RecentDatapoints lists. CloudWatch reports them in the
 // stateReasonData of an anomaly alarm.
 func RecentBand(datums []driver.MetricDatum, p *Params, now time.Time) (lower, upper []float64) {
-	periodDur, evalPeriods, _ := p.normalize()
-	band := p.bandBuckets(now, periodDur, p.span())
+	_, evalPeriods, _ := p.normalize()
+	band := p.bandBuckets(p.locate(now))
 
 	lower, upper = []float64{}, []float64{}
 
@@ -603,18 +721,19 @@ func RecentDatapoints(datums []driver.MetricDatum, p *Params, now time.Time) []f
 }
 
 // bucketByPeriod groups datums into span accumulators indexed by age, where
-// bucket 0 covers the most recent period. A nil bucket had no data.
-func bucketByPeriod(datums []driver.MetricDatum, now time.Time, periodDur time.Duration, span int) []*statAgg {
-	buckets := make([]*statAgg, span)
+// bucket 0 covers the most recent period. A nil bucket had no data. keep
+// retains the raw values an extended statistic needs.
+func bucketByPeriod(datums []driver.MetricDatum, loc *locator, keep bool) []*statAgg {
+	buckets := make([]*statAgg, loc.span)
 
 	for i := range datums {
-		idx, ok := bucketIndex(datums[i].Timestamp, now, periodDur, span)
+		idx, ok := loc.index(datums[i].Timestamp)
 		if !ok {
 			continue
 		}
 
 		if buckets[idx] == nil {
-			buckets[idx] = &statAgg{}
+			buckets[idx] = &statAgg{keep: keep}
 		}
 
 		foldDatum(buckets[idx], &datums[i])
@@ -643,12 +762,58 @@ func bucketIndex(ts, now time.Time, periodDur time.Duration, span int) (int, boo
 // metric datums so any requested statistic can be derived. It treats a plain
 // Value, a pre-aggregated StatisticValues set, and paired Values/Counts arrays
 // uniformly, matching how real CloudWatch folds all three into one series.
+//
+// With keep set it also retains each raw value for the extended statistics.
+// A statistic set hides its raw values, so it makes them unavailable unless
+// it stands for one value: SampleCount 1, or Minimum equal to Maximum.
 type statAgg struct {
 	count float64
 	sum   float64
 	min   float64
 	max   float64
 	seen  bool
+
+	keep     bool
+	obs      []observation
+	unusable bool
+}
+
+// observe retains one raw value with its count.
+func (a *statAgg) observe(value, weight float64) {
+	if a.keep && weight > 0 {
+		a.obs = append(a.obs, observation{value: value, weight: weight})
+	}
+}
+
+// observeSet retains the raw value a statistic set stands for, if it has one.
+func (a *statAgg) observeSet(s *driver.StatisticSet) {
+	switch {
+	case s.SampleCount <= 0:
+	case s.Minimum == s.Maximum:
+		a.observe(s.Minimum, s.SampleCount)
+	case s.SampleCount == 1:
+		a.observe(s.Sum, 1)
+	default:
+		a.unusable = true
+	}
+}
+
+// extStat returns the extended statistic over the retained values.
+func (a *statAgg) extStat(e *ExtStat) (float64, bool) {
+	if !a.seen || a.unusable {
+		return 0, false
+	}
+
+	return e.compute(a.obs)
+}
+
+// value is the statistic an evaluation compares: ext when set, else stat.
+func (a *statAgg) value(stat string, ext *ExtStat) (float64, bool) {
+	if ext != nil {
+		return a.extStat(ext)
+	}
+
+	return a.stat(stat), a.seen
 }
 
 // add folds one observation (or sub-aggregate) into the accumulator: count
@@ -673,15 +838,10 @@ func (a *statAgg) add(count, sum, low, high float64) {
 	a.seen = true
 }
 
-// stat returns the requested statistic, or 0 when no data was accumulated.
-//
-// The accumulator keeps only count/sum/min/max, so a true percentile (an
-// ExtendedStatistic such as p95) is not computable from it: a percentile needs
-// the raw sample distribution. An alarm configured with only an ExtendedStatistic
-// passes an empty Stat here and is therefore approximated by Average. This is a
-// documented approximation (tracked with the deferred percentile support), not a
-// silently wrong answer; it keeps such an alarm evaluating rather than erroring.
-func (a statAgg) stat(stat string) float64 {
+// stat returns the requested standard statistic, or 0 when no data was
+// accumulated. An empty or unknown stat is Average. Extended statistics go
+// through extStat.
+func (a *statAgg) stat(stat string) float64 {
 	if !a.seen {
 		return 0
 	}
@@ -695,17 +855,18 @@ func (a statAgg) stat(stat string) float64 {
 		return a.max
 	case "SampleCount":
 		return a.count
-	default: // "Average", unspecified, or an ExtendedStatistic percentile (approximated)
+	default: // "Average" or unspecified
 		return a.sum / a.count
 	}
 }
 
-// aggregate folds every datum into a single accumulator.
-func aggregate(datums []driver.MetricDatum) statAgg {
-	var a statAgg
+// aggregate folds every datum into a single accumulator. keep retains the
+// raw values an extended statistic needs.
+func aggregate(datums []driver.MetricDatum, keep bool) *statAgg {
+	a := &statAgg{keep: keep}
 
 	for i := range datums {
-		foldDatum(&a, &datums[i])
+		foldDatum(a, &datums[i])
 	}
 
 	return a
@@ -718,6 +879,7 @@ func foldDatum(a *statAgg, d *driver.MetricDatum) {
 	case d.StatisticValues != nil:
 		s := d.StatisticValues
 		a.add(s.SampleCount, s.Sum, s.Minimum, s.Maximum)
+		a.observeSet(s)
 	case len(d.Values) > 0:
 		for j, v := range d.Values {
 			count := 1.0
@@ -726,8 +888,10 @@ func foldDatum(a *statAgg, d *driver.MetricDatum) {
 			}
 
 			a.add(count, v*count, v, v)
+			a.observe(v, count)
 		}
 	default:
 		a.add(1, d.Value, d.Value, d.Value)
+		a.observe(d.Value, 1)
 	}
 }

@@ -59,6 +59,11 @@ type alarmData struct {
 	// Criteria is set on an alert with more than one allOf criterion. Each is
 	// evaluated on its own and the alert fires only when all are breached.
 	Criteria []alarmCriterion
+
+	// EvaluateLowSampleCountPercentile and EvaluationWindow are stored so the
+	// portable API round-trips them. They do not change evaluation here.
+	EvaluateLowSampleCountPercentile string
+	EvaluationWindow                 *driver.EvaluationWindow
 }
 
 // alarmCriterion is one metric condition of a multi-criteria alert. State is
@@ -387,6 +392,9 @@ func (m *Mock) createAlarm(cfg *driver.AlarmConfig, criteria []alarmCriterion) e
 		OKActions:                  append([]string{}, cfg.OKActions...),
 		InsufficientDataActions:    append([]string{}, cfg.InsufficientDataActions...),
 		Criteria:                   criteria,
+
+		EvaluateLowSampleCountPercentile: cfg.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                 copyWindow(cfg.EvaluationWindow),
 	}
 
 	m.alarmMu.Lock()
@@ -715,5 +723,20 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 		OKActions:                  append([]string{}, a.OKActions...),
 		InsufficientDataActions:    append([]string{}, a.InsufficientDataActions...),
 		Dimensions:                 dims,
+
+		EvaluateLowSampleCountPercentile: a.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                 copyWindow(a.EvaluationWindow),
 	}
+}
+
+// copyWindow copies an evaluation window so callers cannot change the stored
+// one.
+func copyWindow(w *driver.EvaluationWindow) *driver.EvaluationWindow {
+	if w == nil {
+		return nil
+	}
+
+	c := *w
+
+	return &c
 }
