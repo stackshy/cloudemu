@@ -111,3 +111,41 @@ func TestSDKConfigCrossValidation(t *testing.T) {
 		t.Fatalf("dynamodbConfig not round-tripped: %#v", out.DataSource.DynamodbConfig)
 	}
 }
+
+// TestSDKUpdateEventBridgeDataSourceWithoutConfig sends the UpdateDataSource
+// shape terraform-provider-aws uses, which never includes eventBridgeConfig.
+func TestSDKUpdateEventBridgeDataSourceWithoutConfig(t *testing.T) {
+	ctx := context.Background()
+	c := newClient(t)
+	apiID := mustCreateAPI(t, c)
+
+	const bus = "arn:aws:events:us-east-1:123456789012:event-bus/default"
+
+	role := aws.String("arn:aws:iam::123456789012:role/r")
+
+	if _, err := c.CreateDataSource(ctx, &awsappsync.CreateDataSourceInput{
+		ApiId: aws.String(apiID), Name: aws.String("bus"), Type: astypes.DataSourceTypeAmazonEventbridge,
+		ServiceRoleArn: role, EventBridgeConfig: &astypes.EventBridgeDataSourceConfig{EventBusArn: aws.String(bus)},
+	}); err != nil {
+		t.Fatalf("CreateDataSource: %v", err)
+	}
+
+	upd, err := c.UpdateDataSource(ctx, &awsappsync.UpdateDataSourceInput{
+		ApiId: aws.String(apiID), Name: aws.String("bus"), Type: astypes.DataSourceTypeAmazonEventbridge,
+		ServiceRoleArn: role, Description: aws.String("changed"),
+	})
+	if err != nil {
+		t.Fatalf("UpdateDataSource: %v", err)
+	}
+
+	ds := upd.DataSource
+	if aws.ToString(ds.Description) != "changed" || ds.EventBridgeConfig == nil || aws.ToString(ds.EventBridgeConfig.EventBusArn) != bus {
+		t.Fatalf("update lost eventBridgeConfig or description: %#v", ds)
+	}
+
+	_, err = c.UpdateDataSource(ctx, &awsappsync.UpdateDataSourceInput{
+		ApiId: aws.String(apiID), Name: aws.String("bus"), Type: astypes.DataSourceTypeAmazonEventbridge,
+		ServiceRoleArn: role, HttpConfig: &astypes.HttpDataSourceConfig{Endpoint: aws.String("https://example.com")},
+	})
+	assertSDKBadRequest(t, err, "HttpConfig is not supported for data source type AMAZON_EVENTBRIDGE.")
+}

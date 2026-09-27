@@ -69,8 +69,9 @@ func (m *Mock) GetDataSource(_ context.Context, apiID, name string) (*driver.Dat
 // UpdateDataSource replaces the mutable fields of a data source while keeping
 // its computed dataSourceArn.
 func (m *Mock) UpdateDataSource(_ context.Context, in *driver.UpdateDataSourceInput) (*driver.DataSource, error) {
-	if err := checkDataSource(in.Type, in.ServiceRoleArn, in.Extra); err != nil {
-		return nil, err
+	rule, ok := dataSourceRules[in.Type]
+	if !ok {
+		return nil, badRequest("data source type %q is not valid", in.Type)
 	}
 
 	ad, err := m.getAPI(in.APIID)
@@ -86,10 +87,18 @@ func (m *Mock) UpdateDataSource(_ context.Context, in *driver.UpdateDataSourceIn
 		return nil, notFound("data source %q not found", in.Name)
 	}
 
+	// Terraform omits some config blocks (eventBridgeConfig) on update, so an
+	// omitted block for the type keeps the stored one.
+	extra := carryBlock(in.Extra, ds.Extra, rule.config)
+
+	if err := validateDataSourceConfig(in.Type, in.ServiceRoleArn, extra); err != nil {
+		return nil, err
+	}
+
 	ds.Type = in.Type
 	ds.Description = in.Description
 	ds.ServiceRoleArn = in.ServiceRoleArn
-	ds.Extra = copyExtra(in.Extra)
+	ds.Extra = extra
 	ad.dataSrcs[in.Name] = ds
 	out := copyDataSource(&ds)
 

@@ -11,6 +11,9 @@ import (
 // the service model. It is also the page size when the caller sends none.
 const maxListResults = 25
 
+// maxAuthorizerTTL is the ceiling on lambdaAuthorizerConfig.authorizerResultTtlInSeconds.
+const maxAuthorizerTTL = 3600
+
 // Request field names for the per-auth-type config blocks.
 const (
 	fieldUserPoolConfig   = "userPoolConfig"
@@ -119,10 +122,11 @@ func present(extra map[string]json.RawMessage, key string) bool {
 	return ok && strings.TrimSpace(string(v)) != "null"
 }
 
-// validateAuthConfig checks that the primary authentication type and every
-// additional provider carry the config block their type needs.
+// validateAuthConfig checks the primary authentication type and every
+// additional provider: each carries the config block its type needs, and an
+// API has at most one AWS_LAMBDA authorizer.
 func validateAuthConfig(authType string, extra map[string]json.RawMessage) error {
-	if err := checkAuthBlock(authType, extra); err != nil {
+	if err := checkProvider(authType, extra); err != nil {
 		return err
 	}
 
@@ -136,20 +140,39 @@ func validateAuthConfig(authType string, extra map[string]json.RawMessage) error
 		}
 	}
 
-	return validateAdditionalAuth(extra)
+	types, err := additionalAuthTypes(extra)
+	if err != nil {
+		return err
+	}
+
+	lambdas := 0
+
+	for _, t := range append(types, authType) {
+		if t == driver.AuthLambda {
+			lambdas++
+		}
+	}
+
+	if lambdas > 1 {
+		return badRequest("Only one AWS_LAMBDA authorization type is allowed per API.")
+	}
+
+	return nil
 }
 
-// validateAdditionalAuth checks each additionalAuthenticationProviders entry
-// names a valid type and carries that type's config block.
-func validateAdditionalAuth(extra map[string]json.RawMessage) error {
+// additionalAuthTypes checks each additionalAuthenticationProviders entry and
+// returns their authentication types.
+func additionalAuthTypes(extra map[string]json.RawMessage) ([]string, error) {
 	if !present(extra, fieldAdditionalAuth) {
-		return nil
+		return nil, nil
 	}
 
 	var providers []map[string]json.RawMessage
 	if err := json.Unmarshal(extra[fieldAdditionalAuth], &providers); err != nil {
-		return badRequest("additionalAuthenticationProviders must be a list")
+		return nil, badRequest("additionalAuthenticationProviders must be a list")
 	}
+
+	types := make([]string, 0, len(providers))
 
 	for _, p := range providers {
 		var t string
@@ -158,29 +181,71 @@ func validateAdditionalAuth(extra map[string]json.RawMessage) error {
 		}
 
 		if t == "" {
-			return badRequest("AuthenticationType can't be null.")
+			return nil, badRequest("AuthenticationType can't be null.")
 		}
 
 		if !validAuthTypes[t] {
-			return badRequest("authenticationType %q is not valid", t)
+			return nil, badRequest("authenticationType %q is not valid", t)
 		}
 
-		if err := checkAuthBlock(t, p); err != nil {
-			return err
+		if err := checkProvider(t, p); err != nil {
+			return nil, err
 		}
+
+		types = append(types, t)
+	}
+
+	return types, nil
+}
+
+// checkProvider requires the config block an authentication type needs and,
+// for AWS_LAMBDA, bounds authorizerResultTtlInSeconds to [0, 3600].
+func checkProvider(authType string, fields map[string]json.RawMessage) error {
+	field, ok := authConfigField[authType]
+	if !ok {
+		return nil
+	}
+
+	if !present(fields, field) {
+		return badRequest("%s can't be null.", configBlockName[field])
+	}
+
+	if authType != driver.AuthLambda {
+		return nil
+	}
+
+	var cfg struct {
+		TTL *int64 `json:"authorizerResultTtlInSeconds"`
+	}
+
+	if err := json.Unmarshal(fields[field], &cfg); err != nil {
+		return badRequest("%s must be an object", configBlockName[field])
+	}
+
+	if cfg.TTL != nil && (*cfg.TTL < 0 || *cfg.TTL > maxAuthorizerTTL) {
+		return badRequest("1 validation error detected: Value '%d' at 'lambdaAuthorizerConfig.authorizerResultTtlInSeconds' "+
+			"failed to satisfy constraint: Member must have value between 0 and %d", *cfg.TTL, maxAuthorizerTTL)
 	}
 
 	return nil
 }
 
-// checkAuthBlock requires the config block an authentication type needs.
-func checkAuthBlock(authType string, fields map[string]json.RawMessage) error {
-	field, ok := authConfigField[authType]
-	if !ok || present(fields, field) {
-		return nil
+// carryBlock returns a copy of the update's fields. When the update omits the
+// config block field, the stored block is kept, so a partial update (as
+// Terraform sends for eventBridgeConfig) neither fails nor drops it.
+func carryBlock(update, stored map[string]json.RawMessage, field string) map[string]json.RawMessage {
+	out := copyExtra(update)
+	if field == "" || present(out, field) || !present(stored, field) {
+		return out
 	}
 
-	return badRequest("%s can't be null.", configBlockName[field])
+	if out == nil {
+		out = map[string]json.RawMessage{}
+	}
+
+	out[field] = append(json.RawMessage(nil), stored[field]...)
+
+	return out
 }
 
 // validateDataSourceConfig checks a data source's type against its config
