@@ -116,11 +116,3 @@ func TestParseLimits(t *testing.T) {
 	_, err = Parse("ALARM(" + strings.Repeat("a", MaxLength) + ")")
 	assert.ErrorContains(t, err, "at most 10240 characters")
 }
-
-func TestMatching(t *testing.T) {
-	r, err := Parse("ALARM(a) OR ALARM(b) OR OK(c)")
-	require.NoError(t, err)
-
-	got := r.Matching(states(map[string]string{"a": "ALARM", "b": "OK", "c": "OK"}))
-	assert.Equal(t, []string{"a", "c"}, got)
-}

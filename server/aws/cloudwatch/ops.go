@@ -226,6 +226,9 @@ type describeAlarmsInput struct {
 	ActionPrefix    string   `cbor:"ActionPrefix,omitempty"`
 	MaxRecords      int      `cbor:"MaxRecords,omitempty"`
 	NextToken       string   `cbor:"NextToken,omitempty"`
+
+	ChildrenOfAlarmName string `cbor:"ChildrenOfAlarmName,omitempty"`
+	ParentsOfAlarmName  string `cbor:"ParentsOfAlarmName,omitempty"`
 }
 
 // maxAlarmPageSize is the AWS cap on DescribeAlarms MaxRecords, used as the page
@@ -274,23 +277,15 @@ func (h *Handler) describeAlarms(w http.ResponseWriter, r *http.Request, body []
 		return
 	}
 
-	matched := make([]metricAlarmCBR, 0)
+	res, err := h.queryAlarmsCore(r.Context(), &in)
+	if err != nil {
+		writeDriverErr(w, err)
+		return
+	}
 
-	// AlarmTypes selects metric alarms, composite alarms, or (when omitted) both.
-	if wantsAlarmType(in.AlarmTypes, alarmTypeMetric) {
-		alarms, err := h.monitoring.DescribeAlarms(r.Context(), in.AlarmNames)
-		if err != nil {
-			writeDriverErr(w, err)
-			return
-		}
-
-		for i := range alarms {
-			if !alarmMatchesFilters(&alarms[i], &in) {
-				continue
-			}
-
-			matched = append(matched, toMetricAlarmCBR(&alarms[i]))
-		}
+	matched := make([]metricAlarmCBR, 0, len(res.MetricAlarms))
+	for i := range res.MetricAlarms {
+		matched = append(matched, toMetricAlarmCBR(&res.MetricAlarms[i]))
 	}
 
 	// Always paginate: real CloudWatch caps a page at 100 alarms and returns a
@@ -320,14 +315,8 @@ func (h *Handler) describeAlarms(w http.ResponseWriter, r *http.Request, body []
 
 	// Composite alarms are a small, separate collection; return them all on the
 	// first page (offset 0) so they aren't duplicated across metric-alarm pages.
-	if offset == 0 && wantsAlarmType(in.AlarmTypes, alarmTypeComposite) {
-		composites, err := h.compositeAlarmRows(r, &in)
-		if err != nil {
-			writeDriverErr(w, err)
-			return
-		}
-
-		resp.CompositeAlarms = composites
+	if offset == 0 {
+		resp.CompositeAlarms = compositeRows(res.CompositeAlarms)
 	}
 
 	writeCBORResponse(w, resp)

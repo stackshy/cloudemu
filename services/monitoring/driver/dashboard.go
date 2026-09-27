@@ -66,3 +66,29 @@ type CompositeAlarmInfo struct {
 	ActionsSuppressedBy     string
 	ActionsSuppressedReason string
 }
+
+// Alarm types of a DescribeAlarms query.
+const (
+	AlarmTypeMetric    = "MetricAlarm"
+	AlarmTypeComposite = "CompositeAlarm"
+)
+
+// AlarmQuery is the filter set of a DescribeAlarms call. AlarmTypes empty
+// means metric alarms only, as on AWS. ChildrenOf and ParentsOf cannot be
+// combined with each other or with the name, state and action filters.
+type AlarmQuery struct {
+	Names        []string
+	NamePrefix   string
+	StateValue   string
+	ActionPrefix string
+	AlarmTypes   []string
+	ChildrenOf   string
+	ParentsOf    string
+}
+
+// AlarmQueryResult holds the metric and composite alarms a query matched,
+// each sorted by name.
+type AlarmQueryResult struct {
+	MetricAlarms    []AlarmInfo
+	CompositeAlarms []CompositeAlarmInfo
+}

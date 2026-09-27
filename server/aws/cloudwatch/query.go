@@ -273,24 +273,20 @@ func (h *Handler) queryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 		AlarmTypes:      queryStringList(r, "AlarmTypes.member."),
 		StateValue:      r.Form.Get("StateValue"),
 		ActionPrefix:    r.Form.Get("ActionPrefix"),
+
+		ChildrenOfAlarmName: r.Form.Get("ChildrenOfAlarmName"),
+		ParentsOfAlarmName:  r.Form.Get("ParentsOfAlarmName"),
 	}
 
-	members := make([]alarmMemberXML, 0)
+	res, err := h.queryAlarmsCore(r.Context(), &in)
+	if err != nil {
+		writeQueryDriverErr(w, err)
+		return
+	}
 
-	if wantsAlarmType(in.AlarmTypes, alarmTypeMetric) {
-		alarms, err := h.monitoring.DescribeAlarms(r.Context(), in.AlarmNames)
-		if err != nil {
-			writeQueryDriverErr(w, err)
-			return
-		}
-
-		for i := range alarms {
-			if !alarmMatchesFilters(&alarms[i], &in) {
-				continue
-			}
-
-			members = append(members, toAlarmMemberXML(&alarms[i]))
-		}
+	members := make([]alarmMemberXML, 0, len(res.MetricAlarms))
+	for i := range res.MetricAlarms {
+		members = append(members, toAlarmMemberXML(&res.MetricAlarms[i]))
 	}
 
 	sort.SliceStable(members, func(i, j int) bool { return members[i].AlarmName < members[j].AlarmName })
@@ -315,14 +311,8 @@ func (h *Handler) queryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 
 	// Composite alarms are a small, separate collection returned in full on the
 	// first page so they aren't duplicated across metric-alarm pages.
-	if offset == 0 && wantsAlarmType(in.AlarmTypes, alarmTypeComposite) {
-		composites, err := h.compositeAlarmRows(r, &in)
-		if err != nil {
-			writeQueryDriverErr(w, err)
-			return
-		}
-
-		result.CompositeAlarms = toCompositeAlarmMemberXMLs(composites)
+	if offset == 0 {
+		result.CompositeAlarms = toCompositeAlarmMemberXMLs(compositeRows(res.CompositeAlarms))
 	}
 
 	writeQueryResponse(w, "DescribeAlarmsResponse", result)

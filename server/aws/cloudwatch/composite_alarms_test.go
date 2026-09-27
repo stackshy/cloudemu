@@ -28,7 +28,7 @@ func TestSDKCompositeAlarmRoundTrip(t *testing.T) {
 		t.Fatalf("PutCompositeAlarm: %v", err)
 	}
 
-	out, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{})
+	out, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{AlarmTypes: []cwtypes.AlarmType{cwtypes.AlarmTypeMetricAlarm, cwtypes.AlarmTypeCompositeAlarm}})
 	if err != nil {
 		t.Fatalf("DescribeAlarms: %v", err)
 	}
@@ -104,13 +104,22 @@ func TestSDKDescribeAlarmsAlarmTypesFilter(t *testing.T) {
 			len(metr.MetricAlarms), len(metr.CompositeAlarms))
 	}
 
-	// Both when unset.
-	both, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{})
+	// Metric alarms only when unset, as the DescribeAlarms API documents.
+	unset, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{})
+	if err != nil {
+		t.Fatalf("DescribeAlarms unset: %v", err)
+	}
+	if len(unset.MetricAlarms) != 1 || len(unset.CompositeAlarms) != 0 {
+		t.Fatalf("no filter: MetricAlarms=%d CompositeAlarms=%d, want 1/0",
+			len(unset.MetricAlarms), len(unset.CompositeAlarms))
+	}
+
+	both, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{AlarmTypes: []cwtypes.AlarmType{cwtypes.AlarmTypeMetricAlarm, cwtypes.AlarmTypeCompositeAlarm}})
 	if err != nil {
 		t.Fatalf("DescribeAlarms both: %v", err)
 	}
 	if len(both.MetricAlarms) != 1 || len(both.CompositeAlarms) != 1 {
-		t.Fatalf("no filter: MetricAlarms=%d CompositeAlarms=%d, want 1/1",
+		t.Fatalf("both types: MetricAlarms=%d CompositeAlarms=%d, want 1/1",
 			len(both.MetricAlarms), len(both.CompositeAlarms))
 	}
 }
@@ -135,7 +144,7 @@ func TestSDKDeleteAlarmsDeletesComposite(t *testing.T) {
 		t.Fatalf("DeleteAlarms: %v", err)
 	}
 
-	out, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{})
+	out, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{AlarmTypes: []cwtypes.AlarmType{cwtypes.AlarmTypeMetricAlarm, cwtypes.AlarmTypeCompositeAlarm}})
 	if err != nil {
 		t.Fatalf("DescribeAlarms: %v", err)
 	}

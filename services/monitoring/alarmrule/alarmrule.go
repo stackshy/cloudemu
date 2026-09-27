@@ -109,20 +109,6 @@ func (r *Rule) Eval(stateOf func(ref string) string) bool {
 	return eval(r.root, stateOf)
 }
 
-// Matching returns the references whose state call is currently true, each
-// once, in rule order.
-func (r *Rule) Matching(stateOf func(ref string) string) []string {
-	var out []string
-
-	walk(r.root, func(n *node) {
-		if n.kind == kindState && stateOf(n.ref) == n.state {
-			out = append(out, n.ref)
-		}
-	})
-
-	return dedupe(out)
-}
-
 func eval(n *node, stateOf func(string) string) bool {
 	switch n.kind {
 	case kindLiteral:
@@ -138,16 +124,6 @@ func eval(n *node, stateOf func(string) string) bool {
 	default:
 		return false
 	}
-}
-
-func walk(n *node, fn func(*node)) {
-	if n == nil {
-		return
-	}
-
-	fn(n)
-	walk(n.left, fn)
-	walk(n.right, fn)
 }
 
 func dedupe(in []string) []string {

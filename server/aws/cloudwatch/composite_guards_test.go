@@ -8,6 +8,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscw "github.com/aws/aws-sdk-go-v2/service/cloudwatch"
+	cwtypes "github.com/aws/aws-sdk-go-v2/service/cloudwatch/types"
 	"github.com/aws/smithy-go"
 )
 
@@ -27,7 +28,7 @@ func TestSDKCompositeSuppressorRoundTrip(t *testing.T) {
 		t.Fatalf("PutCompositeAlarm: %v", err)
 	}
 
-	out, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{AlarmNames: []string{"svc"}})
+	out, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{AlarmNames: []string{"svc"}, AlarmTypes: []cwtypes.AlarmType{cwtypes.AlarmTypeCompositeAlarm}})
 	if err != nil {
 		t.Fatalf("DescribeAlarms: %v", err)
 	}
@@ -78,7 +79,7 @@ func TestSDKCompositeGuards(t *testing.T) {
 	_, err = client.DeleteAlarms(ctx, &awscw.DeleteAlarmsInput{AlarmNames: []string{"p1", "p2"}})
 	requireValidationError(t, err, "at most one composite alarm")
 
-	out, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{})
+	out, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{AlarmTypes: []cwtypes.AlarmType{cwtypes.AlarmTypeMetricAlarm, cwtypes.AlarmTypeCompositeAlarm}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,5 +129,85 @@ func TestQueryCompositeGuards(t *testing.T) {
 	})
 	if code != 400 || !strings.Contains(body, "<Code>ValidationError</Code>") {
 		t.Fatalf("suppressor without periods: %d %s", code, body)
+	}
+}
+
+// DescribeAlarms honours ChildrenOfAlarmName and ParentsOfAlarmName and
+// rejects them with other filters. Before, they were ignored and every alarm
+// came back.
+func TestSDKDescribeAlarmsFamilyFilters(t *testing.T) {
+	client, ctx := newCWClient(t)
+	putChildAlarms(t, client, "a", "b")
+
+	for _, c := range [][2]string{{"mid", "ALARM(a)"}, {"top", "ALARM(mid) OR ALARM(b)"}} {
+		if _, err := client.PutCompositeAlarm(ctx, &awscw.PutCompositeAlarmInput{
+			AlarmName: aws.String(c[0]), AlarmRule: aws.String(c[1]),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	types := []cwtypes.AlarmType{cwtypes.AlarmTypeMetricAlarm, cwtypes.AlarmTypeCompositeAlarm}
+
+	kids, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{ChildrenOfAlarmName: aws.String("top"), AlarmTypes: types})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(kids.MetricAlarms) != 1 || aws.ToString(kids.MetricAlarms[0].AlarmName) != "b" ||
+		len(kids.CompositeAlarms) != 1 || aws.ToString(kids.CompositeAlarms[0].AlarmName) != "mid" {
+		t.Fatalf("children of top = %d metric, %d composite", len(kids.MetricAlarms), len(kids.CompositeAlarms))
+	}
+
+	parents, err := client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{ParentsOfAlarmName: aws.String("a"), AlarmTypes: types})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(parents.MetricAlarms) != 0 || len(parents.CompositeAlarms) != 1 || aws.ToString(parents.CompositeAlarms[0].AlarmName) != "mid" {
+		t.Fatalf("parents of a = %d metric, %d composite", len(parents.MetricAlarms), len(parents.CompositeAlarms))
+	}
+
+	_, err = client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{ChildrenOfAlarmName: aws.String("top"), StateValue: cwtypes.StateValueOk})
+	requireValidationError(t, err, "cannot be used with other filters")
+
+	_, err = client.DescribeAlarms(ctx, &awscw.DescribeAlarmsInput{ChildrenOfAlarmName: aws.String("top"), ParentsOfAlarmName: aws.String("a")})
+	requireValidationError(t, err, "cannot be used together")
+}
+
+func TestQueryDescribeAlarmsFamilyFilters(t *testing.T) {
+	post := newQueryPoster(t)
+
+	if code, body := post(url.Values{
+		"Action": {"PutMetricAlarm"}, "AlarmName": {"a"}, "Namespace": {"MyApp"}, "MetricName": {"A"},
+		"ComparisonOperator": {"GreaterThanThreshold"}, "EvaluationPeriods": {"1"}, "Period": {"60"},
+		"Threshold": {"10"}, "Statistic": {"Average"},
+	}); code != 200 {
+		t.Fatalf("PutMetricAlarm: %d %s", code, body)
+	}
+
+	if code, body := post(url.Values{"Action": {"PutCompositeAlarm"}, "AlarmName": {"top"}, "AlarmRule": {"ALARM(a)"}}); code != 200 {
+		t.Fatalf("PutCompositeAlarm: %d %s", code, body)
+	}
+
+	_, body := post(url.Values{"Action": {"DescribeAlarms"}})
+	if strings.Contains(body, "<AlarmName>top</AlarmName>") {
+		t.Fatalf("composite returned without AlarmTypes: %s", body)
+	}
+
+	_, body = post(url.Values{"Action": {"DescribeAlarms"}, "ChildrenOfAlarmName": {"top"}, "AlarmTypes.member.1": {"MetricAlarm"},
+		"AlarmTypes.member.2": {"CompositeAlarm"}})
+	if !strings.Contains(body, "<AlarmName>a</AlarmName>") || strings.Contains(body, "<AlarmName>top</AlarmName>") {
+		t.Fatalf("children of top: %s", body)
+	}
+
+	_, body = post(url.Values{"Action": {"DescribeAlarms"}, "ParentsOfAlarmName": {"a"}, "AlarmTypes.member.1": {"CompositeAlarm"}})
+	if !strings.Contains(body, "<AlarmName>top</AlarmName>") {
+		t.Fatalf("parents of a: %s", body)
+	}
+
+	code, body := post(url.Values{"Action": {"DescribeAlarms"}, "ParentsOfAlarmName": {"a"}, "AlarmNamePrefix": {"t"}})
+	if code != 400 || !strings.Contains(body, "<Code>ValidationError</Code>") {
+		t.Fatalf("parents with prefix: %d %s", code, body)
 	}
 }

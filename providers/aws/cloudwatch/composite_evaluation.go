@@ -248,8 +248,11 @@ func (m *Mock) transitionCompositeLocked(c *compositeAlarmData, newState, reason
 
 // gateActionsLocked applies the suppressor to a transition and reports
 // whether its actions fire now. With the suppressor in ALARM they are held
-// until it leaves ALARM and its ExtensionPeriod ends. Otherwise they are held
-// for the WaitPeriod, which gives the suppressor time to enter ALARM.
+// until it leaves ALARM and its ExtensionPeriod ends. An active
+// ExtensionPeriod keeps holding them until it ends. A move into ALARM with the
+// suppressor not in ALARM is held for the WaitPeriod, which gives the
+// suppressor time to enter ALARM. API_PutCompositeAlarm ties the WaitPeriod to
+// the suppressor going into ALARM, so other transitions do not wait.
 func (m *Mock) gateActionsLocked(c *compositeAlarmData, oldState string, now time.Time) bool {
 	if c.ActionsSuppressor == "" {
 		return true
@@ -261,7 +264,13 @@ func (m *Mock) gateActionsLocked(c *compositeAlarmData, oldState string, now tim
 		return false
 	}
 
-	if c.WaitPeriod <= 0 {
+	if c.ActionsSuppressedBy == suppressedByExtension && now.Before(c.SuppressUntil) {
+		c.holdActions(suppressedByExtension, c.SuppressUntil, oldState)
+
+		return false
+	}
+
+	if c.State != stateAlarm || c.WaitPeriod <= 0 {
 		c.clearSuppression()
 
 		return true

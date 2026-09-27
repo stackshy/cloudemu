@@ -10,7 +10,6 @@ import (
 	"context"
 	"net/http"
 	"sort"
-	"strings"
 	"time"
 
 	"github.com/fxamacker/cbor/v2"
@@ -124,10 +123,11 @@ type compositeAlarmCBR struct {
 }
 
 // wantsAlarmType reports whether a DescribeAlarms request that lists alarmTypes
-// asks for the given type. An empty list means "both", matching modern AWS.
+// asks for the given type. An empty list means metric alarms only, as the
+// DescribeAlarms API documents.
 func wantsAlarmType(alarmTypes []string, want string) bool {
 	if len(alarmTypes) == 0 {
-		return true
+		return want == alarmTypeMetric
 	}
 
 	for _, t := range alarmTypes {
@@ -139,37 +139,61 @@ func wantsAlarmType(alarmTypes []string, want string) bool {
 	return false
 }
 
-// compositeAlarmRows returns the composite alarms matching the DescribeAlarms
-// filters (names, name prefix, state), sorted by name and rendered for the wire.
-func (h *Handler) compositeAlarmRows(r *http.Request, in *describeAlarmsInput) ([]compositeAlarmCBR, error) {
-	store, ok := h.monitoring.(compositeAlarmStore)
-	if !ok {
-		return nil, nil
+// alarmQuerier is the AWS backend capability that answers DescribeAlarms with
+// every filter applied in the provider.
+type alarmQuerier interface {
+	QueryAlarms(ctx context.Context, q *mondriver.AlarmQuery) (*mondriver.AlarmQueryResult, error)
+}
+
+// queryAlarmsCore runs the DescribeAlarms filters for both protocols. A backend
+// without alarmQuerier has metric alarms only.
+func (h *Handler) queryAlarmsCore(ctx context.Context, in *describeAlarmsInput) (*mondriver.AlarmQueryResult, error) {
+	if qa, ok := h.monitoring.(alarmQuerier); ok {
+		res, err := qa.QueryAlarms(ctx, &mondriver.AlarmQuery{
+			Names:        in.AlarmNames,
+			NamePrefix:   in.AlarmNamePrefix,
+			StateValue:   in.StateValue,
+			ActionPrefix: in.ActionPrefix,
+			AlarmTypes:   in.AlarmTypes,
+			ChildrenOf:   in.ChildrenOfAlarmName,
+			ParentsOf:    in.ParentsOfAlarmName,
+		})
+		if err != nil {
+			return nil, compositeErr(err)
+		}
+
+		return res, nil
 	}
 
-	alarms, err := store.DescribeCompositeAlarms(r.Context(), in.AlarmNames)
+	res := &mondriver.AlarmQueryResult{MetricAlarms: []mondriver.AlarmInfo{}}
+	if !wantsAlarmType(in.AlarmTypes, alarmTypeMetric) {
+		return res, nil
+	}
+
+	alarms, err := h.monitoring.DescribeAlarms(ctx, in.AlarmNames)
 	if err != nil {
 		return nil, err
 	}
 
-	rows := make([]compositeAlarmCBR, 0, len(alarms))
-
 	for i := range alarms {
-		a := &alarms[i]
-		if in.AlarmNamePrefix != "" && !strings.HasPrefix(a.Name, in.AlarmNamePrefix) {
-			continue
+		if alarmMatchesFilters(&alarms[i], in) {
+			res.MetricAlarms = append(res.MetricAlarms, alarms[i])
 		}
-
-		if in.StateValue != "" && a.State != in.StateValue {
-			continue
-		}
-
-		rows = append(rows, toCompositeAlarmCBR(a))
 	}
 
-	sort.SliceStable(rows, func(i, j int) bool { return rows[i].AlarmName < rows[j].AlarmName })
+	sort.SliceStable(res.MetricAlarms, func(i, j int) bool { return res.MetricAlarms[i].Name < res.MetricAlarms[j].Name })
 
-	return rows, nil
+	return res, nil
+}
+
+// compositeRows renders composite alarms for the wire.
+func compositeRows(alarms []mondriver.CompositeAlarmInfo) []compositeAlarmCBR {
+	rows := make([]compositeAlarmCBR, 0, len(alarms))
+	for i := range alarms {
+		rows = append(rows, toCompositeAlarmCBR(&alarms[i]))
+	}
+
+	return rows
 }
 
 func toCompositeAlarmCBR(a *mondriver.CompositeAlarmInfo) compositeAlarmCBR {
