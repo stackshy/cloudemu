@@ -405,6 +405,12 @@ func RecentBand(datums []driver.MetricDatum, p *Params, now time.Time) (lower, u
 
 // missingOutcome is the result when every period in the window is empty and
 // the policy does not fill them in.
+//
+// The AWS docs disagree on AWS/DynamoDB alarms. The user guide page
+// alarms-and-missing-data.html says they "default to ignore missing data" and
+// "You can override this". The TreatMissingData field of API_PutMetricAlarm
+// says they "always ignore missing data even if you choose a different
+// option". This follows the user guide, so an explicit policy wins.
 func missingOutcome(p *Params, evalPeriods int) Outcome {
 	treat := p.TreatMissingData
 	if treat == "" && p.IgnoreMissingByDefault {

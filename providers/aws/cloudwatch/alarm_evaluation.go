@@ -33,11 +33,13 @@ func (m *Mock) Tick(now time.Time) bool {
 }
 
 // evaluateDue evaluates each alarm whose evaluation interval has passed since
-// it was last evaluated. It reports whether any alarm changed state.
+// it was last evaluated, updates the composites above the alarms that changed,
+// and releases held composite actions whose suppressor period has ended. It
+// reports whether any alarm changed state.
 func (m *Mock) evaluateDue(ctx context.Context, now time.Time) bool {
 	var (
 		notices []*alarmNotice
-		changed bool
+		changed []string
 	)
 
 	m.alarmMu.Lock()
@@ -47,33 +49,49 @@ func (m *Mock) evaluateDue(ctx context.Context, now time.Time) bool {
 			continue
 		}
 
-		old := a.State
-		notices = append(notices, m.evaluateLocked(a, now))
-		changed = changed || a.State != old
+		if n := m.evaluateLocked(a, now); n != nil {
+			notices = append(notices, n)
+			changed = append(changed, a.Name)
+		}
 	}
+
+	composites := m.settleLocked(changed, now)
+	notices = append(notices, composites...)
+	notices = append(notices, m.expireSuppressionLocked(now)...)
 
 	m.alarmMu.Unlock()
 
 	m.publish(ctx, notices...)
 
-	return changed
+	return len(changed) > 0 || len(composites) > 0
 }
 
 // evaluateMetricAlarms evaluates, right away, every alarm on one of the given
-// metrics. PutMetricData calls it so new data shows up without waiting for
-// the next interval.
+// metrics, and then the composites above the alarms that changed.
+// PutMetricData calls it so new data shows up without waiting for the next
+// interval.
 func (m *Mock) evaluateMetricAlarms(ctx context.Context, keys map[metricKey]bool) {
 	now := m.opts.Clock.Now()
 
-	var notices []*alarmNotice
+	var (
+		notices []*alarmNotice
+		changed []string
+	)
 
 	m.alarmMu.Lock()
 
 	for _, a := range m.alarms.All() {
-		if alarmReads(a, keys) {
-			notices = append(notices, m.evaluateLocked(a, now))
+		if !alarmReads(a, keys) {
+			continue
+		}
+
+		if n := m.evaluateLocked(a, now); n != nil {
+			notices = append(notices, n)
+			changed = append(changed, a.Name)
 		}
 	}
+
+	notices = append(notices, m.settleLocked(changed, now)...)
 
 	m.alarmMu.Unlock()
 
@@ -180,18 +198,24 @@ func (m *Mock) transitionLocked(alarm *alarmData, newState, reason, reasonData s
 // appendHistory records one alarm state transition in the history log.
 // It runs before the alarm is updated, so alarm still holds the old state.
 func (m *Mock) appendHistory(alarm *alarmData, newState, reason, reasonData string, now time.Time) {
+	m.appendHistoryEntry(alarm.Name, alarm.State, newState, reason, alarm.StateReasonData, reasonData, now)
+}
+
+// appendHistoryEntry records one state transition of a metric or composite
+// alarm.
+func (m *Mock) appendHistoryEntry(name, oldState, newState, reason, oldData, newData string, now time.Time) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	m.history = append(m.history, driver.AlarmHistoryEntry{
-		AlarmName:          alarm.Name,
+		AlarmName:          name,
 		Timestamp:          now,
-		OldState:           alarm.State,
+		OldState:           oldState,
 		NewState:           newState,
 		HistoryItemType:    historyStateUpdate,
-		Reason:             fmt.Sprintf("Transition from %s to %s: %s", alarm.State, newState, reason),
-		OldStateReasonData: alarm.StateReasonData,
-		NewStateReasonData: reasonData,
+		Reason:             fmt.Sprintf("Transition from %s to %s: %s", oldState, newState, reason),
+		OldStateReasonData: oldData,
+		NewStateReasonData: newData,
 	})
 }
 
@@ -204,16 +228,29 @@ func (m *Mock) actionTopics(a *alarmData, oldState, newState string, now time.Ti
 		return nil, ""
 	}
 
-	var actions []string
-
-	switch newState {
-	case stateAlarm:
-		actions = a.AlarmActions
-	case stateOK:
-		actions = a.OKActions
-	case stateInsufficientData:
-		actions = a.InsufficientDataActions
+	topics = snsTopics(stateActions(newState, a.AlarmActions, a.OKActions, a.InsufficientDataActions))
+	if len(topics) == 0 {
+		return nil, ""
 	}
+
+	return topics, m.alarmNotification(a, oldState, newState, now)
+}
+
+// stateActions picks the action list of a state.
+func stateActions(state string, alarmActions, okActions, insufficientActions []string) []string {
+	switch state {
+	case stateAlarm:
+		return alarmActions
+	case stateOK:
+		return okActions
+	default:
+		return insufficientActions
+	}
+}
+
+// snsTopics keeps the actions that are SNS topic ARNs.
+func snsTopics(actions []string) []string {
+	var topics []string
 
 	for _, arn := range actions {
 		if strings.HasPrefix(arn, snsTopicARNPrefix) {
@@ -221,11 +258,7 @@ func (m *Mock) actionTopics(a *alarmData, oldState, newState string, now time.Ti
 		}
 	}
 
-	if len(topics) == 0 {
-		return nil, ""
-	}
-
-	return topics, m.alarmNotification(a, oldState, newState, now)
+	return topics
 }
 
 // publish sends each notice's event to EventBridge and its message to its SNS

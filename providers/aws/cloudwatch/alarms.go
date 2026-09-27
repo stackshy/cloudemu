@@ -50,21 +50,25 @@ func (m *Mock) CreateAlarm(ctx context.Context, cfg driver.AlarmConfig) error {
 	m.ensureAlarmDetectorLocked(alarm)
 
 	var (
-		notice *alarmNotice
-		config *alarmStateEvent
+		notices []*alarmNotice
+		config  *alarmStateEvent
 	)
 
 	if update {
 		config = configEventLocked(operationUpdate, alarm, existing)
 	} else {
 		config = configEventLocked(operationCreate, alarm, nil)
-		notice = m.evaluateLocked(alarm, now)
+
+		if n := m.evaluateLocked(alarm, now); n != nil {
+			notices = append(notices, n)
+			notices = append(notices, m.settleLocked([]string{alarm.Name}, now)...)
+		}
 	}
 
 	m.alarmMu.Unlock()
 
 	m.emitEvent(ctx, config)
-	m.publish(ctx, notice)
+	m.publish(ctx, notices...)
 
 	return nil
 }
@@ -118,24 +122,28 @@ func copyMap(in map[string]string) map[string]string {
 	return out
 }
 
-// DeleteAlarm deletes the alarm with the given name and publishes a
-// configuration change event.
+// DeleteAlarm deletes the metric alarm with the given name and publishes a
+// configuration change event. An alarm that a composite alarm references is
+// not deleted, as on AWS.
 func (m *Mock) DeleteAlarm(ctx context.Context, name string) error {
 	m.alarmMu.Lock()
 
-	a, ok := m.alarms.Get(name)
-	if !ok {
+	if _, ok := m.alarms.Get(name); !ok {
 		m.alarmMu.Unlock()
 
 		return errors.Newf(errors.NotFound, "alarm %q not found", name)
 	}
 
-	config := configEventLocked(operationDelete, a, nil)
-
-	m.alarms.Delete(name)
+	events, err := m.deleteAlarmsLocked([]string{name})
 	m.alarmMu.Unlock()
 
-	m.emitEvent(ctx, config)
+	if err != nil {
+		return err
+	}
+
+	for _, ev := range events {
+		m.emitEvent(ctx, ev)
+	}
 
 	return nil
 }
@@ -182,11 +190,14 @@ func (m *Mock) SetAlarmState(ctx context.Context, name, state, reason string) er
 }
 
 // SetAlarmStateWithData is SetAlarmState with the optional StateReasonData
-// JSON. An empty reasonData clears any data from an earlier transition.
+// JSON. An empty reasonData clears any data from an earlier transition. It
+// accepts a metric or a composite alarm name.
 //
-// The forced state is temporary. AWS says metric alarms "return to their
-// actual state quickly". Here the state holds for one evaluation interval and
-// the next due evaluation puts the real state back.
+// The forced state of a metric alarm is temporary. AWS says metric alarms
+// "return to their actual state quickly". Here the state holds for one
+// evaluation interval and the next due evaluation puts the real state back.
+// A composite keeps the forced state until a child changes or its
+// configuration is put again, as API_SetAlarmState describes.
 func (m *Mock) SetAlarmStateWithData(ctx context.Context, name, state, reason, reasonData string) error {
 	if !alarmeval.ValidState(state) {
 		return errors.Newf(errors.InvalidArgument, "invalid alarm state %q: must be OK, ALARM or INSUFFICIENT_DATA", state)
@@ -196,21 +207,47 @@ func (m *Mock) SetAlarmStateWithData(ctx context.Context, name, state, reason, r
 
 	m.alarmMu.Lock()
 
-	a, ok := m.alarms.Get(name)
-	if !ok {
+	var notice *alarmNotice
+
+	if a, ok := m.alarms.Get(name); ok {
+		a.LastEvaluatedAt = now
+		notice = m.transitionLocked(a, state, reason, reasonData, now)
+		// A call that keeps the state still replaces the reason. It does not
+		// move StateUpdatedTimestamp: API_MetricAlarm defines it as the last
+		// update to StateValue or EvaluationState, and neither changes here.
+		a.StateReason = reason
+		a.StateReasonData = reasonData
+	} else if c, ok := m.compositeAlarms.Get(name); ok {
+		notice = m.setCompositeStateLocked(c, state, reason, reasonData, now)
+	} else {
 		m.alarmMu.Unlock()
 
 		return errors.Newf(errors.NotFound, "alarm %q not found", name)
 	}
 
-	a.LastEvaluatedAt = now
-	notice := m.transitionLocked(a, state, reason, reasonData, now)
-	// A call that keeps the state still replaces the reason.
-	a.StateReason = reason
-	a.StateReasonData = reasonData
+	notices := []*alarmNotice{notice}
+	if notice != nil {
+		notices = append(notices, m.settleLocked([]string{name}, now)...)
+	}
+
 	m.alarmMu.Unlock()
 
-	m.publish(ctx, notice)
+	m.publish(ctx, notices...)
+
+	return nil
+}
+
+// setCompositeStateLocked forces a composite's state. A call that keeps the
+// state still replaces the reason and moves StateUpdatedTimestamp, which
+// API_CompositeAlarm defines as tracking any state update.
+func (m *Mock) setCompositeStateLocked(c *compositeAlarmData, state, reason, reasonData string, now time.Time) *alarmNotice {
+	if c.State != state {
+		return m.transitionCompositeLocked(c, state, reason, reasonData, now)
+	}
+
+	c.StateReason = reason
+	c.StateReasonData = reasonData
+	c.StateUpdatedTimestamp = now
 
 	return nil
 }
