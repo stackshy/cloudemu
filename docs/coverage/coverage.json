@@ -3138,10 +3138,19 @@
         "name": "ContinueUpdateRollback"
       },
       {
+        "name": "CreateChangeSet"
+      },
+      {
         "name": "CreateStack"
       },
       {
+        "name": "DeleteChangeSet"
+      },
+      {
         "name": "DeleteStack"
+      },
+      {
+        "name": "DescribeChangeSet"
       },
       {
         "name": "DescribeStackEvents"
@@ -3153,7 +3162,16 @@
         "name": "DescribeStacks"
       },
       {
+        "name": "ExecuteChangeSet"
+      },
+      {
         "name": "GetTemplate"
+      },
+      {
+        "name": "GetTemplateSummary"
+      },
+      {
+        "name": "ListChangeSets"
       },
       {
         "name": "ListStackResources"

@@ -77,6 +77,31 @@ func (m *Mock) ValidateTemplate(ctx context.Context, in *cfn.ValidateTemplateInp
 	return cfn.Summarize(t), nil
 }
 
+// GetTemplateSummary summarizes the template of a live stack, or one given
+// as a body or URL, the way ValidateTemplate does, plus its resource types
+// and format version.
+func (m *Mock) GetTemplateSummary(ctx context.Context, in *cfn.GetTemplateSummaryInput) (*cfn.TemplateSummary, error) {
+	if in.StackName == "" {
+		return m.ValidateTemplate(ctx, &cfn.ValidateTemplateInput{TemplateBody: in.TemplateBody, TemplateURL: in.TemplateURL})
+	}
+
+	sd, err := m.activeStack(in.StackName)
+	if err != nil {
+		return nil, err
+	}
+
+	sd.mu.RLock()
+	body := sd.stack.TemplateBody
+	sd.mu.RUnlock()
+
+	t, err := cfn.ParseTemplate(body)
+	if err != nil {
+		return nil, err
+	}
+
+	return cfn.Summarize(t), nil
+}
+
 // s3Object names the object a TemplateURL points at.
 type s3Object struct {
 	bucket, key, versionID string

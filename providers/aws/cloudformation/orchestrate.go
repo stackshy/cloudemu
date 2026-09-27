@@ -72,18 +72,40 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 
 	m.emitStackEvent(sd, cfn.StatusCreateInProgress, "User Initiated")
 
-	if failures, _ := m.converge(ctx, sd, effective, resolver, convergeOpts{stopOnFailure: true}); len(failures) > 0 {
-		reason := failureSummary(failures) + " Rollback requested by user."
-		m.emitStackEvent(sd, cfn.StatusRollbackInProgress, reason)
-		m.teardown(ctx, sd)
-		m.emitTerminalEvent(sd, cfn.StatusRollbackComplete, reason)
-	} else {
-		m.emitStackEvent(sd, cfn.StatusCreateComplete, "")
-	}
+	m.provision(ctx, sd, effective, resolver, cfn.OnStackFailureRollback)
 
 	out := sd.snapshotStack()
 
 	return &out, nil
+}
+
+// provision creates the resources of a new stack. It reports whether every
+// resource was created. On a failure onFailure decides what happens next:
+// ROLLBACK deletes what was created and leaves ROLLBACK_COMPLETE,
+// DO_NOTHING keeps it and leaves CREATE_FAILED, and DELETE deletes the stack.
+func (m *Mock) provision(ctx context.Context, sd *stackData, t *cfn.Template, res *cfn.Resolver, onFailure string) bool {
+	failures, _ := m.converge(ctx, sd, t, res, convergeOpts{stopOnFailure: true})
+	if len(failures) == 0 {
+		m.emitStackEvent(sd, cfn.StatusCreateComplete, "")
+		return true
+	}
+
+	reason := failureSummary(failures)
+
+	switch onFailure {
+	case cfn.OnStackFailureDoNothing:
+		m.emitStackEvent(sd, cfn.StatusCreateFailed, reason)
+	case cfn.OnStackFailureDelete:
+		m.emitStackEvent(sd, cfn.StatusDeleteInProgress, reason+" Delete requested by user.")
+		m.finishDelete(ctx, sd)
+	default:
+		reason += " Rollback requested by user."
+		m.emitStackEvent(sd, cfn.StatusRollbackInProgress, reason)
+		m.teardown(ctx, sd)
+		m.emitTerminalEvent(sd, cfn.StatusRollbackComplete, reason)
+	}
+
+	return false
 }
 
 // claimStackSlot atomically inserts sd for name, or replaces a prior

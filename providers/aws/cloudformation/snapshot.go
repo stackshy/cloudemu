@@ -26,6 +26,7 @@ type stackSnapshot struct {
 	DeleteIDs      map[string]string               `json:"deleteIds,omitempty"`
 	Props          map[string]map[string]any       `json:"props,omitempty"`
 	RollbackFailed []string                        `json:"rollbackFailed,omitempty"`
+	ChangeSets     []changeSetRecord               `json:"changeSets,omitempty"`
 }
 
 // Snapshot captures every stack's state under its own name so a restore
@@ -42,6 +43,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 			DeleteIDs:      cloneStringMap(sd.deleteIDs),
 			Props:          cloneProps(sd.props),
 			RollbackFailed: append([]string(nil), sd.rollbackFailed...),
+			ChangeSets:     cloneChangeSets(sd.changeSets),
 		}
 		sd.mu.RUnlock()
 	}
@@ -66,6 +68,10 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 			rollbackFailed: ss.RollbackFailed,
 		}
 
+		for i := range ss.ChangeSets {
+			sd.changeSets = append(sd.changeSets, &ss.ChangeSets[i])
+		}
+
 		if sd.resolved == nil {
 			sd.resolved = map[string]cfn.ResolvedResource{}
 		}
@@ -82,6 +88,17 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	return nil
+}
+
+// cloneChangeSets copies the stored change sets. Their slices and maps are
+// never mutated in place, so sharing them is safe.
+func cloneChangeSets(in []*changeSetRecord) []changeSetRecord {
+	out := make([]changeSetRecord, len(in))
+	for i, rec := range in {
+		out[i] = *rec
+	}
+
+	return out
 }
 
 func cloneResolved(in map[string]cfn.ResolvedResource) map[string]cfn.ResolvedResource {

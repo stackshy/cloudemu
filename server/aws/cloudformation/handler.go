@@ -24,6 +24,12 @@
 //	ListStackResources         API.ListStackResources
 //	GetTemplate                API.GetTemplate
 //	ValidateTemplate           API.ValidateTemplate
+//	GetTemplateSummary         API.GetTemplateSummary
+//	CreateChangeSet            API.CreateChangeSet
+//	DescribeChangeSet          API.DescribeChangeSet
+//	ListChangeSets             API.ListChangeSets
+//	ExecuteChangeSet           API.ExecuteChangeSet
+//	DeleteChangeSet            API.DeleteChangeSet
 //
 // Templates may be JSON or YAML, given inline (TemplateBody) or as an S3
 // object URL (TemplateURL).
@@ -60,6 +66,12 @@ var cfnActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup
 	"ListStackResources":     {},
 	"GetTemplate":            {},
 	"ValidateTemplate":       {},
+	"GetTemplateSummary":     {},
+	actionCreateChangeSet:    {},
+	actionDescribeChangeSet:  {},
+	actionListChangeSets:     {},
+	actionExecuteChangeSet:   {},
+	actionDeleteChangeSet:    {},
 }
 
 // Handler serves CloudFormation query-protocol requests against a stack API.
@@ -123,6 +135,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.getTemplate(w, r)
 	case "ValidateTemplate":
 		h.validateTemplate(w, r)
+	case "GetTemplateSummary":
+		h.getTemplateSummary(w, r)
+	case actionCreateChangeSet, actionDescribeChangeSet, actionListChangeSets, actionExecuteChangeSet, actionDeleteChangeSet:
+		h.serveChangeSet(w, r)
 	default:
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction",
 			"unknown CloudFormation action: "+r.Form.Get("Action"))
@@ -139,7 +155,12 @@ func writeErr(w http.ResponseWriter, err error) {
 
 	switch {
 	case errors.As(err, &named):
-		awsquery.WriteXMLError(w, http.StatusBadRequest, named.Exception(), msg)
+		status := http.StatusBadRequest
+		if named.Exception() == cfn.ExceptionChangeSetNotFound {
+			status = http.StatusNotFound
+		}
+
+		awsquery.WriteXMLError(w, status, named.Exception(), msg)
 	case cerrors.IsNotFound(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "ValidationError", msg)
 	case cerrors.IsAlreadyExists(err):

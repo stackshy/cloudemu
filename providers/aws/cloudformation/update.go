@@ -26,7 +26,8 @@ const (
 // updatableStatus reports the stack statuses UpdateStack accepts.
 func updatableStatus(status string) bool {
 	switch status {
-	case cfn.StatusCreateComplete, cfn.StatusUpdateComplete, cfn.StatusUpdateRollbackComplete:
+	case cfn.StatusCreateComplete, cfn.StatusUpdateComplete, cfn.StatusUpdateRollbackComplete,
+		cfn.StatusCreateFailed, cfn.StatusUpdateFailed:
 		return true
 	default:
 		return false
@@ -86,18 +87,41 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 		return nil, berr
 	}
 
-	m.applyStackMeta(sd, in, plan)
-
-	forward := convergeOpts{stopOnFailure: true, cleanupStatus: cfn.StatusUpdateCompleteCleanupInProgress}
-	if failures, replaced := m.converge(ctx, sd, plan.newT, plan.newRes, forward); len(failures) > 0 {
-		m.rollbackUpdate(ctx, sd, plan, failureSummary(failures), replaced)
-	} else {
-		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
-	}
+	sd.obsoleteChangeSets()
+	m.runUpdate(ctx, sd, in, plan, cfn.OnStackFailureRollback)
 
 	out := sd.snapshotStack()
 
 	return &out, nil
+}
+
+// runUpdate applies a planned update to a stack already in
+// UPDATE_IN_PROGRESS. It reports whether the update succeeded. A failure
+// rolls the stack back, or with DO_NOTHING leaves it UPDATE_FAILED as it is.
+// The old resources of replacements are deleted either way.
+func (m *Mock) runUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStackInput, plan *updatePlan, onFailure string) bool {
+	m.applyStackMeta(sd, in, plan)
+
+	forward := convergeOpts{stopOnFailure: true, cleanupStatus: cfn.StatusUpdateCompleteCleanupInProgress}
+
+	failures, replaced := m.converge(ctx, sd, plan.newT, plan.newRes, forward)
+	if len(failures) == 0 {
+		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
+		return true
+	}
+
+	if onFailure != cfn.OnStackFailureDoNothing {
+		m.rollbackUpdate(ctx, sd, plan, failureSummary(failures), replaced)
+		return false
+	}
+
+	for i := len(replaced) - 1; i >= 0; i-- {
+		_ = m.deletePhysical(ctx, sd, replaced[i].id, &replaced[i].old)
+	}
+
+	m.emitStackEvent(sd, cfn.StatusUpdateFailed, failureSummary(failures))
+
+	return false
 }
 
 // checkUpdatable rejects an update of a stack in a state that does not allow
@@ -516,14 +540,21 @@ func (m *Mock) DeleteStack(ctx context.Context, name string) error {
 	}
 
 	m.emitStackEvent(sd, cfn.StatusDeleteInProgress, reasonUserInitiated)
+	m.finishDelete(ctx, sd)
+
+	return nil
+}
+
+// finishDelete tears down a stack in DELETE_IN_PROGRESS, drops its change
+// sets and marks it DELETE_COMPLETE.
+func (m *Mock) finishDelete(ctx context.Context, sd *stackData) {
 	m.teardown(ctx, sd)
 
 	sd.mu.Lock()
 	sd.stack.DeletionTime = m.clock.Now()
 	sd.rollbackFailed = nil
+	sd.changeSets = nil
 	sd.mu.Unlock()
 
 	m.emitStackEvent(sd, cfn.StatusDeleteComplete, "")
-
-	return nil
 }

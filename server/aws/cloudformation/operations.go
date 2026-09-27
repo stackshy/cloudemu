@@ -198,6 +198,39 @@ func (h *Handler) stackIdentity(r *http.Request, nameOrID string) (id, name stri
 	return stacks[0].ID, stacks[0].Name
 }
 
+func (h *Handler) getTemplateSummary(w http.ResponseWriter, r *http.Request) {
+	sum, err := h.api.GetTemplateSummary(r.Context(), &cfn.GetTemplateSummaryInput{
+		StackName:    r.Form.Get("StackName"),
+		TemplateBody: r.Form.Get("TemplateBody"),
+		TemplateURL:  r.Form.Get("TemplateURL"),
+	})
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	var resp getTemplateSummaryResponse
+	resp.Xmlns = Namespace
+	resp.Meta = meta()
+	resp.Result.Description = sum.Description
+	resp.Result.Capabilities = sum.Capabilities
+	resp.Result.CapabilitiesReason = sum.CapabilitiesReason
+	resp.Result.DeclaredTransforms = sum.DeclaredTransforms
+	resp.Result.ResourceTypes = sum.ResourceTypes
+	resp.Result.Version = sum.Version
+
+	for _, p := range sum.Parameters {
+		x := parameterDeclarationXML{ParameterKey: p.Key, ParameterType: p.Type, NoEcho: p.NoEcho, Description: p.Description}
+		if p.HasDefault {
+			x.DefaultValue = &p.DefaultValue
+		}
+
+		resp.Result.Parameters = append(resp.Result.Parameters, x)
+	}
+
+	awsquery.WriteXMLResponse(w, resp)
+}
+
 func (h *Handler) validateTemplate(w http.ResponseWriter, r *http.Request) {
 	sum, err := h.api.ValidateTemplate(r.Context(), &cfn.ValidateTemplateInput{
 		TemplateBody: r.Form.Get("TemplateBody"),

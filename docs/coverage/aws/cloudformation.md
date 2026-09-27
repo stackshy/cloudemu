@@ -3,17 +3,23 @@
 
 provider-native `cloudformation` wire service (AWS-only) · no portable driver · [AWS index](./README.md)
 
-## Operations (11)
+## Operations (17)
 
 | Operation | Description |
 | --- | --- |
 | `ContinueUpdateRollback` |  |
+| `CreateChangeSet` |  |
 | `CreateStack` |  |
+| `DeleteChangeSet` |  |
 | `DeleteStack` |  |
+| `DescribeChangeSet` |  |
 | `DescribeStackEvents` |  |
 | `DescribeStackResources` |  |
 | `DescribeStacks` |  |
+| `ExecuteChangeSet` |  |
 | `GetTemplate` |  |
+| `GetTemplateSummary` |  |
+| `ListChangeSets` |  |
 | `ListStackResources` |  |
 | `ListStacks` |  |
 | `UpdateStack` |  |

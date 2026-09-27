@@ -52,6 +52,8 @@ type stackData struct {
 	// rollbackFailed lists the resources a failed update rollback could not
 	// restore. It is set only while the stack is UPDATE_ROLLBACK_FAILED.
 	rollbackFailed []string
+	// changeSets holds the stack's change sets in creation order.
+	changeSets []*changeSetRecord
 }
 
 // New builds a CloudFormation mock with an empty provisioner registry. Callers
