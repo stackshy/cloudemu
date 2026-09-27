@@ -55,6 +55,7 @@ func updateInput(form url.Values) cfn.UpdateStackInput {
 		Capabilities: awsquery.ListStrings(form, "Capabilities.member"),
 
 		UsePreviousTemplate: strings.EqualFold(form.Get("UsePreviousTemplate"), "true"),
+		DisableRollback:     strings.EqualFold(form.Get("DisableRollback"), "true"),
 		NotificationARNs:    updateNotificationARNs(form),
 	}
 }
@@ -181,6 +182,7 @@ type stackXML struct {
 	Tags              []tagXML       `xml:"Tags>member,omitempty"`
 	Capabilities      []string       `xml:"Capabilities>member,omitempty"`
 	NotificationARNs  []string       `xml:"NotificationARNs>member,omitempty"`
+	ChangeSetID       string         `xml:"ChangeSetId,omitempty"`
 }
 
 type describeStacksResponse struct {
@@ -300,14 +302,37 @@ type validateTemplateResponse struct {
 	Meta responseMetadata `xml:"ResponseMetadata"`
 }
 
+type parameterDeclarationXML struct {
+	ParameterKey  string  `xml:"ParameterKey"`
+	DefaultValue  *string `xml:"DefaultValue,omitempty"`
+	ParameterType string  `xml:"ParameterType"`
+	NoEcho        bool    `xml:"NoEcho"`
+	Description   string  `xml:"Description,omitempty"`
+}
+
+type getTemplateSummaryResponse struct {
+	XMLName xml.Name `xml:"GetTemplateSummaryResponse"`
+	Xmlns   string   `xml:"xmlns,attr"`
+	Result  struct {
+		Parameters         []parameterDeclarationXML `xml:"Parameters>member"`
+		Description        string                    `xml:"Description,omitempty"`
+		Capabilities       []string                  `xml:"Capabilities>member,omitempty"`
+		CapabilitiesReason string                    `xml:"CapabilitiesReason,omitempty"`
+		ResourceTypes      []string                  `xml:"ResourceTypes>member"`
+		Version            string                    `xml:"Version,omitempty"`
+		DeclaredTransforms []string                  `xml:"DeclaredTransforms>member"`
+	} `xml:"GetTemplateSummaryResult"`
+	Meta responseMetadata `xml:"ResponseMetadata"`
+}
+
 // --- mapping helpers ---
 
 func toStackXML(s *cfn.Stack) stackXML {
 	x := stackXML{
 		StackID: s.ID, StackName: s.Name, Description: s.Description,
 		CreationTime: isoTime(s.CreationTime), LastUpdatedTime: isoTime(s.LastUpdated),
-		StackStatus: s.Status, StackStatusReason: s.StatusReason,
-		Capabilities: s.Capabilities, NotificationARNs: s.NotificationARNs,
+		StackStatus: s.Status, StackStatusReason: s.StatusReason, DisableRollback: s.DisableRollback,
+		Capabilities: s.Capabilities, NotificationARNs: s.NotificationARNs, ChangeSetID: s.ChangeSetID,
 	}
 
 	for _, p := range s.Parameters {

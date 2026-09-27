@@ -52,6 +52,90 @@ type stackData struct {
 	// rollbackFailed lists the resources a failed update rollback could not
 	// restore. It is set only while the stack is UPDATE_ROLLBACK_FAILED.
 	rollbackFailed []string
+	// changeSets holds the stack's change sets in creation order.
+	changeSets []*changeSetRecord
+	// retained holds the old physical resources of replacements made by a
+	// failed update that was not rolled back. The next successful update
+	// deletes them in its cleanup phase, and DeleteStack deletes them.
+	retained []retainedResource
+}
+
+// retainedResource is the old physical resource of a replacement that is
+// waiting for cleanup.
+type retainedResource struct {
+	LogicalID string               `json:"logicalId"`
+	Type      string               `json:"type"`
+	Resolved  cfn.ResolvedResource `json:"resolved"`
+	Props     map[string]any       `json:"props,omitempty"`
+	DeleteID  string               `json:"deleteId"`
+}
+
+func (r *retainedResource) replacement() replacement {
+	return replacement{id: r.LogicalID, old: liveResource{
+		typ: r.Type, resolved: r.Resolved, props: r.Props, deleteID: r.DeleteID,
+	}}
+}
+
+// retain records the old resources of replacements a failed update keeps.
+func (sd *stackData) retain(replaced []replacement) {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	for i := range replaced {
+		old := &replaced[i].old
+		sd.retained = append(sd.retained, retainedResource{
+			LogicalID: replaced[i].id, Type: old.typ, Resolved: old.resolved, Props: old.props, DeleteID: old.deleteID,
+		})
+	}
+}
+
+// drainRetained forgets the retained old resources and returns the ones to
+// delete. A retained resource whose physical id a live resource of the
+// stack now holds again is dropped, not deleted.
+func (sd *stackData) drainRetained() []replacement {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	live := make(map[string]bool, len(sd.resolved))
+	for _, rr := range sd.resolved {
+		live[rr.RefValue] = true
+	}
+
+	var out []replacement
+
+	for i := range sd.retained {
+		if !live[sd.retained[i].Resolved.RefValue] {
+			out = append(out, sd.retained[i].replacement())
+		}
+	}
+
+	sd.retained = nil
+
+	return out
+}
+
+// takeRetained removes and returns the retained old resource of id whose
+// custom name property is name.
+func (sd *stackData) takeRetained(id, rtype, nameProp, name string) (liveResource, bool) {
+	if name == "" {
+		return liveResource{}, false
+	}
+
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	for i := range sd.retained {
+		r := &sd.retained[i]
+		if r.LogicalID == id && r.Type == rtype && cfn.PropString(r.Props, nameProp) == name {
+			old := r.replacement().old
+
+			sd.retained = append(sd.retained[:i], sd.retained[i+1:]...)
+
+			return old, true
+		}
+	}
+
+	return liveResource{}, false
 }
 
 // New builds a CloudFormation mock with an empty provisioner registry. Callers

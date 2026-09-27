@@ -25,6 +25,7 @@ type resolvedRoute struct {
 	resourcePath   string
 	integration    driver.Integration
 	pathParameters map[string]string
+	stageVariables map[string]string
 	apiID          string
 }
 
@@ -71,7 +72,7 @@ func (m *Mock) serveRoute(ctx context.Context, req *driver.ProxyRequest) (*drive
 		return jsonResponse(statusBadGway, `{"message": "Internal server error"}`), noIntegration
 	}
 
-	target := extractLambdaTarget(route.integration.URI)
+	target := extractLambdaTarget(substituteStageVariables(route.integration.URI, route.stageVariables, ""))
 
 	invokeStart := m.opts.Clock.Now()
 	out, fnErr, invErr := m.lambda.InvokeSync(ctx, target, event)
@@ -84,7 +85,9 @@ func (m *Mock) serveRoute(ctx context.Context, req *driver.ProxyRequest) (*drive
 	return mapLambdaResponse(out), integration
 }
 
-// resolve locks the API, resolves the stage and route, and returns a snapshot.
+// resolve locks the API, resolves the stage and the route in the tree the
+// stage's deployment captured, and returns a snapshot. Live edits made since
+// that deployment are not visible here.
 func (m *Mock) resolve(req *driver.ProxyRequest) (resolvedRoute, bool) {
 	ad, err := m.getAPI(req.RestAPIID)
 	if err != nil {
@@ -94,11 +97,12 @@ func (m *Mock) resolve(req *driver.ProxyRequest) (resolvedRoute, bool) {
 	ad.mu.RLock()
 	defer ad.mu.RUnlock()
 
-	if _, ok := ad.stages[req.StageName]; !ok {
+	st, ok := ad.stages[req.StageName]
+	if !ok {
 		return resolvedRoute{}, false
 	}
 
-	match, ok := matchRoute(ad.resources, req.HTTPMethod, req.Path)
+	match, ok := matchRoute(ad.trees[st.DeploymentID], req.HTTPMethod, req.Path)
 	if !ok || match.method.Integration == nil {
 		return resolvedRoute{}, false
 	}
@@ -108,6 +112,7 @@ func (m *Mock) resolve(req *driver.ProxyRequest) (resolvedRoute, bool) {
 		resourcePath:   match.resource.Path,
 		integration:    *match.method.Integration,
 		pathParameters: match.pathParameters,
+		stageVariables: copyStrMap(st.Variables),
 		apiID:          req.RestAPIID,
 	}, true
 }
@@ -192,6 +197,7 @@ func buildProxyEvent(req *driver.ProxyRequest, route *resolvedRoute, accountID s
 		QueryStringParameters:           emptyToNil(req.Query),
 		MultiValueQueryStringParameters: req.MultiValueQuery,
 		PathParameters:                  emptyToNil(route.pathParameters),
+		StageVariables:                  emptyToNil(route.stageVariables),
 		Body:                            req.Body,
 		IsBase64Encoded:                 req.IsBase64Encoded,
 		RequestContext: proxyRequestContext{

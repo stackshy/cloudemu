@@ -27,7 +27,7 @@ AWS's `apigateway` service · portable interface `driver.APIGateway` · [AWS ind
 | `GetRestAPIs` |  |
 | `GetStage` |  |
 | `GetStages` |  |
-| `InvokeRoute` | InvokeRoute resolves req.HTTPMethod+req.Path against the deployed stage's |
+| `InvokeRoute` | InvokeRoute routes req through the tree its stage's deployment captured. |
 | `PutIntegration` |  |
 | `PutMethod` |  |
 | `UpdateDeployment` | UpdateDeployment applies a patchOperations document to a deployment |

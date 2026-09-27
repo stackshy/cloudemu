@@ -326,6 +326,7 @@ func TestUpdateDataSource(t *testing.T) {
 
 	upd, err := m.UpdateDataSource(ctx, &driver.UpdateDataSourceInput{
 		APIID: api.APIID, Name: "src", Type: driver.DataSourceHTTP, Description: "changed",
+		Extra: raw("httpConfig", `{"endpoint":"https://example.com"}`),
 	})
 	if err != nil {
 		t.Fatalf("UpdateDataSource: %v", err)

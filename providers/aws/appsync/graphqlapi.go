@@ -27,6 +27,10 @@ func (m *Mock) CreateGraphqlAPI(_ context.Context, in *driver.CreateGraphqlAPIIn
 		return nil, badRequest("authenticationType %q is not valid", in.AuthenticationType)
 	}
 
+	if err := validateAuthConfig(in.AuthenticationType, in.Extra); err != nil {
+		return nil, err
+	}
+
 	apiID := newAPIID()
 
 	api := driver.GraphqlAPI{
@@ -87,9 +91,16 @@ func (m *Mock) UpdateGraphqlAPI(_ context.Context, in *driver.UpdateGraphqlAPIIn
 	ad.mu.Lock()
 	defer ad.mu.Unlock()
 
+	// An omitted auth config block for the primary type keeps the stored one.
+	extra := carryBlock(in.Extra, ad.api.Extra, authConfigField[in.AuthenticationType])
+
+	if err := validateAuthConfig(in.AuthenticationType, extra); err != nil {
+		return nil, err
+	}
+
 	ad.api.Name = in.Name
 	ad.api.AuthenticationType = in.AuthenticationType
-	ad.api.Extra = copyExtra(in.Extra)
+	ad.api.Extra = extra
 
 	if in.XrayEnabled != nil {
 		ad.api.XrayEnabled = *in.XrayEnabled
@@ -111,6 +122,10 @@ func (m *Mock) DeleteGraphqlAPI(_ context.Context, apiID string) error {
 
 // ListGraphqlAPIs returns a deterministic, deep-copied page of the APIs.
 func (m *Mock) ListGraphqlAPIs(_ context.Context, page driver.Page) ([]driver.GraphqlAPI, string, error) {
+	if err := validatePage(page); err != nil {
+		return nil, "", err
+	}
+
 	ads := m.apis.SortedValues()
 
 	all := make([]driver.GraphqlAPI, 0, len(ads))

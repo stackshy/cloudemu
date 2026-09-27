@@ -92,11 +92,21 @@ type Integration struct {
 }
 
 // Deployment is a point-in-time snapshot of a REST API published to a stage.
+// The resource tree captured at CreateDeployment time is what every stage
+// pointing at the deployment serves. APISummary is that tree's
+// path -> method -> summary view, filled by GetDeployment only.
 type Deployment struct {
 	ID          string
 	RestAPIID   string
 	Description string
 	CreatedDate int64
+	APISummary  map[string]map[string]MethodSnapshot
+}
+
+// MethodSnapshot is one method's entry in a deployment's APISummary.
+type MethodSnapshot struct {
+	AuthorizationType string
+	APIKeyRequired    bool
 }
 
 // Stage is a named, addressable deployment of a REST API (e.g. "prod").
@@ -141,10 +151,13 @@ type PutIntegrationInput struct {
 
 // CreateDeploymentInput carries the fields CreateDeployment accepts. A non-empty
 // StageName auto-creates (or re-points) that stage to the new deployment, exactly
-// as the real CreateDeployment does.
+// as the real CreateDeployment does. StageDescription applies when the stage is
+// created; Variables are merged into the stage's variables.
 type CreateDeploymentInput struct {
-	StageName   string
-	Description string
+	StageName        string
+	StageDescription string
+	Description      string
+	Variables        map[string]string
 }
 
 // CreateStageInput carries the fields CreateStage accepts.
@@ -235,9 +248,9 @@ type APIGateway interface {
 	UpdateStage(ctx context.Context, restAPIID, stageName string, ops []PatchOperation) (*Stage, error)
 	DeleteStage(ctx context.Context, restAPIID, stageName string) error
 
-	// InvokeRoute resolves req.HTTPMethod+req.Path against the deployed stage's
-	// resource tree ({proxy+} greedy paths and {param} placeholders supported)
-	// and, for an AWS_PROXY/AWS Lambda integration, invokes the target function
-	// and returns its mapped HTTP response.
+	// InvokeRoute routes req through the tree its stage's deployment captured.
+	// It resolves req.HTTPMethod+req.Path ({proxy+} greedy paths and {param}
+	// placeholders supported) and, for an AWS_PROXY/AWS Lambda integration,
+	// invokes the target function and returns its mapped HTTP response.
 	InvokeRoute(ctx context.Context, req *ProxyRequest) (*ProxyResponse, error)
 }

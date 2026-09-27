@@ -289,9 +289,11 @@ func (h *Handler) getResources(w http.ResponseWriter, r *http.Request, id string
 		return
 	}
 
+	render := resourceRenderer(r)
+
 	out := listResourcesResponse{Item: make([]resourceResponse, 0, len(resources))}
 	for i := range resources {
-		out.Item = append(out.Item, toResourceResponse(&resources[i]))
+		out.Item = append(out.Item, render(&resources[i]))
 	}
 
 	writeJSON(w, http.StatusOK, out)
@@ -318,7 +320,7 @@ func (h *Handler) serveResourceItem(w http.ResponseWriter, r *http.Request, id, 
 			return
 		}
 
-		writeJSON(w, http.StatusOK, toResourceResponse(res))
+		writeJSON(w, http.StatusOK, resourceRenderer(r)(res))
 	case http.MethodPost:
 		var req createResourceRequest
 		if !decodeJSON(w, r, &req) {
@@ -472,14 +474,43 @@ func (h *Handler) getDeployments(w http.ResponseWriter, r *http.Request, id stri
 //
 //nolint:dupl // parallel item router for deployments vs stages; the shared serveItem shape is intentional
 func (h *Handler) serveDeploymentItem(w http.ResponseWriter, r *http.Request, id, deploymentID string) {
+	render := toDeploymentResponse
+	if r.Method == http.MethodGet && hasEmbed(r, "apisummary") {
+		render = toDeploymentSummaryResponse
+	}
+
 	serveItem(w, r,
 		func(ops []driver.PatchOperation) (*driver.Deployment, error) {
 			return h.ag.UpdateDeployment(r.Context(), id, deploymentID, ops)
 		},
 		func() (*driver.Deployment, error) { return h.ag.GetDeployment(r.Context(), id, deploymentID) },
 		func() error { return h.ag.DeleteDeployment(r.Context(), id, deploymentID) },
-		toDeploymentResponse,
+		render,
 	)
+}
+
+// resourceRenderer picks the resource rendering a GetResource(s) request asks
+// for: full methods under embed=methods, method names only otherwise.
+func resourceRenderer(r *http.Request) func(*driver.Resource) resourceResponse {
+	if hasEmbed(r, "methods") {
+		return toEmbeddedResourceResponse
+	}
+
+	return toResourceResponse
+}
+
+// hasEmbed reports whether the request's embed query parameter (repeated or
+// comma-separated) names want.
+func hasEmbed(r *http.Request, want string) bool {
+	for _, v := range r.URL.Query()["embed"] {
+		for _, e := range strings.Split(v, ",") {
+			if strings.EqualFold(strings.TrimSpace(e), want) {
+				return true
+			}
+		}
+	}
+
+	return false
 }
 
 func (h *Handler) createDeployment(w http.ResponseWriter, r *http.Request, id string) {
@@ -494,7 +525,8 @@ func (h *Handler) createDeployment(w http.ResponseWriter, r *http.Request, id st
 	}
 
 	dep, err := h.ag.CreateDeployment(r.Context(), id, driver.CreateDeploymentInput{
-		StageName: req.StageName, Description: req.Description,
+		StageName: req.StageName, StageDescription: req.StageDescription,
+		Description: req.Description, Variables: req.Variables,
 	})
 	if err != nil {
 		writeErr(w, err)

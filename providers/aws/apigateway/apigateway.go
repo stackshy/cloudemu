@@ -49,11 +49,15 @@ type LambdaInvoker interface {
 // apiData is one REST API plus its full tree, guarded by its own lock. Every
 // resource/method/integration/deployment/stage lives here so a single lock
 // makes each control-plane op atomic and never exposes a half-written tree.
+// trees holds, per deployment id, the resource tree captured when that
+// deployment was created. A stage serves its deployment's tree, never the live
+// resources, so edits stay invisible until the API is redeployed.
 type apiData struct {
 	mu          sync.RWMutex
 	api         driver.RestAPI
 	resources   map[string]*driver.Resource
 	deployments map[string]*driver.Deployment
+	trees       map[string]map[string]*driver.Resource
 	stages      map[string]*driver.Stage
 }
 
@@ -135,6 +139,7 @@ func (m *Mock) CreateRestAPI(_ context.Context, in *driver.CreateRestAPIInput) (
 		api:         api,
 		resources:   map[string]*driver.Resource{rootID: root},
 		deployments: map[string]*driver.Deployment{},
+		trees:       map[string]map[string]*driver.Resource{},
 		stages:      map[string]*driver.Stage{},
 	})
 

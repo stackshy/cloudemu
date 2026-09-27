@@ -25,6 +25,9 @@ type convergeOpts struct {
 	// cleanupStatus is the stack status recorded before the cleanup phase,
 	// or "" to record none.
 	cleanupStatus string
+	// cleanRetained has the cleanup phase also delete the old resources
+	// retained from earlier replacements.
+	cleanRetained bool
 }
 
 // applyFailure is one resource a converge pass could not bring to its target.
@@ -47,6 +50,10 @@ type liveResource struct {
 type replacement struct {
 	id  string
 	old liveResource
+	// reclaimed marks a replacement whose new resource was taken back from
+	// the retained old resources. A rollback retains it again instead of
+	// deleting it.
+	reclaimed bool
 }
 
 // Resource status reasons CloudFormation records on a replacement.
@@ -90,7 +97,12 @@ func (m *Mock) converge(
 		m.emitStackEvent(sd, o.cleanupStatus, "")
 	}
 
-	m.cleanup(ctx, sd, t, o.skip, replaced)
+	var retained []replacement
+	if len(failures) == 0 && o.cleanRetained {
+		retained = sd.drainRetained()
+	}
+
+	m.cleanup(ctx, sd, t, o.skip, append(retained, replaced...))
 
 	return failures, nil
 }
@@ -213,6 +225,10 @@ func (m *Mock) replaceOne(
 ) *applyFailure {
 	m.emitResourceEvent(sd, id, live.resolved.RefValue, live.typ, cfn.ResourceUpdateInProgress, reasonReplacing)
 
+	if f, handled := m.reclaimRetained(ctx, sd, res, id, rdef, live, replaced); handled {
+		return f
+	}
+
 	if f := m.createOne(ctx, sd, res, id, rdef, replaceEvents()); f != nil {
 		return f
 	}
@@ -269,6 +285,15 @@ func (m *Mock) createOne(
 		return fail(err)
 	}
 
+	m.recordCreated(sd, res, id, rdef.Type, out, props, ev.complete)
+
+	return nil
+}
+
+// recordCreated records a resource a provisioner just created.
+func (m *Mock) recordCreated(
+	sd *stackData, res *cfn.Resolver, id, rtype string, out *cfn.ProvisionedResource, props map[string]any, status string,
+) {
 	deleteID := out.DeleteID
 	if deleteID == "" {
 		deleteID = out.PhysicalID
@@ -276,12 +301,58 @@ func (m *Mock) createOne(
 
 	m.record(sd, res, id, cfn.ResolvedResource{RefValue: out.PhysicalID, Attributes: out.Attributes}, props, deleteID)
 	m.upsertResource(sd, &cfn.StackResource{
-		LogicalID: id, PhysicalID: out.PhysicalID, Type: rdef.Type,
-		Status: ev.complete, Timestamp: m.clock.Now(),
+		LogicalID: id, PhysicalID: out.PhysicalID, Type: rtype, Status: status, Timestamp: m.clock.Now(),
 	})
-	m.emitResourceEvent(sd, id, out.PhysicalID, rdef.Type, ev.complete, "")
+	m.emitResourceEvent(sd, id, out.PhysicalID, rtype, status, "")
+}
 
-	return nil
+// reclaimRetained handles a replacement onto the custom name of an old
+// resource the stack retained from a failed update. The name is created
+// again when the old resource is gone. When it still exists it is taken
+// back and updated in place. The resource being replaced is queued for
+// cleanup either way. handled is false when no retained resource has the
+// name.
+func (m *Mock) reclaimRetained(
+	ctx context.Context, sd *stackData, res *cfn.Resolver, id string, rdef cfn.ResourceDef,
+	live *liveResource, replaced *[]replacement,
+) (f *applyFailure, handled bool) {
+	prov := m.registry[rdef.Type]
+
+	named, ok := prov.(cfn.NamedResource)
+	if !ok {
+		return nil, false
+	}
+
+	props, err := resolveProps(res, rdef.Properties)
+	if err != nil {
+		return nil, false
+	}
+
+	old, ok := sd.takeRetained(id, rdef.Type, named.NameProperty(), cfn.PropString(props, named.NameProperty()))
+	if !ok {
+		return nil, false
+	}
+
+	out, err := prov.Create(ctx, m.resourceRequest(res, id, rdef.Type, props))
+
+	switch {
+	case err == nil:
+		m.recordCreated(sd, res, id, rdef.Type, out, props, cfn.ResourceUpdateComplete)
+	case cerrors.IsAlreadyExists(err):
+		m.record(sd, res, id, old.resolved, old.props, old.deleteID)
+		*replaced = append(*replaced, replacement{id: id, old: *live, reclaimed: true})
+
+		return m.updateOne(ctx, sd, res, id, rdef, &old, props), true
+	default:
+		m.emitResourceEvent(sd, id, "", rdef.Type, cfn.ResourceUpdateFailed, cerrors.Message(err))
+		sd.retain([]replacement{{id: id, old: old}})
+
+		return &applyFailure{logicalID: id, verb: verbUpdate, err: err}, true
+	}
+
+	*replaced = append(*replaced, replacement{id: id, old: *live})
+
+	return nil, true
 }
 
 // updateOne changes a live resource in place. The physical id stays the same.
@@ -371,8 +442,16 @@ func (m *Mock) cleanup(
 	}
 }
 
-// teardown deletes every provisioned resource in reverse creation order.
+// teardown deletes every provisioned resource in reverse creation order,
+// then any old resources retained from replacements.
 func (m *Mock) teardown(ctx context.Context, sd *stackData) {
+	defer func() {
+		retained := sd.drainRetained()
+		for i := len(retained) - 1; i >= 0; i-- {
+			_ = m.deletePhysical(ctx, sd, retained[i].id, &retained[i].old)
+		}
+	}()
+
 	sd.mu.RLock()
 	order := append([]string(nil), sd.provisionOrder...)
 	sd.mu.RUnlock()
@@ -426,7 +505,9 @@ func (m *Mock) restoreReplaced(ctx context.Context, sd *stackData, replaced []re
 	for i := len(replaced) - 1; i >= 0; i-- {
 		r := &replaced[i]
 
-		if cur, ok := sd.live(r.id); ok {
+		if cur, ok := sd.live(r.id); ok && r.reclaimed {
+			sd.retain([]replacement{{id: r.id, old: cur}})
+		} else if ok {
 			_ = m.deletePhysical(ctx, sd, r.id, &cur)
 		}
 

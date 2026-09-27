@@ -26,7 +26,7 @@ func (m *Mock) CreateResource(_ context.Context, restAPIID, parentID, pathPart s
 
 	parent, ok := ad.resources[parentID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", parentID)
+		return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	fullPath := joinPath(parent.Path, pathPart)
@@ -93,7 +93,7 @@ func (m *Mock) DeleteResource(_ context.Context, restAPIID, resourceID string) e
 	defer ad.mu.Unlock()
 
 	if _, ok := ad.resources[resourceID]; !ok {
-		return cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	if resourceID == ad.api.RootResourceID {
@@ -143,7 +143,7 @@ func (m *Mock) GetResource(_ context.Context, restAPIID, resourceID string) (*dr
 
 	r, ok := ad.resources[resourceID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	out := copyResource(r)

@@ -109,7 +109,7 @@ func (m *Mock) UpdateResource(
 
 	res, ok := ad.resources[resourceID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	for _, op := range ops {
@@ -122,7 +122,7 @@ func (m *Mock) UpdateResource(
 			}
 
 			if _, ok := ad.resources[op.Value]; !ok {
-				return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", op.Value)
+				return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 			}
 
 			// Reject a move into the resource's own subtree: the target must not
@@ -174,12 +174,12 @@ func (m *Mock) UpdateMethod(
 
 	res, ok := ad.resources[resourceID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	mth, ok := res.Methods[normalizeMethod(httpMethod)]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid method identifier specified %s", httpMethod)
+		return nil, cerrors.New(cerrors.NotFound, msgMethodNotFound)
 	}
 
 	for _, op := range ops {
@@ -210,12 +210,12 @@ func (m *Mock) UpdateIntegration(
 
 	res, ok := ad.resources[resourceID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	mth, ok := res.Methods[normalizeMethod(httpMethod)]
 	if !ok || mth.Integration == nil {
-		return nil, cerrors.New(cerrors.NotFound, "No integration defined for method")
+		return nil, cerrors.New(cerrors.NotFound, msgIntegrationNotFound)
 	}
 
 	for _, op := range ops {
@@ -260,7 +260,7 @@ func (m *Mock) UpdateDeployment(
 
 	dep, ok := ad.deployments[deploymentID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid deployment identifier specified %s", deploymentID)
+		return nil, cerrors.New(cerrors.NotFound, msgDeploymentNotFound)
 	}
 
 	for _, op := range ops {
@@ -310,7 +310,7 @@ func applyStagePatch(ad *apiData, st *driver.Stage, op driver.PatchOperation) er
 		st.Description = op.Value
 	case op.Path == "/deploymentId":
 		if _, ok := ad.deployments[op.Value]; !ok {
-			return cerrors.Newf(cerrors.NotFound, "Invalid deployment identifier specified %s", op.Value)
+			return cerrors.New(cerrors.NotFound, msgDeploymentNotFound)
 		}
 
 		st.DeploymentID = op.Value

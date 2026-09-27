@@ -104,7 +104,7 @@ func buildProxyAPI(t *testing.T, base string) string {
 		`{"authorizationType":"NONE"}`)
 
 	doJSON(t, http.MethodPut, base+"/restapis/"+apiID+"/resources/"+resID+"/methods/ANY/integration",
-		`{"type":"AWS_PROXY","integrationHttpMethod":"POST","uri":"`+lambdaURI+`"}`)
+		`{"type":"AWS_PROXY","httpMethod":"POST","uri":"`+lambdaURI+`"}`)
 
 	doJSON(t, http.MethodPost, base+"/restapis/"+apiID+"/deployments", `{"stageName":"prod"}`)
 
@@ -184,9 +184,12 @@ func TestE2E_HostFormRouting(t *testing.T) {
 func TestE2E_UndefinedRouteForbidden(t *testing.T) {
 	srv := newE2E(t)
 
-	// A REST API that exists but has no matching resource for this path.
+	// A deployed REST API that has no resource matching this path.
 	api := doJSON(t, http.MethodPost, srv.URL+"/restapis", `{"name":"empty"}`)
 	apiID, _ := api["id"].(string)
+	rootID, _ := api["rootResourceId"].(string)
+	doJSON(t, http.MethodPut, srv.URL+"/restapis/"+apiID+"/resources/"+rootID+"/methods/GET", `{"authorizationType":"NONE"}`)
+	doJSON(t, http.MethodPut, srv.URL+"/restapis/"+apiID+"/resources/"+rootID+"/methods/GET/integration", `{"type":"MOCK"}`)
 	doJSON(t, http.MethodPost, srv.URL+"/restapis/"+apiID+"/deployments", `{"stageName":"prod"}`)
 
 	resp, err := http.Get(srv.URL + "/restapis/" + apiID + "/prod/_user_request_/anything") //nolint:noctx // test
@@ -301,7 +304,7 @@ func TestE2E_ControlPlaneRoundTrip(t *testing.T) {
 	apiID, _ := api["id"].(string)
 
 	got := doJSON(t, http.MethodGet, srv.URL+"/restapis/"+apiID, "")
-	if got["name"] != "petstore" || got["description"] != "d" {
+	if got["name"] != "petstore" || got["description"] != "d" || got["apiStatus"] != "AVAILABLE" {
 		t.Fatalf("GetRestApi mismatch: %v", got)
 	}
 
