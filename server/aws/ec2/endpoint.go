@@ -128,6 +128,26 @@ func (h *Handler) describeVPCEndpoints(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) modifyVPCEndpoint(w http.ResponseWriter, r *http.Request) {
 	id := r.Form.Get("VpcEndpointId")
 
+	// A backend that applies the change as a delta does the read-modify-write
+	// under its own lock, so parallel modifies of one endpoint do not race.
+	if sets, ok := h.vpc.(netdriver.VPCEndpointSetModifier); ok {
+		if _, err := sets.ModifyVPCEndpointSets(r.Context(), id, &netdriver.VPCEndpointSetChange{
+			AddRouteTableIDs:       awsquery.ListStrings(r.Form, "AddRouteTableId"),
+			RemoveRouteTableIDs:    awsquery.ListStrings(r.Form, "RemoveRouteTableId"),
+			AddSubnetIDs:           awsquery.ListStrings(r.Form, "AddSubnetId"),
+			RemoveSubnetIDs:        awsquery.ListStrings(r.Form, "RemoveSubnetId"),
+			AddSecurityGroupIDs:    awsquery.ListStrings(r.Form, "AddSecurityGroupId"),
+			RemoveSecurityGroupIDs: awsquery.ListStrings(r.Form, "RemoveSecurityGroupId"),
+		}); err != nil {
+			writeVPCEndpointErr(w, err)
+			return
+		}
+
+		writeReturnTrue(w, "ModifyVpcEndpointResponse")
+
+		return
+	}
+
 	current, err := h.vpc.DescribeVPCEndpoints(r.Context(), []string{id})
 	if err != nil {
 		writeVPCEndpointErr(w, err)
@@ -231,5 +251,12 @@ func toVPCEndpointXML(ep *netdriver.VPCEndpoint) vpcEndpointXML {
 }
 
 func writeVPCEndpointErr(w http.ResponseWriter, err error) {
+	// The only AlreadyExists an endpoint call raises is a second endpoint route
+	// for the same service in one route table.
+	if cerrors.IsAlreadyExists(err) {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "RouteAlreadyExists", cerrors.Message(err))
+		return
+	}
+
 	writeErrWithNotFound(w, err, codeInvalidVpcEndpointID, "DependencyViolation")
 }

@@ -72,17 +72,31 @@ func (*Handler) Matches(r *http.Request) bool {
 // ServeHTTP dispatches to the data plane (execute-api host or a _user_request_
 // path) or the control plane.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	if strings.Contains(r.Host, executeAPIMarker) {
+	switch {
+	case isHostDataPlane(r):
 		h.serveHostDataPlane(w, r)
-		return
-	}
-
-	if strings.Contains(r.URL.Path, "/"+userRequestMark) {
+	case isPathDataPlane(r):
 		h.servePathDataPlane(w, r)
-		return
+	default:
+		h.serveControlPlane(w, r)
 	}
+}
 
-	h.serveControlPlane(w, r)
+// PublicRequest reports whether r is an API invocation (either data-plane
+// form), which real API Gateway accepts without SigV4 unless the method uses
+// AWS_IAM authorization. Control-plane requests always need SigV4.
+func (*Handler) PublicRequest(r *http.Request) bool {
+	return isHostDataPlane(r) || isPathDataPlane(r)
+}
+
+// isHostDataPlane reports a request addressed to an execute-api host.
+func isHostDataPlane(r *http.Request) bool {
+	return strings.Contains(r.Host, executeAPIMarker)
+}
+
+// isPathDataPlane reports a /restapis/{apiId}/{stage}/_user_request_/ invoke.
+func isPathDataPlane(r *http.Request) bool {
+	return strings.Contains(r.URL.Path, "/"+userRequestMark)
 }
 
 // serveControlPlane routes the restJson1 management API under /restapis.

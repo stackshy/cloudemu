@@ -325,6 +325,15 @@ PrefixLists is an OPTIONAL AWS capability (type-asserted).
 | `GetManagedPrefixListEntries` |  |
 | `ModifyManagedPrefixList` |  |
 
+### ServicePrefixLists
+
+ServicePrefixLists is an OPTIONAL AWS capability (type-asserted). The lists
+
+| Operation | Description |
+| --- | --- |
+| `DescribeAWSManagedPrefixLists` | DescribeAWSManagedPrefixLists returns the same lists in the managed prefix |
+| `DescribePrefixLists` | DescribePrefixLists returns the service lists for region, narrowed to ids |
+
 ### SubnetAttributes
 
 SubnetAttributes is an OPTIONAL capability, discovered by type assertion.
@@ -409,6 +418,14 @@ VPCEndpointServices is an OPTIONAL AWS capability (type-asserted).
 | `DescribeVPCEndpointServiceConfigurations` |  |
 | `DescribeVPCEndpointServicePermissions` |  |
 | `ModifyVPCEndpointServicePermissions` |  |
+
+### VPCEndpointSetModifier
+
+VPCEndpointSetModifier is an OPTIONAL AWS capability (type-asserted). It
+
+| Operation | Description |
+| --- | --- |
+| `ModifyVPCEndpointSets` |  |
 
 ### VPNConnections
 

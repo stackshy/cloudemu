@@ -225,6 +225,9 @@ type PrefixList struct {
 	Version       int
 	Entries       []PrefixListEntry
 	Tags          map[string]string
+	// OwnerID is "AWS" for the AWS-managed service lists and empty for a
+	// customer-managed list, which the caller's account owns.
+	OwnerID string
 }
 
 // PrefixListConfig is the input to CreateManagedPrefixList.
@@ -243,6 +246,46 @@ type PrefixLists interface {
 	DescribeManagedPrefixLists(ctx context.Context, ids []string) ([]PrefixList, error)
 	GetManagedPrefixListEntries(ctx context.Context, id string) ([]PrefixListEntry, error)
 	ModifyManagedPrefixList(ctx context.Context, id string, addEntries []PrefixListEntry, removeCIDRs []string) (*PrefixList, error)
+}
+
+// ServicePrefixList is an AWS-managed prefix list for a gateway endpoint
+// service (com.amazonaws.<region>.s3 or .dynamodb), as DescribePrefixLists
+// returns it.
+type ServicePrefixList struct {
+	ID    string
+	Name  string
+	CIDRs []string
+}
+
+// ServicePrefixLists is an OPTIONAL AWS capability (type-asserted). The lists
+// are per region, so every call names the region; an empty region means the
+// provider's own.
+type ServicePrefixLists interface {
+	// DescribePrefixLists returns the service lists for region, narrowed to ids
+	// when given. An unknown id is NotFound.
+	DescribePrefixLists(ctx context.Context, region string, ids []string) ([]ServicePrefixList, error)
+	// DescribeAWSManagedPrefixLists returns the same lists in the managed prefix
+	// list shape (owner AWS, entries = cidrs). Unknown ids are skipped so the
+	// caller can merge the result with customer-managed lists.
+	DescribeAWSManagedPrefixLists(ctx context.Context, region string, ids []string) ([]PrefixList, error)
+}
+
+// VPCEndpointSetChange is the Add*/Remove* id-set part of ModifyVpcEndpoint.
+// An id named in both an Add and its Remove list is dropped.
+type VPCEndpointSetChange struct {
+	AddRouteTableIDs       []string
+	RemoveRouteTableIDs    []string
+	AddSubnetIDs           []string
+	RemoveSubnetIDs        []string
+	AddSecurityGroupIDs    []string
+	RemoveSecurityGroupIDs []string
+}
+
+// VPCEndpointSetModifier is an OPTIONAL AWS capability (type-asserted). It
+// applies a ModifyVpcEndpoint set change to the endpoint's current sets in one
+// step, so concurrent modifies of one endpoint do not overwrite each other.
+type VPCEndpointSetModifier interface {
+	ModifyVPCEndpointSets(ctx context.Context, id string, change *VPCEndpointSetChange) (*VPCEndpoint, error)
 }
 
 // ---- Egress-only Internet Gateway (IPv6) ----

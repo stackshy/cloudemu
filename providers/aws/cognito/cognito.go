@@ -1,12 +1,8 @@
-// Package cognito provides an in-memory mock implementation of the AWS Cognito
-// user-pools (cognito-idp) control plane: user pools, their app clients, and
-// hosted-UI domains, plus resource tagging.
+// Package cognito provides an in-memory mock of AWS Cognito user pools
+// (cognito-idp): user pools, their app clients, hosted-UI domains, resource
+// tagging, and pool users with the admin user-management operations.
 //
-// This is the configuration control plane only. There is no authentication data
-// plane behind the emulator (sign-up, sign-in, token issuance, users, and
-// groups are out of scope), so the mock covers provisioning and reading pools,
-// clients, and domains and their settings, which is what IaC tools (Terraform,
-// CloudFormation) and the console's create flow exercise.
+// Sign-up, sign-in and token issuance are not modeled yet.
 package cognito
 
 import (
@@ -29,13 +25,15 @@ const clientKeySep = "/"
 // plane.
 type Mock struct {
 	// userPools is keyed by pool id; clients is keyed by "<poolID>/<clientID>";
-	// domains is keyed by the domain string.
+	// domains is keyed by the domain string; users is keyed by
+	// "<poolID>/<username>".
 	userPools *memstore.Store[driver.UserPool]
 	clients   *memstore.Store[driver.UserPoolClient]
 	domains   *memstore.Store[driver.UserPoolDomain]
+	users     *memstore.Store[userRecord]
 
 	// mu serializes compound read-modify-write mutations (pool update, cascading
-	// pool delete) that span more than one store operation.
+	// pool delete, user changes) that span more than one store operation.
 	mu sync.Mutex
 
 	// tagsMu guards the resource-tag side map, keyed by resource ARN.
@@ -51,6 +49,7 @@ func New(opts *config.Options) *Mock {
 		userPools: memstore.New[driver.UserPool](),
 		clients:   memstore.New[driver.UserPoolClient](),
 		domains:   memstore.New[driver.UserPoolDomain](),
+		users:     memstore.New[userRecord](),
 		tags:      map[string]map[string]string{},
 		opts:      opts,
 	}

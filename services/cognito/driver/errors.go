@@ -12,6 +12,16 @@ const (
 	ExLimitExceeded    = "LimitExceededException"
 )
 
+// Exception names for the user-management operations.
+const (
+	ExUserNotFound         = "UserNotFoundException"
+	ExUsernameExists       = "UsernameExistsException"
+	ExAliasExists          = "AliasExistsException"
+	ExInvalidPassword      = "InvalidPasswordException"
+	ExNotAuthorized        = "NotAuthorizedException"
+	ExUnsupportedUserState = "UnsupportedUserStateException"
+)
+
 // APIError tags a canonical cloudemu error with the Cognito exception name it
 // concerns, so the server can emit the right __type while GetCode still resolves
 // the HTTP status through Unwrap.

@@ -3796,6 +3796,40 @@
     "interface": "Cognito",
     "operations": [
       {
+        "name": "AddCustomAttributes",
+        "doc": "AddCustomAttributes appends custom attributes to a pool's schema. Names get"
+      },
+      {
+        "name": "AdminCreateUser",
+        "doc": "AdminCreateUser creates a user in FORCE_CHANGE_PASSWORD with a generated"
+      },
+      {
+        "name": "AdminDeleteUser"
+      },
+      {
+        "name": "AdminDeleteUserAttributes"
+      },
+      {
+        "name": "AdminDisableUser"
+      },
+      {
+        "name": "AdminEnableUser"
+      },
+      {
+        "name": "AdminGetUser"
+      },
+      {
+        "name": "AdminResetUserPassword",
+        "doc": "AdminResetUserPassword moves the user to RESET_REQUIRED."
+      },
+      {
+        "name": "AdminSetUserPassword",
+        "doc": "AdminSetUserPassword sets a password checked against the pool policy. A"
+      },
+      {
+        "name": "AdminUpdateUserAttributes"
+      },
+      {
         "name": "CreateUserPool",
         "doc": "CreateUserPool creates a user pool, generating its id and ARN, seeding the"
       },
@@ -3808,7 +3842,7 @@
       },
       {
         "name": "DeleteUserPool",
-        "doc": "DeleteUserPool removes a user pool and its clients, domains, and tags."
+        "doc": "DeleteUserPool removes a user pool with its users, clients and tags. Like"
       },
       {
         "name": "DeleteUserPoolClient"
@@ -3841,6 +3875,10 @@
       {
         "name": "ListUserPools",
         "doc": "ListUserPools returns pool descriptions in a deterministic order."
+      },
+      {
+        "name": "ListUsers",
+        "doc": "ListUsers returns users sorted by username, filtered by an optional"
       },
       {
         "name": "SetUserPoolMfaConfig",
@@ -11839,6 +11877,20 @@
         ]
       },
       {
+        "name": "ServicePrefixLists",
+        "doc": "ServicePrefixLists is an OPTIONAL AWS capability (type-asserted). The lists",
+        "operations": [
+          {
+            "name": "DescribeAWSManagedPrefixLists",
+            "doc": "DescribeAWSManagedPrefixLists returns the same lists in the managed prefix"
+          },
+          {
+            "name": "DescribePrefixLists",
+            "doc": "DescribePrefixLists returns the service lists for region, narrowed to ids"
+          }
+        ]
+      },
+      {
         "name": "SubnetAttributes",
         "doc": "SubnetAttributes is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
@@ -12009,6 +12061,15 @@
           },
           {
             "name": "ModifyVPCEndpointServicePermissions"
+          }
+        ]
+      },
+      {
+        "name": "VPCEndpointSetModifier",
+        "doc": "VPCEndpointSetModifier is an OPTIONAL AWS capability (type-asserted). It",
+        "operations": [
+          {
+            "name": "ModifyVPCEndpointSets"
           }
         ]
       },

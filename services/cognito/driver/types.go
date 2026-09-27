@@ -264,3 +264,57 @@ type CreateUserPoolDomainInput struct {
 	Domain     string
 	UserPoolID string
 }
+
+// User status values reported by AdminGetUser and ListUsers.
+const (
+	UserStatusUnconfirmed         = "UNCONFIRMED"
+	UserStatusConfirmed           = "CONFIRMED"
+	UserStatusResetRequired       = "RESET_REQUIRED"
+	UserStatusForceChangePassword = "FORCE_CHANGE_PASSWORD"
+)
+
+// AdminCreateUser MessageAction values.
+const (
+	MessageActionResend   = "RESEND"
+	MessageActionSuppress = "SUPPRESS"
+)
+
+// Attribute is one name/value pair on a user.
+type Attribute struct {
+	Name  string
+	Value string
+}
+
+// User is a user in a user pool as AdminGetUser and ListUsers report it. The
+// password is never part of this value.
+type User struct {
+	Username             string
+	Attributes           []Attribute
+	UserCreateDate       time.Time
+	UserLastModifiedDate time.Time
+	Enabled              bool
+	UserStatus           string
+}
+
+// AdminCreateUserInput is the input to AdminCreateUser.
+type AdminCreateUserInput struct {
+	UserPoolID             string
+	Username               string
+	UserAttributes         []Attribute
+	TemporaryPassword      string
+	MessageAction          string
+	DesiredDeliveryMediums []string
+	// ForceAliasCreation moves a verified email or phone alias that another
+	// user already holds to the new user instead of failing.
+	ForceAliasCreation bool
+}
+
+// ListUsersInput is the input to ListUsers. A nil AttributesToGet returns every
+// attribute; an empty, non-nil one returns none.
+type ListUsersInput struct {
+	UserPoolID      string
+	Filter          string
+	AttributesToGet []string
+	Limit           int32
+	PaginationToken string
+}

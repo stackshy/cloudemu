@@ -83,6 +83,11 @@ var jsonRPCServiceByTarget = map[string]string{
 // policies defined, gates the action through CheckPermission. It returns
 // proceed=false only when the action is denied, having already written the 403.
 //
+// strict is set for an STS role session. Its principal is the role, which is
+// evaluated on its policies alone: the root/admin and no-policies bootstrap
+// shortcuts that apply to IAM users do not apply, so a role with no allowing
+// policy, or a role that does not exist, is denied.
+//
 // Authorization is enforced for the JSON-RPC protocol, where the X-Amz-Target
 // header both routes the request and names the service, so the service the gate
 // authorizes is the one the handler runs. The query and REST protocols are
@@ -95,6 +100,7 @@ var jsonRPCServiceByTarget = map[string]string{
 // action+resource authorization bound to the routed operation is a follow-up.
 func authorize(
 	w http.ResponseWriter, r *http.Request, p authctx.Principal, iamDriver iamdriver.IAM, body []byte, accountID string,
+	strict bool,
 ) bool {
 	service, action, decision := deriveAction(r)
 
@@ -108,11 +114,11 @@ func authorize(
 		return false
 	}
 
-	if isAdminPrincipal(p) {
+	if !strict && isAdminPrincipal(p) {
 		return true // account root / bootstrap admin identity: full access.
 	}
 
-	if !principalHasPolicies(r, p, iamDriver) {
+	if !strict && !principalHasPolicies(r, p, iamDriver) {
 		return true // no policies defined: unrestricted (dev-friendly bootstrap).
 	}
 

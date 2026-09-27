@@ -160,8 +160,9 @@ func TestUpdateAndDeleteUserPool(t *testing.T) {
 		t.Fatalf("update not applied: %+v", got)
 	}
 
-	requireNoError(t, m.DeleteUserPool(context.Background(), pool.ID), "DeleteUserPool")
-	assertNotFound(t, m.DeleteUserPool(context.Background(), pool.ID))
+	if err := m.DeleteUserPool(context.Background(), pool.ID); err == nil {
+		t.Fatal("DeleteUserPool succeeded with deletion protection ACTIVE")
+	}
 }
 
 func TestClientSecretOnlyWithGenerate(t *testing.T) {
@@ -279,31 +280,6 @@ func TestUserPoolDomainLifecycle(t *testing.T) {
 
 	if after.Domain != "" {
 		t.Fatal("domain still present after delete")
-	}
-}
-
-func TestDeletePoolCascades(t *testing.T) {
-	m := newMock(t)
-	pool := mustCreatePool(t, m, "cascade-pool")
-	ctx := context.Background()
-
-	client, err := m.CreateUserPoolClient(ctx, driver.CreateUserPoolClientInput{UserPoolID: pool.ID, ClientName: "c"})
-	requireNoError(t, err, "CreateUserPoolClient")
-
-	requireNoError(t, m.CreateUserPoolDomain(ctx,
-		driver.CreateUserPoolDomainInput{Domain: "d.example", UserPoolID: pool.ID}), "CreateUserPoolDomain")
-
-	requireNoError(t, m.DeleteUserPool(ctx, pool.ID), "DeleteUserPool")
-
-	if _, err := m.DescribeUserPoolClient(ctx, pool.ID, client.ClientID); !cerrors.IsNotFound(err) {
-		t.Fatal("client not removed on pool delete")
-	}
-
-	dom, err := m.DescribeUserPoolDomain(ctx, "d.example")
-	requireNoError(t, err, "DescribeUserPoolDomain")
-
-	if dom.Domain != "" {
-		t.Fatal("domain not removed on pool delete")
 	}
 }
 

@@ -95,7 +95,12 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 		}
 	}
 
+	m.mu.Lock()
 	m.routeTables.Delete(id)
+	// A Gateway endpoint that used the table loses it, the same as a
+	// ModifyVpcEndpoint RemoveRouteTableId.
+	m.dropRouteTableFromEndpoints(id)
+	m.mu.Unlock()
 
 	return nil
 }
@@ -151,7 +156,7 @@ func (m *Mock) CreateRoute(
 	}
 
 	for _, r := range rt.Routes {
-		if r.DestinationCIDR == destinationCIDR {
+		if r.DestinationCIDR != "" && r.DestinationCIDR == destinationCIDR {
 			return errors.Newf(errors.AlreadyExists,
 				"route for %q already exists in route table %q", destinationCIDR, routeTableID)
 		}
@@ -209,7 +214,9 @@ func (m *Mock) DeleteRoute(_ context.Context, routeTableID, destinationCIDR stri
 	}
 
 	for i, r := range rt.Routes {
-		if r.DestinationCIDR == destinationCIDR {
+		// Prefix-list routes carry no CIDR, so an empty destination never
+		// matches one of them.
+		if r.DestinationCIDR != "" && r.DestinationCIDR == destinationCIDR {
 			rt.Routes = append(rt.Routes[:i], rt.Routes[i+1:]...)
 			return nil
 		}
