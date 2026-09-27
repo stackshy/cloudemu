@@ -8,9 +8,11 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/apigateway/driver"
 )
 
-// CreateDeployment snapshots the API and, when a StageName is supplied,
-// creates (or re-points) that stage to the new deployment. That's the one-shot
-// deploy the real CreateDeployment performs.
+// CreateDeployment captures the API's current resource tree and, when a
+// StageName is supplied, creates that stage or re-points it at the new
+// deployment. That's the one-shot deploy the real CreateDeployment performs.
+// An API with no methods, or with a method that has no integration, cannot be
+// deployed.
 func (m *Mock) CreateDeployment(
 	_ context.Context, restAPIID string, in driver.CreateDeploymentInput,
 ) (*driver.Deployment, error) {
@@ -22,21 +24,89 @@ func (m *Mock) CreateDeployment(
 	ad.mu.Lock()
 	defer ad.mu.Unlock()
 
+	if err := validateDeployable(ad.resources); err != nil {
+		return nil, err
+	}
+
+	if in.StageName != "" {
+		if err := validateStageName(in.StageName); err != nil {
+			return nil, err
+		}
+	}
+
 	dep := &driver.Deployment{
 		ID: genID(), RestAPIID: restAPIID, Description: in.Description, CreatedDate: m.now(),
 	}
 	ad.deployments[dep.ID] = dep
+	ad.trees[dep.ID] = copyTree(ad.resources)
 
 	if in.StageName != "" {
-		ad.stages[in.StageName] = &driver.Stage{
-			StageName: in.StageName, RestAPIID: restAPIID,
-			DeploymentID: dep.ID, CreatedDate: m.now(),
-		}
+		m.deployToStage(ad, dep.ID, &in)
 	}
 
 	out := *dep
 
 	return &out, nil
+}
+
+// deployToStage points the named stage at deploymentID, creating the stage
+// with the deployment's stage description when it does not exist yet. An
+// existing stage keeps its settings, and the input variables are merged in.
+func (m *Mock) deployToStage(ad *apiData, deploymentID string, in *driver.CreateDeploymentInput) {
+	st, ok := ad.stages[in.StageName]
+	if !ok {
+		st = &driver.Stage{
+			StageName: in.StageName, RestAPIID: ad.api.ID,
+			Description: in.StageDescription, CreatedDate: m.now(),
+		}
+		ad.stages[in.StageName] = st
+	}
+
+	st.DeploymentID = deploymentID
+
+	if len(in.Variables) > 0 && st.Variables == nil {
+		st.Variables = make(map[string]string, len(in.Variables))
+	}
+
+	for k, v := range in.Variables {
+		st.Variables[k] = v
+	}
+}
+
+// copyTree deep-copies a resource tree so a deployment's capture never shares
+// a pointer with the live resources.
+func copyTree(resources map[string]*driver.Resource) map[string]*driver.Resource {
+	out := make(map[string]*driver.Resource, len(resources))
+
+	for id, r := range resources {
+		cp := copyResource(r)
+		out[id] = &cp
+	}
+
+	return out
+}
+
+// apiSummary renders a captured tree as the path -> method -> summary map
+// GetDeployment returns under embed=apisummary.
+func apiSummary(tree map[string]*driver.Resource) map[string]map[string]driver.MethodSnapshot {
+	out := map[string]map[string]driver.MethodSnapshot{}
+
+	for _, r := range tree {
+		if len(r.Methods) == 0 {
+			continue
+		}
+
+		methods := make(map[string]driver.MethodSnapshot, len(r.Methods))
+		for name, mth := range r.Methods {
+			methods[name] = driver.MethodSnapshot{
+				AuthorizationType: mth.AuthorizationType, APIKeyRequired: mth.APIKeyRequired,
+			}
+		}
+
+		out[r.Path] = methods
+	}
+
+	return out
 }
 
 // GetDeployments lists every deployment of a REST API.
@@ -79,10 +149,11 @@ func (m *Mock) GetDeployment(_ context.Context, restAPIID, deploymentID string) 
 
 	d, ok := ad.deployments[deploymentID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid deployment identifier specified %s", deploymentID)
+		return nil, cerrors.New(cerrors.NotFound, msgDeploymentNotFound)
 	}
 
 	out := *d
+	out.APISummary = apiSummary(ad.trees[deploymentID])
 
 	return &out, nil
 }
@@ -101,7 +172,7 @@ func (m *Mock) DeleteDeployment(_ context.Context, restAPIID, deploymentID strin
 	defer ad.mu.Unlock()
 
 	if _, ok := ad.deployments[deploymentID]; !ok {
-		return cerrors.Newf(cerrors.NotFound, "Invalid deployment identifier specified %s", deploymentID)
+		return cerrors.New(cerrors.NotFound, msgDeploymentNotFound)
 	}
 
 	for _, st := range ad.stages {
@@ -112,14 +183,15 @@ func (m *Mock) DeleteDeployment(_ context.Context, restAPIID, deploymentID strin
 	}
 
 	delete(ad.deployments, deploymentID)
+	delete(ad.trees, deploymentID)
 
 	return nil
 }
 
 // CreateStage points a named stage at an existing deployment.
 func (m *Mock) CreateStage(_ context.Context, restAPIID string, in driver.CreateStageInput) (*driver.Stage, error) {
-	if in.StageName == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "stageName is required")
+	if err := validateStageName(in.StageName); err != nil {
+		return nil, err
 	}
 
 	if in.DeploymentID == "" {
@@ -135,11 +207,11 @@ func (m *Mock) CreateStage(_ context.Context, restAPIID string, in driver.Create
 	defer ad.mu.Unlock()
 
 	if _, ok := ad.deployments[in.DeploymentID]; !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid deployment identifier specified %s", in.DeploymentID)
+		return nil, cerrors.New(cerrors.NotFound, msgDeploymentNotFound)
 	}
 
 	if _, exists := ad.stages[in.StageName]; exists {
-		return nil, cerrors.Newf(cerrors.AlreadyExists, "Stage already exists: %s", in.StageName)
+		return nil, cerrors.New(cerrors.AlreadyExists, msgStageExists)
 	}
 
 	st := &driver.Stage{

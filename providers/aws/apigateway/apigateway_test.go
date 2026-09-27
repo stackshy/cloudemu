@@ -290,13 +290,13 @@ func TestInvokeRouteLiteralBeatsGreedy(t *testing.T) {
 	health, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "health")
 	_, _ = m.PutMethod(ctx(), api.ID, health.ID, "GET", driver.PutMethodInput{})
 	_, _ = m.PutIntegration(ctx(), api.ID, health.ID, "GET", driver.PutIntegrationInput{
-		Type: driver.IntegrationAWSProxy, URI: lambdaURI,
+		Type: driver.IntegrationAWSProxy, IntegrationHTTPMethod: "POST", URI: lambdaURI,
 	})
 
 	proxy, _ := m.CreateResource(ctx(), api.ID, api.RootResourceID, "{proxy+}")
 	_, _ = m.PutMethod(ctx(), api.ID, proxy.ID, "ANY", driver.PutMethodInput{})
 	_, _ = m.PutIntegration(ctx(), api.ID, proxy.ID, "ANY", driver.PutIntegrationInput{
-		Type: driver.IntegrationAWSProxy, URI: lambdaURI,
+		Type: driver.IntegrationAWSProxy, IntegrationHTTPMethod: "POST", URI: lambdaURI,
 	})
 
 	_, _ = m.CreateDeployment(ctx(), api.ID, driver.CreateDeploymentInput{StageName: "prod"})

@@ -330,7 +330,7 @@
       },
       {
         "name": "InvokeRoute",
-        "doc": "InvokeRoute resolves req.HTTPMethod+req.Path against the deployed stage's"
+        "doc": "InvokeRoute routes req through the tree its stage's deployment captured."
       },
       {
         "name": "PutIntegration"

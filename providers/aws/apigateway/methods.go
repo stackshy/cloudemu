@@ -21,12 +21,16 @@ func (m *Mock) PutMethod(
 
 	res, ok := ad.resources[resourceID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	method := normalizeMethod(httpMethod)
-	if method == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "httpMethod is required")
+	if !validHTTPMethod(method) {
+		return nil, cerrors.New(cerrors.InvalidArgument, msgInvalidHTTPMethod)
+	}
+
+	if _, exists := res.Methods[method]; exists {
+		return nil, cerrors.New(cerrors.AlreadyExists, msgMethodExists)
 	}
 
 	mth := &driver.Method{
@@ -64,12 +68,12 @@ func (m *Mock) DeleteMethod(_ context.Context, restAPIID, resourceID, httpMethod
 
 	res, ok := ad.resources[resourceID]
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	method := normalizeMethod(httpMethod)
 	if _, ok := res.Methods[method]; !ok {
-		return cerrors.Newf(cerrors.NotFound, "Invalid method identifier specified %s", method)
+		return cerrors.New(cerrors.NotFound, msgMethodNotFound)
 	}
 
 	delete(res.Methods, method)
@@ -82,8 +86,8 @@ func (m *Mock) DeleteMethod(_ context.Context, restAPIID, resourceID, httpMethod
 func (m *Mock) PutIntegration(
 	_ context.Context, restAPIID, resourceID, httpMethod string, in driver.PutIntegrationInput,
 ) (*driver.Integration, error) {
-	if in.Type == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "Integration type is required")
+	if err := validateIntegration(&in); err != nil {
+		return nil, err
 	}
 
 	ad, err := m.getAPI(restAPIID)
@@ -96,14 +100,14 @@ func (m *Mock) PutIntegration(
 
 	res, ok := ad.resources[resourceID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	method := normalizeMethod(httpMethod)
 
 	mth, ok := res.Methods[method]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid method identifier specified %s", method)
+		return nil, cerrors.New(cerrors.NotFound, msgMethodNotFound)
 	}
 
 	ig := &driver.Integration{
@@ -128,7 +132,7 @@ func (m *Mock) GetIntegration(_ context.Context, restAPIID, resourceID, httpMeth
 	}
 
 	if mth.Integration == nil {
-		return nil, cerrors.New(cerrors.NotFound, "No integration defined for method")
+		return nil, cerrors.New(cerrors.NotFound, msgIntegrationNotFound)
 	}
 
 	return mth.Integration, nil
@@ -146,18 +150,18 @@ func (m *Mock) DeleteIntegration(_ context.Context, restAPIID, resourceID, httpM
 
 	res, ok := ad.resources[resourceID]
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	method := normalizeMethod(httpMethod)
 
 	mth, ok := res.Methods[method]
 	if !ok {
-		return cerrors.Newf(cerrors.NotFound, "Invalid method identifier specified %s", method)
+		return cerrors.New(cerrors.NotFound, msgMethodNotFound)
 	}
 
 	if mth.Integration == nil {
-		return cerrors.New(cerrors.NotFound, "No integration defined for method")
+		return cerrors.New(cerrors.NotFound, msgIntegrationNotFound)
 	}
 
 	mth.Integration = nil
@@ -178,12 +182,12 @@ func (m *Mock) lookupMethod(restAPIID, resourceID, httpMethod string) (*driver.M
 
 	res, ok := ad.resources[resourceID]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid resource identifier specified %s", resourceID)
+		return nil, cerrors.New(cerrors.NotFound, msgResourceNotFound)
 	}
 
 	mth, ok := res.Methods[normalizeMethod(httpMethod)]
 	if !ok {
-		return nil, cerrors.Newf(cerrors.NotFound, "Invalid method identifier specified %s", httpMethod)
+		return nil, cerrors.New(cerrors.NotFound, msgMethodNotFound)
 	}
 
 	out := *mth

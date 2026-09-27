@@ -56,10 +56,12 @@ type putMethodRequest struct {
 	APIKeyRequired    bool   `json:"apiKeyRequired"`
 }
 
-// putIntegrationRequest is the PutIntegration request body.
+// putIntegrationRequest is the PutIntegration request body. The integration's
+// backend method travels as "httpMethod" on the wire (the model's locationName
+// for integrationHttpMethod).
 type putIntegrationRequest struct {
 	Type                  string `json:"type"`
-	IntegrationHTTPMethod string `json:"integrationHttpMethod"`
+	IntegrationHTTPMethod string `json:"httpMethod"`
 	URI                   string `json:"uri"`
 	PassthroughBehavior   string `json:"passthroughBehavior"`
 	TimeoutInMillis       int    `json:"timeoutInMillis"`
@@ -67,8 +69,10 @@ type putIntegrationRequest struct {
 
 // createDeploymentRequest is the CreateDeployment request body.
 type createDeploymentRequest struct {
-	StageName   string `json:"stageName"`
-	Description string `json:"description"`
+	StageName        string            `json:"stageName"`
+	StageDescription string            `json:"stageDescription"`
+	Description      string            `json:"description"`
+	Variables        map[string]string `json:"variables"`
 }
 
 // createStageRequest is the CreateStage request body.
@@ -79,6 +83,9 @@ type createStageRequest struct {
 	Variables    map[string]string `json:"variables"`
 }
 
+// apiStatusAvailable is the RestApi apiStatus of a ready API.
+const apiStatusAvailable = "AVAILABLE"
+
 // restAPIResponse is the RestApi wire object.
 type restAPIResponse struct {
 	ID                        string                 `json:"id"`
@@ -87,6 +94,7 @@ type restAPIResponse struct {
 	Version                   string                 `json:"version,omitempty"`
 	CreatedDate               int64                  `json:"createdDate"`
 	RootResourceID            string                 `json:"rootResourceId"`
+	APIStatus                 string                 `json:"apiStatus"`
 	APIKeySource              string                 `json:"apiKeySource,omitempty"`
 	Tags                      map[string]string      `json:"tags,omitempty"`
 	BinaryMediaTypes          []string               `json:"binaryMediaTypes,omitempty"`
@@ -101,13 +109,15 @@ type listRestAPIsResponse struct {
 	Item []restAPIResponse `json:"item"`
 }
 
-// resourceResponse is the Resource wire object.
+// resourceResponse is the Resource wire object. ResourceMethods holds a full
+// methodResponse per method under embed=methods, and an empty object per method
+// otherwise.
 type resourceResponse struct {
-	ID              string                    `json:"id"`
-	ParentID        string                    `json:"parentId,omitempty"`
-	PathPart        string                    `json:"pathPart,omitempty"`
-	Path            string                    `json:"path"`
-	ResourceMethods map[string]methodResponse `json:"resourceMethods,omitempty"`
+	ID              string         `json:"id"`
+	ParentID        string         `json:"parentId,omitempty"`
+	PathPart        string         `json:"pathPart,omitempty"`
+	Path            string         `json:"path"`
+	ResourceMethods map[string]any `json:"resourceMethods,omitempty"`
 }
 
 // listResourcesResponse is the GetResources wire object.
@@ -132,11 +142,19 @@ type integrationResponse struct {
 	TimeoutInMillis     int    `json:"timeoutInMillis,omitempty"`
 }
 
-// deploymentResponse is the Deployment wire object.
+// deploymentResponse is the Deployment wire object. APISummary is only sent
+// for GetDeployment with embed=apisummary.
 type deploymentResponse struct {
-	ID          string `json:"id"`
-	Description string `json:"description,omitempty"`
-	CreatedDate int64  `json:"createdDate"`
+	ID          string                               `json:"id"`
+	Description string                               `json:"description,omitempty"`
+	CreatedDate int64                                `json:"createdDate"`
+	APISummary  map[string]map[string]methodSnapshot `json:"apiSummary,omitempty"`
+}
+
+// methodSnapshot is one method's entry in a deployment's apiSummary.
+type methodSnapshot struct {
+	AuthorizationType string `json:"authorizationType,omitempty"`
+	APIKeyRequired    bool   `json:"apiKeyRequired"`
 }
 
 // listDeploymentsResponse is the GetDeployments wire object.
@@ -159,9 +177,11 @@ type listStagesResponse struct {
 }
 
 func toRestAPIResponse(a *driver.RestAPI) restAPIResponse {
+	// An in-memory API is usable as soon as it exists, so apiStatus is always
+	// AVAILABLE. The AWS provider waits on it before creating children.
 	resp := restAPIResponse{
 		ID: a.ID, Name: a.Name, Description: a.Description, Version: a.Version,
-		CreatedDate: a.CreatedDate, RootResourceID: a.RootResourceID,
+		CreatedDate: a.CreatedDate, RootResourceID: a.RootResourceID, APIStatus: apiStatusAvailable,
 		APIKeySource: a.APIKeySource, Tags: a.Tags, BinaryMediaTypes: a.BinaryMediaTypes,
 		DisableExecuteAPIEndpoint: a.DisableExecuteAPIEndpoint,
 		MinimumCompressionSize:    a.MinimumCompressionSize, Policy: a.Policy,
@@ -173,13 +193,30 @@ func toRestAPIResponse(a *driver.RestAPI) restAPIResponse {
 	return resp
 }
 
+// toResourceResponse renders a resource. Its methods are listed by name with
+// an empty object each, as API Gateway does unless embed=methods is requested.
 func toResourceResponse(r *driver.Resource) resourceResponse {
+	return renderResource(r, false)
+}
+
+// toEmbeddedResourceResponse renders a resource with each method's full Method
+// object, the embed=methods form.
+func toEmbeddedResourceResponse(r *driver.Resource) resourceResponse {
+	return renderResource(r, true)
+}
+
+func renderResource(r *driver.Resource, embedMethods bool) resourceResponse {
 	resp := resourceResponse{ID: r.ID, ParentID: r.ParentID, PathPart: r.PathPart, Path: r.Path}
 
 	if len(r.Methods) > 0 {
-		resp.ResourceMethods = make(map[string]methodResponse, len(r.Methods))
+		resp.ResourceMethods = make(map[string]any, len(r.Methods))
+
 		for name, mth := range r.Methods {
-			resp.ResourceMethods[name] = toMethodResponse(mth)
+			if embedMethods {
+				resp.ResourceMethods[name] = toMethodResponse(mth)
+			} else {
+				resp.ResourceMethods[name] = struct{}{}
+			}
 		}
 	}
 
@@ -210,6 +247,24 @@ func toIntegrationResponse(ig *driver.Integration) integrationResponse {
 
 func toDeploymentResponse(d *driver.Deployment) deploymentResponse {
 	return deploymentResponse{ID: d.ID, Description: d.Description, CreatedDate: d.CreatedDate}
+}
+
+// toDeploymentSummaryResponse renders a deployment with its apiSummary, the
+// embed=apisummary form.
+func toDeploymentSummaryResponse(d *driver.Deployment) deploymentResponse {
+	resp := toDeploymentResponse(d)
+	resp.APISummary = make(map[string]map[string]methodSnapshot, len(d.APISummary))
+
+	for path, methods := range d.APISummary {
+		out := make(map[string]methodSnapshot, len(methods))
+		for name, ms := range methods {
+			out[name] = methodSnapshot{AuthorizationType: ms.AuthorizationType, APIKeyRequired: ms.APIKeyRequired}
+		}
+
+		resp.APISummary[path] = out
+	}
+
+	return resp
 }
 
 func toStageResponse(s *driver.Stage) stageResponse {

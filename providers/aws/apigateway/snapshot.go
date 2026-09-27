@@ -20,12 +20,14 @@ type apigatewaySnapshot struct {
 }
 
 // apiSnapshot is the exported form of apiData: the REST API plus its resource
-// tree, deployments and stages, all under their original identities.
+// tree, deployments (with the tree each one captured) and stages, all under
+// their original identities.
 type apiSnapshot struct {
-	API         driver.RestAPI                `json:"api"`
-	Resources   map[string]*driver.Resource   `json:"resources,omitempty"`
-	Deployments map[string]*driver.Deployment `json:"deployments,omitempty"`
-	Stages      map[string]*driver.Stage      `json:"stages,omitempty"`
+	API             driver.RestAPI                         `json:"api"`
+	Resources       map[string]*driver.Resource            `json:"resources,omitempty"`
+	Deployments     map[string]*driver.Deployment          `json:"deployments,omitempty"`
+	DeploymentTrees map[string]map[string]*driver.Resource `json:"deploymentTrees,omitempty"`
+	Stages          map[string]*driver.Stage               `json:"stages,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. API Gateway holds
@@ -55,6 +57,12 @@ func snapshotAPI(ad *apiData) *apiSnapshot {
 		Resources:   make(map[string]*driver.Resource, len(ad.resources)),
 		Deployments: make(map[string]*driver.Deployment, len(ad.deployments)),
 		Stages:      make(map[string]*driver.Stage, len(ad.stages)),
+
+		DeploymentTrees: make(map[string]map[string]*driver.Resource, len(ad.trees)),
+	}
+
+	for did, tree := range ad.trees {
+		as.DeploymentTrees[did] = copyTree(tree)
 	}
 
 	for rid, r := range ad.resources {
@@ -90,12 +98,15 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	return nil
 }
 
-// restoreAPI rebuilds an apiData from its exported snapshot form.
+// restoreAPI rebuilds an apiData from its exported snapshot form. A snapshot
+// written before deployments captured their own tree has none, so each such
+// deployment falls back to a copy of the restored live tree.
 func restoreAPI(as *apiSnapshot) *apiData {
 	ad := &apiData{
 		api:         as.API,
 		resources:   make(map[string]*driver.Resource, len(as.Resources)),
 		deployments: make(map[string]*driver.Deployment, len(as.Deployments)),
+		trees:       make(map[string]map[string]*driver.Resource, len(as.Deployments)),
 		stages:      make(map[string]*driver.Stage, len(as.Stages)),
 	}
 
@@ -105,6 +116,12 @@ func restoreAPI(as *apiSnapshot) *apiData {
 
 	for did, d := range as.Deployments {
 		ad.deployments[did] = d
+
+		if tree, ok := as.DeploymentTrees[did]; ok {
+			ad.trees[did] = tree
+		} else {
+			ad.trees[did] = copyTree(ad.resources)
+		}
 	}
 
 	for name, s := range as.Stages {
