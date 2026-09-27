@@ -76,7 +76,12 @@ func (m *Mock) DeleteBackupVault(_ context.Context, name string) error {
 // ListBackupVaults returns a deterministic page of vaults ordered by name.
 func (m *Mock) ListBackupVaults(_ context.Context, page driver.Page) ([]*driver.Vault, string, error) {
 	stored := m.vaults.SortedValues()
-	start, end, next := paginate(len(stored), page)
+
+	start, end, next, err := paginate(len(stored), page)
+	if err != nil {
+		return nil, "", err
+	}
+
 	out := make([]*driver.Vault, 0, end-start)
 
 	for i := start; i < end; i++ {
@@ -147,11 +152,41 @@ func (m *Mock) PutBackupVaultNotifications(_ context.Context, in *driver.PutVaul
 		return missingParam("SNSTopicArn is required")
 	}
 
+	if in.BackupVaultEvents == nil {
+		return missingParam("BackupVaultEvents is required")
+	}
+
+	for _, e := range in.BackupVaultEvents {
+		if !isVaultEvent(e) {
+			return invalidParam("Invalid BackupVaultEvent value: %s", e)
+		}
+	}
+
 	v.SNSTopicArn = in.SNSTopicArn
 	v.BackupVaultEvents = copyStrings(in.BackupVaultEvents)
 	m.vaults.Set(in.Name, v)
 
 	return nil
+}
+
+// isVaultEvent reports whether e is a member of the BackupVaultEvent enum in
+// the AWS Backup service model. The list includes the deprecated values the
+// model still accepts.
+func isVaultEvent(e string) bool {
+	switch e {
+	case "BACKUP_JOB_STARTED", "BACKUP_JOB_COMPLETED", "BACKUP_JOB_SUCCESSFUL", "BACKUP_JOB_FAILED",
+		"BACKUP_JOB_EXPIRED", "RESTORE_JOB_STARTED", "RESTORE_JOB_COMPLETED", "RESTORE_JOB_SUCCESSFUL",
+		"RESTORE_JOB_FAILED", "COPY_JOB_STARTED", "COPY_JOB_SUCCESSFUL", "COPY_JOB_FAILED",
+		"RECOVERY_POINT_MODIFIED", "BACKUP_PLAN_CREATED", "BACKUP_PLAN_MODIFIED",
+		"S3_BACKUP_OBJECT_FAILED", "S3_RESTORE_OBJECT_FAILED", "CONTINUOUS_BACKUP_INTERRUPTED",
+		"RECOVERY_POINT_INDEX_COMPLETED", "RECOVERY_POINT_INDEX_DELETED", "RECOVERY_POINT_INDEXING_FAILED",
+		"EKS_RESTORE_OBJECT_FAILED", "EKS_RESTORE_OBJECT_SKIPPED", "EKS_BACKUP_OBJECT_FAILED",
+		"ACCESS_POINT_AVAILABLE", "ACCESS_POINT_CREATION_FAILED", "ACCESS_POINT_DELETED",
+		"ACCESS_POINT_DELETION_FAILED", "ACCESS_POINT_EXPIRED", "ACCESS_POINT_DISASSOCIATED":
+		return true
+	default:
+		return false
+	}
 }
 
 // GetBackupVaultNotifications returns the vault and its notification config. A

@@ -111,9 +111,14 @@ func resourceRefFromARN(arn string) (kind, key string) {
 }
 
 // paginate returns the offset window and next token for a slice of length n,
-// honoring an opaque numeric offset token.
-func paginate(n int, page driver.Page) (start, end int, next string) {
-	start = decodeToken(page.NextToken)
+// honoring an opaque numeric offset token. A token this mock did not issue is
+// rejected with InvalidParameterValueException.
+func paginate(n int, page driver.Page) (start, end int, next string, err error) {
+	start, err = decodeToken(page.NextToken)
+	if err != nil {
+		return 0, 0, "", err
+	}
+
 	if start > n {
 		start = n
 	}
@@ -125,27 +130,27 @@ func paginate(n int, page driver.Page) (start, end int, next string) {
 
 	end = start + limit
 	if end >= n {
-		return start, n, ""
+		return start, n, "", nil
 	}
 
-	return start, end, encodeToken(end)
+	return start, end, encodeToken(end), nil
 }
 
 func encodeToken(offset int) string {
 	return strconv.Itoa(offset)
 }
 
-func decodeToken(token string) int {
+func decodeToken(token string) (int, error) {
 	if token == "" {
-		return 0
+		return 0, nil
 	}
 
 	n, err := strconv.Atoi(token)
 	if err != nil || n < 0 {
-		return 0
+		return 0, invalidParam("Invalid NextToken: %s", token)
 	}
 
-	return n
+	return n, nil
 }
 
 // --- deep-copy helpers: reads must never alias stored state ---
@@ -168,7 +173,11 @@ func copyStrings(in []string) []string {
 		return nil
 	}
 
-	return append([]string(nil), in...)
+	// Keep an empty list distinct from nil so an explicit [] round-trips.
+	out := make([]string, len(in))
+	copy(out, in)
+
+	return out
 }
 
 func copyInt64(in *int64) *int64 {

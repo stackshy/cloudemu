@@ -19,6 +19,8 @@ func TestPutCompositeAlarmRoundTrip(t *testing.T) {
 		OKActions:        []string{"arn:aws:sns:us-east-1:123456789012:ok"},
 	}
 
+	putChildren(t, m, "cpu-high", "mem-high")
+
 	t.Run("create then describe returns what was put", func(t *testing.T) {
 		requireNoError(t, m.PutCompositeAlarm(ctx, cfg))
 
@@ -34,8 +36,8 @@ func TestPutCompositeAlarmRoundTrip(t *testing.T) {
 		assertEqual(t, 1, len(a.AlarmActions))
 		assertEqual(t, cfg.AlarmActions[0], a.AlarmActions[0])
 		assertEqual(t, 1, len(a.OKActions))
-		// Round-trip only: no boolean rule engine, so state stays INSUFFICIENT_DATA.
-		assertEqual(t, stateInsufficientData, a.State)
+		// Evaluated at creation: no child is in ALARM, so the rule is false.
+		assertEqual(t, stateOK, a.State)
 		if a.ARN == "" {
 			t.Fatal("expected a non-empty composite alarm ARN")
 		}
@@ -67,6 +69,8 @@ func TestCompositeAlarmActionsEnabledFalse(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
+	putChildren(t, m, "x")
+
 	disabled := false
 	requireNoError(t, m.PutCompositeAlarm(ctx, driver.CompositeAlarmConfig{
 		Name:           "quiet",
@@ -83,6 +87,8 @@ func TestCompositeAlarmActionsEnabledFalse(t *testing.T) {
 func TestDeleteCompositeAlarms(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
+
+	putChildren(t, m, "x", "y")
 
 	requireNoError(t, m.PutCompositeAlarm(ctx, driver.CompositeAlarmConfig{Name: "c1", AlarmRule: "ALARM(x)"}))
 	requireNoError(t, m.PutCompositeAlarm(ctx, driver.CompositeAlarmConfig{Name: "c2", AlarmRule: "ALARM(y)"}))
@@ -101,6 +107,8 @@ func TestPutCompositeAlarmUpdatePreservesState(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
+	putChildren(t, m, "x", "y")
+
 	requireNoError(t, m.PutCompositeAlarm(ctx, driver.CompositeAlarmConfig{Name: "u", AlarmRule: "ALARM(x)"}))
 
 	// Update the rule; a subsequent describe should reflect the new rule while
@@ -111,4 +119,16 @@ func TestPutCompositeAlarmUpdatePreservesState(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, 1, len(out))
 	assertEqual(t, "ALARM(y)", out[0].AlarmRule)
+}
+
+// putChildren creates metric alarms for composite rules to reference.
+func putChildren(t *testing.T, m *Mock, names ...string) {
+	t.Helper()
+
+	for _, name := range names {
+		requireNoError(t, m.CreateAlarm(context.Background(), driver.AlarmConfig{
+			Name: name, Namespace: "Child/App", MetricName: name, ComparisonOperator: "GreaterThanThreshold",
+			Threshold: 5, Period: 60, EvaluationPeriods: 1, Stat: "Maximum",
+		}))
+	}
 }

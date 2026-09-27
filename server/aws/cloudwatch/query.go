@@ -273,57 +273,37 @@ func (h *Handler) queryDescribeAlarms(w http.ResponseWriter, r *http.Request) {
 		AlarmTypes:      queryStringList(r, "AlarmTypes.member."),
 		StateValue:      r.Form.Get("StateValue"),
 		ActionPrefix:    r.Form.Get("ActionPrefix"),
+
+		ChildrenOfAlarmName: r.Form.Get("ChildrenOfAlarmName"),
+		ParentsOfAlarmName:  r.Form.Get("ParentsOfAlarmName"),
+		NextToken:           r.Form.Get("NextToken"),
 	}
 
-	members := make([]alarmMemberXML, 0)
-
-	if wantsAlarmType(in.AlarmTypes, alarmTypeMetric) {
-		alarms, err := h.monitoring.DescribeAlarms(r.Context(), in.AlarmNames)
-		if err != nil {
-			writeQueryDriverErr(w, err)
-			return
-		}
-
-		for i := range alarms {
-			if !alarmMatchesFilters(&alarms[i], &in) {
-				continue
-			}
-
-			members = append(members, toAlarmMemberXML(&alarms[i]))
-		}
+	if v, err := strconv.Atoi(r.Form.Get("MaxRecords")); err == nil {
+		in.MaxRecords = v
 	}
 
-	sort.SliceStable(members, func(i, j int) bool { return members[i].AlarmName < members[j].AlarmName })
-
-	size := maxAlarmPageSize
-	if v, _ := strconv.Atoi(r.Form.Get("MaxRecords")); v > 0 {
-		size = v
-	}
-
-	offset, err := offsetFromToken(r.Form.Get("NextToken"), errInvalidNextToken)
+	page, err := h.describeAlarmsPage(r.Context(), &in)
 	if err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}
 
-	from, to, next := pageWindow(len(members), offset, size)
+	if familyQuery(&in) {
+		metric, composite := familyRows(page)
+		writeQueryResponse(w, "DescribeAlarmsResponse", describeFamilyResultXML{
+			MetricAlarms: familyXML(metric), CompositeAlarms: familyXML(composite), NextToken: page.next,
+		})
 
-	result := describeAlarmsResultXML{MetricAlarms: members[from:to]}
-	if next > 0 {
-		result.NextToken = encodeOffsetToken(next)
+		return
 	}
 
-	// Composite alarms are a small, separate collection returned in full on the
-	// first page so they aren't duplicated across metric-alarm pages.
-	if offset == 0 && wantsAlarmType(in.AlarmTypes, alarmTypeComposite) {
-		composites, err := h.compositeAlarmRows(r, &in)
-		if err != nil {
-			writeQueryDriverErr(w, err)
-			return
-		}
-
-		result.CompositeAlarms = toCompositeAlarmMemberXMLs(composites)
+	result := describeAlarmsResultXML{MetricAlarms: make([]alarmMemberXML, 0, len(page.metric)), NextToken: page.next}
+	for i := range page.metric {
+		result.MetricAlarms = append(result.MetricAlarms, toAlarmMemberXML(&page.metric[i]))
 	}
+
+	result.CompositeAlarms = toCompositeAlarmMemberXMLs(compositeRows(page.composite))
 
 	writeQueryResponse(w, "DescribeAlarmsResponse", result)
 }
@@ -411,10 +391,16 @@ func toCompositeAlarmMemberXMLs(rows []compositeAlarmCBR) []compositeAlarmMember
 			AlarmActions:            row.AlarmActions,
 			OKActions:               row.OKActions,
 			InsufficientDataActions: row.InsufficientDataActions,
-		}
 
-		if row.StateUpdatedTimestamp != nil {
-			m.StateUpdatedTimestamp = row.StateUpdatedTimestamp.UTC().Format(time.RFC3339)
+			StateReasonData:                    row.StateReasonData,
+			StateUpdatedTimestamp:              xmlTime(row.StateUpdatedTimestamp),
+			StateTransitionedTimestamp:         xmlTime(row.StateTransitionedTimestamp),
+			AlarmConfigurationUpdatedTimestamp: xmlTime(row.AlarmConfigurationUpdatedTimestamp),
+			ActionsSuppressor:                  row.ActionsSuppressor,
+			ActionsSuppressorWaitPeriod:        row.ActionsSuppressorWaitPeriod,
+			ActionsSuppressorExtensionPeriod:   row.ActionsSuppressorExtensionPeriod,
+			ActionsSuppressedBy:                row.ActionsSuppressedBy,
+			ActionsSuppressedReason:            row.ActionsSuppressedReason,
 		}
 
 		out = append(out, m)
@@ -426,22 +412,9 @@ func toCompositeAlarmMemberXMLs(rows []compositeAlarmCBR) []compositeAlarmMember
 func (h *Handler) queryDeleteAlarms(w http.ResponseWriter, r *http.Request) {
 	names := queryStringList(r, "AlarmNames.member.")
 
-	// AWS tolerates incorrect alarm names: valid ones are still deleted and no
-	// ResourceNotFound is returned.
-	for _, name := range names {
-		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
-			writeQueryDriverErr(w, err)
-			return
-		}
-	}
-
-	// DeleteAlarms accepts both metric and composite alarm names in one call; a
-	// name that isn't a metric alarm (tolerated above) may be a composite alarm.
-	if store, ok := h.monitoring.(compositeAlarmStore); ok {
-		if err := store.DeleteCompositeAlarms(r.Context(), names); err != nil {
-			writeQueryDriverErr(w, err)
-			return
-		}
+	if err := h.deleteAlarmsCore(r.Context(), names); err != nil {
+		writeQueryDriverErr(w, err)
+		return
 	}
 
 	writeQueryResponse(w, "DeleteAlarmsResponse", nil)
@@ -466,9 +439,13 @@ func (h *Handler) queryPutCompositeAlarm(w http.ResponseWriter, r *http.Request)
 		OKActions:               queryStringList(r, "OKActions.member."),
 		InsufficientDataActions: queryStringList(r, "InsufficientDataActions.member."),
 		Tags:                    queryTagPairs(r, "Tags.member."),
+
+		ActionsSuppressor:                r.Form.Get("ActionsSuppressor"),
+		ActionsSuppressorWaitPeriod:      queryOptInt(r, "ActionsSuppressorWaitPeriod"),
+		ActionsSuppressorExtensionPeriod: queryOptInt(r, "ActionsSuppressorExtensionPeriod"),
 	})
 	if err != nil {
-		writeQueryDriverErr(w, err)
+		writeQueryDriverErr(w, compositeErr(err))
 		return
 	}
 
@@ -597,6 +574,21 @@ func queryOptBool(r *http.Request, field string) *bool {
 	return &v
 }
 
+// queryOptInt reads an optional integer field. A missing or bad value is nil.
+func queryOptInt(r *http.Request, field string) *int {
+	raw := r.Form.Get(field)
+	if raw == "" {
+		return nil
+	}
+
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil
+	}
+
+	return &v
+}
+
 func queryStringList(r *http.Request, prefix string) []string {
 	var out []string
 
@@ -690,6 +682,48 @@ type compositeAlarmMemberXML struct {
 	AlarmActions            []string `xml:"AlarmActions>member,omitempty"`
 	OKActions               []string `xml:"OKActions>member,omitempty"`
 	InsufficientDataActions []string `xml:"InsufficientDataActions>member,omitempty"`
+
+	StateReasonData                    string `xml:"StateReasonData,omitempty"`
+	StateTransitionedTimestamp         string `xml:"StateTransitionedTimestamp,omitempty"`
+	AlarmConfigurationUpdatedTimestamp string `xml:"AlarmConfigurationUpdatedTimestamp,omitempty"`
+	ActionsSuppressor                  string `xml:"ActionsSuppressor,omitempty"`
+	ActionsSuppressorWaitPeriod        *int   `xml:"ActionsSuppressorWaitPeriod,omitempty"`
+	ActionsSuppressorExtensionPeriod   *int   `xml:"ActionsSuppressorExtensionPeriod,omitempty"`
+	ActionsSuppressedBy                string `xml:"ActionsSuppressedBy,omitempty"`
+	ActionsSuppressedReason            string `xml:"ActionsSuppressedReason,omitempty"`
+}
+
+// xmlTime renders an optional timestamp for the query protocol.
+func xmlTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+
+	return t.UTC().Format(time.RFC3339)
+}
+
+// familyAlarmXML is an alarm row of a children or parents query.
+type familyAlarmXML struct {
+	AlarmName             string `xml:"AlarmName"`
+	AlarmArn              string `xml:"AlarmArn,omitempty"`
+	StateValue            string `xml:"StateValue,omitempty"`
+	StateUpdatedTimestamp string `xml:"StateUpdatedTimestamp,omitempty"`
+}
+
+type describeFamilyResultXML struct {
+	XMLName         xml.Name         `xml:"DescribeAlarmsResult"`
+	MetricAlarms    []familyAlarmXML `xml:"MetricAlarms>member"`
+	CompositeAlarms []familyAlarmXML `xml:"CompositeAlarms>member"`
+	NextToken       string           `xml:"NextToken,omitempty"`
+}
+
+func familyXML(rows []familyAlarmCBR) []familyAlarmXML {
+	out := make([]familyAlarmXML, 0, len(rows))
+	for _, r := range rows {
+		out = append(out, familyAlarmXML{r.AlarmName, r.AlarmArn, r.StateValue, xmlTime(r.StateUpdatedTimestamp)})
+	}
+
+	return out
 }
 
 type describeAlarmsResultXML struct {

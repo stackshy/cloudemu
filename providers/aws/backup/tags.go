@@ -2,6 +2,9 @@ package backup
 
 import (
 	"context"
+	"sort"
+
+	"github.com/stackshy/cloudemu/v2/services/backup/driver"
 )
 
 // resolveTaggable validates that a tag operation's ARN names an existing backup
@@ -65,22 +68,55 @@ func (m *Mock) UntagResource(_ context.Context, resourceArn string, tagKeys []st
 	return nil
 }
 
-// ListTags returns the tags of a vault or plan.
-func (m *Mock) ListTags(_ context.Context, resourceArn string) (map[string]string, error) {
+// maxListTagsResults is the upper bound of ListTags maxResults (the service
+// model allows 1 to 1000).
+const maxListTagsResults = 1000
+
+// ListTags returns one page of the tags of a vault or plan. Keys are ordered so
+// a NextToken always resumes where the previous page stopped. A zero MaxResults
+// means the caller sent none.
+func (m *Mock) ListTags(_ context.Context, resourceArn string, page driver.Page) (tags map[string]string, nextToken string, err error) {
+	if page.MaxResults < 0 || page.MaxResults > maxListTagsResults {
+		return nil, "", invalidParam("maxResults must be between 1 and %d", maxListTagsResults)
+	}
+
 	kind, key, err := m.resolveTaggable(resourceArn)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
+
+	var stored map[string]string
 
 	if kind == kindVault {
 		v, _ := m.vaults.Get(key)
-
-		return copyTags(v.Tags), nil
+		stored = v.Tags
+	} else {
+		p, _ := m.plans.Get(key)
+		stored = p.Tags
 	}
 
-	p, _ := m.plans.Get(key)
+	keys := make([]string, 0, len(stored))
+	for k := range stored {
+		keys = append(keys, k)
+	}
 
-	return copyTags(p.Tags), nil
+	sort.Strings(keys)
+
+	start, end, nextToken, err := paginate(len(keys), page)
+	if err != nil {
+		return nil, "", err
+	}
+
+	if start == end {
+		return nil, nextToken, nil
+	}
+
+	tags = make(map[string]string, end-start)
+	for _, k := range keys[start:end] {
+		tags[k] = stored[k]
+	}
+
+	return tags, nextToken, nil
 }
 
 // mutateTags applies fn to the tag map of the identified resource and stores the

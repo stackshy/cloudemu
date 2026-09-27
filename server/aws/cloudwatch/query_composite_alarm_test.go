@@ -18,6 +18,14 @@ func TestQueryCompositeAlarmLifecycle(t *testing.T) {
 	rule := `ALARM("cpu-high")`
 
 	if code, body := post(url.Values{
+		"Action": {"PutMetricAlarm"}, "AlarmName": {"cpu-high"}, "Namespace": {"MyApp"}, "MetricName": {"CPU"},
+		"ComparisonOperator": {"GreaterThanThreshold"}, "EvaluationPeriods": {"1"}, "Period": {"60"},
+		"Threshold": {"10"}, "Statistic": {"Average"},
+	}); code != 200 {
+		t.Fatalf("PutMetricAlarm: code=%d body=%s", code, body)
+	}
+
+	if code, body := post(url.Values{
 		"Action": {"PutCompositeAlarm"}, "AlarmName": {"app-unhealthy"}, "AlarmRule": {rule},
 		"AlarmDescription": {"app is unhealthy"}, "AlarmActions.member.1": {"arn:aws:sns:us-east-1:000000000000:ops"},
 	}); code != 200 || !strings.Contains(body, "PutCompositeAlarmResponse") {
@@ -32,7 +40,7 @@ func TestQueryCompositeAlarmLifecycle(t *testing.T) {
 	for _, want := range []string{
 		"<CompositeAlarms>", "<AlarmName>app-unhealthy</AlarmName>",
 		"<AlarmRule>ALARM(&#34;cpu-high&#34;)</AlarmRule>",
-		"<StateValue>INSUFFICIENT_DATA</StateValue>",
+		"<StateValue>OK</StateValue>",
 		"arn:aws:sns:us-east-1:000000000000:ops",
 	} {
 		if !strings.Contains(body, want) {

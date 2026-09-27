@@ -250,3 +250,149 @@ func (m *Mock) emitEvent(ctx context.Context, ev *alarmStateEvent) {
 
 	m.events.Emit(ctx, eventSource, ev.detailType, ev.detail, ev.arn)
 }
+
+// compositeStateChangeDetail is the detail of a "CloudWatch Alarm State
+// Change" event for a composite alarm.
+type compositeStateChangeDetail struct {
+	AlarmName     string                 `json:"alarmName"`
+	State         compositeEventState    `json:"state"`
+	PreviousState compositeEventState    `json:"previousState"`
+	Configuration compositeEventSettings `json:"configuration"`
+}
+
+// compositeEventState is one side of a composite transition. It carries the
+// suppression of the actions when there is one.
+type compositeEventState struct {
+	ActionsSuppressedBy     string `json:"actionsSuppressedBy,omitempty"`
+	ActionsSuppressedReason string `json:"actionsSuppressedReason,omitempty"`
+	alarmEventState
+}
+
+// compositeEventSettings is the configuration block of a composite state
+// change event.
+type compositeEventSettings struct {
+	AlarmRule         string `json:"alarmRule"`
+	Description       string `json:"description,omitempty"`
+	ActionsSuppressor string `json:"actionsSuppressor,omitempty"`
+	WaitPeriod        *int   `json:"actionsSuppressorWaitPeriod,omitempty"`
+	ExtensionPeriod   *int   `json:"actionsSuppressorExtensionPeriod,omitempty"`
+}
+
+// compositeConfigChangeDetail is the detail of a "CloudWatch Alarm
+// Configuration Change" event for a composite alarm.
+type compositeConfigChangeDetail struct {
+	AlarmName             string               `json:"alarmName"`
+	Operation             string               `json:"operation"`
+	State                 compositeConfigState `json:"state"`
+	Configuration         compositeConfigBody  `json:"configuration"`
+	PreviousConfiguration *compositeConfigBody `json:"previousConfiguration,omitempty"`
+}
+
+// compositeConfigState is the state carried by a composite configuration event.
+type compositeConfigState struct {
+	ActionsSuppressedBy string `json:"actionsSuppressedBy,omitempty"`
+	Value               string `json:"value"`
+	Timestamp           string `json:"timestamp"`
+}
+
+// compositeConfigBody is the configuration block of a composite configuration
+// event, in the field order of the AWS examples.
+type compositeConfigBody struct {
+	AlarmRule               string   `json:"alarmRule"`
+	ActionsSuppressor       string   `json:"actionsSuppressor,omitempty"`
+	WaitPeriod              *int     `json:"actionsSuppressorWaitPeriod,omitempty"`
+	ExtensionPeriod         *int     `json:"actionsSuppressorExtensionPeriod,omitempty"`
+	AlarmName               string   `json:"alarmName"`
+	Description             string   `json:"description,omitempty"`
+	ActionsEnabled          bool     `json:"actionsEnabled"`
+	Timestamp               string   `json:"timestamp"`
+	OKActions               []string `json:"okActions"`
+	AlarmActions            []string `json:"alarmActions"`
+	InsufficientDataActions []string `json:"insufficientDataActions"`
+}
+
+// compositeEventStateOf renders a composite's current state for an event.
+func compositeEventStateOf(c *compositeAlarmData) compositeEventState {
+	return compositeEventState{
+		ActionsSuppressedBy:     c.ActionsSuppressedBy,
+		ActionsSuppressedReason: c.ActionsSuppressedReason,
+		alarmEventState:         eventState(c.State, c.StateReason, c.StateReasonData, c.StateUpdatedTimestamp),
+	}
+}
+
+// suppressorPeriods returns the two periods for an event, or nil when the
+// composite has no suppressor.
+func suppressorPeriods(c *compositeAlarmData) (wait, extension *int) {
+	if c.ActionsSuppressor == "" {
+		return nil, nil
+	}
+
+	w, e := c.WaitPeriod, c.ExtensionPeriod
+
+	return &w, &e
+}
+
+// compositeStateEventLocked builds the event for a composite transition out
+// of prev. The caller holds alarmMu.
+func compositeStateEventLocked(c *compositeAlarmData, prev *compositeEventState) *alarmStateEvent {
+	wait, extension := suppressorPeriods(c)
+
+	return &alarmStateEvent{
+		arn:        c.ARN,
+		detailType: eventAlarmStateChange,
+		detail: compositeStateChangeDetail{
+			AlarmName:     c.Name,
+			State:         compositeEventStateOf(c),
+			PreviousState: *prev,
+			Configuration: compositeEventSettings{
+				AlarmRule:         c.AlarmRule,
+				Description:       c.AlarmDescription,
+				ActionsSuppressor: c.ActionsSuppressor,
+				WaitPeriod:        wait,
+				ExtensionPeriod:   extension,
+			},
+		},
+	}
+}
+
+// compositeConfigBodyOf renders a composite's configuration.
+func compositeConfigBodyOf(c *compositeAlarmData) compositeConfigBody {
+	wait, extension := suppressorPeriods(c)
+
+	return compositeConfigBody{
+		AlarmRule:               c.AlarmRule,
+		ActionsSuppressor:       c.ActionsSuppressor,
+		WaitPeriod:              wait,
+		ExtensionPeriod:         extension,
+		AlarmName:               c.Name,
+		Description:             c.AlarmDescription,
+		ActionsEnabled:          c.ActionsEnabled,
+		Timestamp:               c.ConfigUpdatedAt.UTC().Format(reasonDataTimeFormat),
+		OKActions:               append([]string{}, c.OKActions...),
+		AlarmActions:            append([]string{}, c.AlarmActions...),
+		InsufficientDataActions: append([]string{}, c.InsufficientDataActions...),
+	}
+}
+
+// compositeConfigEventLocked builds a configuration event for a composite.
+// prev is the replaced composite on update and nil otherwise. The caller holds
+// alarmMu.
+func compositeConfigEventLocked(operation string, c, prev *compositeAlarmData) *alarmStateEvent {
+	detail := compositeConfigChangeDetail{
+		AlarmName: c.Name,
+		Operation: operation,
+		State: compositeConfigState{
+			ActionsSuppressedBy: c.ActionsSuppressedBy,
+			Value:               c.State,
+			Timestamp:           c.StateUpdatedTimestamp.UTC().Format(reasonDataTimeFormat),
+		},
+		Configuration: compositeConfigBodyOf(c),
+	}
+
+	if prev != nil {
+		body := compositeConfigBodyOf(prev)
+		detail.PreviousConfiguration = &body
+	}
+
+	return &alarmStateEvent{arn: c.ARN, detailType: eventAlarmConfigChange, detail: detail}
+}

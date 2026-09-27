@@ -152,7 +152,7 @@ type Vault struct {
 	// Access policy (JSON string) and event notifications.
 	AccessPolicy      string   `json:"accessPolicy,omitempty"`
 	SNSTopicArn       string   `json:"snsTopicArn,omitempty"`
-	BackupVaultEvents []string `json:"backupVaultEvents,omitempty"`
+	BackupVaultEvents []string `json:"backupVaultEvents"`
 
 	// Vault Lock state. Locked is true once a lock is applied. MinRetentionDays
 	// and MaxRetentionDays are the enforced retention bounds. LockDate is set
@@ -255,5 +255,5 @@ type Backup interface {
 	// Tagging.
 	TagResource(ctx context.Context, resourceArn string, tags map[string]string) error
 	UntagResource(ctx context.Context, resourceArn string, tagKeys []string) error
-	ListTags(ctx context.Context, resourceArn string) (map[string]string, error)
+	ListTags(ctx context.Context, resourceArn string, page Page) (tags map[string]string, nextToken string, err error)
 }

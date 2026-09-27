@@ -133,7 +133,12 @@ func (m *Mock) selectionsForPlan(planID string) int {
 // ListBackupPlans returns a deterministic page of plans ordered by id.
 func (m *Mock) ListBackupPlans(_ context.Context, page driver.Page) ([]*driver.Plan, string, error) {
 	stored := m.plans.SortedValues()
-	start, end, next := paginate(len(stored), page)
+
+	start, end, next, err := paginate(len(stored), page)
+	if err != nil {
+		return nil, "", err
+	}
+
 	out := make([]*driver.Plan, 0, end-start)
 
 	for i := start; i < end; i++ {
@@ -161,7 +166,11 @@ func (m *Mock) ListBackupPlanVersions(
 		reversed[len(all)-1-i] = all[i]
 	}
 
-	start, end, next := paginate(len(reversed), page)
+	start, end, next, err := paginate(len(reversed), page)
+	if err != nil {
+		return nil, nil, "", err
+	}
+
 	out := copyPlan(&p)
 
 	return &out, reversed[start:end], next, nil
