@@ -51,13 +51,17 @@ var validStatistics = map[string]bool{
 	statSampleCount: true, statAverage: true, statSum: true, statMinimum: true, statMaximum: true,
 }
 
-// maxAlarmLookback is how far back, in seconds, EvaluationPeriods * Period
-// may reach.
-const maxAlarmLookback = 86400
+// How far back, in seconds, EvaluationPeriods * Period may reach: one day
+// for a Period under an hour, seven days for a Period of an hour or more.
+const (
+	maxAlarmLookbackDay  = 86400
+	maxAlarmLookbackWeek = 604800
+	hourPeriod           = 3600
+)
 
 // validateAlarmPeriods checks Period and DatapointsToAlarm. A single-metric
-// alarm's Period is 10, 20, 30 or a multiple of 60, and the alarm cannot
-// look back more than a day.
+// alarm's Period is 10, 20, 30 or a multiple of 60, and EvaluationPeriods *
+// Period is capped at a day, or at a week when Period is an hour or more.
 func validateAlarmPeriods(cfg *mondriver.AlarmConfig) error {
 	if cfg.DatapointsToAlarm > 0 && cfg.EvaluationPeriods > 0 && cfg.DatapointsToAlarm > cfg.EvaluationPeriods {
 		return newWireError(errValidation, "DatapointsToAlarm must be less than or equal to EvaluationPeriods.")
@@ -67,12 +71,25 @@ func validateAlarmPeriods(cfg *mondriver.AlarmConfig) error {
 		return nil
 	}
 
-	switch p := cfg.Period; {
-	case !validPeriod(p):
+	if !validPeriod(cfg.Period) {
 		return newWireError(errValidation, "Period must be 10, 20, 30 or a multiple of 60")
-	case p*max(cfg.EvaluationPeriods, 1) > maxAlarmLookback:
+	}
+
+	return validateAlarmLookback(cfg.Period, cfg.EvaluationPeriods)
+}
+
+// validateAlarmLookback checks EvaluationPeriods * Period against the day or
+// week cap that applies to period p.
+func validateAlarmLookback(p, evaluationPeriods int) error {
+	lookback := p * max(evaluationPeriods, 1)
+
+	switch {
+	case p < hourPeriod && lookback > maxAlarmLookbackDay:
 		return newWireError(errValidation, "Metrics cannot be checked across more than a day "+
 			"(EvaluationPeriods * Period must be <= 86400)")
+	case p >= hourPeriod && lookback > maxAlarmLookbackWeek:
+		return newWireError(errValidation, "Metrics cannot be checked across more than a week "+
+			"(EvaluationPeriods * Period must be <= 604800)")
 	}
 
 	return nil
