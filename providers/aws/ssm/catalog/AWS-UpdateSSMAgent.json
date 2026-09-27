@@ -1,0 +1,29 @@
+{
+  "schemaVersion": "1.2",
+  "description": "Updates the Amazon SSM Agent to the specified version or the latest version.",
+  "parameters": {
+    "version": {
+      "default": "",
+      "description": "(Optional) The version of SSM Agent to install or update to. The latest version is installed if none is specified.",
+      "type": "String"
+    },
+    "allowDowngrade": {
+      "default": "false",
+      "description": "(Optional) Allows SSM Agent to be downgraded to an earlier version.",
+      "type": "String",
+      "allowedValues": ["true", "false"]
+    }
+  },
+  "runtimeConfig": {
+    "aws:updateSsmAgent": {
+      "properties": [
+        {
+          "agentName": "amazon-ssm-agent",
+          "source": "https://s3.{Region}.amazonaws.com/amazon-ssm-{Region}/ssm-agent-manifest.json",
+          "allowDowngrade": "{{ allowDowngrade }}",
+          "targetVersion": "{{ version }}"
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,58 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Send commands to Amazon CloudWatch Agent",
+  "parameters": {
+    "action": {
+      "description": "The action CloudWatch Agent should take.",
+      "type": "String",
+      "default": "configure",
+      "allowedValues": ["configure", "configure (append)", "configure (remove)", "start", "status", "stop"]
+    },
+    "mode": {
+      "description": "Controls platform-specific default behavior such as whether to include EC2 Metadata in metrics.",
+      "type": "String",
+      "default": "ec2",
+      "allowedValues": ["ec2", "onPremise", "auto"]
+    },
+    "optionalConfigurationSource": {
+      "description": "Only for 'configure' related actions. Use 'ssm' to apply a ssm parameter as config. Use 'default' to apply default config for amazon-cloudwatch-agent. Use 'all' with 'configure (remove)' to clean all configs for amazon-cloudwatch-agent.",
+      "type": "String",
+      "allowedValues": ["ssm", "default", "all"],
+      "default": "ssm"
+    },
+    "optionalConfigurationLocation": {
+      "description": "Only for 'configure' related actions. Only needed when Optional Configuration Source is set to 'ssm'. The value should be a ssm parameter name.",
+      "type": "String",
+      "default": "",
+      "allowedPattern": "[a-zA-Z0-9-\"~:_@./^(*)!<>?=+]*$"
+    },
+    "optionalRestart": {
+      "description": "Only for 'configure' related actions. If 'yes', restarts the agent to use the new configuration. Otherwise the new config will only apply on the next agent restart.",
+      "type": "String",
+      "default": "yes",
+      "allowedValues": ["yes", "no"]
+    }
+  },
+  "mainSteps": [
+    {
+      "name": "ControlCloudWatchAgentWindows",
+      "action": "aws:runPowerShellScript",
+      "precondition": {
+        "StringEquals": ["platformType", "Windows"]
+      },
+      "inputs": {
+        "runCommand": ["& 'C:\\Program Files\\Amazon\\AmazonCloudWatchAgent\\amazon-cloudwatch-agent-ctl.ps1' -a '{{action}}' -m '{{mode}}' -c '{{optionalConfigurationSource}}:{{optionalConfigurationLocation}}'"]
+      }
+    },
+    {
+      "name": "ControlCloudWatchAgentLinux",
+      "action": "aws:runShellScript",
+      "precondition": {
+        "StringEquals": ["platformType", "Linux"]
+      },
+      "inputs": {
+        "runCommand": ["/opt/aws/amazon-cloudwatch-agent/bin/amazon-cloudwatch-agent-ctl -a '{{action}}' -m '{{mode}}' -c '{{optionalConfigurationSource}}:{{optionalConfigurationLocation}}'"]
+      }
+    }
+  ]
+}

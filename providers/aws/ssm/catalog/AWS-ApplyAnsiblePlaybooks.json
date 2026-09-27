@@ -1,0 +1,71 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Use this document to run Ansible playbooks on Amazon EC2 managed instances. Specify either YAML text or URL. If you specify both, the URL parameter will be used. Use the extravar parameter to send runtime variables to the Ansible execution. Use the check parameter to perform a dry run of the Ansible execution. The output of the dry run shows the changes that will be made when the playbook is executed.",
+  "parameters": {
+    "SourceType": {
+      "description": "(Optional) Specify the source type.",
+      "type": "String",
+      "allowedValues": ["GitHub", "S3"]
+    },
+    "SourceInfo": {
+      "description": "(Optional) Specify the information required to access the resource from the specified source type.",
+      "type": "StringMap",
+      "displayType": "textarea",
+      "default": {}
+    },
+    "InstallDependencies": {
+      "type": "String",
+      "description": "(Required) If set to True, Systems Manager installs Ansible and its dependencies, including Python, from the PyPI repo.",
+      "allowedValues": ["True", "False"],
+      "default": "True"
+    },
+    "PlaybookFile": {
+      "type": "String",
+      "description": "(Optional) The Playbook file to run (including relative path). If the main Playbook file is located in the ./automation directory, then specify automation/playbook.yml.",
+      "default": "hello-world-playbook.yml",
+      "allowedPattern": "[(a-z_A-Z0-9\\-\\.)/]+(.yml|.yaml)$"
+    },
+    "ExtraVariables": {
+      "type": "String",
+      "description": "(Optional) Additional variables to pass to Ansible at runtime. Enter key/value pairs separated by a space.",
+      "displayType": "textarea",
+      "default": "SSM=True",
+      "allowedPattern": "^$|^\\w+\\=(([^\\s|:();&]+)|('[^|:();&]+'))(\\s+\\w+\\=(([^\\s|:();&]+)|('[^|:();&]+')))*$"
+    },
+    "Check": {
+      "type": "String",
+      "description": " (Optional) Use the check parameter to perform a dry run of the Ansible execution.",
+      "allowedValues": ["True", "False"],
+      "default": "False"
+    },
+    "Verbose": {
+      "type": "String",
+      "description": "(Optional) Set the verbosity level for logging Playbook executions.",
+      "allowedValues": ["-v", "-vv", "-vvv", "-vvvv"],
+      "default": "-v"
+    },
+    "TimeoutSeconds": {
+      "type": "String",
+      "description": "(Optional) The time in seconds for a command to be completed before it is considered to have failed.",
+      "default": "3600"
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:downloadContent",
+      "name": "downloadContent",
+      "inputs": {
+        "SourceType": "{{ SourceType }}",
+        "SourceInfo": "{{ SourceInfo }}"
+      }
+    },
+    {
+      "action": "aws:runShellScript",
+      "name": "runShellScript",
+      "inputs": {
+        "timeoutSeconds": "{{ TimeoutSeconds }}",
+        "runCommand": ["ansible-playbook -i \"localhost,\" --check -c local -e \"{{ExtraVariables}}\" \"{{Verbose}}\" \"{{PlaybookFile}}\""]
+      }
+    }
+  ]
+}

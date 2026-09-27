@@ -1,7 +1,7 @@
-// Package ssm implements the AWS Systems Manager (SSM) Parameter Store
-// JSON-RPC protocol as a server.Handler. Point the real aws-sdk-go-v2 SSM
-// client at a Server registered with this handler and Parameter Store
-// operations work against an in-memory parameterstore driver.
+// Package ssm implements the AWS Systems Manager (SSM) JSON-RPC protocol as a
+// server.Handler: Parameter Store, Run Command, Documents and tagging. Point
+// the real aws-sdk-go-v2 SSM client at a Server registered with this handler
+// and those operations work against the in-memory drivers.
 //
 // SSM uses the AWS JSON 1.1 wire shape (POST + JSON body, dispatched on the
 // X-Amz-Target header "AmazonSSM.<Operation>"), the same family as DynamoDB,
@@ -11,6 +11,7 @@
 package ssm
 
 import (
+	stderrors "errors"
 	"net/http"
 	"strings"
 
@@ -21,14 +22,53 @@ import (
 
 const targetPrefix = "AmazonSSM."
 
-// Handler serves Parameter Store JSON-RPC requests against a ParameterStore driver.
+// handlerFunc serves one SSM operation.
+type handlerFunc func(h *Handler, w http.ResponseWriter, r *http.Request)
+
+// Handler serves SSM JSON-RPC requests. Parameter Store runs against the
+// portable ParameterStore driver. Run Command and Documents are optional
+// capabilities the driver may also implement.
 type Handler struct {
 	store ssmdriver.ParameterStore
+	ops   map[string]handlerFunc
 }
 
-// New returns a Parameter Store handler backed by s.
+// New returns an SSM handler backed by s.
 func New(s ssmdriver.ParameterStore) *Handler {
-	return &Handler{store: s}
+	h := &Handler{store: s, ops: map[string]handlerFunc{}}
+
+	for _, family := range []map[string]handlerFunc{parameterOps(), runCommandOps(), tagOps(), documentOps()} {
+		for op, fn := range family {
+			h.ops[op] = fn
+		}
+	}
+
+	return h
+}
+
+// parameterOps is the Parameter Store family, service settings included.
+func parameterOps() map[string]handlerFunc {
+	return map[string]handlerFunc{
+		"PutParameter":          (*Handler).putParameter,
+		"GetParameter":          (*Handler).getParameter,
+		"GetParameters":         (*Handler).getParameters,
+		"GetParametersByPath":   (*Handler).getParametersByPath,
+		"DeleteParameter":       (*Handler).deleteParameter,
+		"DeleteParameters":      (*Handler).deleteParameters,
+		"DescribeParameters":    (*Handler).describeParameters,
+		"GetParameterHistory":   (*Handler).getParameterHistory,
+		"LabelParameterVersion": (*Handler).labelParameterVersion,
+		"GetServiceSetting":     (*Handler).getServiceSetting,
+		"UpdateServiceSetting":  (*Handler).updateServiceSetting,
+		"ResetServiceSetting":   (*Handler).resetServiceSetting,
+	}
+}
+
+func runCommandOps() map[string]handlerFunc {
+	return map[string]handlerFunc{
+		"SendCommand":          (*Handler).sendCommand,
+		"GetCommandInvocation": (*Handler).getCommandInvocation,
+	}
 }
 
 // Matches returns true for SSM-shaped requests, identified by an X-Amz-Target
@@ -37,49 +77,19 @@ func (*Handler) Matches(r *http.Request) bool {
 	return strings.HasPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 }
 
-// ServeHTTP dispatches Parameter Store operations based on X-Amz-Target.
+// ServeHTTP dispatches SSM operations based on X-Amz-Target.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	op := strings.TrimPrefix(r.Header.Get("X-Amz-Target"), targetPrefix)
 
-	switch op {
-	case "PutParameter":
-		h.putParameter(w, r)
-	case "GetParameter":
-		h.getParameter(w, r)
-	case "GetParameters":
-		h.getParameters(w, r)
-	case "GetParametersByPath":
-		h.getParametersByPath(w, r)
-	case "DeleteParameter":
-		h.deleteParameter(w, r)
-	case "DeleteParameters":
-		h.deleteParameters(w, r)
-	case "DescribeParameters":
-		h.describeParameters(w, r)
-	case "GetParameterHistory":
-		h.getParameterHistory(w, r)
-	case "LabelParameterVersion":
-		h.labelParameterVersion(w, r)
-	case "SendCommand":
-		h.sendCommand(w, r)
-	case "GetCommandInvocation":
-		h.getCommandInvocation(w, r)
-	case "AddTagsToResource":
-		h.addTagsToResource(w, r)
-	case "RemoveTagsFromResource":
-		h.removeTagsFromResource(w, r)
-	case "ListTagsForResource":
-		h.listTagsForResource(w, r)
-	case "GetServiceSetting":
-		h.getServiceSetting(w, r)
-	case "UpdateServiceSetting":
-		h.updateServiceSetting(w, r)
-	case "ResetServiceSetting":
-		h.resetServiceSetting(w, r)
-	default:
+	fn, ok := h.ops[op]
+	if !ok {
 		wire.WriteJSONError(w, http.StatusBadRequest,
 			"UnknownOperationException", "unknown SSM operation: "+op)
+
+		return
 	}
+
+	fn(h, w, r)
 }
 
 // writeErr maps canonical cloudemu errors to SSM JSON error responses. SSM
@@ -87,6 +97,19 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // exception.
 func writeErr(w http.ResponseWriter, err error) {
 	msg := cerrors.Message(err)
+
+	// A provider error may name its exact SSM exception (InvalidDocument,
+	// InvalidInstanceId, ...). The code mapping below only fits Parameter Store.
+	var ex interface {
+		SSMException() (string, int)
+	}
+
+	if stderrors.As(err, &ex) {
+		name, status := ex.SSMException()
+		wire.WriteJSONError(w, status, name, msg)
+
+		return
+	}
 
 	switch {
 	case cerrors.IsNotFound(err):

@@ -338,50 +338,6 @@ type ParameterStore interface {
 	LabelParameterVersion(ctx context.Context, name string, version int64, labels []string) (appliedVersion int64, invalid []string, err error)
 }
 
-// CommandInvocation is the result of a Run Command execution on one instance.
-type CommandInvocation struct {
-	CommandID    string
-	InstanceID   string
-	DocumentName string
-	Status       string
-	ResponseCode int32
-	Stdout       string
-	Stderr       string
-}
-
-// CommandTarget identifies managed nodes by a Key/Values criterion, e.g.
-// {Key: "tag:Name", Values: ["web"]}. It mirrors the SSM Target shape and is an
-// alternative to listing InstanceIDs explicitly.
-type CommandTarget struct {
-	Key    string
-	Values []string
-}
-
-// CommandConfig describes a Run Command send. Either InstanceIDs or Targets
-// (or both) must be supplied; Targets select managed nodes by tag/attribute.
-type CommandConfig struct {
-	InstanceIDs  []string
-	Targets      []CommandTarget
-	DocumentName string
-	Comment      string
-	Parameters   map[string][]string
-}
-
-// RunCommand is an OPTIONAL capability, discovered by type assertion.
-//
-// Targets are validated: sending to an instance that does not exist is
-// InvalidInstanceId, as it is against the real service.
-//
-// IMPORTANT: an emulated instance has no guest operating system, so nothing
-// executes. Invocations report success and empty output. This exercises a
-// caller's send/poll orchestration (that it waits for a terminal status, reads
-// the response code, and handles failure) but it does NOT validate the script
-// itself. A caller whose bootstrap script is wrong will still see success here.
-type RunCommand interface {
-	SendCommand(ctx context.Context, cfg CommandConfig) (string, error)
-	GetCommandInvocation(ctx context.Context, commandID, instanceID string) (*CommandInvocation, error)
-}
-
 // ServiceSetting is an account-level Parameter Store setting, such as the
 // default parameter tier.
 type ServiceSetting struct {
