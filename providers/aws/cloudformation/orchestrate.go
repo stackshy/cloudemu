@@ -2,6 +2,7 @@ package cloudformation
 
 import (
 	"context"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -24,6 +25,11 @@ const stackResourceType = "AWS::CloudFormation::Stack"
 func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.Stack, error) {
 	if in.StackName == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "stack name is required")
+	}
+
+	onFailure, err := createFailureMode(in)
+	if err != nil {
+		return nil, err
 	}
 
 	body, err := m.templateBody(ctx, in.TemplateBody, in.TemplateURL)
@@ -53,6 +59,10 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 		return nil, cerr
 	}
 
+	if lerr := m.checkStackLimit(); lerr != nil {
+		return nil, lerr
+	}
+
 	now := m.clock.Now()
 	sd := &stackData{
 		resolved:  map[string]cfn.ResolvedResource{},
@@ -63,6 +73,9 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 			Description: t.Description, Parameters: params, Tags: in.Tags,
 			Capabilities: in.Capabilities, TemplateBody: body,
 			CreationTime: now, LastUpdated: now, NotificationARNs: in.NotificationARNs,
+			DisableRollback:             onFailure == cfn.OnStackFailureDoNothing,
+			EnableTerminationProtection: in.EnableTerminationProtection,
+			RetainExceptOnCreate:        in.RetainExceptOnCreate,
 		},
 	}
 
@@ -72,7 +85,7 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 
 	m.emitStackEvent(sd, cfn.StatusCreateInProgress, "User Initiated")
 
-	m.provision(ctx, sd, effective, resolver, cfn.OnStackFailureRollback)
+	m.provision(ctx, sd, effective, resolver, onFailure)
 
 	out := sd.snapshotStack()
 
@@ -84,7 +97,14 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 // ROLLBACK deletes what was created and leaves ROLLBACK_COMPLETE,
 // DO_NOTHING keeps it and leaves CREATE_FAILED, and DELETE deletes the stack.
 func (m *Mock) provision(ctx context.Context, sd *stackData, t *cfn.Template, res *cfn.Resolver, onFailure string) bool {
-	failures, _ := m.converge(ctx, sd, t, res, convergeOpts{stopOnFailure: true})
+	var failures []applyFailure
+
+	if _, f := m.bindImports(sd, t, res, nil); f != nil {
+		failures = []applyFailure{*f}
+	} else {
+		failures, _ = m.converge(ctx, sd, t, res, convergeOpts{stopOnFailure: true})
+	}
+
 	if len(failures) == 0 {
 		m.emitStackEvent(sd, cfn.StatusCreateComplete, "")
 		return true
@@ -97,15 +117,39 @@ func (m *Mock) provision(ctx context.Context, sd *stackData, t *cfn.Template, re
 		m.emitStackEvent(sd, cfn.StatusCreateFailed, reason)
 	case cfn.OnStackFailureDelete:
 		m.emitStackEvent(sd, cfn.StatusDeleteInProgress, reason+" Delete requested by user.")
-		m.finishDelete(ctx, sd)
+		m.finishDelete(ctx, sd, teardownOpts{rollbackOfCreate: true})
 	default:
 		reason += " Rollback requested by user."
 		m.emitStackEvent(sd, cfn.StatusRollbackInProgress, reason)
-		m.teardown(ctx, sd)
+
+		if tf := m.teardown(ctx, sd, teardownOpts{rollbackOfCreate: true}); len(tf) > 0 {
+			m.emitStackEvent(sd, cfn.StatusRollbackFailed, failureSummary(tf))
+			return false
+		}
+
 		m.emitTerminalEvent(sd, cfn.StatusRollbackComplete, reason)
 	}
 
 	return false
+}
+
+// createFailureMode resolves CreateStack's OnFailure and DisableRollback to
+// the one failure mode they name.
+func createFailureMode(in *cfn.CreateStackInput) (string, error) {
+	modes := []string{cfn.OnStackFailureDoNothing, cfn.OnStackFailureRollback, cfn.OnStackFailureDelete}
+
+	switch {
+	case in.OnFailure != "" && in.DisableRollback:
+		return "", cerrors.New(cerrors.InvalidArgument, msgFailureAndRollback)
+	case in.OnFailure != "" && !slices.Contains(modes, in.OnFailure):
+		return "", cerrors.Newf(cerrors.InvalidArgument, msgFieldEnum, in.OnFailure, "onFailure", strings.Join(modes, ", "))
+	case in.OnFailure != "":
+		return in.OnFailure, nil
+	case in.DisableRollback:
+		return cfn.OnStackFailureDoNothing, nil
+	default:
+		return cfn.OnStackFailureRollback, nil
+	}
 }
 
 // claimStackSlot atomically inserts sd for name, or replaces a prior
@@ -307,6 +351,7 @@ func (m *Mock) newResolver(name, id string, paramValues map[string]string, notif
 		StackName:        name,
 		StackID:          id,
 		NotificationARNs: notificationARNs,
+		Exports:          m.exportValues(id),
 	}
 }
 
@@ -460,6 +505,8 @@ func (*Mock) forgetAll(sd *stackData) {
 	sd.resolved = map[string]cfn.ResolvedResource{}
 	sd.deleteIDs = map[string]string{}
 	sd.props = map[string]map[string]any{}
+	sd.policies = nil
+	sd.imports = nil
 }
 
 func (*Mock) resourceTypes(sd *stackData) map[string]string {

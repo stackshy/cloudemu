@@ -46,6 +46,11 @@ type ResourceDef struct {
 	DependsOn  any
 	// Condition names the condition that decides whether the resource exists.
 	Condition string
+	// DeletionPolicy decides what happens to the resource when it is
+	// deleted from the stack. UpdateReplacePolicy decides what happens to
+	// the old resource when it is replaced. "" means Delete.
+	DeletionPolicy      string
+	UpdateReplacePolicy string
 }
 
 // OutputDef is one output declaration.

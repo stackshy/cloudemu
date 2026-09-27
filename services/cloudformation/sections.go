@@ -291,9 +291,32 @@ func buildResource(m map[string]any, path string) (ResourceDef, error) {
 		return r, formatErr("[/%s/Properties] must be an object", path)
 	}
 
-	r.Condition, err = scalarField(m["Condition"], path+"/Condition")
+	if r.Condition, err = scalarField(m["Condition"], path+"/Condition"); err != nil {
+		return r, err
+	}
+
+	id := strings.TrimPrefix(path, "Resources/")
+
+	if r.DeletionPolicy, err = policyField(m, "DeletionPolicy", id, deletionPolicies); err != nil {
+		return r, err
+	}
+
+	r.UpdateReplacePolicy, err = policyField(m, "UpdateReplacePolicy", id, replacePolicies)
 
 	return r, err
+}
+
+// policyField reads a resource's DeletionPolicy or UpdateReplacePolicy,
+// which must be a plain string.
+func policyField(m map[string]any, attr, id string, allowed []string) (string, error) {
+	switch v := m[attr].(type) {
+	case nil:
+		return "", nil
+	case string:
+		return v, checkPolicy(attr, v, id, allowed)
+	default:
+		return "", formatErr("Every %s member must be a string.", attr)
+	}
 }
 
 func buildOutput(m map[string]any, path string) (OutputDef, error) {

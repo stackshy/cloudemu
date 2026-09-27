@@ -49,7 +49,13 @@ func (h *Handler) continueUpdateRollback(w http.ResponseWriter, r *http.Request)
 }
 
 func (h *Handler) deleteStack(w http.ResponseWriter, r *http.Request) {
-	if err := h.api.DeleteStack(r.Context(), r.Form.Get("StackName")); err != nil {
+	in := &cfn.DeleteStackInput{
+		StackName:       r.Form.Get("StackName"),
+		RetainResources: awsquery.ListStrings(r.Form, "RetainResources.member"),
+		DeletionMode:    r.Form.Get("DeletionMode"),
+	}
+
+	if err := h.api.DeleteStack(r.Context(), in); err != nil {
 		writeErr(w, err)
 		return
 	}
