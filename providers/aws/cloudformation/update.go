@@ -12,12 +12,12 @@ import (
 
 // Error texts for UpdateStack and ContinueUpdateRollback.
 const (
-	msgNoUpdates          = "No updates are to be performed."
-	msgPreviousAndBody    = "You cannot specify both usePreviousTemplate and Template Body/Template Url"
-	msgContinueBadStatus  = "ContinueUpdateRollback cannot be called from current stack status"
-	msgSkipNotFailed      = "Resource [%s] is not in a failed state and cannot be skipped"
-	msgStackCannotUpdate  = "Stack:%s is in %s state and can not be updated."
-	msgTypeChanged        = "Update of resource type is not permitted. " +
+	msgNoUpdates         = "No updates are to be performed."
+	msgPreviousAndBody   = "You cannot specify both usePreviousTemplate and Template Body/Template Url"
+	msgContinueBadStatus = "ContinueUpdateRollback cannot be called from current stack status"
+	msgSkipNotFailed     = "Resource [%s] is not in a failed state and cannot be skipped"
+	msgStackCannotUpdate = "Stack:%s is in %s state and can not be updated."
+	msgTypeChanged       = "Update of resource type is not permitted. " +
 		"The new template modifies resource type of the following resources: [%s]"
 	reasonSkippedRollback = "Resource skipped during rollback"
 	reasonUserInitiated   = "User Initiated"
