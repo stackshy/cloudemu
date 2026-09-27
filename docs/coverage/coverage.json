@@ -433,6 +433,9 @@
         "name": "CreateAPI"
       },
       {
+        "name": "CreateDeployment"
+      },
+      {
         "name": "CreateIntegration"
       },
       {
@@ -443,6 +446,9 @@
       },
       {
         "name": "DeleteAPI"
+      },
+      {
+        "name": "DeleteDeployment"
       },
       {
         "name": "DeleteIntegration"
@@ -458,6 +464,12 @@
       },
       {
         "name": "GetAPIs"
+      },
+      {
+        "name": "GetDeployment"
+      },
+      {
+        "name": "GetDeployments"
       },
       {
         "name": "GetIntegration"
@@ -478,7 +490,19 @@
         "name": "GetStages"
       },
       {
+        "name": "GetTags"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
         "name": "UpdateAPI"
+      },
+      {
+        "name": "UpdateDeployment"
       },
       {
         "name": "UpdateIntegration"

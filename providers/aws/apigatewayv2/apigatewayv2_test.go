@@ -97,7 +97,7 @@ func TestAPICRUD(t *testing.T) {
 		t.Fatalf("PATCH clobbered untouched fields: %+v", upd)
 	}
 
-	apis, err := m.GetAPIs(ctx())
+	apis, _, err := m.GetAPIs(ctx(), nil)
 	if err != nil || len(apis) != 1 {
 		t.Fatalf("GetAPIs: %v, len=%d", err, len(apis))
 	}
@@ -124,13 +124,20 @@ func TestRouteCRUD(t *testing.T) {
 		t.Fatalf("CreateRoute: %v, %+v", err, rt)
 	}
 
-	target := "integrations/abc"
+	ig, err := m.CreateIntegration(ctx(), api.APIID, &driver.CreateIntegrationInput{
+		IntegrationType: driver.IntegrationHTTPProxy, IntegrationURI: "https://example.com", IntegrationMethod: "GET",
+	})
+	if err != nil {
+		t.Fatalf("CreateIntegration: %v", err)
+	}
+
+	target := "integrations/" + ig.IntegrationID
 	upd, err := m.UpdateRoute(ctx(), api.APIID, rt.RouteID, &driver.UpdateRouteInput{Target: &target})
 	if err != nil || upd.Target != target || upd.RouteKey != "GET /items" {
 		t.Fatalf("UpdateRoute: %v, %+v", err, upd)
 	}
 
-	routes, err := m.GetRoutes(ctx(), api.APIID)
+	routes, _, err := m.GetRoutes(ctx(), api.APIID, nil)
 	if err != nil || len(routes) != 1 {
 		t.Fatalf("GetRoutes: %v, len=%d", err, len(routes))
 	}
@@ -164,7 +171,9 @@ func TestIntegrationCRUDAndTimeoutDefault(t *testing.T) {
 	}
 
 	// WebSocket API defaults the integration timeout to 29000.
-	wsAPI, err := m.CreateAPI(ctx(), &driver.CreateAPIInput{Name: "ws", ProtocolType: driver.ProtocolWebSocket})
+	wsAPI, err := m.CreateAPI(ctx(), &driver.CreateAPIInput{
+		Name: "ws", ProtocolType: driver.ProtocolWebSocket, RouteSelectionExpression: "$request.body.action",
+	})
 	if err != nil {
 		t.Fatalf("CreateAPI ws: %v", err)
 	}
@@ -202,7 +211,7 @@ func TestStageCRUDAndConflict(t *testing.T) {
 		t.Fatalf("UpdateStage: %v, %+v", err, upd)
 	}
 
-	stages, err := m.GetStages(ctx(), api.APIID)
+	stages, _, err := m.GetStages(ctx(), api.APIID, nil)
 	if err != nil || len(stages) != 1 {
 		t.Fatalf("GetStages: %v, len=%d", err, len(stages))
 	}
@@ -219,7 +228,7 @@ func TestStageCRUDAndConflict(t *testing.T) {
 func TestSubResourcesOnMissingAPI(t *testing.T) {
 	m := newMock(t)
 
-	if _, err := m.GetRoutes(ctx(), "nope"); !cerrors.IsNotFound(err) {
+	if _, _, err := m.GetRoutes(ctx(), "nope", nil); !cerrors.IsNotFound(err) {
 		t.Fatalf("GetRoutes missing api err = %v, want NotFound", err)
 	}
 
