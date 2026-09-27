@@ -37,6 +37,7 @@ Each service's summary breaks the verified counts out per SDK/language. Only lan
 
 | Operation | AWS (CloudFormation) |
 |---|---|
+| CancelUpdateStack | ✅ |
 | ContinueUpdateRollback | ✅ |
 | CreateChangeSet | ✅ |
 | CreateStack | ✅ |
@@ -49,6 +50,7 @@ Each service's summary breaks the verified counts out per SDK/language. Only lan
 | DescribeStacks | ✅ |
 | EstimateTemplateCost | ✅ |
 | ExecuteChangeSet | ✅ |
+| GetStackPolicy | ✅ |
 | GetTemplate | ✅ |
 | GetTemplateSummary | ✅ |
 | ListChangeSets | ✅ |
@@ -56,12 +58,14 @@ Each service's summary breaks the verified counts out per SDK/language. Only lan
 | ListImports | ✅ |
 | ListStackResources | ✅ |
 | ListStacks | ✅ |
+| RollbackStack | ✅ |
+| SetStackPolicy | ✅ |
 | UpdateStack | ✅ |
 | UpdateTerminationProtection | ✅ |
 | ValidateTemplate | ✅ |
 
 **cloudformation verified per language:**
-- Go: AWS 22/22
+- Go: AWS 26/26
 
 ## compute
 

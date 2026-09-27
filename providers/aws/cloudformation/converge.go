@@ -32,6 +32,11 @@ type convergeOpts struct {
 	// rollback marks a pass that rolls an update back. Its cleanup deletes
 	// the resources the update created, and it does not check exports.
 	rollback bool
+	// policy is the stack policy an update is held to, or nil for none.
+	policy *cfn.StackPolicy
+	// holdCleanup ends a successful pass before its cleanup phase and
+	// returns the replacements, so the cleanup can run later.
+	holdCleanup bool
 }
 
 // applyFailure is one resource a converge pass could not bring to its target.
@@ -88,13 +93,17 @@ func (m *Mock) converge(
 	}
 
 	failures, replaced := m.applyAll(ctx, sd, t, res, order, o)
+	if len(failures) == 0 {
+		failures = m.checkDrops(sd, t, &o)
+	}
+
 	if len(failures) > 0 && o.stopOnFailure {
 		return failures, replaced
 	}
 
 	if len(failures) == 0 {
 		failures = m.setOutputs(sd, res, t, !o.rollback)
-		if len(failures) > 0 && o.stopOnFailure {
+		if len(failures) > 0 && o.stopOnFailure || len(failures) == 0 && o.holdCleanup {
 			return failures, replaced
 		}
 	}
@@ -130,7 +139,7 @@ func (m *Mock) applyAll(
 
 		rdef := t.Resources[id]
 
-		if f := m.applyOne(ctx, sd, res, id, rdef, &replaced); f != nil {
+		if f := m.applyOne(ctx, sd, res, id, &rdef, o.policy, &replaced); f != nil {
 			failures = append(failures, *f)
 
 			if o.stopOnFailure {
@@ -184,12 +193,14 @@ func seedResolver(sd *stackData, t *cfn.Template, res *cfn.Resolver) {
 }
 
 // applyOne brings one resource to its definition in the target template.
+// A change the stack policy does not allow fails the resource untouched.
 func (m *Mock) applyOne(
-	ctx context.Context, sd *stackData, res *cfn.Resolver, id string, rdef cfn.ResourceDef, replaced *[]replacement,
+	ctx context.Context, sd *stackData, res *cfn.Resolver, id string, rdef *cfn.ResourceDef,
+	policy *cfn.StackPolicy, replaced *[]replacement,
 ) *applyFailure {
 	live, exists := sd.live(id)
 	if !exists {
-		return m.createOne(ctx, sd, res, id, rdef, createEvents())
+		return m.createOne(ctx, sd, res, id, *rdef, createEvents())
 	}
 
 	props, err := resolveProps(res, rdef.Properties)
@@ -199,20 +210,32 @@ func (m *Mock) applyOne(
 
 	prov, ok := m.registry[rdef.Type]
 	if !ok || live.typ != rdef.Type {
-		return m.replaceOne(ctx, sd, res, id, rdef, &live, replaced)
+		if f := m.policyDenies(sd, policy, cfn.StackPolicyReplace, id, &live); f != nil {
+			return f
+		}
+
+		return m.replaceOne(ctx, sd, res, id, *rdef, &live, replaced)
 	}
 
 	switch cfn.PlanResourceUpdate(prov, live.props, props) {
 	case cfn.UpdateNone:
 		return nil
 	case cfn.UpdateInPlace:
-		return m.updateOne(ctx, sd, res, id, rdef, &live, props)
+		if f := m.policyDenies(sd, policy, cfn.StackPolicyModify, id, &live); f != nil {
+			return f
+		}
+
+		return m.updateOne(ctx, sd, res, id, *rdef, &live, props)
 	case cfn.UpdateReplace:
+		if f := m.policyDenies(sd, policy, cfn.StackPolicyReplace, id, &live); f != nil {
+			return f
+		}
+
 		if name, kept := customNameKept(prov, live.props, props); kept {
 			return m.updateFailed(sd, id, &live, cerrors.Newf(cerrors.InvalidArgument, msgCustomNameFmt, name))
 		}
 
-		return m.replaceOne(ctx, sd, res, id, rdef, &live, replaced)
+		return m.replaceOne(ctx, sd, res, id, *rdef, &live, replaced)
 	}
 
 	return nil

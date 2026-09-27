@@ -303,11 +303,12 @@ func nativeOperations(mockDir string, services map[string]*Service) []Operation 
 	}
 
 	methods := mockMethods(mockDir)
+	apiSetters := contextSetters(mockDir)
 
 	ops := make([]Operation, 0, len(methods))
 
 	for name := range methods {
-		if isNativeOperation(name) {
+		if isNativeOperation(name, apiSetters[name]) {
 			ops = append(ops, Operation{Name: name})
 		}
 	}
@@ -317,17 +318,59 @@ func nativeOperations(mockDir string, services map[string]*Service) []Operation 
 	return ops
 }
 
-func isNativeOperation(name string) bool {
+// isNativeOperation reports whether a mock method is an operation. Snapshot,
+// Restore and Tick are persistence and time plumbing. A Set* method is a
+// wiring setter unless it takes a context, as an API call such as
+// SetStackPolicy does.
+func isNativeOperation(name string, takesContext bool) bool {
 	if !ast.IsExported(name) {
 		return false
 	}
 
 	switch name {
-	case "Snapshot", "Restore":
+	case "Snapshot", "Restore", "Tick":
 		return false
 	}
 
-	return !strings.HasPrefix(name, "Set")
+	return takesContext || !strings.HasPrefix(name, "Set")
+}
+
+// contextSetters returns the Set* methods in mockDir whose first parameter
+// is a context.Context.
+func contextSetters(mockDir string) map[string]bool {
+	fset := token.NewFileSet()
+
+	//nolint:staticcheck // ParseDir is adequate here; build-tag precision is unneeded for docs generation.
+	pkgs, err := parser.ParseDir(fset, mockDir, notTest, 0)
+	if err != nil {
+		return nil
+	}
+
+	out := map[string]bool{}
+
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Files {
+			for _, decl := range file.Decls {
+				if fn, ok := decl.(*ast.FuncDecl); ok && fn.Recv != nil && strings.HasPrefix(fn.Name.Name, "Set") &&
+					firstParamIsContext(fn) {
+					out[fn.Name.Name] = true
+				}
+			}
+		}
+	}
+
+	return out
+}
+
+func firstParamIsContext(fn *ast.FuncDecl) bool {
+	params := fn.Type.Params.List
+	if len(params) == 0 {
+		return false
+	}
+
+	sel, ok := params[0].Type.(*ast.SelectorExpr)
+
+	return ok && sel.Sel.Name == "Context"
 }
 
 // displayName is the fallback native display for a handler package with no

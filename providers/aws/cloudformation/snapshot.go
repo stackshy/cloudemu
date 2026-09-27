@@ -31,6 +31,11 @@ type stackSnapshot struct {
 	Retained       []retainedResource              `json:"retained,omitempty"`
 	Imports        []string                        `json:"imports,omitempty"`
 	Policies       map[string]resourcePolicy       `json:"policies,omitempty"`
+	StackPolicy    string                          `json:"stackPolicy,omitempty"`
+	Pending        *pendingOp                      `json:"pending,omitempty"`
+	Tokens         map[string]string               `json:"tokens,omitempty"`
+	OpToken        string                          `json:"opToken,omitempty"`
+	Stable         *storedPrior                    `json:"stable,omitempty"`
 }
 
 // Snapshot captures every stack's state under its own name so a restore
@@ -51,6 +56,11 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 			Retained:       append([]retainedResource(nil), sd.retained...),
 			Imports:        append([]string(nil), sd.imports...),
 			Policies:       maps.Clone(sd.policies),
+			StackPolicy:    sd.stackPolicy,
+			Pending:        clonePending(sd.pending),
+			Tokens:         maps.Clone(sd.tokens),
+			OpToken:        sd.opToken,
+			Stable:         sd.stable,
 		}
 		sd.mu.RUnlock()
 	}
@@ -76,6 +86,11 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 			retained:       ss.Retained,
 			imports:        ss.Imports,
 			policies:       ss.Policies,
+			stackPolicy:    ss.StackPolicy,
+			pending:        ss.Pending,
+			tokens:         ss.Tokens,
+			opToken:        ss.OpToken,
+			stable:         ss.Stable,
 		}
 
 		for i := range ss.ChangeSets {
@@ -98,6 +113,18 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	return nil
+}
+
+// clonePending copies the pending phase for a snapshot. Its slices are
+// never mutated in place, so sharing them is safe.
+func clonePending(op *pendingOp) *pendingOp {
+	if op == nil {
+		return nil
+	}
+
+	out := *op
+
+	return &out
 }
 
 // cloneChangeSets copies the stored change sets. Their slices and maps are

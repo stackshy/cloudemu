@@ -54,6 +54,10 @@ type updatePlan struct {
 	newT, oldT       *cfn.Template
 	newRes, oldRes   *cfn.Resolver
 	prior            priorState
+	// policy is the stack policy the update is held to, and newPolicy the
+	// policy the request sets for later updates, "" to keep the current one.
+	policy    *cfn.StackPolicy
+	newPolicy string
 }
 
 // UpdateStack brings the stack to a new template. Each resource is created,
@@ -64,10 +68,27 @@ type updatePlan struct {
 // are to be performed.". A failure rolls the stack back to its previous
 // template. If the rollback also fails the stack ends UPDATE_ROLLBACK_FAILED
 // until ContinueUpdateRollback.
+//
+// A stack policy, or StackPolicyDuringUpdateBody for this update only, can
+// refuse a resource's change, which fails the update. A retry with the
+// ClientRequestToken of an update that already ran returns the stack as it
+// is.
 func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.Stack, error) {
+	m.settle(ctx)
+
 	sd, err := m.activeStack(in.StackName)
 	if err != nil {
 		return nil, err
+	}
+
+	if retry, terr := sd.checkToken(in.ClientRequestToken, actionUpdateStack); terr != nil || retry {
+		if terr != nil {
+			return nil, terr
+		}
+
+		out := sd.snapshotStack()
+
+		return &out, nil
 	}
 
 	if uerr := checkUpdatable(sd); uerr != nil {
@@ -83,7 +104,8 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 		return nil, cerrors.New(cerrors.InvalidArgument, msgNoUpdates)
 	}
 
-	if berr := m.beginOperation(sd, updatableStatus, cfn.StatusUpdateInProgress); berr != nil {
+	if berr := m.beginOperation(sd, updatableStatus, cfn.StatusUpdateInProgress, in.ClientRequestToken,
+		actionUpdateStack); berr != nil {
 		return nil, berr
 	}
 
@@ -94,7 +116,7 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 
 	sd.obsoleteChangeSets()
 	sd.setRollbackFlags(in.DisableRollback, in.RetainExceptOnCreate)
-	m.runUpdate(ctx, sd, in, plan, onFailure)
+	m.runUpdate(ctx, sd, in, plan, &pendingOp{OnFailure: onFailure})
 
 	out := sd.snapshotStack()
 
@@ -102,16 +124,15 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 }
 
 // runUpdate applies a planned update to a stack already in
-// UPDATE_IN_PROGRESS. It reports whether the update succeeded. A failure
-// rolls the stack back, or with DO_NOTHING leaves it UPDATE_FAILED as it is.
-// Old resources of replacements are deleted only in the cleanup phase of a
-// successful update. A failure that is not rolled back keeps them, and the
-// next successful update cleans them up.
-func (m *Mock) runUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStackInput, plan *updatePlan, onFailure string) bool {
+// UPDATE_IN_PROGRESS. The update ends in op's last phase. Under
+// AsyncSettle the cleanup phase waits for it too, so a cancel can still
+// put the old resources of replacements back.
+func (m *Mock) runUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStackInput, plan *updatePlan, op *pendingOp) {
 	m.applyStackMeta(sd, in, plan)
 
 	forward := convergeOpts{
 		stopOnFailure: true, cleanupStatus: cfn.StatusUpdateCompleteCleanupInProgress, cleanRetained: true,
+		policy: plan.policy, holdCleanup: m.settleWindow > 0,
 	}
 
 	var (
@@ -126,22 +147,77 @@ func (m *Mock) runUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStack
 		failures, replaced = m.converge(ctx, sd, plan.newT, plan.newRes, forward)
 	}
 
-	if len(failures) == 0 {
-		sd.setImports(imports)
+	op.Kind = opUpdate
+	op.Prior = storePrior(&plan.prior)
+	op.plan = plan
+	op.Replaced = toRetained(replaced)
+	op.Imports = imports
+	op.HeldCleanup = forward.holdCleanup && len(failures) == 0
+
+	if len(failures) > 0 {
+		op.Failure = failureSummary(failures)
+	}
+
+	m.finish(ctx, sd, op)
+}
+
+// completeUpdate ends an update. A failure rolls the stack back, or with
+// DO_NOTHING leaves it UPDATE_FAILED as it is. Old resources of
+// replacements are deleted only in the cleanup phase of a successful
+// update. A failure that is not rolled back keeps them, and the next
+// successful update cleans them up.
+func (m *Mock) completeUpdate(ctx context.Context, sd *stackData, op *pendingOp) {
+	if op.Failure == "" {
+		if op.HeldCleanup {
+			m.cleanupUpdate(ctx, sd, op)
+		}
+
+		sd.setImports(op.Imports)
+		sd.clearStable()
 		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
+		sd.finishChangeSet(op.ChangeSetID, true)
 
-		return true
+		return
 	}
 
-	if onFailure != cfn.OnStackFailureDoNothing {
-		m.rollbackUpdate(ctx, sd, plan, failureSummary(failures), replaced)
-		return false
+	sd.finishChangeSet(op.ChangeSetID, false)
+
+	if op.OnFailure != cfn.OnStackFailureDoNothing {
+		m.startRollback(ctx, sd, op, op.Failure)
+		return
 	}
 
-	sd.retain(replaced)
-	m.emitStackEvent(sd, cfn.StatusUpdateFailed, failureSummary(failures))
+	sd.retain(replacements(op.Replaced))
+	sd.keepStable(op.Prior)
+	m.emitStackEvent(sd, cfn.StatusUpdateFailed, op.Failure)
+}
 
-	return false
+// cleanupUpdate runs the cleanup phase an asynchronous update held back:
+// it deletes the old resources of replacements, then the resources the
+// template dropped.
+func (m *Mock) cleanupUpdate(ctx context.Context, sd *stackData, op *pendingOp) {
+	var t *cfn.Template
+
+	if op.plan != nil {
+		t = op.plan.newT
+	} else {
+		cur := sd.priorState()
+		if prepared, _, err := m.preparedTemplate(sd, &cur); err == nil {
+			t = prepared
+		}
+	}
+
+	if t == nil {
+		// Without the template no resource can be told to be dropped, so
+		// only the replaced ones are cleaned up.
+		t = &cfn.Template{Resources: map[string]cfn.ResourceDef{}}
+		for id, typ := range m.resourceTypes(sd) {
+			t.Resources[id] = cfn.ResourceDef{Type: typ}
+		}
+	}
+
+	m.emitStackEvent(sd, cfn.StatusUpdateCompleteCleanupInProgress, "")
+	m.cleanup(ctx, sd, t, &convergeOpts{}, append(sd.drainRetained(), replacements(op.Replaced)...))
 }
 
 // checkUpdatable rejects an update of a stack in a state that does not allow
@@ -160,13 +236,16 @@ func checkUpdatable(sd *stackData) error {
 // beginOperation moves the stack to status, recording a "User Initiated"
 // event, if its current status passes allowed. The check and the move are
 // one step, so two concurrent operations cannot both start.
-func (m *Mock) beginOperation(sd *stackData, allowed func(string) bool, status string) error {
+func (m *Mock) beginOperation(sd *stackData, allowed func(string) bool, status, token, action string) error {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	if !allowed(sd.stack.Status) {
+	if !allowed(sd.stack.Status) || sd.pending != nil {
 		return cerrors.Newf(cerrors.InvalidArgument, msgStackCannotUpdate, sd.stack.ID, sd.stack.Status)
 	}
+
+	sd.recordToken(token, action)
+	m.startCursor(sd)
 
 	sd.stack.Status = status
 	sd.stack.StatusReason = reasonUserInitiated
@@ -202,6 +281,10 @@ func (m *Mock) planUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStac
 	}
 
 	p := &updatePlan{body: body, params: params, description: newT.Description, prior: prior}
+
+	if p.policy, p.newPolicy, err = m.updatePolicies(ctx, sd, in); err != nil {
+		return nil, err
+	}
 
 	p.notificationARNs = in.NotificationARNs
 	if p.notificationARNs == nil {
@@ -449,16 +532,53 @@ func previousValues(in, stored []cfn.Parameter) ([]cfn.Parameter, error) {
 	return out, nil
 }
 
-// rollbackUpdate brings the stack back to its previous template after a
-// failed update, restoring what the update changed or deleted and deleting
-// what it created.
-func (m *Mock) rollbackUpdate(
-	ctx context.Context, sd *stackData, p *updatePlan, reason string, replaced []replacement,
-) {
+// updatePolicies checks an update's stack policy inputs. It returns the
+// policy the update is held to and the body StackPolicyBody sets.
+func (m *Mock) updatePolicies(ctx context.Context, sd *stackData, in *cfn.UpdateStackInput) (*cfn.StackPolicy, string, error) {
+	during, err := m.policyBody(ctx, in.StackPolicyDuringUpdateBody, in.StackPolicyDuringUpdateURL, msgBothDuringPolicies)
+	if err != nil {
+		return nil, "", err
+	}
+
+	next, err := m.policyBody(ctx, in.StackPolicyBody, in.StackPolicyURL, msgBothPolicies)
+	if err != nil {
+		return nil, "", err
+	}
+
+	policy, err := updatePolicy(sd, during)
+
+	return policy, next, err
+}
+
+// startRollback begins rolling a failed or stopped update back. The
+// rollback itself is the next phase.
+func (m *Mock) startRollback(ctx context.Context, sd *stackData, op *pendingOp, reason string) {
 	m.emitStackEvent(sd, cfn.StatusUpdateRollbackInProgress, reason)
-	m.restoreReplaced(ctx, sd, replaced)
-	m.revertStackMeta(sd, &p.prior)
-	m.finishRollback(ctx, sd, p.oldT, p.oldRes, nil, reason)
+	m.finish(ctx, sd, &pendingOp{
+		Kind: opRollback, Failure: reason, Prior: op.Prior, Replaced: op.Replaced, plan: op.plan,
+	})
+}
+
+// doRollback brings the stack back to its previous template, restoring
+// what the update changed or deleted and deleting what it created.
+func (m *Mock) doRollback(ctx context.Context, sd *stackData, op *pendingOp) {
+	m.restoreReplaced(ctx, sd, replacements(op.Replaced))
+
+	prior := op.Prior.state()
+	m.revertStackMeta(sd, &prior)
+
+	if op.plan != nil {
+		m.finishRollback(ctx, sd, op.plan.oldT, op.plan.oldRes, nil, op.Failure)
+		return
+	}
+
+	t, res, err := m.preparedTemplate(sd, &prior)
+	if err != nil {
+		m.emitStackEvent(sd, cfn.StatusUpdateRollbackFailed, cerrors.Message(err))
+		return
+	}
+
+	m.finishRollback(ctx, sd, t, res, nil, op.Failure)
 }
 
 // finishRollback converges to the previous template t. If a resource cannot
@@ -477,6 +597,7 @@ func (m *Mock) finishRollback(
 		}
 
 		sd.setRollbackFailed(nil)
+		sd.clearStable()
 		m.emitTerminalEvent(sd, cfn.StatusUpdateRollbackComplete, reason)
 
 		return
@@ -506,25 +627,31 @@ func (sd *stackData) setRollbackFailed(ids []string) {
 // UPDATE_ROLLBACK_FAILED. Resources named in ResourcesToSkip must be among
 // those that failed. They are marked UPDATE_COMPLETE and left as they are.
 func (m *Mock) ContinueUpdateRollback(ctx context.Context, in *cfn.ContinueUpdateRollbackInput) error {
+	m.settle(ctx)
+
 	sd, err := m.activeStack(in.StackName)
 	if err != nil {
 		return err
 	}
 
-	skip, err := sd.skipSet(in.ResourcesToSkip)
-	if err != nil {
+	if retry, terr := sd.checkToken(in.ClientRequestToken, actionContinueUpdateRollback); terr != nil || retry {
+		return terr
+	}
+
+	if _, err = sd.skipSet(in.ResourcesToSkip); err != nil {
 		return err
 	}
 
 	st := sd.priorState()
 
-	t, res, err := m.preparedTemplate(sd, &st)
+	t, _, err := m.preparedTemplate(sd, &st)
 	if err != nil {
 		return err
 	}
 
 	isFailed := func(s string) bool { return s == cfn.StatusUpdateRollbackFailed }
-	if err = m.beginOperation(sd, isFailed, cfn.StatusUpdateRollbackInProgress); err != nil {
+	if err = m.beginOperation(sd, isFailed, cfn.StatusUpdateRollbackInProgress, in.ClientRequestToken,
+		actionContinueUpdateRollback); err != nil {
 		return cerrors.New(cerrors.InvalidArgument, msgContinueBadStatus)
 	}
 
@@ -532,9 +659,23 @@ func (m *Mock) ContinueUpdateRollback(ctx context.Context, in *cfn.ContinueUpdat
 		m.markSkipped(sd, t, id)
 	}
 
-	m.finishRollback(ctx, sd, t, res, skip, "")
+	m.finish(ctx, sd, &pendingOp{Kind: opContinue, Skip: in.ResourcesToSkip})
 
 	return nil
+}
+
+// completeContinue retries the rollback, leaving the skipped resources as
+// they are.
+func (m *Mock) completeContinue(ctx context.Context, sd *stackData, op *pendingOp) {
+	st := sd.priorState()
+
+	t, res, err := m.preparedTemplate(sd, &st)
+	if err != nil {
+		m.emitStackEvent(sd, cfn.StatusUpdateRollbackFailed, cerrors.Message(err))
+		return
+	}
+
+	m.finishRollback(ctx, sd, t, res, nameSet(op.Skip), "")
 }
 
 // skipSet checks ResourcesToSkip against the resources whose rollback failed.

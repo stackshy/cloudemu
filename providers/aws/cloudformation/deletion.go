@@ -50,9 +50,19 @@ func (m *Mock) DeleteStack(ctx context.Context, in *cfn.DeleteStackInput) error 
 		return cerrors.Newf(cerrors.InvalidArgument, msgFieldEnum, in.DeletionMode, "deletionMode", strings.Join(modes, ", "))
 	}
 
+	m.settle(ctx)
+
 	sd, _, ok := m.findStack(in.StackName)
 	if !ok || sd.status() == cfn.StatusDeleteComplete {
 		return nil
+	}
+
+	if retry, err := sd.checkToken(in.ClientRequestToken, actionDeleteStack); err != nil || retry {
+		return err
+	}
+
+	if err := checkNotBusy(sd); err != nil {
+		return err
 	}
 
 	wasFailed, err := checkDeletable(sd, in)
@@ -62,7 +72,7 @@ func (m *Mock) DeleteStack(ctx context.Context, in *cfn.DeleteStackInput) error 
 
 	m.exportMu.Lock()
 	reason := m.exportInUse(sd)
-	m.startDelete(sd, in.DeletionMode)
+	m.startDelete(sd, in.DeletionMode, in.ClientRequestToken)
 	m.exportMu.Unlock()
 
 	if reason != "" {
@@ -70,12 +80,9 @@ func (m *Mock) DeleteStack(ctx context.Context, in *cfn.DeleteStackInput) error 
 		return nil
 	}
 
-	retain := make(map[string]bool, len(in.RetainResources))
-	for _, id := range in.RetainResources {
-		retain[id] = true
-	}
-
-	m.finishDelete(ctx, sd, teardownOpts{retain: retain, force: wasFailed && in.DeletionMode == cfn.DeletionModeForceDelete})
+	m.finish(ctx, sd, &pendingOp{
+		Kind: opDelete, Retain: in.RetainResources, Force: wasFailed && in.DeletionMode == cfn.DeletionModeForceDelete,
+	})
 
 	return nil
 }
@@ -100,13 +107,15 @@ func checkDeletable(sd *stackData, in *cfn.DeleteStackInput) (bool, error) {
 
 // startDelete moves the stack to DELETE_IN_PROGRESS, which also withdraws
 // its exports. The caller holds exportMu.
-func (m *Mock) startDelete(sd *stackData, mode string) {
+func (m *Mock) startDelete(sd *stackData, mode, token string) {
 	if mode == "" {
 		mode = cfn.DeletionModeStandard
 	}
 
 	sd.mu.Lock()
 	sd.stack.DeletionMode = mode
+	sd.recordToken(token, actionDeleteStack)
+	m.startCursor(sd)
 	sd.mu.Unlock()
 
 	m.emitStackEvent(sd, cfn.StatusDeleteInProgress, reasonUserInitiated)
@@ -114,7 +123,9 @@ func (m *Mock) startDelete(sd *stackData, mode string) {
 
 // UpdateTerminationProtection turns a stack's termination protection on or
 // off and returns the stack id.
-func (m *Mock) UpdateTerminationProtection(_ context.Context, in *cfn.UpdateTerminationProtectionInput) (string, error) {
+func (m *Mock) UpdateTerminationProtection(ctx context.Context, in *cfn.UpdateTerminationProtectionInput) (string, error) {
+	m.settle(ctx)
+
 	sd, err := m.activeStack(in.StackName)
 	if err != nil {
 		return "", err
