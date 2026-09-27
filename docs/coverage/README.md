@@ -53,7 +53,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cloudtasks` | - | - | [CloudTasks](./gcp/cloudtasks.md) | - | 11 |
 | `cloudtrail` | [CloudTrail](./aws/cloudtrail.md) | - | - | - | 60 |
 | `codeartifact` | [CodeArtifact](./aws/codeartifact.md) | - | - | - | 15 |
-| `cognito` | [Cognito](./aws/cognito.md) | - | - | - | 18 |
+| `cognito` | [Cognito](./aws/cognito.md) | - | - | - | 29 |
 | `communication` | - | [Communication](./azure/communication.md) | - | - | 10 |
 | `composer` | - | - | [Composer](./gcp/composer.md) | - | 6 |
 | `compute` | [EC2](./aws/ec2.md) | [VirtualMachines](./azure/virtualmachines.md) | [GCE](./gcp/gce.md) | - | 37 |

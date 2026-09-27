@@ -3,14 +3,24 @@
 
 AWS's `cognito` service · portable interface `driver.Cognito` · [AWS index](./README.md)
 
-## Operations (18)
+## Operations (29)
 
 | Operation | Description |
 | --- | --- |
+| `AddCustomAttributes` | AddCustomAttributes appends custom attributes to a pool's schema. Names get |
+| `AdminCreateUser` | AdminCreateUser creates a user in FORCE_CHANGE_PASSWORD with a generated |
+| `AdminDeleteUser` |  |
+| `AdminDeleteUserAttributes` |  |
+| `AdminDisableUser` |  |
+| `AdminEnableUser` |  |
+| `AdminGetUser` |  |
+| `AdminResetUserPassword` | AdminResetUserPassword moves the user to RESET_REQUIRED. |
+| `AdminSetUserPassword` | AdminSetUserPassword sets a password checked against the pool policy. A |
+| `AdminUpdateUserAttributes` |  |
 | `CreateUserPool` | CreateUserPool creates a user pool, generating its id and ARN, seeding the |
 | `CreateUserPoolClient` | CreateUserPoolClient creates an app client, generating its 26-character id |
 | `CreateUserPoolDomain` |  |
-| `DeleteUserPool` | DeleteUserPool removes a user pool and its clients, domains, and tags. |
+| `DeleteUserPool` | DeleteUserPool removes a user pool with its users, clients and tags. Like |
 | `DeleteUserPoolClient` |  |
 | `DeleteUserPoolDomain` |  |
 | `DescribeUserPool` | DescribeUserPool returns a deep copy of a user pool, or a |
@@ -20,6 +30,7 @@ AWS's `cognito` service · portable interface `driver.Cognito` · [AWS index](./
 | `ListTagsForResource` |  |
 | `ListUserPoolClients` | ListUserPoolClients returns client descriptions in a user pool in a |
 | `ListUserPools` | ListUserPools returns pool descriptions in a deterministic order. |
+| `ListUsers` | ListUsers returns users sorted by username, filtered by an optional |
 | `SetUserPoolMfaConfig` | SetUserPoolMfaConfig replaces a pool's MFA configuration and returns the |
 | `TagResource` |  |
 | `UntagResource` |  |

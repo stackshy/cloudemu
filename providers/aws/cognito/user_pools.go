@@ -67,6 +67,7 @@ func (m *Mock) DescribeUserPool(_ context.Context, id string) (*driver.UserPool,
 
 	out := copyUserPool(pool)
 	out.Tags = m.currentTags(pool.ARN)
+	out.EstimatedNumberOfUsers = m.countUsers(id)
 
 	return &out, nil
 }
@@ -112,14 +113,27 @@ func (m *Mock) UpdateUserPool(_ context.Context, in driver.UpdateUserPoolInput) 
 	return nil
 }
 
-// DeleteUserPool removes a user pool along with its clients, domains, and tags.
+// DeleteUserPool removes a user pool along with its users, clients, and tags.
+// Real Cognito refuses the delete while deletion protection is ACTIVE or a
+// hosted-UI domain is still attached, so the caller must clear those first.
 func (m *Mock) DeleteUserPool(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	pool, ok := m.userPools.Get(id)
 	if !ok {
-		return resourceNotFound("User pool %s does not exist.", id)
+		return poolNotFound(id)
+	}
+
+	if pool.DeletionProtection == driver.DeletionProtectionActive {
+		return invalidParameter("The user pool cannot be deleted because deletion protection is activated. " +
+			"Deletion protection must be inactivated first.")
+	}
+
+	for _, d := range m.domains.All() {
+		if d.UserPoolID == id {
+			return invalidParameter("User pool cannot be deleted. It has a domain configured that should be deleted first.")
+		}
 	}
 
 	for _, key := range m.clients.Keys() {
@@ -128,12 +142,7 @@ func (m *Mock) DeleteUserPool(_ context.Context, id string) error {
 		}
 	}
 
-	for _, domain := range m.domains.Keys() {
-		if d, ok := m.domains.Get(domain); ok && d.UserPoolID == id {
-			m.domains.Delete(domain)
-		}
-	}
-
+	m.deletePoolUsers(id)
 	m.userPools.Delete(id)
 	m.deleteTags(pool.ARN)
 
@@ -142,6 +151,11 @@ func (m *Mock) DeleteUserPool(_ context.Context, id string) error {
 
 // ListUserPools returns pool descriptions sorted by id.
 func (m *Mock) ListUserPools(_ context.Context, page driver.Pagination) ([]driver.UserPoolDescription, string, error) {
+	if page.MaxResults > defaultPageSize {
+		return nil, "", invalidParameter("1 validation error detected: Value '%d' at 'maxResults' failed to satisfy constraint: "+
+			"Member must have value less than or equal to %d", page.MaxResults, defaultPageSize)
+	}
+
 	ids := sortedKeys(m.userPools.Keys())
 	all := make([]driver.UserPoolDescription, 0, len(ids))
 
@@ -214,13 +228,20 @@ func mergeSchema(custom []driver.SchemaAttribute) []driver.SchemaAttribute {
 			continue
 		}
 
-		a.Name = customPrefix(a.DeveloperOnlyAttribute) + a.Name
-		a.StringAttributeConstraints = copyStringConstraints(a.StringAttributeConstraints)
-		a.NumberAttributeConstraints = copyNumberConstraints(a.NumberAttributeConstraints)
-		attrs = append(attrs, a)
+		attrs = append(attrs, customAttribute(a))
 	}
 
 	return attrs
+}
+
+// customAttribute returns a caller-supplied attribute with its custom: or dev:
+// prefix applied and its constraints deep-copied.
+func customAttribute(a driver.SchemaAttribute) driver.SchemaAttribute {
+	a.Name = customPrefix(a.DeveloperOnlyAttribute) + a.Name
+	a.StringAttributeConstraints = copyStringConstraints(a.StringAttributeConstraints)
+	a.NumberAttributeConstraints = copyNumberConstraints(a.NumberAttributeConstraints)
+
+	return a
 }
 
 // customPrefix returns the attribute-name prefix Cognito applies to a

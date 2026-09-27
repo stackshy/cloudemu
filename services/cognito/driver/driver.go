@@ -1,13 +1,9 @@
-// Package driver defines the interface and types for the AWS Cognito user-pools
-// (cognito-idp) control plane. It models user pools, their app clients, and
-// hosted-UI domains, plus resource tagging.
+// Package driver defines the interface and types for AWS Cognito user pools
+// (cognito-idp). It models user pools, their app clients, hosted-UI domains,
+// resource tagging, and the users of a pool with the admin user-management
+// operations.
 //
-// This is the configuration control plane only: creating and reading the pool,
-// client, and domain resources and their settings. There is no authentication
-// data plane behind the emulator: sign-up, sign-in, token issuance, users, and
-// groups are out of scope. A caller that only provisions Cognito resources
-// (Terraform, CloudFormation, the console's create flow) behaves as it would
-// against real Cognito, while token/user operations are deferred.
+// Sign-up, sign-in and token issuance are not modeled yet.
 package driver
 
 import "context"
@@ -19,6 +15,7 @@ type Cognito interface {
 	userPoolClientAPI
 	userPoolDomainAPI
 	tagAPI
+	userAPI
 }
 
 // userPoolAPI covers the user-pool control plane.
@@ -34,8 +31,13 @@ type userPoolAPI interface {
 	// UpdateUserPool applies the mutable pool settings. A nil field is left
 	// unchanged; UserPoolTags, when non-nil, replaces the pool's tag set.
 	UpdateUserPool(ctx context.Context, in UpdateUserPoolInput) error
-	// DeleteUserPool removes a user pool and its clients, domains, and tags.
+	// DeleteUserPool removes a user pool with its users, clients and tags. Like
+	// real Cognito it refuses (InvalidParameterException) while deletion
+	// protection is ACTIVE or a hosted-UI domain is still attached.
 	DeleteUserPool(ctx context.Context, id string) error
+	// AddCustomAttributes appends custom attributes to a pool's schema. Names get
+	// the "custom:" prefix, and an existing name is rejected.
+	AddCustomAttributes(ctx context.Context, userPoolID string, attrs []SchemaAttribute) error
 	// ListUserPools returns pool descriptions in a deterministic order.
 	ListUserPools(ctx context.Context, page Pagination) ([]UserPoolDescription, string, error)
 	// GetUserPoolMfaConfig returns a pool's MFA configuration. The Terraform AWS
@@ -79,4 +81,27 @@ type tagAPI interface {
 	TagResource(ctx context.Context, resourceARN string, tags map[string]string) error
 	UntagResource(ctx context.Context, resourceARN string, tagKeys []string) error
 	ListTagsForResource(ctx context.Context, resourceARN string) (map[string]string, error)
+}
+
+// userAPI covers the users of a user pool and the admin user-management
+// operations. Usernames are looked up the way Cognito does: by username, or by
+// email/phone number when the pool uses them as username attributes or aliases.
+type userAPI interface {
+	// AdminCreateUser creates a user in FORCE_CHANGE_PASSWORD with a generated
+	// sub. MessageAction RESEND re-invites an existing FORCE_CHANGE_PASSWORD user.
+	AdminCreateUser(ctx context.Context, in AdminCreateUserInput) (*User, error)
+	AdminGetUser(ctx context.Context, userPoolID, username string) (*User, error)
+	// ListUsers returns users sorted by username, filtered by an optional
+	// `attr = "v"` or `attr ^= "v"` expression on a searchable attribute.
+	ListUsers(ctx context.Context, in ListUsersInput) ([]User, string, error)
+	AdminDeleteUser(ctx context.Context, userPoolID, username string) error
+	AdminUpdateUserAttributes(ctx context.Context, userPoolID, username string, attrs []Attribute) error
+	AdminDeleteUserAttributes(ctx context.Context, userPoolID, username string, names []string) error
+	// AdminSetUserPassword sets a password checked against the pool policy. A
+	// permanent password confirms the user; otherwise it is FORCE_CHANGE_PASSWORD.
+	AdminSetUserPassword(ctx context.Context, userPoolID, username, password string, permanent bool) error
+	AdminEnableUser(ctx context.Context, userPoolID, username string) error
+	AdminDisableUser(ctx context.Context, userPoolID, username string) error
+	// AdminResetUserPassword moves the user to RESET_REQUIRED.
+	AdminResetUserPassword(ctx context.Context, userPoolID, username string) error
 }
