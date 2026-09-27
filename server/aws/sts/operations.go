@@ -6,6 +6,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/server/authctx"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsidentity"
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 )
@@ -74,7 +75,8 @@ func (h *Handler) assumeRole(w http.ResponseWriter, r *http.Request) {
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
 	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID})
+	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID},
+		roleOwner(roleName))
 	if !ok {
 		return
 	}
@@ -133,7 +135,8 @@ func (h *Handler) assumeRoleWithWebIdentity(w http.ResponseWriter, r *http.Reque
 
 	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID})
+	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID},
+		roleOwner(roleName))
 	if !ok {
 		return
 	}
@@ -162,7 +165,8 @@ func (h *Handler) assumeRoleWithSAML(w http.ResponseWriter, r *http.Request) {
 	assumedArn := "arn:aws:sts::" + h.accountID + ":assumed-role/" + roleName + "/" + sessionName
 	assumedRoleID := assumedRoleIDPrefix + ":" + sessionName
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID})
+	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: assumedArn, UserID: assumedRoleID},
+		roleOwner(roleName))
 	if !ok {
 		return
 	}
@@ -196,7 +200,8 @@ func (h *Handler) getFederationToken(w http.ResponseWriter, r *http.Request) {
 	fedArn := "arn:aws:sts::" + h.accountID + ":federated-user/" + name
 	fedUserID := h.accountID + ":" + name
 
-	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: fedArn, UserID: fedUserID})
+	creds, ok := h.mintCredentials(w, durationFromForm(r), awsidentity.Identity{ARN: fedArn, UserID: fedUserID},
+		h.callerOwner(r))
 	if !ok {
 		return
 	}
@@ -254,7 +259,7 @@ func durationFromForm(r *http.Request) time.Duration {
 // or a federated user, so the minted credentials are recorded under the
 // identity resolveCallerIdentity resolves for the request that asked for them.
 func (h *Handler) getSessionToken(w http.ResponseWriter, r *http.Request) {
-	creds, ok := h.mintCredentials(w, durationFromForm(r), h.resolveCallerIdentity(r))
+	creds, ok := h.mintCredentials(w, durationFromForm(r), h.resolveCallerIdentity(r), h.callerOwner(r))
 	if !ok {
 		return
 	}
@@ -273,13 +278,15 @@ func (h *Handler) getSessionToken(w http.ResponseWriter, r *http.Request) {
 // always has (default, auth-off behavior is byte-for-byte unchanged). Either
 // way, the returned access key id is recorded under identity so a later
 // GetCallerIdentity call made with these credentials reflects it.
-func (h *Handler) synthCredentials(dur time.Duration, identity awsidentity.Identity) (credentials, error) {
+func (h *Handler) synthCredentials(dur time.Duration, identity awsidentity.Identity, owner SessionOwner) (credentials, error) {
 	if dur <= 0 {
 		dur = sessionDuration
 	}
 
 	if h.sessions != nil {
-		sess, err := h.sessions.Mint(dur)
+		owner.ARN, owner.UserID = identity.ARN, identity.UserID
+
+		sess, err := h.sessions.Mint(dur, owner)
 		if err != nil {
 			return credentials{}, err
 		}
@@ -309,8 +316,10 @@ func (h *Handler) synthCredentials(dur time.Duration, identity awsidentity.Ident
 // mintCredentials builds temporary credentials representing identity for a
 // handler, writing an InternalFailure error response and reporting ok=false
 // when credential generation fails closed (a crypto/rand read error).
-func (h *Handler) mintCredentials(w http.ResponseWriter, dur time.Duration, identity awsidentity.Identity) (credentials, bool) {
-	creds, err := h.synthCredentials(dur, identity)
+func (h *Handler) mintCredentials(
+	w http.ResponseWriter, dur time.Duration, identity awsidentity.Identity, owner SessionOwner,
+) (credentials, bool) {
+	creds, err := h.synthCredentials(dur, identity, owner)
 	if err != nil {
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure",
 			"could not generate temporary credentials")
@@ -319,6 +328,27 @@ func (h *Handler) mintCredentials(w http.ResponseWriter, dur time.Duration, iden
 	}
 
 	return creds, true
+}
+
+// roleOwner is the policy owner of a session for the assumed role roleName.
+func roleOwner(roleName string) SessionOwner {
+	return SessionOwner{PolicyEntity: roleName, Role: true}
+}
+
+// callerOwner is the policy owner of a session the caller mints for itself
+// (GetSessionToken, GetFederationToken): the calling IAM user. A caller that is
+// itself signing with a session passes that session's owner on, so a session
+// can never widen its own permissions.
+func (h *Handler) callerOwner(r *http.Request) SessionOwner {
+	p, _ := authctx.PrincipalFrom(r.Context())
+
+	if h.sessions != nil {
+		if sess, ok := h.sessions.Lookup(p.AccessKeyID); ok {
+			return sess.Owner
+		}
+	}
+
+	return SessionOwner{PolicyEntity: p.UserName}
 }
 
 // roleNameFromArn extracts the role name (last path segment) from a role ARN

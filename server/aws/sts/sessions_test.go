@@ -16,12 +16,12 @@ import (
 func TestMintYieldsDistinctHighEntropyCredentials(t *testing.T) {
 	store := sts.NewSessionStore(config.NewFakeClock(time.Unix(0, 0)))
 
-	a, err := store.Mint(time.Hour)
+	a, err := store.Mint(time.Hour, sts.SessionOwner{})
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}
 
-	b, err := store.Mint(time.Hour)
+	b, err := store.Mint(time.Hour, sts.SessionOwner{})
 	if err != nil {
 		t.Fatalf("Mint: %v", err)
 	}

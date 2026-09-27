@@ -51,6 +51,9 @@ type createAPIRequest struct {
 	DisableExecuteAPIEndpoint bool              `json:"disableExecuteApiEndpoint"`
 	CorsConfiguration         *corsWire         `json:"corsConfiguration"`
 	Tags                      map[string]string `json:"tags"`
+	Target                    string            `json:"target"`
+	RouteKey                  string            `json:"routeKey"`
+	CredentialsArn            string            `json:"credentialsArn"`
 }
 
 // updateAPIRequest is the UpdateApi (PATCH) request body. Pointer fields
@@ -64,6 +67,9 @@ type updateAPIRequest struct {
 	APIKeySelectionExpression *string   `json:"apiKeySelectionExpression"`
 	DisableExecuteAPIEndpoint *bool     `json:"disableExecuteApiEndpoint"`
 	CorsConfiguration         *corsWire `json:"corsConfiguration"`
+	Target                    *string   `json:"target"`
+	RouteKey                  *string   `json:"routeKey"`
+	CredentialsArn            *string   `json:"credentialsArn"`
 }
 
 // apiResponse is the API wire object.
@@ -79,7 +85,7 @@ type apiResponse struct {
 	APIEndpoint               string            `json:"apiEndpoint"`
 	CreatedDate               string            `json:"createdDate"`
 	CorsConfiguration         *corsWire         `json:"corsConfiguration,omitempty"`
-	Tags                      map[string]string `json:"tags,omitempty"`
+	Tags                      map[string]string `json:"tags"`
 }
 
 func toAPIResponse(a *driver.API) apiResponse {
@@ -92,8 +98,17 @@ func toAPIResponse(a *driver.API) apiResponse {
 		APIEndpoint:               a.APIEndpoint,
 		CreatedDate:               isoTime(a.CreatedDate),
 		CorsConfiguration:         corsFromDriver(a.CorsConfiguration),
-		Tags:                      a.Tags,
+		Tags:                      tagsOrEmpty(a.Tags),
 	}
+}
+
+// tagsOrEmpty renders a nil tag map as {} so every resource carries "tags".
+func tagsOrEmpty(tags map[string]string) map[string]string {
+	if tags == nil {
+		return map[string]string{}
+	}
+
+	return tags
 }
 
 // routeRequest is the CreateRoute/UpdateRoute request body. On create the
@@ -110,12 +125,13 @@ type routeRequest struct {
 
 // updateRouteRequest is the UpdateRoute (PATCH) request body.
 type updateRouteRequest struct {
-	RouteKey          *string `json:"routeKey"`
-	Target            *string `json:"target"`
-	AuthorizationType *string `json:"authorizationType"`
-	APIKeyRequired    *bool   `json:"apiKeyRequired"`
-	AuthorizerID      *string `json:"authorizerId"`
-	OperationName     *string `json:"operationName"`
+	RouteKey            *string  `json:"routeKey"`
+	Target              *string  `json:"target"`
+	AuthorizationType   *string  `json:"authorizationType"`
+	APIKeyRequired      *bool    `json:"apiKeyRequired"`
+	AuthorizerID        *string  `json:"authorizerId"`
+	OperationName       *string  `json:"operationName"`
+	AuthorizationScopes []string `json:"authorizationScopes"`
 }
 
 // routeResponse is the Route wire object.
@@ -128,6 +144,7 @@ type routeResponse struct {
 	AuthorizerID        string   `json:"authorizerId,omitempty"`
 	AuthorizationScopes []string `json:"authorizationScopes,omitempty"`
 	OperationName       string   `json:"operationName,omitempty"`
+	APIGatewayManaged   bool     `json:"apiGatewayManaged,omitempty"`
 }
 
 func toRouteResponse(r *driver.Route) routeResponse {
@@ -135,7 +152,7 @@ func toRouteResponse(r *driver.Route) routeResponse {
 		RouteID: r.RouteID, RouteKey: r.RouteKey, Target: r.Target,
 		AuthorizationType: r.AuthorizationType, APIKeyRequired: r.APIKeyRequired,
 		AuthorizerID: r.AuthorizerID, AuthorizationScopes: r.AuthorizationScopes,
-		OperationName: r.OperationName,
+		OperationName: r.OperationName, APIGatewayManaged: r.APIGatewayManaged,
 	}
 }
 
@@ -149,6 +166,11 @@ type integrationRequest struct {
 	TimeoutInMillis      int               `json:"timeoutInMillis"`
 	Description          string            `json:"description"`
 	RequestParameters    map[string]string `json:"requestParameters"`
+	CredentialsArn       string            `json:"credentialsArn"`
+
+	RequestTemplates            map[string]string `json:"requestTemplates"`
+	TemplateSelectionExpression string            `json:"templateSelectionExpression"`
+	PassthroughBehavior         string            `json:"passthroughBehavior"`
 }
 
 // updateIntegrationRequest is the UpdateIntegration (PATCH) request body.
@@ -161,6 +183,11 @@ type updateIntegrationRequest struct {
 	TimeoutInMillis      *int              `json:"timeoutInMillis"`
 	Description          *string           `json:"description"`
 	RequestParameters    map[string]string `json:"requestParameters"`
+	CredentialsArn       *string           `json:"credentialsArn"`
+
+	RequestTemplates            map[string]string `json:"requestTemplates"`
+	TemplateSelectionExpression *string           `json:"templateSelectionExpression"`
+	PassthroughBehavior         *string           `json:"passthroughBehavior"`
 }
 
 // integrationResponse is the Integration wire object.
@@ -174,6 +201,12 @@ type integrationResponse struct {
 	TimeoutInMillis      int               `json:"timeoutInMillis,omitempty"`
 	Description          string            `json:"description,omitempty"`
 	RequestParameters    map[string]string `json:"requestParameters,omitempty"`
+	CredentialsArn       string            `json:"credentialsArn,omitempty"`
+	APIGatewayManaged    bool              `json:"apiGatewayManaged,omitempty"`
+
+	RequestTemplates            map[string]string `json:"requestTemplates,omitempty"`
+	TemplateSelectionExpression string            `json:"templateSelectionExpression,omitempty"`
+	PassthroughBehavior         string            `json:"passthroughBehavior,omitempty"`
 }
 
 func toIntegrationResponse(i *driver.Integration) integrationResponse {
@@ -182,7 +215,12 @@ func toIntegrationResponse(i *driver.Integration) integrationResponse {
 		IntegrationURI: i.IntegrationURI, IntegrationMethod: i.IntegrationMethod,
 		ConnectionType: i.ConnectionType, PayloadFormatVersion: i.PayloadFormatVersion,
 		TimeoutInMillis: i.TimeoutInMillis, Description: i.Description,
-		RequestParameters: i.RequestParameters,
+		RequestParameters: i.RequestParameters, CredentialsArn: i.CredentialsArn,
+		APIGatewayManaged: i.APIGatewayManaged,
+
+		RequestTemplates:            i.RequestTemplates,
+		TemplateSelectionExpression: i.TemplateSelectionExpression,
+		PassthroughBehavior:         i.PassthroughBehavior,
 	}
 }
 
@@ -227,6 +265,7 @@ type stageRequest struct {
 	DeploymentID         string             `json:"deploymentId"`
 	StageVariables       map[string]string  `json:"stageVariables"`
 	DefaultRouteSettings *routeSettingsWire `json:"defaultRouteSettings"`
+	Tags                 map[string]string  `json:"tags"`
 }
 
 // updateStageRequest is the UpdateStage (PATCH) request body.
@@ -248,6 +287,10 @@ type stageResponse struct {
 	DefaultRouteSettings *routeSettingsWire `json:"defaultRouteSettings,omitempty"`
 	CreatedDate          string             `json:"createdDate"`
 	LastUpdatedDate      string             `json:"lastUpdatedDate"`
+	Tags                 map[string]string  `json:"tags"`
+	APIGatewayManaged    bool               `json:"apiGatewayManaged,omitempty"`
+
+	LastDeploymentStatusMessage string `json:"lastDeploymentStatusMessage,omitempty"`
 }
 
 func toStageResponse(s *driver.Stage) stageResponse {
@@ -256,7 +299,44 @@ func toStageResponse(s *driver.Stage) stageResponse {
 		DeploymentID: s.DeploymentID, StageVariables: s.StageVariables,
 		DefaultRouteSettings: routeSettingsFromDriver(s.DefaultRouteSettings),
 		CreatedDate:          isoTime(s.CreatedDate), LastUpdatedDate: isoTime(s.LastUpdatedDate),
+		Tags: tagsOrEmpty(s.Tags), APIGatewayManaged: s.APIGatewayManaged,
+
+		LastDeploymentStatusMessage: s.LastDeploymentStatusMessage,
 	}
+}
+
+// deploymentRequest is the CreateDeployment request body.
+type deploymentRequest struct {
+	Description string `json:"description"`
+	StageName   string `json:"stageName"`
+}
+
+// updateDeploymentRequest is the UpdateDeployment (PATCH) request body.
+type updateDeploymentRequest struct {
+	Description *string `json:"description"`
+}
+
+// deploymentResponse is the Deployment wire object.
+type deploymentResponse struct {
+	DeploymentID            string `json:"deploymentId"`
+	Description             string `json:"description,omitempty"`
+	CreatedDate             string `json:"createdDate"`
+	DeploymentStatus        string `json:"deploymentStatus"`
+	DeploymentStatusMessage string `json:"deploymentStatusMessage,omitempty"`
+	AutoDeployed            bool   `json:"autoDeployed"`
+}
+
+func toDeploymentResponse(d *driver.Deployment) deploymentResponse {
+	return deploymentResponse{
+		DeploymentID: d.DeploymentID, Description: d.Description, CreatedDate: isoTime(d.CreatedDate),
+		DeploymentStatus: d.DeploymentStatus, DeploymentStatusMessage: d.DeploymentStatusMessage,
+		AutoDeployed: d.AutoDeployed,
+	}
+}
+
+// tagsBody is the TagResource request body and the GetTags response body.
+type tagsBody struct {
+	Tags map[string]string `json:"tags"`
 }
 
 // isoTime renders a unix-seconds timestamp as the ISO8601 string the

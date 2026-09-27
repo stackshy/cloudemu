@@ -12,7 +12,9 @@ func (h *Handler) serveIntegrations(w http.ResponseWriter, r *http.Request, apiI
 	switch r.Method {
 	case http.MethodGet:
 		serveList(w,
-			func() ([]driver.Integration, error) { return h.ag.GetIntegrations(r.Context(), apiID) },
+			func() ([]driver.Integration, string, error) {
+				return h.ag.GetIntegrations(r.Context(), apiID, pageInput(r))
+			},
 			toIntegrationResponse)
 	case http.MethodPost:
 		h.createIntegration(w, r, apiID)
@@ -32,6 +34,11 @@ func (h *Handler) createIntegration(w http.ResponseWriter, r *http.Request, apiI
 		IntegrationMethod: req.IntegrationMethod, ConnectionType: req.ConnectionType,
 		PayloadFormatVersion: req.PayloadFormatVersion, TimeoutInMillis: req.TimeoutInMillis,
 		Description: req.Description, RequestParameters: req.RequestParameters,
+		CredentialsArn: req.CredentialsArn,
+
+		RequestTemplates:            req.RequestTemplates,
+		TemplateSelectionExpression: req.TemplateSelectionExpression,
+		PassthroughBehavior:         req.PassthroughBehavior,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -63,6 +70,11 @@ func (h *Handler) updateIntegration(w http.ResponseWriter, r *http.Request, apiI
 		IntegrationMethod: req.IntegrationMethod, ConnectionType: req.ConnectionType,
 		PayloadFormatVersion: req.PayloadFormatVersion, TimeoutInMillis: req.TimeoutInMillis,
 		Description: req.Description, RequestParameters: req.RequestParameters,
+		CredentialsArn: req.CredentialsArn,
+
+		RequestTemplates:            req.RequestTemplates,
+		TemplateSelectionExpression: req.TemplateSelectionExpression,
+		PassthroughBehavior:         req.PassthroughBehavior,
 	})
 	if err != nil {
 		writeErr(w, err)

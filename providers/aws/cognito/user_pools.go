@@ -2,6 +2,8 @@ package cognito
 
 import (
 	"context"
+	"slices"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/services/cognito/driver"
 )
@@ -67,6 +69,7 @@ func (m *Mock) DescribeUserPool(_ context.Context, id string) (*driver.UserPool,
 
 	out := copyUserPool(pool)
 	out.Tags = m.currentTags(pool.ARN)
+	out.EstimatedNumberOfUsers = m.countUsers(id)
 
 	return &out, nil
 }
@@ -112,14 +115,27 @@ func (m *Mock) UpdateUserPool(_ context.Context, in driver.UpdateUserPoolInput) 
 	return nil
 }
 
-// DeleteUserPool removes a user pool along with its clients, domains, and tags.
+// DeleteUserPool removes a user pool along with its users, clients, and tags.
+// Real Cognito refuses the delete while deletion protection is ACTIVE or a
+// hosted-UI domain is still attached, so the caller must clear those first.
 func (m *Mock) DeleteUserPool(_ context.Context, id string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	pool, ok := m.userPools.Get(id)
 	if !ok {
-		return resourceNotFound("User pool %s does not exist.", id)
+		return poolNotFound(id)
+	}
+
+	if pool.DeletionProtection == driver.DeletionProtectionActive {
+		return invalidParameter("The user pool cannot be deleted because deletion protection is activated. " +
+			"Deletion protection must be inactivated first.")
+	}
+
+	for _, d := range m.domains.All() {
+		if d.UserPoolID == id {
+			return invalidParameter("User pool cannot be deleted. It has a domain configured that should be deleted first.")
+		}
 	}
 
 	for _, key := range m.clients.Keys() {
@@ -128,12 +144,7 @@ func (m *Mock) DeleteUserPool(_ context.Context, id string) error {
 		}
 	}
 
-	for _, domain := range m.domains.Keys() {
-		if d, ok := m.domains.Get(domain); ok && d.UserPoolID == id {
-			m.domains.Delete(domain)
-		}
-	}
-
+	m.deletePoolUsers(id)
 	m.userPools.Delete(id)
 	m.deleteTags(pool.ARN)
 
@@ -142,6 +153,11 @@ func (m *Mock) DeleteUserPool(_ context.Context, id string) error {
 
 // ListUserPools returns pool descriptions sorted by id.
 func (m *Mock) ListUserPools(_ context.Context, page driver.Pagination) ([]driver.UserPoolDescription, string, error) {
+	if page.MaxResults > defaultPageSize {
+		return nil, "", invalidParameter("1 validation error detected: Value '%d' at 'maxResults' failed to satisfy constraint: "+
+			"Member must have value less than or equal to %d", page.MaxResults, defaultPageSize)
+	}
+
 	ids := sortedKeys(m.userPools.Keys())
 	all := make([]driver.UserPoolDescription, 0, len(ids))
 
@@ -205,22 +221,64 @@ func orDefault(v, def string) string {
 
 // mergeSchema returns the 20 default attributes followed by any caller-supplied
 // custom attributes (prefixed "dev:" for developer-only, else "custom:"),
-// matching how Cognito names non-standard attributes.
+// matching how Cognito names non-standard attributes. An entry naming a
+// standard attribute adjusts that attribute instead of adding one.
 func mergeSchema(custom []driver.SchemaAttribute) []driver.SchemaAttribute {
 	attrs := defaultSchemaAttributes()
+	n := len(attrs)
 
 	for _, a := range custom {
-		if isStandardAttribute(a.Name) {
+		if i := slices.IndexFunc(attrs[:n], func(s driver.SchemaAttribute) bool { return s.Name == a.Name }); i >= 0 {
+			overrideStandard(&attrs[i], &a)
+
 			continue
 		}
 
-		a.Name = customPrefix(a.DeveloperOnlyAttribute) + a.Name
-		a.StringAttributeConstraints = copyStringConstraints(a.StringAttributeConstraints)
-		a.NumberAttributeConstraints = copyNumberConstraints(a.NumberAttributeConstraints)
-		attrs = append(attrs, a)
+		attrs = append(attrs, customAttribute(a))
 	}
 
 	return attrs
+}
+
+// overrideStandard applies the caller's Required flag and length or value
+// constraints to a standard attribute. sub is fixed. Mutable keeps its default:
+// the wire cannot tell an omitted Mutable from false.
+func overrideStandard(std, in *driver.SchemaAttribute) {
+	if std.Name == attrSub {
+		return
+	}
+
+	std.Required = in.Required
+
+	if c := in.StringAttributeConstraints; c != nil && std.StringAttributeConstraints != nil {
+		std.StringAttributeConstraints = copyStringConstraints(c)
+	}
+
+	if c := in.NumberAttributeConstraints; c != nil && std.NumberAttributeConstraints != nil {
+		std.NumberAttributeConstraints = copyNumberConstraints(c)
+	}
+}
+
+// customAttribute returns a caller-supplied attribute with its custom: or dev:
+// prefix applied and its constraints deep-copied.
+func customAttribute(a driver.SchemaAttribute) driver.SchemaAttribute {
+	a.Name = customPrefix(a.DeveloperOnlyAttribute) + bareCustomName(a.Name)
+	a.StringAttributeConstraints = copyStringConstraints(a.StringAttributeConstraints)
+	a.NumberAttributeConstraints = copyNumberConstraints(a.NumberAttributeConstraints)
+
+	return a
+}
+
+// bareCustomName strips a custom: or dev: prefix the caller already supplied,
+// so "custom:tier" and "tier" name the same attribute.
+func bareCustomName(name string) string {
+	for _, p := range []string{customPrefix(false), customPrefix(true)} {
+		if rest, ok := strings.CutPrefix(name, p); ok {
+			return rest
+		}
+	}
+
+	return name
 }
 
 // customPrefix returns the attribute-name prefix Cognito applies to a
@@ -231,15 +289,4 @@ func customPrefix(developerOnly bool) string {
 	}
 
 	return "custom:"
-}
-
-// isStandardAttribute reports whether name is one of the 20 default attributes.
-func isStandardAttribute(name string) bool {
-	for _, a := range defaultSchemaAttributes() {
-		if a.Name == name {
-			return true
-		}
-	}
-
-	return false
 }

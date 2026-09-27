@@ -19,6 +19,7 @@ type cognitoSnapshot struct {
 	UserPools map[string]driver.UserPool       `json:"userPools,omitempty"`
 	Clients   map[string]driver.UserPoolClient `json:"clients,omitempty"`
 	Domains   map[string]driver.UserPoolDomain `json:"domains,omitempty"`
+	Users     map[string]userRecord            `json:"users,omitempty"`
 	Tags      map[string]map[string]string     `json:"tags,omitempty"`
 }
 
@@ -29,6 +30,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		UserPools: deepCopyMap(m.userPools.All(), copyUserPool),
 		Clients:   deepCopyMap(m.clients.All(), copyUserPoolClient),
 		Domains:   deepCopyMap(m.domains.All(), copyUserPoolDomain),
+		Users:     deepCopyMap(m.users.All(), copyUserRecord),
 	}
 
 	m.tagsMu.RLock()
@@ -48,6 +50,7 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	m.userPools.Clear()
 	m.clients.Clear()
 	m.domains.Clear()
+	m.users.Clear()
 
 	for k := range snap.UserPools {
 		m.userPools.Set(k, copyUserPool(snap.UserPools[k]))
@@ -59,6 +62,10 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 
 	for k := range snap.Domains {
 		m.domains.Set(k, copyUserPoolDomain(snap.Domains[k]))
+	}
+
+	for k := range snap.Users {
+		m.users.Set(k, copyUserRecord(snap.Users[k]))
 	}
 
 	m.tagsMu.Lock()

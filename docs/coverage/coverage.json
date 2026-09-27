@@ -505,6 +505,9 @@
         "name": "CreateAPI"
       },
       {
+        "name": "CreateDeployment"
+      },
+      {
         "name": "CreateIntegration"
       },
       {
@@ -515,6 +518,9 @@
       },
       {
         "name": "DeleteAPI"
+      },
+      {
+        "name": "DeleteDeployment"
       },
       {
         "name": "DeleteIntegration"
@@ -530,6 +536,12 @@
       },
       {
         "name": "GetAPIs"
+      },
+      {
+        "name": "GetDeployment"
+      },
+      {
+        "name": "GetDeployments"
       },
       {
         "name": "GetIntegration"
@@ -550,7 +562,19 @@
         "name": "GetStages"
       },
       {
+        "name": "GetTags"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
         "name": "UpdateAPI"
+      },
+      {
+        "name": "UpdateDeployment"
       },
       {
         "name": "UpdateIntegration"
@@ -3222,6 +3246,9 @@
         "name": "DeleteStack"
       },
       {
+        "name": "DescribeAccountLimits"
+      },
+      {
         "name": "DescribeChangeSet"
       },
       {
@@ -3232,6 +3259,9 @@
       },
       {
         "name": "DescribeStacks"
+      },
+      {
+        "name": "EstimateTemplateCost"
       },
       {
         "name": "ExecuteChangeSet"
@@ -3246,6 +3276,12 @@
         "name": "ListChangeSets"
       },
       {
+        "name": "ListExports"
+      },
+      {
+        "name": "ListImports"
+      },
+      {
         "name": "ListStackResources"
       },
       {
@@ -3253,6 +3289,9 @@
       },
       {
         "name": "UpdateStack"
+      },
+      {
+        "name": "UpdateTerminationProtection"
       },
       {
         "name": "ValidateTemplate"
@@ -3817,6 +3856,40 @@
     "interface": "Cognito",
     "operations": [
       {
+        "name": "AddCustomAttributes",
+        "doc": "AddCustomAttributes appends custom attributes to a pool's schema. Names get"
+      },
+      {
+        "name": "AdminCreateUser",
+        "doc": "AdminCreateUser creates a user in FORCE_CHANGE_PASSWORD with a generated"
+      },
+      {
+        "name": "AdminDeleteUser"
+      },
+      {
+        "name": "AdminDeleteUserAttributes"
+      },
+      {
+        "name": "AdminDisableUser"
+      },
+      {
+        "name": "AdminEnableUser"
+      },
+      {
+        "name": "AdminGetUser"
+      },
+      {
+        "name": "AdminResetUserPassword",
+        "doc": "AdminResetUserPassword moves the user to RESET_REQUIRED."
+      },
+      {
+        "name": "AdminSetUserPassword",
+        "doc": "AdminSetUserPassword sets a password checked against the pool policy. A"
+      },
+      {
+        "name": "AdminUpdateUserAttributes"
+      },
+      {
         "name": "CreateUserPool",
         "doc": "CreateUserPool creates a user pool, generating its id and ARN, seeding the"
       },
@@ -3829,7 +3902,7 @@
       },
       {
         "name": "DeleteUserPool",
-        "doc": "DeleteUserPool removes a user pool and its clients, domains, and tags."
+        "doc": "DeleteUserPool removes a user pool with its users, clients and tags. Like"
       },
       {
         "name": "DeleteUserPoolClient"
@@ -3862,6 +3935,10 @@
       {
         "name": "ListUserPools",
         "doc": "ListUserPools returns pool descriptions in a deterministic order."
+      },
+      {
+        "name": "ListUsers",
+        "doc": "ListUsers returns users sorted by username, filtered by an optional"
       },
       {
         "name": "SetUserPoolMfaConfig",

@@ -3,7 +3,6 @@ package apigateway
 import (
 	"context"
 	"sort"
-	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/services/apigateway/driver"
@@ -175,19 +174,11 @@ func (m *Mock) DeleteDocumentationVersion(_ context.Context, restAPIID, version 
 		return cerrors.New(cerrors.NotFound, msgDocVersionNotFound)
 	}
 
-	var users []string
-
-	for name, st := range ad.stages {
+	for _, st := range ad.stages {
 		if st.DocumentationVersion == version {
-			users = append(users, name)
+			return cerrors.New(cerrors.InvalidArgument,
+				"Cannot delete documentation version because there are API Stages associated with it.")
 		}
-	}
-
-	if len(users) > 0 {
-		sort.Strings(users)
-
-		return cerrors.Newf(cerrors.InvalidArgument,
-			"Cannot delete documentation version %s because it is associated with stage(s): %s", version, strings.Join(users, ", "))
 	}
 
 	delete(ad.docVersions, version)

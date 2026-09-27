@@ -106,8 +106,13 @@ func (h *Handler) executeChangeSet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if r.Form.Has("DisableRollback") {
-		disable := strings.EqualFold(r.Form.Get("DisableRollback"), "true")
+		disable := formBool(r.Form, "DisableRollback")
 		in.DisableRollback = &disable
+	}
+
+	if r.Form.Has("RetainExceptOnCreate") {
+		retain := formBool(r.Form, "RetainExceptOnCreate")
+		in.RetainExceptOnCreate = &retain
 	}
 
 	if err := h.api.ExecuteChangeSet(r.Context(), in); err != nil {

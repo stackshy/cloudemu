@@ -79,7 +79,8 @@ func PlanChanges(in *ChangePlanInput) []ResourceChange {
 		if _, kept := in.New.Resources[id]; !kept {
 			out = append(out, ResourceChange{
 				Action: ChangeActionRemove, LogicalID: id, PhysicalID: live.PhysicalID,
-				ResourceType: live.Type, PolicyAction: PolicyDelete, BeforeContext: propertiesContext(live.Props),
+				ResourceType: live.Type, PolicyAction: in.removePolicy(id, live.Type),
+				BeforeContext: propertiesContext(live.Props),
 			})
 		}
 	}
@@ -87,6 +88,17 @@ func PlanChanges(in *ChangePlanInput) []ResourceChange {
 	sort.Slice(out, func(i, j int) bool { return out[i].LogicalID < out[j].LogicalID })
 
 	return out
+}
+
+// removePolicy is the PolicyAction of removing id, from the DeletionPolicy
+// it was deployed with.
+func (in *ChangePlanInput) removePolicy(id, rtype string) string {
+	rdef := ResourceDef{Type: rtype}
+	if in.Old != nil {
+		rdef.DeletionPolicy = in.Old.Resources[id].DeletionPolicy
+	}
+
+	return removePolicyAction(&rdef)
 }
 
 // modifyChange builds the Modify change of a kept resource, and records how
@@ -134,7 +146,8 @@ func (in *ChangePlanInput) modifyChange(id, rtype string, live *LiveResource, ef
 	}
 
 	if c.Replacement == ReplacementTrue {
-		c.PolicyAction = PolicyReplaceAndDelete
+		rdef := in.New.Resources[id]
+		c.PolicyAction = replacePolicyAction(&rdef)
 	}
 
 	return c, true
