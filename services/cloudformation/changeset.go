@@ -166,6 +166,9 @@ type CreateChangeSetInput struct {
 	Capabilities        []string
 	NotificationARNs    []string
 	OnStackFailure      string
+	// ClientToken makes a retry of the same request return the change set it
+	// made instead of failing on the duplicate name.
+	ClientToken string
 }
 
 // DescribeChangeSetInput names a change set by ARN, or by name within
@@ -196,6 +199,9 @@ type ExecuteChangeSetInput struct {
 	ChangeSetName   string
 	StackName       string
 	DisableRollback *bool
+	// ClientRequestToken makes a retry of an execution that already started
+	// succeed without running it again.
+	ClientRequestToken string
 }
 
 // DeleteChangeSetInput is the request to delete a change set.

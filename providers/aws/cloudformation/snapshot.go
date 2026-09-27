@@ -27,6 +27,7 @@ type stackSnapshot struct {
 	Props          map[string]map[string]any       `json:"props,omitempty"`
 	RollbackFailed []string                        `json:"rollbackFailed,omitempty"`
 	ChangeSets     []changeSetRecord               `json:"changeSets,omitempty"`
+	Retained       []retainedResource              `json:"retained,omitempty"`
 }
 
 // Snapshot captures every stack's state under its own name so a restore
@@ -44,6 +45,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 			Props:          cloneProps(sd.props),
 			RollbackFailed: append([]string(nil), sd.rollbackFailed...),
 			ChangeSets:     cloneChangeSets(sd.changeSets),
+			Retained:       append([]retainedResource(nil), sd.retained...),
 		}
 		sd.mu.RUnlock()
 	}
@@ -66,6 +68,7 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 			deleteIDs:      ss.DeleteIDs,
 			props:          ss.Props,
 			rollbackFailed: ss.RollbackFailed,
+			retained:       ss.Retained,
 		}
 
 		for i := range ss.ChangeSets {

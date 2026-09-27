@@ -25,6 +25,9 @@ type convergeOpts struct {
 	// cleanupStatus is the stack status recorded before the cleanup phase,
 	// or "" to record none.
 	cleanupStatus string
+	// retained are old resources of earlier replacements that the cleanup
+	// phase also deletes.
+	retained []replacement
 }
 
 // applyFailure is one resource a converge pass could not bring to its target.
@@ -90,7 +93,7 @@ func (m *Mock) converge(
 		m.emitStackEvent(sd, o.cleanupStatus, "")
 	}
 
-	m.cleanup(ctx, sd, t, o.skip, replaced)
+	m.cleanup(ctx, sd, t, o.skip, append(o.retained, replaced...))
 
 	return failures, nil
 }
@@ -371,8 +374,16 @@ func (m *Mock) cleanup(
 	}
 }
 
-// teardown deletes every provisioned resource in reverse creation order.
+// teardown deletes every provisioned resource in reverse creation order,
+// then any old resources retained from replacements.
 func (m *Mock) teardown(ctx context.Context, sd *stackData) {
+	defer func() {
+		retained := sd.retainedReplacements(true)
+		for i := len(retained) - 1; i >= 0; i-- {
+			_ = m.deletePhysical(ctx, sd, retained[i].id, &retained[i].old)
+		}
+	}()
+
 	sd.mu.RLock()
 	order := append([]string(nil), sd.provisionOrder...)
 	sd.mu.RUnlock()

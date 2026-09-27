@@ -98,15 +98,22 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 // runUpdate applies a planned update to a stack already in
 // UPDATE_IN_PROGRESS. It reports whether the update succeeded. A failure
 // rolls the stack back, or with DO_NOTHING leaves it UPDATE_FAILED as it is.
-// The old resources of replacements are deleted either way.
+// Old resources of replacements are deleted only in the cleanup phase of a
+// successful update. A failure that is not rolled back keeps them, and the
+// next successful update cleans them up.
 func (m *Mock) runUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStackInput, plan *updatePlan, onFailure string) bool {
 	m.applyStackMeta(sd, in, plan)
 
-	forward := convergeOpts{stopOnFailure: true, cleanupStatus: cfn.StatusUpdateCompleteCleanupInProgress}
+	forward := convergeOpts{
+		stopOnFailure: true, cleanupStatus: cfn.StatusUpdateCompleteCleanupInProgress,
+		retained: sd.retainedReplacements(false),
+	}
 
 	failures, replaced := m.converge(ctx, sd, plan.newT, plan.newRes, forward)
 	if len(failures) == 0 {
+		sd.retainedReplacements(true)
 		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
+
 		return true
 	}
 
@@ -115,10 +122,7 @@ func (m *Mock) runUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStack
 		return false
 	}
 
-	for i := len(replaced) - 1; i >= 0; i-- {
-		_ = m.deletePhysical(ctx, sd, replaced[i].id, &replaced[i].old)
-	}
-
+	sd.retain(replaced)
 	m.emitStackEvent(sd, cfn.StatusUpdateFailed, failureSummary(failures))
 
 	return false

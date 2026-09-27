@@ -90,8 +90,14 @@ func (m *Mock) GetTemplateSummary(ctx context.Context, in *cfn.GetTemplateSummar
 		return nil, err
 	}
 
+	// A stack still in review has no template of its own yet. AWS
+	// summarizes the template of its latest change set.
 	sd.mu.RLock()
+
 	body := sd.stack.TemplateBody
+	if n := len(sd.changeSets); body == "" && n > 0 {
+		body = sd.changeSets[n-1].Template
+	}
 	sd.mu.RUnlock()
 
 	t, err := cfn.ParseTemplate(body)

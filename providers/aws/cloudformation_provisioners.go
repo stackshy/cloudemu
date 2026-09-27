@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	cfnprovider "github.com/stackshy/cloudemu/v2/providers/aws/cloudformation"
 	cfn "github.com/stackshy/cloudemu/v2/services/cloudformation"
@@ -175,6 +176,17 @@ func fitNameParts(a, b string, budget int) (fitA, fitB string) {
 	}
 }
 
+// nameTaken reports a create that failed because the physical name is in
+// use the way CloudFormation does, "<name> already exists". Other errors
+// pass through.
+func nameTaken(name string, err error) error {
+	if cerrors.IsAlreadyExists(err) {
+		return cerrors.Newf(cerrors.AlreadyExists, "%s already exists", name)
+	}
+
+	return err
+}
+
 // --- AWS::S3::Bucket ---
 
 type s3BucketProvisioner struct{ s3 storagedriver.Bucket }
@@ -183,7 +195,7 @@ type s3BucketProvisioner struct{ s3 storagedriver.Bucket }
 func (p s3BucketProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
 	name := physicalName(&req, "BucketName", true)
 	if err := p.s3.CreateBucket(ctx, name); err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	return &cfn.ProvisionedResource{
@@ -222,7 +234,7 @@ func (p dynamoTableProvisioner) Create(ctx context.Context, req cfn.ResourceRequ
 
 	cfg := dynamoTableConfig(name, req.Properties)
 	if err := p.db.CreateTable(ctx, cfg); err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	attrs := map[string]string{"Arn": ""}
@@ -306,6 +318,12 @@ func (p sqsQueueProvisioner) Create(ctx context.Context, req cfn.ResourceRequest
 		MessageRetention:  propInt(req.Properties, "MessageRetentionPeriod"),
 	}
 
+	// SQS CreateQueue returns an existing queue of the same name, but
+	// CloudFormation never adopts one.
+	if err := p.checkFree(ctx, name); err != nil {
+		return nil, err
+	}
+
 	info, err := p.sqs.CreateQueue(ctx, cfg)
 	if err != nil {
 		return nil, err
@@ -331,6 +349,22 @@ func sqsAttributeDefaults() map[string]int {
 		"MaximumMessageSize":     sqsDefaultMaxMessageSize,
 		"MessageRetentionPeriod": sqsDefaultRetention,
 	}
+}
+
+// checkFree fails when a queue with the name already exists.
+func (p sqsQueueProvisioner) checkFree(ctx context.Context, name string) error {
+	queues, err := p.sqs.ListQueues(ctx, name)
+	if err != nil {
+		return err
+	}
+
+	for i := range queues {
+		if queues[i].Name == name {
+			return cerrors.Newf(cerrors.AlreadyExists, "%s already exists", name)
+		}
+	}
+
+	return nil
 }
 
 // SQS attribute defaults.
@@ -395,7 +429,7 @@ func (p snsTopicProvisioner) Create(ctx context.Context, req cfn.ResourceRequest
 		FifoTopic:   propBool(req.Properties, "FifoTopic") || strings.HasSuffix(name, ".fifo"),
 	})
 	if err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	// SNS Ref returns the topic ARN (ResourceID); the driver deletes by name.
@@ -443,7 +477,7 @@ func (p lambdaFunctionProvisioner) Create(ctx context.Context, req cfn.ResourceR
 
 	info, err := p.lambda.CreateFunction(ctx, cfg)
 	if err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	return &cfn.ProvisionedResource{
@@ -506,7 +540,7 @@ func (p iamRoleProvisioner) Create(ctx context.Context, req cfn.ResourceRequest)
 		MaxSessionDuration:  propInt(req.Properties, "MaxSessionDuration"),
 	})
 	if err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	return &cfn.ProvisionedResource{
@@ -544,7 +578,7 @@ func (p secretProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) 
 		KMSKeyID:    cfn.PropString(req.Properties, "KmsKeyId"),
 	}, []byte(cfn.PropString(req.Properties, "SecretString")))
 	if err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	// Secrets Manager Ref returns the secret ARN; the driver deletes by name.
@@ -592,7 +626,7 @@ func (p ssmParameterProvisioner) Create(ctx context.Context, req cfn.ResourceReq
 		Description: cfn.PropString(req.Properties, "Description"),
 		Tier:        cfn.PropString(req.Properties, "Tier"),
 	}); err != nil {
-		return nil, err
+		return nil, nameTaken(name, err)
 	}
 
 	return &cfn.ProvisionedResource{

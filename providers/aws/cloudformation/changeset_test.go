@@ -417,6 +417,83 @@ func TestExecuteChangeSetRejectsBothFailureOptions(t *testing.T) {
 	assertEqual(t, describeCS(t, m, "s", "c").ExecutionStatus, cfn.ExecutionAvailable, "still available")
 }
 
+const keepV1 = `{"Resources":{
+	"A":{"Type":"Test::Param","Properties":{"Name":"/a","Value":"data"}},
+	"B":{"Type":"Test::Param","DependsOn":"A","Properties":{"Name":"/b","Value":"b"}}
+}}`
+
+// keepFailing replaces A, then fails to replace B onto a name in use.
+const keepFailing = `{"Resources":{
+	"A":{"Type":"Test::Param","Properties":{"Name":"/a2","Value":"data"}},
+	"B":{"Type":"Test::Param","DependsOn":"A","Properties":{"Name":"/taken","Value":"b"}}
+}}`
+
+// failDoNothing leaves stack "s" UPDATE_FAILED after A was replaced and B
+// failed, with rollback disabled.
+func failDoNothing(t *testing.T, m *Mock, p paramProv) {
+	t.Helper()
+
+	ctx := context.Background()
+
+	_, err := m.CreateStack(ctx, &cfn.CreateStackInput{StackName: "s", TemplateBody: keepV1})
+	requireNoError(t, err)
+
+	p.values["/taken"] = "outside"
+
+	cs := createCS(t, m, &cfn.CreateChangeSetInput{
+		StackName: "s", ChangeSetName: "c", TemplateBody: keepFailing, OnStackFailure: cfn.OnStackFailureDoNothing,
+	})
+	requireNoError(t, m.ExecuteChangeSet(ctx, &cfn.ExecuteChangeSetInput{ChangeSetName: cs.ID}))
+	assertEqual(t, stackStatus(t, m, "s").Status, cfn.StatusUpdateFailed, "stack status")
+}
+
+// A failed update that is not rolled back keeps the old physical resource
+// of a replacement. Only a later successful update cleans it up.
+func TestDoNothingKeepsReplacedResources(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("kept until a successful update", func(t *testing.T) {
+		p := newParamProv()
+		m := newParamMock(p)
+		failDoNothing(t, m, p)
+
+		assertEqual(t, p.values["/a"], "data", "old A kept with its data")
+		assertEqual(t, p.values["/a2"], "data", "new A created")
+		assertEqual(t, p.values["/taken"], "outside", "outside resource untouched")
+
+		_, err := m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: strings.ReplaceAll(keepFailing, "/taken", "/b3")})
+		requireNoError(t, err)
+		assertEqual(t, stackStatus(t, m, "s").Status, cfn.StatusUpdateComplete, "retried")
+
+		if _, ok := p.values["/a"]; ok {
+			t.Fatalf("the old A must be cleaned up after the successful update")
+		}
+
+		assertEqual(t, p.values["/a2"], "data", "new A kept")
+	})
+
+	t.Run("survives a snapshot and is deleted with the stack", func(t *testing.T) {
+		p := newParamProv()
+		m := newParamMock(p)
+		failDoNothing(t, m, p)
+
+		data, err := m.Snapshot(ctx, false)
+		requireNoError(t, err)
+
+		restored := newParamMock(p)
+		requireNoError(t, restored.Restore(ctx, json.RawMessage(data)))
+		requireNoError(t, restored.DeleteStack(ctx, "s"))
+
+		for _, name := range []string{"/a", "/a2", "/b"} {
+			if _, ok := p.values[name]; ok {
+				t.Fatalf("%s left behind after DeleteStack", name)
+			}
+		}
+
+		assertEqual(t, p.values["/taken"], "outside", "outside resource untouched")
+	})
+}
+
 func TestUpdateChangeSetDoNothingLeavesUpdateFailed(t *testing.T) {
 	p := newParamProv()
 	m := newParamMock(p)
@@ -631,6 +708,55 @@ func TestConcurrentExecuteChangeSet(t *testing.T) {
 	wg.Wait()
 	assertEqual(t, wins, 1, "executions that ran")
 	assertEqual(t, *p.updates, 1, "P updated once")
+}
+
+// A CreateChangeSet retry with the same ClientToken returns the change set it
+// made. Another token, or none, is a duplicate name. An ExecuteChangeSet
+// retry with the same ClientRequestToken succeeds without running again.
+func TestChangeSetClientTokens(t *testing.T) {
+	p := newParamProv()
+	m := newParamMock(p)
+	ctx := context.Background()
+
+	_, err := m.CreateStack(ctx, &cfn.CreateStackInput{StackName: "s", TemplateBody: csV1})
+	requireNoError(t, err)
+
+	in := cfn.CreateChangeSetInput{StackName: "s", ChangeSetName: "c", TemplateBody: csV2, ClientToken: "tok-1"}
+	first := createCS(t, m, &in)
+
+	retry := in
+	again := createCS(t, m, &retry)
+	assertEqual(t, again.ID, first.ID, "retry returns the same change set")
+
+	for _, token := range []string{"tok-2", ""} {
+		other := in
+		other.ClientToken = token
+		_, err = m.CreateChangeSet(ctx, &other)
+		assertException(t, err, cfn.ExceptionAlreadyExists, "ChangeSet [c] already exists")
+	}
+
+	exec := &cfn.ExecuteChangeSetInput{ChangeSetName: first.ID, ClientRequestToken: "run-1"}
+	requireNoError(t, m.ExecuteChangeSet(ctx, exec))
+	requireNoError(t, m.ExecuteChangeSet(ctx, exec))
+	assertEqual(t, *p.updates, 1, "executed once")
+
+	err = m.ExecuteChangeSet(ctx, &cfn.ExecuteChangeSetInput{ChangeSetName: first.ID, ClientRequestToken: "run-2"})
+	assertException(t, err, cfn.ExceptionInvalidChangeSetStatus, "")
+}
+
+// GetTemplateSummary on a stack still in review summarizes the template of
+// its change set.
+func TestGetTemplateSummaryReviewStack(t *testing.T) {
+	m := newParamMock(newParamProv())
+	ctx := context.Background()
+
+	createCS(t, m, &cfn.CreateChangeSetInput{
+		StackName: "s", ChangeSetName: "c", ChangeSetType: cfn.ChangeSetTypeCreate, TemplateBody: csV1,
+	})
+
+	sum, err := m.GetTemplateSummary(ctx, &cfn.GetTemplateSummaryInput{StackName: "s"})
+	requireNoError(t, err)
+	assertEqual(t, strings.Join(sum.ResourceTypes, ","), "Test::Param", "resource types")
 }
 
 func boolPtr(b bool) *bool { return &b }

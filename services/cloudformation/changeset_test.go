@@ -91,7 +91,7 @@ func TestPlanChangesUpdateMatrix(t *testing.T) {
 			"ByRef":{"Type":"Test::Named","Properties":{"Name":{"Ref":"Src"}}},
 			"ByAtt":{"Type":"Test::Named","Properties":{"Label":{"Fn::GetAtt":["Src","Arn"]}}},
 			"ByParam":{"Type":"Test::Named","Properties":{"Size":{"Ref":"Size"}}},
-			"Fresh":{"Type":"Test::Plain"}
+			"Fresh":{"Type":"Test::Plain","Properties":{"Label":{"Ref":"Src"},"Size":"3"}}
 		}
 	}`
 
@@ -99,7 +99,9 @@ func TestPlanChangesUpdateMatrix(t *testing.T) {
 		Old:           mustTemplate(t, planOld),
 		New:           mustTemplate(t, newBody),
 		Live:          planLive(),
-		NewProps:      map[string]map[string]any{"Src": {"Name": "src2", "Size": "1"}},
+		NewProps: map[string]map[string]any{
+			"Src": {"Name": "src2", "Size": "1"}, "ByRef": {"Name": "src"}, "Fresh": {"Label": "src", "Size": "3"},
+		},
 		ChangedParams: map[string]bool{"Size": true},
 		Registry:      planRegistry(),
 	})
@@ -152,6 +154,11 @@ func TestPlanChangesUpdateMatrix(t *testing.T) {
 
 	fresh := changeFor(t, changes, "Fresh")
 	assert.Equal(t, cfn.ChangeActionAdd, fresh.Action)
+
+	// A value only known once Src is replaced shows as the placeholder in
+	// the after context, never as the stale resolved value.
+	assert.JSONEq(t, `{"Properties":{"Name":"{{changeSet:KNOWN_AFTER_APPLY}}"}}`, byRef.AfterContext)
+	assert.JSONEq(t, `{"Properties":{"Label":"{{changeSet:KNOWN_AFTER_APPLY}}","Size":"3"}}`, fresh.AfterContext)
 }
 
 // An unchanged resource is not listed, and a resource whose referenced

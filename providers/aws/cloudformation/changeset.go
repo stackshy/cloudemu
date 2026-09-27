@@ -58,6 +58,10 @@ type changeSetRecord struct {
 	Tags             map[string]string `json:"tags"`
 	Capabilities     []string          `json:"capabilities"`
 	NotificationARNs []string          `json:"notificationArns"`
+	// ClientToken is the CreateChangeSet token, and ExecuteToken the
+	// ExecuteChangeSet token of the execution that ran.
+	ClientToken  string `json:"clientToken,omitempty"`
+	ExecuteToken string `json:"executeToken,omitempty"`
 }
 
 // CreateChangeSet plans a change set. ChangeSetType CREATE plans a new stack
@@ -69,6 +73,10 @@ type changeSetRecord struct {
 func (m *Mock) CreateChangeSet(ctx context.Context, in *cfn.CreateChangeSetInput) (*cfn.ChangeSet, error) {
 	if err := validateChangeSetInput(in); err != nil {
 		return nil, err
+	}
+
+	if prior := m.retriedChangeSet(in); prior != nil {
+		return prior, nil
 	}
 
 	var (
@@ -94,6 +102,35 @@ func (m *Mock) CreateChangeSet(ctx context.Context, in *cfn.CreateChangeSetInput
 	}
 
 	return &out, nil
+}
+
+// retriedChangeSet returns the change set an earlier request with the same
+// name and ClientToken made, or nil.
+func (m *Mock) retriedChangeSet(in *cfn.CreateChangeSetInput) *cfn.ChangeSet {
+	if in.ClientToken == "" {
+		return nil
+	}
+
+	sd, _, ok := m.findStack(in.StackName)
+	if !ok {
+		return nil
+	}
+
+	rec := sd.changeSet(func(cs *cfn.ChangeSet) bool { return cs.Name == in.ChangeSetName })
+	if rec == nil {
+		return nil
+	}
+
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	if rec.ClientToken != in.ClientToken {
+		return nil
+	}
+
+	out := rec.ChangeSet
+
+	return &out
 }
 
 // validateChangeSetInput checks the request fields and defaults the type.
@@ -313,6 +350,7 @@ func (m *Mock) newRecord(in *cfn.CreateChangeSetInput, stackName, stackID, body 
 			Capabilities: in.Capabilities, OnStackFailure: in.OnStackFailure,
 		},
 		Template: body, Tags: in.Tags, Capabilities: in.Capabilities, NotificationARNs: in.NotificationARNs,
+		ClientToken: in.ClientToken,
 	}
 }
 
@@ -549,8 +587,13 @@ func (m *Mock) ExecuteChangeSet(ctx context.Context, in *cfn.ExecuteChangeSetInp
 	}
 
 	sd.mu.RLock()
+	retried := in.ClientRequestToken != "" && rec.ExecuteToken == in.ClientRequestToken
 	err = executable(rec)
 	sd.mu.RUnlock()
+
+	if retried {
+		return nil
+	}
 
 	if err != nil {
 		return err
@@ -561,11 +604,20 @@ func (m *Mock) ExecuteChangeSet(ctx context.Context, in *cfn.ExecuteChangeSetInp
 		return err
 	}
 
+	run := execution{rec: rec, onFailure: onFailure, token: in.ClientRequestToken}
+
 	if rec.ChangeSet.Type == cfn.ChangeSetTypeCreate {
-		return m.executeCreate(ctx, sd, rec, onFailure)
+		return m.executeCreate(ctx, sd, &run)
 	}
 
-	return m.executeUpdate(ctx, sd, rec, onFailure)
+	return m.executeUpdate(ctx, sd, &run)
+}
+
+// execution is one ExecuteChangeSet call.
+type execution struct {
+	rec       *changeSetRecord
+	onFailure string
+	token     string
 }
 
 // executable rejects a change set that cannot run. The caller holds the
@@ -601,7 +653,9 @@ func failureMode(onStackFailure string, disableRollback *bool) (string, error) {
 }
 
 // executeCreate creates the resources of a REVIEW_IN_PROGRESS stack.
-func (m *Mock) executeCreate(ctx context.Context, sd *stackData, rec *changeSetRecord, onFailure string) error {
+func (m *Mock) executeCreate(ctx context.Context, sd *stackData, run *execution) error {
+	rec := run.rec
+
 	t, err := cfn.ParseTemplate(rec.Template)
 	if err != nil {
 		return err
@@ -617,7 +671,7 @@ func (m *Mock) executeCreate(ctx context.Context, sd *stackData, rec *changeSetR
 
 	isReview := func(s string) bool { return s == cfn.StatusReviewInProgress }
 
-	err = m.beginExecute(sd, rec, isReview, cfn.StatusCreateInProgress, onFailure, func(s *cfn.Stack) {
+	err = m.beginExecute(sd, run, isReview, cfn.StatusCreateInProgress, func(s *cfn.Stack) {
 		s.Parameters = rec.ChangeSet.Parameters
 		s.Description = t.Description
 		s.Tags = rec.Tags
@@ -630,13 +684,14 @@ func (m *Mock) executeCreate(ctx context.Context, sd *stackData, rec *changeSetR
 		return err
 	}
 
-	sd.finishExecute(rec, m.provision(ctx, sd, effective, res, onFailure))
+	sd.finishExecute(rec, m.provision(ctx, sd, effective, res, run.onFailure))
 
 	return nil
 }
 
 // executeUpdate applies an UPDATE change set through the UpdateStack path.
-func (m *Mock) executeUpdate(ctx context.Context, sd *stackData, rec *changeSetRecord, onFailure string) error {
+func (m *Mock) executeUpdate(ctx context.Context, sd *stackData, run *execution) error {
+	rec := run.rec
 	name, _ := sd.identity()
 	in := &cfn.UpdateStackInput{
 		StackName: name, TemplateBody: rec.Template, Parameters: rec.ChangeSet.Parameters,
@@ -648,11 +703,11 @@ func (m *Mock) executeUpdate(ctx context.Context, sd *stackData, rec *changeSetR
 		return err
 	}
 
-	if berr := m.beginExecute(sd, rec, updatableStatus, cfn.StatusUpdateInProgress, onFailure, nil); berr != nil {
+	if berr := m.beginExecute(sd, run, updatableStatus, cfn.StatusUpdateInProgress, nil); berr != nil {
 		return berr
 	}
 
-	sd.finishExecute(rec, m.runUpdate(ctx, sd, in, plan, onFailure))
+	sd.finishExecute(rec, m.runUpdate(ctx, sd, in, plan, run.onFailure))
 
 	return nil
 }
@@ -661,10 +716,12 @@ func (m *Mock) executeUpdate(ctx context.Context, sd *stackData, rec *changeSetR
 // checks the change set and the stack status, deletes the stack's other
 // change sets, applies setup to the stack and moves it to status.
 func (m *Mock) beginExecute(
-	sd *stackData, rec *changeSetRecord, allowed func(string) bool, status, onFailure string, setup func(*cfn.Stack),
+	sd *stackData, run *execution, allowed func(string) bool, status string, setup func(*cfn.Stack),
 ) error {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
+
+	rec := run.rec
 
 	if err := executable(rec); err != nil {
 		return err
@@ -675,6 +732,7 @@ func (m *Mock) beginExecute(
 	}
 
 	rec.ChangeSet.ExecutionStatus = cfn.ExecutionInProgress
+	rec.ExecuteToken = run.token
 	sd.changeSets = []*changeSetRecord{rec}
 
 	if setup != nil {
@@ -682,7 +740,7 @@ func (m *Mock) beginExecute(
 	}
 
 	sd.stack.ChangeSetID = rec.ChangeSet.ID
-	sd.stack.DisableRollback = onFailure == cfn.OnStackFailureDoNothing
+	sd.stack.DisableRollback = run.onFailure == cfn.OnStackFailureDoNothing
 	sd.stack.Status = status
 	sd.stack.StatusReason = reasonUserInitiated
 	sd.stack.Events = append(sd.stack.Events,

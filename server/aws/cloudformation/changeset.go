@@ -100,8 +100,9 @@ func (h *Handler) listChangeSets(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) executeChangeSet(w http.ResponseWriter, r *http.Request) {
 	in := &cfn.ExecuteChangeSetInput{
-		ChangeSetName: r.Form.Get("ChangeSetName"),
-		StackName:     r.Form.Get("StackName"),
+		ChangeSetName:      r.Form.Get("ChangeSetName"),
+		StackName:          r.Form.Get("StackName"),
+		ClientRequestToken: r.Form.Get("ClientRequestToken"),
 	}
 
 	if r.Form.Has("DisableRollback") {
@@ -146,6 +147,7 @@ func createChangeSetInput(form url.Values) *cfn.CreateChangeSetInput {
 		Capabilities:        awsquery.ListStrings(form, "Capabilities.member"),
 		NotificationARNs:    updateNotificationARNs(form),
 		OnStackFailure:      form.Get("OnStackFailure"),
+		ClientToken:         form.Get("ClientToken"),
 	}
 }
 

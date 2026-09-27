@@ -249,6 +249,40 @@ func TestListChangeSetsRealSDK(t *testing.T) {
 	}
 }
 
+func TestChangeSetClientTokenRealSDK(t *testing.T) {
+	ctx := context.Background()
+	c, _ := bootWithProvider(t)
+
+	in := &awscfn.CreateChangeSetInput{
+		StackName: aws.String("tok"), ChangeSetName: aws.String("c"), ChangeSetType: cfntypes.ChangeSetTypeCreate,
+		TemplateBody: aws.String(queuesV1), ClientToken: aws.String("t1"),
+	}
+
+	first, err := c.CreateChangeSet(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateChangeSet: %v", err)
+	}
+
+	again, err := c.CreateChangeSet(ctx, in)
+	if err != nil || aws.ToString(again.Id) != aws.ToString(first.Id) {
+		t.Fatalf("retry: %v, id %s want %s", err, aws.ToString(again.Id), aws.ToString(first.Id))
+	}
+
+	in.ClientToken = aws.String("t2")
+
+	var exists *cfntypes.AlreadyExistsException
+	if _, err = c.CreateChangeSet(ctx, in); !errors.As(err, &exists) {
+		t.Fatalf("other token: want AlreadyExistsException, got %v", err)
+	}
+
+	exec := &awscfn.ExecuteChangeSetInput{ChangeSetName: first.Id, ClientRequestToken: aws.String("r1")}
+	for range 2 {
+		if _, err = c.ExecuteChangeSet(ctx, exec); err != nil {
+			t.Fatalf("ExecuteChangeSet: %v", err)
+		}
+	}
+}
+
 // aws cloudformation deploy reads the live stack's parameter keys with
 // GetTemplateSummary before it plans an update.
 func TestGetTemplateSummaryRealSDK(t *testing.T) {

@@ -54,6 +54,57 @@ type stackData struct {
 	rollbackFailed []string
 	// changeSets holds the stack's change sets in creation order.
 	changeSets []*changeSetRecord
+	// retained holds the old physical resources of replacements made by a
+	// failed update that was not rolled back. The next successful update
+	// deletes them in its cleanup phase, and DeleteStack deletes them.
+	retained []retainedResource
+}
+
+// retainedResource is the old physical resource of a replacement that is
+// waiting for cleanup.
+type retainedResource struct {
+	LogicalID string               `json:"logicalId"`
+	Type      string               `json:"type"`
+	Resolved  cfn.ResolvedResource `json:"resolved"`
+	Props     map[string]any       `json:"props,omitempty"`
+	DeleteID  string               `json:"deleteId"`
+}
+
+func (r *retainedResource) replacement() replacement {
+	return replacement{id: r.LogicalID, old: liveResource{
+		typ: r.Type, resolved: r.Resolved, props: r.Props, deleteID: r.DeleteID,
+	}}
+}
+
+// retain records the old resources of replacements a failed update keeps.
+func (sd *stackData) retain(replaced []replacement) {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	for i := range replaced {
+		old := &replaced[i].old
+		sd.retained = append(sd.retained, retainedResource{
+			LogicalID: replaced[i].id, Type: old.typ, Resolved: old.resolved, Props: old.props, DeleteID: old.deleteID,
+		})
+	}
+}
+
+// retainedReplacements returns the retained old resources as replacements to
+// clean up, and forgets them when forget is set.
+func (sd *stackData) retainedReplacements(forget bool) []replacement {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	out := make([]replacement, len(sd.retained))
+	for i := range sd.retained {
+		out[i] = sd.retained[i].replacement()
+	}
+
+	if forget {
+		sd.retained = nil
+	}
+
+	return out
 }
 
 // New builds a CloudFormation mock with an empty provisioner registry. Callers

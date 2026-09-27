@@ -60,8 +60,12 @@ func PlanChanges(in *ChangePlanInput) []ResourceChange {
 		if !ok {
 			out = append(out, ResourceChange{
 				Action: ChangeActionAdd, LogicalID: id, ResourceType: rdef.Type,
-				AfterContext: propertiesContext(in.NewProps[id]),
+				AfterContext: afterContext(in.NewProps[id], rdef.Properties, effects),
 			})
+
+			// A new resource's Ref and attributes are only known once it
+			// exists.
+			effects[id] = effectReplace
 
 			continue
 		}
@@ -120,7 +124,7 @@ func (in *ChangePlanInput) modifyChange(id, rtype string, live *LiveResource, ef
 	}
 
 	if resolved {
-		c.AfterContext = propertiesContext(newProps)
+		c.AfterContext = afterContext(newProps, newRaw, effects)
 	}
 
 	effects[id] = effectModify
@@ -369,6 +373,47 @@ func valueString(v any) string {
 	}
 
 	return string(b)
+}
+
+// afterContext renders a resource's resolved new properties as its after
+// context. A property that reads a value only known at execution shows the
+// KNOWN_AFTER_APPLY placeholder instead of the value it resolves to now.
+func afterContext(props, raw map[string]any, effects map[string]int) string {
+	if props == nil {
+		return ""
+	}
+
+	out := make(map[string]any, len(props))
+
+	for name, v := range props {
+		out[name] = v
+
+		if dynamicValue(raw[name], effects) {
+			out[name] = knownAfterApply
+		}
+	}
+
+	return propertiesContext(out)
+}
+
+// dynamicValue reports whether a property value reads a resource that may be
+// replaced, or an attribute of a resource that changes.
+func dynamicValue(node any, effects map[string]int) bool {
+	refs, atts := referencedEntities(node)
+
+	for _, name := range refs {
+		if effects[name] == effectReplace {
+			return true
+		}
+	}
+
+	for _, att := range atts {
+		if logical, _, _ := strings.Cut(att, "."); effects[logical] != 0 {
+			return true
+		}
+	}
+
+	return false
 }
 
 // propertiesContext renders a resource's properties as the JSON context a
