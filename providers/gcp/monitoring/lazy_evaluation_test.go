@@ -85,6 +85,23 @@ func TestLazyEvalPolicySetStateReverts(t *testing.T) {
 	assert.Equal(t, "INSUFFICIENT_DATA", policyState(t, m, "forced"))
 }
 
+// A GCP condition evaluates only its duration window. The CloudWatch
+// evaluation range and premature-alarm rule do not apply, so one old breaching
+// point with silence after it does not open an incident on a 3 of 3 policy.
+func TestLazyEvalPolicyNoCloudWatchLookBack(t *testing.T) {
+	m, clk := newTestMock()
+	policy := lazyPolicy("window", "")
+	policy.Stat, policy.EvaluationPeriods, policy.DatapointsToAlarm = "Maximum", 3, 3
+	require.NoError(t, m.CreateAlarm(context.Background(), policy))
+
+	putErrors(t, m, clk, 10)
+	clk.Advance(150 * time.Second)
+	assert.Equal(t, "OK", policyState(t, m, "window"))
+
+	clk.Advance(time.Minute)
+	assert.Equal(t, "INSUFFICIENT_DATA", policyState(t, m, "window"))
+}
+
 func TestLazyEvalPolicyConcurrency(t *testing.T) {
 	ctx := context.Background()
 	m, clk := newTestMock()

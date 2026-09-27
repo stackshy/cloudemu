@@ -59,6 +59,22 @@ func TestSDKAzureDNSRejectsBadAddress(t *testing.T) {
 			}},
 			wantMsg: "The value '192.0.2.1' of field 'ipv6Address' is not a valid IPv6 address.",
 		},
+		{
+			name:  "A holding mapped IPv4",
+			rtype: armdns.RecordTypeA,
+			props: &armdns.RecordSetProperties{TTL: to.Ptr(int64(300)), ARecords: []*armdns.ARecord{
+				{IPv4Address: to.Ptr("::ffff:1.2.3.4")},
+			}},
+			wantMsg: "The value '::ffff:1.2.3.4' of field 'ipv4Address' is not a valid IPv4 address.",
+		},
+		{
+			name:  "AAAA zoned",
+			rtype: armdns.RecordTypeAAAA,
+			props: &armdns.RecordSetProperties{TTL: to.Ptr(int64(300)), AaaaRecords: []*armdns.AaaaRecord{
+				{IPv6Address: to.Ptr("fe80::1%eth0")},
+			}},
+			wantMsg: "The value 'fe80::1%eth0' of field 'ipv6Address' is not a valid IPv6 address.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -115,5 +131,36 @@ func TestSDKAzureDNSPatchRejectsBadAddress(t *testing.T) {
 
 	if len(got.Properties.ARecords) != 1 || *got.Properties.ARecords[0].IPv4Address != "192.0.2.1" {
 		t.Fatalf("stored values changed by a rejected PATCH: %+v", got.Properties.ARecords)
+	}
+}
+
+// TestSDKAzureDNSAcceptsMappedAAAA checks that an IPv4-mapped IPv6 address is
+// a valid AAAA value and reads back as written.
+func TestSDKAzureDNSAcceptsMappedAAAA(t *testing.T) {
+	zones, records := newDNSClients(t)
+	ctx := context.Background()
+
+	const zone = "mappedip.com"
+
+	if _, err := zones.CreateOrUpdate(ctx, testRG, zone, armdns.Zone{Location: to.Ptr("global")}, nil); err != nil {
+		t.Fatalf("Zones.CreateOrUpdate: %v", err)
+	}
+
+	if _, err := records.CreateOrUpdate(ctx, testRG, zone, "www", armdns.RecordTypeAAAA, armdns.RecordSet{
+		Properties: &armdns.RecordSetProperties{
+			TTL:         to.Ptr(int64(300)),
+			AaaaRecords: []*armdns.AaaaRecord{{IPv6Address: to.Ptr("::ffff:1.2.3.4")}},
+		},
+	}, nil); err != nil {
+		t.Fatalf("PUT mapped AAAA: %v", err)
+	}
+
+	got, err := records.Get(ctx, testRG, zone, "www", armdns.RecordTypeAAAA, nil)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+
+	if len(got.Properties.AaaaRecords) != 1 || *got.Properties.AaaaRecords[0].IPv6Address != "::ffff:1.2.3.4" {
+		t.Fatalf("AAAA read back as %+v", got.Properties.AaaaRecords)
 	}
 }

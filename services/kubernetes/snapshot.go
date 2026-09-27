@@ -59,6 +59,11 @@ type clusterSnapshot struct {
 	// already holds.
 	NextClusterIP uint32 `json:"nextClusterIP"`
 	NextPodIP     uint32 `json:"nextPodIP"`
+	// ManagedNodes and NextNodeOrdinal carry the managed node pool state: that
+	// the bootstrap nodes were retired (strict scheduling) and the node IP
+	// allocator.
+	ManagedNodes    bool   `json:"managedNodes,omitempty"`
+	NextNodeOrdinal uint32 `json:"nextNodeOrdinal,omitempty"`
 
 	Namespaces      map[string]*corev1.Namespace             `json:"namespaces,omitempty"`
 	ConfigMaps      map[string]*corev1.ConfigMap             `json:"configMaps,omitempty"`
@@ -117,6 +122,9 @@ func (s *ClusterState) snapshot() clusterSnapshot {
 		RV:            s.rv,
 		NextClusterIP: s.nextClusterIP,
 		NextPodIP:     s.nextPodIP,
+
+		ManagedNodes:    s.managedNodes,
+		NextNodeOrdinal: s.nextNodeOrdinal,
 
 		Namespaces:      copyObjMap(s.namespaces),
 		ConfigMaps:      copyObjMap(s.configMaps),
@@ -226,6 +234,8 @@ func (s *APIServer) restoreClusterLocked(cs *clusterSnapshot) (*ClusterState, er
 	// against a degenerate zero (a well-formed v4 snapshot always carries real
 	// values) so a malformed field can't wedge allocation at the reserved base.
 	st.rv = cs.RV
+	st.managedNodes = cs.ManagedNodes
+	st.nextNodeOrdinal = cs.NextNodeOrdinal
 
 	if cs.NextClusterIP != 0 {
 		st.nextClusterIP = cs.NextClusterIP

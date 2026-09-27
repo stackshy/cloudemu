@@ -16,7 +16,8 @@ func TestTickReportsTransitions(t *testing.T) {
 
 	assertEqual(t, false, m.Tick(fc.Now()))
 
-	fc.Advance(2 * time.Minute)
+	// Past the evaluation range of N+2 periods, so every point is missing.
+	fc.Advance(4 * time.Minute)
 	assertEqual(t, true, m.Tick(fc.Now()))
 	assertEqual(t, false, m.Tick(fc.Now()))
 }
@@ -38,7 +39,8 @@ func TestAlarmTimestamps(t *testing.T) {
 	assertEqual(t, created, a[0].StateTransitionedTimestamp)
 	assertEqual(t, created, a[0].StateUpdatedTimestamp)
 
-	fc.Advance(6 * time.Minute)
+	// Past the evaluation range of N+2 periods, so every point is missing.
+	fc.Advance(16 * time.Minute)
 
 	a, err = m.DescribeAlarms(ctx, []string{"ts"})
 	requireNoError(t, err)

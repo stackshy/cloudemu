@@ -203,7 +203,8 @@ func TestStateChangeEventOnLazyRead(t *testing.T) {
 	requireNoError(t, m.CreateAlarm(ctx, lazyAlarm("stale", 60, "")))
 	assertEqual(t, 1, len(bus.all()))
 
-	fc.Advance(2 * time.Minute)
+	// Past the evaluation range of N+2 periods, so every point is missing.
+	fc.Advance(4 * time.Minute)
 
 	if _, err := m.DescribeAlarms(ctx, []string{"stale"}); err != nil {
 		t.Fatal(err)
