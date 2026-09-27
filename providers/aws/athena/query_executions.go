@@ -152,14 +152,22 @@ func (m *Mock) buildExecution(
 // state to FAILED with a reason, mirroring how real Athena surfaces a query that
 // was accepted but failed to run.
 func (m *Mock) executeStatement(ctx context.Context, qe *driver.QueryExecution) {
-	effect := parseDatabaseDDL(qe.Query)
-	if effect.action == "" {
-		return
-	}
-
 	catalog := driver.DefaultDataCatalog
 	if qe.QueryExecutionContext != nil && qe.QueryExecutionContext.Catalog != "" {
 		catalog = qe.QueryExecutionContext.Catalog
+	}
+
+	// A connector catalog fails every statement, since no connector runs.
+	if dc, ok := m.dataCatalogs.Get(catalog); ok && dc.Type != driver.DataCatalogTypeGlue {
+		qe.Status.State = driver.QueryStateFailed
+		qe.Status.StateChangeReason = connectorNotSupported
+
+		return
+	}
+
+	effect := parseDatabaseDDL(qe.Query)
+	if effect.action == "" {
+		return
 	}
 
 	if reason := m.applyDatabaseDDL(ctx, catalog, &effect); reason != "" {

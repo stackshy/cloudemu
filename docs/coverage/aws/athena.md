@@ -3,22 +3,24 @@
 
 AWS's `athena` service · portable interface `driver.Athena` · [AWS index](./README.md)
 
-## Operations (23)
+## Operations (26)
 
 | Operation | Description |
 | --- | --- |
+| `CreateDataCatalog` | CreateDataCatalog registers a LAMBDA, GLUE, HIVE or FEDERATED catalog |
 | `CreateNamedQuery` | CreateNamedQuery saves a query and returns its generated id. The |
 | `CreateWorkGroup` | CreateWorkGroup creates a workgroup, materializing the effective engine |
+| `DeleteDataCatalog` | DeleteDataCatalog removes a catalog and returns it. AwsDataCatalog cannot |
 | `DeleteNamedQuery` |  |
 | `DeleteWorkGroup` | DeleteWorkGroup removes a workgroup. recursive deletes its named queries |
-| `GetDataCatalog` |  |
+| `GetDataCatalog` | GetDataCatalog returns a data catalog, or an InvalidRequestException |
 | `GetDatabase` | GetDatabase returns a database in a data catalog, or an error tagged |
 | `GetNamedQuery` |  |
 | `GetQueryExecution` |  |
 | `GetQueryResults` | GetQueryResults returns the result rows for a SUCCEEDED execution. DDL and |
 | `GetTableMetadata` | GetTableMetadata returns a table's metadata, or an error tagged |
 | `GetWorkGroup` | GetWorkGroup returns a deep copy of a workgroup, or an error tagged |
-| `ListDataCatalogs` |  |
+| `ListDataCatalogs` | ListDataCatalogs lists every catalog, AwsDataCatalog included, by name. |
 | `ListDatabases` |  |
 | `ListNamedQueries` | ListNamedQueries returns the ids of saved queries in the given workgroup |
 | `ListQueryExecutions` | ListQueryExecutions returns execution ids in the given workgroup |
@@ -29,6 +31,7 @@ AWS's `athena` service · portable interface `driver.Athena` · [AWS index](./RE
 | `StopQueryExecution` | StopQueryExecution is a no-op on an already-terminal execution; it errors |
 | `TagResource` |  |
 | `UntagResource` |  |
+| `UpdateDataCatalog` | UpdateDataCatalog changes a catalog's type, description or parameters. |
 | `UpdateWorkGroup` | UpdateWorkGroup applies a delta: the top-level Description/State plus the |
 
 ## Not in scope

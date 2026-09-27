@@ -234,37 +234,3 @@ func setIfNotEmpty(m map[string]string, key, value string) {
 		m[key] = value
 	}
 }
-
-// GetDataCatalog returns a registered data catalog by name.
-func (m *Mock) GetDataCatalog(_ context.Context, name string) (*driver.DataCatalog, error) {
-	if name == "" {
-		name = driver.DefaultDataCatalog
-	}
-
-	dc, ok := m.dataCatalogs.Get(name)
-	if !ok {
-		return nil, resourceNotFound("DataCatalog %s not found", name)
-	}
-
-	out := copyDataCatalog(dc)
-
-	return &out, nil
-}
-
-// ListDataCatalogs returns the registered data-catalog summaries, sorted by
-// name.
-func (m *Mock) ListDataCatalogs(_ context.Context, page driver.Pagination) ([]driver.DataCatalogSummary, string, error) {
-	names := sortedKeys(m.dataCatalogs.Keys())
-	all := make([]driver.DataCatalogSummary, 0, len(names))
-
-	for _, name := range names {
-		dc, ok := m.dataCatalogs.Get(name)
-		if !ok {
-			continue
-		}
-
-		all = append(all, driver.DataCatalogSummary{CatalogName: dc.Name, Type: dc.Type})
-	}
-
-	return paginate(all, page)
-}

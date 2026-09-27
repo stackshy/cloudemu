@@ -25,7 +25,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `apprunner` | [AppRunner](./aws/apprunner.md) | - | - | - | 29 |
 | `appsync` | [AppSync](./aws/appsync.md) | - | - | - | 17 |
 | `aps` | [APS](./aws/aps.md) | - | - | - | 21 |
-| `athena` | [Athena](./aws/athena.md) | - | - | - | 23 |
+| `athena` | [Athena](./aws/athena.md) | - | - | - | 26 |
 | `azureai` | - | [AI](./azure/ai.md) | - | - | 92 |
 | `azurefirewall` | - | [Firewall](./azure/firewall.md) | - | - | 8 |
 | `azuresearch` | - | [Search](./azure/search.md) | - | - | 53 |

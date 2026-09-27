@@ -866,12 +866,20 @@
     "interface": "Athena",
     "operations": [
       {
+        "name": "CreateDataCatalog",
+        "doc": "CreateDataCatalog registers a LAMBDA, GLUE, HIVE or FEDERATED catalog"
+      },
+      {
         "name": "CreateNamedQuery",
         "doc": "CreateNamedQuery saves a query and returns its generated id. The"
       },
       {
         "name": "CreateWorkGroup",
         "doc": "CreateWorkGroup creates a workgroup, materializing the effective engine"
+      },
+      {
+        "name": "DeleteDataCatalog",
+        "doc": "DeleteDataCatalog removes a catalog and returns it. AwsDataCatalog cannot"
       },
       {
         "name": "DeleteNamedQuery"
@@ -881,7 +889,8 @@
         "doc": "DeleteWorkGroup removes a workgroup. recursive deletes its named queries"
       },
       {
-        "name": "GetDataCatalog"
+        "name": "GetDataCatalog",
+        "doc": "GetDataCatalog returns a data catalog, or an InvalidRequestException"
       },
       {
         "name": "GetDatabase",
@@ -906,7 +915,8 @@
         "doc": "GetWorkGroup returns a deep copy of a workgroup, or an error tagged"
       },
       {
-        "name": "ListDataCatalogs"
+        "name": "ListDataCatalogs",
+        "doc": "ListDataCatalogs lists every catalog, AwsDataCatalog included, by name."
       },
       {
         "name": "ListDatabases"
@@ -943,6 +953,10 @@
       },
       {
         "name": "UntagResource"
+      },
+      {
+        "name": "UpdateDataCatalog",
+        "doc": "UpdateDataCatalog changes a catalog's type, description or parameters."
       },
       {
         "name": "UpdateWorkGroup",

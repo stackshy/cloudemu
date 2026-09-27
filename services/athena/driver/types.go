@@ -228,11 +228,49 @@ type Database struct {
 	Parameters  map[string]string
 }
 
-// DataCatalog is a registered data catalog.
+// Data catalog types.
+const (
+	DataCatalogTypeLambda    = "LAMBDA"
+	DataCatalogTypeGlue      = "GLUE"
+	DataCatalogTypeHive      = "HIVE"
+	DataCatalogTypeFederated = "FEDERATED"
+)
+
+// Data catalog status values. Creation and deletion settle synchronously, so
+// only the terminal values are modeled.
+const (
+	DataCatalogStatusCreateComplete = "CREATE_COMPLETE"
+	DataCatalogStatusCreateFailed   = "CREATE_FAILED"
+	DataCatalogStatusDeleteComplete = "DELETE_COMPLETE"
+)
+
+// DataCatalog is a registered data catalog. Status, ConnectionType and Error
+// report how a catalog was created. ConnectionType is set for FEDERATED only.
 type DataCatalog struct {
+	Name           string
+	Description    string
+	Type           string
+	Parameters     map[string]string
+	Status         string
+	ConnectionType string
+	Error          string
+}
+
+// CreateDataCatalogInput registers a data catalog.
+type CreateDataCatalogInput struct {
 	Name        string
-	Description string
 	Type        string
+	Description string
+	Parameters  map[string]string
+	Tags        map[string]string
+}
+
+// UpdateDataCatalogInput changes a data catalog. A nil Description or
+// Parameters keeps the stored value.
+type UpdateDataCatalogInput struct {
+	Name        string
+	Type        string
+	Description *string
 	Parameters  map[string]string
 }
 
@@ -258,6 +296,9 @@ type Column struct {
 
 // DataCatalogSummary is the light projection returned by ListDataCatalogs.
 type DataCatalogSummary struct {
-	CatalogName string
-	Type        string
+	CatalogName    string
+	Type           string
+	Status         string
+	ConnectionType string
+	Error          string
 }

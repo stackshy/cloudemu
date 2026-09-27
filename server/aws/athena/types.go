@@ -132,14 +132,21 @@ type databaseJSON struct {
 	Parameters  map[string]string `json:"Parameters,omitempty"`
 }
 
+// dataCatalogJSON always carries Parameters, as {} when there are none.
 type dataCatalogJSON struct {
-	Name        string            `json:"Name"`
-	Description string            `json:"Description,omitempty"`
-	Type        string            `json:"Type,omitempty"`
-	Parameters  map[string]string `json:"Parameters,omitempty"`
+	Name           string            `json:"Name"`
+	Description    string            `json:"Description,omitempty"`
+	Type           string            `json:"Type,omitempty"`
+	Parameters     map[string]string `json:"Parameters"`
+	Status         string            `json:"Status,omitempty"`
+	ConnectionType string            `json:"ConnectionType,omitempty"`
+	Error          string            `json:"Error,omitempty"`
 }
 
 type dataCatalogSummaryJSON struct {
-	CatalogName string `json:"CatalogName,omitempty"`
-	Type        string `json:"Type,omitempty"`
+	CatalogName    string `json:"CatalogName,omitempty"`
+	Type           string `json:"Type,omitempty"`
+	Status         string `json:"Status,omitempty"`
+	ConnectionType string `json:"ConnectionType,omitempty"`
+	Error          string `json:"Error,omitempty"`
 }
