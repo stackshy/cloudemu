@@ -46,12 +46,17 @@ func (h *Handler) describeComputeEnvironments(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	details := make([]computeEnvironmentDetail, 0, len(ces))
-	for i := range ces {
-		details = append(details, toCEDetail(&ces[i]))
+	page, next, ok := paginate(w, ces, req.MaxResults, req.NextToken)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, describeComputeEnvironmentsResponse{ComputeEnvironments: details})
+	details := make([]computeEnvironmentDetail, 0, len(page))
+	for i := range page {
+		details = append(details, toCEDetail(&page[i]))
+	}
+
+	writeJSON(w, describeComputeEnvironmentsResponse{ComputeEnvironments: details, NextToken: next})
 }
 
 func (h *Handler) updateComputeEnvironment(w http.ResponseWriter, r *http.Request) {
