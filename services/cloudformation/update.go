@@ -21,21 +21,21 @@ const (
 
 // PlanResourceUpdate compares the resolved properties a resource was last
 // applied with to the resolved properties the new template gives it. A change
-// is in place only when the provisioner is an Updater and no changed property
-// requires replacement.
+// replaces the resource when a changed property requires replacement, or when
+// the provisioner has no ReplacementSchema. Otherwise it is in place.
 func PlanResourceUpdate(p Provisioner, previous, next map[string]any) UpdateAction {
 	changed := ChangedProperties(previous, next)
 	if len(changed) == 0 {
 		return UpdateNone
 	}
 
-	u, ok := p.(Updater)
+	schema, ok := p.(ReplacementSchema)
 	if !ok {
 		return UpdateReplace
 	}
 
 	for _, name := range changed {
-		if u.RequiresReplacement(name) {
+		if schema.RequiresReplacement(name) {
 			return UpdateReplace
 		}
 	}

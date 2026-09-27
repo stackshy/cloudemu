@@ -38,11 +38,19 @@ type Provisioner interface {
 	Delete(ctx context.Context, physicalID string, properties map[string]any) error
 }
 
-// Updater is implemented by a Provisioner that can update a resource in place.
-type Updater interface {
-	// RequiresReplacement reports whether changing the named top-level
-	// property needs a new physical resource.
+// ReplacementSchema is implemented by a Provisioner that knows which of its
+// properties need a new physical resource when they change, the ones the
+// resource reference lists as "Update requires: Replacement". A change to any
+// other property is applied in place.
+type ReplacementSchema interface {
 	RequiresReplacement(property string) bool
+}
+
+// Updater is implemented by a Provisioner that can update its backend in
+// place. A ReplacementSchema without an Updater only records the new
+// properties on an in-place change, so the backend resource is kept.
+type Updater interface {
+	ReplacementSchema
 	// Update applies req.Properties to the existing resource. previous holds
 	// the properties it was last created or updated with.
 	Update(ctx context.Context, physicalID string, previous map[string]any, req ResourceRequest) (*ProvisionedResource, error)

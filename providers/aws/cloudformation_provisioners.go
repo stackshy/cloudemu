@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"encoding/json"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -35,6 +36,28 @@ func cloudformationRegistry(p *Provider) cfn.Registry {
 		"AWS::SecretsManager::Secret": secretProvisioner{p.SecretsManager},
 		"AWS::SSM::Parameter":         ssmParameterProvisioner{p.SSM},
 	}
+}
+
+// cfnReplacementProperties lists, per resource type, the properties whose
+// change needs a new physical resource ("Update requires: Replacement" in the
+// CloudFormation resource reference). Any other property changes in place.
+func cfnReplacementProperties() map[string][]string {
+	return map[string][]string{
+		"AWS::S3::Bucket":             {"BucketName", "ObjectLockEnabled"},
+		"AWS::DynamoDB::Table":        {"TableName", "KeySchema", "LocalSecondaryIndexes"},
+		"AWS::SQS::Queue":             {"QueueName", "FifoQueue"},
+		"AWS::SNS::Topic":             {"TopicName", "FifoTopic"},
+		"AWS::Lambda::Function":       {"FunctionName", "PackageType"},
+		"AWS::IAM::Role":              {"RoleName", "Path"},
+		"AWS::SecretsManager::Secret": {"Name"},
+		"AWS::SSM::Parameter":         {"Name"},
+	}
+}
+
+// requiresReplacement reports whether changing property replaces a resource
+// of type rtype.
+func requiresReplacement(rtype, property string) bool {
+	return slices.Contains(cfnReplacementProperties()[rtype], property)
 }
 
 // cloudformationTemplateFetcher reads a TemplateURL object from the emulated S3.
@@ -159,6 +182,12 @@ func (p s3BucketProvisioner) Create(ctx context.Context, req cfn.ResourceRequest
 	}, nil
 }
 
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (s3BucketProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::S3::Bucket", property)
+}
+
 func (p s3BucketProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
 	return p.s3.DeleteBucket(ctx, physicalID)
 }
@@ -186,6 +215,12 @@ func (p dynamoTableProvisioner) Create(ctx context.Context, req cfn.ResourceRequ
 	}
 
 	return &cfn.ProvisionedResource{PhysicalID: name, Attributes: attrs}, nil
+}
+
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (dynamoTableProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::DynamoDB::Table", property)
 }
 
 func (p dynamoTableProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
@@ -283,7 +318,7 @@ const (
 // RequiresReplacement reports the queue properties CloudFormation cannot
 // change in place.
 func (sqsQueueProvisioner) RequiresReplacement(property string) bool {
-	return property == "QueueName" || property == "FifoQueue"
+	return requiresReplacement("AWS::SQS::Queue", property)
 }
 
 // Update sets the changed queue attributes. A dropped attribute goes back to
@@ -341,6 +376,12 @@ func (p snsTopicProvisioner) Create(ctx context.Context, req cfn.ResourceRequest
 	}, nil
 }
 
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (snsTopicProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::SNS::Topic", property)
+}
+
 func (p snsTopicProvisioner) Delete(ctx context.Context, deleteID string, _ map[string]any) error {
 	return p.sns.DeleteTopic(ctx, deleteID)
 }
@@ -374,6 +415,12 @@ func (p lambdaFunctionProvisioner) Create(ctx context.Context, req cfn.ResourceR
 		PhysicalID: info.Name,
 		Attributes: map[string]string{"Arn": info.ARN},
 	}, nil
+}
+
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (lambdaFunctionProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::Lambda::Function", property)
 }
 
 func (p lambdaFunctionProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
@@ -428,6 +475,12 @@ func (p iamRoleProvisioner) Create(ctx context.Context, req cfn.ResourceRequest)
 	}, nil
 }
 
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (iamRoleProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::IAM::Role", property)
+}
+
 func (p iamRoleProvisioner) Delete(ctx context.Context, physicalID string, _ map[string]any) error {
 	return p.iam.DeleteRole(ctx, physicalID)
 }
@@ -455,6 +508,12 @@ func (p secretProvisioner) Create(ctx context.Context, req cfn.ResourceRequest) 
 		DeleteID:   info.Name,
 		Attributes: map[string]string{"Arn": info.ResourceID, "Id": info.ResourceID},
 	}, nil
+}
+
+// RequiresReplacement reports the properties that replace the resource. Other
+// changes are recorded without touching the backend.
+func (secretProvisioner) RequiresReplacement(property string) bool {
+	return requiresReplacement("AWS::SecretsManager::Secret", property)
 }
 
 func (p secretProvisioner) Delete(ctx context.Context, deleteID string, _ map[string]any) error {
@@ -498,7 +557,7 @@ func (p ssmParameterProvisioner) Delete(ctx context.Context, physicalID string, 
 
 // RequiresReplacement reports that only a new Name replaces a parameter.
 func (ssmParameterProvisioner) RequiresReplacement(property string) bool {
-	return property == "Name"
+	return requiresReplacement("AWS::SSM::Parameter", property)
 }
 
 // Update overwrites the parameter with the new value, type, description and

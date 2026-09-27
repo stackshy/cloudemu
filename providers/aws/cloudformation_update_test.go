@@ -66,3 +66,56 @@ func TestCFNQueueAndParameterUpdateInPlace(t *testing.T) {
 		}
 	}
 }
+
+// A table without an Updater keeps its items when only an in-place property
+// changes, and is replaced only when TableName changes.
+func TestCFNDynamoTableKeepsItemsOnInPlaceChange(t *testing.T) {
+	ctx := context.Background()
+	p := New()
+
+	tpl := `{"Parameters":{"Mode":{"Type":"String"},"Env":{"Type":"String"},"Name":{"Type":"String"}},
+	"Resources":{"T":{"Type":"AWS::DynamoDB::Table","Properties":{
+		"TableName":{"Ref":"Name"},"BillingMode":{"Ref":"Mode"},
+		"AttributeDefinitions":[{"AttributeName":"id","AttributeType":"S"}],
+		"KeySchema":[{"AttributeName":"id","KeyType":"HASH"}],
+		"Tags":[{"Key":"env","Value":{"Ref":"Env"}}]}}}}`
+
+	params := func(mode, env, name string) []cfn.Parameter {
+		return []cfn.Parameter{{Key: "Mode", Value: mode}, {Key: "Env", Value: env}, {Key: "Name", Value: name}}
+	}
+
+	if _, err := p.CloudFormation.CreateStack(ctx, &cfn.CreateStackInput{
+		StackName: "t", TemplateBody: tpl, Parameters: params("PAY_PER_REQUEST", "dev", "orders"),
+	}); err != nil {
+		t.Fatalf("CreateStack: %v", err)
+	}
+
+	if err := p.DynamoDB.PutItem(ctx, "orders", map[string]any{"id": "1"}); err != nil {
+		t.Fatalf("PutItem: %v", err)
+	}
+
+	// A tag change, then a BillingMode change, are both in place.
+	for _, step := range []struct{ mode, env string }{{"PAY_PER_REQUEST", "prod"}, {"PROVISIONED", "prod"}} {
+		st, err := p.CloudFormation.UpdateStack(ctx, &cfn.UpdateStackInput{
+			StackName: "t", UsePreviousTemplate: true, Parameters: params(step.mode, step.env, "orders"),
+		})
+		if err != nil || st.Status != cfn.StatusUpdateComplete {
+			t.Fatalf("update %+v: %v", step, err)
+		}
+
+		if item, gerr := p.DynamoDB.GetItem(ctx, "orders", map[string]any{"id": "1"}); gerr != nil || item == nil {
+			t.Fatalf("update %+v lost the item: %v %v", step, item, gerr)
+		}
+	}
+
+	if _, err := p.CloudFormation.UpdateStack(ctx, &cfn.UpdateStackInput{
+		StackName: "t", UsePreviousTemplate: true, Parameters: params("PROVISIONED", "prod", "orders-v2"),
+	}); err != nil {
+		t.Fatalf("rename: %v", err)
+	}
+
+	tables, err := p.DynamoDB.ListTables(ctx)
+	if err != nil || len(tables) != 1 || tables[0] != "orders-v2" {
+		t.Fatalf("a TableName change replaces the table, got %v %v", tables, err)
+	}
+}

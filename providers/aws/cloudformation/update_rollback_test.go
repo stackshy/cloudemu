@@ -191,6 +191,22 @@ func TestContinueUpdateRollbackSkipsResources(t *testing.T) {
 	assertEqual(t, len(res), 1, "resources")
 	assertEqual(t, res[0].Status, cfn.ResourceUpdateComplete, "skipped status")
 	assertEqual(t, res[0].StatusReason, "Resource skipped during rollback", "skipped reason")
+	assertEqual(t, res[0].Type, "Test::Param", "skipped type")
+	assertEqual(t, res[0].PhysicalID, "/q", "skipped keeps its last physical id")
+}
+
+func TestUpdateRejectsTypeChange(t *testing.T) {
+	ctx := context.Background()
+	m := newParamMock(newParamProv())
+
+	_, err := m.CreateStack(ctx, &cfn.CreateStackInput{StackName: "s", TemplateBody: paramV1})
+	requireNoError(t, err)
+
+	_, err = m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: `{"Resources":{
+		"Old":{"Type":"Test::Bucket","Properties":{"Name":"/p"}}}}`})
+	assertErrMsg(t, err, "Update of resource type is not permitted. "+
+		"The new template modifies resource type of the following resources: [Old]")
+	assertEqual(t, stackStatus(t, m, "s").Status, cfn.StatusCreateComplete, "stack untouched")
 }
 
 func TestContinueUpdateRollbackSurvivesSnapshot(t *testing.T) {

@@ -189,8 +189,7 @@ func (m *Mock) createOne(
 	return nil
 }
 
-// updateOne changes a live resource in place through its Updater. The
-// physical id stays the same.
+// updateOne changes a live resource in place. The physical id stays the same.
 func (m *Mock) updateOne(
 	ctx context.Context, sd *stackData, res *cfn.Resolver, id string, rdef cfn.ResourceDef,
 	live *liveResource, props map[string]any,
@@ -198,17 +197,20 @@ func (m *Mock) updateOne(
 	physicalID := live.resolved.RefValue
 	m.emitResourceEvent(sd, id, physicalID, rdef.Type, cfn.ResourceUpdateInProgress, "")
 
-	u, _ := m.registry[rdef.Type].(cfn.Updater)
-
-	out, err := u.Update(ctx, physicalID, live.props, m.resourceRequest(res, id, rdef.Type, props))
-	if err != nil {
-		m.emitResourceEvent(sd, id, physicalID, rdef.Type, cfn.ResourceUpdateFailed, cerrors.Message(err))
-		return &applyFailure{logicalID: id, verb: verbUpdate, err: err}
-	}
-
 	rr := live.resolved
-	if out != nil && out.Attributes != nil {
-		rr.Attributes = out.Attributes
+
+	// Without an Updater the new properties are only recorded, and the
+	// backend resource is kept as it is.
+	if u, ok := m.registry[rdef.Type].(cfn.Updater); ok {
+		out, err := u.Update(ctx, physicalID, live.props, m.resourceRequest(res, id, rdef.Type, props))
+		if err != nil {
+			m.emitResourceEvent(sd, id, physicalID, rdef.Type, cfn.ResourceUpdateFailed, cerrors.Message(err))
+			return &applyFailure{logicalID: id, verb: verbUpdate, err: err}
+		}
+
+		if out != nil && out.Attributes != nil {
+			rr.Attributes = out.Attributes
+		}
 	}
 
 	m.record(sd, res, id, rr, props, live.deleteID)

@@ -23,6 +23,11 @@ func (plainProv) Delete(context.Context, string, map[string]any) error { return 
 
 type namedProv struct{ plainProv }
 
+// schemaProv knows its replacement properties but has no Updater.
+type schemaProv struct{ plainProv }
+
+func (schemaProv) RequiresReplacement(property string) bool { return property == "Name" }
+
 func (namedProv) RequiresReplacement(property string) bool { return property == "Name" }
 
 func (namedProv) Update(context.Context, string, map[string]any, cfn.ResourceRequest) (*cfn.ProvisionedResource, error) {
@@ -46,6 +51,8 @@ func TestPlanResourceUpdate(t *testing.T) {
 		{"replacement property", namedProv{}, map[string]any{"Name": "b", "Size": json.Number("5"), "Tags": []any{"x"}}, cfn.UpdateReplace},
 		{"no updater replaces", plainProv{}, map[string]any{"Name": "a", "Size": json.Number("6"), "Tags": []any{"x"}}, cfn.UpdateReplace},
 		{"no updater no change", plainProv{}, old, cfn.UpdateNone},
+		{"schema only in place", schemaProv{}, map[string]any{"Name": "a", "Size": json.Number("6"), "Tags": []any{"x"}}, cfn.UpdateInPlace},
+		{"schema only replacement", schemaProv{}, map[string]any{"Name": "b", "Size": json.Number("5"), "Tags": []any{"x"}}, cfn.UpdateReplace},
 	}
 
 	for _, c := range cases {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"maps"
 	"slices"
+	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	cfn "github.com/stackshy/cloudemu/v2/services/cloudformation"
@@ -16,6 +17,8 @@ const (
 	msgContinueBadStatus  = "ContinueUpdateRollback cannot be called from current stack status"
 	msgSkipNotFailed      = "Resource [%s] is not in a failed state and cannot be skipped"
 	msgStackCannotUpdate  = "Stack:%s is in %s state and can not be updated."
+	msgTypeChanged        = "Update of resource type is not permitted. " +
+		"The new template modifies resource type of the following resources: [%s]"
 	reasonSkippedRollback = "Resource skipped during rollback"
 	reasonUserInitiated   = "User Initiated"
 )
@@ -171,6 +174,10 @@ func (m *Mock) planUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStac
 		return nil, cerr
 	}
 
+	if terr := checkTypesKept(sd, p.newT); terr != nil {
+		return nil, terr
+	}
+
 	if p.oldT, p.oldRes, err = m.preparedTemplate(sd, &prior); err != nil {
 		return nil, err
 	}
@@ -178,6 +185,25 @@ func (m *Mock) planUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStac
 	backfillProps(sd, p.oldT, p.oldRes)
 
 	return p, nil
+}
+
+// checkTypesKept rejects a template that gives a live logical ID a new type.
+func checkTypesKept(sd *stackData, t *cfn.Template) error {
+	var changed []string
+
+	for id, rdef := range t.Resources {
+		if rtype := sd.rowType(id); rtype != "" && rtype != rdef.Type {
+			changed = append(changed, id)
+		}
+	}
+
+	if len(changed) == 0 {
+		return nil
+	}
+
+	slices.Sort(changed)
+
+	return cerrors.Newf(cerrors.InvalidArgument, msgTypeChanged, strings.Join(changed, ", "))
 }
 
 // updateTemplateBody returns the template an update names: the request's body
@@ -392,7 +418,7 @@ func (m *Mock) ContinueUpdateRollback(ctx context.Context, in *cfn.ContinueUpdat
 	}
 
 	for _, id := range in.ResourcesToSkip {
-		m.markSkipped(sd, id)
+		m.markSkipped(sd, t, id)
 	}
 
 	m.finishRollback(ctx, sd, t, res, skip, "")
@@ -422,16 +448,41 @@ func (sd *stackData) skipSet(ids []string) (map[string]bool, error) {
 	return skip, nil
 }
 
-// markSkipped records a failed resource the rollback leaves as it is.
-func (m *Mock) markSkipped(sd *stackData, id string) {
-	live, _ := sd.live(id)
-	rtype := sd.rowType(id)
+// markSkipped records a failed resource the rollback leaves as it is. Its
+// type comes from the template the rollback restores. A resource that is no
+// longer live keeps the last physical id it had.
+func (m *Mock) markSkipped(sd *stackData, t *cfn.Template, id string) {
+	rtype := t.Resources[id].Type
+	if rtype == "" {
+		rtype = sd.rowType(id)
+	}
+
+	physicalID := sd.lastPhysicalID(id)
 
 	m.upsertResource(sd, &cfn.StackResource{
-		LogicalID: id, PhysicalID: live.resolved.RefValue, Type: rtype,
+		LogicalID: id, PhysicalID: physicalID, Type: rtype,
 		Status: cfn.ResourceUpdateComplete, StatusReason: reasonSkippedRollback, Timestamp: m.clock.Now(),
 	})
-	m.emitResourceEvent(sd, id, live.resolved.RefValue, rtype, cfn.ResourceUpdateComplete, reasonSkippedRollback)
+	m.emitResourceEvent(sd, id, physicalID, rtype, cfn.ResourceUpdateComplete, reasonSkippedRollback)
+}
+
+// lastPhysicalID returns the live physical id of a resource, or else the
+// newest one its events recorded.
+func (sd *stackData) lastPhysicalID(id string) string {
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	if rr, ok := sd.resolved[id]; ok {
+		return rr.RefValue
+	}
+
+	for i := len(sd.stack.Events) - 1; i >= 0; i-- {
+		if e := sd.stack.Events[i]; e.LogicalID == id && e.PhysicalID != "" {
+			return e.PhysicalID
+		}
+	}
+
+	return ""
 }
 
 // rowType returns the type on a resource's stack row, or "" without one.
