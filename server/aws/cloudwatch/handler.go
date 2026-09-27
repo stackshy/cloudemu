@@ -1,5 +1,5 @@
-// Package cloudwatch implements AWS CloudWatch's Smithy RPC-v2-CBOR protocol
-// as a server.Handler.
+// Package cloudwatch implements AWS CloudWatch as a server.Handler over the
+// three protocols its clients speak: Smithy RPC-v2-CBOR, awsJson1_0 and query.
 //
 // Modern aws-sdk-go-v2 CloudWatch clients no longer use the AWS query protocol.
 // They send CBOR-encoded request bodies to URLs like
@@ -9,7 +9,9 @@
 //	Content-Type:    application/cbor
 //
 // This handler matches those requests, decodes CBOR, dispatches to the
-// monitoring driver, and writes CBOR responses.
+// monitoring driver, and writes CBOR responses. botocore 1.43+ sends
+// awsJson1_0 instead (json_protocol.go), and the AWS CLI v2 and older SDKs
+// send query (query.go). All three run through the same per-op cores.
 package cloudwatch
 
 import (
@@ -89,7 +91,8 @@ func (h *Handler) SetIPAMMetrics(ipam netdriver.IPAMMetrics) {
 	h.ipam = ipam
 }
 
-// Matches returns true for Smithy rpc-v2-cbor requests, and for classic
+// Matches returns true for Smithy rpc-v2-cbor requests, for awsJson1_0
+// requests whose X-Amz-Target names the CloudWatch service, and for classic
 // query-protocol CloudWatch requests (used by the AWS CLI and older SDKs),
 // disambiguated from EC2 by the SigV4 "monitoring" credential scope.
 func (*Handler) Matches(r *http.Request) bool {
@@ -97,11 +100,18 @@ func (*Handler) Matches(r *http.Request) bool {
 		return true
 	}
 
-	return isQueryRequest(r)
+	return isJSONRequest(r) || isQueryRequest(r)
 }
 
 // ServeHTTP parses the URL path for the operation name and dispatches.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	decodeRequestBody(r)
+
+	if r.Header.Get(protocolHeader) != protocolValue && isJSONRequest(r) {
+		h.serveJSON(w, r)
+		return
+	}
+
 	if isQueryRequest(r) {
 		h.serveQuery(w, r)
 		return
@@ -203,8 +213,14 @@ func extractOperation(path string) string {
 	return path[i+len(opMarker):]
 }
 
-// writeCBORError writes an rpc-v2-cbor error response.
+// writeCBORError writes an rpc-v2-cbor error response, or the awsJson1_0
+// error when w is the writer of a JSON request.
 func writeCBORError(w http.ResponseWriter, status int, errType, msg string) {
+	if jw, ok := w.(*jsonWriter); ok {
+		jw.writeError(status, errType, msg)
+		return
+	}
+
 	payload := map[string]any{
 		"__type":  errType,
 		"message": msg,
@@ -232,8 +248,14 @@ func mustSmithyEncMode() cbor.EncMode {
 	return mode
 }
 
-// writeCBORResponse writes a successful rpc-v2-cbor response body.
+// writeCBORResponse writes a successful rpc-v2-cbor response body, or the
+// awsJson1_0 body when w is the writer of a JSON request.
 func writeCBORResponse(w http.ResponseWriter, payload any) {
+	if jw, ok := w.(*jsonWriter); ok {
+		jw.writeResult(payload)
+		return
+	}
+
 	body, err := smithyEncMode.Marshal(payload)
 	if err != nil {
 		writeCBORError(w, http.StatusInternalServerError, "InternalError", err.Error())
