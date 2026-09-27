@@ -3162,10 +3162,19 @@
         "name": "ContinueUpdateRollback"
       },
       {
+        "name": "CreateChangeSet"
+      },
+      {
         "name": "CreateStack"
       },
       {
+        "name": "DeleteChangeSet"
+      },
+      {
         "name": "DeleteStack"
+      },
+      {
+        "name": "DescribeChangeSet"
       },
       {
         "name": "DescribeStackEvents"
@@ -3177,7 +3186,16 @@
         "name": "DescribeStacks"
       },
       {
+        "name": "ExecuteChangeSet"
+      },
+      {
         "name": "GetTemplate"
+      },
+      {
+        "name": "GetTemplateSummary"
+      },
+      {
+        "name": "ListChangeSets"
       },
       {
         "name": "ListStackResources"
@@ -9986,6 +10004,57 @@
       "aws": "CloudWatchLogs",
       "azure": "LogAnalytics",
       "gcp": "CloudLogging"
+    }
+  },
+  {
+    "service": "logic",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Disable"
+      },
+      {
+        "name": "DiscoverWorkflows"
+      },
+      {
+        "name": "Enable"
+      },
+      {
+        "name": "Endpoints"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "ListCallbackURL"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "Update"
+      },
+      {
+        "name": "Version"
+      }
+    ],
+    "providers": {
+      "azure": "Logic"
     }
   },
   {

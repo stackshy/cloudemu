@@ -41,6 +41,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadtesting"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loganalytics"
+	"github.com/stackshy/cloudemu/v2/providers/azure/logic"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedcassandra"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedgrafana"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedidentity"
@@ -206,6 +207,7 @@ type Provider struct {
 	StreamAnalytics    *streamanalytics.Mock
 	RecoveryServices   *recoveryservices.Mock
 	IoTHub             *iothub.Mock
+	Logic              *logic.Mock
 	HealthcareApis     *healthcareapis.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
@@ -288,6 +290,7 @@ func New(opts ...config.Option) *Provider {
 		StreamAnalytics:    streamanalytics.New(o),
 		RecoveryServices:   recoveryservices.New(o),
 		IoTHub:             iothub.New(o),
+		Logic:              logic.New(o),
 		HealthcareApis:     healthcareapis.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
@@ -342,6 +345,7 @@ func New(opts ...config.Option) *Provider {
 				streamAnalyticsDiscovery{p.StreamAnalytics},
 				recoveryServicesDiscovery{p.RecoveryServices},
 				iotHubDiscovery{p.IoTHub},
+				logicWorkflowDiscovery{p.Logic},
 				healthcareApisDiscovery{p.HealthcareApis},
 			},
 		},

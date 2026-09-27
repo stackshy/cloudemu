@@ -105,7 +105,7 @@ func TestNodegroupNodesCreatedWithEKSShape(t *testing.T) {
 		InstanceTypes: []string{"m5.large"},
 		AmiType:       "AL2023_ARM_64_STANDARD",
 		CapacityType:  "SPOT",
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
 		Labels:        map[string]string{"team": "payments"},
 		Taints:        []eksdriver.Taint{{Key: "dedicated", Value: "batch", Effect: "NO_SCHEDULE"}},
 	})
@@ -192,7 +192,7 @@ func TestNodegroupNodesUSEast1Hostname(t *testing.T) {
 
 	_, err := m.CreateNodegroup(context.Background(), eksdriver.NodegroupConfig{
 		ClusterName: "c1", NodegroupName: "ng",
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 1, DesiredSize: 1},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 1, DesiredSize: 1},
 	})
 	requireNoError(t, err)
 
@@ -222,7 +222,7 @@ func TestNodegroupNodesScaleUpdateAndDelete(t *testing.T) {
 
 	_, err := m.CreateNodegroup(ctx, eksdriver.NodegroupConfig{
 		ClusterName: "c1", NodegroupName: "ng",
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
 		Labels:        map[string]string{"old": "1"},
 		Taints:        []eksdriver.Taint{{Key: "k", Value: "v", Effect: "NO_EXECUTE"}},
 	})
@@ -239,7 +239,7 @@ func TestNodegroupNodesScaleUpdateAndDelete(t *testing.T) {
 		t.Helper()
 
 		_, err := m.UpdateNodegroupConfig(ctx, "c1", "ng", eksdriver.NodegroupConfigUpdate{
-			Scaling: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: n},
+			Scaling: &eksdriver.NodegroupScalingUpdate{MinSize: intPtr(1), MaxSize: intPtr(3), DesiredSize: intPtr(n)},
 		})
 		requireNoError(t, err)
 	}
@@ -303,7 +303,7 @@ func TestNodegroupNodesVersionUpdateRefreshesKubelet(t *testing.T) {
 
 	_, err := m.CreateNodegroup(ctx, eksdriver.NodegroupConfig{
 		ClusterName: "c1", NodegroupName: "ng", Version: "1.29",
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 1, DesiredSize: 1},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 1, DesiredSize: 1},
 	})
 	requireNoError(t, err)
 
@@ -331,7 +331,7 @@ func TestNodegroupNodesSurviveSnapshotRestore(t *testing.T) {
 
 	_, err := m.CreateNodegroup(ctx, eksdriver.NodegroupConfig{
 		ClusterName: "c1", NodegroupName: "ng",
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
 	})
 	requireNoError(t, err)
 
@@ -359,7 +359,7 @@ func TestNodegroupNodesSurviveSnapshotRestore(t *testing.T) {
 	assertEqual(t, 2, len(before))
 
 	_, err = m2.UpdateNodegroupConfig(ctx, "c1", "ng", eksdriver.NodegroupConfigUpdate{
-		Scaling: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 3},
+		Scaling: &eksdriver.NodegroupScalingUpdate{MinSize: intPtr(1), MaxSize: intPtr(3), DesiredSize: intPtr(3)},
 	})
 	requireNoError(t, err)
 
@@ -404,7 +404,7 @@ func TestNodegroupNodesWithoutDataPlane(t *testing.T) {
 
 	_, err := m.CreateNodegroup(context.Background(), eksdriver.NodegroupConfig{
 		ClusterName: "c1", NodegroupName: "ng",
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 2, DesiredSize: 2},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 2, DesiredSize: 2},
 	})
 	requireNoError(t, err)
 

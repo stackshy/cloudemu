@@ -17,6 +17,7 @@ const (
 
 	StatusUpdateInProgress         = "UPDATE_IN_PROGRESS"
 	StatusUpdateComplete           = "UPDATE_COMPLETE"
+	StatusUpdateFailed             = "UPDATE_FAILED"
 	StatusUpdateRollbackInProgress = "UPDATE_ROLLBACK_IN_PROGRESS"
 	StatusUpdateRollbackComplete   = "UPDATE_ROLLBACK_COMPLETE"
 	StatusUpdateRollbackFailed     = "UPDATE_ROLLBACK_FAILED"
@@ -109,6 +110,12 @@ type Stack struct {
 
 	// NotificationARNs are the SNS topics the stack reports events to.
 	NotificationARNs []string
+	// ChangeSetID is the change set the stack was last created or updated
+	// from.
+	ChangeSetID string
+	// DisableRollback records that a failed operation leaves the stack as it
+	// is instead of rolling it back.
+	DisableRollback bool
 }
 
 // StackSummary is the condensed stack view ListStacks returns.
@@ -146,6 +153,9 @@ type UpdateStackInput struct {
 	Capabilities []string
 	// UsePreviousTemplate reuses the stack's current template.
 	UsePreviousTemplate bool
+	// DisableRollback leaves a failed update UPDATE_FAILED instead of
+	// rolling it back.
+	DisableRollback bool
 
 	// NotificationARNs replaces the stack's topics. Nil keeps them.
 	NotificationARNs []string
@@ -169,19 +179,31 @@ type ValidateTemplateInput struct {
 // TemplateParameter is one parameter declaration as ValidateTemplate reports it.
 type TemplateParameter struct {
 	Key          string
+	Type         string
 	DefaultValue string
 	HasDefault   bool
 	NoEcho       bool
 	Description  string
 }
 
-// TemplateSummary is the ValidateTemplate result.
+// TemplateSummary is the ValidateTemplate and GetTemplateSummary result.
 type TemplateSummary struct {
 	Description        string
 	Parameters         []TemplateParameter
 	Capabilities       []string
 	CapabilitiesReason string
 	DeclaredTransforms []string
+	// ResourceTypes and Version are reported by GetTemplateSummary only.
+	ResourceTypes []string
+	Version       string
+}
+
+// GetTemplateSummaryInput names the template to summarize: a live stack's,
+// or one given as a body or URL.
+type GetTemplateSummaryInput struct {
+	StackName    string
+	TemplateBody string
+	TemplateURL  string
 }
 
 // API is the CloudFormation control surface a wire handler drives. The AWS
@@ -199,4 +221,11 @@ type API interface {
 	ListStackResources(ctx context.Context, stackName string) ([]StackResource, error)
 	GetTemplate(ctx context.Context, stackName string) (string, error)
 	ValidateTemplate(ctx context.Context, in *ValidateTemplateInput) (*TemplateSummary, error)
+	GetTemplateSummary(ctx context.Context, in *GetTemplateSummaryInput) (*TemplateSummary, error)
+
+	CreateChangeSet(ctx context.Context, in *CreateChangeSetInput) (*ChangeSet, error)
+	DescribeChangeSet(ctx context.Context, in *DescribeChangeSetInput) (*ChangeSet, error)
+	ListChangeSets(ctx context.Context, in *ListChangeSetsInput) (*ChangeSetList, error)
+	ExecuteChangeSet(ctx context.Context, in *ExecuteChangeSetInput) error
+	DeleteChangeSet(ctx context.Context, in *DeleteChangeSetInput) error
 }

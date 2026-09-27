@@ -18,6 +18,9 @@ const (
 	apiKeyDeleteGrace     = 60 * 24 * time.Hour
 )
 
+// apiKeyIDPrefix marks the current (da2) API-key version.
+const apiKeyIDPrefix = "da2-"
+
 // CreateAPIKey mints an API key whose expiry is computed once via the clock and
 // floored to the hour, then never recomputed on a read.
 func (m *Mock) CreateAPIKey(_ context.Context, in *driver.CreateAPIKeyInput) (*driver.APIKey, error) {
@@ -32,7 +35,7 @@ func (m *Mock) CreateAPIKey(_ context.Context, in *driver.CreateAPIKeyInput) (*d
 	}
 
 	key := driver.APIKey{
-		ID:          idgen.GenerateID("da2-"),
+		ID:          newAPIKeyID(),
 		Description: in.Description,
 		Expires:     expires,
 		Deletes:     deletes,
@@ -48,6 +51,10 @@ func (m *Mock) CreateAPIKey(_ context.Context, in *driver.CreateAPIKeyInput) (*d
 // ListAPIKeys returns a deterministic, deep-copied page of an API's keys,
 // ordered by id. Stored expiry values are returned as-is (never recomputed).
 func (m *Mock) ListAPIKeys(_ context.Context, apiID string, page driver.Page) ([]driver.APIKey, string, error) {
+	if err := validatePage(page); err != nil {
+		return nil, "", err
+	}
+
 	ad, err := m.getAPI(apiID)
 	if err != nil {
 		return nil, "", err
@@ -114,6 +121,12 @@ func (m *Mock) DeleteAPIKey(_ context.Context, apiID, id string) error {
 	delete(ad.apiKeys, id)
 
 	return nil
+}
+
+// newAPIKeyID mints a da2 API-key id: "da2-" plus 26 lowercase alphanumeric
+// characters, the same random shape AppSync uses for an apiId.
+func newAPIKeyID() string {
+	return apiKeyIDPrefix + idgen.AppSyncAPIID()
 }
 
 // computeExpiry resolves an API-key expiry (epoch seconds) and its deletion

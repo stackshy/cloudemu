@@ -31,17 +31,27 @@ var iamNameProps = map[string]string{ //nolint:gochecknoglobals // static lookup
 	"AWS::IAM::UserToGroupAddition": "",
 }
 
-// Summarize builds the ValidateTemplate view of a parsed template.
+// Summarize builds the ValidateTemplate and GetTemplateSummary view of a
+// parsed template.
 func Summarize(t *Template) *TemplateSummary {
-	out := &TemplateSummary{Description: t.Description, DeclaredTransforms: transforms(t.Transform)}
+	out := &TemplateSummary{
+		Description: t.Description, DeclaredTransforms: transforms(t.Transform), Version: t.FormatVersion,
+	}
 
 	for _, name := range sortedKeys(t.Parameters) {
 		def := t.Parameters[name]
 		out.Parameters = append(out.Parameters, TemplateParameter{
-			Key: name, DefaultValue: scalarString(def.Default), HasDefault: def.Default != nil,
+			Key: name, Type: def.Type, DefaultValue: scalarString(def.Default), HasDefault: def.Default != nil,
 			NoEcho: def.NoEcho, Description: def.Description,
 		})
 	}
+
+	types := map[string]bool{}
+	for _, r := range t.Resources {
+		types[r.Type] = true
+	}
+
+	out.ResourceTypes = sortedKeys(types)
 
 	out.Capabilities, out.CapabilitiesReason = requiredCapabilities(t)
 

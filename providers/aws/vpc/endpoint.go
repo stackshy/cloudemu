@@ -110,6 +110,9 @@ func (m *Mock) DeleteVPCEndpoint(
 func (m *Mock) DescribeVPCEndpoints(
 	_ context.Context, ids []string,
 ) ([]driver.VPCEndpoint, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
 	for _, id := range ids {
 		if !m.endpoints.Has(id) {
 			return nil, errors.Newf(
@@ -129,6 +132,11 @@ func (m *Mock) DescribeVPCEndpoints(
 func (m *Mock) ModifyVPCEndpoint(
 	_ context.Context, id string, cfg driver.VPCEndpointConfig,
 ) (*driver.VPCEndpoint, error) {
+	// The field writes below go through the stored pointer, so they need m.mu:
+	// DescribeVPCEndpoints and the EC2 tag writer touch the same record under it.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	ep, ok := m.endpoints.Get(id)
 	if !ok {
 		return nil, errors.Newf(

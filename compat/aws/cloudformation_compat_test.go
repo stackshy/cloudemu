@@ -6,6 +6,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	awscfn "github.com/aws/aws-sdk-go-v2/service/cloudformation"
+	cfntypes "github.com/aws/aws-sdk-go-v2/service/cloudformation/types"
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
 	"github.com/stackshy/cloudemu/v2/internal/compat"
@@ -89,6 +90,19 @@ func TestAWSCloudFormationCompat(t *testing.T) {
 		return err
 	})
 
+	sess.Op(svc, "GetTemplateSummary", func() error {
+		out, err := client.GetTemplateSummary(ctx, &awscfn.GetTemplateSummaryInput{StackName: aws.String(stack)})
+		if err != nil {
+			return err
+		}
+
+		if len(out.ResourceTypes) != 2 {
+			return errCompat("expected 2 resource types")
+		}
+
+		return nil
+	})
+
 	sess.Op(svc, "UpdateStack", func() error {
 		_, err := client.UpdateStack(ctx, &awscfn.UpdateStackInput{
 			StackName:    aws.String(stack),
@@ -102,11 +116,97 @@ func TestAWSCloudFormationCompat(t *testing.T) {
 		return continueUpdateRollback(ctx, client)
 	})
 
+	changeSetOps(ctx, sess, client)
+
 	sess.Op(svc, "DeleteStack", func() error {
 		_, err := client.DeleteStack(ctx, &awscfn.DeleteStackInput{StackName: aws.String(stack)})
 		return err
 	})
 }
+
+// changeSetOps creates a stack from a CREATE change set, then creates and
+// deletes an UPDATE change set on it.
+func changeSetOps(ctx context.Context, sess *compat.AWSSession, client *awscfn.Client) {
+	const (
+		svc   = "cloudformation"
+		stack = "compat-cs"
+	)
+
+	var id string
+
+	sess.Op(svc, "CreateChangeSet", func() error {
+		out, err := client.CreateChangeSet(ctx, &awscfn.CreateChangeSetInput{
+			StackName: aws.String(stack), ChangeSetName: aws.String("create"),
+			ChangeSetType: cfntypes.ChangeSetTypeCreate, TemplateBody: aws.String(changeSetTemplate),
+		})
+		if err != nil {
+			return err
+		}
+
+		id = aws.ToString(out.Id)
+
+		return nil
+	})
+
+	sess.Op(svc, "DescribeChangeSet", func() error {
+		out, err := client.DescribeChangeSet(ctx, &awscfn.DescribeChangeSetInput{ChangeSetName: aws.String(id)})
+		if err != nil {
+			return err
+		}
+
+		if out.Status != cfntypes.ChangeSetStatusCreateComplete || len(out.Changes) != 1 {
+			return errCompat("change set " + string(out.Status))
+		}
+
+		return nil
+	})
+
+	sess.Op(svc, "ListChangeSets", func() error {
+		out, err := client.ListChangeSets(ctx, &awscfn.ListChangeSetsInput{StackName: aws.String(stack)})
+		if err != nil {
+			return err
+		}
+
+		if len(out.Summaries) != 1 {
+			return errCompat("expected 1 change set")
+		}
+
+		return nil
+	})
+
+	sess.Op(svc, "ExecuteChangeSet", func() error {
+		if _, err := client.ExecuteChangeSet(ctx, &awscfn.ExecuteChangeSetInput{ChangeSetName: aws.String(id)}); err != nil {
+			return err
+		}
+
+		out, err := client.DescribeStacks(ctx, &awscfn.DescribeStacksInput{StackName: aws.String(stack)})
+		if err != nil {
+			return err
+		}
+
+		if out.Stacks[0].StackStatus != cfntypes.StackStatusCreateComplete {
+			return errCompat("status " + string(out.Stacks[0].StackStatus))
+		}
+
+		return nil
+	})
+
+	sess.Op(svc, "DeleteChangeSet", func() error {
+		if _, err := client.CreateChangeSet(ctx, &awscfn.CreateChangeSetInput{
+			StackName: aws.String(stack), ChangeSetName: aws.String("update"), UsePreviousTemplate: aws.Bool(true),
+		}); err != nil {
+			return err
+		}
+
+		_, err := client.DeleteChangeSet(ctx, &awscfn.DeleteChangeSetInput{
+			StackName: aws.String(stack), ChangeSetName: aws.String("update"),
+		})
+
+		return err
+	})
+}
+
+const changeSetTemplate = `{"Resources":{"Bucket":{"Type":"AWS::S3::Bucket","Properties":{"BucketName":"compat-cs-bucket"}}}}`
 
 // continueUpdateRollback drives a stack into UPDATE_ROLLBACK_FAILED, where
 // Parameter Store refuses to move a parameter back from the Advanced tier,

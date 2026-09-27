@@ -26,7 +26,8 @@ const (
 // updatableStatus reports the stack statuses UpdateStack accepts.
 func updatableStatus(status string) bool {
 	switch status {
-	case cfn.StatusCreateComplete, cfn.StatusUpdateComplete, cfn.StatusUpdateRollbackComplete:
+	case cfn.StatusCreateComplete, cfn.StatusUpdateComplete, cfn.StatusUpdateRollbackComplete,
+		cfn.StatusCreateFailed, cfn.StatusUpdateFailed:
 		return true
 	default:
 		return false
@@ -86,18 +87,48 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 		return nil, berr
 	}
 
-	m.applyStackMeta(sd, in, plan)
-
-	forward := convergeOpts{stopOnFailure: true, cleanupStatus: cfn.StatusUpdateCompleteCleanupInProgress}
-	if failures, replaced := m.converge(ctx, sd, plan.newT, plan.newRes, forward); len(failures) > 0 {
-		m.rollbackUpdate(ctx, sd, plan, failureSummary(failures), replaced)
-	} else {
-		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
+	onFailure := cfn.OnStackFailureRollback
+	if in.DisableRollback {
+		onFailure = cfn.OnStackFailureDoNothing
 	}
+
+	sd.obsoleteChangeSets()
+	sd.setDisableRollback(in.DisableRollback)
+	m.runUpdate(ctx, sd, in, plan, onFailure)
 
 	out := sd.snapshotStack()
 
 	return &out, nil
+}
+
+// runUpdate applies a planned update to a stack already in
+// UPDATE_IN_PROGRESS. It reports whether the update succeeded. A failure
+// rolls the stack back, or with DO_NOTHING leaves it UPDATE_FAILED as it is.
+// Old resources of replacements are deleted only in the cleanup phase of a
+// successful update. A failure that is not rolled back keeps them, and the
+// next successful update cleans them up.
+func (m *Mock) runUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStackInput, plan *updatePlan, onFailure string) bool {
+	m.applyStackMeta(sd, in, plan)
+
+	forward := convergeOpts{
+		stopOnFailure: true, cleanupStatus: cfn.StatusUpdateCompleteCleanupInProgress, cleanRetained: true,
+	}
+
+	failures, replaced := m.converge(ctx, sd, plan.newT, plan.newRes, forward)
+	if len(failures) == 0 {
+		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
+		return true
+	}
+
+	if onFailure != cfn.OnStackFailureDoNothing {
+		m.rollbackUpdate(ctx, sd, plan, failureSummary(failures), replaced)
+		return false
+	}
+
+	sd.retain(replaced)
+	m.emitStackEvent(sd, cfn.StatusUpdateFailed, failureSummary(failures))
+
+	return false
 }
 
 // checkUpdatable rejects an update of a stack in a state that does not allow
@@ -185,7 +216,55 @@ func (m *Mock) planUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStac
 
 	backfillProps(sd, p.oldT, p.oldRes)
 
+	if st := sd.status(); st == cfn.StatusUpdateFailed || st == cfn.StatusCreateFailed {
+		p.oldT = appliedTemplate(sd, p.oldT, p.oldRes)
+	}
+
 	return p, nil
+}
+
+// appliedTemplate returns what a stack left UPDATE_FAILED or CREATE_FAILED
+// really holds, for the update planner and a rollback to diff against. The
+// stack keeps its submitted template, but only some of its resources reached
+// it. A resource that did keeps its definition. One that failed keeps the
+// properties and type it was last applied with. One that was never created
+// is left out.
+func appliedTemplate(sd *stackData, t *cfn.Template, res *cfn.Resolver) *cfn.Template {
+	out := *t
+	out.Resources = make(map[string]cfn.ResourceDef, len(t.Resources))
+
+	sd.mu.RLock()
+
+	ids := make([]string, 0, len(sd.resolved))
+	for id := range sd.resolved {
+		ids = append(ids, id)
+	}
+	sd.mu.RUnlock()
+
+	for _, id := range ids {
+		live, ok := sd.live(id)
+		if !ok {
+			continue
+		}
+
+		if rdef, declared := t.Resources[id]; declared && rdef.Type == live.typ {
+			if props, err := resolveProps(res, rdef.Properties); err == nil && cfn.SameProperties(live.props, props) {
+				out.Resources[id] = rdef
+				continue
+			}
+		}
+
+		out.Resources[id] = cfn.ResourceDef{Type: live.typ, Properties: live.props}
+	}
+
+	return &out
+}
+
+func (sd *stackData) setDisableRollback(v bool) {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	sd.stack.DisableRollback = v
 }
 
 // checkTypesKept rejects a template that gives a live logical ID a new type.
@@ -516,14 +595,21 @@ func (m *Mock) DeleteStack(ctx context.Context, name string) error {
 	}
 
 	m.emitStackEvent(sd, cfn.StatusDeleteInProgress, reasonUserInitiated)
+	m.finishDelete(ctx, sd)
+
+	return nil
+}
+
+// finishDelete tears down a stack in DELETE_IN_PROGRESS, drops its change
+// sets and marks it DELETE_COMPLETE.
+func (m *Mock) finishDelete(ctx context.Context, sd *stackData) {
 	m.teardown(ctx, sd)
 
 	sd.mu.Lock()
 	sd.stack.DeletionTime = m.clock.Now()
 	sd.rollbackFailed = nil
+	sd.changeSets = nil
 	sd.mu.Unlock()
 
 	m.emitStackEvent(sd, cfn.StatusDeleteComplete, "")
-
-	return nil
 }

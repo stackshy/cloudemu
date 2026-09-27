@@ -362,7 +362,8 @@ func TestSummarizeParameters(t *testing.T) {
 	sum := cfn.Summarize(tmpl)
 	assert.Equal(t, "my stack", sum.Description)
 	assert.Equal(t, []cfn.TemplateParameter{
-		{Key: "Secret", NoEcho: true},
-		{Key: "Size", DefaultValue: "3", HasDefault: true, Description: "how many"},
+		{Key: "Secret", Type: "String", NoEcho: true},
+		{Key: "Size", Type: "Number", DefaultValue: "3", HasDefault: true, Description: "how many"},
 	}, sum.Parameters)
+	assert.Equal(t, []string{"AWS::S3::Bucket"}, sum.ResourceTypes)
 }

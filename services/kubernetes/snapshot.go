@@ -124,7 +124,7 @@ func (s *ClusterState) snapshot() clusterSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
-	serverVersion := s.serverVersion
+	serverVersion := s.targetServerVersionLocked()
 
 	cs := clusterSnapshot{
 		RV:            s.rv,

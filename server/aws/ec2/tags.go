@@ -3,8 +3,12 @@ package ec2
 import (
 	"context"
 	"encoding/xml"
+	"fmt"
 	"net/http"
+	"net/url"
+	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/awsquery"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -95,6 +99,7 @@ func (h *Handler) describeTags(w http.ResponseWriter, r *http.Request) {
 	var recs []tagRecord
 	recs = h.collectComputeTags(r.Context(), recs)
 	recs = h.collectNetworkTags(r.Context(), recs)
+	recs = h.collectAddressingTags(r.Context(), recs)
 
 	items := make([]describeTagItemXML, 0, len(recs))
 
@@ -185,6 +190,37 @@ func (h *Handler) collectNetworkTags(ctx context.Context, recs []tagRecord) []ta
 	return recs
 }
 
+// collectAddressingTags appends tag records for Elastic IP allocations, VPC
+// endpoints and VPC endpoint services, using the resource-type names real EC2
+// DescribeTags reports for them.
+func (h *Handler) collectAddressingTags(ctx context.Context, recs []tagRecord) []tagRecord {
+	if h.vpc == nil {
+		return recs
+	}
+
+	if eips, err := h.vpc.DescribeAddresses(ctx, nil); err == nil {
+		for i := range eips {
+			recs = appendTagRecords(recs, eips[i].AllocationID, "elastic-ip", eips[i].Tags)
+		}
+	}
+
+	if eps, err := h.vpc.DescribeVPCEndpoints(ctx, nil); err == nil {
+		for i := range eps {
+			recs = appendTagRecords(recs, eps[i].ID, "vpc-endpoint", eps[i].Tags)
+		}
+	}
+
+	if svcs, ok := h.vpc.(netdriver.VPCEndpointServices); ok {
+		if list, err := svcs.DescribeVPCEndpointServiceConfigurations(ctx, nil); err == nil {
+			for i := range list {
+				recs = appendTagRecords(recs, list[i].ID, "vpc-endpoint-service", list[i].Tags)
+			}
+		}
+	}
+
+	return recs
+}
+
 // appendSGRuleTagRecords appends tag records for each security-group rule that
 // carries tags, keyed by the rule's sgr- id.
 func appendSGRuleTagRecords(recs []tagRecord, rules []netdriver.SecurityRule) []tagRecord {
@@ -240,9 +276,41 @@ func tagMatchesFilter(rec tagRecord, f awsquery.Filter) bool {
 	return false
 }
 
+// tagReader is the optional read side of the EC2 taggers: the current tags of
+// one resource, NotFound when it does not exist. The AWS compute and VPC
+// providers implement it; the handler uses it to check a whole CreateTags /
+// DeleteTags batch before writing any of it.
+type tagReader interface {
+	ResourceTags(ctx context.Context, id string) (map[string]string, error)
+}
+
+// currentTags returns the tags on id from the provider that owns it. A provider
+// that cannot report tags yields a nil map after an existence probe (a no-op
+// CreateTags), so the batch is still checked for unknown ids.
+func (h *Handler) currentTags(ctx context.Context, id string) (map[string]string, error) {
+	var owner any = h.compute
+	if networkOwnedTagID(id) {
+		owner = h.vpc
+	}
+
+	if rd, ok := owner.(tagReader); ok {
+		return rd.ResourceTags(ctx, id)
+	}
+
+	return nil, h.tagResource(ctx, id, nil)
+}
+
+// networkOwnedTagID reports whether the networking provider owns id's tags.
+func networkOwnedTagID(id string) bool {
+	return strings.HasPrefix(id, "vpc-") || strings.HasPrefix(id, "subnet-") ||
+		strings.HasPrefix(id, "sg-") || networkTaggableID(id)
+}
+
 // createTags applies tags to one or more resources, dispatching each resource
 // ID by prefix to the owning provider (VPC-family IDs to the networking
-// provider, compute IDs to the compute tagger).
+// provider, compute IDs to the compute tagger). Real EC2 checks the whole batch
+// before it writes: an unknown id or a resource that would pass the tag limit
+// fails the call with nothing tagged, so every id is checked first.
 func (h *Handler) createTags(w http.ResponseWriter, r *http.Request) {
 	ids := awsquery.ListStrings(r.Form, "ResourceId")
 	tags := awsquery.FlatTags(r.Form, "Tag")
@@ -250,6 +318,19 @@ func (h *Handler) createTags(w http.ResponseWriter, r *http.Request) {
 	if code, msg, ok := validateUserTags(tags); !ok {
 		awsquery.WriteXMLError(w, http.StatusBadRequest, code, msg)
 		return
+	}
+
+	for _, id := range ids {
+		existing, err := h.currentTags(r.Context(), id)
+		if err != nil {
+			writeErrWithNotFound(w, err, tagNotFoundCode(id), "IncorrectState")
+			return
+		}
+
+		if userTagCountAfter(existing, tags) > maxUserTagsPerResource {
+			awsquery.WriteXMLError(w, http.StatusBadRequest, codeTagLimitExceeded, msgTagLimitExceeded)
+			return
+		}
 	}
 
 	for _, id := range ids {
@@ -262,48 +343,171 @@ func (h *Handler) createTags(w http.ResponseWriter, r *http.Request) {
 	awsquery.WriteXMLResponse(w, tagsResponseXML{Return: true, RequestID: "cloudemu"})
 }
 
-// maxUserTagsPerResource is the ceiling EC2 enforces on user tags per resource;
-// reservedTagPrefix is the "aws:" namespace reserved for AWS-managed tags that a
-// CreateTags call may not write.
+// The CreateTags limits from the EC2 tag restrictions: at most 50 user tags per
+// resource, keys up to 128 and values up to 256 Unicode characters, and the
+// "aws:" key namespace reserved for AWS-generated tags (which do not count
+// toward the 50).
 const (
 	maxUserTagsPerResource = 50
+	maxTagKeyLen           = 128
+	maxTagValueLen         = 256
 	reservedTagPrefix      = "aws:"
+
+	codeTagLimitExceeded     = "TagLimitExceeded"
+	codeTagLengthExceeded    = "InvalidParameterValue"
+	codeInvalidVpcEndpointID = "InvalidVpcEndpointId.NotFound"
+	msgTagLimitExceeded      = "The maximum number of tags per resource is 50"
 )
 
-// validateUserTags enforces the CreateTags restrictions real EC2 applies before
-// any tag is written: at most 50 user tags per resource (TagLimitExceeded), and
-// no key in the reserved "aws:" namespace (InvalidTagKey.Malformed). Only the
-// key is checked; real EC2 permits a value that starts with "aws:". It returns
-// the wire error code and message plus ok=false when a rule is violated.
-func validateUserTags(tags map[string]string) (code, msg string, ok bool) {
-	if len(tags) > maxUserTagsPerResource {
-		return "TagLimitExceeded",
-			"The maximum number of tags per resource is 50", false
+// userTagCountAfter is how many user (non-"aws:") tags a resource holds once
+// tags are merged onto existing: a key already present is overwritten, not
+// added.
+func userTagCountAfter(existing, tags map[string]string) int {
+	n := 0
+
+	for k := range existing {
+		if _, overwritten := tags[k]; !overwritten && !strings.HasPrefix(k, reservedTagPrefix) {
+			n++
+		}
 	}
 
-	for k := range tags {
+	return n + len(tags)
+}
+
+// validateUserTags enforces the per-request CreateTags restrictions real EC2
+// applies before any tag is written: no more than 50 tags in the request
+// (TagLimitExceeded), no key in the reserved "aws:" namespace
+// (InvalidTagKey.Malformed), keys of at most 128 and values of at most 256
+// characters (InvalidParameterValue). A value that starts with "aws:" is
+// permitted. The per-resource limit, which also counts the tags a resource
+// already has, is checked by createTags. It returns the wire error code and
+// message plus ok=false when a rule is violated.
+func validateUserTags(tags map[string]string) (code, msg string, ok bool) {
+	if len(tags) > maxUserTagsPerResource {
+		return codeTagLimitExceeded, msgTagLimitExceeded, false
+	}
+
+	for k, v := range tags {
 		if strings.HasPrefix(k, reservedTagPrefix) {
 			return "InvalidTagKey.Malformed",
 				"The specified tag key is not valid. Tag keys cannot be empty or null, and cannot start with aws:", false
+		}
+
+		if utf8.RuneCountInString(k) > maxTagKeyLen {
+			return codeTagLengthExceeded,
+				fmt.Sprintf("Tag key exceeds the maximum length of %d characters", maxTagKeyLen), false
+		}
+
+		if utf8.RuneCountInString(v) > maxTagValueLen {
+			return codeTagLengthExceeded,
+				fmt.Sprintf("Tag value exceeds the maximum length of %d characters", maxTagValueLen), false
 		}
 	}
 
 	return "", "", true
 }
 
-// deleteTags removes tags (by key) from one or more resources.
-func (h *Handler) deleteTags(w http.ResponseWriter, r *http.Request) {
-	ids := awsquery.ListStrings(r.Form, "ResourceId")
-	tags := awsquery.FlatTags(r.Form, "Tag")
+// deleteTagSpec is one Tag.N entry of a DeleteTags request. hasValue is false
+// when the request sent no Tag.N.Value at all, which deletes the key whatever
+// its value; an explicit Value (even "") deletes it only on an exact match.
+type deleteTagSpec struct {
+	key      string
+	value    string
+	hasValue bool
+}
 
-	keys := make([]string, 0, len(tags))
-	for k := range tags {
-		keys = append(keys, k)
+// parseDeleteTags reads the Tag.N.Key / Tag.N.Value pairs of a DeleteTags
+// request, keeping whether each Value was present. Entries without a key are
+// skipped, as FlatTags does.
+func parseDeleteTags(form url.Values) []deleteTagSpec {
+	idxs := awsquery.CollectIndices(form, "Tag")
+	specs := make([]deleteTagSpec, 0, len(idxs))
+
+	for _, idx := range idxs {
+		base := "Tag." + strconv.Itoa(idx)
+
+		k := form.Get(base + ".Key")
+		if k == "" {
+			continue
+		}
+
+		_, hasValue := form[base+".Value"]
+		specs = append(specs, deleteTagSpec{key: k, value: form.Get(base + ".Value"), hasValue: hasValue})
 	}
 
+	return specs
+}
+
+// deleteTagKeys resolves a DeleteTags request against one resource's current
+// tags into the keys to remove. With no Tag entries it is every user tag (EC2
+// never deletes "aws:" tags that way); otherwise it is each named key that is
+// present and, when the entry carries a value, holds exactly that value.
+// write is false when nothing on the resource matches, so the caller skips a
+// removal whose empty key list the provider would read as "delete all".
+//
+// existing is nil when the provider cannot report tags; then the named keys are
+// passed through unchecked (and an empty list is the provider's delete-all).
+func deleteTagKeys(existing map[string]string, specs []deleteTagSpec) (keys []string, write bool) {
+	if existing == nil {
+		keys = make([]string, 0, len(specs))
+		for _, s := range specs {
+			keys = append(keys, s.key)
+		}
+
+		return keys, true
+	}
+
+	if len(specs) == 0 {
+		for k := range existing {
+			if !strings.HasPrefix(k, reservedTagPrefix) {
+				keys = append(keys, k)
+			}
+		}
+
+		return keys, len(keys) > 0
+	}
+
+	for _, s := range specs {
+		v, ok := existing[s.key]
+		if !ok || (s.hasValue && v != s.value) {
+			continue
+		}
+
+		keys = append(keys, s.key)
+	}
+
+	return keys, len(keys) > 0
+}
+
+// deleteTags removes tags from one or more resources. Like createTags it checks
+// every id (and resolves which keys match) before it removes anything, so an
+// unknown id fails the batch with nothing deleted.
+func (h *Handler) deleteTags(w http.ResponseWriter, r *http.Request) {
+	ids := awsquery.ListStrings(r.Form, "ResourceId")
+	specs := parseDeleteTags(r.Form)
+
+	type removal struct {
+		id   string
+		keys []string
+	}
+
+	plan := make([]removal, 0, len(ids))
+
 	for _, id := range ids {
-		if err := h.untagResource(r.Context(), id, keys); err != nil {
+		existing, err := h.currentTags(r.Context(), id)
+		if err != nil {
 			writeErrWithNotFound(w, err, tagNotFoundCode(id), "IncorrectState")
+			return
+		}
+
+		if keys, write := deleteTagKeys(existing, specs); write {
+			plan = append(plan, removal{id: id, keys: keys})
+		}
+	}
+
+	for _, p := range plan {
+		if err := h.untagResource(r.Context(), p.id, p.keys); err != nil {
+			writeErrWithNotFound(w, err, tagNotFoundCode(p.id), "IncorrectState")
 			return
 		}
 	}
@@ -312,15 +516,23 @@ func (h *Handler) deleteTags(w http.ResponseWriter, r *http.Request) {
 }
 
 // tagNotFoundCode returns the "…NotFound" error code real EC2 emits when
-// CreateTags/DeleteTags names a non-existent resource. An instance id yields the
-// resource-specific InvalidInstanceID.NotFound; other resource types fall back
-// to the generic InvalidID.NotFound.
+// CreateTags/DeleteTags names a non-existent resource: the resource-specific
+// code the EC2 error reference defines (and this package already returns from
+// the resource's own actions) where there is one, and the generic
+// InvalidID.NotFound for the rest. vpce-svc- is matched before vpce-, whose
+// prefix it shares.
 func tagNotFoundCode(id string) string {
 	switch {
 	case strings.HasPrefix(id, "i-"):
 		return codeInvalidInstanceID
 	case strings.HasPrefix(id, "sgr-"):
 		return "InvalidSecurityGroupRuleId.NotFound"
+	case strings.HasPrefix(id, "eipalloc-"):
+		return "InvalidAllocationID.NotFound"
+	case strings.HasPrefix(id, "vpce-svc-"):
+		return "InvalidVpcEndpointServiceId.NotFound"
+	case strings.HasPrefix(id, "vpce-"):
+		return codeInvalidVpcEndpointID
 	default:
 		return "InvalidID.NotFound"
 	}
@@ -332,7 +544,10 @@ func tagNotFoundCode(id string) string {
 // their own methods and are handled separately.
 //
 //nolint:gochecknoglobals // static id-prefix routing table
-var networkResourceTagPrefixes = []string{"rtb-", "igw-", "nat-", "acl-", "dopt-", "pcx-", "pl-", "eigw-", "sgr-"}
+var networkResourceTagPrefixes = []string{
+	"rtb-", "igw-", "nat-", "acl-", "dopt-", "pcx-", "pl-", "eigw-", "sgr-",
+	"eipalloc-", "vpce-", // vpce- also covers vpce-svc- endpoint services
+}
 
 // networkTaggableID reports whether id belongs to a resource tagged via the
 // NetworkResourceTagger optional interface.

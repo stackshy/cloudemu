@@ -21,9 +21,6 @@ import (
 // Compile-time check that Mock implements driver.AppSync.
 var _ driver.AppSync = (*Mock)(nil)
 
-// defaultMaxResults caps a page when the caller requests none.
-const defaultMaxResults = 100
-
 // apiData is the full server-side state of one GraphQL API plus its own lock.
 // The nested data-source and API-key maps are guarded by mu.
 type apiData struct {
@@ -137,7 +134,7 @@ func paginate(n int, page driver.Page) (start, end int, next string) {
 
 	limit := int(page.MaxResults)
 	if limit <= 0 {
-		limit = defaultMaxResults
+		limit = maxListResults
 	}
 
 	end = start + limit
