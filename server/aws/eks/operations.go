@@ -95,6 +95,22 @@ func safeInt32(v int) int32 {
 	}
 }
 
+// creatorARN returns the IAM principal that sent a CreateCluster request.
+// It is empty when nothing identifies the caller, and the provider then
+// derives one from the access key.
+func (h *Handler) creatorARN(r *http.Request) string {
+	if h.identities != nil {
+		return h.identities.Resolve(r).ARN
+	}
+
+	// With EnforceAuth on, the gate has resolved the real caller.
+	if p, ok := authctx.PrincipalFrom(r.Context()); ok {
+		return p.ARN
+	}
+
+	return ""
+}
+
 // Cluster operations.
 
 func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
@@ -111,10 +127,7 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request) {
 		CreatorAccessKeyID: sigv4.AccessKeyID(r),
 	}
 
-	// With EnforceAuth on, the gate has resolved the real caller.
-	if p, ok := authctx.PrincipalFrom(r.Context()); ok {
-		cfg.CreatorPrincipalArn = p.ARN
-	}
+	cfg.CreatorPrincipalArn = h.creatorARN(r)
 
 	if body.ResourcesVpcConfig != nil {
 		cfg.VPCConfig = vpcRequestToDriver(body.ResourcesVpcConfig)
@@ -395,7 +408,12 @@ func (h *Handler) updateNodegroupVersion(w http.ResponseWriter, r *http.Request,
 		return
 	}
 
-	upd, err := h.eks.UpdateNodegroupVersion(r.Context(), clusterName, ngName, body.Version, body.ReleaseVersion)
+	in := eksdriver.NodegroupVersionUpdate{Version: body.Version, ReleaseVersion: body.ReleaseVersion}
+	if body.LaunchTemplate != nil {
+		in.LaunchTemplate = launchTemplateFromJSON(body.LaunchTemplate)
+	}
+
+	upd, err := h.eks.UpdateNodegroupVersion(r.Context(), clusterName, ngName, in)
 	if err != nil {
 		writeErr(w, err)
 

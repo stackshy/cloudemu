@@ -50,7 +50,8 @@ func validateAuthMode(mode string) error {
 }
 
 // validateAuthModeUpdate allows only the next mode in the one-way order.
-// Asking for the current mode is not a change.
+// Real EKS also rejects a request for the current mode, with the same
+// message.
 func validateAuthModeUpdate(from, to string) error {
 	if err := validateAuthMode(to); err != nil {
 		return err
@@ -94,19 +95,22 @@ func (m *Mock) creatorPrincipalArn(cfg eksdriver.ClusterConfig) string {
 // bootstrapCreatorEntryLocked gives the cluster creator a STANDARD access
 // entry with AmazonEKSClusterAdminPolicy at cluster scope. Real EKS does this
 // when bootstrapClusterCreatorAdminPermissions is true and the mode includes
-// the API. A creator ARN EKS can't use as a principal is skipped. Callers
-// hold m.mu.
-//
-//nolint:gocritic // cfg matches the driver interface signature.
-func (m *Mock) bootstrapCreatorEntryLocked(c *eksdriver.Cluster, cfg eksdriver.ClusterConfig) {
+// the API, either at create time or when a CONFIG_MAP cluster first moves to
+// an API mode. A creator ARN EKS can't use as a principal is skipped, and an
+// existing entry for the creator is kept. Callers hold m.mu.
+func (m *Mock) bootstrapCreatorEntryLocked(c *eksdriver.Cluster) {
 	if !c.AccessConfig.BootstrapClusterCreatorAdminPermissions || !apiAuthMode(c.AccessConfig.AuthenticationMode) {
 		return
 	}
 
-	principalArn := m.creatorPrincipalArn(cfg)
+	principalArn := c.CreatorPrincipalArn
 
 	p, err := parsePrincipal(principalArn)
 	if err != nil {
+		return
+	}
+
+	if _, ok := m.accessEntries.Get(accessEntryKey(c.Name, principalArn)); ok {
 		return
 	}
 

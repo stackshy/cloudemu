@@ -89,6 +89,7 @@ import (
 	transfersrv "github.com/stackshy/cloudemu/v2/server/aws/transfer"
 	vpclatticesrv "github.com/stackshy/cloudemu/v2/server/aws/vpclattice"
 	wafv2srv "github.com/stackshy/cloudemu/v2/server/aws/wafv2"
+	"github.com/stackshy/cloudemu/v2/server/wire/awsidentity"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/acm/driver"
 	aossdriver "github.com/stackshy/cloudemu/v2/services/aoss/driver"
 	apigatewaydriver "github.com/stackshy/cloudemu/v2/services/apigateway/driver"
@@ -454,6 +455,11 @@ type Drivers struct {
 	// default, e.g. NewFromProvider) and New creates a per-server store when
 	// EnforceAuth is on, as before.
 	STSSessions *stssrv.SessionStore
+	// Identities resolves the caller of a request and remembers the sessions
+	// STS mints. The region mux shares one across regions, like STSSessions,
+	// so credentials minted in one region resolve in all of them. Leave nil
+	// and New creates one for this server.
+	Identities *awsidentity.Resolver
 	// ResourceExplorerLister overrides the inventory the Resource Explorer 2
 	// handler queries. The region mux sets it to a cross-region aggregator so
 	// Search fans out over every live region (the aggregator-index behavior);
@@ -1062,11 +1068,20 @@ func New(d Drivers) *server.Server {
 		stsSessions = stssrv.NewSessionStore(authClock)
 	}
 
+	// STS records the sessions it mints here, and EKS reads the cluster
+	// creator from it, so both see the caller the same way.
+	identities := d.Identities
+	if identities == nil {
+		identities = awsidentity.New(d.AccountID, d.IAM)
+	}
+
 	if d.STS {
 		// Pass the IAM driver so AssumeRole can enforce the target role's trust
 		// policy and existence. d.IAM may be nil (standalone STS-only), in which
 		// case AssumeRole stays permissive.
 		stsHandler := stssrv.New(d.AccountID, d.Region, d.IAM)
+		stsHandler.SetIdentities(identities)
+
 		if stsSessions != nil {
 			stsHandler.SetSessions(stsSessions)
 		}
@@ -1131,7 +1146,9 @@ func New(d Drivers) *server.Server {
 	// otherwise claim the same path. EKS's Matches predicate is rooted
 	// at /clusters specifically so it doesn't shadow other REST URLs.
 	if d.EKS != nil {
-		srv.Register(eks.New(d.EKS))
+		eksHandler := eks.New(d.EKS)
+		eksHandler.SetIdentities(identities)
+		srv.Register(eksHandler)
 	}
 
 	// Bedrock is a REST/JSON service rooted at /foundation-models,

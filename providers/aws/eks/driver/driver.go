@@ -145,6 +145,9 @@ type Cluster struct {
 	// A rollback to PreviousVersion is allowed for 7 days after it.
 	PreviousVersion   string
 	VersionUpgradedAt time.Time
+	// CreatorPrincipalArn is the IAM principal of the bootstrap admin entry.
+	// It is kept so a later switch to an API mode can add that entry.
+	CreatorPrincipalArn string
 }
 
 // ClusterVersionUpdate is the UpdateClusterVersion request.
@@ -230,6 +233,15 @@ type NodegroupConfig struct {
 	Tags           map[string]string
 	// LaunchTemplate is optional; when set, it names the EC2 launch template
 	// backing the node group's instances.
+	LaunchTemplate *LaunchTemplateSpecification
+}
+
+// NodegroupVersionUpdate is the UpdateNodegroupVersion request. An empty
+// Version means the cluster version. LaunchTemplate, when set, moves the
+// nodegroup to another version of the launch template it already uses.
+type NodegroupVersionUpdate struct {
+	Version        string
+	ReleaseVersion string
 	LaunchTemplate *LaunchTemplateSpecification
 }
 
@@ -393,6 +405,10 @@ type AccessEntry struct {
 	ModifiedAt         time.Time
 	ClientRequestToken string
 	Policies           []AssociatedAccessPolicy
+	// AutoCreated marks a node entry EKS made for a managed nodegroup or a
+	// Fargate profile. EKS removes it when no nodegroup or profile of the
+	// cluster uses the role any more.
+	AutoCreated bool
 }
 
 // AccessPolicy is one entry of the fixed EKS access policy catalog.
@@ -480,7 +496,7 @@ type EKS interface {
 		upd NodegroupConfigUpdate,
 	) (*ClusterUpdate, error)
 	UpdateNodegroupVersion(
-		ctx context.Context, clusterName, nodegroupName, version, releaseVersion string,
+		ctx context.Context, clusterName, nodegroupName string, upd NodegroupVersionUpdate,
 	) (*ClusterUpdate, error)
 	DeleteNodegroup(ctx context.Context, clusterName, nodegroupName string) (*Nodegroup, error)
 

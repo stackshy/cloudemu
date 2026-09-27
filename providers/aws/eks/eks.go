@@ -422,6 +422,49 @@ func copyTaints(src []eksdriver.Taint) []eksdriver.Taint {
 	return out
 }
 
+// applyLaunchTemplateVersion moves a nodegroup to another version of the
+// launch template it was created with. EKS doesn't let UpdateNodegroupVersion
+// add a launch template or switch to a different one.
+func applyLaunchTemplateVersion(ng *eksdriver.Nodegroup, lt *eksdriver.LaunchTemplateSpecification) error {
+	if lt == nil {
+		return nil
+	}
+
+	cur := ng.LaunchTemplate
+	if cur == nil {
+		return cerrors.Newf(cerrors.InvalidArgument,
+			"Nodegroup %s was not created with a launch template, so a launch template can't be specified.",
+			ng.NodegroupName)
+	}
+
+	if (lt.ID == "") == (lt.Name == "") {
+		return cerrors.New(cerrors.InvalidArgument,
+			"Either provide launch template ID or launch template name in the request.")
+	}
+
+	if !sameLaunchTemplate(cur, lt) {
+		return cerrors.New(cerrors.InvalidArgument,
+			"The launch template of a nodegroup can't be changed. Only its version can be updated.")
+	}
+
+	if lt.Version != "" {
+		next := *cur
+		next.Version = lt.Version
+		ng.LaunchTemplate = &next
+	}
+
+	return nil
+}
+
+// sameLaunchTemplate reports whether lt names the template cur points at. A
+// field the nodegroup doesn't know is not compared.
+func sameLaunchTemplate(cur, lt *eksdriver.LaunchTemplateSpecification) bool {
+	idDiffers := lt.ID != "" && cur.ID != "" && lt.ID != cur.ID
+	nameDiffers := lt.Name != "" && cur.Name != "" && lt.Name != cur.Name
+
+	return !idDiffers && !nameDiffers
+}
+
 // copyLaunchTemplate returns a defensive copy of a nodegroup's launch template
 // spec, or nil when the caller omitted one.
 func copyLaunchTemplate(src *eksdriver.LaunchTemplateSpecification) *eksdriver.LaunchTemplateSpecification {
@@ -672,6 +715,8 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 		AccessConfig:  resolveAccessConfig(cfg.AccessConfig),
 		Tags:          copyTags(cfg.Tags),
 		CreatedAt:     m.opts.Clock.Now().UTC(),
+
+		CreatorPrincipalArn: m.creatorPrincipalArn(cfg),
 	}
 
 	// Wave 2: if a Kubernetes data-plane server is wired, register a fresh
@@ -683,7 +728,7 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 	}
 
 	m.clusters.Set(cfg.Name, cluster)
-	m.bootstrapCreatorEntryLocked(&cluster, cfg)
+	m.bootstrapCreatorEntryLocked(&cluster)
 
 	m.emitClusterMetrics(cfg.Name)
 
@@ -855,14 +900,18 @@ func (m *Mock) UpdateClusterConfig(
 			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
 	}
 
-	accessConfigChanged := accessConfig != nil && accessConfig.AuthenticationMode != "" &&
-		accessConfig.AuthenticationMode != c.AccessConfig.AuthenticationMode
+	accessConfigChanged := accessConfig != nil && accessConfig.AuthenticationMode != ""
 	if accessConfigChanged {
 		if err := validateAuthModeUpdate(c.AccessConfig.AuthenticationMode, accessConfig.AuthenticationMode); err != nil {
 			return nil, err
 		}
 
+		gainsAPI := !apiAuthMode(c.AccessConfig.AuthenticationMode)
 		c.AccessConfig.AuthenticationMode = accessConfig.AuthenticationMode
+
+		if gainsAPI {
+			m.backfillAccessEntriesLocked(&c)
+		}
 	}
 
 	vpcEndpointChanged, vpcOtherChanged := applyVPCUpdate(&c, cfg)
@@ -1128,6 +1177,7 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 	}
 
 	m.nodegroups.Set(key, ng)
+	m.addNodeEntryLocked(&parent, ng.NodeRole, nodegroupEntryType(ng.AmiType))
 
 	// Under AsyncSettle a fresh nodegroup reports CREATING until the window
 	// elapses, matching real EKS. With the default (AsyncSettle off)
@@ -1243,8 +1293,10 @@ func (m *Mock) UpdateNodegroupConfig(
 
 // UpdateNodegroupVersion bumps the Kubernetes version of a nodegroup.
 func (m *Mock) UpdateNodegroupVersion(
-	_ context.Context, clusterName, nodegroupName, version, releaseVersion string,
+	_ context.Context, clusterName, nodegroupName string, upd eksdriver.NodegroupVersionUpdate,
 ) (*eksdriver.ClusterUpdate, error) {
+	version, releaseVersion := upd.Version, upd.ReleaseVersion
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1269,6 +1321,10 @@ func (m *Mock) UpdateNodegroupVersion(
 
 	resolved, err := resolveNodegroupVersion(&parent, version)
 	if err != nil {
+		return nil, err
+	}
+
+	if err := applyLaunchTemplateVersion(&ng, upd.LaunchTemplate); err != nil {
 		return nil, err
 	}
 
@@ -1312,6 +1368,7 @@ func (m *Mock) DeleteNodegroup(_ context.Context, clusterName, nodegroupName str
 
 	m.nodegroups.Delete(key)
 	m.nodegroupSettle.Clear(key)
+	m.removeNodeEntryLocked(clusterName, ng.NodeRole)
 
 	out := ng
 
@@ -1359,6 +1416,7 @@ func (m *Mock) CreateFargateProfile(
 	}
 
 	m.fargateProfiles.Set(key, fp)
+	m.addNodeEntryLocked(&parent, fp.PodExecutionRole, eksdriver.AccessEntryTypeFargateLinux)
 
 	out := fp
 
@@ -1422,6 +1480,7 @@ func (m *Mock) DeleteFargateProfile(
 	fp.Status = eksdriver.FargateProfileStatusDeleting
 
 	m.fargateProfiles.Delete(key)
+	m.removeNodeEntryLocked(clusterName, fp.PodExecutionRole)
 
 	out := fp
 

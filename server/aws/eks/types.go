@@ -304,8 +304,9 @@ type taintsUpdate struct {
 }
 
 type updateNodegroupVersionRequest struct {
-	Version        string `json:"version,omitempty"`
-	ReleaseVersion string `json:"releaseVersion,omitempty"`
+	Version        string                           `json:"version,omitempty"`
+	ReleaseVersion string                           `json:"releaseVersion,omitempty"`
+	LaunchTemplate *launchTemplateSpecificationJSON `json:"launchTemplate,omitempty"`
 }
 
 type createFargateProfileRequest struct {

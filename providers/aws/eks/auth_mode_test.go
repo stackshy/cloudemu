@@ -2,6 +2,7 @@ package eks
 
 import (
 	"context"
+	"strings"
 	"testing"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -56,10 +57,17 @@ func TestAuthModeTransitions(t *testing.T) {
 	}
 }
 
-func TestAuthModeSameValueIsNoOp(t *testing.T) {
-	m := newAPICluster(t, "API")
-	if err := updateAuthMode(m, "API"); err != nil {
-		t.Fatalf("same mode: %v", err)
+// Real EKS rejects a request for the mode the cluster already has with the
+// same message as a backward move.
+func TestAuthModeSameValueRejected(t *testing.T) {
+	for _, mode := range []string{"CONFIG_MAP", "API_AND_CONFIG_MAP", "API"} {
+		m := newAPICluster(t, mode)
+
+		err := updateAuthMode(m, mode)
+		if !cerrors.IsInvalidArgument(err) ||
+			!strings.HasSuffix(err.Error(), "Unsupported authentication mode update from "+mode+" to "+mode) {
+			t.Fatalf("%s: want InvalidArgument with the EKS message, got %v", mode, err)
+		}
 	}
 }
 
