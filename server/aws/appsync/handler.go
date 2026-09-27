@@ -13,6 +13,7 @@
 package appsync
 
 import (
+	"math"
 	"net/http"
 	"net/url"
 	"strings"
@@ -195,6 +196,12 @@ func atoiDefault(s string, def int32) int32 {
 		}
 
 		n = n*10 + int(c-'0')
+
+		// Saturate so an oversized value still fails the maxResults cap
+		// instead of wrapping into range.
+		if n > math.MaxInt32 {
+			return math.MaxInt32
+		}
 	}
 
 	return int32(n)

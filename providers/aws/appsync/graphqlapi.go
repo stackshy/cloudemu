@@ -27,6 +27,10 @@ func (m *Mock) CreateGraphqlAPI(_ context.Context, in *driver.CreateGraphqlAPIIn
 		return nil, badRequest("authenticationType %q is not valid", in.AuthenticationType)
 	}
 
+	if err := validateAuthConfig(in.AuthenticationType, in.Extra); err != nil {
+		return nil, err
+	}
+
 	apiID := newAPIID()
 
 	api := driver.GraphqlAPI{
@@ -79,6 +83,10 @@ func (m *Mock) UpdateGraphqlAPI(_ context.Context, in *driver.UpdateGraphqlAPIIn
 		return nil, badRequest("authenticationType %q is not valid", in.AuthenticationType)
 	}
 
+	if err := validateAuthConfig(in.AuthenticationType, in.Extra); err != nil {
+		return nil, err
+	}
+
 	ad, err := m.getAPI(in.APIID)
 	if err != nil {
 		return nil, err
@@ -111,6 +119,10 @@ func (m *Mock) DeleteGraphqlAPI(_ context.Context, apiID string) error {
 
 // ListGraphqlAPIs returns a deterministic, deep-copied page of the APIs.
 func (m *Mock) ListGraphqlAPIs(_ context.Context, page driver.Page) ([]driver.GraphqlAPI, string, error) {
+	if err := validatePage(page); err != nil {
+		return nil, "", err
+	}
+
 	ads := m.apis.SortedValues()
 
 	all := make([]driver.GraphqlAPI, 0, len(ads))

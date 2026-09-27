@@ -46,14 +46,15 @@ const (
 
 // Data-source types accepted by CreateDataSource / UpdateDataSource.
 const (
-	DataSourceLambda        = "AWS_LAMBDA"
-	DataSourceDynamoDB      = "AMAZON_DYNAMODB"
-	DataSourceElasticsearch = "AMAZON_ELASTICSEARCH"
-	DataSourceOpenSearch    = "AMAZON_OPENSEARCH_SERVICE"
-	DataSourceHTTP          = "HTTP"
-	DataSourceNone          = "NONE"
-	DataSourceRelational    = "RELATIONAL_DATABASE"
-	DataSourceEventBridge   = "AMAZON_EVENTBRIDGE"
+	DataSourceLambda         = "AWS_LAMBDA"
+	DataSourceDynamoDB       = "AMAZON_DYNAMODB"
+	DataSourceElasticsearch  = "AMAZON_ELASTICSEARCH"
+	DataSourceOpenSearch     = "AMAZON_OPENSEARCH_SERVICE"
+	DataSourceHTTP           = "HTTP"
+	DataSourceNone           = "NONE"
+	DataSourceRelational     = "RELATIONAL_DATABASE"
+	DataSourceEventBridge    = "AMAZON_EVENTBRIDGE"
+	DataSourceBedrockRuntime = "AMAZON_BEDROCK_RUNTIME"
 )
 
 // GraphqlAPI is an AppSync GraphQL API. apiId, arn, uris, and owner are

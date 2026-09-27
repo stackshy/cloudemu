@@ -2,22 +2,11 @@ package appsync
 
 import (
 	"context"
+	"encoding/json"
 	"sort"
 
 	"github.com/stackshy/cloudemu/v2/services/appsync/driver"
 )
-
-//nolint:gochecknoglobals // immutable validation set, read-only after init.
-var validDataSourceTypes = map[string]bool{
-	driver.DataSourceLambda:        true,
-	driver.DataSourceDynamoDB:      true,
-	driver.DataSourceElasticsearch: true,
-	driver.DataSourceOpenSearch:    true,
-	driver.DataSourceHTTP:          true,
-	driver.DataSourceNone:          true,
-	driver.DataSourceRelational:    true,
-	driver.DataSourceEventBridge:   true,
-}
 
 // CreateDataSource attaches a data source to an API, computing its stable
 // dataSourceArn.
@@ -26,8 +15,8 @@ func (m *Mock) CreateDataSource(_ context.Context, in *driver.CreateDataSourceIn
 		return nil, badRequest("name is required")
 	}
 
-	if !validDataSourceTypes[in.Type] {
-		return nil, badRequest("data source type %q is not valid", in.Type)
+	if err := checkDataSource(in.Type, in.ServiceRoleArn, in.Extra); err != nil {
+		return nil, err
 	}
 
 	ad, err := m.getAPI(in.APIID)
@@ -80,8 +69,8 @@ func (m *Mock) GetDataSource(_ context.Context, apiID, name string) (*driver.Dat
 // UpdateDataSource replaces the mutable fields of a data source while keeping
 // its computed dataSourceArn.
 func (m *Mock) UpdateDataSource(_ context.Context, in *driver.UpdateDataSourceInput) (*driver.DataSource, error) {
-	if !validDataSourceTypes[in.Type] {
-		return nil, badRequest("data source type %q is not valid", in.Type)
+	if err := checkDataSource(in.Type, in.ServiceRoleArn, in.Extra); err != nil {
+		return nil, err
 	}
 
 	ad, err := m.getAPI(in.APIID)
@@ -129,6 +118,10 @@ func (m *Mock) DeleteDataSource(_ context.Context, apiID, name string) error {
 // ListDataSources returns a deterministic, deep-copied page of an API's data
 // sources, ordered by name.
 func (m *Mock) ListDataSources(_ context.Context, apiID string, page driver.Page) ([]driver.DataSource, string, error) {
+	if err := validatePage(page); err != nil {
+		return nil, "", err
+	}
+
 	ad, err := m.getAPI(apiID)
 	if err != nil {
 		return nil, "", err
@@ -141,6 +134,15 @@ func (m *Mock) ListDataSources(_ context.Context, apiID string, page driver.Page
 	start, end, next := paginate(len(all), page)
 
 	return all[start:end], next, nil
+}
+
+// checkDataSource validates a data source's type and its type-specific config.
+func checkDataSource(dsType, serviceRoleArn string, extra map[string]json.RawMessage) error {
+	if _, ok := dataSourceRules[dsType]; !ok {
+		return badRequest("data source type %q is not valid", dsType)
+	}
+
+	return validateDataSourceConfig(dsType, serviceRoleArn, extra)
 }
 
 func sortedDataSources(m map[string]driver.DataSource) []driver.DataSource {
