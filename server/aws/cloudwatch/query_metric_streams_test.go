@@ -209,9 +209,8 @@ func TestQueryMetricStreamLifecycle(t *testing.T) {
 }
 
 // TestQueryPutMetricStreamValidation confirms the query-protocol path rejects
-// IncludeFilters and ExcludeFilters supplied together with the real
-// InvalidParameterValueException error name (not the shorter
-// InvalidParameterValue the older alarm operations return).
+// IncludeFilters and ExcludeFilters supplied together with InvalidParameterValue,
+// the query error code of the InvalidParameterValueException shape.
 func TestQueryPutMetricStreamValidation(t *testing.T) {
 	h := cwserver.New(cwprovider.New(config.NewOptions()))
 	ts := httptest.NewServer(h)
@@ -246,7 +245,7 @@ func TestQueryPutMetricStreamValidation(t *testing.T) {
 	if code != http.StatusBadRequest {
 		t.Fatalf("PutMetricStream with both filters: code=%d, want 400, body=%s", code, body)
 	}
-	if !strings.Contains(body, "<Code>InvalidParameterValueException</Code>") {
-		t.Fatalf("PutMetricStream with both filters: want <Code>InvalidParameterValueException</Code>, body=%s", body)
+	if !strings.Contains(body, "<Code>InvalidParameterValue</Code>") {
+		t.Fatalf("PutMetricStream with both filters: want <Code>InvalidParameterValue</Code>, body=%s", body)
 	}
 }

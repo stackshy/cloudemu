@@ -385,6 +385,10 @@ func TestJSONProtocolErrors(t *testing.T) {
 			status: http.StatusBadRequest, errType: "SerializationException",
 		},
 		{
+			name: "trailing data", op: "DescribeAlarms", body: `{"AlarmNames":[]} {"x":1}`,
+			status: http.StatusBadRequest, errType: "SerializationException",
+		},
+		{
 			name: "unknown operation", op: "NoSuchOperation", body: `{}`,
 			status: http.StatusBadRequest, errType: "UnknownOperationException",
 		},

@@ -30,11 +30,49 @@ func validateAlarmStatistic(cfg *mondriver.AlarmConfig) error {
 		return newWireError(errInvalidParameterCombo, "Exactly one of Statistic or ExtendedStatistic must be specified.")
 	case cfg.Stat == "" && cfg.ExtendedStatistic == "":
 		return newWireError(errValidation, "Exactly one of Statistic or ExtendedStatistic must be specified.")
+	case cfg.Stat != "" && !validStatistics[cfg.Stat]:
+		return newWireError(errValidation, "1 validation error detected: Value '"+cfg.Stat+
+			"' at 'statistic' failed to satisfy constraint: Member must satisfy enum value set: "+
+			"[Maximum, SampleCount, Sum, Minimum, Average]")
 	case cfg.ExtendedStatistic != "":
 		if _, err := alarmeval.ParseExtendedStatistic(cfg.ExtendedStatistic); err != nil {
 			return newWireError(errValidation, "The value "+cfg.ExtendedStatistic+
 				" for parameter ExtendedStatistic is not supported.")
 		}
+	}
+
+	return nil
+}
+
+// validStatistics is the closed Statistic enum.
+//
+//nolint:gochecknoglobals // fixed lookup table for a closed enum.
+var validStatistics = map[string]bool{
+	statSampleCount: true, statAverage: true, statSum: true, statMinimum: true, statMaximum: true,
+}
+
+// maxAlarmLookback is how far back, in seconds, EvaluationPeriods * Period
+// may reach.
+const maxAlarmLookback = 86400
+
+// validateAlarmPeriods checks Period and DatapointsToAlarm. A single-metric
+// alarm's Period is 10, 20, 30 or a multiple of 60, and the alarm cannot
+// look back more than a day.
+func validateAlarmPeriods(cfg *mondriver.AlarmConfig) error {
+	if cfg.DatapointsToAlarm > 0 && cfg.EvaluationPeriods > 0 && cfg.DatapointsToAlarm > cfg.EvaluationPeriods {
+		return newWireError(errValidation, "DatapointsToAlarm must be less than or equal to EvaluationPeriods.")
+	}
+
+	if len(cfg.Metrics) > 0 || cfg.Period == 0 {
+		return nil
+	}
+
+	switch p := cfg.Period; {
+	case !validPeriod(p):
+		return newWireError(errValidation, "Period must be 10, 20, 30 or a multiple of 60")
+	case p*max(cfg.EvaluationPeriods, 1) > maxAlarmLookback:
+		return newWireError(errValidation, "Metrics cannot be checked across more than a day "+
+			"(EvaluationPeriods * Period must be <= 86400)")
 	}
 
 	return nil

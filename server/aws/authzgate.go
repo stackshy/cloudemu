@@ -62,6 +62,7 @@ var jsonRPCServiceByTarget = map[string]string{
 	"Route53Resolver.":                      "route53resolver",
 	"AWSEvents.":                            "events",
 	"Logs_20140328.":                        "logs",
+	"GraniteServiceVersion20100801.":        "cloudwatch",
 	"SageMaker.":                            "sagemaker",
 	"secretsmanager.":                       "secretsmanager",
 	"KeyspacesService.":                     "cassandra",

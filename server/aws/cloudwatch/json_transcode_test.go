@@ -40,8 +40,9 @@ func TestCBORPayloadToJSON(t *testing.T) {
 	}
 }
 
-// TestJSONToCBOR covers the request rules: integer literals decode into int
-// fields, fractional numbers into floats, epoch seconds into time.Time.
+// TestJSONToCBOR covers the request rules: integral numbers (60.0 too) decode
+// into int fields, fractional numbers into floats, epoch seconds into
+// time.Time, and trailing data is rejected.
 func TestJSONToCBOR(t *testing.T) {
 	type in struct {
 		Period int        `cbor:"Period"`
@@ -51,7 +52,7 @@ func TestJSONToCBOR(t *testing.T) {
 		End    time.Time  `cbor:"End"`
 	}
 
-	body, err := jsonToCBOR([]byte(`{"Period":60,"Value":1.5,"Whole":3,"Start":1700000000,"End":1700000000.5}`))
+	body, err := jsonToCBOR([]byte(`{"Period":60.0,"Value":1.5,"Whole":3,"Start":1700000000,"End":1700000000.5}`))
 	if err != nil {
 		t.Fatalf("jsonToCBOR: %v", err)
 	}
@@ -69,7 +70,7 @@ func TestJSONToCBOR(t *testing.T) {
 		t.Fatalf("timestamps: %+v", v)
 	}
 
-	for _, bad := range []string{`[1]`, `{"a":`, `"x"`} {
+	for _, bad := range []string{`[1]`, `{"a":`, `"x"`, `{"a":1} {"b":2}`, `{"a":1}x`, `{"a":1e999}`} {
 		if _, err := jsonToCBOR([]byte(bad)); err == nil {
 			t.Fatalf("jsonToCBOR(%s) must fail", bad)
 		}

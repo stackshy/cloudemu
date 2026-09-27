@@ -39,7 +39,10 @@ const (
 	msPerSecond      = 1e3
 )
 
-var errNotJSONObject = errors.New("request body must be a JSON object")
+var (
+	errNotJSONObject = errors.New("request body must be a JSON object")
+	errTrailingJSON  = errors.New("invalid JSON: unexpected data after the top-level object")
+)
 
 // jsonErrorShapes maps the query error codes the cores return to the error
 // shape names of the CloudWatch model. CloudWatch is awsQueryCompatible, so
@@ -143,9 +146,10 @@ func (j *jsonWriter) writeError(status int, code, msg string) {
 }
 
 // jsonToCBOR re-encodes a JSON request body as CBOR for the shared decoders.
-// Integer literals become CBOR integers so they decode into int fields, and
-// timestamps (epoch seconds numbers) decode into time.Time as untagged
-// numbers. An empty body is an empty input.
+// Integral numbers (60, 60.0, 6e1) become CBOR integers so they decode into
+// int fields as well as float ones, and timestamps (epoch seconds numbers)
+// decode into time.Time as untagged numbers. An empty body is an empty input,
+// and anything after the JSON object is rejected.
 func jsonToCBOR(raw []byte) ([]byte, error) {
 	if len(bytes.TrimSpace(raw)) == 0 {
 		raw = []byte("{}")
@@ -161,6 +165,10 @@ func jsonToCBOR(raw []byte) ([]byte, error) {
 
 	if _, ok := v.(map[string]any); !ok {
 		return nil, errNotJSONObject
+	}
+
+	if _, err := dec.Token(); !errors.Is(err, io.EOF) {
+		return nil, errTrailingJSON
 	}
 
 	conv, err := jsonNumbersToCBOR(v)
@@ -192,19 +200,29 @@ func jsonNumbersToCBOR(v any) (any, error) {
 			t[i] = c
 		}
 	case json.Number:
-		if i, err := strconv.ParseInt(t.String(), 10, 64); err == nil {
-			return i, nil
-		}
-
-		f, err := t.Float64()
-		if err != nil {
-			return nil, fmt.Errorf("invalid number %q: %w", t, err)
-		}
-
-		return f, nil
+		return jsonNumberToCBOR(t)
 	}
 
 	return v, nil
+}
+
+// jsonNumberToCBOR returns an int64 for an integral number in int64 range and
+// a float64 otherwise.
+func jsonNumberToCBOR(n json.Number) (any, error) {
+	if i, err := strconv.ParseInt(n.String(), 10, 64); err == nil {
+		return i, nil
+	}
+
+	f, err := n.Float64()
+	if err != nil {
+		return nil, fmt.Errorf("invalid number %q: %w", n, err)
+	}
+
+	if f == math.Trunc(f) && f >= math.MinInt64 && f < math.MaxInt64 {
+		return int64(f), nil
+	}
+
+	return f, nil
 }
 
 // cborDecMode decodes a CBOR response back to generic values, with string map
