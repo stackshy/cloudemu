@@ -32,6 +32,16 @@ func TestRecordRejectsBadAddress(t *testing.T) {
 			props:   map[string]any{"ttl": 300, "aaaaRecords": []any{map[string]any{"ipv6Address": "10.0.0.1"}}},
 			wantMsg: "The value '10.0.0.1' of field 'ipv6Address' is not a valid IPv6 address.",
 		},
+		{
+			name: "A holding mapped IPv4", path: "/A/bad",
+			props:   map[string]any{"ttl": 300, "aRecords": []any{map[string]any{"ipv4Address": "::ffff:1.2.3.4"}}},
+			wantMsg: "The value '::ffff:1.2.3.4' of field 'ipv4Address' is not a valid IPv4 address.",
+		},
+		{
+			name: "AAAA zoned", path: "/AAAA/bad",
+			props:   map[string]any{"ttl": 300, "aaaaRecords": []any{map[string]any{"ipv6Address": "fe80::1%eth0"}}},
+			wantMsg: "The value 'fe80::1%eth0' of field 'ipv6Address' is not a valid IPv6 address.",
+		},
 	}
 
 	for _, tt := range tests {
@@ -55,5 +65,19 @@ func TestRecordRejectsBadAddress(t *testing.T) {
 				t.Fatalf("GET after rejected PUT = %d, want 404", status)
 			}
 		})
+	}
+}
+
+// TestRecordAcceptsMappedAAAA checks that an IPv4-mapped IPv6 address is a
+// valid AAAA value.
+func TestRecordAcceptsMappedAAAA(t *testing.T) {
+	ts := newServer(t)
+	mustCreateZone(t, ts)
+
+	props := map[string]any{"ttl": 300, "aaaaRecords": []any{map[string]any{"ipv6Address": "::ffff:1.2.3.4"}}}
+
+	status, body := doJSON(t, ts, http.MethodPut, zonePath(zoneName)+"/AAAA/mapped", map[string]any{"properties": props})
+	if status != http.StatusCreated && status != http.StatusOK {
+		t.Fatalf("PUT status = %d, body %v", status, body)
 	}
 }
