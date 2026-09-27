@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/labels"
 )
 
@@ -30,6 +31,7 @@ func serveWatch[T any](
 		resume:      watchResume(r) && !initial,
 		bookmarks:   watchBookmarksEnabled(r) || initial,
 		bookmarkObj: typedBookmark(apiVersion, kind, rv, initial),
+		table:       newWatchTable(s, r, kind, nil),
 	})
 }
 
@@ -68,6 +70,62 @@ type watchOpts struct {
 	// (sendInitialEvents=true) it also carries the k8s.io/initial-events-end
 	// annotation marking the end of the initial-state replay.
 	bookmarkObj any
+	// table, when non-nil, renders every object event as a one-row Table
+	// (`kubectl get -w` asks for Table watch events).
+	table *watchTable
+}
+
+// watchTable converts watch event objects into meta.k8s.io/v1 Tables the way
+// kube-apiserver does for an Accept of as=Table: one row per event, with the
+// column definitions sent only on the first event. Status objects (ERROR
+// events) pass through untouched. Used by a single streaming goroutine.
+type watchTable struct {
+	s           *ClusterState
+	proj        *tableProjector
+	mode        string
+	sentHeaders bool
+}
+
+// newWatchTable returns the Table presenter for a watch request, or nil when
+// the client did not ask for Table output.
+func newWatchTable(s *ClusterState, r *http.Request, kind string, override *tableProjector) *watchTable {
+	if !wantsTable(r) {
+		return nil
+	}
+
+	return &watchTable{s: s, proj: resolveProjector(kind, override), mode: includeObjectMode(r)}
+}
+
+// present returns ev ready for the wire: unchanged without a Table request or
+// for an ERROR event, else with its object replaced by a one-row Table.
+func (wt *watchTable) present(ev watchEvent) watchEvent {
+	if wt == nil || ev.Type == EventError {
+		return ev
+	}
+
+	u, err := asUnstructured(ev.Object)
+	if err != nil {
+		return ev
+	}
+
+	// The apiserver embeds only metadata for the initial-events-end bookmark.
+	mode := wt.mode
+	if _, ok := u.GetAnnotations()[metav1.InitialEventsAnnotationKey]; ok {
+		mode = includeObjectMetadata
+	}
+
+	table := &metav1.Table{
+		TypeMeta: metav1.TypeMeta{Kind: "Table", APIVersion: tableAPIVersion},
+		ListMeta: metav1.ListMeta{ResourceVersion: u.GetResourceVersion()},
+		Rows:     []metav1.TableRow{wt.s.tableRow(u, wt.proj, mode)},
+	}
+
+	if !wt.sentHeaders {
+		table.ColumnDefinitions = wt.proj.columns
+		wt.sentHeaders = true
+	}
+
+	return watchEvent{Type: ev.Type, Object: table}
 }
 
 // watchResume reports whether the request is resuming from a known
@@ -165,11 +223,34 @@ func expiredWatchStatus() *metav1.Status {
 // just shed load).
 const watchSubscriberBuffer = 64
 
-// watchEvent is the wire shape sent on each Watch chunk. object is left as
-// any so the encoder picks up the concrete resource type's JSON tags.
+// watchEvent is one event on a watch stream. Object holds the published value
+// as-is (a typed struct or an unstructured.Unstructured) so selector filters can
+// type-assert it; MarshalJSON renders the wire shape.
 type watchEvent struct {
-	Type   string `json:"type"`
-	Object any    `json:"object"`
+	Type   string
+	Object any
+}
+
+// MarshalJSON renders the kube-apiserver wire shape
+// {"type":"<TYPE>","object":{<the resource JSON>}}. Registry kinds publish
+// unstructured.Unstructured by value, and its MarshalJSON has a pointer
+// receiver, so encoding the bare value emits the Go field instead
+// ({"Object":{...}}), which client-go rejects with "Object 'Kind' is missing".
+func (ev watchEvent) MarshalJSON() ([]byte, error) {
+	return json.Marshal(struct {
+		Type   string `json:"type"`
+		Object any    `json:"object"`
+	}{Type: ev.Type, Object: wireObject(ev.Object)})
+}
+
+// wireObject returns the value to JSON-encode for a watch event object:
+// the content map of an unstructured.Unstructured value, else obj unchanged.
+func wireObject(obj any) any {
+	if u, ok := obj.(unstructured.Unstructured); ok {
+		return u.UnstructuredContent()
+	}
+
+	return obj
 }
 
 // subscriber is one connected client waiting for events on a single resource
@@ -311,6 +392,10 @@ func streamWatch[T any](
 	w.Header().Set("Content-Type", contentTypeJSON)
 	w.Header().Set("Transfer-Encoding", "chunked")
 	w.WriteHeader(http.StatusOK)
+	// Send the headers now, as kube-apiserver does. Otherwise a watch with
+	// nothing to replay (a resume, or an empty collection) leaves the client
+	// blocked in its request until the first event happens to arrive.
+	flusher.Flush()
 
 	enc := json.NewEncoder(w)
 
@@ -322,7 +407,7 @@ func streamWatch[T any](
 				continue
 			}
 
-			if !encodeWatchEvent(enc, flusher, watchEvent{Type: EventAdded, Object: item}) {
+			if !encodeWatchEvent(enc, flusher, opts.table, watchEvent{Type: EventAdded, Object: item}) {
 				return
 			}
 		}
@@ -331,7 +416,7 @@ func streamWatch[T any](
 	// Emit a single post-sync BOOKMARK so an opted-in client learns the current
 	// resourceVersion to resume from. Bypasses keep (a bookmark is not a T).
 	if opts.bookmarks && opts.bookmarkObj != nil {
-		if !encodeWatchEvent(enc, flusher, watchEvent{Type: EventBookmark, Object: opts.bookmarkObj}) {
+		if !encodeWatchEvent(enc, flusher, opts.table, watchEvent{Type: EventBookmark, Object: opts.bookmarkObj}) {
 			return
 		}
 	}
@@ -345,7 +430,7 @@ func streamWatch[T any](
 			// Gone (Expired) like a real apiserver so the client-go reflector
 			// relists rather than running with a permanently-stale cache, then
 			// end the stream.
-			encodeWatchEvent(enc, flusher, watchEvent{Type: EventError, Object: expiredWatchStatus()})
+			encodeWatchEvent(enc, flusher, opts.table, watchEvent{Type: EventError, Object: expiredWatchStatus()})
 
 			return
 		case ev, ok := <-sub.ch:
@@ -360,17 +445,19 @@ func streamWatch[T any](
 				continue
 			}
 
-			if !encodeWatchEvent(enc, flusher, ev) {
+			if !encodeWatchEvent(enc, flusher, opts.table, ev) {
 				return
 			}
 		}
 	}
 }
 
-// encodeWatchEvent writes one watch event and flushes it, returning false if
-// the write failed (client gone) so the caller stops streaming.
-func encodeWatchEvent(enc *json.Encoder, flusher http.Flusher, ev watchEvent) bool {
-	if err := enc.Encode(ev); err != nil {
+// encodeWatchEvent writes one watch event (as a Table when table is set) and
+// flushes it, returning false if the write failed (client gone) so the caller
+// stops streaming. json.Encoder ends each event with a newline, the framing the
+// apiserver's JSON watch stream uses.
+func encodeWatchEvent(enc *json.Encoder, flusher http.Flusher, table *watchTable, ev watchEvent) bool {
+	if err := enc.Encode(table.present(ev)); err != nil {
 		return false
 	}
 

@@ -243,6 +243,7 @@ func (s *ClusterState) registryList(w http.ResponseWriter, r *http.Request, st *
 			resume:      watchResume(r) && !initial,
 			bookmarks:   watchBookmarksEnabled(r) || initial,
 			bookmarkObj: registryBookmark(st, rv, initial),
+			table:       newWatchTable(s, r, st.def.kind, st.def.tableColumns),
 		})
 
 		return
