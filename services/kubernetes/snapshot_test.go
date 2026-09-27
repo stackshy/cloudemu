@@ -35,6 +35,7 @@ var clusterStatePersistedFields = map[string]struct{}{
 	"pdbs":            {}, // typed store (clusterSnapshot.PDBs)
 	"endpoints":       {}, // typed store (clusterSnapshot.Endpoints)
 	"reg":             {}, // registry store items (clusterSnapshot.Registry)
+	"serverVersion":   {}, // /version body (clusterSnapshot.ServerVersion)
 }
 
 // clusterStateRuntimeFields lists the ClusterState fields deliberately NOT

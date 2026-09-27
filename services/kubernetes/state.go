@@ -11,6 +11,7 @@ import (
 	policyv1 "k8s.io/api/policy/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/version"
 
 	"github.com/stackshy/cloudemu/v2/config"
 )
@@ -54,6 +55,11 @@ type ClusterState struct {
 	// single-node instant-schedule behavior. Set once at registration (see
 	// APIServer.SetNodeCount).
 	nodeCount int
+
+	// serverVersion is what /version reports. The EKS, AKS and GKE providers
+	// set it from the cluster's control-plane version (SetClusterVersion); a
+	// cluster with no cloud parent keeps defaultServerVersion.
+	serverVersion version.Info
 
 	// namespaces is cluster-scoped, keyed by namespace name.
 	namespaces map[string]*corev1.Namespace
@@ -156,6 +162,7 @@ func newClusterState(
 		clock:                clock,
 		lifecycleProgression: lifecycleProgression,
 		nodeCount:            nodeCount,
+		serverVersion:        defaultServerVersion(),
 		namespaces:           make(map[string]*corev1.Namespace),
 		configMaps:           make(map[string]*corev1.ConfigMap),
 		pods:                 make(map[string]*corev1.Pod),

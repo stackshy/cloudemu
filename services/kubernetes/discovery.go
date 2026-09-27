@@ -69,11 +69,8 @@ func (s *ClusterState) serveDiscovery(w http.ResponseWriter, r *http.Request) bo
 	// /version is not discovery proper, but kubectl and helm both probe it and
 	// some code paths refuse to proceed without a parseable server version.
 	case "/version":
-		writeJSON(w, http.StatusOK, map[string]any{
-			"major": "1", "minor": "29",
-			"gitVersion": "v1.29.0-cloudemu",
-			"platform":   "cloudemu/amd64",
-		})
+		// The body is per cluster: EKS, AKS and GKE each format it their own way.
+		writeJSON(w, http.StatusOK, s.ServerVersion())
 
 		return true
 	}
