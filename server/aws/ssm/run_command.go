@@ -4,8 +4,8 @@ import (
 	"net/http"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	ssmnative "github.com/stackshy/cloudemu/v2/providers/aws/ssm/driver"
 	"github.com/stackshy/cloudemu/v2/server/wire"
-	ssmdriver "github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
 
 type ssmTarget struct {
@@ -51,8 +51,8 @@ type getCommandInvocationResponse struct {
 }
 
 // runCommand reports whether the configured driver supports Run Command.
-func (h *Handler) runCommand() (ssmdriver.RunCommand, bool) {
-	rc, ok := h.store.(ssmdriver.RunCommand)
+func (h *Handler) runCommand() (ssmnative.RunCommand, bool) {
+	rc, ok := h.store.(ssmnative.RunCommand)
 
 	return rc, ok
 }
@@ -71,7 +71,7 @@ func (h *Handler) sendCommand(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	commandID, err := store.SendCommand(r.Context(), ssmdriver.CommandConfig{
+	commandID, err := store.SendCommand(r.Context(), ssmnative.CommandConfig{
 		InstanceIDs:  req.InstanceIds,
 		Targets:      toDriverTargets(req.Targets),
 		DocumentName: req.DocumentName,
@@ -79,15 +79,9 @@ func (h *Handler) sendCommand(w http.ResponseWriter, r *http.Request) {
 		Parameters:   req.Parameters,
 	})
 	if err != nil {
-		// A rejected target is InvalidInstanceId, not the parameter-store
-		// not-found the generic mapping would produce. Callers branch on this
-		// code (it is the ordinary Run Command bring-up failure), and
-		// ParameterNotFound would send them looking at the wrong subsystem.
-		if cerrors.IsNotFound(err) {
-			wire.WriteJSONError(w, http.StatusBadRequest, "InvalidInstanceId", cerrors.Message(err))
-			return
-		}
-
+		// The provider names the exception: InvalidInstanceId for a target
+		// that is not a managed instance, InvalidDocument for a document that
+		// does not resolve.
 		writeErr(w, err)
 
 		return
@@ -108,14 +102,14 @@ func (h *Handler) sendCommand(w http.ResponseWriter, r *http.Request) {
 }
 
 // toDriverTargets converts wire Targets to the driver's CommandTarget shape.
-func toDriverTargets(in []ssmTarget) []ssmdriver.CommandTarget {
+func toDriverTargets(in []ssmTarget) []ssmnative.CommandTarget {
 	if len(in) == 0 {
 		return nil
 	}
 
-	out := make([]ssmdriver.CommandTarget, 0, len(in))
+	out := make([]ssmnative.CommandTarget, 0, len(in))
 	for _, t := range in {
-		out = append(out, ssmdriver.CommandTarget{Key: t.Key, Values: t.Values})
+		out = append(out, ssmnative.CommandTarget{Key: t.Key, Values: t.Values})
 	}
 
 	return out

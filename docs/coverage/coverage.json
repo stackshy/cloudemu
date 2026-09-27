@@ -12358,6 +12358,53 @@
     ],
     "optionalCapabilities": [
       {
+        "name": "Documents",
+        "doc": "Documents is an OPTIONAL capability, discovered by type assertion. It covers",
+        "operations": [
+          {
+            "name": "CreateDocument"
+          },
+          {
+            "name": "DeleteDocument",
+            "doc": "DeleteDocument removes every version, or only the selected one when ref"
+          },
+          {
+            "name": "DescribeDocument"
+          },
+          {
+            "name": "DescribeDocumentPermission"
+          },
+          {
+            "name": "GetDocument"
+          },
+          {
+            "name": "ListDocumentTags"
+          },
+          {
+            "name": "ListDocumentVersions"
+          },
+          {
+            "name": "ListDocuments",
+            "doc": "ListDocuments returns the default version of every matching document,"
+          },
+          {
+            "name": "ModifyDocumentPermission"
+          },
+          {
+            "name": "TagDocument"
+          },
+          {
+            "name": "UntagDocument"
+          },
+          {
+            "name": "UpdateDocument"
+          },
+          {
+            "name": "UpdateDocumentDefaultVersion"
+          }
+        ]
+      },
+      {
         "name": "RunCommand",
         "doc": "RunCommand is an OPTIONAL capability, discovered by type assertion.",
         "operations": [

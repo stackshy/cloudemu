@@ -31,6 +31,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/awsevents"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	ssmdriver "github.com/stackshy/cloudemu/v2/providers/aws/ssm/driver"
 	"github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
 
@@ -77,7 +78,7 @@ type KMSCrypto interface {
 // Mock is an in-memory mock implementation of SSM Parameter Store.
 type Mock struct {
 	params           *memstore.Store[*paramData]
-	commands         *memstore.Store[driver.CommandInvocation]
+	commands         *memstore.Store[ssmdriver.CommandInvocation]
 	instanceResolver InstanceResolver
 	// kmsCrypto, when wired via SetKMSCrypto, encrypts SecureString values through
 	// real KMS. Nil stores them verbatim (library plaintext fallback).
@@ -88,6 +89,11 @@ type Mock struct {
 	opts   *config.Options
 	// settings holds the Parameter Store service settings.
 	settings *serviceSettings
+	// documents holds customer SSM documents and catalog the read-only
+	// AWS-owned ones. docMu guards every document's fields.
+	documents *memstore.Store[*document]
+	catalog   map[string]*document
+	docMu     sync.RWMutex
 }
 
 // SetKMSCrypto wires the KMS backend so SecureString values are encrypted at
@@ -143,10 +149,12 @@ func (m *Mock) revealValue(ctx context.Context, v *version, withDecryption bool)
 // New creates a new SSM Parameter Store mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		params:   memstore.New[*paramData](),
-		commands: memstore.New[driver.CommandInvocation](),
-		opts:     opts,
-		settings: newServiceSettings(opts.Clock.Now()),
+		params:    memstore.New[*paramData](),
+		commands:  memstore.New[ssmdriver.CommandInvocation](),
+		opts:      opts,
+		settings:  newServiceSettings(opts.Clock.Now()),
+		documents: memstore.New[*document](),
+		catalog:   loadCatalog(),
 	}
 }
 
