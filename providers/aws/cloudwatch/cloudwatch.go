@@ -657,8 +657,9 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 		Metrics:                    metricmath.Clone(a.Metrics),
 		ThresholdMetricID:          a.ThresholdMetricID,
 
-		EvaluateLowSampleCountPercentile: a.EvaluateLowSampleCountPercentile,
-		EvaluationWindow:                 cloneWindow(a.EvaluationWindow),
+		AlarmConfigurationUpdatedTimestamp: a.ConfigUpdatedAt,
+		EvaluateLowSampleCountPercentile:   a.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                   cloneWindow(a.EvaluationWindow),
 	}
 }
 

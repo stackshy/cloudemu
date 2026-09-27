@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	cfn "github.com/stackshy/cloudemu/v2/services/cloudformation"
@@ -28,6 +29,8 @@ type stackSnapshot struct {
 	RollbackFailed []string                        `json:"rollbackFailed,omitempty"`
 	ChangeSets     []changeSetRecord               `json:"changeSets,omitempty"`
 	Retained       []retainedResource              `json:"retained,omitempty"`
+	Imports        []string                        `json:"imports,omitempty"`
+	Policies       map[string]resourcePolicy       `json:"policies,omitempty"`
 }
 
 // Snapshot captures every stack's state under its own name so a restore
@@ -46,6 +49,8 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 			RollbackFailed: append([]string(nil), sd.rollbackFailed...),
 			ChangeSets:     cloneChangeSets(sd.changeSets),
 			Retained:       append([]retainedResource(nil), sd.retained...),
+			Imports:        append([]string(nil), sd.imports...),
+			Policies:       maps.Clone(sd.policies),
 		}
 		sd.mu.RUnlock()
 	}
@@ -69,6 +74,8 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 			props:          ss.Props,
 			rollbackFailed: ss.RollbackFailed,
 			retained:       ss.Retained,
+			imports:        ss.Imports,
+			policies:       ss.Policies,
 		}
 
 		for i := range ss.ChangeSets {

@@ -161,6 +161,9 @@ type AlarmInfo struct {
 	Tags map[string]string
 	// StateTransitionedTimestamp is when State last changed.
 	StateTransitionedTimestamp time.Time
+	// AlarmConfigurationUpdatedTimestamp is when the configuration was last
+	// put. Populated by AWS CloudWatch; zero for the others.
+	AlarmConfigurationUpdatedTimestamp time.Time
 	// Metrics and ThresholdMetricID echo a metric-math alarm's query list.
 	Metrics           []MetricDataQuery
 	ThresholdMetricID string

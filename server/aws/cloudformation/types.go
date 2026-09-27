@@ -42,7 +42,17 @@ func createInput(form url.Values) cfn.CreateStackInput {
 		Capabilities: awsquery.ListStrings(form, "Capabilities.member"),
 
 		NotificationARNs: awsquery.ListStrings(form, "NotificationARNs.member"),
+
+		OnFailure:                   form.Get("OnFailure"),
+		DisableRollback:             formBool(form, "DisableRollback"),
+		EnableTerminationProtection: formBool(form, "EnableTerminationProtection"),
+		RetainExceptOnCreate:        formBool(form, "RetainExceptOnCreate"),
 	}
+}
+
+// formBool reads a boolean form field. Absent is false.
+func formBool(form url.Values, key string) bool {
+	return strings.EqualFold(form.Get(key), "true")
 }
 
 func updateInput(form url.Values) cfn.UpdateStackInput {
@@ -54,9 +64,10 @@ func updateInput(form url.Values) cfn.UpdateStackInput {
 		Tags:         parseTags(form),
 		Capabilities: awsquery.ListStrings(form, "Capabilities.member"),
 
-		UsePreviousTemplate: strings.EqualFold(form.Get("UsePreviousTemplate"), "true"),
-		DisableRollback:     strings.EqualFold(form.Get("DisableRollback"), "true"),
-		NotificationARNs:    updateNotificationARNs(form),
+		UsePreviousTemplate:  formBool(form, "UsePreviousTemplate"),
+		DisableRollback:      formBool(form, "DisableRollback"),
+		RetainExceptOnCreate: formBool(form, "RetainExceptOnCreate"),
+		NotificationARNs:     updateNotificationARNs(form),
 	}
 }
 
@@ -183,6 +194,10 @@ type stackXML struct {
 	Capabilities      []string       `xml:"Capabilities>member,omitempty"`
 	NotificationARNs  []string       `xml:"NotificationARNs>member,omitempty"`
 	ChangeSetID       string         `xml:"ChangeSetId,omitempty"`
+
+	EnableTerminationProtection bool   `xml:"EnableTerminationProtection"`
+	RetainExceptOnCreate        bool   `xml:"RetainExceptOnCreate"`
+	DeletionMode                string `xml:"DeletionMode,omitempty"`
 }
 
 type describeStacksResponse struct {
@@ -333,6 +348,8 @@ func toStackXML(s *cfn.Stack) stackXML {
 		CreationTime: isoTime(s.CreationTime), LastUpdatedTime: isoTime(s.LastUpdated),
 		StackStatus: s.Status, StackStatusReason: s.StatusReason, DisableRollback: s.DisableRollback,
 		Capabilities: s.Capabilities, NotificationARNs: s.NotificationARNs, ChangeSetID: s.ChangeSetID,
+		DeletionTime: isoTime(s.DeletionTime), EnableTerminationProtection: s.EnableTerminationProtection,
+		RetainExceptOnCreate: s.RetainExceptOnCreate, DeletionMode: s.DeletionMode,
 	}
 
 	for _, p := range s.Parameters {

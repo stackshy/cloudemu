@@ -180,7 +180,7 @@ func TestDeleteStackTearsDownResources(t *testing.T) {
 	_, err := m.CreateStack(ctx, &cfn.CreateStackInput{StackName: "demo", TemplateBody: twoResourceTemplate})
 	requireNoError(t, err)
 
-	requireNoError(t, m.DeleteStack(ctx, "demo"))
+	requireNoError(t, m.DeleteStack(ctx, &cfn.DeleteStackInput{StackName: "demo"}))
 
 	if len(store.items) != 0 {
 		t.Fatalf("expected all resources removed, still have %v", store.items)

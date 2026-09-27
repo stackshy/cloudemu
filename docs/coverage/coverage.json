@@ -433,6 +433,9 @@
         "name": "CreateAPI"
       },
       {
+        "name": "CreateDeployment"
+      },
+      {
         "name": "CreateIntegration"
       },
       {
@@ -443,6 +446,9 @@
       },
       {
         "name": "DeleteAPI"
+      },
+      {
+        "name": "DeleteDeployment"
       },
       {
         "name": "DeleteIntegration"
@@ -458,6 +464,12 @@
       },
       {
         "name": "GetAPIs"
+      },
+      {
+        "name": "GetDeployment"
+      },
+      {
+        "name": "GetDeployments"
       },
       {
         "name": "GetIntegration"
@@ -478,7 +490,19 @@
         "name": "GetStages"
       },
       {
+        "name": "GetTags"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
         "name": "UpdateAPI"
+      },
+      {
+        "name": "UpdateDeployment"
       },
       {
         "name": "UpdateIntegration"
@@ -3150,6 +3174,9 @@
         "name": "DeleteStack"
       },
       {
+        "name": "DescribeAccountLimits"
+      },
+      {
         "name": "DescribeChangeSet"
       },
       {
@@ -3160,6 +3187,9 @@
       },
       {
         "name": "DescribeStacks"
+      },
+      {
+        "name": "EstimateTemplateCost"
       },
       {
         "name": "ExecuteChangeSet"
@@ -3174,6 +3204,12 @@
         "name": "ListChangeSets"
       },
       {
+        "name": "ListExports"
+      },
+      {
+        "name": "ListImports"
+      },
+      {
         "name": "ListStackResources"
       },
       {
@@ -3181,6 +3217,9 @@
       },
       {
         "name": "UpdateStack"
+      },
+      {
+        "name": "UpdateTerminationProtection"
       },
       {
         "name": "ValidateTemplate"
@@ -9980,6 +10019,57 @@
       "aws": "CloudWatchLogs",
       "azure": "LogAnalytics",
       "gcp": "CloudLogging"
+    }
+  },
+  {
+    "service": "logic",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CreateOrUpdate"
+      },
+      {
+        "name": "Delete"
+      },
+      {
+        "name": "Disable"
+      },
+      {
+        "name": "DiscoverWorkflows"
+      },
+      {
+        "name": "Enable"
+      },
+      {
+        "name": "Endpoints"
+      },
+      {
+        "name": "Get"
+      },
+      {
+        "name": "ListByResourceGroup"
+      },
+      {
+        "name": "ListBySubscription"
+      },
+      {
+        "name": "ListCallbackURL"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "Update"
+      },
+      {
+        "name": "Version"
+      }
+    ],
+    "providers": {
+      "azure": "Logic"
     }
   },
   {

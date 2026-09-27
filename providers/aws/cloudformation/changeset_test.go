@@ -482,7 +482,7 @@ func TestDoNothingKeepsReplacedResources(t *testing.T) {
 
 		restored := newParamMock(p)
 		requireNoError(t, restored.Restore(ctx, json.RawMessage(data)))
-		requireNoError(t, restored.DeleteStack(ctx, "s"))
+		requireNoError(t, restored.DeleteStack(ctx, &cfn.DeleteStackInput{StackName: "s"}))
 
 		for _, name := range []string{"/a", "/a2", "/b"} {
 			if _, ok := p.values[name]; ok {
@@ -686,7 +686,7 @@ func TestDeleteChangeSet(t *testing.T) {
 	assertEqual(t, again.StackID, st.ID, "same review stack")
 
 	// DeleteStack removes the review stack and its change sets.
-	requireNoError(t, m.DeleteStack(ctx, "s"))
+	requireNoError(t, m.DeleteStack(ctx, &cfn.DeleteStackInput{StackName: "s"}))
 
 	_, err = m.DescribeChangeSet(ctx, &cfn.DescribeChangeSetInput{ChangeSetName: again.ID})
 	assertException(t, err, cfn.ExceptionChangeSetNotFound, "")

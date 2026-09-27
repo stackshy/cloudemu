@@ -1,7 +1,7 @@
 // Package apigatewayv2 is an in-memory mock of Amazon API Gateway v2 (HTTP and
 // WebSocket APIs). It models the control plane only: an API and its Route,
-// Integration and Stage sub-collections, reachable over the apigatewayv2
-// REST/JSON protocol. It is a separate service from API Gateway REST v1
+// Integration, Stage and Deployment sub-collections plus resource tags,
+// reachable over the apigatewayv2 REST/JSON protocol. It is a separate service from API Gateway REST v1
 // (providers/aws/apigateway), sharing no state or types.
 package apigatewayv2
 
@@ -52,6 +52,7 @@ type apiData struct {
 	routes       map[string]*driver.Route
 	integrations map[string]*driver.Integration
 	stages       map[string]*driver.Stage
+	deployments  map[string]*deploymentRecord
 }
 
 // Mock is an in-memory implementation of Amazon API Gateway v2.
@@ -96,14 +97,15 @@ func (m *Mock) getAPI(id string) (*apiData, error) {
 }
 
 // CreateAPI creates a new API with defaulted selection expressions and a
-// computed execute-api endpoint.
+// computed execute-api endpoint. A Target quick-creates the default
+// integration, route and auto-deployed $default stage.
 func (m *Mock) CreateAPI(_ context.Context, in *driver.CreateAPIInput) (*driver.API, error) {
-	if in.Name == "" {
-		return nil, cerrors.New(cerrors.InvalidArgument, "Name is required")
+	if in.ProtocolType != driver.ProtocolHTTP && in.ProtocolType != driver.ProtocolWebSocket {
+		return nil, badRequest("Invalid protocol type specified: %s", in.ProtocolType)
 	}
 
-	if in.ProtocolType != driver.ProtocolHTTP && in.ProtocolType != driver.ProtocolWebSocket {
-		return nil, cerrors.Newf(cerrors.InvalidArgument, "Invalid protocol type specified: %s", in.ProtocolType)
+	if in.ProtocolType == driver.ProtocolWebSocket && in.RouteSelectionExpression == "" {
+		return nil, badRequest("RouteSelectionExpression is required for WEBSOCKET protocol")
 	}
 
 	apiID := genID()
@@ -113,22 +115,52 @@ func (m *Mock) CreateAPI(_ context.Context, in *driver.CreateAPIInput) (*driver.
 		RouteSelectionExpression:  orDefault(in.RouteSelectionExpression, defaultRouteSelectionExpr),
 		APIKeySelectionExpression: orDefault(in.APIKeySelectionExpression, defaultAPIKeySelectionExpr),
 		DisableExecuteAPIEndpoint: in.DisableExecuteAPIEndpoint,
-		APIEndpoint:               fmt.Sprintf("https://%s.execute-api.%s.amazonaws.com", apiID, m.region),
+		APIEndpoint:               m.apiEndpoint(apiID, in.ProtocolType),
 		CreatedDate:               m.now(),
 		Tags:                      copyStrMap(in.Tags),
 		CorsConfiguration:         copyCors(in.CorsConfiguration),
 	}
 
-	m.apis.Set(apiID, &apiData{
+	if err := validateAPIFields(&api); err != nil {
+		return nil, err
+	}
+
+	if err := validateTags(in.Tags); err != nil {
+		return nil, err
+	}
+
+	if err := checkQuickCreate(in.ProtocolType, in.Target, in.RouteKey, in.CredentialsArn); err != nil {
+		return nil, err
+	}
+
+	ad := &apiData{
 		api:          api,
 		routes:       map[string]*driver.Route{},
 		integrations: map[string]*driver.Integration{},
 		stages:       map[string]*driver.Stage{},
-	})
+		deployments:  map[string]*deploymentRecord{},
+	}
+
+	if in.Target != "" {
+		m.quickCreate(ad, in.Target, in.RouteKey, in.CredentialsArn)
+	}
+
+	m.apis.Set(apiID, ad)
 
 	out := copyAPI(&api)
 
 	return &out, nil
+}
+
+// apiEndpoint is the execute-api endpoint of an API: https for HTTP APIs and
+// wss for WebSocket APIs.
+func (m *Mock) apiEndpoint(apiID, protocol string) string {
+	scheme := "https"
+	if protocol == driver.ProtocolWebSocket {
+		scheme = "wss"
+	}
+
+	return fmt.Sprintf("%s://%s.execute-api.%s.amazonaws.com", scheme, apiID, m.region)
 }
 
 // GetAPI returns a single API.
@@ -146,8 +178,8 @@ func (m *Mock) GetAPI(_ context.Context, apiID string) (*driver.API, error) {
 	return &out, nil
 }
 
-// GetAPIs lists all APIs.
-func (m *Mock) GetAPIs(_ context.Context) ([]driver.API, error) {
+// GetAPIs lists one page of APIs, ordered by id.
+func (m *Mock) GetAPIs(_ context.Context, page *driver.PageInput) ([]driver.API, string, error) {
 	all := m.apis.All()
 	out := make([]driver.API, 0, len(all))
 
@@ -157,10 +189,11 @@ func (m *Mock) GetAPIs(_ context.Context) ([]driver.API, error) {
 		ad.mu.RUnlock()
 	}
 
-	return out, nil
+	return pageOf(out, func(a, b driver.API) bool { return a.APIID < b.APIID }, page)
 }
 
-// UpdateAPI applies the non-nil fields of in to the stored API (PATCH).
+// UpdateAPI applies the non-nil fields of in to the stored API (PATCH). The
+// quick-create fields update the managed integration and route.
 func (m *Mock) UpdateAPI(_ context.Context, apiID string, in *driver.UpdateAPIInput) (*driver.API, error) {
 	ad, err := m.getAPI(apiID)
 	if err != nil {
@@ -170,7 +203,7 @@ func (m *Mock) UpdateAPI(_ context.Context, apiID string, in *driver.UpdateAPIIn
 	ad.mu.Lock()
 	defer ad.mu.Unlock()
 
-	a := &ad.api
+	a := ad.api
 	setString(&a.Name, in.Name)
 	setString(&a.Description, in.Description)
 	setString(&a.Version, in.Version)
@@ -182,7 +215,16 @@ func (m *Mock) UpdateAPI(_ context.Context, apiID string, in *driver.UpdateAPIIn
 		a.CorsConfiguration = copyCors(in.CorsConfiguration)
 	}
 
-	out := copyAPI(a)
+	if err := validateAPIFields(&a); err != nil {
+		return nil, err
+	}
+
+	if err := m.updateQuickCreate(ad, in); err != nil {
+		return nil, err
+	}
+
+	ad.api = a
+	out := copyAPI(&a)
 
 	return &out, nil
 }

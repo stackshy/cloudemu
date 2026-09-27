@@ -22,15 +22,13 @@ import (
 
 // writeMetricStreamQueryDriverErr is the query-protocol counterpart of
 // writeMetricStreamDriverErr (see metric_streams.go): it maps a metric-stream
-// driver error to CloudWatch's real ResourceNotFoundException /
-// InvalidParameterValueException error codes rather than the shorter names
-// the shared writeQueryDriverErr uses for the older alarm operations.
+// driver error to ResourceNotFoundException / InvalidParameterValue.
 func writeMetricStreamQueryDriverErr(w http.ResponseWriter, err error) {
 	switch {
 	case cerrors.IsNotFound(err):
 		writeQueryError(w, http.StatusNotFound, "ResourceNotFoundException", err.Error())
 	case cerrors.IsInvalidArgument(err):
-		writeQueryError(w, http.StatusBadRequest, "InvalidParameterValueException", err.Error())
+		writeQueryError(w, http.StatusBadRequest, errInvalidParameterValue, cerrors.Message(err))
 	default:
 		writeQueryDriverErr(w, err)
 	}
@@ -200,7 +198,7 @@ func (h *Handler) queryTagResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.Form.Get("ResourceARN")
 
 	if err := h.addResourceTagsByARN(r.Context(), arn, queryTagPairs(r, "Tags.member.")); err != nil {
-		writeTagRouteQueryErr(w, arn, err)
+		writeTagRouteQueryErr(w, err)
 		return
 	}
 
@@ -211,7 +209,7 @@ func (h *Handler) queryUntagResource(w http.ResponseWriter, r *http.Request) {
 	arn := r.Form.Get("ResourceARN")
 
 	if err := h.removeResourceTagsByARN(r.Context(), arn, queryStringList(r, "TagKeys.member.")); err != nil {
-		writeTagRouteQueryErr(w, arn, err)
+		writeTagRouteQueryErr(w, err)
 		return
 	}
 
@@ -223,7 +221,7 @@ func (h *Handler) queryListTagsForResource(w http.ResponseWriter, r *http.Reques
 
 	tags, err := h.resourceTagsByARN(r.Context(), arn)
 	if err != nil {
-		writeTagRouteQueryErr(w, arn, err)
+		writeTagRouteQueryErr(w, err)
 		return
 	}
 
@@ -291,20 +289,28 @@ func (h *Handler) resourceTagsByARN(ctx context.Context, arn string) (map[string
 
 // writeTagRouteQueryErr writes the query-protocol response for a tag-routing
 // error: an unsupported-capability error becomes InvalidAction, and any other
-// error is mapped by the metric-stream or alarm driver-error mapper depending
-// on which resource kind arn routed to.
-func writeTagRouteQueryErr(w http.ResponseWriter, arn string, err error) {
+// error is mapped by tagRouteErr.
+func writeTagRouteQueryErr(w http.ResponseWriter, err error) {
 	if errors.Is(err, errTaggingUnsupported) {
 		writeQueryError(w, http.StatusBadRequest, "InvalidAction", err.Error())
 		return
 	}
 
-	if _, ok := metricStreamNameFromARN(arn); ok {
-		writeMetricStreamQueryDriverErr(w, err)
-		return
+	writeQueryDriverErr(w, tagRouteErr(err))
+}
+
+// tagRouteErr maps a tagging error to the codes TagResource, UntagResource
+// and ListTagsForResource document: a missing alarm or metric stream is a
+// 404 ResourceNotFoundException, and a bad value is InvalidParameterValue.
+func tagRouteErr(err error) error {
+	switch {
+	case cerrors.IsNotFound(err):
+		return newNotFoundError(errResourceNotFoundException, cerrors.Message(err))
+	case cerrors.IsInvalidArgument(err):
+		return newWireError(errInvalidParameterValue, cerrors.Message(err))
 	}
 
-	writeQueryDriverErr(w, err)
+	return err
 }
 
 // ---- form parsing helpers ----

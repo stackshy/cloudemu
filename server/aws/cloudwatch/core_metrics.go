@@ -481,6 +481,9 @@ func setStat(dp *datapoint, stat requestedStat, value float64) {
 	}
 }
 
+// maxDatumDimensions is the most dimensions one metric can have.
+const maxDatumDimensions = 30
+
 // putMetricDataCore validates every datum and then stores them. One bad
 // datum rejects the whole request, so nothing is stored.
 func (h *Handler) putMetricDataCore(ctx context.Context, in *putMetricDataInput) error {
@@ -488,6 +491,11 @@ func (h *Handler) putMetricDataCore(ctx context.Context, in *putMetricDataInput)
 
 	for i := range in.MetricData {
 		d := &in.MetricData[i]
+
+		if len(d.Dimensions) > maxDatumDimensions {
+			return newWireError(errInvalidParameterValue, "The collection MetricData.member."+strconv.Itoa(i+1)+
+				".Dimensions must not have a size greater than "+strconv.Itoa(maxDatumDimensions)+".")
+		}
 
 		if d.Unit != "" && !alarmeval.ValidUnit(d.Unit) {
 			return newWireError(errInvalidParameterValue, "The parameter MetricData.member."+strconv.Itoa(i+1)+

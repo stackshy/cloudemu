@@ -81,8 +81,12 @@ const (
 
 // Policy actions taken on the physical resource of a change.
 const (
-	PolicyDelete           = "Delete"
-	PolicyReplaceAndDelete = "ReplaceAndDelete"
+	PolicyDelete             = "Delete"
+	PolicyRetain             = "Retain"
+	PolicySnapshot           = "Snapshot"
+	PolicyReplaceAndDelete   = "ReplaceAndDelete"
+	PolicyReplaceAndRetain   = "ReplaceAndRetain"
+	PolicyReplaceAndSnapshot = "ReplaceAndSnapshot"
 )
 
 // Exception names the change set operations report.
@@ -90,6 +94,7 @@ const (
 	ExceptionAlreadyExists          = "AlreadyExistsException"
 	ExceptionChangeSetNotFound      = "ChangeSetNotFound"
 	ExceptionInvalidChangeSetStatus = "InvalidChangeSetStatus"
+	ExceptionLimitExceeded          = "LimitExceededException"
 )
 
 // ChangeTarget is the part of a resource a change detail touches. The value
@@ -199,6 +204,9 @@ type ExecuteChangeSetInput struct {
 	ChangeSetName   string
 	StackName       string
 	DisableRollback *bool
+	// RetainExceptOnCreate deletes the resources the execution created when
+	// it rolls back, even those whose DeletionPolicy is Retain.
+	RetainExceptOnCreate *bool
 	// ClientRequestToken makes a retry of an execution that already started
 	// succeed without running it again.
 	ClientRequestToken string

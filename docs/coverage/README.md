@@ -17,7 +17,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `aoss` | [AOSS](./aws/aoss.md) | - | - | - | 18 |
 | `apigateway` | [APIGateway](./aws/apigateway.md) | - | - | - | 29 |
 | `apigatewaygcp` | - | - | [APIGateway](./gcp/apigateway.md) | - | 16 |
-| `apigatewayv2` | [APIGatewayV2](./aws/apigatewayv2.md) | - | - | - | 20 |
+| `apigatewayv2` | [APIGatewayV2](./aws/apigatewayv2.md) | - | - | - | 28 |
 | `appconfiguration` | - | [AppConfiguration](./azure/appconfiguration.md) | - | - | 9 |
 | `appflow` | [AppFlow](./aws/appflow.md) | - | - | - | 14 |
 | `appinsights` | - | [Appinsights](./azure/appinsights.md) | - | - | 6 |
@@ -45,7 +45,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cloudasset` | - | - | [Cloudasset](./gcp/cloudasset.md) | - | 11 |
 | `cloudbilling` | - | - | [Cloudbilling](./gcp/cloudbilling.md) | - | 14 |
 | `clouddeploy` | - | - | [CloudDeploy](./gcp/clouddeploy.md) | - | 11 |
-| `cloudformation` | [CloudFormation](./aws/cloudformation.md) | - | - | - | 17 |
+| `cloudformation` | [CloudFormation](./aws/cloudformation.md) | - | - | - | 22 |
 | `cloudfront` | [CloudFront](./aws/cloudfront.md) | - | - | - | 11 |
 | `cloudids` | - | - | [CloudIDS](./gcp/cloudids.md) | - | 6 |
 | `cloudrun` | - | - | [CloudRun](./gcp/cloudrun.md) | - | 18 |
@@ -114,6 +114,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `location` | [Location](./aws/location.md) | - | - | - | 28 |
 | `locks` | - | [Locks](./azure/locks.md) | - | - | 4 |
 | `logging` | [CloudWatchLogs](./aws/cloudwatchlogs.md) | [LogAnalytics](./azure/loganalytics.md) | [CloudLogging](./gcp/cloudlogging.md) | - | 17 |
+| `logic` | - | [Logic](./azure/logic.md) | - | - | 14 |
 | `lro` | - | - | [LRO](./gcp/lro.md) | - | 1 |
 | `managedcassandra` | - | [ManagedCassandra](./azure/managedcassandra.md) | - | - | 15 |
 | `managedgrafana` | - | [ManagedGrafana](./azure/managedgrafana.md) | - | - | 8 |

@@ -20,12 +20,14 @@ type apigatewayV2Snapshot struct {
 }
 
 // apiSnapshot is the exported form of apiData: the API plus its routes,
-// integrations and stages, all under their original identities.
+// integrations, stages and deployments (with their frozen route and
+// integration snapshots), all under their original identities.
 type apiSnapshot struct {
 	API          driver.API                     `json:"api"`
 	Routes       map[string]*driver.Route       `json:"routes,omitempty"`
 	Integrations map[string]*driver.Integration `json:"integrations,omitempty"`
 	Stages       map[string]*driver.Stage       `json:"stages,omitempty"`
+	Deployments  map[string]*deploymentRecord   `json:"deployments,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. API Gateway v2 holds
@@ -55,6 +57,11 @@ func snapshotAPI(ad *apiData) *apiSnapshot {
 		Routes:       make(map[string]*driver.Route, len(ad.routes)),
 		Integrations: make(map[string]*driver.Integration, len(ad.integrations)),
 		Stages:       make(map[string]*driver.Stage, len(ad.stages)),
+		Deployments:  make(map[string]*deploymentRecord, len(ad.deployments)),
+	}
+
+	for id, rec := range ad.deployments {
+		as.Deployments[id] = copyDeploymentRecord(rec)
 	}
 
 	for id, r := range ad.routes {
@@ -97,6 +104,11 @@ func restoreAPI(as *apiSnapshot) *apiData {
 		routes:       make(map[string]*driver.Route, len(as.Routes)),
 		integrations: make(map[string]*driver.Integration, len(as.Integrations)),
 		stages:       make(map[string]*driver.Stage, len(as.Stages)),
+		deployments:  make(map[string]*deploymentRecord, len(as.Deployments)),
+	}
+
+	for id, rec := range as.Deployments {
+		ad.deployments[id] = rec
 	}
 
 	for id, r := range as.Routes {

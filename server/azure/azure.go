@@ -67,6 +67,7 @@ import (
 	loadtestingsrv "github.com/stackshy/cloudemu/v2/server/azure/loadtesting"
 	"github.com/stackshy/cloudemu/v2/server/azure/locks"
 	loganalyticssrv "github.com/stackshy/cloudemu/v2/server/azure/loganalytics"
+	logicsrv "github.com/stackshy/cloudemu/v2/server/azure/logic"
 	"github.com/stackshy/cloudemu/v2/server/azure/managedcassandra"
 	managedgrafanasrv "github.com/stackshy/cloudemu/v2/server/azure/managedgrafana"
 	managedidentitysrv "github.com/stackshy/cloudemu/v2/server/azure/managedidentity"
@@ -219,6 +220,9 @@ type Drivers struct {
 	// IoTHub serves Microsoft.Devices/IotHubs plus its listkeys /
 	// getKeysForKeyName actions and the nested event-hub consumer groups.
 	IoTHub iothubsrv.Store
+	// Logic serves Microsoft.Logic/workflows (Consumption Logic Apps) plus the
+	// enable / disable actions.
+	Logic logicsrv.Store
 	// SQLVirtualMachine serves Microsoft.SqlVirtualMachine/sqlVirtualMachines:
 	// the SQL-management overlay on a compute VM.
 	SQLVirtualMachine sqlvirtualmachinesrv.Store
@@ -638,6 +642,15 @@ func New(d Drivers) http.Handler {
 	if d.IoTHub != nil {
 		iotHubHandler = iothubsrv.New(d.IoTHub)
 		rgPurgers = append(rgPurgers, iotHubHandler)
+	}
+
+	// Logic Apps workflows: a resource-group-scoped resource, so its handler joins
+	// the purge cascade. Deleting the group tears down every workflow. Registered
+	// further below.
+	var logicHandler *logicsrv.Handler
+	if d.Logic != nil {
+		logicHandler = logicsrv.New(d.Logic)
+		rgPurgers = append(rgPurgers, logicHandler)
 	}
 
 	// SQL virtual machines: a resource-group-scoped resource, so its handler
@@ -1112,6 +1125,13 @@ func New(d Drivers) http.Handler {
 	// every other Azure handler, so registration order is unconstrained.
 	if iotHubHandler != nil {
 		srv.Register(iotHubHandler)
+	}
+
+	// Logic Apps claims Microsoft.Logic/workflows (and only its enable / disable
+	// actions): a distinct ARM provider name from every other Azure handler, so
+	// registration order is unconstrained.
+	if logicHandler != nil {
+		srv.Register(logicHandler)
 	}
 
 	// SQL virtual machines claim Microsoft.SqlVirtualMachine/sqlVirtualMachines:

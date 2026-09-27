@@ -395,6 +395,8 @@ func toAlarmMemberXML(a *mondriver.AlarmInfo) alarmMemberXML {
 		m.StateTransitionedTimestamp = a.StateTransitionedTimestamp.UTC().Format(time.RFC3339)
 	}
 
+	m.AlarmConfigurationUpdatedTimestamp = xmlTime(optTime(a.AlarmConfigurationUpdatedTimestamp))
+
 	return m
 }
 
@@ -744,8 +746,9 @@ type alarmMemberXML struct {
 	Metrics                    []metricDataQueryXML `xml:"Metrics>member,omitempty"`
 	ThresholdMetricID          string               `xml:"ThresholdMetricId,omitempty"`
 
-	EvaluateLowSampleCountPercentile string               `xml:"EvaluateLowSampleCountPercentile,omitempty"`
-	EvaluationWindow                 *evaluationWindowXML `xml:"EvaluationWindow,omitempty"`
+	EvaluateLowSampleCountPercentile   string               `xml:"EvaluateLowSampleCountPercentile,omitempty"`
+	EvaluationWindow                   *evaluationWindowXML `xml:"EvaluationWindow,omitempty"`
+	AlarmConfigurationUpdatedTimestamp string               `xml:"AlarmConfigurationUpdatedTimestamp,omitempty"`
 }
 
 type compositeAlarmMemberXML struct {

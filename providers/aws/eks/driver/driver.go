@@ -183,6 +183,14 @@ type NodegroupScalingConfig struct {
 	DesiredSize int
 }
 
+// NodegroupScalingUpdate is a partial scaling change for UpdateNodegroupConfig.
+// Only the non-nil sizes change; the rest keep their current values.
+type NodegroupScalingUpdate struct {
+	MinSize     *int
+	MaxSize     *int
+	DesiredSize *int
+}
+
 // Taint is a Kubernetes taint applied to a managed node group's nodes. Effect
 // is one of NO_SCHEDULE, PREFER_NO_SCHEDULE, or NO_EXECUTE. A taint is
 // identified by its Key+Effect pair.
@@ -226,11 +234,13 @@ type NodegroupConfig struct {
 	DiskSize       int
 	Version        string
 	ReleaseVersion string
-	ScalingConfig  NodegroupScalingConfig
-	UpdateConfig   NodegroupUpdateConfig
-	Labels         map[string]string
-	Taints         []Taint
-	Tags           map[string]string
+	// ScalingConfig is optional; nil gets the EKS default of min 1, max 2,
+	// desired 2.
+	ScalingConfig *NodegroupScalingConfig
+	UpdateConfig  NodegroupUpdateConfig
+	Labels        map[string]string
+	Taints        []Taint
+	Tags          map[string]string
 	// LaunchTemplate is optional; when set, it names the EC2 launch template
 	// backing the node group's instances.
 	LaunchTemplate *LaunchTemplateSpecification
@@ -273,11 +283,11 @@ type Nodegroup struct {
 }
 
 // NodegroupConfigUpdate carries the mutable fields UpdateNodegroupConfig
-// applies. Scaling, when non-nil, is the already-merged target sizing (the
-// caller overlays partial requests). Label and taint changes are expressed as
+// applies. Scaling, when non-nil, names the sizes to change; they are merged
+// onto the current config and the result is validated. Label and taint changes are expressed as
 // add/update and remove deltas, matching the real EKS request shape.
 type NodegroupConfigUpdate struct {
-	Scaling           *NodegroupScalingConfig
+	Scaling           *NodegroupScalingUpdate
 	UpdateConfig      *NodegroupUpdateConfig
 	AddOrUpdateLabels map[string]string
 	RemoveLabels      []string

@@ -131,3 +131,39 @@ func (m *Mock) UntagResource(_ context.Context, id string, keys []string) error 
 
 	return nil
 }
+
+// ResourceTags returns a copy of the current tags on an EC2 instance, volume,
+// snapshot, or image, or NotFound for an unknown ID. The EC2 CreateTags and
+// DeleteTags handler reads it for every resource in a batch before writing, so
+// an unknown id, a tag-limit breach, or a DeleteTags value mismatch is decided
+// before any resource changes. It takes the same locks as TagResource.
+func (m *Mock) ResourceTags(_ context.Context, id string) (map[string]string, error) {
+	var out map[string]string
+
+	snapshot := func(src map[string]string) {
+		out = make(map[string]string, len(src))
+		for k, v := range src {
+			out[k] = v
+		}
+	}
+
+	if strings.HasPrefix(id, "i-") {
+		if !m.mutateInstanceTags(id, snapshot) {
+			return nil, cerrors.Newf(cerrors.NotFound, "resource %q not found", id)
+		}
+
+		return out, nil
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	src, ok := m.tagsOf(id)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "resource %q not found", id)
+	}
+
+	snapshot(src)
+
+	return out, nil
+}

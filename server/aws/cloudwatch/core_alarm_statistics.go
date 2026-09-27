@@ -30,11 +30,66 @@ func validateAlarmStatistic(cfg *mondriver.AlarmConfig) error {
 		return newWireError(errInvalidParameterCombo, "Exactly one of Statistic or ExtendedStatistic must be specified.")
 	case cfg.Stat == "" && cfg.ExtendedStatistic == "":
 		return newWireError(errValidation, "Exactly one of Statistic or ExtendedStatistic must be specified.")
+	case cfg.Stat != "" && !validStatistics[cfg.Stat]:
+		return newWireError(errValidation, "1 validation error detected: Value '"+cfg.Stat+
+			"' at 'statistic' failed to satisfy constraint: Member must satisfy enum value set: "+
+			"[Maximum, SampleCount, Sum, Minimum, Average]")
 	case cfg.ExtendedStatistic != "":
 		if _, err := alarmeval.ParseExtendedStatistic(cfg.ExtendedStatistic); err != nil {
 			return newWireError(errValidation, "The value "+cfg.ExtendedStatistic+
 				" for parameter ExtendedStatistic is not supported.")
 		}
+	}
+
+	return nil
+}
+
+// validStatistics is the closed Statistic enum.
+//
+//nolint:gochecknoglobals // fixed lookup table for a closed enum.
+var validStatistics = map[string]bool{
+	statSampleCount: true, statAverage: true, statSum: true, statMinimum: true, statMaximum: true,
+}
+
+// How far back, in seconds, EvaluationPeriods * Period may reach: one day
+// for a Period under an hour, seven days for a Period of an hour or more.
+const (
+	maxAlarmLookbackDay  = 86400
+	maxAlarmLookbackWeek = 604800
+	hourPeriod           = 3600
+)
+
+// validateAlarmPeriods checks Period and DatapointsToAlarm. A single-metric
+// alarm's Period is 10, 20, 30 or a multiple of 60, and EvaluationPeriods *
+// Period is capped at a day, or at a week when Period is an hour or more.
+func validateAlarmPeriods(cfg *mondriver.AlarmConfig) error {
+	if cfg.DatapointsToAlarm > 0 && cfg.EvaluationPeriods > 0 && cfg.DatapointsToAlarm > cfg.EvaluationPeriods {
+		return newWireError(errValidation, "DatapointsToAlarm must be less than or equal to EvaluationPeriods.")
+	}
+
+	if len(cfg.Metrics) > 0 || cfg.Period == 0 {
+		return nil
+	}
+
+	if !validPeriod(cfg.Period) {
+		return newWireError(errValidation, "Period must be 10, 20, 30 or a multiple of 60")
+	}
+
+	return validateAlarmLookback(cfg.Period, cfg.EvaluationPeriods)
+}
+
+// validateAlarmLookback checks EvaluationPeriods * Period against the day or
+// week cap that applies to period p.
+func validateAlarmLookback(p, evaluationPeriods int) error {
+	lookback := p * max(evaluationPeriods, 1)
+
+	switch {
+	case p < hourPeriod && lookback > maxAlarmLookbackDay:
+		return newWireError(errValidation, "Metrics cannot be checked across more than a day "+
+			"(EvaluationPeriods * Period must be <= 86400)")
+	case p >= hourPeriod && lookback > maxAlarmLookbackWeek:
+		return newWireError(errValidation, "Metrics cannot be checked across more than a week "+
+			"(EvaluationPeriods * Period must be <= 604800)")
 	}
 
 	return nil

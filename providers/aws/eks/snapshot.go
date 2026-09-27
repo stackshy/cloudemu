@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/stackshy/cloudemu/v2/internal/settle"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 )
 
@@ -87,11 +88,19 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return err
 	}
 
+	m.mu.Lock()
+
 	if snap.K8sUIDs != nil {
-		m.mu.Lock()
 		m.k8sUIDs = snap.K8sUIDs
-		m.mu.Unlock()
 	}
+
+	// Settle windows are not persisted, so a restored cluster or nodegroup
+	// reports the version it was moving to and its updates read Successful.
+	m.updateSettle = settle.NewSet()
+	m.clusterOldVersions = make(map[string]oldVersion)
+	m.nodegroupOldVersions = make(map[string]oldVersion)
+
+	m.mu.Unlock()
 
 	return nil
 }

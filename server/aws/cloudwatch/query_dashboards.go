@@ -20,7 +20,7 @@ func (h *Handler) queryPutDashboard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := store.PutDashboard(r.Context(), r.Form.Get("DashboardName"), r.Form.Get("DashboardBody")); err != nil {
+	if err := putDashboardCore(r.Context(), store, r.Form.Get("DashboardName"), r.Form.Get("DashboardBody")); err != nil {
 		writeQueryDriverErr(w, err)
 		return
 	}

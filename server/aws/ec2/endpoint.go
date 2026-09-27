@@ -81,7 +81,7 @@ func (h *Handler) deleteVPCEndpoints(w http.ResponseWriter, r *http.Request) {
 	for _, id := range awsquery.ListStrings(r.Form, "VpcEndpointId") {
 		if err := h.vpc.DeleteVPCEndpoint(r.Context(), id); err != nil {
 			item := unsuccessfulItemXML{ResourceID: id}
-			item.Error.Code = "InvalidVpcEndpointId.NotFound"
+			item.Error.Code = codeInvalidVpcEndpointID
 			item.Error.Message = cerrors.Message(err)
 			unsuccessful = append(unsuccessful, item)
 		}
@@ -231,5 +231,5 @@ func toVPCEndpointXML(ep *netdriver.VPCEndpoint) vpcEndpointXML {
 }
 
 func writeVPCEndpointErr(w http.ResponseWriter, err error) {
-	writeErrWithNotFound(w, err, "InvalidVpcEndpointId.NotFound", "DependencyViolation")
+	writeErrWithNotFound(w, err, codeInvalidVpcEndpointID, "DependencyViolation")
 }

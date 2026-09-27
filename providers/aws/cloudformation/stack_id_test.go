@@ -35,7 +35,7 @@ func TestStackNameAcceptsStackID(t *testing.T) {
 		t.Fatalf("an unknown ID must be NotFound, got %v", err)
 	}
 
-	requireNoError(t, m.DeleteStack(ctx, id))
+	requireNoError(t, m.DeleteStack(ctx, &cfn.DeleteStackInput{StackName: id}))
 
 	got, err = m.DescribeStacks(ctx, id)
 	requireNoError(t, err)
