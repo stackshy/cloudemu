@@ -121,6 +121,32 @@ func TestSDKCreatorFromAssumedRoleSession(t *testing.T) {
 	}
 }
 
+// TestSDKCreatorFromFederatedUser checks that a federated user session gets
+// no creator entry, since EKS can't use it as an access entry principal.
+func TestSDKCreatorFromFederatedUser(t *testing.T) {
+	ctx := context.Background()
+	ts, _ := identityServer(t)
+
+	stsClient := awssts.NewFromConfig(sdkConfig(t, "test", "test", ""), func(o *awssts.Options) {
+		o.BaseEndpoint = aws.String(ts.URL)
+	})
+
+	fed, err := stsClient.GetFederationToken(ctx, &awssts.GetFederationTokenInput{Name: aws.String("bob")})
+	if err != nil {
+		t.Fatalf("GetFederationToken: %v", err)
+	}
+
+	c := fed.Credentials
+	client := eksClientFor(ts.URL, sdkConfig(t,
+		aws.ToString(c.AccessKeyId), aws.ToString(c.SecretAccessKey), aws.ToString(c.SessionToken)))
+	createAPICluster(t, client, "fed")
+
+	out, err := client.ListAccessEntries(ctx, &awseks.ListAccessEntriesInput{ClusterName: aws.String("fed")})
+	if err != nil || len(out.AccessEntries) != 0 {
+		t.Fatalf("entries = %+v err %v, want none", out, err)
+	}
+}
+
 // TestSDKCreatorFromIAMUserKey checks that a long-term key maps to the IAM
 // user that owns it.
 func TestSDKCreatorFromIAMUserKey(t *testing.T) {
