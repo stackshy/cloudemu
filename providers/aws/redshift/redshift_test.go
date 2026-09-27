@@ -428,7 +428,7 @@ func TestDeleteClusterSubnetGroupInUseGuard(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	if _, err := m.CreateClusterSubnetGroup(ctx, "sng", "desc", []string{"subnet-1"}); err != nil {
+	if _, err := m.CreateClusterSubnetGroup(ctx, "sng", "desc", []string{"subnet-1"}, nil); err != nil {
 		t.Fatalf("create subnet group: %v", err)
 	}
 
@@ -463,7 +463,7 @@ func TestDeleteClusterParameterGroupInUseGuard(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	if _, err := m.CreateClusterParameterGroup(ctx, "pg", "redshift-1.0", "desc"); err != nil {
+	if _, err := m.CreateClusterParameterGroup(ctx, "pg", "redshift-1.0", "desc", nil); err != nil {
 		t.Fatalf("create parameter group: %v", err)
 	}
 
@@ -496,11 +496,11 @@ func TestDeleteUnreferencedGroupsSucceed(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	if _, err := m.CreateClusterSubnetGroup(ctx, "sng", "desc", []string{"subnet-1"}); err != nil {
+	if _, err := m.CreateClusterSubnetGroup(ctx, "sng", "desc", []string{"subnet-1"}, nil); err != nil {
 		t.Fatalf("create subnet group: %v", err)
 	}
 
-	if _, err := m.CreateClusterParameterGroup(ctx, "pg", "redshift-1.0", "desc"); err != nil {
+	if _, err := m.CreateClusterParameterGroup(ctx, "pg", "redshift-1.0", "desc", nil); err != nil {
 		t.Fatalf("create parameter group: %v", err)
 	}
 

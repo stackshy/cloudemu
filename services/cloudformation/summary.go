@@ -1,12 +1,22 @@
 package cloudformation
 
-import "strings"
+import (
+	"slices"
+	"strings"
+
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
+)
 
 // Capability values CloudFormation asks callers to acknowledge.
 const (
-	CapabilityIAM      = "CAPABILITY_IAM"
-	CapabilityNamedIAM = "CAPABILITY_NAMED_IAM"
+	CapabilityIAM        = "CAPABILITY_IAM"
+	CapabilityNamedIAM   = "CAPABILITY_NAMED_IAM"
+	CapabilityAutoExpand = "CAPABILITY_AUTO_EXPAND"
 )
+
+// ExceptionInsufficientCapabilities is the error CreateStack and UpdateStack
+// return when the caller did not acknowledge a required capability.
+const ExceptionInsufficientCapabilities = "InsufficientCapabilitiesException"
 
 // iamNameProps maps each IAM resource type to the property that gives it a
 // custom name. A type with "" has no such property.
@@ -71,6 +81,33 @@ func requiredCapabilities(t *Template) (caps []string, reason string) {
 	}
 
 	return []string{CapabilityIAM}, reason
+}
+
+// CheckCapabilities returns InsufficientCapabilitiesException when the
+// template needs a capability the caller did not pass. CAPABILITY_NAMED_IAM
+// also covers CAPABILITY_IAM.
+func CheckCapabilities(t *Template, given []string) error {
+	iamCaps, _ := requiredCapabilities(t)
+
+	var missing []string
+
+	for _, c := range iamCaps {
+		ok := slices.Contains(given, c) || (c == CapabilityIAM && slices.Contains(given, CapabilityNamedIAM))
+		if !ok {
+			missing = append(missing, c)
+		}
+	}
+
+	if len(transforms(t.Transform)) > 0 && !slices.Contains(given, CapabilityAutoExpand) {
+		missing = append(missing, CapabilityAutoExpand)
+	}
+
+	if len(missing) == 0 {
+		return nil
+	}
+
+	return NewException(ExceptionInsufficientCapabilities,
+		cerrors.Newf(cerrors.InvalidArgument, "Requires capabilities : [%s]", strings.Join(missing, ", ")))
 }
 
 // transforms lists the macro names a Transform section declares, in order.

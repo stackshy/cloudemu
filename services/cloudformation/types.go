@@ -19,6 +19,10 @@ const (
 	StatusUpdateComplete           = "UPDATE_COMPLETE"
 	StatusUpdateRollbackInProgress = "UPDATE_ROLLBACK_IN_PROGRESS"
 	StatusUpdateRollbackComplete   = "UPDATE_ROLLBACK_COMPLETE"
+	StatusUpdateRollbackFailed     = "UPDATE_ROLLBACK_FAILED"
+
+	StatusUpdateCompleteCleanupInProgress         = "UPDATE_COMPLETE_CLEANUP_IN_PROGRESS"
+	StatusUpdateRollbackCompleteCleanupInProgress = "UPDATE_ROLLBACK_COMPLETE_CLEANUP_IN_PROGRESS"
 
 	StatusDeleteInProgress = "DELETE_IN_PROGRESS"
 	StatusDeleteComplete   = "DELETE_COMPLETE"
@@ -32,6 +36,7 @@ const (
 	ResourceCreateFailed     = "CREATE_FAILED"
 	ResourceUpdateInProgress = "UPDATE_IN_PROGRESS"
 	ResourceUpdateComplete   = "UPDATE_COMPLETE"
+	ResourceUpdateFailed     = "UPDATE_FAILED"
 	ResourceDeleteInProgress = "DELETE_IN_PROGRESS"
 	ResourceDeleteComplete   = "DELETE_COMPLETE"
 	ResourceDeleteFailed     = "DELETE_FAILED"
@@ -139,9 +144,19 @@ type UpdateStackInput struct {
 	Parameters   []Parameter
 	Tags         map[string]string
 	Capabilities []string
+	// UsePreviousTemplate reuses the stack's current template.
+	UsePreviousTemplate bool
 
 	// NotificationARNs replaces the stack's topics. Nil keeps them.
 	NotificationARNs []string
+}
+
+// ContinueUpdateRollbackInput is the request to retry the rollback of a stack
+// in UPDATE_ROLLBACK_FAILED.
+type ContinueUpdateRollbackInput struct {
+	StackName string
+	// ResourcesToSkip names failed resources the rollback leaves as they are.
+	ResourcesToSkip []string
 }
 
 // ValidateTemplateInput is the request to validate a template. TemplateBody
@@ -175,6 +190,7 @@ type TemplateSummary struct {
 type API interface {
 	CreateStack(ctx context.Context, in *CreateStackInput) (*Stack, error)
 	UpdateStack(ctx context.Context, in *UpdateStackInput) (*Stack, error)
+	ContinueUpdateRollback(ctx context.Context, in *ContinueUpdateRollbackInput) error
 	DeleteStack(ctx context.Context, stackName string) error
 	DescribeStacks(ctx context.Context, stackName string) ([]Stack, error)
 	DescribeStackEvents(ctx context.Context, stackName string) ([]StackEvent, error)

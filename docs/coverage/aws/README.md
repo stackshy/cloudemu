@@ -13,13 +13,13 @@ Services cloudemu emulates for AWS, by native name. Back to the [cross-provider 
 | [AppFlow](./appflow.md) | `appflow` | 14 |
 | [AppRunner](./apprunner.md) | `apprunner` | 29 |
 | [AppSync](./appsync.md) | `appsync` | 17 |
-| [Athena](./athena.md) | `athena` | 23 |
+| [Athena](./athena.md) | `athena` | 26 |
 | [Backup](./backup.md) | `backup` | 25 |
 | [Batch](./batch.md) | `batch` | 14 |
 | [Bedrock](./bedrock.md) | `bedrock` | 65 |
 | [BedrockAgent](./bedrockagent.md) | `bedrockagent` | 29 |
 | [BedrockAgentRuntime](./bedrockagentruntime.md) | `bedrockagentruntime` | 3 |
-| [CloudFormation](./cloudformation.md) | (provider-native) | 10 |
+| [CloudFormation](./cloudformation.md) | (provider-native) | 11 |
 | [CloudFront](./cloudfront.md) | `cloudfront` | 11 |
 | [CloudTrail](./cloudtrail.md) | `cloudtrail` | 60 |
 | [CloudWatch](./cloudwatch.md) | `monitoring` | 12 |

@@ -25,7 +25,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `apprunner` | [AppRunner](./aws/apprunner.md) | - | - | - | 29 |
 | `appsync` | [AppSync](./aws/appsync.md) | - | - | - | 17 |
 | `aps` | [APS](./aws/aps.md) | - | - | - | 21 |
-| `athena` | [Athena](./aws/athena.md) | - | - | - | 23 |
+| `athena` | [Athena](./aws/athena.md) | - | - | - | 26 |
 | `azureai` | - | [AI](./azure/ai.md) | - | - | 92 |
 | `azurefirewall` | - | [Firewall](./azure/firewall.md) | - | - | 8 |
 | `azuresearch` | - | [Search](./azure/search.md) | - | - | 53 |
@@ -45,7 +45,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `cloudasset` | - | - | [Cloudasset](./gcp/cloudasset.md) | - | 11 |
 | `cloudbilling` | - | - | [Cloudbilling](./gcp/cloudbilling.md) | - | 14 |
 | `clouddeploy` | - | - | [CloudDeploy](./gcp/clouddeploy.md) | - | 11 |
-| `cloudformation` | [CloudFormation](./aws/cloudformation.md) | - | - | - | 10 |
+| `cloudformation` | [CloudFormation](./aws/cloudformation.md) | - | - | - | 11 |
 | `cloudfront` | [CloudFront](./aws/cloudfront.md) | - | - | - | 11 |
 | `cloudids` | - | - | [CloudIDS](./gcp/cloudids.md) | - | 6 |
 | `cloudrun` | - | - | [CloudRun](./gcp/cloudrun.md) | - | 18 |

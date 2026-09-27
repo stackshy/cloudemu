@@ -13,7 +13,6 @@ import (
 // Event subscription limits and defaults, from the Redshift API reference.
 const (
 	maxSubscriptionNameLen = 255
-	maxSubscriptionTags    = 50
 	defaultSeverity        = "INFO"
 	subscriptionActive     = "active"
 )
@@ -107,8 +106,8 @@ func (m *Mock) CreateEventSubscription(ctx context.Context, cfg EventSubscriptio
 		return nil, err
 	}
 
-	if len(cfg.Tags) > maxSubscriptionTags {
-		return nil, cerrors.Newf(cerrors.ResourceExhausted, "number of tags exceeds the limit of %d", maxSubscriptionTags)
+	if err := validateTags(nil, cfg.Tags); err != nil {
+		return nil, err
 	}
 
 	sub := EventSubscription{
@@ -343,25 +342,6 @@ func (m *Mock) sourceExists(sourceType, id string) bool {
 		return m.clusterSnapshots.Has(id)
 	default:
 		return true
-	}
-}
-
-// setTagsLocked adds tags to the ARN-keyed tag store. The caller holds m.mu.
-func (m *Mock) setTagsLocked(arn string, tags map[string]string) {
-	if len(tags) == 0 {
-		return
-	}
-
-	if m.tagsByARN == nil {
-		m.tagsByARN = map[string]map[string]string{}
-	}
-
-	if m.tagsByARN[arn] == nil {
-		m.tagsByARN[arn] = map[string]string{}
-	}
-
-	for k, v := range tags {
-		m.tagsByARN[arn][k] = v
 	}
 }
 

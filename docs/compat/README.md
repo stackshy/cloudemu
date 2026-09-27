@@ -37,6 +37,7 @@ Each service's summary breaks the verified counts out per SDK/language. Only lan
 
 | Operation | AWS (CloudFormation) |
 |---|---|
+| ContinueUpdateRollback | ✅ |
 | CreateStack | ✅ |
 | DeleteStack | ✅ |
 | DescribeStackEvents | ✅ |
@@ -49,7 +50,7 @@ Each service's summary breaks the verified counts out per SDK/language. Only lan
 | ValidateTemplate | ✅ |
 
 **cloudformation verified per language:**
-- Go: AWS 10/10
+- Go: AWS 11/11
 
 ## compute
 

@@ -89,8 +89,9 @@ func tagsByPrefix(form url.Values, prefix string) map[string]string {
 
 	for _, n := range indices {
 		base := prefix + "." + strconv.Itoa(n)
-		if k := form.Get(base + ".Key"); k != "" {
-			out[k] = form.Get(base + ".Value")
+		// An empty key is kept so tag validation can reject it.
+		if form.Has(base + ".Key") {
+			out[form.Get(base+".Key")] = form.Get(base + ".Value")
 		}
 	}
 
@@ -286,9 +287,10 @@ func (h *Handler) createClusterSnapshot(w http.ResponseWriter, r *http.Request) 
 	form := r.Form
 
 	cfg := rdbdriver.ClusterSnapshotConfig{
-		ID:        form.Get("SnapshotIdentifier"),
-		ClusterID: form.Get("ClusterIdentifier"),
-		Tags:      parseRedshiftTags(form),
+		ID:                            form.Get("SnapshotIdentifier"),
+		ClusterID:                     form.Get("ClusterIdentifier"),
+		Tags:                          parseRedshiftTags(form),
+		ManualSnapshotRetentionPeriod: optionalFormInt(form, "ManualSnapshotRetentionPeriod"),
 	}
 
 	snap, err := h.db.CreateClusterSnapshot(r.Context(), cfg)
@@ -490,4 +492,38 @@ func (h *Handler) resumeCluster(w http.ResponseWriter, r *http.Request) {
 		Result:   clusterResult{Cluster: toClusterXML(cluster)},
 		Metadata: responseMetadata{RequestID: awsquery.RequestID},
 	})
+}
+
+func (h *Handler) modifyClusterSnapshot(w http.ResponseWriter, r *http.Request) {
+	mod, ok := h.db.(snapshotModifier)
+	if !ok {
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "InvalidAction", "ModifyClusterSnapshot is not supported")
+		return
+	}
+
+	form := r.Form
+
+	snap, err := mod.ModifyClusterSnapshot(r.Context(), form.Get("SnapshotIdentifier"),
+		optionalFormInt(form, "ManualSnapshotRetentionPeriod"), formBool(form.Get("Force")))
+	if err != nil {
+		writeErr(w, err)
+		return
+	}
+
+	awsquery.WriteXMLResponse(w, modifyClusterSnapshotResponse{
+		Xmlns:    Namespace,
+		Result:   snapshotResult{Snapshot: toSnapshotXML(snap)},
+		Metadata: responseMetadata{RequestID: awsquery.RequestID},
+	})
+}
+
+// optionalFormInt returns the int value of key, or nil when the form omits it.
+func optionalFormInt(form url.Values, key string) *int {
+	if !form.Has(key) {
+		return nil
+	}
+
+	v := formInt(form.Get(key))
+
+	return &v
 }

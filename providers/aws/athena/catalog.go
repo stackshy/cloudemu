@@ -26,8 +26,15 @@ type Catalog interface {
 	GetTables(ctx context.Context, catalogID, dbName string, page gluedriver.TablePagination) ([]gluedriver.Table, string, error)
 }
 
-// catalogTypeGlue is the data catalog type backed by Glue.
-const catalogTypeGlue = "GLUE"
+// connectionLookup is the optional part of Catalog that finds Glue
+// connections. A FEDERATED catalog built on a connection-arn needs it. The
+// fallback store has no connections, so it skips the check.
+type connectionLookup interface {
+	GetConnection(ctx context.Context, catalogID, name string) (*gluedriver.Connection, error)
+}
+
+// connectorNotSupported is the failure for catalogs served by a connector.
+const connectorNotSupported = "NOT_SUPPORTED: federated/Lambda connector execution is not emulated"
 
 // catalogIDParam is the GLUE data catalog parameter naming the Glue catalog.
 const catalogIDParam = "catalog-id"
@@ -57,11 +64,11 @@ func (m *Mock) glueCatalogID(name string) (string, error) {
 
 	dc, ok := m.dataCatalogs.Get(name)
 	if !ok {
-		return "", notFoundRequest("Catalog %s not found", name)
+		return "", catalogNotFound(name)
 	}
 
-	if !strings.EqualFold(dc.Type, catalogTypeGlue) {
-		return "", invalidRequest("NOT_SUPPORTED: %s catalogs are not emulated", dc.Type)
+	if !strings.EqualFold(dc.Type, driver.DataCatalogTypeGlue) {
+		return "", invalidRequest("%s", connectorNotSupported)
 	}
 
 	id := dc.Parameters[catalogIDParam]

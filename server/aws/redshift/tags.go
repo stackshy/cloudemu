@@ -47,7 +47,7 @@ func (h *Handler) createTags(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := tagger.CreateTags(r.Context(), r.Form.Get("ResourceName"), awsquery.FlatTags(r.Form, "Tags.Tag")); err != nil {
+	if err := tagger.CreateTags(r.Context(), r.Form.Get("ResourceName"), parseRedshiftTags(r.Form)); err != nil {
 		writeErr(w, err)
 		return
 	}

@@ -86,9 +86,46 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	if snap.TagsByARN != nil {
 		m.tagsByARN = snap.TagsByARN
 	}
+
+	m.moveRowTagsLocked()
 	m.mu.Unlock()
 
 	return nil
+}
+
+// moveRowTagsLocked moves tags that older snapshots kept on cluster and
+// snapshot rows into the ARN-keyed store. Store entries win. The caller holds
+// m.mu.
+func (m *Mock) moveRowTagsLocked() {
+	clusters := m.clusters.All()
+	for id := range clusters {
+		c := clusters[id]
+		if len(c.Tags) == 0 {
+			continue
+		}
+
+		if _, ok := m.tagsByARN[c.ARN]; !ok {
+			m.setTagsLocked(c.ARN, c.Tags)
+		}
+
+		c.Tags = nil
+		m.clusters.Set(id, c)
+	}
+
+	snaps := m.clusterSnapshots.All()
+	for id := range snaps {
+		s := snaps[id]
+		if len(s.Tags) == 0 {
+			continue
+		}
+
+		if _, ok := m.tagsByARN[s.ARN]; !ok {
+			m.setTagsLocked(s.ARN, s.Tags)
+		}
+
+		s.Tags = nil
+		m.clusterSnapshots.Set(id, s)
+	}
 }
 
 func (m *Mock) restoreStores(snap *redshiftSnapshot) error {

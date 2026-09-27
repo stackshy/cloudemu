@@ -18,9 +18,3 @@ func invalidRequest(format string, args ...any) error {
 func notFoundRequest(format string, args ...any) error {
 	return &driver.APIError{Exception: driver.ExInvalidRequest, Err: errors.Newf(errors.NotFound, format, args...)}
 }
-
-// resourceNotFound builds a ResourceNotFoundException-tagged error, used by
-// GetDataCatalog when the catalog is absent.
-func resourceNotFound(format string, args ...any) error {
-	return &driver.APIError{Exception: driver.ExResourceNotFound, Err: errors.Newf(errors.NotFound, format, args...)}
-}

@@ -98,11 +98,60 @@ func TestAWSCloudFormationCompat(t *testing.T) {
 		return err
 	})
 
+	sess.Op(svc, "ContinueUpdateRollback", func() error {
+		return continueUpdateRollback(ctx, client)
+	})
+
 	sess.Op(svc, "DeleteStack", func() error {
 		_, err := client.DeleteStack(ctx, &awscfn.DeleteStackInput{StackName: aws.String(stack)})
 		return err
 	})
 }
+
+// continueUpdateRollback drives a stack into UPDATE_ROLLBACK_FAILED, where
+// Parameter Store refuses to move a parameter back from the Advanced tier,
+// then continues the rollback skipping it.
+func continueUpdateRollback(ctx context.Context, client *awscfn.Client) error {
+	const name = "compat-rollback"
+
+	if _, err := client.CreateStack(ctx, &awscfn.CreateStackInput{
+		StackName: aws.String(name), TemplateBody: aws.String(rollbackTemplate),
+	}); err != nil {
+		return err
+	}
+
+	if _, err := client.UpdateStack(ctx, &awscfn.UpdateStackInput{
+		StackName: aws.String(name), TemplateBody: aws.String(rollbackTemplateFailing),
+	}); err != nil {
+		return err
+	}
+
+	if _, err := client.ContinueUpdateRollback(ctx, &awscfn.ContinueUpdateRollbackInput{
+		StackName: aws.String(name), ResourcesToSkip: []string{"Old"},
+	}); err != nil {
+		return err
+	}
+
+	out, err := client.DescribeStacks(ctx, &awscfn.DescribeStacksInput{StackName: aws.String(name)})
+	if err != nil {
+		return err
+	}
+
+	if out.Stacks[0].StackStatus != "UPDATE_ROLLBACK_COMPLETE" {
+		return errCompat("status " + string(out.Stacks[0].StackStatus))
+	}
+
+	return nil
+}
+
+const rollbackTemplate = `{"Resources":{
+  "Old":{"Type":"AWS::SSM::Parameter","Properties":{"Name":"/compat/p","Type":"String","Value":"v","Tier":"Standard"}}
+}}`
+
+const rollbackTemplateFailing = `{"Resources":{
+  "Old":{"Type":"AWS::SSM::Parameter","Properties":{"Name":"/compat/p","Type":"String","Value":"v","Tier":"Advanced"}},
+  "Bad":{"Type":"AWS::Unknown::Thing","DependsOn":"Old"}
+}}`
 
 type errCompat string
 

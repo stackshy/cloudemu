@@ -15,6 +15,7 @@
 //
 //	CreateStack                API.CreateStack
 //	UpdateStack                API.UpdateStack
+//	ContinueUpdateRollback     API.ContinueUpdateRollback
 //	DeleteStack                API.DeleteStack
 //	DescribeStacks             API.DescribeStacks
 //	DescribeStackEvents        API.DescribeStackEvents
@@ -29,6 +30,7 @@
 package cloudformation
 
 import (
+	"errors"
 	"net/http"
 	"strings"
 
@@ -49,6 +51,7 @@ const (
 var cfnActions = map[string]struct{}{ //nolint:gochecknoglobals // static lookup table
 	"CreateStack":            {},
 	"UpdateStack":            {},
+	"ContinueUpdateRollback": {},
 	"DeleteStack":            {},
 	"DescribeStacks":         {},
 	"DescribeStackEvents":    {},
@@ -102,6 +105,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.createStack(w, r)
 	case "UpdateStack":
 		h.updateStack(w, r)
+	case "ContinueUpdateRollback":
+		h.continueUpdateRollback(w, r)
 	case "DeleteStack":
 		h.deleteStack(w, r)
 	case "DescribeStacks":
@@ -124,11 +129,17 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// writeErr maps cloudemu errors to CloudFormation XML error responses.
+// writeErr maps cloudemu errors to CloudFormation XML error responses. An
+// error that names its own exception, such as
+// InsufficientCapabilitiesException, is reported under that name.
 func writeErr(w http.ResponseWriter, err error) {
 	msg := cerrors.Message(err)
 
+	var named *cfn.ExceptionError
+
 	switch {
+	case errors.As(err, &named):
+		awsquery.WriteXMLError(w, http.StatusBadRequest, named.Exception(), msg)
 	case cerrors.IsNotFound(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, "ValidationError", msg)
 	case cerrors.IsAlreadyExists(err):

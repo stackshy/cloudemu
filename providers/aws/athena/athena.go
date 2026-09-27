@@ -1,8 +1,8 @@
 // Package athena provides an in-memory mock implementation of AWS Athena: the
 // interactive-query control plane. It models workgroups (with their result and
 // engine configuration and usage controls), saved (named) queries, query
-// executions, and the read side of the Data Catalog (databases, tables and
-// data catalogs). AwsDataCatalog is the Glue Data Catalog wired via SetCatalog.
+// executions, and the Data Catalog (databases, tables and registered data
+// catalogs). AwsDataCatalog is the Glue Data Catalog wired via SetCatalog.
 //
 // There is no real Presto/Trino compute plane behind the emulator, so a started
 // query execution settles to SUCCEEDED synchronously and CREATE/DROP DATABASE
@@ -114,8 +114,9 @@ func (m *Mock) seed() {
 	m.workGroups.SetIfAbsent(primary.Name, copyWorkGroup(primary))
 
 	m.dataCatalogs.SetIfAbsent(driver.DefaultDataCatalog, driver.DataCatalog{
-		Name: driver.DefaultDataCatalog,
-		Type: "GLUE",
+		Name:       driver.DefaultDataCatalog,
+		Type:       driver.DataCatalogTypeGlue,
+		Parameters: map[string]string{},
 	})
 }
 

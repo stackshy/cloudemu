@@ -54,7 +54,8 @@ func updateInput(form url.Values) cfn.UpdateStackInput {
 		Tags:         parseTags(form),
 		Capabilities: awsquery.ListStrings(form, "Capabilities.member"),
 
-		NotificationARNs: updateNotificationARNs(form),
+		UsePreviousTemplate: strings.EqualFold(form.Get("UsePreviousTemplate"), "true"),
+		NotificationARNs:    updateNotificationARNs(form),
 	}
 }
 
@@ -131,6 +132,13 @@ type updateStackResponse struct {
 	XMLName xml.Name         `xml:"UpdateStackResponse"`
 	Xmlns   string           `xml:"xmlns,attr"`
 	Result  stackIDResult    `xml:"UpdateStackResult"`
+	Meta    responseMetadata `xml:"ResponseMetadata"`
+}
+
+type continueUpdateRollbackResponse struct {
+	XMLName xml.Name         `xml:"ContinueUpdateRollbackResponse"`
+	Xmlns   string           `xml:"xmlns,attr"`
+	Result  struct{}         `xml:"ContinueUpdateRollbackResult"`
 	Meta    responseMetadata `xml:"ResponseMetadata"`
 }
 
