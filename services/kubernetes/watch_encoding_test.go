@@ -43,6 +43,16 @@ const (
 func newWatchFixture(t *testing.T) string {
 	t.Helper()
 
+	base, _ := newWatchFixtureAPI(t)
+
+	return base
+}
+
+// newWatchFixtureAPI is newWatchFixture that also returns the APIServer, for
+// tests that snapshot and restore it.
+func newWatchFixtureAPI(t *testing.T) (string, *kubernetes.APIServer) {
+	t.Helper()
+
 	api := kubernetes.NewAPIServer()
 	uid, _ := api.RegisterCluster()
 	ts := httptest.NewServer(api)
@@ -54,7 +64,7 @@ func newWatchFixture(t *testing.T) string {
 		ts.Close()
 	})
 
-	return ts.URL + "/k8s/" + uid
+	return ts.URL + "/k8s/" + uid, api
 }
 
 // watchKind describes one resource kind the encoding tests exercise.
@@ -666,18 +676,28 @@ func expectTypedMatch[T metav1.Object](t *testing.T, w watch.Interface, typ watc
 	}
 }
 
-// TestWatchEncoding_TooOldResourceVersionExpires: a watch resuming from an RV
-// older than the watch history gets a single ERROR event carrying a 410
-// Expired Status and the stream ends, which makes a reflector relist.
+// TestWatchEncoding_TooOldResourceVersionExpires: after a snapshot restore the
+// watch history starts at the restored RV, so a watch resuming from an older RV
+// gets a single ERROR event carrying a 410 Expired Status and the stream ends,
+// which makes a reflector relist.
 func TestWatchEncoding_TooOldResourceVersionExpires(t *testing.T) {
 	kinds := encodingKinds()
 
 	for _, wk := range []watchKind{kinds[0], kinds[6]} { // typed Pods, registry Nodes
 		t.Run(wk.name, func(t *testing.T) {
-			base := newWatchFixture(t)
+			base, api := newWatchFixtureAPI(t)
 
 			ctx, cancel := context.WithTimeout(context.Background(), watchTestTimeout)
 			defer cancel()
+
+			snap, err := api.Snapshot(ctx, true)
+			if err != nil {
+				t.Fatalf("snapshot: %v", err)
+			}
+
+			if err := api.Restore(ctx, snap); err != nil {
+				t.Fatalf("restore: %v", err)
+			}
 
 			_, br := openWatch(t, ctx, base+wk.listPath+"?watch=true&resourceVersion=1", "")
 
@@ -725,6 +745,65 @@ func TestWatchEncoding_TimeoutSecondsEndsStream(t *testing.T) {
 
 			if d := time.Since(start); d < 900*time.Millisecond || d > 3*time.Second {
 				t.Fatalf("watch with timeoutSeconds=1 ended after %v", d)
+			}
+		})
+	}
+}
+
+// TestWatchEncoding_SeededObjectRVIsWatchable: on a fresh cluster a watch from
+// a bootstrap object's own resourceVersion (the client-go Get-then-Watch
+// pattern) must stream, not expire. The first event is the object's update.
+func TestWatchEncoding_SeededObjectRVIsWatchable(t *testing.T) {
+	cases := []struct {
+		name, getPath, listPath, objName string
+	}{
+		{"typed_namespace", "/api/v1/namespaces/kube-system", "/api/v1/namespaces", "kube-system"},
+		{"registry_node", "/api/v1/nodes/cloudemu-node-0", "/api/v1/nodes", "cloudemu-node-0"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			base := newWatchFixture(t)
+
+			resp := do(t, http.MethodGet, base+tc.getPath, nil)
+
+			var obj struct {
+				Metadata struct {
+					ResourceVersion string `json:"resourceVersion"`
+				} `json:"metadata"`
+			}
+
+			if err := json.NewDecoder(resp.Body).Decode(&obj); err != nil {
+				t.Fatalf("decode %s: %v", tc.objName, err)
+			}
+
+			resp.Body.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), watchTestTimeout)
+			defer cancel()
+
+			_, br := openWatch(t, ctx, base+tc.listPath+"?watch=true&fieldSelector=metadata.name%3D"+tc.objName+
+				"&resourceVersion="+obj.Metadata.ResourceVersion, "")
+
+			req, err := http.NewRequest(http.MethodPatch, base+tc.getPath,
+				bytes.NewReader([]byte(`{"metadata":{"labels":{"watch-test":"yes"}}}`)))
+			if err != nil {
+				t.Fatalf("new patch request: %v", err)
+			}
+
+			req.Header.Set("Content-Type", "application/merge-patch+json")
+
+			patchResp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("patch %s: %v", tc.objName, err)
+			}
+
+			patchResp.Body.Close()
+
+			ev := nextEvent(t, br)
+			if ev.Type != "MODIFIED" || ev.name() != tc.objName {
+				t.Fatalf("watch from seeded RV %s: got %s %v, want MODIFIED %s",
+					obj.Metadata.ResourceVersion, ev.Type, ev.Object, tc.objName)
 			}
 		})
 	}
