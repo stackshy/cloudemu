@@ -68,9 +68,18 @@ func (m *Mock) CreateVPCEndpoint(
 		State:            "available",
 		SubnetIDs:        copyStringSlice(cfg.SubnetIDs),
 		SecurityGroupIDs: copyStringSlice(cfg.SecurityGroupIDs),
-		RouteTableIDs:    copyStringSlice(cfg.RouteTableIDs),
 		Tags:             copyTags(cfg.Tags),
 		CreatedAt:        m.opts.Clock.Now().Format(timeFormat),
+	}
+
+	// The route-table check, the store write and the route sync run under one
+	// lock hold, so a concurrent Delete or a second endpoint for the same
+	// service cannot slip in between.
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if err := m.setEndpointRouteTables(ep, cfg.RouteTableIDs); err != nil {
+		return nil, err
 	}
 
 	// An Interface endpoint provisions one requester-managed ENI per subnet, which
@@ -84,10 +93,7 @@ func (m *Mock) CreateVPCEndpoint(
 	}
 
 	m.endpoints.Set(id, ep)
-
-	m.mu.Lock()
 	m.syncEndpointRoutes(ep)
-	m.mu.Unlock()
 
 	return copyEndpoint(ep), nil
 }
@@ -98,6 +104,9 @@ func (m *Mock) CreateVPCEndpoint(
 func (m *Mock) DeleteVPCEndpoint(
 	_ context.Context, id string,
 ) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	ep, ok := m.endpoints.Get(id)
 	if !ok {
 		return errors.Newf(
@@ -109,11 +118,9 @@ func (m *Mock) DeleteVPCEndpoint(
 	m.endpoints.Delete(id)
 	m.releaseManagedENIs(endpointENIDescription(id))
 
-	m.mu.Lock()
 	gone := *ep
 	gone.RouteTableIDs = nil
 	m.syncEndpointRoutes(&gone)
-	m.mu.Unlock()
 
 	return nil
 }
@@ -142,7 +149,8 @@ func (m *Mock) DescribeVPCEndpoints(
 	), nil
 }
 
-// ModifyVPCEndpoint updates a VPC endpoint configuration.
+// ModifyVPCEndpoint replaces an endpoint's id sets and tags. A nil set leaves
+// that set unchanged. The AWS wire layer uses ModifyVPCEndpointSets instead.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
 func (m *Mock) ModifyVPCEndpoint(
@@ -161,19 +169,20 @@ func (m *Mock) ModifyVPCEndpoint(
 		)
 	}
 
+	if cfg.RouteTableIDs != nil {
+		if err := m.setEndpointRouteTables(ep, cfg.RouteTableIDs); err != nil {
+			return nil, err
+		}
+
+		m.syncEndpointRoutes(ep)
+	}
+
 	if len(cfg.SubnetIDs) > 0 {
 		ep.SubnetIDs = copyStringSlice(cfg.SubnetIDs)
 	}
 
 	if len(cfg.SecurityGroupIDs) > 0 {
 		ep.SecurityGroupIDs = copyStringSlice(cfg.SecurityGroupIDs)
-	}
-
-	// A non-nil empty set removes every route table, which is how
-	// ModifyVpcEndpoint with only RemoveRouteTableId arrives here.
-	if cfg.RouteTableIDs != nil {
-		ep.RouteTableIDs = copyStringSlice(cfg.RouteTableIDs)
-		m.syncEndpointRoutes(ep)
 	}
 
 	if len(cfg.Tags) > 0 {

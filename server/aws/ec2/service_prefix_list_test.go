@@ -257,6 +257,32 @@ func TestManagedPrefixListsIncludeAWSOwned(t *testing.T) {
 		t.Error("AWS-owned list has no entries")
 	}
 
+	if pl.MaxEntries != nil || pl.Version != nil {
+		t.Errorf("AWS-owned list carries maxEntries %v / version %v, want neither", pl.MaxEntries, pl.Version)
+	}
+
+	page1, err := c.GetManagedPrefixListEntries(ctx, &ec2.GetManagedPrefixListEntriesInput{
+		PrefixListId: pl.PrefixListId, MaxResults: aws.Int32(5),
+	})
+	if err != nil {
+		t.Fatalf("GetManagedPrefixListEntries page 1: %v", err)
+	}
+
+	if len(page1.Entries) != 5 || page1.NextToken == nil {
+		t.Fatalf("page 1 = %d entries, next %v; want 5 and a token", len(page1.Entries), page1.NextToken)
+	}
+
+	page2, err := c.GetManagedPrefixListEntries(ctx, &ec2.GetManagedPrefixListEntriesInput{
+		PrefixListId: pl.PrefixListId, MaxResults: aws.Int32(5), NextToken: page1.NextToken,
+	})
+	if err != nil {
+		t.Fatalf("GetManagedPrefixListEntries page 2: %v", err)
+	}
+
+	if len(page1.Entries)+len(page2.Entries) != len(entries.Entries) || page2.NextToken != nil {
+		t.Fatalf("page 2 = %d entries, next %v", len(page2.Entries), page2.NextToken)
+	}
+
 	_, err = c.DescribeManagedPrefixLists(ctx, &ec2.DescribeManagedPrefixListsInput{PrefixListIds: []string{"pl-00000000"}})
 	requireAPIErrorCode(t, err, "InvalidPrefixListID.NotFound")
 }

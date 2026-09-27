@@ -11985,6 +11985,15 @@
         ]
       },
       {
+        "name": "VPCEndpointSetModifier",
+        "doc": "VPCEndpointSetModifier is an OPTIONAL AWS capability (type-asserted). It",
+        "operations": [
+          {
+            "name": "ModifyVPCEndpointSets"
+          }
+        ]
+      },
+      {
         "name": "VPNConnections",
         "doc": "VPNConnections is an OPTIONAL AWS capability (type-asserted).",
         "operations": [

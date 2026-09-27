@@ -419,6 +419,14 @@ VPCEndpointServices is an OPTIONAL AWS capability (type-asserted).
 | `DescribeVPCEndpointServicePermissions` |  |
 | `ModifyVPCEndpointServicePermissions` |  |
 
+### VPCEndpointSetModifier
+
+VPCEndpointSetModifier is an OPTIONAL AWS capability (type-asserted). It
+
+| Operation | Description |
+| --- | --- |
+| `ModifyVPCEndpointSets` |  |
+
 ### VPNConnections
 
 VPNConnections is an OPTIONAL AWS capability (type-asserted).

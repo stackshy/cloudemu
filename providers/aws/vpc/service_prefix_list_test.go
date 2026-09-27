@@ -98,6 +98,9 @@ func TestAWSManagedPrefixListsShape(t *testing.T) {
 		assertEqual(t, "IPv4", pl.AddressFamily)
 		assertEqual(t, svc[i].ID, pl.ID)
 		assertEqual(t, len(svc[i].CIDRs), len(pl.Entries))
+		// AWS-owned lists carry no maxEntries or version on the wire.
+		assertEqual(t, 0, pl.MaxEntries)
+		assertEqual(t, 0, pl.Version)
 	}
 
 	none, err := m.DescribeAWSManagedPrefixLists(ctx, "us-east-1", []string{"pl-00000000"})

@@ -122,7 +122,8 @@ func (m *Mock) DescribePrefixLists(
 }
 
 // DescribeAWSManagedPrefixLists returns the service lists in the managed
-// prefix list shape. Unknown ids are skipped.
+// prefix list shape. Unknown ids are skipped. MaxEntries and Version stay
+// zero: EC2 reports neither for an AWS-owned list.
 func (m *Mock) DescribeAWSManagedPrefixLists(
 	_ context.Context, region string, ids []string,
 ) ([]driver.PrefixList, error) {
@@ -145,8 +146,7 @@ func (m *Mock) DescribeAWSManagedPrefixLists(
 
 		out = append(out, driver.PrefixList{
 			ID: pl.ID, Name: pl.Name, AddressFamily: "IPv4",
-			MaxEntries: len(entries), State: "create-complete", Version: 1,
-			Entries: entries, OwnerID: servicePrefixListOwner,
+			State: "create-complete", Entries: entries, OwnerID: servicePrefixListOwner,
 		})
 	}
 
@@ -158,10 +158,7 @@ func (m *Mock) DescribeAWSManagedPrefixLists(
 // from tables the endpoint no longer uses. Tables that do not exist are
 // skipped. Other endpoint types hold no routes. The caller holds m.mu.
 func (m *Mock) syncEndpointRoutes(ep *driver.VPCEndpoint) {
-	var plID string
-	if ep.EndpointType == "" || ep.EndpointType == vpcEndpointTypeGateway {
-		plID = servicePrefixListForEndpoint(ep.ServiceName)
-	}
+	plID := endpointPrefixList(ep)
 
 	want := map[string]bool{}
 
@@ -174,6 +171,16 @@ func (m *Mock) syncEndpointRoutes(ep *driver.VPCEndpoint) {
 	for _, rt := range m.routeTables.All() {
 		rt.Routes = endpointRoutes(rt.Routes, ep.ID, plID, want[rt.ID])
 	}
+}
+
+// endpointPrefixList returns the pl- id a Gateway endpoint routes to, or ""
+// for other endpoint types and services without a prefix list.
+func endpointPrefixList(ep *driver.VPCEndpoint) string {
+	if ep.EndpointType != "" && ep.EndpointType != vpcEndpointTypeGateway {
+		return ""
+	}
+
+	return servicePrefixListForEndpoint(ep.ServiceName)
 }
 
 // endpointRoutes returns routes with at most one route to endpointID, kept

@@ -21,9 +21,9 @@ type prefixListXML struct {
 	PrefixListArn  string    `xml:"prefixListArn,omitempty"`
 	PrefixListName string    `xml:"prefixListName"`
 	AddressFamily  string    `xml:"addressFamily"`
-	MaxEntries     int       `xml:"maxEntries"`
+	MaxEntries     *int      `xml:"maxEntries,omitempty"`
 	State          string    `xml:"state"`
-	Version        int       `xml:"version"`
+	Version        *int      `xml:"version,omitempty"`
 	OwnerID        string    `xml:"ownerId,omitempty"`
 	Tags           []tagItem `xml:"tagSet>item,omitempty"`
 }
@@ -178,12 +178,18 @@ func (h *Handler) getPrefixListEntries(w http.ResponseWriter, r *http.Request, p
 		out = append(out, prefixListEntryXML{Cidr: entries[i].CIDR, Description: entries[i].Description})
 	}
 
+	// Entries keep their list order; the cidr is unique within a list, so it
+	// doubles as the page token key.
+	page, next := paginateXML(out, r.Form.Get("MaxResults"), r.Form.Get("NextToken"),
+		func(e prefixListEntryXML) string { return e.Cidr })
+
 	awsquery.WriteXMLResponse(w, struct {
 		XMLName xml.Name             `xml:"GetManagedPrefixListEntriesResponse"`
 		Xmlns   string               `xml:"xmlns,attr"`
 		Req     string               `xml:"requestId"`
 		Set     []prefixListEntryXML `xml:"entrySet>item"`
-	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: out})
+		Next    string               `xml:"nextToken,omitempty"`
+	}{Xmlns: awsquery.Namespace, Req: awsquery.RequestID, Set: page, Next: next})
 }
 
 func (h *Handler) modifyPrefixList(w http.ResponseWriter, r *http.Request, p netdriver.PrefixLists) {
@@ -314,14 +320,19 @@ func parsePrefixListEntries(r *http.Request) []netdriver.PrefixListEntry {
 }
 
 func (h *Handler) toPrefixListXML(region string, p *netdriver.PrefixList) prefixListXML {
-	owner := nonEmpty(p.OwnerID, h.accountID)
-
-	return prefixListXML{
-		PrefixListID: p.ID, PrefixListArn: prefixListARN(region, owner, p.ID),
-		PrefixListName: p.Name, AddressFamily: p.AddressFamily,
-		MaxEntries: p.MaxEntries, State: p.State, Version: p.Version,
-		OwnerID: owner, Tags: toTagItems(p.Tags),
+	x := prefixListXML{
+		PrefixListID: p.ID, PrefixListName: p.Name, AddressFamily: p.AddressFamily,
+		State: p.State, OwnerID: nonEmpty(p.OwnerID, h.accountID), Tags: toTagItems(p.Tags),
 	}
+	x.PrefixListArn = prefixListARN(region, x.OwnerID, p.ID)
+
+	// AWS-owned lists carry no maxEntries or version; customer lists always do.
+	if p.OwnerID == "" {
+		maxEntries, version := p.MaxEntries, p.Version
+		x.MaxEntries, x.Version = &maxEntries, &version
+	}
+
+	return x
 }
 
 // prefixListARN builds the managed-prefix-list ARN AWS returns; the SDK and

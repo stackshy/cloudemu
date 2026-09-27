@@ -95,7 +95,12 @@ func (m *Mock) DeleteRouteTable(_ context.Context, id string) error {
 		}
 	}
 
+	m.mu.Lock()
 	m.routeTables.Delete(id)
+	// A Gateway endpoint that used the table loses it, the same as a
+	// ModifyVpcEndpoint RemoveRouteTableId.
+	m.dropRouteTableFromEndpoints(id)
+	m.mu.Unlock()
 
 	return nil
 }

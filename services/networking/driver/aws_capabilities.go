@@ -270,6 +270,24 @@ type ServicePrefixLists interface {
 	DescribeAWSManagedPrefixLists(ctx context.Context, region string, ids []string) ([]PrefixList, error)
 }
 
+// VPCEndpointSetChange is the Add*/Remove* id-set part of ModifyVpcEndpoint.
+// An id named in both an Add and its Remove list is dropped.
+type VPCEndpointSetChange struct {
+	AddRouteTableIDs       []string
+	RemoveRouteTableIDs    []string
+	AddSubnetIDs           []string
+	RemoveSubnetIDs        []string
+	AddSecurityGroupIDs    []string
+	RemoveSecurityGroupIDs []string
+}
+
+// VPCEndpointSetModifier is an OPTIONAL AWS capability (type-asserted). It
+// applies a ModifyVpcEndpoint set change to the endpoint's current sets in one
+// step, so concurrent modifies of one endpoint do not overwrite each other.
+type VPCEndpointSetModifier interface {
+	ModifyVPCEndpointSets(ctx context.Context, id string, change *VPCEndpointSetChange) (*VPCEndpoint, error)
+}
+
 // ---- Egress-only Internet Gateway (IPv6) ----
 
 // EgressOnlyInternetGateway provides outbound-only IPv6 for private subnets.
