@@ -89,8 +89,9 @@ func tagsByPrefix(form url.Values, prefix string) map[string]string {
 
 	for _, n := range indices {
 		base := prefix + "." + strconv.Itoa(n)
-		if k := form.Get(base + ".Key"); k != "" {
-			out[k] = form.Get(base + ".Value")
+		// An empty key is kept so tag validation can reject it.
+		if form.Has(base + ".Key") {
+			out[form.Get(base+".Key")] = form.Get(base + ".Value")
 		}
 	}
 

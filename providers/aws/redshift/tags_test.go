@@ -5,6 +5,7 @@ import (
 	"maps"
 	"testing"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -66,9 +67,13 @@ func TestRestoreClusterTagsGoToStore(t *testing.T) {
 
 	requireNoError(t, m.DeleteClusterSnapshot(ctx, "s1"))
 
-	got, err := m.DescribeTags(ctx, snap.ARN)
-	requireNoError(t, err)
-	assertTags(t, "DescribeTags after snapshot delete", got, nil)
+	if _, ok := m.tagsByARN[snap.ARN]; ok {
+		t.Fatal("tags of deleted snapshot are still stored")
+	}
+
+	if _, err := m.DescribeTags(ctx, snap.ARN); !cerrors.IsNotFound(err) {
+		t.Fatalf("DescribeTags after snapshot delete: err = %v, want NotFound", err)
+	}
 }
 
 // TestRestoreMovesRowTagsToStore covers state saved before tags moved to the

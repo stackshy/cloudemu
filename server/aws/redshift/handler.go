@@ -272,16 +272,27 @@ func writeErr(w http.ResponseWriter, err error) {
 		awsquery.WriteXMLError(w, http.StatusBadRequest, invalidArgumentCode(err), msg)
 	case cerrors.IsFailedPrecondition(err):
 		awsquery.WriteXMLError(w, http.StatusBadRequest, invalidStateCode(err), msg)
+	case cerrors.GetCode(err) == cerrors.ResourceExhausted:
+		awsquery.WriteXMLError(w, http.StatusBadRequest, "TagLimitExceededFault", msg)
 	default:
 		awsquery.WriteXMLError(w, http.StatusInternalServerError, "InternalFailure", msg)
 	}
 }
 
+// codeResourceNotFound is the fault for a missing resource with no more
+// specific code, such as an unknown ARN in a tag call.
+const codeResourceNotFound = "ResourceNotFoundFault"
+
 // invalidArgumentCode picks the AWS fault code for a bad-input error by its
-// message. A bad snapshot retention period has its own fault.
+// message. A bad snapshot retention period or tag has its own fault.
 func invalidArgumentCode(err error) string {
-	if strings.Contains(err.Error(), "snapshot retention period") {
+	msg := err.Error()
+
+	switch {
+	case strings.Contains(msg, "snapshot retention period"):
 		return "InvalidRetentionPeriodFault"
+	case strings.Contains(msg, "invalid tag"):
+		return "InvalidTagFault"
 	}
 
 	return "InvalidParameterValue"
@@ -292,6 +303,8 @@ func notFoundCode(err error) string {
 	msg := err.Error()
 
 	switch {
+	case strings.Contains(msg, "taggable resource"):
+		return codeResourceNotFound
 	case strings.Contains(msg, "cluster snapshot"):
 		return "ClusterSnapshotNotFound"
 	case strings.Contains(msg, "parameter group"):
@@ -301,7 +314,7 @@ func notFoundCode(err error) string {
 	case strings.Contains(msg, "cluster"):
 		return "ClusterNotFound"
 	default:
-		return "ResourceNotFoundFault"
+		return codeResourceNotFound
 	}
 }
 

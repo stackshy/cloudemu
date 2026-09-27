@@ -3,6 +3,8 @@ package redshift_test
 import (
 	"context"
 	"maps"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -110,7 +112,114 @@ func TestSDKRedshiftClusterTagsReadBack(t *testing.T) {
 		t.Fatalf("DeleteCluster: %v", err)
 	}
 
-	requireTags(t, "DescribeTags after delete", describeTagMap(t, client, arn), map[string]string{})
+	_, err = client.DescribeTags(ctx, &awsredshift.DescribeTagsInput{ResourceName: aws.String(arn)})
+	requireAPIErrorCode(t, err, "ResourceNotFoundFault")
+}
+
+// TestSDKRedshiftTagGhostARN checks that tags cannot be put on a resource
+// that does not exist yet, so a later create cannot pick them up.
+func TestSDKRedshiftTagGhostARN(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+	arn := tagARNPrefix + "cluster:ghost"
+
+	_, err := client.CreateTags(ctx, &awsredshift.CreateTagsInput{ResourceName: aws.String(arn), Tags: sdkTags("k", "v")})
+	requireAPIErrorCode(t, err, "ResourceNotFoundFault")
+
+	_, err = client.DeleteTags(ctx, &awsredshift.DeleteTagsInput{ResourceName: aws.String(arn), TagKeys: []string{"k"}})
+	requireAPIErrorCode(t, err, "ResourceNotFoundFault")
+
+	_, err = client.DescribeTags(ctx, &awsredshift.DescribeTagsInput{ResourceName: aws.String(arn)})
+	requireAPIErrorCode(t, err, "ResourceNotFoundFault")
+
+	created, err := client.CreateCluster(ctx, &awsredshift.CreateClusterInput{
+		ClusterIdentifier:  aws.String("ghost"),
+		MasterUsername:     aws.String("admin"),
+		MasterUserPassword: aws.String("Sup3rSecret!"),
+		NodeType:           aws.String("ra3.xlplus"),
+	})
+	if err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	requireTags(t, "new cluster", tagMap(created.Cluster.Tags), map[string]string{})
+
+	// Other resource types and other accounts are checked the same way.
+	for _, other := range []string{
+		tagARNPrefix + "snapshot:nope",
+		tagARNPrefix + "parametergroup:nope",
+		tagARNPrefix + "subnetgroup:nope",
+		tagARNPrefix + "eventsubscription:nope",
+		"arn:aws:redshift:us-east-1:999999999999:cluster:ghost",
+	} {
+		_, err = client.CreateTags(ctx, &awsredshift.CreateTagsInput{ResourceName: aws.String(other), Tags: sdkTags("k", "v")})
+		requireAPIErrorCode(t, err, "ResourceNotFoundFault")
+	}
+}
+
+func TestSDKRedshiftTagLimits(t *testing.T) {
+	client := newSDKClient(t)
+	ctx := context.Background()
+	arn := tagARNPrefix + "cluster:limits"
+
+	if _, err := client.CreateCluster(ctx, &awsredshift.CreateClusterInput{
+		ClusterIdentifier:  aws.String("limits"),
+		MasterUsername:     aws.String("admin"),
+		MasterUserPassword: aws.String("Sup3rSecret!"),
+		NodeType:           aws.String("ra3.xlplus"),
+		Tags:               sdkTags("b", "2", "a", "1", "c", "3"),
+	}); err != nil {
+		t.Fatalf("CreateCluster: %v", err)
+	}
+
+	got, err := client.DescribeClusters(ctx, &awsredshift.DescribeClustersInput{ClusterIdentifier: aws.String("limits")})
+	if err != nil {
+		t.Fatalf("DescribeClusters: %v", err)
+	}
+
+	var order []string
+	for _, tag := range got.Clusters[0].Tags {
+		order = append(order, aws.ToString(tag.Key))
+	}
+
+	if strings.Join(order, ",") != "a,b,c" {
+		t.Fatalf("tag order = %v, want a,b,c", order)
+	}
+
+	many := make([]string, 0, 96)
+	for i := range 48 {
+		many = append(many, "k"+strconv.Itoa(i), "v")
+	}
+
+	_, err = client.CreateTags(ctx, &awsredshift.CreateTagsInput{ResourceName: aws.String(arn), Tags: sdkTags(many...)})
+	requireAPIErrorCode(t, err, "TagLimitExceededFault")
+
+	bad := map[string][]rstypes.Tag{
+		"aws prefix": sdkTags("aws:owner", "x"),
+		"empty key":  sdkTags("", "x"),
+		"long key":   sdkTags(strings.Repeat("k", 129), "x"),
+		"long value": sdkTags("k", strings.Repeat("v", 257)),
+	}
+
+	for name, tags := range bad {
+		_, err = client.CreateTags(ctx, &awsredshift.CreateTagsInput{ResourceName: aws.String(arn), Tags: tags})
+		if err == nil {
+			t.Fatalf("%s: CreateTags succeeded", name)
+		}
+
+		requireAPIErrorCode(t, err, "InvalidTagFault")
+	}
+
+	_, err = client.CreateCluster(ctx, &awsredshift.CreateClusterInput{
+		ClusterIdentifier:  aws.String("badtags"),
+		MasterUsername:     aws.String("admin"),
+		MasterUserPassword: aws.String("Sup3rSecret!"),
+		NodeType:           aws.String("ra3.xlplus"),
+		Tags:               sdkTags("aws:x", "y"),
+	})
+	requireAPIErrorCode(t, err, "InvalidTagFault")
+
+	requireTags(t, "after rejected writes", describeTagMap(t, client, arn), map[string]string{"a": "1", "b": "2", "c": "3"})
 }
 
 func TestSDKRedshiftSnapshotTagsReadBack(t *testing.T) {

@@ -76,6 +76,25 @@ func TestSDKRedshiftSnapshotRetentionDefaultAndGiven(t *testing.T) {
 		t.Fatalf("given retention reads back %d, want 7", got)
 	}
 
+	snaps, err := client.DescribeClusterSnapshots(ctx, &awsredshift.DescribeClusterSnapshotsInput{ClusterIdentifier: aws.String("ret")})
+	if err != nil {
+		t.Fatalf("DescribeClusterSnapshots: %v", err)
+	}
+
+	for _, s := range snaps.Snapshots {
+		remaining := s.ManualSnapshotRemainingDays
+		switch aws.ToString(s.SnapshotIdentifier) {
+		case "s-default":
+			if remaining != nil {
+				t.Fatalf("s-default remaining days = %d, want omitted", *remaining)
+			}
+		case "s-7":
+			if aws.ToInt32(remaining) != 7 {
+				t.Fatalf("s-7 remaining days = %v, want 7", remaining)
+			}
+		}
+	}
+
 	for _, bad := range []int32{0, -2, 3654} {
 		_, err := client.CreateClusterSnapshot(ctx, &awsredshift.CreateClusterSnapshotInput{
 			ClusterIdentifier: aws.String("ret"), SnapshotIdentifier: aws.String("s-bad"),

@@ -13,7 +13,6 @@ import (
 // Event subscription limits and defaults, from the Redshift API reference.
 const (
 	maxSubscriptionNameLen = 255
-	maxSubscriptionTags    = 50
 	defaultSeverity        = "INFO"
 	subscriptionActive     = "active"
 )
@@ -107,8 +106,8 @@ func (m *Mock) CreateEventSubscription(ctx context.Context, cfg EventSubscriptio
 		return nil, err
 	}
 
-	if len(cfg.Tags) > maxSubscriptionTags {
-		return nil, cerrors.Newf(cerrors.ResourceExhausted, "number of tags exceeds the limit of %d", maxSubscriptionTags)
+	if err := validateTags(nil, cfg.Tags); err != nil {
+		return nil, err
 	}
 
 	sub := EventSubscription{

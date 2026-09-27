@@ -646,6 +646,10 @@ type ClusterSnapshot struct {
 	// in days; -1 keeps it forever. Zero is never valid and reads as -1 (rows
 	// saved before the field existed). Unused outside Redshift.
 	ManualSnapshotRetentionPeriod int
+	// ManualSnapshotRemainingDays is the days left before a Redshift manual
+	// snapshot passes its retention period. Worked out on read, never stored,
+	// and nil when the snapshot is kept forever.
+	ManualSnapshotRemainingDays *int `json:"-"`
 	// AllocatedStorage / EngineMode capture the source cluster's shape at
 	// snapshot time so RestoreDBClusterFromSnapshot can reproduce it instead of
 	// leaving the restored cluster with the Go zero value. Zero/empty on

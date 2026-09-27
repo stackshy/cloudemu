@@ -158,6 +158,13 @@ func (m *Mock) CreateClusterParameterGroup(
 		return nil, cerrors.New(cerrors.InvalidArgument, "parameter group name is required")
 	}
 
+	if err := validateTags(nil, tags); err != nil {
+		return nil, err
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.parameterGroups.Has(name) {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "parameter group %q already exists", name)
 	}
@@ -169,11 +176,8 @@ func (m *Mock) CreateClusterParameterGroup(
 		Parameters:  defaultRedshiftParameters(),
 	}
 	m.parameterGroups.Set(name, pg)
-
-	m.mu.Lock()
 	m.setTagsLocked(m.parameterGroupARN(name), tags)
 	pg.Tags = m.tagsLocked(m.parameterGroupARN(name))
-	m.mu.Unlock()
 
 	return &pg, nil
 }
@@ -354,11 +358,19 @@ func (m *Mock) CreateClusterSubnetGroup(
 		return nil, cerrors.New(cerrors.InvalidArgument, "subnet group name is required")
 	}
 
+	if err := validateTags(nil, tags); err != nil {
+		return nil, err
+	}
+
+	// Resolve subnets before taking the lock: it calls into the VPC mock.
+	vpcID, subnets := m.resolveSubnets(ctx, subnetIDs)
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
 	if m.subnetGroups.Has(name) {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "subnet group %q already exists", name)
 	}
-
-	vpcID, subnets := m.resolveSubnets(ctx, subnetIDs)
 
 	sg := SubnetGroup{
 		Name:        name,
@@ -368,11 +380,8 @@ func (m *Mock) CreateClusterSubnetGroup(
 		Subnets:     subnets,
 	}
 	m.subnetGroups.Set(name, sg)
-
-	m.mu.Lock()
 	m.setTagsLocked(m.subnetGroupARN(name), tags)
 	sg.Tags = m.tagsLocked(m.subnetGroupARN(name))
-	m.mu.Unlock()
 
 	return &sg, nil
 }
@@ -535,6 +544,10 @@ func (m *Mock) RebootInstance(ctx context.Context, id string) error {
 func (m *Mock) CreateCluster(ctx context.Context, cfg rdbdriver.ClusterConfig) (*rdbdriver.Cluster, error) {
 	if cfg.ID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "ClusterIdentifier is required")
+	}
+
+	if err := validateTags(nil, cfg.Tags); err != nil {
+		return nil, err
 	}
 
 	cluster, err := m.reserveCluster(cfg)
@@ -773,6 +786,10 @@ func (m *Mock) DescribeClusters(_ context.Context, ids []string) ([]rdbdriver.Cl
 func (m *Mock) ModifyCluster(
 	ctx context.Context, id string, input rdbdriver.ModifyInstanceInput,
 ) (*rdbdriver.Cluster, error) {
+	if err := validateTags(nil, input.Tags); err != nil {
+		return nil, err
+	}
+
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -1092,6 +1109,10 @@ func (m *Mock) CreateClusterSnapshot(
 		return nil, cerrors.New(cerrors.InvalidArgument, "SnapshotIdentifier is required")
 	}
 
+	if err := validateTags(nil, cfg.Tags); err != nil {
+		return nil, err
+	}
+
 	retention := manualRetentionIndefinite
 	if cfg.ManualSnapshotRetentionPeriod != nil {
 		retention = *cfg.ManualSnapshotRetentionPeriod
@@ -1190,6 +1211,10 @@ func (m *Mock) RestoreClusterFromSnapshot(
 ) (*rdbdriver.Cluster, error) {
 	if input.NewClusterID == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "ClusterIdentifier is required")
+	}
+
+	if err := validateTags(nil, input.Tags); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()

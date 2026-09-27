@@ -2,6 +2,7 @@ package redshift
 
 import (
 	"encoding/xml"
+	"sort"
 	"strconv"
 
 	rdbdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
@@ -130,8 +131,10 @@ type snapshotXML struct {
 	KmsKeyID                   string  `xml:"KmsKeyId,omitempty"`
 	TotalBackupSizeInMegaBytes float64 `xml:"TotalBackupSizeInMegaBytes,omitempty"`
 	// ManualSnapshotRetentionPeriod is always sent: -1 means kept forever.
-	ManualSnapshotRetentionPeriod int      `xml:"ManualSnapshotRetentionPeriod"`
-	Tags                          *tagsXML `xml:"Tags,omitempty"`
+	ManualSnapshotRetentionPeriod int `xml:"ManualSnapshotRetentionPeriod"`
+	// ManualSnapshotRemainingDays is left out for -1 retention, as AWS does.
+	ManualSnapshotRemainingDays *int     `xml:"ManualSnapshotRemainingDays,omitempty"`
+	Tags                        *tagsXML `xml:"Tags,omitempty"`
 }
 
 // Result wrappers, one per Action.
@@ -421,6 +424,7 @@ func toSnapshotXML(snap *rdbdriver.ClusterSnapshot) snapshotXML {
 		KmsKeyID:                      snap.KmsKeyID,
 		TotalBackupSizeInMegaBytes:    snap.TotalBackupSizeInMegaBytes,
 		ManualSnapshotRetentionPeriod: snap.ManualSnapshotRetentionPeriod,
+		ManualSnapshotRemainingDays:   snap.ManualSnapshotRemainingDays,
 		Tags:                          toTagsXML(snap.Tags),
 	}
 }
@@ -430,9 +434,16 @@ func toTagsXML(tags map[string]string) *tagsXML {
 		return nil
 	}
 
+	keys := make([]string, 0, len(tags))
+	for k := range tags {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
 	out := &tagsXML{Tag: make([]tagXML, 0, len(tags))}
-	for k, v := range tags {
-		out.Tag = append(out.Tag, tagXML{Key: k, Value: v})
+	for _, k := range keys {
+		out.Tag = append(out.Tag, tagXML{Key: k, Value: tags[k]})
 	}
 
 	return out
