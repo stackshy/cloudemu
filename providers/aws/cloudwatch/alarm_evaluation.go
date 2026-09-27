@@ -109,6 +109,7 @@ func alarmParams(alarm *alarmData) alarmeval.Params {
 		Threshold:              alarm.Threshold,
 		TreatMissingData:       alarm.TreatMissingData,
 		IgnoreMissingByDefault: alarm.Namespace == dynamoDBNamespace,
+		ExtendedRange:          true,
 	}
 }
 
@@ -146,7 +147,7 @@ func evaluationReasonData(datums []driver.MetricDatum, p *alarmeval.Params, now 
 	}{
 		Version:          "1.0",
 		QueryDate:        now.UTC().Format(reasonDataTimeFormat),
-		StartDate:        p.WindowStart(now).UTC().Format(reasonDataTimeFormat),
+		StartDate:        alarmeval.EvaluatedStart(datums, p, now).UTC().Format(reasonDataTimeFormat),
 		Statistic:        p.Stat,
 		Period:           p.Period,
 		RecentDatapoints: alarmeval.RecentDatapoints(datums, p, now),
