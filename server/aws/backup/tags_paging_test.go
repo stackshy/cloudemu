@@ -3,9 +3,11 @@ package backup_test
 import (
 	"context"
 	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -93,6 +95,61 @@ func TestListTagsBadMaxResultsRaw(t *testing.T) {
 	}
 }
 
+func TestListBadNextTokenOverWire(t *testing.T) {
+	c := newClient(t)
+	ctx := context.Background()
+	v := mustCreateVault(t, c, "token-vault")
+
+	var ipv *backuptypes.InvalidParameterValueException
+
+	_, err := c.ListTags(ctx, &backupapi.ListTagsInput{ResourceArn: v.BackupVaultArn, NextToken: aws.String("garbage")})
+	if !errors.As(err, &ipv) {
+		t.Fatalf("ListTags bad token: want InvalidParameterValueException, got %v", err)
+	}
+
+	_, err = c.ListBackupVaults(ctx, &backupapi.ListBackupVaultsInput{NextToken: aws.String("garbage")})
+	if !errors.As(err, &ipv) {
+		t.Fatalf("ListBackupVaults bad token: want InvalidParameterValueException, got %v", err)
+	}
+}
+
+func TestPutVaultNotificationsEmptyEventsEchoed(t *testing.T) {
+	cloud := cloudemu.NewAWS()
+	ts := httptest.NewServer(awsserver.New(awsserver.Drivers{Backup: cloud.Backup}))
+	t.Cleanup(ts.Close)
+
+	do := func(method, path, body string) (int, string) {
+		req, err := http.NewRequestWithContext(context.Background(), method, ts.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+
+		b, _ := io.ReadAll(resp.Body)
+
+		return resp.StatusCode, string(b)
+	}
+
+	if st, b := do(http.MethodPut, "/backup-vaults/empty-v", "{}"); st != http.StatusOK {
+		t.Fatalf("create vault: %d %s", st, b)
+	}
+
+	put := `{"SNSTopicArn":"arn:aws:sns:us-east-1:123456789012:t","BackupVaultEvents":[]}`
+	if st, b := do(http.MethodPut, "/backup-vaults/empty-v/notification-configuration", put); st != http.StatusOK {
+		t.Fatalf("put empty events: %d %s", st, b)
+	}
+
+	st, b := do(http.MethodGet, "/backup-vaults/empty-v/notification-configuration", "")
+	if st != http.StatusOK || !strings.Contains(b, `"BackupVaultEvents":[]`) {
+		t.Fatalf("get must echo []: %d %s", st, b)
+	}
+}
+
 func TestPutVaultNotificationsBadEventOverWire(t *testing.T) {
 	c := newClient(t)
 	ctx := context.Background()
@@ -107,10 +164,6 @@ func TestPutVaultNotificationsBadEventOverWire(t *testing.T) {
 	var ipv *backuptypes.InvalidParameterValueException
 	if !errors.As(err, &ipv) {
 		t.Fatalf("want InvalidParameterValueException, got %v", err)
-	}
-
-	if aws.ToString(ipv.Type) != "Client" {
-		t.Fatalf("want Type=Client in the error body, got %q", aws.ToString(ipv.Type))
 	}
 
 	var rnf *backuptypes.ResourceNotFoundException

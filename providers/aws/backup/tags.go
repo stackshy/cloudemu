@@ -102,7 +102,11 @@ func (m *Mock) ListTags(_ context.Context, resourceArn string, page driver.Page)
 
 	sort.Strings(keys)
 
-	start, end, nextToken := paginate(len(keys), page)
+	start, end, nextToken, err := paginate(len(keys), page)
+	if err != nil {
+		return nil, "", err
+	}
+
 	if start == end {
 		return nil, nextToken, nil
 	}

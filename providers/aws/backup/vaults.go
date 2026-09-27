@@ -76,7 +76,12 @@ func (m *Mock) DeleteBackupVault(_ context.Context, name string) error {
 // ListBackupVaults returns a deterministic page of vaults ordered by name.
 func (m *Mock) ListBackupVaults(_ context.Context, page driver.Page) ([]*driver.Vault, string, error) {
 	stored := m.vaults.SortedValues()
-	start, end, next := paginate(len(stored), page)
+
+	start, end, next, err := paginate(len(stored), page)
+	if err != nil {
+		return nil, "", err
+	}
+
 	out := make([]*driver.Vault, 0, end-start)
 
 	for i := start; i < end; i++ {

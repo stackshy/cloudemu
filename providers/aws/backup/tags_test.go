@@ -74,6 +74,39 @@ func TestListTagsMaxResultsBounds(t *testing.T) {
 	}
 }
 
+func TestListBadNextTokenRejected(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	v := mustVault(t, m, "v1")
+
+	requireNoError(t, m.TagResource(ctx, v.Arn, map[string]string{"a": "1"}))
+
+	for _, tok := range []string{"garbage", "-1"} {
+		_, _, err := m.ListTags(ctx, v.Arn, driver.Page{NextToken: tok})
+		requireException(t, err, driver.ExInvalidParameter)
+
+		_, _, err = m.ListBackupVaults(ctx, driver.Page{NextToken: tok})
+		requireException(t, err, driver.ExInvalidParameter)
+	}
+}
+
+func TestPutVaultNotificationsEmptyEvents(t *testing.T) {
+	m := newMock()
+	ctx := context.Background()
+	mustVault(t, m, "v1")
+
+	requireNoError(t, m.PutBackupVaultNotifications(ctx, &driver.PutVaultNotificationsInput{
+		Name: "v1", SNSTopicArn: "arn:aws:sns:us-east-1:123456789012:t", BackupVaultEvents: []string{},
+	}))
+
+	_, n, err := m.GetBackupVaultNotifications(ctx, "v1")
+	requireNoError(t, err)
+
+	if n.BackupVaultEvents == nil || len(n.BackupVaultEvents) != 0 {
+		t.Fatalf("want an empty non-nil list, got %#v", n.BackupVaultEvents)
+	}
+}
+
 func TestPutVaultNotificationsEventValidation(t *testing.T) {
 	m := newMock()
 	ctx := context.Background()
