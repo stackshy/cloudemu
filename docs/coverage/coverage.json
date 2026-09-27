@@ -2485,6 +2485,9 @@
         "name": "ListPrompts"
       },
       {
+        "name": "ListTagsForResource"
+      },
+      {
         "name": "PrepareAgent"
       },
       {
@@ -2492,6 +2495,12 @@
       },
       {
         "name": "StartIngestionJob"
+      },
+      {
+        "name": "TagResource"
+      },
+      {
+        "name": "UntagResource"
       },
       {
         "name": "UpdateAgent"

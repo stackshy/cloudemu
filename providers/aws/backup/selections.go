@@ -80,7 +80,11 @@ func (m *Mock) ListBackupSelections(
 		}
 	}
 
-	start, end, next := paginate(len(filtered), page)
+	start, end, next, err := paginate(len(filtered), page)
+	if err != nil {
+		return nil, "", err
+	}
+
 	out := make([]*driver.Selection, 0, end-start)
 
 	for i := start; i < end; i++ {

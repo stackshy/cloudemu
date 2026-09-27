@@ -1,11 +1,12 @@
 // Package bedrockagent provides an in-memory mock implementation of the AWS
 // Bedrock Agent authoring control plane: agents (and aliases), knowledge bases,
-// data sources, ingestion jobs, flows, and prompts. Resources are created
-// directly in a terminal/ready state.
+// data sources, ingestion jobs, flows, and prompts, with ARN-keyed tags.
+// Resources are created directly in a terminal/ready state.
 package bedrockagent
 
 import (
 	"encoding/json"
+	"sync"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -32,7 +33,11 @@ type Mock struct {
 	jobs       *memstore.Store[*driver.IngestionJob]
 	flows      *memstore.Store[*driver.Flow]
 	prompts    *memstore.Store[*driver.Prompt]
-	opts       *config.Options
+	// tags holds each resource's tags keyed by its ARN; tagMu serializes the
+	// read-modify-write of Tag/UntagResource.
+	tags  *memstore.Store[map[string]string]
+	tagMu sync.Mutex
+	opts  *config.Options
 }
 
 // New creates a new Bedrock Agent mock.
@@ -45,6 +50,7 @@ func New(opts *config.Options) *Mock {
 		jobs:       memstore.New[*driver.IngestionJob](),
 		flows:      memstore.New[*driver.Flow](),
 		prompts:    memstore.New[*driver.Prompt](),
+		tags:       memstore.New[map[string]string](),
 		opts:       opts,
 	}
 }

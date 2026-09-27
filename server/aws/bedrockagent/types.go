@@ -34,6 +34,13 @@ type agentJSON struct {
 	CreatedAt               string `json:"createdAt"`
 	UpdatedAt               string `json:"updatedAt"`
 	PreparedAt              string `json:"preparedAt,omitempty"`
+	// PromptOverrideConfiguration is always present on a real agent. Only the
+	// empty override list is modeled; the default prompt templates are not.
+	PromptOverrideConfiguration promptOverrideJSON `json:"promptOverrideConfiguration"`
+}
+
+type promptOverrideJSON struct {
+	PromptConfigurations []json.RawMessage `json:"promptConfigurations"`
 }
 
 type agentSummaryJSON struct {
@@ -66,8 +73,9 @@ type prepareAgentResponse struct {
 }
 
 type createAgentAliasRequest struct {
-	AgentAliasName string `json:"agentAliasName"`
-	Description    string `json:"description"`
+	AgentAliasName string            `json:"agentAliasName"`
+	Description    string            `json:"description"`
+	Tags           map[string]string `json:"tags"`
 }
 
 type agentAliasJSON struct {
@@ -199,11 +207,12 @@ type ingestionJobEnvelope struct {
 // --- flows (flat responses) ---
 
 type createFlowRequest struct {
-	Name                     string          `json:"name"`
-	ExecutionRoleArn         string          `json:"executionRoleArn"`
-	Description              string          `json:"description"`
-	CustomerEncryptionKeyArn string          `json:"customerEncryptionKeyArn"`
-	Definition               json.RawMessage `json:"definition"`
+	Name                     string            `json:"name"`
+	ExecutionRoleArn         string            `json:"executionRoleArn"`
+	Description              string            `json:"description"`
+	CustomerEncryptionKeyArn string            `json:"customerEncryptionKeyArn"`
+	Definition               json.RawMessage   `json:"definition"`
+	Tags                     map[string]string `json:"tags"`
 }
 
 type flowJSON struct {
@@ -248,11 +257,12 @@ type prepareFlowResponse struct {
 // --- prompts (flat responses) ---
 
 type createPromptRequest struct {
-	Name                     string          `json:"name"`
-	Description              string          `json:"description"`
-	DefaultVariant           string          `json:"defaultVariant"`
-	CustomerEncryptionKeyArn string          `json:"customerEncryptionKeyArn"`
-	Variants                 json.RawMessage `json:"variants"`
+	Name                     string            `json:"name"`
+	Description              string            `json:"description"`
+	DefaultVariant           string            `json:"defaultVariant"`
+	CustomerEncryptionKeyArn string            `json:"customerEncryptionKeyArn"`
+	Variants                 json.RawMessage   `json:"variants"`
+	Tags                     map[string]string `json:"tags"`
 }
 
 type promptJSON struct {

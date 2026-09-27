@@ -114,7 +114,9 @@ func (h *Handler) getNotifications(w http.ResponseWriter, r *http.Request, name 
 		"BackupVaultName": v.Name,
 		"SNSTopicArn":     n.SNSTopicArn,
 	}
-	if len(n.BackupVaultEvents) > 0 {
+	// An explicit empty list is valid (the model sets no minimum) and is echoed
+	// back as [].
+	if n.BackupVaultEvents != nil {
 		body["BackupVaultEvents"] = n.BackupVaultEvents
 	}
 

@@ -23,6 +23,8 @@ func TestSnapshotRoundTripBedrockAgent(t *testing.T) {
 		Name:                       "kb1",
 		RoleArn:                    "arn:aws:iam::000000000000:role/kb",
 		KnowledgeBaseConfiguration: []byte(`{"type":"VECTOR"}`),
+		StorageConfiguration:       []byte(`{"type":"OPENSEARCH_SERVERLESS"}`),
+		Tags:                       map[string]string{"env": "test"},
 	})
 	require.NoError(t, err)
 
@@ -44,6 +46,10 @@ func TestSnapshotRoundTripBedrockAgent(t *testing.T) {
 	gotKB, err := dst.GetKnowledgeBase(ctx, kb.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "kb1", gotKB.Name)
+
+	gotTags, err := dst.ListTagsForResource(ctx, kb.ARN)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]string{"env": "test"}, gotTags)
 
 	gotPrompt, err := dst.GetPrompt(ctx, prompt.ID)
 	require.NoError(t, err)
