@@ -206,7 +206,7 @@ func (m *Mock) CreateDocument(_ context.Context, in *ssmdriver.CreateDocumentInp
 		return nil, err
 	}
 
-	if err := validVersionName(in.VersionName); err != nil {
+	if err := validDocumentInput(in.DocumentType, in.DocumentFormat, in.TargetType, in.VersionName); err != nil {
 		return nil, err
 	}
 
@@ -263,6 +263,10 @@ func validVersionName(name string) error {
 // GetDocument returns one version's content, converted to format when it
 // names a different one than the version was stored in.
 func (m *Mock) GetDocument(_ context.Context, ref ssmdriver.DocumentRef, format string) (*ssmdriver.DocumentContent, error) {
+	if err := validEnum("documentFormat", format, documentFormats()); err != nil {
+		return nil, err
+	}
+
 	m.docMu.RLock()
 	defer m.docMu.RUnlock()
 
@@ -314,7 +318,7 @@ func (m *Mock) DescribeDocument(_ context.Context, ref ssmdriver.DocumentRef) (*
 
 // UpdateDocument adds a new latest version. The default version does not move.
 func (m *Mock) UpdateDocument(_ context.Context, in *ssmdriver.UpdateDocumentInput) (*ssmdriver.DocumentDescription, error) {
-	if err := validVersionName(in.VersionName); err != nil {
+	if err := validDocumentInput("", in.DocumentFormat, in.TargetType, in.VersionName); err != nil {
 		return nil, err
 	}
 
@@ -467,16 +471,16 @@ func (m *Mock) ListDocumentVersions(_ context.Context, name string) ([]ssmdriver
 
 // UpdateDocumentDefaultVersion moves the default version.
 func (m *Mock) UpdateDocumentDefaultVersion(_ context.Context, name, version string) (*ssmdriver.DefaultVersionResult, error) {
+	if err := validVersionNumber(version); err != nil {
+		return nil, err
+	}
+
 	m.docMu.Lock()
 	defer m.docMu.Unlock()
 
 	d, err := m.ownedDocument(name)
 	if err != nil {
 		return nil, err
-	}
-
-	if version == "" {
-		return nil, ssmErrf(excInvalidDocumentVersion, errors.InvalidArgument, "DocumentVersion is required.")
 	}
 
 	v, err := d.resolveVersion(version, "")

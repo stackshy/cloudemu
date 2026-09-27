@@ -83,6 +83,13 @@ func (m *Mock) commandDocument(ref string) (string, error) {
 
 	d, err := m.lookupDocument(ref)
 	if err != nil {
+		// The catalog holds the common AWS-owned documents, not all of them.
+		// An unknown name in the AWS namespace is taken as an AWS-owned Command
+		// document so a real one the catalog lacks still runs.
+		if name := documentName(ref); awsOwnedName(name) {
+			return name, nil
+		}
+
 		return "", err
 	}
 
