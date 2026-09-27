@@ -55,7 +55,8 @@ func TestCloudWatchAlarmStateChangeEvents(t *testing.T) {
 		t.Fatalf("PutMetricData: %v", err)
 	}
 
-	fc.Advance(2 * time.Minute)
+	// Past the evaluation range of N+2 periods, so every point is missing.
+	fc.Advance(4 * time.Minute)
 
 	if _, err := p.CloudWatch.DescribeAlarms(ctx, nil); err != nil {
 		t.Fatalf("DescribeAlarms: %v", err)

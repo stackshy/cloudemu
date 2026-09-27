@@ -117,7 +117,8 @@ func TestLazyEvalFallsBackToInsufficientData(t *testing.T) {
 	requireNoError(t, m.CreateAlarm(context.Background(), lazyAlarm("stale", 60, "")))
 	assertEqual(t, stateAlarm, stateOf(t, m, "stale"))
 
-	fc.Advance(2 * time.Minute)
+	// Past the evaluation range of N+2 periods, so every point is missing.
+	fc.Advance(4 * time.Minute)
 
 	assertEqual(t, stateInsufficientData, stateOf(t, m, "stale"))
 	assertEqual(t, 1, pub.count(insuffTop))
@@ -134,7 +135,8 @@ func TestLazyEvalIgnoreRetainsState(t *testing.T) {
 	putValue(t, m, fc, lazyNS, 10)
 	requireNoError(t, m.CreateAlarm(context.Background(), lazyAlarm("keep", 60, "ignore")))
 
-	fc.Advance(2 * time.Minute)
+	// Past the evaluation range of N+2 periods, so every point is missing.
+	fc.Advance(4 * time.Minute)
 
 	assertEqual(t, stateAlarm, stateOf(t, m, "keep"))
 	assertEqual(t, 0, pub.count(insuffTop))
@@ -210,21 +212,61 @@ func TestLazyEvalDynamoDBDefaultIgnore(t *testing.T) {
 	assertEqual(t, stateAlarm, stateOf(t, m, "ddb-default"))
 	assertEqual(t, stateAlarm, stateOf(t, m, "ddb-missing"))
 
-	fc.Advance(2 * time.Minute)
+	// Past the evaluation range of N+2 periods, so every point is missing.
+	fc.Advance(4 * time.Minute)
 
 	assertEqual(t, stateAlarm, stateOf(t, m, "ddb-default"))
 	assertEqual(t, stateInsufficientData, stateOf(t, m, "ddb-missing"))
 }
 
-// A 10-second alarm is evaluated every 10 seconds. Its data ages out after one
-// period, so a read 11 seconds later shows INSUFFICIENT_DATA.
+// A 10-second alarm is evaluated every 10 seconds. Its data leaves the
+// evaluation range after three periods, so a read 31 seconds later shows
+// INSUFFICIENT_DATA.
 func TestLazyEvalHighResolutionInterval(t *testing.T) {
 	m, fc, _ := newClockMock()
 	putValue(t, m, fc, lazyNS, 10)
 	requireNoError(t, m.CreateAlarm(context.Background(), lazyAlarm("hires", 10, "")))
 	assertEqual(t, stateAlarm, stateOf(t, m, "hires"))
 
-	fc.Advance(11 * time.Second)
+	fc.Advance(21 * time.Second)
+	assertEqual(t, stateAlarm, stateOf(t, m, "hires"))
 
+	fc.Advance(10 * time.Second)
 	assertEqual(t, stateInsufficientData, stateOf(t, m, "hires"))
+}
+
+// One breaching point followed by silence is the doc row "- - X - -" with
+// Evaluation Periods and Datapoints to Alarm both 3. "alarms are designed to
+// always go into ALARM state when the oldest available breaching datapoint
+// during the Evaluation Periods number of data points is at least as old as
+// the value of Datapoints to Alarm" (alarms-and-missing-data.html).
+func TestLazyEvalPrematureAlarmAfterSilence(t *testing.T) {
+	m, fc, pub := newClockMock()
+	cfg := lazyAlarm("prem", 60, "")
+	cfg.Stat, cfg.EvaluationPeriods, cfg.DatapointsToAlarm = "Maximum", 3, 3
+	requireNoError(t, m.CreateAlarm(context.Background(), cfg))
+
+	putValue(t, m, fc, lazyNS, 10)
+	assertEqual(t, stateOK, stateOf(t, m, "prem"))
+
+	fc.Advance(150 * time.Second)
+	assertEqual(t, stateAlarm, stateOf(t, m, "prem"))
+	assertEqual(t, 1, pub.count(alarmTopic))
+
+	// Once the point leaves the evaluation range every point is missing.
+	fc.Advance(3 * time.Minute)
+	assertEqual(t, stateInsufficientData, stateOf(t, m, "prem"))
+}
+
+// A point older than Evaluation Periods but inside the evaluation range still
+// counts: CloudWatch "evaluates the alarm state based on the most recent real
+// data points that were successfully retrieved, including the necessary extra
+// data points from farther back in the evaluation range."
+func TestLazyEvalRangeReachesPastEvaluationPeriods(t *testing.T) {
+	m, fc, _ := newClockMock()
+	putValue(t, m, fc, lazyNS, 10)
+	fc.Advance(90 * time.Second)
+
+	requireNoError(t, m.CreateAlarm(context.Background(), lazyAlarm("reach", 60, "")))
+	assertEqual(t, stateAlarm, stateOf(t, m, "reach"))
 }

@@ -146,4 +146,8 @@ func TestWindowStart(t *testing.T) {
 	// Defaults: period 60, evalPeriods 1.
 	def := alarmeval.Params{}
 	assert.Equal(t, now.Add(-time.Minute), def.WindowStart(now))
+
+	// The CloudWatch evaluation range reaches two periods past EvaluationPeriods.
+	p.ExtendedRange = true
+	assert.Equal(t, now.Add(-7*time.Minute), p.WindowStart(now))
 }

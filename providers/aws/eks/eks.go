@@ -725,7 +725,7 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 	if m.k8sAPI != nil {
 		uid, _ := m.k8sAPI.RegisterCluster()
 		m.k8sUIDs[cfg.Name] = uid
-		m.k8sAPI.SetClusterVersion(uid, kubernetes.DistributionEKS, version)
+		m.k8sAPI.SetClusterVersion(uid, kubernetes.DistributionEKS, serverPatchVersion(version))
 	}
 
 	m.clusters.Set(cfg.Name, cluster)
@@ -992,7 +992,7 @@ func (m *Mock) UpdateClusterVersion(
 
 	// The API server now reports the new version on /version.
 	if uid, ok := m.k8sUIDs[name]; ok && m.k8sAPI != nil {
-		m.k8sAPI.SetClusterVersion(uid, kubernetes.DistributionEKS, version)
+		m.k8sAPI.SetClusterVersion(uid, kubernetes.DistributionEKS, serverPatchVersion(version))
 	}
 
 	m.clusterSettle.Begin(name, eksdriver.ClusterStatusUpdating, m.opts.Clock.Now(),
@@ -1184,6 +1184,7 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 
 	m.nodegroups.Set(key, ng)
 	m.addNodeEntryLocked(&parent, ng.NodeRole, nodegroupEntryType(ng.AmiType))
+	m.syncNodegroupNodesLocked(&ng, ng.ScalingConfig.DesiredSize)
 
 	// Under AsyncSettle a fresh nodegroup reports CREATING until the window
 	// elapses, matching real EKS. With the default (AsyncSettle off)
@@ -1283,6 +1284,7 @@ func (m *Mock) UpdateNodegroupConfig(
 	ng.ModifiedAt = m.opts.Clock.Now().UTC()
 
 	m.nodegroups.Set(key, ng)
+	m.syncNodegroupNodesLocked(&ng, ng.ScalingConfig.DesiredSize)
 
 	m.nodegroupSettle.Begin(key, eksdriver.NodegroupStatusUpdating, m.opts.Clock.Now(),
 		m.opts.SettleDuration(settle.DefaultClusterSettle))
@@ -1343,6 +1345,7 @@ func (m *Mock) UpdateNodegroupVersion(
 	ng.ModifiedAt = m.opts.Clock.Now().UTC()
 
 	m.nodegroups.Set(key, ng)
+	m.syncNodegroupNodesLocked(&ng, ng.ScalingConfig.DesiredSize)
 
 	m.nodegroupSettle.Begin(key, eksdriver.NodegroupStatusUpdating, m.opts.Clock.Now(),
 		m.opts.SettleDuration(settle.DefaultClusterSettle))
@@ -1375,6 +1378,7 @@ func (m *Mock) DeleteNodegroup(_ context.Context, clusterName, nodegroupName str
 	m.nodegroups.Delete(key)
 	m.nodegroupSettle.Clear(key)
 	m.removeNodeEntryLocked(clusterName, ng.NodeRole)
+	m.syncNodegroupNodesLocked(&ng, 0)
 
 	out := ng
 

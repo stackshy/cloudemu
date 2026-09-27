@@ -83,6 +83,23 @@ func TestLazyEvalRuleSetStateReverts(t *testing.T) {
 	assert.False(t, m.Tick(clk.Now()))
 }
 
+// An Azure alert evaluates only its windowSize aggregation. The CloudWatch
+// evaluation range and premature-alarm rule do not apply, so one old breaching
+// point with silence after it does not fire a 3 of 3 rule.
+func TestLazyEvalRuleNoCloudWatchLookBack(t *testing.T) {
+	m, clk := newTestMock()
+	rule := lazyRule("window", "")
+	rule.Stat, rule.EvaluationPeriods, rule.DatapointsToAlarm = "Maximum", 3, 3
+	require.NoError(t, m.CreateAlarm(context.Background(), rule))
+
+	putErrors(t, m, clk, 10)
+	clk.Advance(150 * time.Second)
+	assert.Equal(t, "OK", ruleState(t, m, "window"))
+
+	clk.Advance(time.Minute)
+	assert.Equal(t, "INSUFFICIENT_DATA", ruleState(t, m, "window"))
+}
+
 func TestLazyEvalRuleConcurrency(t *testing.T) {
 	ctx := context.Background()
 	m, clk := newTestMock()

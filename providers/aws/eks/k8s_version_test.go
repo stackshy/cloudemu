@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"regexp"
+	"strings"
 	"testing"
 
 	eksdriver "github.com/stackshy/cloudemu/v2/providers/aws/eks/driver"
@@ -44,6 +45,10 @@ func TestK8sVersion_FollowsClusterVersion(t *testing.T) {
 	uid := m.k8sUIDs["c1"]
 
 	git, minor := dataPlaneVersion(t, api, uid)
+	if want := "v" + serverPatchVersion("1.31") + "-eks-"; !strings.HasPrefix(git, want) {
+		t.Fatalf("after create: gitVersion %q, want prefix %q (kubelet patch)", git, want)
+	}
+
 	if !regexp.MustCompile(`^v1\.31\.\d+-eks-[0-9a-f]{7}$`).MatchString(git) || minor != "31+" {
 		t.Fatalf("after create: gitVersion %q minor %q, want v1.31.x-eks-<hash> / 31+", git, minor)
 	}

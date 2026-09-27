@@ -25,6 +25,8 @@ var clusterStatePersistedFields = map[string]struct{}{
 	"rv":              {}, // resourceVersion high-water mark (clusterSnapshot.RV)
 	"nextClusterIP":   {}, // Service ClusterIP allocator (clusterSnapshot.NextClusterIP)
 	"nextPodIP":       {}, // Pod IP allocator (clusterSnapshot.NextPodIP)
+	"managedNodes":    {}, // managed node pool flag (clusterSnapshot.ManagedNodes)
+	"nextNodeOrdinal": {}, // managed node IP allocator (clusterSnapshot.NextNodeOrdinal)
 	"namespaces":      {}, // typed store (clusterSnapshot.Namespaces)
 	"configMaps":      {}, // typed store (clusterSnapshot.ConfigMaps)
 	"pods":            {}, // typed store (clusterSnapshot.Pods)

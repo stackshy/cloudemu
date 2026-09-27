@@ -46,6 +46,8 @@ func TestSDKRecordSetValidation(t *testing.T) {
 	}{
 		{name: "A not an IP", rr: plainRecord("a.rrval.com.", r53types.RRTypeA, "not-an-ip"), want: "InvalidChangeBatch"},
 		{name: "A given IPv6", rr: plainRecord("a6.rrval.com.", r53types.RRTypeA, "2001:db8::1"), want: "InvalidChangeBatch"},
+		{name: "A given mapped IPv4", rr: plainRecord("am.rrval.com.", r53types.RRTypeA, "::ffff:1.2.3.4"), want: "InvalidChangeBatch"},
+		{name: "AAAA zoned", rr: plainRecord("qz.rrval.com.", r53types.RRTypeAaaa, "fe80::1%eth0"), want: "InvalidChangeBatch"},
 		{name: "AAAA given IPv4", rr: plainRecord("q.rrval.com.", r53types.RRTypeAaaa, "10.0.0.1"), want: "InvalidChangeBatch"},
 		{name: "CNAME two values", rr: plainRecord("c.rrval.com.", r53types.RRTypeCname, "a.com.", "b.com."), want: "InvalidChangeBatch"},
 		{name: "alias with TTL", rr: aliasWithTTL, want: "InvalidInput"},
@@ -54,6 +56,7 @@ func TestSDKRecordSetValidation(t *testing.T) {
 		{name: "bogus type", rr: plainRecord("b.rrval.com.", "BOGUS", "x"), want: "InvalidInput"},
 		{name: "valid A", rr: plainRecord("ok.rrval.com.", r53types.RRTypeA, "10.0.0.1")},
 		{name: "valid AAAA", rr: plainRecord("ok6.rrval.com.", r53types.RRTypeAaaa, "2001:db8::1")},
+		{name: "valid AAAA mapped IPv4", rr: plainRecord("okm.rrval.com.", r53types.RRTypeAaaa, "::ffff:1.2.3.4")},
 		{name: "valid CNAME", rr: plainRecord("okc.rrval.com.", r53types.RRTypeCname, "a.com.")},
 		{name: "valid alias", rr: &r53types.ResourceRecordSet{
 			Name: aws.String("oka.rrval.com."), Type: r53types.RRTypeA, AliasTarget: alias,

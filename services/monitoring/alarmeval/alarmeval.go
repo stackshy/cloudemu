@@ -4,6 +4,11 @@
 // forms, and the per-Period M-of-N rule with OK recovery and TreatMissingData
 // handling. Keeping this in one place stops the three providers from drifting.
 //
+// A CloudWatch alarm (Params.ExtendedRange) looks back over an evaluation
+// range that is longer than EvaluationPeriods, so a few missing recent points
+// do not hide older real ones. The range length is a calibrated
+// approximation, see evaluationRangeExtra.
+//
 // Evaluation is lazy and clock based. A provider evaluates an alarm when data
 // arrives, when the alarm is created or updated, and on any read that shows
 // state once EvaluationInterval has passed since the last evaluation. There is
@@ -107,10 +112,10 @@ const (
 )
 
 // TreatMissingData policies from PutMetricAlarm. Any other value, including
-// the empty string, is the AWS default "missing". With "missing" an empty
-// period is not counted toward the M-of-N rule.
+// the empty string, is the AWS default "missing".
 const (
 	TreatMissingIgnore       = "ignore"
+	treatMissing             = "missing"
 	treatMissingBreaching    = "breaching"
 	treatMissingNotBreaching = "notBreaching"
 )
@@ -127,6 +132,11 @@ type Params struct {
 	// IgnoreMissingByDefault makes an empty TreatMissingData act as "ignore".
 	// AWS sets it for AWS/DynamoDB alarms. An explicit policy still wins.
 	IgnoreMissingByDefault bool
+	// ExtendedRange turns on the CloudWatch evaluation range and the
+	// premature-alarm rule. Only the AWS provider sets it. Azure evaluates just
+	// its windowSize and GCP just its duration, so they look back exactly
+	// EvaluationPeriods.
+	ExtendedRange bool
 	// Band is the anomaly band of a band-operator alarm, bucketed like the
 	// datums. A period with data but no band point counts as missing.
 	Band []BandPoint
@@ -233,11 +243,27 @@ func (p *Params) normalize() (periodDur time.Duration, evalPeriods, datapointsTo
 }
 
 // WindowStart is the earliest timestamp an evaluation of p at now considers, so
-// a provider can pre-filter its stored datums to the evaluation window.
+// a provider can pre-filter its stored datums. With ExtendedRange it is the
+// start of the evaluation range, which reaches back past EvaluationPeriods in
+// case recent points are missing.
 func (p *Params) WindowStart(now time.Time) time.Time {
+	periodDur, _, _ := p.normalize()
+
+	return now.Add(-periodDur * time.Duration(p.span()))
+}
+
+// EvaluatedStart is the start of the oldest period an evaluation at now uses.
+// That is EvaluationPeriods back, or further when the evaluation reaches back
+// into the range for older real points.
+func EvaluatedStart(datums []driver.MetricDatum, p *Params, now time.Time) time.Time {
 	periodDur, evalPeriods, _ := p.normalize()
 
-	return now.Add(-periodDur * time.Duration(evalPeriods))
+	oldest := evalPeriods - 1
+	if pts := evaluated(p.realPoints(datums, now), evalPeriods); len(pts) > 0 && pts[0].age > oldest {
+		oldest = pts[0].age
+	}
+
+	return now.Add(-periodDur * time.Duration(oldest+1))
 }
 
 // MatchDimensions reports whether a datum belongs to the metric series a query
@@ -300,43 +326,166 @@ func StatOf(datums []driver.MetricDatum, stat string) float64 {
 	return aggregate(datums).stat(stat)
 }
 
-// EvaluateWindow applies CloudWatch's M-of-N rule. It groups datums (already
-// filtered to the alarm's metric series and evaluation window) into the last
-// EvaluationPeriods per-Period buckets, where bucket 0 is the most recent
-// period. It returns ALARM when at least DatapointsToAlarm buckets breach and
-// OK otherwise, which is how an alarm recovers once breaching periods age out.
-// Empty periods count per TreatMissingData. When every period is empty and the
-// policy does not fill them in, "missing" gives INSUFFICIENT_DATA and "ignore"
-// keeps the current state.
-func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) Outcome {
-	periodDur, evalPeriods, datapointsToAlarm := p.normalize()
-	buckets := bucketByPeriod(datums, now, periodDur, evalPeriods)
-	band := p.bandBuckets(now, periodDur, evalPeriods)
+// evaluationRangeExtra is how many periods past EvaluationPeriods an
+// evaluation looks back. The guide says CloudWatch "attempts to retrieve a
+// higher number of data points than the number specified as Evaluation
+// Periods" and that the exact number "depends on the length of the alarm
+// period and whether it is based on a metric with standard resolution or high
+// resolution". That rule is not published. Its only worked examples use a range
+// of 5 for 3 evaluation periods, so cloudemu always looks back N+2 periods.
+const evaluationRangeExtra = 2
 
-	breaching, present := 0, 0
+// span is the number of periods an evaluation looks back over: the
+// evaluation range with ExtendedRange, otherwise EvaluationPeriods.
+func (p *Params) span() int {
+	_, evalPeriods, _ := p.normalize()
+	if p.ExtendedRange {
+		return evalPeriods + evaluationRangeExtra
+	}
+
+	return evalPeriods
+}
+
+// slot is one real datapoint of the evaluation range. age 0 is the most
+// recent period.
+type slot struct {
+	age    int
+	value  float64
+	breach bool
+}
+
+// realPoints returns the periods of the evaluation range that hold a usable
+// datapoint, newest first.
+func (p *Params) realPoints(datums []driver.MetricDatum, now time.Time) []slot {
+	periodDur, _, _ := p.normalize()
+	span := p.span()
+	buckets := bucketByPeriod(datums, now, periodDur, span)
+	band := p.bandBuckets(now, periodDur, span)
+
+	var out []slot
 
 	for i, b := range buckets {
-		has, breach := p.judge(b, band[i])
-
-		switch {
-		case has:
-			present++
-
-			if breach {
-				breaching++
-			}
-		case p.TreatMissingData == treatMissingBreaching:
-			present++
-			breaching++
-		case p.TreatMissingData == treatMissingNotBreaching:
-			present++
+		if has, breach := p.judge(b, band[i]); has {
+			out = append(out, slot{age: i, value: b.stat(p.Stat), breach: breach})
 		}
 	}
 
-	if present == 0 {
-		return missingOutcome(p, evalPeriods)
+	return out
+}
+
+// treatment is the TreatMissingData policy in force. An empty or unknown
+// policy is the AWS default "missing".
+//
+// The AWS docs disagree on AWS/DynamoDB alarms. The user guide page
+// alarms-and-missing-data.html says they "default to ignore missing data" and
+// "You can override this". The TreatMissingData field of API_PutMetricAlarm
+// says they "always ignore missing data even if you choose a different
+// option". This follows the user guide, so an explicit policy wins.
+func (p *Params) treatment() string {
+	switch p.TreatMissingData {
+	case TreatMissingIgnore, treatMissingBreaching, treatMissingNotBreaching:
+		return p.TreatMissingData
+	case "":
+		if p.IgnoreMissingByDefault {
+			return TreatMissingIgnore
+		}
 	}
 
+	return treatMissing
+}
+
+// EvaluateWindow applies CloudWatch's M-of-N rule over the evaluation range,
+// following "How alarm state is evaluated when data is missing" in
+// https://docs.aws.amazon.com/AmazonCloudWatch/latest/monitoring/alarms-and-missing-data.html.
+// Datums are already filtered to the alarm's metric series and to WindowStart.
+//
+// With at least EvaluationPeriods real points in the range, "CloudWatch
+// evaluates the alarm state based on the most recent real data points" and
+// TreatMissingData "is not needed and is ignored". With fewer, it "fills in
+// the missing data points with the result you specified" and "all real data
+// points in the evaluation range are included". The alarm is in ALARM when at
+// least DatapointsToAlarm of the points breach and OK otherwise.
+//
+// Without ExtendedRange the evaluation sees exactly EvaluationPeriods periods
+// and the premature rule is off.
+func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) Outcome {
+	_, evalPeriods, datapointsToAlarm := p.normalize()
+	points := p.realPoints(datums, now)
+
+	if len(points) >= evalPeriods {
+		return thresholdOutcome(countBreaching(points[:evalPeriods]), datapointsToAlarm)
+	}
+
+	treat := p.treatment()
+	fill := evalPeriods - len(points)
+	breaching := countBreaching(points)
+
+	switch {
+	case len(points) == 0 && (treat == treatMissing || treat == TreatMissingIgnore):
+		return missingOutcome(treat, evalPeriods)
+	case treat == treatMissingBreaching:
+		breaching += fill
+	case treat == treatMissingNotBreaching:
+		// Filled points are good, so nothing is missing and the premature
+		// rule does not apply.
+	case p.prematureApplies(points, breaching, datapointsToAlarm):
+		// "the alarm goes into ALARM state even if missing data points are
+		// treated as missing." With "ignore" the doc tables keep the state.
+		if treat == TreatMissingIgnore {
+			return Outcome{Retain: true}
+		}
+
+		return Outcome{State: StateAlarm, Reason: "Threshold crossed"}
+	}
+
+	return thresholdOutcome(breaching, datapointsToAlarm)
+}
+
+// prematureApplies reports whether the premature rule decides a CloudWatch
+// evaluation. Enough real breaching points alarm first, whatever the policy.
+func (p *Params) prematureApplies(points []slot, breaching, datapointsToAlarm int) bool {
+	return p.ExtendedRange && breaching < datapointsToAlarm && premature(points, datapointsToAlarm)
+}
+
+// premature is the rule from "Avoiding premature transitions to alarm state":
+// "alarms are designed to always go into ALARM state when the oldest available
+// breaching datapoint during the Evaluation Periods number of data points is
+// at least as old as the value of Datapoints to Alarm. All other more recent
+// data points are breaching or missing." points holds every real point in the
+// range, newest first.
+//
+// The doc tables add one more condition. The 2 out of 3 row "0 - X - -" stays
+// OK although its breaching point is old enough, so a non-breaching point
+// anywhere in the range turns the rule off.
+func premature(points []slot, datapointsToAlarm int) bool {
+	if len(points) == 0 {
+		return false
+	}
+
+	for _, pt := range points {
+		if !pt.breach {
+			return false
+		}
+	}
+
+	oldest := points[len(points)-1]
+
+	return oldest.age+1 >= datapointsToAlarm
+}
+
+func countBreaching(points []slot) int {
+	n := 0
+
+	for _, pt := range points {
+		if pt.breach {
+			n++
+		}
+	}
+
+	return n
+}
+
+func thresholdOutcome(breaching, datapointsToAlarm int) Outcome {
 	if breaching >= datapointsToAlarm {
 		return Outcome{State: StateAlarm, Reason: "Threshold crossed"}
 	}
@@ -364,13 +513,13 @@ func (p *Params) judge(b *statAgg, band *BandPoint) (has, breach bool) {
 
 // bandBuckets places each band point in its period, like bucketByPeriod. The
 // latest point wins when a period has more than one. A nil entry has none.
-func (p *Params) bandBuckets(now time.Time, periodDur time.Duration, evalPeriods int) []*BandPoint {
-	out := make([]*BandPoint, evalPeriods)
+func (p *Params) bandBuckets(now time.Time, periodDur time.Duration, span int) []*BandPoint {
+	out := make([]*BandPoint, span)
 
 	for i := range p.Band {
 		bp := &p.Band[i]
 
-		idx, ok := bucketIndex(bp.Timestamp, now, periodDur, evalPeriods)
+		idx, ok := bucketIndex(bp.Timestamp, now, periodDur, span)
 		if !ok {
 			continue
 		}
@@ -383,40 +532,45 @@ func (p *Params) bandBuckets(now time.Time, periodDur time.Duration, evalPeriods
 	return out
 }
 
-// RecentBand returns the band edges of each period that has both a
-// datapoint and a band point, oldest first. CloudWatch reports them in the
+// RecentBand returns the band edges of each evaluated period, oldest first.
+// These are the periods RecentDatapoints lists. CloudWatch reports them in the
 // stateReasonData of an anomaly alarm.
 func RecentBand(datums []driver.MetricDatum, p *Params, now time.Time) (lower, upper []float64) {
 	periodDur, evalPeriods, _ := p.normalize()
-	buckets := bucketByPeriod(datums, now, periodDur, evalPeriods)
-	band := p.bandBuckets(now, periodDur, evalPeriods)
+	band := p.bandBuckets(now, periodDur, p.span())
 
 	lower, upper = []float64{}, []float64{}
 
-	for i := len(buckets) - 1; i >= 0; i-- {
-		if buckets[i] != nil && band[i] != nil {
-			lower = append(lower, band[i].Lower)
-			upper = append(upper, band[i].Upper)
+	for _, pt := range evaluated(p.realPoints(datums, now), evalPeriods) {
+		if band[pt.age] == nil {
+			continue
 		}
+
+		lower = append(lower, band[pt.age].Lower)
+		upper = append(upper, band[pt.age].Upper)
 	}
 
 	return lower, upper
 }
 
-// missingOutcome is the result when every period in the window is empty and
-// the policy does not fill them in.
-//
-// The AWS docs disagree on AWS/DynamoDB alarms. The user guide page
-// alarms-and-missing-data.html says they "default to ignore missing data" and
-// "You can override this". The TreatMissingData field of API_PutMetricAlarm
-// says they "always ignore missing data even if you choose a different
-// option". This follows the user guide, so an explicit policy wins.
-func missingOutcome(p *Params, evalPeriods int) Outcome {
-	treat := p.TreatMissingData
-	if treat == "" && p.IgnoreMissingByDefault {
-		treat = TreatMissingIgnore
+// evaluated returns the real points an evaluation uses, oldest first: the
+// most recent evalPeriods of them, or all of them when there are fewer.
+func evaluated(points []slot, evalPeriods int) []slot {
+	if len(points) > evalPeriods {
+		points = points[:evalPeriods]
 	}
 
+	out := make([]slot, len(points))
+	for i, pt := range points {
+		out[len(points)-1-i] = pt
+	}
+
+	return out
+}
+
+// missingOutcome is the result when every period in the evaluation range is
+// empty. "missing" gives INSUFFICIENT_DATA and "ignore" keeps the state.
+func missingOutcome(treat string, evalPeriods int) Outcome {
 	if treat == TreatMissingIgnore {
 		return Outcome{Retain: true}
 	}
@@ -432,31 +586,29 @@ func missingOutcome(p *Params, evalPeriods int) Outcome {
 	}
 }
 
-// RecentDatapoints returns the statistic of each non-empty period in the
-// evaluation window, oldest first. CloudWatch reports these in the
-// stateReasonData of a metric-driven transition.
+// RecentDatapoints returns the statistic of each evaluated period, oldest
+// first. These are the most recent real points of the evaluation range, up to
+// EvaluationPeriods of them. CloudWatch reports these in the stateReasonData of
+// a metric-driven transition.
 func RecentDatapoints(datums []driver.MetricDatum, p *Params, now time.Time) []float64 {
-	periodDur, evalPeriods, _ := p.normalize()
-	buckets := bucketByPeriod(datums, now, periodDur, evalPeriods)
+	_, evalPeriods, _ := p.normalize()
+	points := evaluated(p.realPoints(datums, now), evalPeriods)
 
-	out := make([]float64, 0, len(buckets))
-
-	for i := len(buckets) - 1; i >= 0; i-- {
-		if buckets[i] != nil {
-			out = append(out, buckets[i].stat(p.Stat))
-		}
+	out := make([]float64, 0, len(points))
+	for _, pt := range points {
+		out = append(out, pt.value)
 	}
 
 	return out
 }
 
-// bucketByPeriod groups datums into evalPeriods accumulators indexed by age,
-// where bucket 0 covers the most recent period. A nil bucket had no data.
-func bucketByPeriod(datums []driver.MetricDatum, now time.Time, periodDur time.Duration, evalPeriods int) []*statAgg {
-	buckets := make([]*statAgg, evalPeriods)
+// bucketByPeriod groups datums into span accumulators indexed by age, where
+// bucket 0 covers the most recent period. A nil bucket had no data.
+func bucketByPeriod(datums []driver.MetricDatum, now time.Time, periodDur time.Duration, span int) []*statAgg {
+	buckets := make([]*statAgg, span)
 
 	for i := range datums {
-		idx, ok := bucketIndex(datums[i].Timestamp, now, periodDur, evalPeriods)
+		idx, ok := bucketIndex(datums[i].Timestamp, now, periodDur, span)
 		if !ok {
 			continue
 		}
@@ -472,15 +624,15 @@ func bucketByPeriod(datums []driver.MetricDatum, now time.Time, periodDur time.D
 }
 
 // bucketIndex is the age bucket of ts, where 0 is the most recent period.
-// ok is false for a future time or one older than the window.
-func bucketIndex(ts, now time.Time, periodDur time.Duration, evalPeriods int) (int, bool) {
+// ok is false for a future time or one older than the span.
+func bucketIndex(ts, now time.Time, periodDur time.Duration, span int) (int, bool) {
 	age := now.Sub(ts)
 	if age < 0 {
 		return 0, false
 	}
 
 	idx := int(age / periodDur)
-	if idx >= evalPeriods {
+	if idx >= span {
 		return 0, false
 	}
 
