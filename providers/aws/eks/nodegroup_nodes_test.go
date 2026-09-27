@@ -3,6 +3,7 @@ package eks
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -374,6 +375,27 @@ func TestNodegroupNodesSurviveSnapshotRestore(t *testing.T) {
 	}
 
 	assertEqual(t, 2, kept)
+}
+
+// TestKubeletVersionCoversSupportedVersions checks that every Kubernetes minor
+// the provider accepts gets a real patch release in its kubelet version.
+func TestKubeletVersionCoversSupportedVersions(t *testing.T) {
+	for minor := supportedMinMinor; minor <= catalogMaxMinor; minor++ {
+		version := fmt.Sprintf("1.%d", minor)
+		requireNoError(t, validateKubernetesVersion(version))
+
+		got := nodegroupNodeInfo(&eksdriver.Nodegroup{Version: version}, "linux", "amd64").KubeletVersion
+
+		prefix := "v" + version + "."
+		if !strings.HasPrefix(got, prefix) || !strings.Contains(got, "-eks-") {
+			t.Fatalf("version %s: kubeletVersion = %q", version, got)
+		}
+
+		patch := strings.SplitN(strings.TrimPrefix(got, prefix), "-", 2)[0]
+		if patch == "" || patch == "0" {
+			t.Fatalf("version %s: kubeletVersion %q has no patch release", version, got)
+		}
+	}
 }
 
 func TestNodegroupNodesWithoutDataPlane(t *testing.T) {

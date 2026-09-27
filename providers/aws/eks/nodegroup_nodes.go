@@ -89,11 +89,19 @@ var instanceShapes = map[string]instanceShape{
 	"g4dn.xlarge": {4, 16, 29},
 }
 
-// kubeletPatches is the EKS kubelet patch release per Kubernetes minor.
-//
-//nolint:gochecknoglobals // read-only lookup table
-var kubeletPatches = map[string]string{
-	"1.28": "15", "1.29": "10", "1.30": "8", "1.31": "4", "1.32": "3", "1.33": "1",
+// kubeletPatch returns the kubelet patch release for a Kubernetes version. It
+// is derived from the supported version range (supportedMinMinor through
+// catalogMaxMinor) so every version the provider accepts has one: the newest
+// minor is on an early patch and each older minor has had more patch releases.
+func kubeletPatch(version string) int {
+	const firstPatch, patchesPerMinor = 2, 3
+
+	minor, ok := parseMinor(version)
+	if !ok || minor > catalogMaxMinor {
+		return firstPatch
+	}
+
+	return firstPatch + patchesPerMinor*(catalogMaxMinor-minor)
 }
 
 // k8sStateLocked returns the data-plane state of a cluster, or nil when no data
@@ -314,13 +322,9 @@ func nodegroupNodeInfo(ng *eksdriver.Nodegroup, osName, arch string) kubernetes.
 		kernelArch = "aarch64"
 	}
 
-	patch, ok := kubeletPatches[ng.Version]
-	if !ok {
-		patch = "0"
-	}
-
 	info := kubernetes.NodeInfo{
-		KubeletVersion:          fmt.Sprintf("v%s.%s-eks-%s", ng.Version, patch, shortHash(ng.Version, kubeletBuildHexLen)),
+		KubeletVersion: fmt.Sprintf("v%s.%d-eks-%s",
+			ng.Version, kubeletPatch(ng.Version), shortHash(ng.Version, kubeletBuildHexLen)),
 		OperatingSystem:         osName,
 		Architecture:            arch,
 		OSImage:                 "Amazon Linux 2023.6.20241111",

@@ -236,6 +236,71 @@ func TestNodePool_ScaleDownDrainsAndReschedules(t *testing.T) {
 	}
 }
 
+// TestNodePool_ScaleDownCordonsWholeRemovalSetFirst checks that a Pod drained
+// off one removed node is never rescheduled onto another node that the same
+// scale down is about to remove.
+func TestNodePool_ScaleDownCordonsWholeRemovalSetFirst(t *testing.T) {
+	_, state, base, done := newPoolFixture(t)
+	defer done()
+
+	const (
+		nodeA = "ip-10-0-1-10.eu-west-1.compute.internal"
+		nodeB = "ip-10-0-1-11.eu-west-1.compute.internal"
+		nodeC = "ip-10-0-1-12.eu-west-1.compute.internal"
+	)
+
+	create := func(name string) {
+		t.Helper()
+		do(t, http.MethodPost, base+"/api/v1/namespaces/default/pods", cpuPodJSON(t, name, "600m")).Body.Close()
+	}
+
+	// Nodes A and B: three 600m Pods fill A, the fourth lands on B.
+	state.SyncNodePool(testPool(2))
+
+	for _, name := range []string{"p1", "p2", "p3", "p4"} {
+		create(name)
+	}
+
+	// Add C and steer p5 onto it by cordoning B for one create.
+	state.SyncNodePool(testPool(3))
+
+	setUnschedulable := func(node string, v bool) {
+		t.Helper()
+
+		patch := mustJSON(t, map[string]any{"spec": map[string]any{"unschedulable": v}})
+		do(t, http.MethodPatch, base+"/api/v1/nodes/"+node, patch).Body.Close()
+	}
+
+	setUnschedulable(nodeB, true)
+	create("p5")
+	setUnschedulable(nodeB, false)
+
+	placed := podPlacements(t, base, "default")
+	if placed["p4"].node != nodeB || placed["p5"].node != nodeC {
+		t.Fatalf("setup placements: p4=%+v p5=%+v, want p4 on B and p5 on C", placed["p4"], placed["p5"])
+	}
+
+	// Scale to 1 removes B and C. B has room for p5, but it is being removed too.
+	state.SyncNodePool(testPool(1))
+
+	resp := do(t, http.MethodGet, base+"/api/v1/namespaces/default/events", nil)
+	events := decodeMap(t, resp.Body)
+	items, _ := events["items"].([]any)
+
+	for _, raw := range items {
+		ev, _ := raw.(map[string]any)
+		if msg, _ := ev["message"].(string); msg == "Successfully assigned default/p5 to "+nodeB {
+			t.Fatalf("p5 was rescheduled onto %s, a node in the same removal set", nodeB)
+		}
+	}
+
+	for _, name := range []string{"p4", "p5"} {
+		if got := podPlacements(t, base, "default")[name]; got.phase != "Pending" || got.node != "" {
+			t.Fatalf("%s after scale-down: %+v, want Pending (node A is full)", name, got)
+		}
+	}
+}
+
 func TestNodePool_TaintedPoolSchedulesOnlyTolerations(t *testing.T) {
 	_, state, base, done := newPoolFixture(t)
 	defer done()

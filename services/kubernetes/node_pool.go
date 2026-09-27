@@ -140,9 +140,13 @@ func (s *ClusterState) SyncNodePool(p NodePool) {
 		s.retireBootstrapNodesLocked(store)
 	}
 
+	// Remove the newest nodes first, after cordoning the whole set.
+	removal := make([]*unstructured.Unstructured, 0, len(members)-keep)
 	for i := len(members) - 1; i >= keep; i-- {
-		s.drainAndRemoveNodeLocked(store, members[i])
+		removal = append(removal, members[i])
 	}
+
+	s.drainAndRemoveNodesLocked(store, removal)
 
 	s.refanDaemonSetsLocked()
 	s.reschedulePendingPodsLocked()
@@ -415,11 +419,24 @@ func (s *ClusterState) retireBootstrapNodesLocked(store *registryStore) {
 	}
 }
 
-// drainAndRemoveNodeLocked cordons a node (spec.unschedulable plus the
-// unschedulable taint, published so watchers see the cordon), then removes it,
-// which evicts its Pods onto the remaining nodes or leaves them Pending.
+// drainAndRemoveNodesLocked cordons every node in the removal set first, then
+// removes them one by one. Cordoning the whole set up front means a Pod evicted
+// from one of them can only land on a node that stays, never on another node
+// the same scale down is about to remove. Callers hold s.mu.
+func (s *ClusterState) drainAndRemoveNodesLocked(store *registryStore, nodes []*unstructured.Unstructured) {
+	for _, node := range nodes {
+		s.cordonNodeLocked(store, node)
+	}
+
+	for _, node := range nodes {
+		s.removeNodeLocked(store, node)
+	}
+}
+
+// cordonNodeLocked marks a node unschedulable (spec.unschedulable plus the
+// unschedulable taint) and publishes the change so watchers see the cordon.
 // Callers hold s.mu.
-func (s *ClusterState) drainAndRemoveNodeLocked(store *registryStore, node *unstructured.Unstructured) {
+func (s *ClusterState) cordonNodeLocked(store *registryStore, node *unstructured.Unstructured) {
 	_ = unstructured.SetNestedField(node.Object, true, "spec", "unschedulable")
 
 	taints, _, _ := unstructured.NestedSlice(node.Object, "spec", "taints")
@@ -431,8 +448,6 @@ func (s *ClusterState) drainAndRemoveNodeLocked(store *registryStore, node *unst
 
 	s.stampRegistryRVLocked(node)
 	store.watch.publish(EventModified, "", *node.DeepCopy())
-
-	s.removeNodeLocked(store, node)
 }
 
 // removeNodeLocked deletes a node through the same teardown the API delete runs:
