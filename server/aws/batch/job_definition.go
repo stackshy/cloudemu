@@ -57,12 +57,17 @@ func (h *Handler) describeJobDefinitions(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	details := make([]jobDefinitionDetail, 0, len(jds))
-	for i := range jds {
-		details = append(details, toJDDetail(&jds[i]))
+	page, next, ok := paginate(w, jds, req.MaxResults, req.NextToken)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, describeJobDefinitionsResponse{JobDefinitions: details})
+	details := make([]jobDefinitionDetail, 0, len(page))
+	for i := range page {
+		details = append(details, toJDDetail(&page[i]))
+	}
+
+	writeJSON(w, describeJobDefinitionsResponse{JobDefinitions: details, NextToken: next})
 }
 
 func (h *Handler) deregisterJobDefinition(w http.ResponseWriter, r *http.Request) {
