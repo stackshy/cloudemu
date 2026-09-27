@@ -153,6 +153,9 @@ type UpdateStackInput struct {
 	Capabilities []string
 	// UsePreviousTemplate reuses the stack's current template.
 	UsePreviousTemplate bool
+	// DisableRollback leaves a failed update UPDATE_FAILED instead of
+	// rolling it back.
+	DisableRollback bool
 
 	// NotificationARNs replaces the stack's topics. Nil keeps them.
 	NotificationARNs []string

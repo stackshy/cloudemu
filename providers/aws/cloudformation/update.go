@@ -87,8 +87,14 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 		return nil, berr
 	}
 
+	onFailure := cfn.OnStackFailureRollback
+	if in.DisableRollback {
+		onFailure = cfn.OnStackFailureDoNothing
+	}
+
 	sd.obsoleteChangeSets()
-	m.runUpdate(ctx, sd, in, plan, cfn.OnStackFailureRollback)
+	sd.setDisableRollback(in.DisableRollback)
+	m.runUpdate(ctx, sd, in, plan, onFailure)
 
 	out := sd.snapshotStack()
 
@@ -120,45 +126,9 @@ func (m *Mock) runUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStack
 	}
 
 	sd.retain(replaced)
-	m.recordAppliedTemplate(sd, plan)
 	m.emitStackEvent(sd, cfn.StatusUpdateFailed, failureSummary(failures))
 
 	return false
-}
-
-// recordAppliedTemplate stores, after a failed update that is not rolled
-// back, the template of what the stack now holds. A resource that reached
-// its new definition keeps it. One that failed or never ran keeps its old
-// one, and one the update would have added is left out. A later update and
-// its rollback then start from that state.
-func (*Mock) recordAppliedTemplate(sd *stackData, plan *updatePlan) {
-	seedResolver(sd, plan.newT, plan.newRes)
-
-	useOld := map[string]bool{}
-
-	for id, rdef := range plan.newT.Resources {
-		live, ok := sd.live(id)
-		props, err := resolveProps(plan.newRes, rdef.Properties)
-
-		if !ok || err != nil || live.typ != rdef.Type || !cfn.SameProperties(live.props, props) {
-			useOld[id] = true
-		}
-	}
-
-	for id := range plan.oldT.Resources {
-		if _, kept := plan.newT.Resources[id]; !kept {
-			useOld[id] = true
-		}
-	}
-
-	merged, err := cfn.MergeResources(plan.body, plan.prior.templateBody, useOld)
-	if err != nil {
-		return
-	}
-
-	sd.mu.Lock()
-	sd.stack.TemplateBody = merged
-	sd.mu.Unlock()
 }
 
 // checkUpdatable rejects an update of a stack in a state that does not allow
@@ -246,7 +216,55 @@ func (m *Mock) planUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStac
 
 	backfillProps(sd, p.oldT, p.oldRes)
 
+	if st := sd.status(); st == cfn.StatusUpdateFailed || st == cfn.StatusCreateFailed {
+		p.oldT = appliedTemplate(sd, p.oldT, p.oldRes)
+	}
+
 	return p, nil
+}
+
+// appliedTemplate returns what a stack left UPDATE_FAILED or CREATE_FAILED
+// really holds, for the update planner and a rollback to diff against. The
+// stack keeps its submitted template, but only some of its resources reached
+// it. A resource that did keeps its definition. One that failed keeps the
+// properties and type it was last applied with. One that was never created
+// is left out.
+func appliedTemplate(sd *stackData, t *cfn.Template, res *cfn.Resolver) *cfn.Template {
+	out := *t
+	out.Resources = make(map[string]cfn.ResourceDef, len(t.Resources))
+
+	sd.mu.RLock()
+
+	ids := make([]string, 0, len(sd.resolved))
+	for id := range sd.resolved {
+		ids = append(ids, id)
+	}
+	sd.mu.RUnlock()
+
+	for _, id := range ids {
+		live, ok := sd.live(id)
+		if !ok {
+			continue
+		}
+
+		if rdef, declared := t.Resources[id]; declared && rdef.Type == live.typ {
+			if props, err := resolveProps(res, rdef.Properties); err == nil && cfn.SameProperties(live.props, props) {
+				out.Resources[id] = rdef
+				continue
+			}
+		}
+
+		out.Resources[id] = cfn.ResourceDef{Type: live.typ, Properties: live.props}
+	}
+
+	return &out
+}
+
+func (sd *stackData) setDisableRollback(v bool) {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	sd.stack.DisableRollback = v
 }
 
 // checkTypesKept rejects a template that gives a live logical ID a new type.

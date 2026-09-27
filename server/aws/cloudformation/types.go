@@ -55,6 +55,7 @@ func updateInput(form url.Values) cfn.UpdateStackInput {
 		Capabilities: awsquery.ListStrings(form, "Capabilities.member"),
 
 		UsePreviousTemplate: strings.EqualFold(form.Get("UsePreviousTemplate"), "true"),
+		DisableRollback:     strings.EqualFold(form.Get("DisableRollback"), "true"),
 		NotificationARNs:    updateNotificationARNs(form),
 	}
 }

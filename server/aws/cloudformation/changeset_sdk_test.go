@@ -283,6 +283,35 @@ func TestChangeSetClientTokenRealSDK(t *testing.T) {
 	}
 }
 
+// After an update that fails with DisableRollback, GetTemplate returns the
+// submitted body byte for byte, comments included, as Terraform compares it.
+func TestUpdateFailedKeepsSubmittedTemplateRealSDK(t *testing.T) {
+	ctx := context.Background()
+	c, _ := bootWithProvider(t)
+
+	if _, err := c.CreateStack(ctx, &awscfn.CreateStackInput{StackName: aws.String("tf"), TemplateBody: aws.String(queuesV1)}); err != nil {
+		t.Fatalf("CreateStack: %v", err)
+	}
+
+	v2 := "# second version\n" + queuesV2 + "  Broken: # never created\n    Type: AWS::Unknown::Thing\n"
+
+	if _, err := c.UpdateStack(ctx, &awscfn.UpdateStackInput{
+		StackName: aws.String("tf"), TemplateBody: aws.String(v2), DisableRollback: aws.Bool(true),
+	}); err != nil {
+		t.Fatalf("UpdateStack: %v", err)
+	}
+
+	st := describeStack(t, c, "tf")
+	if st.StackStatus != cfntypes.StackStatusUpdateFailed || !aws.ToBool(st.DisableRollback) {
+		t.Fatalf("status %s, DisableRollback %v", st.StackStatus, aws.ToBool(st.DisableRollback))
+	}
+
+	out, err := c.GetTemplate(ctx, &awscfn.GetTemplateInput{StackName: aws.String("tf")})
+	if err != nil || aws.ToString(out.TemplateBody) != v2 {
+		t.Fatalf("GetTemplate: %v\n%q\nwant\n%q", err, aws.ToString(out.TemplateBody), v2)
+	}
+}
+
 // aws cloudformation deploy reads the live stack's parameter keys with
 // GetTemplateSummary before it plans an update.
 func TestGetTemplateSummaryRealSDK(t *testing.T) {

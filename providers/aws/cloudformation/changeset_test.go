@@ -507,9 +507,7 @@ func TestDoNothingFailureKeepsLastAppliedState(t *testing.T) {
 	body, err := m.GetTemplate(ctx, "s")
 	requireNoError(t, err)
 
-	if !strings.Contains(body, `"/b"`) || strings.Contains(body, `"/taken"`) || !strings.Contains(body, `"/a2"`) {
-		t.Fatalf("recorded template must hold A's new and B's old state: %s", body)
-	}
+	assertEqual(t, body, keepFailing, "the stack keeps the submitted template verbatim")
 
 	st, err := m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: keepV1})
 	requireNoError(t, err)
@@ -548,6 +546,59 @@ func TestDoNothingFailureKeepsLastAppliedState(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, st.Status, cfn.StatusUpdateComplete, "back to the first template")
 	assertEqual(t, p2.values["/a"], "data", "A back at /a with its data")
+}
+
+// The documented retry after UPDATE_FAILED: fix the cause, then update with
+// the previous template. The resources that failed or never ran are applied.
+func TestRetryAfterUpdateFailedWithPreviousTemplate(t *testing.T) {
+	ctx := context.Background()
+	p := newParamProv()
+	m := newParamMock(p)
+	failDoNothing(t, m, p)
+
+	delete(p.values, "/taken")
+
+	st, err := m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", UsePreviousTemplate: true, DisableRollback: true})
+	requireNoError(t, err)
+	assertEqual(t, st.Status, cfn.StatusUpdateComplete, "retry status")
+	assertEqual(t, p.values["/taken"], "b", "B now at its new name")
+	assertEqual(t, p.values["/a2"], "data", "A kept at its new name")
+
+	for _, gone := range []string{"/a", "/b"} {
+		if _, ok := p.values[gone]; ok {
+			t.Fatalf("%s must be cleaned up after the successful retry", gone)
+		}
+	}
+
+	body, err := m.GetTemplate(ctx, "s")
+	requireNoError(t, err)
+	assertEqual(t, body, keepFailing, "template kept verbatim")
+}
+
+// UpdateStack with DisableRollback leaves a failed update UPDATE_FAILED
+// instead of rolling it back.
+func TestUpdateStackDisableRollback(t *testing.T) {
+	ctx := context.Background()
+	p := newParamProv()
+	m := newParamMock(p)
+
+	_, err := m.CreateStack(ctx, &cfn.CreateStackInput{StackName: "s", TemplateBody: paramV1})
+	requireNoError(t, err)
+
+	st, err := m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: paramV2, DisableRollback: true})
+	requireNoError(t, err)
+	assertEqual(t, st.Status, cfn.StatusUpdateFailed, "status")
+	assertEqual(t, st.DisableRollback, true, "DisableRollback")
+	assertEqual(t, p.values["/p"], "v2", "Old not rolled back")
+	assertEqual(t, p.values["/n"], "new", "New kept")
+
+	// Without it the next failure rolls back to the last applied state.
+	st, err = m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: strings.Replace(paramV2, `"v2"`, `"v3"`, 1)})
+	requireNoError(t, err)
+	assertEqual(t, st.Status, cfn.StatusUpdateRollbackComplete, "rolled back")
+	assertEqual(t, st.DisableRollback, false, "DisableRollback cleared")
+	assertEqual(t, p.values["/p"], "v2", "Old back at its last applied value")
+	assertEqual(t, p.values["/n"], "new", "New kept")
 }
 
 // A retained resource deleted out of band is created again by a later
