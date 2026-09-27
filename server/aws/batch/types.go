@@ -58,6 +58,8 @@ type computeEnvironmentNameArnResponse struct {
 
 type describeComputeEnvironmentsRequest struct {
 	ComputeEnvironments []string `json:"computeEnvironments"`
+	MaxResults          *int32   `json:"maxResults"`
+	NextToken           string   `json:"nextToken"`
 }
 
 type computeEnvironmentDetail struct {
@@ -77,6 +79,7 @@ type computeEnvironmentDetail struct {
 
 type describeComputeEnvironmentsResponse struct {
 	ComputeEnvironments []computeEnvironmentDetail `json:"computeEnvironments"`
+	NextToken           string                     `json:"nextToken,omitempty"`
 }
 
 func toCEDetail(ce *driver.ComputeEnvironment) computeEnvironmentDetail {
@@ -124,7 +127,9 @@ type jobQueueNameArnResponse struct {
 }
 
 type describeJobQueuesRequest struct {
-	JobQueues []string `json:"jobQueues"`
+	JobQueues  []string `json:"jobQueues"`
+	MaxResults *int32   `json:"maxResults"`
+	NextToken  string   `json:"nextToken"`
 }
 
 type jobQueueDetail struct {
@@ -141,6 +146,7 @@ type jobQueueDetail struct {
 
 type describeJobQueuesResponse struct {
 	JobQueues []jobQueueDetail `json:"jobQueues"`
+	NextToken string           `json:"nextToken,omitempty"`
 }
 
 func toJQDetail(q *driver.JobQueue) jobQueueDetail {
@@ -197,6 +203,8 @@ type describeJobDefinitionsRequest struct {
 	JobDefinitions    []string `json:"jobDefinitions"`
 	JobDefinitionName string   `json:"jobDefinitionName"`
 	Status            string   `json:"status"`
+	MaxResults        *int32   `json:"maxResults"`
+	NextToken         string   `json:"nextToken"`
 }
 
 type jobDefinitionDetail struct {
@@ -220,6 +228,7 @@ type jobDefinitionDetail struct {
 
 type describeJobDefinitionsResponse struct {
 	JobDefinitions []jobDefinitionDetail `json:"jobDefinitions"`
+	NextToken      string                `json:"nextToken,omitempty"`
 }
 
 func toJDDetail(jd *driver.JobDefinition) jobDefinitionDetail {
