@@ -18,6 +18,16 @@ type Handler interface {
 	ServeHTTP(w http.ResponseWriter, r *http.Request)
 }
 
+// PublicRequester is an optional Handler capability for services that serve some
+// operations without credentials (AWS noAuth operations such as Cognito
+// InitiateAuth, or an API Gateway invoke). PublicRequest reports whether the
+// handler serves r as one of those public operations. It must answer true only
+// for the exact public routes the handler itself serves, since an
+// authentication hook lets such requests through unsigned.
+type PublicRequester interface {
+	PublicRequest(r *http.Request) bool
+}
+
 // Server routes incoming HTTP requests to registered Handlers. Server itself
 // implements http.Handler, so httptest.NewServer(srv) works.
 type Server struct {
@@ -71,17 +81,30 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	for _, h := range s.handlers {
-		if h.Matches(r) {
-			h.ServeHTTP(w, r)
+	if h := s.Match(r); h != nil {
+		h.ServeHTTP(w, r)
 
-			if s.observer != nil {
-				s.observer(r)
-			}
-
-			return
+		if s.observer != nil {
+			s.observer(r)
 		}
+
+		return
 	}
 
 	http.Error(w, "no handler registered for this request", http.StatusNotImplemented)
+}
+
+// Match returns the handler that would serve r (the first registered handler
+// whose Matches returns true), or nil when none would. A pre-dispatch hook uses
+// it to bind a decision to the handler that actually runs. Matches may read the
+// request body (form parsing), so a caller that needs the body afterwards must
+// buffer and restore it.
+func (s *Server) Match(r *http.Request) Handler {
+	for _, h := range s.handlers {
+		if h.Matches(r) {
+			return h
+		}
+	}
+
+	return nil
 }

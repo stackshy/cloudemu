@@ -1239,7 +1239,7 @@ func New(d Drivers) *server.Server {
 	// on, and adds no request-path change beyond a context value.
 	var authGate func(http.ResponseWriter, *http.Request) (*http.Request, bool)
 	if d.EnforceAuth {
-		authGate = newAuthGate(d.IAM, d.AccountID, stsSessions, authClock)
+		authGate = newAuthGate(d.IAM, d.AccountID, stsSessions, authClock, srv.Match)
 	}
 
 	srv.SetPreDispatch(composePreDispatch(newRegionStamp(), authGate))

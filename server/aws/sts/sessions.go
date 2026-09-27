@@ -17,6 +17,24 @@ type Session struct {
 	SecretAccessKey string
 	SessionToken    string
 	Expiration      time.Time
+	Owner           SessionOwner
+}
+
+// SessionOwner is who a session acts as, and whose IAM policies the
+// authorization gate evaluates for requests signed with it.
+type SessionOwner struct {
+	// ARN and UserID are the session's own identity (assumed-role/... or the
+	// calling user's), as GetCallerIdentity reports it.
+	ARN    string
+	UserID string
+	// PolicyEntity is the IAM user or role friendly name whose policies govern
+	// the session: the assumed role, or the user that called GetSessionToken or
+	// GetFederationToken.
+	PolicyEntity string
+	// Role marks a role session. Its role's policies are evaluated strictly: a
+	// role with no allowing policy (or no such role) is denied, with none of the
+	// no-policy bootstrap leniency a long-term user key gets.
+	Role bool
 }
 
 // SessionStore records the temporary credentials STS issues so their signatures
@@ -51,12 +69,12 @@ const secretLen = 40
 // sessionTokenRandomLen is the random suffix length of a generated session token.
 const sessionTokenRandomLen = 32
 
-// Mint generates a unique temporary credential set valid for dur, records it,
-// and returns it. Each call yields a distinct access key id and a fresh
+// Mint generates a unique temporary credential set valid for dur acting as
+// owner, records it, and returns it. Each call yields a distinct access key id and a fresh
 // high-entropy secret, so a caller that does not hold the issued secret cannot
 // forge a valid signature. It fails closed on a crypto/rand read error rather
 // than issuing a predictable, forgeable credential.
-func (s *SessionStore) Mint(dur time.Duration) (Session, error) {
+func (s *SessionStore) Mint(dur time.Duration, owner SessionOwner) (Session, error) {
 	if dur <= 0 {
 		dur = sessionDuration
 	}
@@ -81,6 +99,7 @@ func (s *SessionStore) Mint(dur time.Duration) (Session, error) {
 		SecretAccessKey: secret,
 		SessionToken:    "cloudemu-session-" + token,
 		Expiration:      s.clock.Now().UTC().Add(dur),
+		Owner:           owner,
 	}
 
 	s.mu.Lock()
