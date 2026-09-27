@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"strings"
@@ -13,31 +14,46 @@ const (
 	opGreaterThan        = "GreaterThanThreshold"
 )
 
+// multiCriteriaAlarmer is the optional backend capability behind an alert
+// with more than one allOf criterion.
+type multiCriteriaAlarmer interface {
+	CreateAlarmAllOf(ctx context.Context, cfgs []mondriver.AlarmConfig) error
+}
+
 // registerAlarm bridges an Azure metric-alert definition onto the monitoring
-// driver so the named metric is actually evaluated. It reads the first static
-// threshold criterion from properties.criteria.allOf and maps the ARM operator /
-// timeAggregation / windowSize onto the driver's AlarmConfig. A definition with
+// driver so its metrics are actually evaluated. Every static threshold
+// criterion in properties.criteria.allOf is mapped onto an AlarmConfig. An
+// alert with several criteria fires only when all are met. A definition with
 // no usable criterion is stored (echoed on read) but not evaluated.
 func (h *Handler) registerAlarm(r *http.Request, name string, props map[string]any) error {
-	c, ok := firstCriterion(props)
-	if !ok {
+	criteria := allCriteria(props)
+	if len(criteria) == 0 {
 		return nil
 	}
 
-	cfg := mondriver.AlarmConfig{
-		Name:               name,
-		Namespace:          c.metricNamespace,
-		MetricName:         c.metricName,
-		ComparisonOperator: mapOperator(c.operator),
-		Threshold:          c.threshold,
-		Period:             windowSeconds(props),
-		EvaluationPeriods:  1,
-		Stat:               mapAggregation(c.timeAggregation),
-		Dimensions:         alarmDimensions(c.dimensions, props),
-		AlarmActions:       actionGroupIDs(props),
+	cfgs := make([]mondriver.AlarmConfig, 0, len(criteria))
+
+	for i := range criteria {
+		c := &criteria[i]
+		cfgs = append(cfgs, mondriver.AlarmConfig{
+			Name:               name,
+			Namespace:          c.metricNamespace,
+			MetricName:         c.metricName,
+			ComparisonOperator: mapOperator(c.operator),
+			Threshold:          c.threshold,
+			Period:             windowSeconds(props),
+			EvaluationPeriods:  1,
+			Stat:               mapAggregation(c.timeAggregation),
+			Dimensions:         alarmDimensions(c.dimensions, props),
+			AlarmActions:       actionGroupIDs(props),
+		})
 	}
 
-	return h.mon.CreateAlarm(r.Context(), cfg)
+	if multi, ok := h.mon.(multiCriteriaAlarmer); ok && len(cfgs) > 1 {
+		return multi.CreateAlarmAllOf(r.Context(), cfgs)
+	}
+
+	return h.mon.CreateAlarm(r.Context(), cfgs[0])
 }
 
 // alarmDimensions maps a metric-alert's evaluation scope onto the driver's
@@ -118,36 +134,43 @@ type criterion struct {
 	dimensions      map[string]string
 }
 
-// firstCriterion extracts the first entry of properties.criteria.allOf.
-func firstCriterion(props map[string]any) (criterion, bool) {
+// allCriteria extracts every usable entry of properties.criteria.allOf. An
+// entry with no metricName is skipped.
+func allCriteria(props map[string]any) []criterion {
 	criteria, ok := props["criteria"].(map[string]any)
 	if !ok {
-		return criterion{}, false
+		return nil
 	}
 
 	allOf, ok := criteria["allOf"].([]any)
-	if !ok || len(allOf) == 0 {
-		return criterion{}, false
-	}
-
-	item, ok := allOf[0].(map[string]any)
 	if !ok {
-		return criterion{}, false
+		return nil
 	}
 
-	name, ok := item["metricName"].(string)
-	if !ok || name == "" {
-		return criterion{}, false
+	out := make([]criterion, 0, len(allOf))
+
+	for _, raw := range allOf {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+
+		name, ok := item["metricName"].(string)
+		if !ok || name == "" {
+			continue
+		}
+
+		out = append(out, criterion{
+			metricName:      name,
+			metricNamespace: stringField(item, "metricNamespace"),
+			operator:        stringField(item, "operator"),
+			threshold:       floatField(item["threshold"]),
+			timeAggregation: stringField(item, "timeAggregation"),
+			dimensions:      criterionDimensions(item),
+		})
 	}
 
-	return criterion{
-		metricName:      name,
-		metricNamespace: stringField(item, "metricNamespace"),
-		operator:        stringField(item, "operator"),
-		threshold:       floatField(item["threshold"]),
-		timeAggregation: stringField(item, "timeAggregation"),
-		dimensions:      criterionDimensions(item),
-	}, true
+	return out
 }
 
 // criterionDimensions maps a criterion's dimension filters onto the driver's

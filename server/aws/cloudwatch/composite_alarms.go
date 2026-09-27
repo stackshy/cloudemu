@@ -15,6 +15,7 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
@@ -31,6 +32,23 @@ type compositeAlarmStore interface {
 	DeleteCompositeAlarms(ctx context.Context, names []string) error
 }
 
+// alarmBatchDeleter deletes metric and composite alarms in one checked call.
+// The AWS backend implements it so the one-composite limit and the
+// referenced-alarm guard apply before anything is deleted.
+type alarmBatchDeleter interface {
+	DeleteAlarms(ctx context.Context, names []string) error
+}
+
+// compositeErr maps a backend error of the composite alarm operations to the
+// ValidationError that CloudWatch returns for them.
+func compositeErr(err error) error {
+	if cerrors.IsInvalidArgument(err) || cerrors.IsFailedPrecondition(err) {
+		return newWireError(errValidation, cerrors.Message(err))
+	}
+
+	return err
+}
+
 type putCompositeAlarmInput struct {
 	AlarmName               string   `cbor:"AlarmName"`
 	AlarmRule               string   `cbor:"AlarmRule"`
@@ -40,6 +58,11 @@ type putCompositeAlarmInput struct {
 	OKActions               []string `cbor:"OKActions,omitempty"`
 	InsufficientDataActions []string `cbor:"InsufficientDataActions,omitempty"`
 	Tags                    []tagCBR `cbor:"Tags,omitempty"`
+	// The suppressor fields are ints in the model. Both periods are required
+	// with ActionsSuppressor.
+	ActionsSuppressor                string `cbor:"ActionsSuppressor,omitempty"`
+	ActionsSuppressorWaitPeriod      *int   `cbor:"ActionsSuppressorWaitPeriod,omitempty"`
+	ActionsSuppressorExtensionPeriod *int   `cbor:"ActionsSuppressorExtensionPeriod,omitempty"`
 }
 
 func (h *Handler) putCompositeAlarm(w http.ResponseWriter, r *http.Request, body []byte) {
@@ -64,9 +87,13 @@ func (h *Handler) putCompositeAlarm(w http.ResponseWriter, r *http.Request, body
 		OKActions:               in.OKActions,
 		InsufficientDataActions: in.InsufficientDataActions,
 		Tags:                    tagsToMap(in.Tags),
+
+		ActionsSuppressor:                in.ActionsSuppressor,
+		ActionsSuppressorWaitPeriod:      in.ActionsSuppressorWaitPeriod,
+		ActionsSuppressorExtensionPeriod: in.ActionsSuppressorExtensionPeriod,
 	})
 	if err != nil {
-		writeDriverErr(w, err)
+		writeDriverErr(w, compositeErr(err))
 		return
 	}
 
@@ -85,6 +112,15 @@ type compositeAlarmCBR struct {
 	AlarmActions            []string   `cbor:"AlarmActions,omitempty"`
 	OKActions               []string   `cbor:"OKActions,omitempty"`
 	InsufficientDataActions []string   `cbor:"InsufficientDataActions,omitempty"`
+
+	StateReasonData                    string     `cbor:"StateReasonData,omitempty"`
+	StateTransitionedTimestamp         *time.Time `cbor:"StateTransitionedTimestamp,omitempty"`
+	AlarmConfigurationUpdatedTimestamp *time.Time `cbor:"AlarmConfigurationUpdatedTimestamp,omitempty"`
+	ActionsSuppressor                  string     `cbor:"ActionsSuppressor,omitempty"`
+	ActionsSuppressorWaitPeriod        *int       `cbor:"ActionsSuppressorWaitPeriod,omitempty"`
+	ActionsSuppressorExtensionPeriod   *int       `cbor:"ActionsSuppressorExtensionPeriod,omitempty"`
+	ActionsSuppressedBy                string     `cbor:"ActionsSuppressedBy,omitempty"`
+	ActionsSuppressedReason            string     `cbor:"ActionsSuppressedReason,omitempty"`
 }
 
 // wantsAlarmType reports whether a DescribeAlarms request that lists alarmTypes
@@ -150,10 +186,54 @@ func toCompositeAlarmCBR(a *mondriver.CompositeAlarmInfo) compositeAlarmCBR {
 		InsufficientDataActions: a.InsufficientDataActions,
 	}
 
-	if !a.StateUpdatedTimestamp.IsZero() {
-		ts := a.StateUpdatedTimestamp.UTC()
-		c.StateUpdatedTimestamp = &ts
+	c.StateReasonData = a.StateReasonData
+	c.StateUpdatedTimestamp = optTime(a.StateUpdatedTimestamp)
+	c.StateTransitionedTimestamp = optTime(a.StateTransitionedTimestamp)
+	c.AlarmConfigurationUpdatedTimestamp = optTime(a.AlarmConfigurationUpdatedTimestamp)
+	c.ActionsSuppressedBy = a.ActionsSuppressedBy
+	c.ActionsSuppressedReason = a.ActionsSuppressedReason
+
+	// The periods are only reported with a suppressor, so a zero period still
+	// round-trips for Terraform.
+	if a.ActionsSuppressor != "" {
+		wait, extension := a.ActionsSuppressorWaitPeriod, a.ActionsSuppressorExtensionPeriod
+		c.ActionsSuppressor = a.ActionsSuppressor
+		c.ActionsSuppressorWaitPeriod = &wait
+		c.ActionsSuppressorExtensionPeriod = &extension
 	}
 
 	return c
+}
+
+// optTime returns a UTC copy of t, or nil for the zero time.
+func optTime(t time.Time) *time.Time {
+	if t.IsZero() {
+		return nil
+	}
+
+	ts := t.UTC()
+
+	return &ts
+}
+
+// deleteAlarmsCore runs DeleteAlarms for both protocols. AWS tolerates
+// incorrect alarm names: the correctly named alarms are still deleted and no
+// ResourceNotFound is returned.
+func (h *Handler) deleteAlarmsCore(ctx context.Context, names []string) error {
+	if d, ok := h.monitoring.(alarmBatchDeleter); ok {
+		return compositeErr(d.DeleteAlarms(ctx, names))
+	}
+
+	for _, name := range names {
+		if err := h.monitoring.DeleteAlarm(ctx, name); err != nil && !cerrors.IsNotFound(err) {
+			return err
+		}
+	}
+
+	// A name that is not a metric alarm may be a composite alarm.
+	if store, ok := h.monitoring.(compositeAlarmStore); ok {
+		return compositeErr(store.DeleteCompositeAlarms(ctx, names))
+	}
+
+	return nil
 }

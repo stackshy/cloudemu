@@ -8,7 +8,6 @@ import (
 
 	"github.com/fxamacker/cbor/v2"
 
-	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
 )
 
@@ -438,24 +437,9 @@ func (h *Handler) deleteAlarms(w http.ResponseWriter, r *http.Request, body []by
 		return
 	}
 
-	// AWS tolerates incorrect alarm names: the correctly named alarms are still
-	// deleted and no ResourceNotFound is returned. Skip not-found names so a
-	// batch that includes an already-gone alarm (e.g. terraform destroy) never
-	// fails spuriously or leaves a half-deleted state.
-	for _, name := range in.AlarmNames {
-		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
-			writeDriverErr(w, err)
-			return
-		}
-	}
-
-	// DeleteAlarms accepts both metric and composite alarm names in one call; a
-	// name that isn't a metric alarm (tolerated above) may be a composite alarm.
-	if store, ok := h.monitoring.(compositeAlarmStore); ok {
-		if err := store.DeleteCompositeAlarms(r.Context(), in.AlarmNames); err != nil {
-			writeDriverErr(w, err)
-			return
-		}
+	if err := h.deleteAlarmsCore(r.Context(), in.AlarmNames); err != nil {
+		writeDriverErr(w, err)
+		return
 	}
 
 	writeCBORResponse(w, struct{}{})

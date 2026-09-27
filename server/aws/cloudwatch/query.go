@@ -411,10 +411,16 @@ func toCompositeAlarmMemberXMLs(rows []compositeAlarmCBR) []compositeAlarmMember
 			AlarmActions:            row.AlarmActions,
 			OKActions:               row.OKActions,
 			InsufficientDataActions: row.InsufficientDataActions,
-		}
 
-		if row.StateUpdatedTimestamp != nil {
-			m.StateUpdatedTimestamp = row.StateUpdatedTimestamp.UTC().Format(time.RFC3339)
+			StateReasonData:                    row.StateReasonData,
+			StateUpdatedTimestamp:              xmlTime(row.StateUpdatedTimestamp),
+			StateTransitionedTimestamp:         xmlTime(row.StateTransitionedTimestamp),
+			AlarmConfigurationUpdatedTimestamp: xmlTime(row.AlarmConfigurationUpdatedTimestamp),
+			ActionsSuppressor:                  row.ActionsSuppressor,
+			ActionsSuppressorWaitPeriod:        row.ActionsSuppressorWaitPeriod,
+			ActionsSuppressorExtensionPeriod:   row.ActionsSuppressorExtensionPeriod,
+			ActionsSuppressedBy:                row.ActionsSuppressedBy,
+			ActionsSuppressedReason:            row.ActionsSuppressedReason,
 		}
 
 		out = append(out, m)
@@ -426,22 +432,9 @@ func toCompositeAlarmMemberXMLs(rows []compositeAlarmCBR) []compositeAlarmMember
 func (h *Handler) queryDeleteAlarms(w http.ResponseWriter, r *http.Request) {
 	names := queryStringList(r, "AlarmNames.member.")
 
-	// AWS tolerates incorrect alarm names: valid ones are still deleted and no
-	// ResourceNotFound is returned.
-	for _, name := range names {
-		if err := h.monitoring.DeleteAlarm(r.Context(), name); err != nil && !cerrors.IsNotFound(err) {
-			writeQueryDriverErr(w, err)
-			return
-		}
-	}
-
-	// DeleteAlarms accepts both metric and composite alarm names in one call; a
-	// name that isn't a metric alarm (tolerated above) may be a composite alarm.
-	if store, ok := h.monitoring.(compositeAlarmStore); ok {
-		if err := store.DeleteCompositeAlarms(r.Context(), names); err != nil {
-			writeQueryDriverErr(w, err)
-			return
-		}
+	if err := h.deleteAlarmsCore(r.Context(), names); err != nil {
+		writeQueryDriverErr(w, err)
+		return
 	}
 
 	writeQueryResponse(w, "DeleteAlarmsResponse", nil)
@@ -466,9 +459,13 @@ func (h *Handler) queryPutCompositeAlarm(w http.ResponseWriter, r *http.Request)
 		OKActions:               queryStringList(r, "OKActions.member."),
 		InsufficientDataActions: queryStringList(r, "InsufficientDataActions.member."),
 		Tags:                    queryTagPairs(r, "Tags.member."),
+
+		ActionsSuppressor:                r.Form.Get("ActionsSuppressor"),
+		ActionsSuppressorWaitPeriod:      queryOptInt(r, "ActionsSuppressorWaitPeriod"),
+		ActionsSuppressorExtensionPeriod: queryOptInt(r, "ActionsSuppressorExtensionPeriod"),
 	})
 	if err != nil {
-		writeQueryDriverErr(w, err)
+		writeQueryDriverErr(w, compositeErr(err))
 		return
 	}
 
@@ -597,6 +594,21 @@ func queryOptBool(r *http.Request, field string) *bool {
 	return &v
 }
 
+// queryOptInt reads an optional integer field. A missing or bad value is nil.
+func queryOptInt(r *http.Request, field string) *int {
+	raw := r.Form.Get(field)
+	if raw == "" {
+		return nil
+	}
+
+	v, err := strconv.Atoi(raw)
+	if err != nil {
+		return nil
+	}
+
+	return &v
+}
+
 func queryStringList(r *http.Request, prefix string) []string {
 	var out []string
 
@@ -690,6 +702,24 @@ type compositeAlarmMemberXML struct {
 	AlarmActions            []string `xml:"AlarmActions>member,omitempty"`
 	OKActions               []string `xml:"OKActions>member,omitempty"`
 	InsufficientDataActions []string `xml:"InsufficientDataActions>member,omitempty"`
+
+	StateReasonData                    string `xml:"StateReasonData,omitempty"`
+	StateTransitionedTimestamp         string `xml:"StateTransitionedTimestamp,omitempty"`
+	AlarmConfigurationUpdatedTimestamp string `xml:"AlarmConfigurationUpdatedTimestamp,omitempty"`
+	ActionsSuppressor                  string `xml:"ActionsSuppressor,omitempty"`
+	ActionsSuppressorWaitPeriod        *int   `xml:"ActionsSuppressorWaitPeriod,omitempty"`
+	ActionsSuppressorExtensionPeriod   *int   `xml:"ActionsSuppressorExtensionPeriod,omitempty"`
+	ActionsSuppressedBy                string `xml:"ActionsSuppressedBy,omitempty"`
+	ActionsSuppressedReason            string `xml:"ActionsSuppressedReason,omitempty"`
+}
+
+// xmlTime renders an optional timestamp for the query protocol.
+func xmlTime(t *time.Time) string {
+	if t == nil {
+		return ""
+	}
+
+	return t.UTC().Format(time.RFC3339)
 }
 
 type describeAlarmsResultXML struct {

@@ -1,6 +1,7 @@
 package cloudwatch_test
 
 import (
+	"context"
 	"testing"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -15,6 +16,8 @@ func TestSDKCompositeAlarmRoundTrip(t *testing.T) {
 	client, ctx := newCWClient(t)
 
 	rule := `ALARM("cpu-high") OR ALARM("mem-high")`
+
+	putChildAlarms(t, client, "cpu-high", "mem-high")
 
 	if _, err := client.PutCompositeAlarm(ctx, &awscw.PutCompositeAlarmInput{
 		AlarmName:        aws.String("app-unhealthy"),
@@ -46,9 +49,9 @@ func TestSDKCompositeAlarmRoundTrip(t *testing.T) {
 	if aws.ToString(c.AlarmArn) == "" {
 		t.Fatal("AlarmArn is empty")
 	}
-	// Round-trip only: no boolean rule engine, so state is INSUFFICIENT_DATA.
-	if c.StateValue != cwtypes.StateValueInsufficientData {
-		t.Fatalf("StateValue = %q, want INSUFFICIENT_DATA", c.StateValue)
+	// Evaluated at creation: neither child is in ALARM, so the rule is false.
+	if c.StateValue != cwtypes.StateValueOk {
+		t.Fatalf("StateValue = %q, want OK", c.StateValue)
 	}
 }
 
@@ -117,6 +120,8 @@ func TestSDKDescribeAlarmsAlarmTypesFilter(t *testing.T) {
 func TestSDKDeleteAlarmsDeletesComposite(t *testing.T) {
 	client, ctx := newCWClient(t)
 
+	putChildAlarms(t, client, "cpu-high")
+
 	if _, err := client.PutCompositeAlarm(ctx, &awscw.PutCompositeAlarmInput{
 		AlarmName: aws.String("app-unhealthy"),
 		AlarmRule: aws.String(`ALARM("cpu-high")`),
@@ -136,5 +141,25 @@ func TestSDKDeleteAlarmsDeletesComposite(t *testing.T) {
 	}
 	if len(out.CompositeAlarms) != 0 {
 		t.Fatalf("CompositeAlarms after delete = %d, want 0", len(out.CompositeAlarms))
+	}
+}
+
+// putChildAlarms creates metric alarms for a composite rule to reference.
+func putChildAlarms(t *testing.T, client *awscw.Client, names ...string) {
+	t.Helper()
+
+	for _, name := range names {
+		if _, err := client.PutMetricAlarm(context.Background(), &awscw.PutMetricAlarmInput{
+			AlarmName:          aws.String(name),
+			Namespace:          aws.String("Child/App"),
+			MetricName:         aws.String(name),
+			Statistic:          cwtypes.StatisticMaximum,
+			Period:             aws.Int32(60),
+			EvaluationPeriods:  aws.Int32(1),
+			Threshold:          aws.Float64(5),
+			ComparisonOperator: cwtypes.ComparisonOperatorGreaterThanThreshold,
+		}); err != nil {
+			t.Fatalf("PutMetricAlarm %s: %v", name, err)
+		}
 	}
 }

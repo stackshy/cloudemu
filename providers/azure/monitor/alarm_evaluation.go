@@ -1,6 +1,7 @@
 package monitor
 
 import (
+	"fmt"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/services/monitoring/alarmeval"
@@ -58,7 +59,7 @@ func (m *Mock) evaluateMetricAlarms(keys map[metricKey]bool) {
 	m.alarmMu.Lock()
 
 	for _, a := range m.alarms.All() {
-		if keys[metricKey{Namespace: a.Namespace, MetricName: a.MetricName}] {
+		if alarmReads(a, keys) {
 			fires = append(fires, m.evaluateLocked(a, now))
 		}
 	}
@@ -81,9 +82,28 @@ func alarmParams(alarm *alarmData) alarmeval.Params {
 	}
 }
 
+// alarmReads reports whether an alert reads one of the given metrics.
+func alarmReads(a *alarmData, keys map[metricKey]bool) bool {
+	if keys[metricKey{Namespace: a.Namespace, MetricName: a.MetricName}] {
+		return true
+	}
+
+	for i := range a.Criteria {
+		if keys[metricKey{Namespace: a.Criteria[i].Namespace, MetricName: a.Criteria[i].MetricName}] {
+			return true
+		}
+	}
+
+	return false
+}
+
 // evaluateLocked evaluates one alert rule at now and applies the result. The
 // caller holds alarmMu.
 func (m *Mock) evaluateLocked(alarm *alarmData, now time.Time) *alertFire {
+	if len(alarm.Criteria) > 0 {
+		return m.evaluateCriteriaLocked(alarm, now)
+	}
+
 	params := alarmParams(alarm)
 	at := params.EvaluationTime(now)
 
@@ -129,5 +149,46 @@ func (m *Mock) deliver(fires []*alertFire) {
 		if f != nil {
 			m.fireActionGroups(&f.alarm, f.newState, f.now)
 		}
+	}
+}
+
+// evaluateCriteriaLocked evaluates each criterion of a multi-criteria alert.
+// The alert is in ALARM when every criterion is, OK when any criterion is OK,
+// and INSUFFICIENT_DATA otherwise. A criterion whose missing data is ignored
+// keeps its last state. The caller holds alarmMu.
+func (m *Mock) evaluateCriteriaLocked(alarm *alarmData, now time.Time) *alertFire {
+	breached, ok := 0, 0
+
+	for i := range alarm.Criteria {
+		c := &alarm.Criteria[i]
+
+		params := alarmParams(alarm)
+		params.Stat = c.Stat
+		params.ComparisonOperator = c.ComparisonOperator
+		params.Threshold = c.Threshold
+		at := params.EvaluationTime(now)
+
+		filtered := m.collectFilteredDatums(c.Namespace, c.MetricName, c.Dimensions, alarm.Unit, params.WindowStart(at), at)
+		if out := alarmeval.EvaluateWindow(filtered, &params, at); !out.Retain {
+			c.State = out.State
+		}
+
+		switch c.State {
+		case alarmeval.StateAlarm:
+			breached++
+		case alarmeval.StateOK:
+			ok++
+		}
+	}
+
+	alarm.LastEvaluatedAt = now
+
+	switch {
+	case breached == len(alarm.Criteria):
+		return m.transitionLocked(alarm, alarmeval.StateAlarm, fmt.Sprintf("All %d criteria are met", breached), now)
+	case ok > 0:
+		return m.transitionLocked(alarm, alarmeval.StateOK, fmt.Sprintf("%d of %d criteria are not met", ok, len(alarm.Criteria)), now)
+	default:
+		return m.transitionLocked(alarm, alarmeval.StateInsufficientData, "Insufficient data for the alert criteria", now)
 	}
 }
