@@ -243,6 +243,41 @@ type ContextualAuthorizer interface {
 	) (bool, error)
 }
 
+// Decision is the outcome of one policy evaluation. The values match the AWS
+// SimulatePolicy EvalDecision strings.
+type Decision string
+
+// Policy evaluation outcomes. An explicit Deny always wins; an implicit deny
+// means no statement allowed the request.
+const (
+	DecisionAllowed      Decision = "allowed"
+	DecisionImplicitDeny Decision = "implicitDeny"
+	DecisionExplicitDeny Decision = "explicitDeny"
+)
+
+// EvalRequest is one permission question for PermissionEvaluator. When
+// ResourceKnown is false the caller cannot name the target resource, and the
+// evaluator answers conservatively: it never allows more than it would for any
+// concrete resource. Resource is ignored in that case.
+type EvalRequest struct {
+	Principal     string
+	Action        string
+	Resource      string
+	ResourceKnown bool
+	Context       map[string]string
+}
+
+// PermissionEvaluator is an optional capability: an IAM implementation that
+// reports the full tri-state decision (allowed, implicit deny, explicit deny)
+// and can evaluate a request whose resource is unknown, or a whole service
+// ("may this principal use any s3 action on anything?"). The AWS authorization
+// gate type-asserts for it. Like ContextualAuthorizer it is AWS-only and
+// therefore not part of the shared IAM interface.
+type PermissionEvaluator interface {
+	EvaluatePermission(ctx context.Context, req EvalRequest) Decision
+	EvaluateServiceWide(ctx context.Context, principal, service string, condCtx map[string]string) Decision
+}
+
 // IAM is the interface that IAM provider implementations must satisfy.
 type IAM interface {
 	CreateUser(ctx context.Context, config UserConfig) (*UserInfo, error)

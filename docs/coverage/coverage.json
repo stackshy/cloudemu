@@ -8547,6 +8547,18 @@
         ]
       },
       {
+        "name": "PermissionEvaluator",
+        "doc": "PermissionEvaluator is an optional capability: an IAM implementation that",
+        "operations": [
+          {
+            "name": "EvaluatePermission"
+          },
+          {
+            "name": "EvaluateServiceWide"
+          }
+        ]
+      },
+      {
         "name": "PolicyInspector",
         "doc": "PolicyInspector is an optional capability: an IAM implementation that can",
         "operations": [
