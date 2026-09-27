@@ -57,9 +57,12 @@ type metricKey struct {
 type Mock struct {
 	// alarmMu guards every alarm field and is taken before mu. SNS actions and
 	// EventBridge events are published only after both are released.
-	alarmMu         sync.Mutex
-	mu              sync.RWMutex
-	metrics         map[metricKey][]driver.MetricDatum
+	alarmMu sync.Mutex
+	mu      sync.RWMutex
+	metrics map[metricKey][]driver.MetricDatum
+	// lastReceived is when each series, keyed by seriesSig, last had data
+	// put. ListMetrics uses it for RecentlyActive and the two-week cutoff.
+	lastReceived    map[string]time.Time
 	alarms          *memstore.Store[*alarmData]
 	compositeAlarms *memstore.Store[*compositeAlarmData]
 	dashboards      *memstore.Store[*storedDashboard]
@@ -118,12 +121,17 @@ type alarmData struct {
 	// Metrics and ThresholdMetricID are set on a metric-math alarm.
 	Metrics           []driver.MetricDataQuery
 	ThresholdMetricID string
+	// EvaluateLowSampleCountPercentile is "", "evaluate" or "ignore".
+	EvaluateLowSampleCountPercentile string
+	// EvaluationWindow is nil for the default sliding window.
+	EvaluationWindow *driver.EvaluationWindow
 }
 
 // New creates a new CloudWatch mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
 		metrics:          make(map[metricKey][]driver.MetricDatum),
+		lastReceived:     make(map[string]time.Time),
 		alarms:           memstore.New[*alarmData](),
 		compositeAlarms:  memstore.New[*compositeAlarmData](),
 		dashboards:       memstore.New[*storedDashboard](),
@@ -140,6 +148,8 @@ func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) err
 		return errors.Newf(errors.InvalidArgument, "metric data is required")
 	}
 
+	received := m.opts.Clock.Now()
+
 	m.mu.Lock()
 	for i := range data {
 		key := metricKey{
@@ -147,6 +157,7 @@ func (m *Mock) PutMetricData(ctx context.Context, data []driver.MetricDatum) err
 			MetricName: data[i].MetricName,
 		}
 		m.metrics[key] = append(m.metrics[key], data[i])
+		m.lastReceived[seriesSig(key, data[i].Dimensions)] = received
 	}
 	m.mu.Unlock()
 
@@ -271,8 +282,13 @@ func buildMetricResult(filtered []driver.MetricDatum, startTime time.Time, perio
 			to++
 		}
 
-		result.Timestamps = append(result.Timestamps, startTime.Add(idx*periodDur))
-		result.Values = append(result.Values, alarmeval.StatOf(filtered[from:to], stat))
+		// A period where an extended statistic is not available, such as a
+		// percentile over negative values, is left out as on AWS.
+		if v, ok := alarmeval.StatValue(filtered[from:to], stat); ok {
+			result.Timestamps = append(result.Timestamps, startTime.Add(idx*periodDur))
+			result.Values = append(result.Values, v)
+		}
+
 		from = to
 	}
 
@@ -321,6 +337,32 @@ func (m *Mock) ListMetricsDetailed(_ context.Context) ([]driver.MetricIdentifier
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	return m.seriesRowsLocked(func(string) bool { return true }), nil
+}
+
+// ListMetricsActive is ListMetricsDetailed limited to the series that had
+// data put within the last `within`. ListMetrics uses it for its two-week
+// visibility and for RecentlyActive.
+func (m *Mock) ListMetricsActive(_ context.Context, within time.Duration) ([]driver.MetricIdentifier, error) {
+	cutoff := m.opts.Clock.Now().Add(-within)
+
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	return m.seriesRowsLocked(func(sig string) bool {
+		at, ok := m.lastReceived[sig]
+
+		return !ok || !at.Before(cutoff)
+	}), nil
+}
+
+// seriesSig identifies one metric series: namespace, name and dimension set.
+func seriesSig(key metricKey, dims map[string]string) string {
+	return key.Namespace + "\x00" + key.MetricName + "\x00" + canonicalDims(dims)
+}
+
+// seriesRowsLocked lists each series that keep accepts. The caller holds mu.
+func (m *Mock) seriesRowsLocked(keep func(sig string) bool) []driver.MetricIdentifier {
 	// AWS lists one entry per unique (namespace, name, dimension-set), so walk
 	// every stored datum and dedupe on a canonical dimension signature.
 	seen := make(map[string]bool)
@@ -328,12 +370,16 @@ func (m *Mock) ListMetricsDetailed(_ context.Context) ([]driver.MetricIdentifier
 
 	for key, data := range m.metrics {
 		for i := range data {
-			sig := key.Namespace + "\x00" + key.MetricName + "\x00" + canonicalDims(data[i].Dimensions)
+			sig := seriesSig(key, data[i].Dimensions)
 			if seen[sig] {
 				continue
 			}
 
 			seen[sig] = true
+
+			if !keep(sig) {
+				continue
+			}
 
 			out = append(out, driver.MetricIdentifier{
 				Namespace:  key.Namespace,
@@ -355,7 +401,7 @@ func (m *Mock) ListMetricsDetailed(_ context.Context) ([]driver.MetricIdentifier
 		return canonicalDims(out[i].Dimensions) < canonicalDims(out[j].Dimensions)
 	})
 
-	return out, nil
+	return out
 }
 
 // canonicalDims renders a dimension map as a stable, order-independent string.
@@ -610,5 +656,20 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 		Tags:                       tags,
 		Metrics:                    metricmath.Clone(a.Metrics),
 		ThresholdMetricID:          a.ThresholdMetricID,
+
+		EvaluateLowSampleCountPercentile: a.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                 cloneWindow(a.EvaluationWindow),
 	}
+}
+
+// cloneWindow copies an evaluation window so callers cannot change the
+// stored one.
+func cloneWindow(w *driver.EvaluationWindow) *driver.EvaluationWindow {
+	if w == nil {
+		return nil
+	}
+
+	c := *w
+
+	return &c
 }

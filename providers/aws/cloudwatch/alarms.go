@@ -109,6 +109,9 @@ func (m *Mock) newAlarmData(cfg *driver.AlarmConfig, now time.Time) *alarmData {
 		ConfigUpdatedAt:            now,
 		Metrics:                    metricmath.Clone(cfg.Metrics),
 		ThresholdMetricID:          cfg.ThresholdMetricID,
+
+		EvaluateLowSampleCountPercentile: cfg.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                 cloneWindow(cfg.EvaluationWindow),
 	}
 }
 

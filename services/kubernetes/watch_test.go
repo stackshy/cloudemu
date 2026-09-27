@@ -17,6 +17,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // httpClient and newRequestWithContext are tiny helpers used by the
@@ -445,4 +447,62 @@ func tryReceive(sub *subscriber, deadline time.Duration) (watchEvent, bool) {
 	case <-time.After(deadline):
 		return watchEvent{}, false
 	}
+}
+
+// The ERROR event must carry the metav1.Status as the event object itself
+// (kind Status, code 410, reason Expired), the shape client-go's reflector
+// turns into a relist.
+func TestWatch_ErrorEventCarriesStatusObject(t *testing.T) {
+	b := newBroadcaster()
+	sub := b.subscribe("")
+
+	for i := 0; i < watchSubscriberBuffer+1; i++ {
+		b.publish(EventAdded, "", unstructuredNode("n"))
+	}
+
+	rec := httptest.NewRecorder()
+	streamWatch[unstructured.Unstructured](context.Background(), rec, sub, nil, nil, watchOpts{})
+
+	// The stream always ends with the ERROR event, whichever order the select
+	// drains the buffered events and the overflow signal in.
+	lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
+
+	var ev struct {
+		Type   string `json:"type"`
+		Object struct {
+			Kind   string `json:"kind"`
+			Code   int    `json:"code"`
+			Reason string `json:"reason"`
+		} `json:"object"`
+	}
+
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &ev); err != nil {
+		t.Fatalf("decode last event: %v", err)
+	}
+
+	if ev.Type != EventError || ev.Object.Kind != "Status" || ev.Object.Code != http.StatusGone || ev.Object.Reason != "Expired" {
+		t.Fatalf("ERROR event: %+v", ev)
+	}
+}
+
+// An unstructured.Unstructured value (how registry kinds publish) must encode
+// as the resource JSON itself, not as its Go field {"Object":{...}}.
+func TestWatchEvent_UnstructuredValueEncodesAsResource(t *testing.T) {
+	b, err := json.Marshal(watchEvent{Type: EventAdded, Object: unstructuredNode("n")})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	want := `{"type":"ADDED","object":{"apiVersion":"v1","kind":"Node","metadata":{"name":"n"}}}`
+	if string(b) != want {
+		t.Fatalf("event JSON:\n got %s\nwant %s", b, want)
+	}
+}
+
+func unstructuredNode(name string) unstructured.Unstructured {
+	return unstructured.Unstructured{Object: map[string]any{
+		"apiVersion": "v1",
+		"kind":       "Node",
+		"metadata":   map[string]any{"name": name},
+	}}
 }

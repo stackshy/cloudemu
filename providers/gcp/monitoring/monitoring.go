@@ -55,6 +55,11 @@ type alarmData struct {
 	// LastEvaluatedAt is when the alarm was last evaluated or had its state
 	// set. The next lazy evaluation is due one EvaluationInterval later.
 	LastEvaluatedAt time.Time
+
+	// EvaluateLowSampleCountPercentile and EvaluationWindow are stored so the
+	// portable API round-trips them. They do not change evaluation here.
+	EvaluateLowSampleCountPercentile string
+	EvaluationWindow                 *driver.EvaluationWindow
 }
 
 // Mock is an in-memory mock implementation of the GCP Cloud Monitoring service.
@@ -348,6 +353,9 @@ func (m *Mock) CreateAlarm(_ context.Context, cfg driver.AlarmConfig) error {
 		AlarmActions:               append([]string{}, cfg.AlarmActions...),
 		OKActions:                  append([]string{}, cfg.OKActions...),
 		InsufficientDataActions:    append([]string{}, cfg.InsufficientDataActions...),
+
+		EvaluateLowSampleCountPercentile: cfg.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                 copyWindow(cfg.EvaluationWindow),
 	}
 
 	m.alarmMu.Lock()
@@ -644,5 +652,20 @@ func toAlarmInfo(a *alarmData) driver.AlarmInfo {
 		OKActions:                  append([]string{}, a.OKActions...),
 		InsufficientDataActions:    append([]string{}, a.InsufficientDataActions...),
 		Dimensions:                 dims,
+
+		EvaluateLowSampleCountPercentile: a.EvaluateLowSampleCountPercentile,
+		EvaluationWindow:                 copyWindow(a.EvaluationWindow),
 	}
+}
+
+// copyWindow copies an evaluation window so callers cannot change the stored
+// one.
+func copyWindow(w *driver.EvaluationWindow) *driver.EvaluationWindow {
+	if w == nil {
+		return nil
+	}
+
+	c := *w
+
+	return &c
 }

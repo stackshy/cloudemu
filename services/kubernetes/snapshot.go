@@ -10,6 +10,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	policyv1 "k8s.io/api/policy/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/version"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 )
@@ -43,8 +44,9 @@ type apiServerSnapshot struct {
 // clusterSnapshot is one ClusterState's serializable surface. The nine typed
 // maps hold upstream JSON-tagged types (map[string]*corev1.Pod, …) and the
 // registry holds map[string]*unstructured.Unstructured, so every field marshals
-// directly, with no per-kind mirror structs. The only bespoke work is the three
-// unexported scalars (rv, the two IP allocators), captured explicitly. The
+// directly, with no per-kind mirror structs. The only bespoke work is the
+// unexported scalars (rv, the two IP allocators, the server version), captured
+// explicitly. The
 // broadcasters, admissionClient, eventIndex, mutex, clock and config flags are
 // deliberately absent: they are runtime-only (rebuilt fresh on restore) or
 // config re-injected at registration, never serialized (see Restore).
@@ -59,6 +61,10 @@ type clusterSnapshot struct {
 	// already holds.
 	NextClusterIP uint32 `json:"nextClusterIP"`
 	NextPodIP     uint32 `json:"nextPodIP"`
+	// ServerVersion is what the cluster reports on /version. Older snapshots
+	// lack it and restore with the default.
+	ServerVersion *version.Info `json:"serverVersion,omitempty"`
+
 	// ManagedNodes and NextNodeOrdinal carry the managed node pool state: that
 	// the bootstrap nodes were retired (strict scheduling) and the node IP
 	// allocator.
@@ -118,10 +124,13 @@ func (s *ClusterState) snapshot() clusterSnapshot {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
+	serverVersion := s.serverVersion
+
 	cs := clusterSnapshot{
 		RV:            s.rv,
 		NextClusterIP: s.nextClusterIP,
 		NextPodIP:     s.nextPodIP,
+		ServerVersion: &serverVersion,
 
 		ManagedNodes:    s.managedNodes,
 		NextNodeOrdinal: s.nextNodeOrdinal,
@@ -234,6 +243,7 @@ func (s *APIServer) restoreClusterLocked(cs *clusterSnapshot) (*ClusterState, er
 	// against a degenerate zero (a well-formed v4 snapshot always carries real
 	// values) so a malformed field can't wedge allocation at the reserved base.
 	st.rv = cs.RV
+	st.watchFloor = cs.RV
 	st.managedNodes = cs.ManagedNodes
 	st.nextNodeOrdinal = cs.NextNodeOrdinal
 
@@ -243,6 +253,10 @@ func (s *APIServer) restoreClusterLocked(cs *clusterSnapshot) (*ClusterState, er
 
 	if cs.NextPodIP != 0 {
 		st.nextPodIP = cs.NextPodIP
+	}
+
+	if cs.ServerVersion != nil && cs.ServerVersion.GitVersion != "" {
+		st.serverVersion = *cs.ServerVersion
 	}
 
 	return st, nil

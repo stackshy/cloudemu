@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -30,6 +31,9 @@ type cwSnapshot struct {
 	Channels         json.RawMessage            `json:"channels,omitempty"`
 	AnomalyDetectors json.RawMessage            `json:"anomalyDetectors,omitempty"`
 	History          []driver.AlarmHistoryEntry `json:"history,omitempty"`
+	// LastReceived is when each series last had data put, keyed by its
+	// namespace, name and canonical dimensions.
+	LastReceived map[string]time.Time `json:"lastReceived,omitempty"`
 }
 
 // metricEntrySnapshot promotes one (metricKey -> datapoints) entry to an
@@ -47,6 +51,13 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 
 	m.mu.RLock()
 	snap.Metrics = snapshotMetrics(m.metrics)
+
+	if len(m.lastReceived) > 0 {
+		snap.LastReceived = make(map[string]time.Time, len(m.lastReceived))
+		for k, v := range m.lastReceived {
+			snap.LastReceived[k] = v
+		}
+	}
 
 	if len(m.history) > 0 {
 		snap.History = make([]driver.AlarmHistoryEntry, len(m.history))
@@ -127,9 +138,24 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return fmt.Errorf("cloudwatch: parse snapshot: %w", err)
 	}
 
+	now := m.opts.Clock.Now()
+
 	m.mu.Lock()
+	for k, v := range snap.LastReceived {
+		m.lastReceived[k] = v
+	}
+
+	// A snapshot from before receipt times were kept restores its series as
+	// received now, so ListMetrics still shows them.
 	for _, e := range snap.Metrics {
 		m.metrics[e.Key] = e.Data
+
+		for i := range e.Data {
+			sig := seriesSig(e.Key, e.Data[i].Dimensions)
+			if _, ok := m.lastReceived[sig]; !ok {
+				m.lastReceived[sig] = now
+			}
+		}
 	}
 
 	if len(snap.History) > 0 {

@@ -464,10 +464,15 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 	// return a working URL. CreateOrUpdate may be called more than once for
 	// the same cluster name; only register on the first sighting.
 	if m.k8sAPI != nil {
-		if _, ok := m.k8sUIDs[key]; !ok {
-			uid, _ := m.k8sAPI.RegisterCluster()
+		uid, ok := m.k8sUIDs[key]
+		if !ok {
+			uid, _ = m.k8sAPI.RegisterCluster()
 			m.k8sUIDs[key] = uid
 		}
+
+		// A PUT that changes kubernetesVersion is an AKS upgrade, so /version
+		// follows it.
+		m.k8sAPI.SetClusterVersion(uid, kubernetes.DistributionAKS, cluster.KubernetesVersion)
 	}
 
 	m.clusters.Set(key, cluster)
