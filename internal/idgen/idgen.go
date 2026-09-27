@@ -166,6 +166,13 @@ const appSyncAPIIDLen = 26
 // the legacy 8-char id breaks TagResource/ListTagsForResource client-side.
 func AppSyncAPIID() string { return randString(appSyncAPIIDLen, lowerAlphaNum) }
 
+// bedrockProfileIDLen is the length of a Bedrock application inference profile id.
+const bedrockProfileIDLen = 12
+
+// BedrockInferenceProfileID returns a 12-character lowercase-alphanumeric id,
+// the shape Bedrock mints for an application inference profile.
+func BedrockInferenceProfileID() string { return randString(bedrockProfileIDLen, lowerAlphaNum) }
+
 // ARN generates an AWS ARN.
 func ARN(partition, service, region, accountID, resource string) string {
 	return fmt.Sprintf("arn:%s:%s:%s:%s:%s", partition, service, region, accountID, resource)

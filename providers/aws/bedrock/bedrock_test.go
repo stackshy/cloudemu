@@ -26,7 +26,7 @@ func newTestMock() *Mock {
 func TestListFoundationModels(t *testing.T) {
 	m := newTestMock()
 
-	models, err := m.ListFoundationModels(context.Background())
+	models, err := m.ListFoundationModels(context.Background(), bedrockdriver.FoundationModelFilter{})
 	requireNoError(t, err)
 
 	if len(models) == 0 {
@@ -36,7 +36,9 @@ func TestListFoundationModels(t *testing.T) {
 	for _, fm := range models {
 		assertNotEmpty(t, fm.ModelARN)
 		assertNotEmpty(t, fm.ModelID)
-		assertEqual(t, bedrockdriver.LifecycleActive, fm.LifecycleStatus)
+		if fm.LifecycleStatus != bedrockdriver.LifecycleActive && fm.LifecycleStatus != bedrockdriver.LifecycleLegacy {
+			t.Fatalf("%s: unexpected lifecycle %q", fm.ModelID, fm.LifecycleStatus)
+		}
 	}
 }
 
@@ -74,7 +76,7 @@ func TestFoundationModelCopyOut(t *testing.T) {
 	assertEqual(t, "TEXT", other.InputModalities[0])
 
 	// ListFoundationModels returns independent copies too.
-	list, err := m.ListFoundationModels(ctx)
+	list, err := m.ListFoundationModels(ctx, bedrockdriver.FoundationModelFilter{})
 	requireNoError(t, err)
 	for i := range list {
 		if len(list[i].InputModalities) > 0 {
@@ -82,7 +84,7 @@ func TestFoundationModelCopyOut(t *testing.T) {
 		}
 	}
 
-	relist, err := m.ListFoundationModels(ctx)
+	relist, err := m.ListFoundationModels(ctx, bedrockdriver.FoundationModelFilter{})
 	requireNoError(t, err)
 	for i := range relist {
 		if len(relist[i].InputModalities) > 0 {

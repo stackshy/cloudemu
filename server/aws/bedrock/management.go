@@ -2,7 +2,6 @@ package bedrock
 
 import (
 	"net/http"
-	"strconv"
 
 	bedrockdriver "github.com/stackshy/cloudemu/v2/services/bedrock/driver"
 )
@@ -214,7 +213,10 @@ func (h *Handler) listGuardrails(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	page, next := paginateGuardrails(gs, q.Get("maxResults"), q.Get("nextToken"))
+	page, next, ok := paginate(w, r, gs)
+	if !ok {
+		return
+	}
 
 	out := make([]guardrailSummaryJSON, 0, len(page))
 	for i := range page {
@@ -222,26 +224,6 @@ func (h *Handler) listGuardrails(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, listGuardrailsResponse{Guardrails: out, NextToken: next})
-}
-
-// paginateGuardrails applies optional maxResults/nextToken (a decimal start
-// offset) paging, returning the page and the token for the next page (empty
-// when the page is the last).
-func paginateGuardrails(
-	gs []bedrockdriver.Guardrail, maxResults, nextToken string,
-) (page []bedrockdriver.Guardrail, next string) {
-	start := 0
-	if n, err := strconv.Atoi(nextToken); err == nil && n > 0 {
-		start = min(n, len(gs))
-	}
-
-	gs = gs[start:]
-
-	if n, err := strconv.Atoi(maxResults); err == nil && n > 0 && n < len(gs) {
-		return gs[:n], strconv.Itoa(start + n)
-	}
-
-	return gs, ""
 }
 
 func (h *Handler) updateGuardrail(w http.ResponseWriter, r *http.Request, id string) {
@@ -323,12 +305,17 @@ func (h *Handler) listProvisioned(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	out := make([]provisionedJSON, 0, len(pts))
-	for i := range pts {
-		out = append(out, toProvisionedJSON(&pts[i]))
+	page, next, ok := paginate(w, r, pts)
+	if !ok {
+		return
 	}
 
-	writeJSON(w, listProvisionedResponse{ProvisionedModelSummaries: out})
+	out := make([]provisionedJSON, 0, len(page))
+	for i := range page {
+		out = append(out, toProvisionedJSON(&page[i]))
+	}
+
+	writeJSON(w, listProvisionedResponse{ProvisionedModelSummaries: out, NextToken: next})
 }
 
 func (h *Handler) deleteProvisioned(w http.ResponseWriter, r *http.Request, id string) {

@@ -23,7 +23,7 @@ func createClusterWithMode(t *testing.T, client *awseks.Client, name string, mod
 
 	_, err := client.CreateCluster(context.Background(), &awseks.CreateClusterInput{
 		Name:               aws.String(name),
-		Version:            aws.String("1.30"),
+		Version:            aws.String("1.32"),
 		RoleArn:            aws.String("arn:aws:iam::123456789012:role/eks-cluster"),
 		ResourcesVpcConfig: &ekstypes.VpcConfigRequest{SubnetIds: []string{"subnet-1"}},
 		AccessConfig: &ekstypes.CreateAccessConfigRequest{

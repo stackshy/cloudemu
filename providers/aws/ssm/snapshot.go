@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 )
@@ -17,8 +18,22 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // generic memstore helper. The wired instanceResolver and opts are not
 // serialized.
 type ssmSnapshot struct {
-	Params   map[string]*paramSnapshot `json:"params,omitempty"`
-	Commands json.RawMessage           `json:"commands,omitempty"`
+	Params   map[string]*paramSnapshot  `json:"params,omitempty"`
+	Commands json.RawMessage            `json:"commands,omitempty"`
+	Settings map[string]settingSnapshot `json:"settings,omitempty"`
+}
+
+// settingSnapshot mirrors a customized service setting.
+type settingSnapshot struct {
+	Value        string `json:"value"`
+	LastModified string `json:"lastModified,omitempty"`
+	User         string `json:"user,omitempty"`
+}
+
+// policySnapshot keeps a policy's text and its status.
+type policySnapshot struct {
+	Text   string `json:"text"`
+	Status string `json:"status,omitempty"`
 }
 
 // paramSnapshot mirrors paramData, promoting its unexported fields (and its
@@ -34,20 +49,21 @@ type paramSnapshot struct {
 
 // versionSnapshot mirrors the unexported version struct.
 type versionSnapshot struct {
-	Value          string   `json:"value,omitempty"`
-	Typ            string   `json:"typ,omitempty"`
-	DataType       string   `json:"dataType,omitempty"`
-	Version        int64    `json:"version,omitempty"`
-	LastModified   string   `json:"lastModified,omitempty"`
-	Labels         []string `json:"labels,omitempty"`
-	KeyID          string   `json:"keyId,omitempty"`
-	AllowedPattern string   `json:"allowedPattern,omitempty"`
+	Value          string           `json:"value,omitempty"`
+	Typ            string           `json:"typ,omitempty"`
+	DataType       string           `json:"dataType,omitempty"`
+	Version        int64            `json:"version,omitempty"`
+	LastModified   string           `json:"lastModified,omitempty"`
+	Labels         []string         `json:"labels,omitempty"`
+	KeyID          string           `json:"keyId,omitempty"`
+	AllowedPattern string           `json:"allowedPattern,omitempty"`
+	Policies       []policySnapshot `json:"policies,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. SSM holds no bulk
 // object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
-	snap := ssmSnapshot{Params: m.snapshotParams()}
+	snap := ssmSnapshot{Params: m.snapshotParams(), Settings: m.snapshotSettings()}
 
 	cmds, err := m.commands.Snapshot()
 	if err != nil {
@@ -77,7 +93,7 @@ func (m *Mock) snapshotParams() map[string]*paramSnapshot {
 			ps.Versions = append(ps.Versions, &versionSnapshot{
 				Value: v.value, Typ: v.typ, DataType: v.dataType, Version: v.version,
 				LastModified: v.lastModified, Labels: v.labels, KeyID: v.keyID,
-				AllowedPattern: v.allowedPattern,
+				AllowedPattern: v.allowedPattern, Policies: snapshotPolicies(v.policies),
 			})
 		}
 		p.mu.RUnlock()
@@ -103,15 +119,22 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		}
 
 		for _, v := range ps.Versions {
+			policies, err := restorePolicies(v.Policies)
+			if err != nil {
+				return fmt.Errorf("ssm: restore policies of %s: %w", name, err)
+			}
+
 			p.versions = append(p.versions, &version{
 				value: v.Value, typ: v.Typ, dataType: v.DataType, version: v.Version,
 				lastModified: v.LastModified, labels: v.Labels, keyID: v.KeyID,
-				allowedPattern: v.AllowedPattern,
+				allowedPattern: v.AllowedPattern, policies: policies,
 			})
 		}
 
 		m.params.Set(name, p)
 	}
+
+	m.restoreSettings(snap.Settings)
 
 	if len(snap.Commands) > 0 {
 		if err := m.commands.LoadSnapshot(snap.Commands); err != nil {
@@ -120,4 +143,63 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	return nil
+}
+
+func snapshotPolicies(ps []*policy) []policySnapshot {
+	out := make([]policySnapshot, 0, len(ps))
+	for _, p := range ps {
+		out = append(out, policySnapshot{Text: p.text, Status: p.status})
+	}
+
+	return out
+}
+
+// restorePolicies parses saved policies again. An Expiration time that has
+// passed is kept, so the next evaluation deletes the parameter.
+func restorePolicies(saved []policySnapshot) ([]*policy, error) {
+	var out []*policy
+
+	for _, ps := range saved {
+		p, err := parsePolicy(json.RawMessage(ps.Text), time.Time{}, false)
+		if err != nil {
+			return nil, err
+		}
+
+		if p == nil {
+			continue
+		}
+
+		if ps.Status != "" {
+			p.status = ps.Status
+		}
+
+		out = append(out, p)
+	}
+
+	return out, nil
+}
+
+func (m *Mock) snapshotSettings() map[string]settingSnapshot {
+	m.settings.mu.RLock()
+	defer m.settings.mu.RUnlock()
+
+	if len(m.settings.values) == 0 {
+		return nil
+	}
+
+	out := make(map[string]settingSnapshot, len(m.settings.values))
+	for id, v := range m.settings.values {
+		out[id] = settingSnapshot{Value: v.value, LastModified: v.lastModified, User: v.user}
+	}
+
+	return out
+}
+
+func (m *Mock) restoreSettings(saved map[string]settingSnapshot) {
+	m.settings.mu.Lock()
+	defer m.settings.mu.Unlock()
+
+	for id, v := range saved {
+		m.settings.values[id] = settingValue{value: v.Value, lastModified: v.LastModified, user: v.User}
+	}
 }

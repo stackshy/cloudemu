@@ -244,7 +244,7 @@ func TestSDKQueryExecutionAndDatabaseDDL(t *testing.T) {
 	}
 }
 
-func TestSDKGetDatabaseNotFoundIsResourceNotFound(t *testing.T) {
+func TestSDKGetDatabaseNotFoundIsMetadataException(t *testing.T) {
 	ctx := context.Background()
 	c := newAthenaClient(t)
 
@@ -260,8 +260,8 @@ func TestSDKGetDatabaseNotFoundIsResourceNotFound(t *testing.T) {
 		t.Fatalf("not an API error: %v", err)
 	}
 
-	if apiErr.ErrorCode() != "ResourceNotFoundException" {
-		t.Fatalf("error code = %q, want ResourceNotFoundException", apiErr.ErrorCode())
+	if apiErr.ErrorCode() != "MetadataException" || apiErr.ErrorMessage() != "Database ghost not found" {
+		t.Fatalf("error = %q %q, want MetadataException \"Database ghost not found\"", apiErr.ErrorCode(), apiErr.ErrorMessage())
 	}
 }
 

@@ -5,7 +5,6 @@ package bedrock
 
 import (
 	"context"
-	"strings"
 	"sync"
 	"time"
 
@@ -22,6 +21,7 @@ var _ driver.Bedrock = (*Mock)(nil)
 // Mock is an in-memory mock implementation of the AWS Bedrock service.
 type Mock struct {
 	foundation  []driver.FoundationModel
+	sysProfiles []driver.InferenceProfile // SYSTEM_DEFINED profiles, immutable like the catalog
 	jobs        *memstore.Store[*driver.CustomizationJob]
 	models      *memstore.Store[*driver.CustomModel]
 	guardrails  *memstore.Store[*guardrailRecord]
@@ -49,8 +49,12 @@ type Mock struct {
 // New creates a new Bedrock mock seeded with a realistic foundation-model
 // catalog.
 func New(opts *config.Options) *Mock {
+	catalog := seedFoundationModels(opts.Region)
+	seededAt := opts.Clock.Now().UTC().Format(time.RFC3339)
+
 	return &Mock{
-		foundation:  seedFoundationModels(opts.Region),
+		foundation:  catalog,
+		sysProfiles: seedSystemProfiles(opts.Region, opts.AccountID, seededAt, catalog),
 		jobs:        memstore.New[*driver.CustomizationJob](),
 		models:      memstore.New[*driver.CustomModel](),
 		guardrails:  memstore.New[*guardrailRecord](),
@@ -77,11 +81,18 @@ func (m *Mock) now() string {
 	return m.opts.Clock.Now().UTC().Format(time.RFC3339)
 }
 
-// ListFoundationModels returns the seeded foundation-model catalog.
-func (m *Mock) ListFoundationModels(_ context.Context) ([]driver.FoundationModel, error) {
-	out := make([]driver.FoundationModel, len(m.foundation))
+// ListFoundationModels returns the catalog models that pass filter.
+func (m *Mock) ListFoundationModels(_ context.Context, filter driver.FoundationModelFilter) ([]driver.FoundationModel, error) {
+	if err := validateFoundationFilter(filter); err != nil {
+		return nil, err
+	}
+
+	out := make([]driver.FoundationModel, 0, len(m.foundation))
+
 	for i := range m.foundation {
-		out[i] = cloneFoundationModel(m.foundation[i])
+		if matchesFoundationFilter(&m.foundation[i], filter) {
+			out = append(out, cloneFoundationModel(m.foundation[i]))
+		}
 	}
 
 	return out, nil
@@ -314,67 +325,4 @@ func copyMap(in map[string]string) map[string]string {
 	}
 
 	return out
-}
-
-// fmARN builds a foundation-model ARN (no account component, per AWS).
-func fmARN(region, modelID string) string {
-	return idgen.AWSARN("bedrock", region, "", "foundation-model/"+modelID)
-}
-
-// seedFoundationModels returns a realistic catalog of foundation models.
-func seedFoundationModels(region string) []driver.FoundationModel {
-	text := []string{"TEXT"}
-	embed := []string{"EMBEDDING"}
-	onDemand := []string{"ON_DEMAND"}
-	fineTune := []string{"FINE_TUNING"}
-
-	specs := []driver.FoundationModel{
-		{ModelID: "anthropic.claude-3-sonnet-20240229-v1:0", ModelName: "Claude 3 Sonnet", ProviderName: "Anthropic",
-			InputModalities: text, OutputModalities: text, ResponseStreamingSupported: true, InferenceTypesSupported: onDemand},
-		{ModelID: "anthropic.claude-3-haiku-20240307-v1:0", ModelName: "Claude 3 Haiku", ProviderName: "Anthropic",
-			InputModalities: text, OutputModalities: text, ResponseStreamingSupported: true, InferenceTypesSupported: onDemand},
-		{ModelID: "amazon.titan-text-express-v1", ModelName: "Titan Text G1 - Express", ProviderName: "Amazon",
-			InputModalities: text, OutputModalities: text, ResponseStreamingSupported: true,
-			CustomizationsSupported: fineTune, InferenceTypesSupported: onDemand},
-		{ModelID: "amazon.titan-embed-text-v1", ModelName: "Titan Embeddings G1 - Text", ProviderName: "Amazon",
-			InputModalities: text, OutputModalities: embed, InferenceTypesSupported: onDemand},
-		{ModelID: "meta.llama3-8b-instruct-v1:0", ModelName: "Llama 3 8B Instruct", ProviderName: "Meta",
-			InputModalities: text, OutputModalities: text, ResponseStreamingSupported: true,
-			CustomizationsSupported: fineTune, InferenceTypesSupported: onDemand},
-		{ModelID: "cohere.command-text-v14", ModelName: "Command", ProviderName: "Cohere",
-			InputModalities: text, OutputModalities: text, ResponseStreamingSupported: true,
-			CustomizationsSupported: fineTune, InferenceTypesSupported: onDemand},
-	}
-
-	for i := range specs {
-		specs[i].ModelARN = fmARN(region, specs[i].ModelID)
-		specs[i].LifecycleStatus = driver.LifecycleActive
-	}
-
-	return specs
-}
-
-// modelExists reports whether id names a known foundation or custom model.
-func (m *Mock) modelExists(id string) bool {
-	if m.findFoundation(id) != nil {
-		return true
-	}
-
-	return m.findCustom(id) != nil
-}
-
-// familyOf classifies a model ID by provider prefix for response shaping.
-func familyOf(modelID string) string {
-	switch {
-	case strings.HasPrefix(modelID, "anthropic."):
-		return familyAnthropic
-	case strings.HasPrefix(modelID, "amazon.titan"):
-		return familyTitan
-	case strings.HasPrefix(modelID, "meta.llama"):
-		return familyLlama
-	case strings.HasPrefix(modelID, "cohere."):
-		return familyCohere
-	default:
-		return familyGeneric
-	}
 }

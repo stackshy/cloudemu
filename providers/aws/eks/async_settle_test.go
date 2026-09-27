@@ -53,7 +53,7 @@ func TestAsyncSettleClusterCreateUpdate(t *testing.T) {
 	m, fc := newAsyncMock()
 	ctx := context.Background()
 
-	created, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.30"})
+	created, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.32"})
 	if err != nil {
 		t.Fatalf("create cluster: %v", err)
 	}
@@ -67,7 +67,7 @@ func TestAsyncSettleClusterCreateUpdate(t *testing.T) {
 	}
 
 	// A cluster-level update is rejected while creation is still settling.
-	if _, err := m.UpdateClusterVersion(ctx, "c1", "1.31"); err == nil {
+	if _, err := m.UpdateClusterVersion(ctx, "c1", eksdriver.ClusterVersionUpdate{Version: "1.33"}); err == nil {
 		t.Fatal("expected UpdateClusterVersion to reject a cluster that is still CREATING")
 	}
 
@@ -91,7 +91,7 @@ func TestAsyncSettleClusterCreateUpdate(t *testing.T) {
 	}
 
 	// Update -> UPDATING -> ACTIVE.
-	updated, err := m.UpdateClusterVersion(ctx, "c1", "1.31")
+	updated, err := m.UpdateClusterVersion(ctx, "c1", eksdriver.ClusterVersionUpdate{Version: "1.33"})
 	if err != nil {
 		t.Fatalf("update cluster version: %v", err)
 	}
@@ -123,7 +123,7 @@ func TestAsyncSettleNodegroupCreateUpdate(t *testing.T) {
 	m, fc := newAsyncMock()
 	ctx := context.Background()
 
-	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.30"})
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.32"})
 	if err != nil {
 		t.Fatalf("create cluster: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestAsyncSettleDefaultOff(t *testing.T) {
 	m := newTestMock() // no WithAsyncSettle
 	ctx := context.Background()
 
-	created, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.30"})
+	created, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.32"})
 	if err != nil {
 		t.Fatalf("create cluster: %v", err)
 	}
@@ -214,7 +214,7 @@ func TestAsyncSettleDefaultOff(t *testing.T) {
 		t.Fatalf("nodegroup create status = %q, want %q", ng.Status, eksdriver.NodegroupStatusActive)
 	}
 
-	if _, err := m.UpdateClusterVersion(ctx, "c1", "1.31"); err != nil {
+	if _, err := m.UpdateClusterVersion(ctx, "c1", eksdriver.ClusterVersionUpdate{Version: "1.33"}); err != nil {
 		t.Fatalf("update cluster version: %v", err)
 	}
 

@@ -23,24 +23,30 @@ const (
 	familyTitan     = "titan"
 	familyLlama     = "llama"
 	familyCohere    = "cohere"
+	familyCohereR   = "cohere-r"
+	familyNova      = "nova"
+	familyMistral   = "mistral"
+	familyDeepSeek  = "deepseek"
 	familyGeneric   = "generic"
+
+	stopStop = "stop"
+
+	// placeholderPNG is a 1x1 transparent PNG, base64 encoded.
+	placeholderPNG = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII="
 )
 
 // InvokeModel runs emulated inference, returning a response envelope shaped to
 // match the requested model's family so real SDK callers can parse it.
 func (m *Mock) InvokeModel(_ context.Context, in driver.InvokeModelInput) (*driver.InvokeModelResult, error) {
-	if in.ModelID == "" {
-		return nil, errors.New(errors.InvalidArgument, "modelId is required")
-	}
-
-	if !m.modelExists(in.ModelID) {
-		return nil, errors.Newf(errors.InvalidArgument, "model %q not found", in.ModelID)
+	target, err := m.resolveForInvoke(in.ModelID)
+	if err != nil {
+		return nil, err
 	}
 
 	prompt := extractPrompt(in.Body)
 	text := completion(in.ModelID, prompt)
 
-	body, err := encodeInvokeResponse(in.ModelID, text, wordCount(prompt), wordCount(text))
+	body, err := encodeInvokeResponse(target, text, wordCount(prompt), wordCount(text))
 	if err != nil {
 		return nil, errors.Newf(errors.Internal, "encode response: %v", err)
 	}
@@ -50,12 +56,8 @@ func (m *Mock) InvokeModel(_ context.Context, in driver.InvokeModelInput) (*driv
 
 // Converse runs emulated inference for the structured Converse API.
 func (m *Mock) Converse(_ context.Context, in driver.ConverseInput) (*driver.ConverseOutput, error) {
-	if in.ModelID == "" {
-		return nil, errors.New(errors.InvalidArgument, "modelId is required")
-	}
-
-	if !m.modelExists(in.ModelID) {
-		return nil, errors.Newf(errors.InvalidArgument, "model %q not found", in.ModelID)
+	if _, err := m.resolveForInvoke(in.ModelID); err != nil {
+		return nil, err
 	}
 
 	if len(in.Messages) == 0 {
@@ -87,12 +89,21 @@ func completion(modelID, prompt string) string {
 	return fmt.Sprintf("This is a simulated response from %s to: %s", modelID, prompt)
 }
 
-// encodeInvokeResponse marshals text into the response envelope of modelID's
-// family.
-func encodeInvokeResponse(modelID, text string, inTokens, outTokens int) ([]byte, error) {
-	if isEmbeddingModel(modelID) {
+// encodeInvokeResponse marshals text into the response envelope of the
+// resolved model's family. Custom models and profiles use their base model.
+func encodeInvokeResponse(target *resolvedModel, text string, inTokens, outTokens int) ([]byte, error) {
+	switch {
+	case target.isEmbedding() && familyOf(target.modelID()) == familyCohere:
+		return json.Marshal(cohereEmbedResponse{
+			ID: idgen.GenerateID(""), ResponseType: "embeddings_floats", Embeddings: [][]float64{fakeEmbedding(inTokens)},
+		})
+	case target.isEmbedding():
 		return json.Marshal(embeddingResponse{Embedding: fakeEmbedding(inTokens), InputTextTokenCount: inTokens})
+	case target.isImage():
+		return json.Marshal(imageResponse{Images: []string{placeholderPNG}})
 	}
+
+	modelID := target.modelID()
 
 	switch familyOf(modelID) {
 	case familyAnthropic:
@@ -109,12 +120,33 @@ func encodeInvokeResponse(modelID, text string, inTokens, outTokens int) ([]byte
 		})
 	case familyLlama:
 		return json.Marshal(llamaResponse{
-			Generation: text, PromptTokenCount: inTokens, GenerationTokenCount: outTokens, StopReason: "stop",
+			Generation: text, PromptTokenCount: inTokens, GenerationTokenCount: outTokens, StopReason: stopStop,
 		})
 	case familyCohere:
 		return json.Marshal(cohereResponse{Generations: []cohereGeneration{{Text: text, FinishReason: "COMPLETE"}}})
 	default:
-		return json.Marshal(genericResponse{Completion: text, StopReason: "stop"})
+		return encodeNewerFamily(modelID, text, inTokens, outTokens)
+	}
+}
+
+// encodeNewerFamily covers the Nova, Mistral, Command R and DeepSeek envelopes.
+// Unknown models get a generic completion body.
+func encodeNewerFamily(modelID, text string, inTokens, outTokens int) ([]byte, error) {
+	switch familyOf(modelID) {
+	case familyNova:
+		return json.Marshal(novaResponse{
+			Output:     novaOutput{Message: novaMessage{Role: "assistant", Content: []novaContent{{Text: text}}}},
+			StopReason: stopReasonTurn,
+			Usage:      novaUsage{InputTokens: inTokens, OutputTokens: outTokens, TotalTokens: inTokens + outTokens},
+		})
+	case familyMistral:
+		return json.Marshal(mistralResponse{Outputs: []mistralOutput{{Text: text, StopReason: stopStop}}})
+	case familyCohereR:
+		return json.Marshal(cohereRResponse{Text: text, GenerationID: idgen.GenerateID(""), FinishReason: "COMPLETE"})
+	case familyDeepSeek:
+		return json.Marshal(deepSeekResponse{Choices: []deepSeekChoice{{Text: text, StopReason: stopStop}}})
+	default:
+		return json.Marshal(genericResponse{Completion: text, StopReason: stopStop})
 	}
 }
 
@@ -205,12 +237,6 @@ func conversationTokens(msgs []driver.Message) int {
 // wordCount is a crude token estimate: whitespace-separated words.
 func wordCount(s string) int {
 	return len(strings.Fields(s))
-}
-
-// isEmbeddingModel reports whether modelID is an embedding model, which
-// returns a vector rather than a text completion.
-func isEmbeddingModel(modelID string) bool {
-	return strings.Contains(modelID, "embed")
 }
 
 // fakeEmbedding produces a deterministic pseudo-embedding vector seeded by the

@@ -27,7 +27,7 @@ func newAPICluster(t *testing.T, mode string) *Mock {
 	noBootstrap := false
 
 	if _, err := m.CreateCluster(context.Background(), eksdriver.ClusterConfig{
-		Name: "c1", Version: "1.30",
+		Name: "c1", Version: "1.32",
 		AccessConfig: eksdriver.AccessConfigRequest{
 			AuthenticationMode: mode, BootstrapClusterCreatorAdminPermissions: &noBootstrap,
 		},

@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -34,10 +35,9 @@ import (
 // Wave 1 placeholder for the cluster API server endpoint. Wave 2 will swap
 // in a real per-cluster apiserver address.
 const (
-	wavePlaceholderEndpoint  = "https://EKS-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local"
-	defaultPlatformVersion   = "eks.1"
-	defaultKubernetesVersion = "1.29"
-	namespaceEKS             = "AWS/EKS"
+	wavePlaceholderEndpoint = "https://EKS-DATAPLANE-NOT-IMPLEMENTED.cloudemu.local"
+	defaultPlatformVersion  = "eks.1"
+	namespaceEKS            = "AWS/EKS"
 
 	// Managed-nodegroup defaults real EKS applies when the caller omits them.
 	defaultNodegroupInstanceType = "t3.medium"
@@ -634,6 +634,12 @@ func (m *Mock) CreateCluster(ctx context.Context, cfg eksdriver.ClusterConfig) (
 		}
 	}
 
+	if cfg.Version != "" {
+		if err := validateKubernetesVersion(cfg.Version); err != nil {
+			return nil, err
+		}
+	}
+
 	version := cfg.Version
 	if version == "" {
 		// Real EKS defaults to the latest supported Kubernetes version when the
@@ -884,10 +890,23 @@ func (m *Mock) UpdateClusterConfig(
 	}), nil
 }
 
-// UpdateClusterVersion bumps the Kubernetes version of an existing cluster.
-func (m *Mock) UpdateClusterVersion(_ context.Context, name, version string) (*eksdriver.ClusterUpdate, error) {
+// UpdateClusterVersion moves a cluster up one minor version. A one-minor
+// rollback is allowed within 7 days of the upgrade that reached the current
+// version. Force skips only the rollback readiness check.
+func (m *Mock) UpdateClusterVersion(
+	_ context.Context, name string, in eksdriver.ClusterVersionUpdate,
+) (*eksdriver.ClusterUpdate, error) {
+	version := in.Version
 	if version == "" {
 		return nil, cerrors.New(cerrors.InvalidArgument, "version is required")
+	}
+
+	if err := validateKubernetesVersion(version); err != nil {
+		return nil, err
+	}
+
+	if err := validateRollbackConfig(in.RollbackTimeoutMinutes); err != nil {
+		return nil, err
 	}
 
 	m.mu.Lock()
@@ -903,6 +922,21 @@ func (m *Mock) UpdateClusterVersion(_ context.Context, name, version string) (*e
 			"cluster %q already has a pending update (status %s); only one update is allowed at a time", name, status)
 	}
 
+	updateType, err := m.clusterVersionChange(&c, version, in.Force)
+	if err != nil {
+		return nil, err
+	}
+
+	if updateType == updateTypeRollback {
+		// A rolled-back cluster did not reach its version by an upgrade, so
+		// it can't roll back again.
+		c.PreviousVersion = ""
+		c.VersionUpgradedAt = time.Time{}
+	} else {
+		c.PreviousVersion = c.Version
+		c.VersionUpgradedAt = m.opts.Clock.Now().UTC()
+	}
+
 	c.Version = version
 	m.clusters.Set(name, c)
 
@@ -911,7 +945,7 @@ func (m *Mock) UpdateClusterVersion(_ context.Context, name, version string) (*e
 
 	return m.recordUpdate(&eksdriver.ClusterUpdate{
 		ID:          newUpdateID(),
-		Type:        "VersionUpdate",
+		Type:        updateType,
 		Status:      "Successful",
 		CreatedAt:   m.opts.Clock.Now().UTC(),
 		ClusterName: name,
@@ -1061,6 +1095,11 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 		return nil, err
 	}
 
+	version, err := resolveNodegroupVersion(&parent, cfg.Version)
+	if err != nil {
+		return nil, err
+	}
+
 	now := m.opts.Clock.Now().UTC()
 
 	instanceTypes, amiType, diskSize := nodegroupDefaults(&cfg)
@@ -1075,7 +1114,7 @@ func (m *Mock) CreateNodegroup(_ context.Context, cfg eksdriver.NodegroupConfig)
 		AmiType:        amiType,
 		CapacityType:   cfg.CapacityType,
 		DiskSize:       diskSize,
-		Version:        cfg.Version,
+		Version:        version,
 		ReleaseVersion: cfg.ReleaseVersion,
 		ScalingConfig:  cfg.ScalingConfig,
 		UpdateConfig:   resolveUpdateConfig(cfg.UpdateConfig),
@@ -1223,9 +1262,17 @@ func (m *Mock) UpdateNodegroupVersion(
 			nodegroupName, status)
 	}
 
-	if version != "" {
-		ng.Version = version
+	parent, ok := m.clusters.Get(clusterName)
+	if !ok {
+		return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", clusterName)
 	}
+
+	resolved, err := resolveNodegroupVersion(&parent, version)
+	if err != nil {
+		return nil, err
+	}
+
+	ng.Version = resolved
 
 	if releaseVersion != "" {
 		ng.ReleaseVersion = releaseVersion
@@ -1407,12 +1454,21 @@ func (m *Mock) CreateAddon(_ context.Context, cfg eksdriver.AddonConfig) (*eksdr
 			"add-on %q already installed on cluster %q", cfg.AddonName, cfg.ClusterName)
 	}
 
+	version, err := resolveAddonVersion(cfg.AddonName, parent.Version, cfg.AddonVersion)
+	if err != nil {
+		return nil, err
+	}
+
+	if err := validateConfigurationValues(cfg.ConfigurationValues); err != nil {
+		return nil, err
+	}
+
 	now := m.opts.Clock.Now().UTC()
 
 	ad := eksdriver.Addon{
 		ClusterName:           cfg.ClusterName,
 		AddonName:             cfg.AddonName,
-		AddonVersion:          cfg.AddonVersion,
+		AddonVersion:          version,
 		ARN:                   m.addonARN(arnRegion(parent.ARN, m.opts.Region), cfg.ClusterName, cfg.AddonName),
 		ServiceAccountRoleArn: cfg.ServiceAccountRoleArn,
 		ConfigurationValues:   cfg.ConfigurationValues,
@@ -1482,7 +1538,21 @@ func (m *Mock) UpdateAddon(_ context.Context, cfg eksdriver.AddonConfig) (*eksdr
 	}
 
 	if cfg.AddonVersion != "" {
-		ad.AddonVersion = cfg.AddonVersion
+		parent, ok := m.clusters.Get(cfg.ClusterName)
+		if !ok {
+			return nil, cerrors.Newf(cerrors.NotFound, "cluster %q not found", cfg.ClusterName)
+		}
+
+		version, err := resolveAddonVersion(cfg.AddonName, parent.Version, cfg.AddonVersion)
+		if err != nil {
+			return nil, err
+		}
+
+		ad.AddonVersion = version
+	}
+
+	if err := validateConfigurationValues(cfg.ConfigurationValues); err != nil {
+		return nil, err
 	}
 
 	if cfg.ServiceAccountRoleArn != "" {

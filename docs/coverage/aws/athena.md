@@ -3,7 +3,7 @@
 
 AWS's `athena` service · portable interface `driver.Athena` · [AWS index](./README.md)
 
-## Operations (21)
+## Operations (23)
 
 | Operation | Description |
 | --- | --- |
@@ -16,11 +16,13 @@ AWS's `athena` service · portable interface `driver.Athena` · [AWS index](./RE
 | `GetNamedQuery` |  |
 | `GetQueryExecution` |  |
 | `GetQueryResults` | GetQueryResults returns the result rows for a SUCCEEDED execution. DDL and |
+| `GetTableMetadata` | GetTableMetadata returns a table's metadata, or an error tagged |
 | `GetWorkGroup` | GetWorkGroup returns a deep copy of a workgroup, or an error tagged |
 | `ListDataCatalogs` |  |
 | `ListDatabases` |  |
 | `ListNamedQueries` | ListNamedQueries returns the ids of saved queries in the given workgroup |
 | `ListQueryExecutions` | ListQueryExecutions returns execution ids in the given workgroup |
+| `ListTableMetadata` | ListTableMetadata lists the tables of a database. expression is a regex |
 | `ListTagsForResource` |  |
 | `ListWorkGroups` | ListWorkGroups returns workgroup summaries in a deterministic order. |
 | `StartQueryExecution` | StartQueryExecution runs a query and returns its id. Re-issuing with the |

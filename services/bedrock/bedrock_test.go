@@ -30,7 +30,7 @@ func TestListAndGetFoundationModels(t *testing.T) {
 	b := newTestBedrock()
 	ctx := context.Background()
 
-	models, err := b.ListFoundationModels(ctx)
+	models, err := b.ListFoundationModels(ctx, driver.FoundationModelFilter{})
 	require.NoError(t, err)
 	assert.NotEmpty(t, models)
 
@@ -99,7 +99,7 @@ func TestWithRecorder(t *testing.T) {
 	rec := recorder.New()
 	b := newTestBedrock(WithRecorder(rec))
 
-	_, err := b.ListFoundationModels(context.Background())
+	_, err := b.ListFoundationModels(context.Background(), driver.FoundationModelFilter{})
 	require.NoError(t, err)
 
 	calls := rec.Calls()
@@ -112,7 +112,7 @@ func TestWithMetrics(t *testing.T) {
 	mc := metrics.NewCollector()
 	b := newTestBedrock(WithMetrics(mc))
 
-	_, err := b.ListFoundationModels(context.Background())
+	_, err := b.ListFoundationModels(context.Background(), driver.FoundationModelFilter{})
 	require.NoError(t, err)
 
 	q := metrics.NewQuery(mc)
@@ -125,7 +125,7 @@ func TestWithErrorInjection(t *testing.T) {
 
 	inj.Set("bedrock", "ListFoundationModels", fmt.Errorf("injected failure"), inject.Always{})
 
-	_, err := b.ListFoundationModels(context.Background())
+	_, err := b.ListFoundationModels(context.Background(), driver.FoundationModelFilter{})
 	require.Error(t, err)
 }
 
@@ -133,7 +133,7 @@ func TestWithLatency(t *testing.T) {
 	b := newTestBedrock(WithLatency(time.Millisecond))
 
 	start := time.Now()
-	_, err := b.ListFoundationModels(context.Background())
+	_, err := b.ListFoundationModels(context.Background(), driver.FoundationModelFilter{})
 	require.NoError(t, err)
 	assert.GreaterOrEqual(t, time.Since(start), time.Millisecond)
 }
@@ -144,10 +144,10 @@ func TestWithRateLimiter(t *testing.T) {
 	lim := ratelimit.New(1, 1, fc)
 	b := NewBedrock(awsbedrock.New(o), WithRateLimiter(lim))
 
-	_, err := b.ListFoundationModels(context.Background())
+	_, err := b.ListFoundationModels(context.Background(), driver.FoundationModelFilter{})
 	require.NoError(t, err)
 
-	_, err = b.ListFoundationModels(context.Background())
+	_, err = b.ListFoundationModels(context.Background(), driver.FoundationModelFilter{})
 	require.Error(t, err)
 }
 

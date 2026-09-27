@@ -30,7 +30,7 @@ func TestCreateCluster(t *testing.T) {
 			name: "success",
 			cfg: eksdriver.ClusterConfig{
 				Name:    "my-cluster",
-				Version: "1.30",
+				Version: "1.32",
 				RoleArn: "arn:aws:iam::123456789012:role/eks-cluster",
 				VPCConfig: eksdriver.VPCConfig{
 					SubnetIDs: []string{"subnet-1", "subnet-2"},
@@ -39,7 +39,7 @@ func TestCreateCluster(t *testing.T) {
 		},
 		{
 			name:      "missing name",
-			cfg:       eksdriver.ClusterConfig{Version: "1.30"},
+			cfg:       eksdriver.ClusterConfig{Version: "1.32"},
 			expectErr: true,
 		},
 	}
@@ -66,7 +66,7 @@ func TestCreateCluster(t *testing.T) {
 
 func TestCreateCluster_Duplicate(t *testing.T) {
 	m := newTestMock()
-	cfg := eksdriver.ClusterConfig{Name: "c1", Version: "1.30"}
+	cfg := eksdriver.ClusterConfig{Name: "c1", Version: "1.32"}
 
 	_, err := m.CreateCluster(context.Background(), cfg)
 	requireNoError(t, err)
@@ -80,7 +80,7 @@ func TestClusterLifecycle(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.30"})
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.32"})
 	requireNoError(t, err)
 
 	got, err := m.DescribeCluster(ctx, "c1")
@@ -91,13 +91,13 @@ func TestClusterLifecycle(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, 1, len(names))
 
-	upd, err := m.UpdateClusterVersion(ctx, "c1", "1.31")
+	upd, err := m.UpdateClusterVersion(ctx, "c1", eksdriver.ClusterVersionUpdate{Version: "1.33"})
 	requireNoError(t, err)
 	assertEqual(t, "Successful", upd.Status)
 
 	got, err = m.DescribeCluster(ctx, "c1")
 	requireNoError(t, err)
-	assertEqual(t, "1.31", got.Version)
+	assertEqual(t, "1.33", got.Version)
 
 	_, err = m.UpdateClusterConfig(ctx, "c1",
 		&eksdriver.VPCConfig{EndpointPublicAccess: true, PublicAccessCidrs: []string{"0.0.0.0/0"}},
@@ -122,7 +122,7 @@ func TestUpdateCluster_NotFound(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	if _, err := m.UpdateClusterVersion(ctx, "missing", "1.30"); err == nil {
+	if _, err := m.UpdateClusterVersion(ctx, "missing", eksdriver.ClusterVersionUpdate{Version: "1.32"}); err == nil {
 		t.Fatal("expected error for missing cluster")
 	}
 
@@ -135,7 +135,7 @@ func TestNodegroupLifecycle(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.30"})
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.32"})
 	requireNoError(t, err)
 
 	ng, err := m.CreateNodegroup(ctx, eksdriver.NodegroupConfig{
@@ -167,12 +167,12 @@ func TestNodegroupLifecycle(t *testing.T) {
 	requireNoError(t, err)
 	assertEqual(t, 3, got.ScalingConfig.DesiredSize)
 
-	_, err = m.UpdateNodegroupVersion(ctx, "c1", "ng1", "1.31", "")
+	_, err = m.UpdateNodegroupVersion(ctx, "c1", "ng1", "1.32", "")
 	requireNoError(t, err)
 
 	got, err = m.DescribeNodegroup(ctx, "c1", "ng1")
 	requireNoError(t, err)
-	assertEqual(t, "1.31", got.Version)
+	assertEqual(t, "1.32", got.Version)
 
 	_, err = m.DeleteNodegroup(ctx, "c1", "ng1")
 	requireNoError(t, err)
@@ -191,7 +191,7 @@ func TestNodegroupTaintsAndModifiedAt(t *testing.T) {
 	))
 	ctx := context.Background()
 
-	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.30"})
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.32"})
 	requireNoError(t, err)
 
 	ng, err := m.CreateNodegroup(ctx, eksdriver.NodegroupConfig{
@@ -315,7 +315,7 @@ func TestFargateProfileLifecycle(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.30"})
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.32"})
 	requireNoError(t, err)
 
 	fp, err := m.CreateFargateProfile(ctx, eksdriver.FargateProfileConfig{
@@ -348,13 +348,13 @@ func TestAddonLifecycle(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.30"})
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.32"})
 	requireNoError(t, err)
 
 	ad, err := m.CreateAddon(ctx, eksdriver.AddonConfig{
 		ClusterName:  "c1",
 		AddonName:    "vpc-cni",
-		AddonVersion: "v1.0",
+		AddonVersion: "v1.20.4-eksbuild.2",
 	})
 	requireNoError(t, err)
 	assertEqual(t, "ACTIVE", ad.Status)
@@ -362,21 +362,21 @@ func TestAddonLifecycle(t *testing.T) {
 
 	got, err := m.DescribeAddon(ctx, "c1", "vpc-cni")
 	requireNoError(t, err)
-	assertEqual(t, "v1.0", got.AddonVersion)
+	assertEqual(t, "v1.20.4-eksbuild.2", got.AddonVersion)
 
 	names, err := m.ListAddons(ctx, "c1")
 	requireNoError(t, err)
 	assertEqual(t, 1, len(names))
 
 	upd, err := m.UpdateAddon(ctx, eksdriver.AddonConfig{
-		ClusterName: "c1", AddonName: "vpc-cni", AddonVersion: "v2.0",
+		ClusterName: "c1", AddonName: "vpc-cni", AddonVersion: "v1.23.1-eksbuild.1",
 	})
 	requireNoError(t, err)
 	assertEqual(t, "Successful", upd.Status)
 
 	got, err = m.DescribeAddon(ctx, "c1", "vpc-cni")
 	requireNoError(t, err)
-	assertEqual(t, "v2.0", got.AddonVersion)
+	assertEqual(t, "v1.23.1-eksbuild.1", got.AddonVersion)
 
 	_, err = m.DeleteAddon(ctx, "c1", "vpc-cni")
 	requireNoError(t, err)
@@ -392,7 +392,7 @@ func TestDeleteCluster_RejectsAttachedChildren(t *testing.T) {
 	m := newTestMock()
 	ctx := context.Background()
 
-	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.30"})
+	_, err := m.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.32"})
 	requireNoError(t, err)
 
 	_, err = m.CreateNodegroup(ctx, eksdriver.NodegroupConfig{ClusterName: "c1", NodegroupName: "ng1"})

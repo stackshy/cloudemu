@@ -228,7 +228,12 @@ func (h *Handler) listMarketplaceEndpoints(w http.ResponseWriter, r *http.Reques
 		out = append(out, toMarketplaceEndpointSummaryJSON(&endpoints[i]))
 	}
 
-	writeJSON(w, listMarketplaceEndpointsResponse{MarketplaceModelEndpoints: out})
+	page, next, ok := paginate(w, r, out)
+	if !ok {
+		return
+	}
+
+	writeJSON(w, listMarketplaceEndpointsResponse{MarketplaceModelEndpoints: page, NextToken: next})
 }
 
 func (h *Handler) updateMarketplaceEndpoint(w http.ResponseWriter, r *http.Request, arn string) {

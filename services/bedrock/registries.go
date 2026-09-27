@@ -32,9 +32,10 @@ func (b *Bedrock) GetInferenceProfile(ctx context.Context, identifier string) (*
 	return out.(*driver.InferenceProfile), nil
 }
 
-// ListInferenceProfiles lists all inference profiles.
-func (b *Bedrock) ListInferenceProfiles(ctx context.Context) ([]driver.InferenceProfile, error) {
-	out, err := b.do(ctx, "ListInferenceProfiles", nil, func() (any, error) { return b.driver.ListInferenceProfiles(ctx) })
+// ListInferenceProfiles lists inference profiles of one type. An empty type
+// means SYSTEM_DEFINED, as in AWS.
+func (b *Bedrock) ListInferenceProfiles(ctx context.Context, typeEquals string) ([]driver.InferenceProfile, error) {
+	out, err := b.do(ctx, "ListInferenceProfiles", typeEquals, func() (any, error) { return b.driver.ListInferenceProfiles(ctx, typeEquals) })
 	if err != nil {
 		return nil, err
 	}

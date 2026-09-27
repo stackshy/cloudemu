@@ -88,8 +88,9 @@ func TestSDKListAndGetFoundationModels(t *testing.T) {
 		t.Fatalf("got model %q, want %q", aws.ToString(got.ModelDetails.ModelId), claudeModel)
 	}
 
-	if got.ModelDetails.ModelLifecycle == nil || got.ModelDetails.ModelLifecycle.Status != bedrocktypes.FoundationModelLifecycleStatusActive {
-		t.Fatalf("expected ACTIVE lifecycle, got %+v", got.ModelDetails.ModelLifecycle)
+	// Claude 3 Sonnet is past its AWS end of life, so it reports LEGACY.
+	if got.ModelDetails.ModelLifecycle == nil || got.ModelDetails.ModelLifecycle.Status != bedrocktypes.FoundationModelLifecycleStatusLegacy {
+		t.Fatalf("expected LEGACY lifecycle, got %+v", got.ModelDetails.ModelLifecycle)
 	}
 }
 

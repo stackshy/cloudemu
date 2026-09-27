@@ -508,6 +508,46 @@ func TestSSMParameterStoreChangeEvents(t *testing.T) {
 	}
 }
 
+func TestSSMParameterPolicyActionEvents(t *testing.T) {
+	clock := config.NewFakeClock(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC))
+	p := aws.New(config.WithClock(clock))
+	ctx := context.Background()
+	drain := captureEvents(t, p, `{"source":["aws.ssm"],"detail-type":["Parameter Store Policy Action"]}`)
+
+	pols := `[{"Type":"Expiration","Version":"1.0","Attributes":{"Timestamp":"2026-01-01T00:10:00Z"}}]`
+	if _, _, err := p.SSM.PutParameter(ctx, psdriver.PutConfig{
+		Name: "/app/ttl", Value: "v", Type: "SecureString", Tier: "Advanced", Policies: &pols,
+	}); err != nil {
+		t.Fatalf("PutParameter: %v", err)
+	}
+
+	if !p.SSM.Tick(clock.Now().Add(10 * time.Minute)) {
+		t.Fatal("Tick reported no change at the expiration time")
+	}
+
+	events := drain()
+	if len(events) != 1 {
+		t.Fatalf("got %d events, want 1", len(events))
+	}
+
+	requireEnvelope(t, &events[0], "aws.ssm", "Parameter Store Policy Action")
+
+	d := detailOf(t, &events[0])
+	if d["parameter-name"] != "/app/ttl" || d["parameter-type"] != "SecureString" ||
+		d["policy-type"] != "Expiration" || d["action-status"] != "Finished" {
+		t.Fatalf("detail = %v", d)
+	}
+
+	arn := "arn:aws:ssm:" + config.DefaultRegion + ":" + testAccountID + ":parameter/app/ttl"
+	if len(events[0].Resources) != 1 || events[0].Resources[0] != arn {
+		t.Fatalf("resources = %v, want [%s]", events[0].Resources, arn)
+	}
+
+	if _, err := p.SSM.GetParameter(ctx, "/app/ttl", false); err == nil {
+		t.Fatal("expired parameter still readable")
+	}
+}
+
 // glueCrawlerSetup builds a provider on a fake clock with a crawler and a
 // capture rule for Glue events.
 func glueCrawlerSetup(t *testing.T) (*aws.Provider, *config.FakeClock, func() []lifecycleEvent) {

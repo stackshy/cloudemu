@@ -99,8 +99,8 @@ func (b *Bedrock) rec(op string, input, output any, err error, dur time.Duration
 }
 
 // ListFoundationModels lists the available foundation models.
-func (b *Bedrock) ListFoundationModels(ctx context.Context) ([]driver.FoundationModel, error) {
-	out, err := b.do(ctx, "ListFoundationModels", nil, func() (any, error) { return b.driver.ListFoundationModels(ctx) })
+func (b *Bedrock) ListFoundationModels(ctx context.Context, filter driver.FoundationModelFilter) ([]driver.FoundationModel, error) {
+	out, err := b.do(ctx, "ListFoundationModels", filter, func() (any, error) { return b.driver.ListFoundationModels(ctx, filter) })
 	if err != nil {
 		return nil, err
 	}

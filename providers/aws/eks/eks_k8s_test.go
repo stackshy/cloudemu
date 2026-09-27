@@ -21,7 +21,7 @@ func TestSetK8sAPI_CreateClusterRegistersWithAPIServer(t *testing.T) {
 
 	_, err := m.CreateCluster(context.Background(), eksdriver.ClusterConfig{
 		Name:    "c1",
-		Version: "1.30",
+		Version: "1.32",
 		RoleArn: "arn:aws:iam::123456789012:role/eks",
 	})
 	if err != nil {
@@ -47,7 +47,7 @@ func TestDescribeCluster_EndpointRewrittenToK8s(t *testing.T) {
 
 	_, err := m.CreateCluster(context.Background(), eksdriver.ClusterConfig{
 		Name:    "c1",
-		Version: "1.30",
+		Version: "1.32",
 		RoleArn: "arn:aws:iam::123456789012:role/eks",
 	})
 	if err != nil {
@@ -73,7 +73,7 @@ func TestDescribeCluster_NoAPIKeepsSentinel(t *testing.T) {
 
 	_, err := m.CreateCluster(context.Background(), eksdriver.ClusterConfig{
 		Name:    "c1",
-		Version: "1.30",
+		Version: "1.32",
 		RoleArn: "arn:aws:iam::123456789012:role/eks",
 	})
 	if err != nil {
@@ -99,7 +99,7 @@ func TestDescribeCluster_APIWithoutBaseURLKeepsSentinel(t *testing.T) {
 
 	_, err := m.CreateCluster(context.Background(), eksdriver.ClusterConfig{
 		Name:    "c1",
-		Version: "1.30",
+		Version: "1.32",
 		RoleArn: "arn:aws:iam::123456789012:role/eks",
 	})
 	if err != nil {
@@ -125,7 +125,7 @@ func TestDeleteCluster_DeregistersK8sState(t *testing.T) {
 
 	_, err := m.CreateCluster(context.Background(), eksdriver.ClusterConfig{
 		Name:    "c1",
-		Version: "1.30",
+		Version: "1.32",
 		RoleArn: "arn:aws:iam::123456789012:role/eks",
 	})
 	if err != nil {

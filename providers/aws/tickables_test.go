@@ -7,13 +7,14 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/aws"
 )
 
-// TestTickablesRegistersCloudWatch checks the serve ticker reaches the
-// region's own CloudWatch, so due alarms are evaluated without a read.
-func TestTickablesRegistersCloudWatch(t *testing.T) {
+// TestTickablesRegistersTimeDrivenServices checks the serve ticker reaches the
+// region's own CloudWatch and SSM, so due alarms and parameter policies run
+// without a read.
+func TestTickablesRegistersTimeDrivenServices(t *testing.T) {
 	p := aws.New()
 
 	got := p.Tickables()
-	if len(got) != 1 || got[0] != config.Tickable(p.CloudWatch) {
-		t.Fatalf("Tickables() = %v, want only this provider's CloudWatch", got)
+	if len(got) != 2 || got[0] != config.Tickable(p.CloudWatch) || got[1] != config.Tickable(p.SSM) {
+		t.Fatalf("Tickables() = %v, want this provider's CloudWatch and SSM", got)
 	}
 }

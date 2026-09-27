@@ -255,7 +255,13 @@ type updateClusterConfigRequest struct {
 }
 
 type updateClusterVersionRequest struct {
-	Version string `json:"version,omitempty"`
+	Version        string              `json:"version,omitempty"`
+	Force          bool                `json:"force,omitempty"`
+	RollbackConfig *rollbackConfigJSON `json:"rollbackConfig,omitempty"`
+}
+
+type rollbackConfigJSON struct {
+	TimeoutMinutes *int `json:"timeoutMinutes,omitempty"`
 }
 
 type createNodegroupRequest struct {

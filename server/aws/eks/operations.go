@@ -207,7 +207,12 @@ func (h *Handler) updateClusterVersion(w http.ResponseWriter, r *http.Request, n
 		return
 	}
 
-	upd, err := h.eks.UpdateClusterVersion(r.Context(), name, body.Version)
+	in := eksdriver.ClusterVersionUpdate{Version: body.Version, Force: body.Force}
+	if body.RollbackConfig != nil {
+		in.RollbackTimeoutMinutes = body.RollbackConfig.TimeoutMinutes
+	}
+
+	upd, err := h.eks.UpdateClusterVersion(r.Context(), name, in)
 	if err != nil {
 		writeErr(w, err)
 

@@ -1,0 +1,50 @@
+{
+  "workGroups": {
+    "primary": {
+      "Name": "primary",
+      "State": "ENABLED",
+      "Description": "",
+      "Configuration": {
+        "ResultConfiguration": null,
+        "EnforceWorkGroupConfiguration": true,
+        "PublishCloudWatchMetricsEnabled": true,
+        "RequesterPaysEnabled": false,
+        "BytesScannedCutoffPerQuery": null,
+        "EngineVersion": {
+          "SelectedEngineVersion": "AUTO",
+          "EffectiveEngineVersion": "Athena engine version 3"
+        }
+      },
+      "CreationTime": "2023-11-14T22:13:20Z",
+      "Tags": null
+    }
+  },
+  "databases": {
+    "AwsDataCatalog/analytics": {
+      "Name": "analytics",
+      "Description": "",
+      "Parameters": null
+    },
+    "AwsDataCatalog/sales": {
+      "Name": "sales",
+      "Description": "legacy sales",
+      "Parameters": {
+        "owner": "bi"
+      }
+    },
+    "ghostcatalog/orphan": {
+      "Name": "orphan",
+      "Description": "",
+      "Parameters": null
+    }
+  },
+  "dataCatalogs": {
+    "AwsDataCatalog": {
+      "Name": "AwsDataCatalog",
+      "Description": "",
+      "Type": "GLUE",
+      "Parameters": null
+    }
+  },
+  "seq": 3
+}

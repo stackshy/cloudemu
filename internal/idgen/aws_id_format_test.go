@@ -19,6 +19,7 @@ func TestAWSIDFormats(t *testing.T) {
 		{"AccessKeyID", idgen.AccessKeyID(), regexp.MustCompile(`^AKIA[A-Z2-7]{16}$`)},
 		{"TempAccessKeyID", idgen.TempAccessKeyID(), regexp.MustCompile(`^ASIA[A-Z2-7]{16}$`)},
 		{"AppSyncAPIID", idgen.AppSyncAPIID(), regexp.MustCompile(`^[a-z0-9]{26}$`)},
+		{"BedrockInferenceProfileID", idgen.BedrockInferenceProfileID(), regexp.MustCompile(`^[a-z0-9]{12}$`)},
 		{"GenerateLongID", idgen.GenerateLongID("svc-"), regexp.MustCompile(`^svc-[0-9a-f]{17}$`)},
 		{"UUID", idgen.UUID(), regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`)},
 	}

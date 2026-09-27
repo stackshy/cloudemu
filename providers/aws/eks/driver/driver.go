@@ -141,6 +141,21 @@ type Cluster struct {
 	// DescribeCluster identity.oidc.issuer. Required for IRSA and
 	// aws_iam_openid_connect_provider wiring.
 	OIDCIssuer string
+	// PreviousVersion and VersionUpgradedAt record the last in-place upgrade.
+	// A rollback to PreviousVersion is allowed for 7 days after it.
+	PreviousVersion   string
+	VersionUpgradedAt time.Time
+}
+
+// ClusterVersionUpdate is the UpdateClusterVersion request.
+type ClusterVersionUpdate struct {
+	Version string
+	// Force overrides readiness checks, such as a nodegroup that is newer
+	// than a rollback target.
+	Force bool
+	// RollbackTimeoutMinutes is rollbackConfig.timeoutMinutes. Nil means
+	// the field was not sent.
+	RollbackTimeoutMinutes *int
 }
 
 // ClusterUpdate is returned by mutating cluster ops; SDKs poll this via
@@ -449,7 +464,7 @@ type EKS interface {
 		ctx context.Context, name string, cfg *VPCConfig,
 		logging []ClusterLogging, accessConfig *AccessConfigUpdate, tags map[string]string,
 	) (*ClusterUpdate, error)
-	UpdateClusterVersion(ctx context.Context, name, version string) (*ClusterUpdate, error)
+	UpdateClusterVersion(ctx context.Context, name string, in ClusterVersionUpdate) (*ClusterUpdate, error)
 	DeleteCluster(ctx context.Context, name string) (*Cluster, error)
 
 	// Updates

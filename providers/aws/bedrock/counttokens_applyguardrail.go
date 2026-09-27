@@ -18,8 +18,8 @@ func (m *Mock) CountTokens(_ context.Context, in driver.CountTokensInput) (int, 
 		return 0, errors.New(errors.InvalidArgument, "modelId is required")
 	}
 
-	if !m.modelExists(in.ModelID) {
-		return 0, errors.Newf(errors.InvalidArgument, "model %q not found", in.ModelID)
+	if m.resolveModel(in.ModelID) == nil {
+		return 0, errors.New(errors.InvalidArgument, msgInvalidModelID)
 	}
 
 	if len(in.InvokeBody) > 0 {

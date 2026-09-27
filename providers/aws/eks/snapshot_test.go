@@ -13,7 +13,7 @@ func TestSnapshotRoundTripEKS(t *testing.T) {
 	ctx := context.Background()
 	src := newTestMock()
 
-	if _, err := src.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.30"}); err != nil {
+	if _, err := src.CreateCluster(ctx, eksdriver.ClusterConfig{Name: "c1", Version: "1.32"}); err != nil {
 		t.Fatalf("create cluster: %v", err)
 	}
 
