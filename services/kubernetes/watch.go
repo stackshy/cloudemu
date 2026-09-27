@@ -3,8 +3,11 @@ package kubernetes
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
+	"strconv"
 	"sync"
+	"time"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -21,18 +24,58 @@ func serveWatch[T any](
 	b *broadcaster, namespace, apiVersion, kind string, collect func() []T, keep func(T) bool,
 ) {
 	initial := watchSendInitialEvents(r)
+	resume := watchResume(r) && !initial
 
 	s.mu.RLock()
 	sub := b.subscribe(namespace)
 	items := collect()
 	rv := s.clusterRVLocked()
+	expired := s.watchExpiredLocked(r, resume)
 	s.mu.RUnlock()
-	streamWatch(r.Context(), w, sub, items, keep, watchOpts{
-		resume:      watchResume(r) && !initial,
+
+	ctx, cancel := watchContext(r)
+	defer cancel()
+
+	streamWatch(ctx, w, sub, items, keep, watchOpts{
+		resume:      resume,
 		bookmarks:   watchBookmarksEnabled(r) || initial,
 		bookmarkObj: typedBookmark(apiVersion, kind, rv, initial),
 		table:       newWatchTable(s, r, kind, nil),
+		expired:     expired,
 	})
+}
+
+// watchContext bounds a watch by its timeoutSeconds parameter, which client-go
+// reflectors always send: the stream then ends cleanly after that many
+// seconds and the client re-establishes it. Without the parameter (or with a
+// non-positive or malformed value) the watch lasts as long as the request.
+func watchContext(r *http.Request) (context.Context, context.CancelFunc) {
+	secs, err := strconv.ParseInt(r.URL.Query().Get("timeoutSeconds"), 10, 64)
+	if err != nil || secs <= 0 {
+		return context.WithCancel(r.Context())
+	}
+
+	return context.WithTimeout(r.Context(), time.Duration(secs)*time.Second)
+}
+
+// watchExpiredLocked returns the 410 Expired Status for a resuming watch whose
+// resourceVersion predates the watch history (watchFloor), as kube-apiserver
+// does for an RV older than its watch cache. Nil when the watch can proceed,
+// including for a non-numeric RV. Callers hold s.mu.
+func (s *ClusterState) watchExpiredLocked(r *http.Request, resume bool) *metav1.Status {
+	if !resume {
+		return nil
+	}
+
+	rv, err := strconv.ParseUint(r.URL.Query().Get("resourceVersion"), 10, 64)
+	if err != nil || rv >= s.watchFloor {
+		return nil
+	}
+
+	st := expiredWatchStatus()
+	st.Message = fmt.Sprintf("too old resource version: %d (%d)", rv, s.watchFloor)
+
+	return st
 }
 
 // typedBookmark builds the minimal object a BOOKMARK watch event carries for a
@@ -73,6 +116,9 @@ type watchOpts struct {
 	// table, when non-nil, renders every object event as a one-row Table
 	// (`kubectl get -w` asks for Table watch events).
 	table *watchTable
+	// expired, when non-nil, is sent as the only event (ERROR) before the stream
+	// ends: the requested resourceVersion is older than the watch history.
+	expired *metav1.Status
 }
 
 // watchTable converts watch event objects into meta.k8s.io/v1 Tables the way
@@ -398,6 +444,12 @@ func streamWatch[T any](
 	flusher.Flush()
 
 	enc := json.NewEncoder(w)
+
+	if opts.expired != nil {
+		encodeWatchEvent(enc, flusher, nil, watchEvent{Type: EventError, Object: opts.expired})
+
+		return
+	}
 
 	// A resuming watch (resourceVersion>0) already holds the current state, so
 	// the full ADDED replay is skipped; only subsequent events are streamed.

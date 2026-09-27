@@ -11,6 +11,8 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -661,5 +663,69 @@ func expectTypedMatch[T metav1.Object](t *testing.T, w watch.Interface, typ watc
 
 			return zero
 		}
+	}
+}
+
+// TestWatchEncoding_TooOldResourceVersionExpires: a watch resuming from an RV
+// older than the watch history gets a single ERROR event carrying a 410
+// Expired Status and the stream ends, which makes a reflector relist.
+func TestWatchEncoding_TooOldResourceVersionExpires(t *testing.T) {
+	kinds := encodingKinds()
+
+	for _, wk := range []watchKind{kinds[0], kinds[6]} { // typed Pods, registry Nodes
+		t.Run(wk.name, func(t *testing.T) {
+			base := newWatchFixture(t)
+
+			ctx, cancel := context.WithTimeout(context.Background(), watchTestTimeout)
+			defer cancel()
+
+			_, br := openWatch(t, ctx, base+wk.listPath+"?watch=true&resourceVersion=1", "")
+
+			ev := nextEvent(t, br)
+			if ev.Type != "ERROR" || ev.Object["kind"] != "Status" || ev.Object["reason"] != "Expired" ||
+				ev.Object["code"] != float64(http.StatusGone) {
+				t.Fatalf("stale rv watch: got %s %v, want ERROR 410 Expired Status", ev.Type, ev.Object)
+			}
+
+			if msg, _ := ev.Object["message"].(string); !strings.HasPrefix(msg, "too old resource version: 1 ") {
+				t.Fatalf("stale rv message: %q", msg)
+			}
+
+			if _, err := br.ReadBytes('\n'); !errors.Is(err, io.EOF) {
+				t.Fatalf("stream after ERROR: got %v, want EOF", err)
+			}
+		})
+	}
+}
+
+// TestWatchEncoding_TimeoutSecondsEndsStream: timeoutSeconds bounds the watch;
+// the server ends the stream cleanly once it elapses.
+func TestWatchEncoding_TimeoutSecondsEndsStream(t *testing.T) {
+	kinds := encodingKinds()
+
+	for _, wk := range []watchKind{kinds[0], kinds[6]} { // typed Pods, registry Nodes
+		t.Run(wk.name, func(t *testing.T) {
+			base := newWatchFixture(t)
+
+			ctx, cancel := context.WithTimeout(context.Background(), watchTestTimeout)
+			defer cancel()
+
+			start := time.Now()
+			_, br := openWatch(t, ctx, base+wk.listPath+"?watch=true&timeoutSeconds=1", "")
+
+			for {
+				if _, err := br.ReadBytes('\n'); err != nil {
+					if !errors.Is(err, io.EOF) {
+						t.Fatalf("watch ended with %v, want a clean EOF", err)
+					}
+
+					break
+				}
+			}
+
+			if d := time.Since(start); d < 900*time.Millisecond || d > 3*time.Second {
+				t.Fatalf("watch with timeoutSeconds=1 ended after %v", d)
+			}
+		})
 	}
 }

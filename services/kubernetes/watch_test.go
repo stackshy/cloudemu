@@ -463,6 +463,8 @@ func TestWatch_ErrorEventCarriesStatusObject(t *testing.T) {
 	rec := httptest.NewRecorder()
 	streamWatch[unstructured.Unstructured](context.Background(), rec, sub, nil, nil, watchOpts{})
 
+	// The stream always ends with the ERROR event, whichever order the select
+	// drains the buffered events and the overflow signal in.
 	lines := strings.Split(strings.TrimSpace(rec.Body.String()), "\n")
 
 	var ev struct {
@@ -481,10 +483,19 @@ func TestWatch_ErrorEventCarriesStatusObject(t *testing.T) {
 	if ev.Type != EventError || ev.Object.Kind != "Status" || ev.Object.Code != http.StatusGone || ev.Object.Reason != "Expired" {
 		t.Fatalf("ERROR event: %+v", ev)
 	}
+}
 
-	// Every buffered event before it is the Node JSON itself, not a wrapper.
-	if !strings.HasPrefix(lines[0], `{"type":"ADDED","object":{"apiVersion":"v1","kind":"Node"`) {
-		t.Fatalf("buffered event not encoded as the resource JSON: %s", lines[0])
+// An unstructured.Unstructured value (how registry kinds publish) must encode
+// as the resource JSON itself, not as its Go field {"Object":{...}}.
+func TestWatchEvent_UnstructuredValueEncodesAsResource(t *testing.T) {
+	b, err := json.Marshal(watchEvent{Type: EventAdded, Object: unstructuredNode("n")})
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+
+	want := `{"type":"ADDED","object":{"apiVersion":"v1","kind":"Node","metadata":{"name":"n"}}}`
+	if string(b) != want {
+		t.Fatalf("event JSON:\n got %s\nwant %s", b, want)
 	}
 }
 

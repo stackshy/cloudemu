@@ -234,6 +234,7 @@ func (s *APIServer) restoreClusterLocked(cs *clusterSnapshot) (*ClusterState, er
 	// against a degenerate zero (a well-formed v4 snapshot always carries real
 	// values) so a malformed field can't wedge allocation at the reserved base.
 	st.rv = cs.RV
+	st.watchFloor = cs.RV
 	st.managedNodes = cs.ManagedNodes
 	st.nextNodeOrdinal = cs.NextNodeOrdinal
 

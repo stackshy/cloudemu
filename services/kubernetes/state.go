@@ -36,6 +36,12 @@ type ClusterState struct {
 	// value field guarded by mu (snapshot-friendly for #868).
 	rv uint64
 
+	// watchFloor is the resourceVersion the watch history starts at: the
+	// cluster RV once bootstrap seeding (or a snapshot restore) finished. A
+	// watch resuming from an RV below it gets a 410 Expired ERROR event, the
+	// "too old resource version" signal client-go reflectors relist on.
+	watchFloor uint64
+
 	// clock sources every timestamp the data plane stamps (creationTimestamp,
 	// pod start/condition times). A FakeClock makes all of them deterministic;
 	// defaults to config.RealClock.
@@ -219,6 +225,8 @@ func newClusterState(
 	// Seed the standard kube-system add-ons (coredns, kube-dns Service,
 	// kube-proxy DaemonSet) so a fresh cluster looks managed, not empty.
 	s.seedKubeSystemLocked()
+
+	s.watchFloor = s.rv
 
 	return s
 }

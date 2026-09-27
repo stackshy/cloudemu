@@ -60,6 +60,7 @@ var clusterStateRuntimeFields = map[string]struct{}{
 	"wServices":            {}, // watch broadcaster, rebuilt fresh
 	"wDeployments":         {}, // watch broadcaster, rebuilt fresh
 	"wEndpoints":           {}, // watch broadcaster, rebuilt fresh
+	"watchFloor":           {}, // derived: set to the restored rv
 }
 
 // apiServerPersistedFields / apiServerRuntimeFields do the same classification
