@@ -6,8 +6,8 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
+	ssmdriver "github.com/stackshy/cloudemu/v2/providers/aws/ssm/driver"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
-	"github.com/stackshy/cloudemu/v2/services/parameterstore/driver"
 )
 
 // InstanceResolver is the slice of the compute mock this package needs to
@@ -30,7 +30,7 @@ func (m *Mock) SetInstanceResolver(r InstanceResolver) {
 // completion, but the script itself is never validated. See driver.RunCommand.
 //
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (string, error) {
+func (m *Mock) SendCommand(ctx context.Context, cfg ssmdriver.CommandConfig) (string, error) {
 	// Real SSM accepts EITHER explicit InstanceIds OR tag/attribute Targets;
 	// supplying neither is a ValidationException.
 	if len(cfg.InstanceIDs) == 0 && len(cfg.Targets) == 0 {
@@ -39,6 +39,11 @@ func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (strin
 
 	if cfg.DocumentName == "" {
 		return "", errors.New(errors.InvalidArgument, "DocumentName is required")
+	}
+
+	docName, err := m.commandDocument(cfg.DocumentName)
+	if err != nil {
+		return "", err
 	}
 
 	// Real SSM answers InvalidInstanceId when an explicitly listed target is not
@@ -57,10 +62,10 @@ func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (strin
 	commandID := idgen.UUID()
 
 	for _, instanceID := range instanceIDs {
-		m.commands.Set(commandKey(commandID, instanceID), driver.CommandInvocation{
+		m.commands.Set(commandKey(commandID, instanceID), ssmdriver.CommandInvocation{
 			CommandID:    commandID,
 			InstanceID:   instanceID,
-			DocumentName: cfg.DocumentName,
+			DocumentName: docName,
 			Status:       "Success",
 			ResponseCode: 0,
 		})
@@ -69,11 +74,38 @@ func (m *Mock) SendCommand(ctx context.Context, cfg driver.CommandConfig) (strin
 	return commandID, nil
 }
 
+// commandDocument resolves a SendCommand DocumentName (a name or an ARN)
+// through the customer documents and the AWS-owned catalog. Only Command
+// documents can be sent.
+func (m *Mock) commandDocument(ref string) (string, error) {
+	m.docMu.RLock()
+	defer m.docMu.RUnlock()
+
+	d, err := m.lookupDocument(ref)
+	if err != nil {
+		// The catalog holds the common AWS-owned documents, not all of them.
+		// An unknown name in the AWS namespace is taken as an AWS-owned Command
+		// document so a real one the catalog lacks still runs.
+		if name := documentName(ref); awsOwnedName(name) {
+			return name, nil
+		}
+
+		return "", err
+	}
+
+	if d.docType != ssmdriver.DocumentTypeCommand {
+		return "", ssmErrf(excInvalidDocument, errors.InvalidArgument,
+			"Document %s of type %s can't be used with SendCommand.", d.name, d.docType)
+	}
+
+	return d.name, nil
+}
+
 // resolveTargets maps SSM Targets to the instance ids they select. Multiple
 // targets are AND-combined, matching real SSM. Resolution needs the compute
 // mock; without it (or on a lookup error) no ids are resolved, which still
 // yields an accepted command.
-func (m *Mock) resolveTargets(ctx context.Context, targets []driver.CommandTarget) []string {
+func (m *Mock) resolveTargets(ctx context.Context, targets []ssmdriver.CommandTarget) []string {
 	if len(targets) == 0 || m.instanceResolver == nil {
 		return nil
 	}
@@ -154,7 +186,7 @@ func dedupeStrings(in []string) []string {
 // "Success" would bury it.
 func (m *Mock) GetCommandInvocation(
 	_ context.Context, commandID, instanceID string,
-) (*driver.CommandInvocation, error) {
+) (*ssmdriver.CommandInvocation, error) {
 	inv, ok := m.commands.Get(commandKey(commandID, instanceID))
 	if !ok {
 		return nil, errors.Newf(errors.NotFound,
@@ -178,8 +210,7 @@ func (m *Mock) checkTargets(ctx context.Context, instanceIDs []string) error {
 	found, err := m.instanceResolver.DescribeInstances(ctx, instanceIDs, nil,
 		computedriver.DescribeInstancesOptions{IncludeManagedResources: true})
 	if err != nil {
-		return errors.Newf(errors.NotFound,
-			"InvalidInstanceId: %v", err)
+		return ssmErrf(excInvalidInstanceID, errors.NotFound, "%v", err)
 	}
 
 	known := make(map[string]bool, len(found))
@@ -189,8 +220,8 @@ func (m *Mock) checkTargets(ctx context.Context, instanceIDs []string) error {
 
 	for _, id := range instanceIDs {
 		if !known[id] {
-			return errors.Newf(errors.NotFound,
-				"InvalidInstanceId: instance %q is not a managed instance", id)
+			return ssmErrf(excInvalidInstanceID, errors.NotFound,
+				"Instance %s is not a managed instance.", id)
 		}
 	}
 

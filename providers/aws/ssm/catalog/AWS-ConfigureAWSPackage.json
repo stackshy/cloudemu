@@ -1,0 +1,46 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Install or uninstall a Distributor package. You can install the latest version, default version, or a version of the package you specify.",
+  "parameters": {
+    "action": {
+      "description": "(Required) Specify whether or not to install or uninstall the package.",
+      "type": "String",
+      "allowedValues": ["Install", "Uninstall"]
+    },
+    "installationType": {
+      "description": "(Optional) Specify the type of installation. Uninstall and reinstall: The application is taken offline until the reinstallation process completes. In-place update: The application is available while new or updated files are added to the installation.",
+      "type": "String",
+      "allowedValues": ["Uninstall and reinstall", "In-place update"],
+      "default": "Uninstall and reinstall"
+    },
+    "name": {
+      "description": "(Required) The package to install/uninstall.",
+      "type": "String",
+      "allowedPattern": "^arn:[a-z0-9][-.a-z0-9]{0,62}:[a-z0-9][-.a-z0-9]{0,62}:([a-z0-9][-.a-z0-9]{0,62})?:([a-z0-9][-.a-z0-9]{0,62})?:(package|document)\\/[a-zA-Z0-9/:.\\-_]{1,128}$|^[a-zA-Z0-9/:.\\-_]{1,128}$"
+    },
+    "version": {
+      "description": "(Optional) The version of the package to install or uninstall. If you don't specify a version, the system installs the latest published version by default.",
+      "type": "String",
+      "default": ""
+    },
+    "additionalArguments": {
+      "description": "(Optional) The additional parameters to provide to your install, uninstall, or update scripts.",
+      "type": "StringMap",
+      "displayType": "textarea",
+      "default": {}
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:configurePackage",
+      "name": "configurePackage",
+      "inputs": {
+        "name": "{{ name }}",
+        "action": "{{ action }}",
+        "installationType": "{{installationType}}",
+        "version": "{{ version }}",
+        "additionalArguments": "{{ additionalArguments }}"
+      }
+    }
+  ]
+}

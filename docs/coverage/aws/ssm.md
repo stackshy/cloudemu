@@ -21,6 +21,26 @@ AWS's `parameterstore` service · portable interface `driver.ParameterStore` · 
 
 Discovered by type assertion; only some providers implement these.
 
+### Documents
+
+Documents is an OPTIONAL capability, discovered by type assertion. It covers
+
+| Operation | Description |
+| --- | --- |
+| `CreateDocument` |  |
+| `DeleteDocument` | DeleteDocument removes every version, or only the selected one when ref |
+| `DescribeDocument` |  |
+| `DescribeDocumentPermission` |  |
+| `GetDocument` |  |
+| `ListDocumentTags` |  |
+| `ListDocumentVersions` |  |
+| `ListDocuments` | ListDocuments returns the default version of every matching document, |
+| `ModifyDocumentPermission` |  |
+| `TagDocument` |  |
+| `UntagDocument` |  |
+| `UpdateDocument` |  |
+| `UpdateDocumentDefaultVersion` |  |
+
 ### RunCommand
 
 RunCommand is an OPTIONAL capability, discovered by type assertion.

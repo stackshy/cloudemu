@@ -4,7 +4,9 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -60,8 +62,43 @@ func attachProvider(root, prov string, byName map[string]*Service) error {
 			}
 
 			svc.providerMethods[prov] = mockMethods(dir)
+
+			if err := addNativeCapabilities(svc, dir); err != nil {
+				return err
+			}
 		}
 	}
+
+	return nil
+}
+
+// addNativeCapabilities lists the interfaces of a provider-native driver
+// package next to the mock (providers/<prov>/<pkg>/driver) as optional
+// capabilities of the portable service that mock backs. AWS SSM keeps its Run
+// Command and Documents families there because they have no portable shape.
+func addNativeCapabilities(svc *Service, mockDir string) error {
+	driverDir := filepath.Join(mockDir, "driver")
+	if _, err := os.Stat(driverDir); err != nil {
+		return nil //nolint:nilerr // no native driver package is the common case
+	}
+
+	ifaces, err := parseInterfaces(driverDir)
+	if err != nil {
+		return err
+	}
+
+	have := map[string]bool{}
+	for _, c := range svc.Capabilities {
+		have[c.Name] = true
+	}
+
+	for _, iface := range ifaces {
+		if !have[iface.name] {
+			svc.Capabilities = append(svc.Capabilities, Capability{Name: iface.name, Doc: iface.doc, Operations: iface.methods})
+		}
+	}
+
+	sort.Slice(svc.Capabilities, func(i, j int) bool { return svc.Capabilities[i].Name < svc.Capabilities[j].Name })
 
 	return nil
 }

@@ -1,0 +1,53 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Scans for or installs patches from a patch baseline to a Linux or Windows operating system.",
+  "parameters": {
+    "Operation": {
+      "type": "String",
+      "description": "(Required) The update or configuration to perform on the instance. The system checks if patches specified in the patch baseline are installed on the instance. The install operation installs patches missing from the baseline.",
+      "allowedValues": ["Scan", "Install"]
+    },
+    "SnapshotId": {
+      "type": "String",
+      "description": "(Optional) The snapshot ID to use to retrieve a patch baseline snapshot.",
+      "allowedPattern": "(^$)|^[a-fA-F0-9]{8}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{4}-[a-fA-F0-9]{12}$",
+      "default": ""
+    },
+    "InstallOverrideList": {
+      "type": "String",
+      "description": "(Optional) An https URL or an Amazon S3 path-style URL to a list of patches to be installed. This patch installation list overrides the patches specified by the default patch baseline.",
+      "allowedPattern": "(^$)|^https://.+$|^s3://([^/]+)/(.*?([^/]+))$",
+      "default": ""
+    },
+    "RebootOption": {
+      "type": "String",
+      "description": "(Optional) Reboot behavior after a patch Install operation. If you choose NoReboot and patches are installed, the instance is marked as non-compliant until a subsequent reboot and scan.",
+      "allowedValues": ["RebootIfNeeded", "NoReboot"],
+      "default": "RebootIfNeeded"
+    }
+  },
+  "mainSteps": [
+    {
+      "precondition": {
+        "StringEquals": ["platformType", "Windows"]
+      },
+      "action": "aws:runPowerShellScript",
+      "name": "PatchWindows",
+      "inputs": {
+        "timeoutSeconds": 7200,
+        "runCommand": ["Invoke-PatchBaselineOperation -Operation {{Operation}} -SnapshotId {{SnapshotId}}"]
+      }
+    },
+    {
+      "precondition": {
+        "StringEquals": ["platformType", "Linux"]
+      },
+      "action": "aws:runShellScript",
+      "name": "PatchLinux",
+      "inputs": {
+        "timeoutSeconds": 7200,
+        "runCommand": ["python3 -m patch_baseline_operations --operation {{Operation}}"]
+      }
+    }
+  ]
+}

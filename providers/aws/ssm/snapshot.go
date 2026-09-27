@@ -14,13 +14,15 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // ssmSnapshot is the full serialized state of the SSM Parameter Store mock.
 // params holds an unexported paramData (with a slice of unexported *version), so
 // it is promoted to an exported snapshot form keyed by parameter name; commands
-// holds a fully-exported driver.CommandInvocation and round-trips through the
+// holds a fully-exported ssmdriver.CommandInvocation and round-trips through the
 // generic memstore helper. The wired instanceResolver and opts are not
 // serialized.
 type ssmSnapshot struct {
 	Params   map[string]*paramSnapshot  `json:"params,omitempty"`
 	Commands json.RawMessage            `json:"commands,omitempty"`
 	Settings map[string]settingSnapshot `json:"settings,omitempty"`
+	// Documents holds the customer SSM documents keyed by name.
+	Documents map[string]*documentSnapshot `json:"documents,omitempty"`
 }
 
 // settingSnapshot mirrors a customized service setting.
@@ -63,7 +65,9 @@ type versionSnapshot struct {
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused. SSM holds no bulk
 // object bodies.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
-	snap := ssmSnapshot{Params: m.snapshotParams(), Settings: m.snapshotSettings()}
+	snap := ssmSnapshot{
+		Params: m.snapshotParams(), Settings: m.snapshotSettings(), Documents: m.snapshotDocuments(),
+	}
 
 	cmds, err := m.commands.Snapshot()
 	if err != nil {
@@ -135,6 +139,10 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	m.restoreSettings(snap.Settings)
+
+	if err := m.restoreDocuments(snap.Documents); err != nil {
+		return err
+	}
 
 	if len(snap.Commands) > 0 {
 		if err := m.commands.LoadSnapshot(snap.Commands); err != nil {

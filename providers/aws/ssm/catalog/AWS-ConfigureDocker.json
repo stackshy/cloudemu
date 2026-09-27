@@ -1,0 +1,20 @@
+{
+  "schemaVersion": "2.2",
+  "description": "Install or uninstall the Docker client and daemon.",
+  "parameters": {
+    "action": {
+      "type": "String",
+      "description": "The type of action to perform.",
+      "allowedValues": ["Install", "Uninstall"]
+    }
+  },
+  "mainSteps": [
+    {
+      "action": "aws:configureDocker",
+      "name": "configureDocker",
+      "inputs": {
+        "action": "{{ action }}"
+      }
+    }
+  ]
+}
