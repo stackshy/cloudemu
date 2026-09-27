@@ -89,22 +89,53 @@ func (sd *stackData) retain(replaced []replacement) {
 	}
 }
 
-// retainedReplacements returns the retained old resources as replacements to
-// clean up, and forgets them when forget is set.
-func (sd *stackData) retainedReplacements(forget bool) []replacement {
+// drainRetained forgets the retained old resources and returns the ones to
+// delete. A retained resource whose physical id a live resource of the
+// stack now holds again is dropped, not deleted.
+func (sd *stackData) drainRetained() []replacement {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	out := make([]replacement, len(sd.retained))
-	for i := range sd.retained {
-		out[i] = sd.retained[i].replacement()
+	live := make(map[string]bool, len(sd.resolved))
+	for _, rr := range sd.resolved {
+		live[rr.RefValue] = true
 	}
 
-	if forget {
-		sd.retained = nil
+	var out []replacement
+
+	for i := range sd.retained {
+		if !live[sd.retained[i].Resolved.RefValue] {
+			out = append(out, sd.retained[i].replacement())
+		}
 	}
+
+	sd.retained = nil
 
 	return out
+}
+
+// takeRetained removes and returns the retained old resource of id whose
+// custom name property is name.
+func (sd *stackData) takeRetained(id, rtype, nameProp, name string) (liveResource, bool) {
+	if name == "" {
+		return liveResource{}, false
+	}
+
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	for i := range sd.retained {
+		r := &sd.retained[i]
+		if r.LogicalID == id && r.Type == rtype && cfn.PropString(r.Props, nameProp) == name {
+			old := r.replacement().old
+
+			sd.retained = append(sd.retained[:i], sd.retained[i+1:]...)
+
+			return old, true
+		}
+	}
+
+	return liveResource{}, false
 }
 
 // New builds a CloudFormation mock with an empty provisioner registry. Callers

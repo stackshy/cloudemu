@@ -494,6 +494,84 @@ func TestDoNothingKeepsReplacedResources(t *testing.T) {
 	})
 }
 
+// After a DO_NOTHING failure the stack keeps each resource's last applied
+// state: A at its new name, B at its old one, because B never changed. An
+// update back to the first template takes the retained /a back instead of
+// creating it again, and never touches the name B failed on.
+func TestDoNothingFailureKeepsLastAppliedState(t *testing.T) {
+	ctx := context.Background()
+	p := newParamProv()
+	m := newParamMock(p)
+	failDoNothing(t, m, p)
+
+	body, err := m.GetTemplate(ctx, "s")
+	requireNoError(t, err)
+
+	if !strings.Contains(body, `"/b"`) || strings.Contains(body, `"/taken"`) || !strings.Contains(body, `"/a2"`) {
+		t.Fatalf("recorded template must hold A's new and B's old state: %s", body)
+	}
+
+	st, err := m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: keepV1})
+	requireNoError(t, err)
+	assertEqual(t, st.Status, cfn.StatusUpdateComplete, "back to the first template")
+	assertEqual(t, p.values["/a"], "data", "retained A taken back with its data")
+	assertEqual(t, p.values["/b"], "b", "B untouched")
+	assertEqual(t, p.values["/taken"], "outside", "outside resource untouched")
+
+	if _, ok := p.values["/a2"]; ok {
+		t.Fatalf("the A created by the failed update must be cleaned up")
+	}
+
+	assertEqual(t, len(m.mustData(t, "s").retained), 0, "nothing left retained")
+
+	// A second failure now rolls back to the last applied state, not onto
+	// the name B failed on.
+	p2 := newParamProv()
+	m2 := newParamMock(p2)
+	failDoNothing(t, m2, p2)
+
+	failing := strings.Replace(keepV1, `}
+}}`, `},
+	"Bad":{"Type":"Test::Boom","DependsOn":"B"}
+}}`, 1)
+
+	st, err = m2.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: failing})
+	requireNoError(t, err)
+	assertEqual(t, st.Status, cfn.StatusUpdateRollbackComplete, "rollback to the last applied state")
+	assertEqual(t, p2.values["/taken"], "outside", "outside resource untouched")
+	assertEqual(t, p2.values["/b"], "b", "B untouched")
+	assertEqual(t, p2.values["/a"], "data", "the retained A taken back and rolled back keeps its data")
+	assertEqual(t, p2.values["/a2"], "data", "A points at /a2 again")
+
+	// The retained A is still retained, so a later update takes it back.
+	st, err = m2.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: keepV1})
+	requireNoError(t, err)
+	assertEqual(t, st.Status, cfn.StatusUpdateComplete, "back to the first template")
+	assertEqual(t, p2.values["/a"], "data", "A back at /a with its data")
+}
+
+// A retained resource deleted out of band is created again by a later
+// update, and the cleanup must not delete that new resource.
+func TestRetainedCleanupSparesRecreatedResource(t *testing.T) {
+	ctx := context.Background()
+	p := newParamProv()
+	m := newParamMock(p)
+	failDoNothing(t, m, p)
+
+	delete(p.values, "/a")
+
+	st, err := m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: keepV1})
+	requireNoError(t, err)
+	assertEqual(t, st.Status, cfn.StatusUpdateComplete, "status")
+	assertEqual(t, p.values["/a"], "data", "the recreated A survives cleanup")
+
+	if _, ok := p.values["/a2"]; ok {
+		t.Fatalf("the A created by the failed update must be cleaned up")
+	}
+
+	assertEqual(t, len(m.mustData(t, "s").retained), 0, "nothing left retained")
+}
+
 func TestUpdateChangeSetDoNothingLeavesUpdateFailed(t *testing.T) {
 	p := newParamProv()
 	m := newParamMock(p)

@@ -105,15 +105,12 @@ func (m *Mock) runUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStack
 	m.applyStackMeta(sd, in, plan)
 
 	forward := convergeOpts{
-		stopOnFailure: true, cleanupStatus: cfn.StatusUpdateCompleteCleanupInProgress,
-		retained: sd.retainedReplacements(false),
+		stopOnFailure: true, cleanupStatus: cfn.StatusUpdateCompleteCleanupInProgress, cleanRetained: true,
 	}
 
 	failures, replaced := m.converge(ctx, sd, plan.newT, plan.newRes, forward)
 	if len(failures) == 0 {
-		sd.retainedReplacements(true)
 		m.emitStackEvent(sd, cfn.StatusUpdateComplete, "")
-
 		return true
 	}
 
@@ -123,9 +120,45 @@ func (m *Mock) runUpdate(ctx context.Context, sd *stackData, in *cfn.UpdateStack
 	}
 
 	sd.retain(replaced)
+	m.recordAppliedTemplate(sd, plan)
 	m.emitStackEvent(sd, cfn.StatusUpdateFailed, failureSummary(failures))
 
 	return false
+}
+
+// recordAppliedTemplate stores, after a failed update that is not rolled
+// back, the template of what the stack now holds. A resource that reached
+// its new definition keeps it. One that failed or never ran keeps its old
+// one, and one the update would have added is left out. A later update and
+// its rollback then start from that state.
+func (*Mock) recordAppliedTemplate(sd *stackData, plan *updatePlan) {
+	seedResolver(sd, plan.newT, plan.newRes)
+
+	useOld := map[string]bool{}
+
+	for id, rdef := range plan.newT.Resources {
+		live, ok := sd.live(id)
+		props, err := resolveProps(plan.newRes, rdef.Properties)
+
+		if !ok || err != nil || live.typ != rdef.Type || !cfn.SameProperties(live.props, props) {
+			useOld[id] = true
+		}
+	}
+
+	for id := range plan.oldT.Resources {
+		if _, kept := plan.newT.Resources[id]; !kept {
+			useOld[id] = true
+		}
+	}
+
+	merged, err := cfn.MergeResources(plan.body, plan.prior.templateBody, useOld)
+	if err != nil {
+		return
+	}
+
+	sd.mu.Lock()
+	sd.stack.TemplateBody = merged
+	sd.mu.Unlock()
 }
 
 // checkUpdatable rejects an update of a stack in a state that does not allow
