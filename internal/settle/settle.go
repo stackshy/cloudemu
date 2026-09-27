@@ -34,6 +34,9 @@ const (
 
 	DefaultExperimentInitiateSettle = 1 * time.Second // FIS experiment initiating->running
 
+	DefaultCommandDeliverySettle = 1 * time.Second // SSM Run Command invocation Pending->InProgress
+	DefaultCommandRunSettle      = 5 * time.Second // SSM Run Command invocation InProgress->Success
+
 	DefaultCacheSettle       = 2 * time.Second // ElastiCache/Redis/Memorystore creating->available
 	DefaultCacheModifySettle = 1 * time.Second // cache modifying->available
 	DefaultClusterSettle     = 3 * time.Second // Redshift/MemoryDB/Bigtable creating->available

@@ -1,5 +1,6 @@
 // Package ssm implements the AWS Systems Manager (SSM) JSON-RPC protocol as a
-// server.Handler: Parameter Store, Run Command, Documents and tagging. Point
+// server.Handler: Parameter Store, Run Command, managed nodes, Documents and
+// tagging. Point
 // the real aws-sdk-go-v2 SSM client at a Server registered with this handler
 // and those operations work against the in-memory drivers.
 //
@@ -61,13 +62,6 @@ func parameterOps() map[string]handlerFunc {
 		"GetServiceSetting":     (*Handler).getServiceSetting,
 		"UpdateServiceSetting":  (*Handler).updateServiceSetting,
 		"ResetServiceSetting":   (*Handler).resetServiceSetting,
-	}
-}
-
-func runCommandOps() map[string]handlerFunc {
-	return map[string]handlerFunc{
-		"SendCommand":          (*Handler).sendCommand,
-		"GetCommandInvocation": (*Handler).getCommandInvocation,
 	}
 }
 

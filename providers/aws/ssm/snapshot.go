@@ -4,21 +4,26 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
+	ssmdriver "github.com/stackshy/cloudemu/v2/providers/aws/ssm/driver"
 )
 
 var _ snapshot.Snapshottable = (*Mock)(nil)
 
-// ssmSnapshot is the full serialized state of the SSM Parameter Store mock.
-// params holds an unexported paramData (with a slice of unexported *version), so
-// it is promoted to an exported snapshot form keyed by parameter name; commands
-// holds a fully-exported ssmdriver.CommandInvocation and round-trips through the
-// generic memstore helper. The wired instanceResolver and opts are not
-// serialized.
+// ssmSnapshot is the full serialized state of the SSM mock. params holds an
+// unexported paramData (with a slice of unexported *version), so it is
+// promoted to an exported snapshot form keyed by parameter name. The Run
+// Command history is a map of exported command records keyed by command id.
+// The wired instanceResolver, outputStore and opts are not serialized.
 type ssmSnapshot struct {
-	Params   map[string]*paramSnapshot  `json:"params,omitempty"`
+	Params map[string]*paramSnapshot `json:"params,omitempty"`
+	// CommandHistory holds every Run Command send.
+	CommandHistory json.RawMessage `json:"commandHistory,omitempty"`
+	// Commands is the per-invocation form older snapshots used. It is only
+	// read.
 	Commands json.RawMessage            `json:"commands,omitempty"`
 	Settings map[string]settingSnapshot `json:"settings,omitempty"`
 	// Documents holds the customer SSM documents keyed by name.
@@ -69,12 +74,15 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		Params: m.snapshotParams(), Settings: m.snapshotSettings(), Documents: m.snapshotDocuments(),
 	}
 
+	m.cmdMu.RLock()
 	cmds, err := m.commands.Snapshot()
+	m.cmdMu.RUnlock()
+
 	if err != nil {
 		return nil, fmt.Errorf("ssm: snapshot commands: %w", err)
 	}
 
-	snap.Commands = cmds
+	snap.CommandHistory = cmds
 
 	return json.Marshal(snap)
 }
@@ -144,10 +152,60 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return err
 	}
 
-	if len(snap.Commands) > 0 {
-		if err := m.commands.LoadSnapshot(snap.Commands); err != nil {
+	return m.restoreCommands(snap.CommandHistory, snap.Commands)
+}
+
+// legacyInvocation is one entry of the per-invocation command form older
+// snapshots used.
+type legacyInvocation struct {
+	CommandID    string
+	InstanceID   string
+	DocumentName string
+}
+
+// restoreCommands loads the command history, converting the older
+// per-invocation form into finished commands.
+func (m *Mock) restoreCommands(history, legacy json.RawMessage) error {
+	m.cmdMu.Lock()
+	defer m.cmdMu.Unlock()
+
+	if len(history) > 0 {
+		if err := m.commands.LoadSnapshot(history); err != nil {
 			return fmt.Errorf("ssm: restore commands: %w", err)
 		}
+	}
+
+	if len(legacy) == 0 {
+		return nil
+	}
+
+	var old map[string]legacyInvocation
+	if err := json.Unmarshal(legacy, &old); err != nil {
+		return fmt.Errorf("ssm: restore commands: %w", err)
+	}
+
+	keys := make([]string, 0, len(old))
+	for k := range old {
+		keys = append(keys, k)
+	}
+
+	sort.Strings(keys)
+
+	for _, k := range keys {
+		inv := old[k]
+
+		rec, ok := m.commands.Get(inv.CommandID)
+		if !ok {
+			rec = &commandRecord{Command: ssmdriver.Command{
+				CommandID: inv.CommandID, DocumentName: inv.DocumentName, DocumentVersion: versionDefault,
+				RequestedDateTime: m.opts.Clock.Now(), MaxConcurrency: defaultMaxConcurrency,
+				MaxErrors: defaultMaxErrors, TimeoutSeconds: defaultCommandTimeout,
+			}}
+			m.commands.Set(inv.CommandID, rec)
+		}
+
+		rec.Command.InstanceIDs = append(rec.Command.InstanceIDs, inv.InstanceID)
+		rec.Invocations = append(rec.Invocations, &invocationRecord{InstanceID: inv.InstanceID, OutputWritten: true})
 	}
 
 	return nil

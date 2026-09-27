@@ -41,13 +41,24 @@ Documents is an OPTIONAL capability, discovered by type assertion. It covers
 | `UpdateDocument` |  |
 | `UpdateDocumentDefaultVersion` |  |
 
+### ManagedNodes
+
+ManagedNodes is an OPTIONAL capability, discovered by type assertion. Every
+
+| Operation | Description |
+| --- | --- |
+| `DescribeInstanceInformation` |  |
+
 ### RunCommand
 
 RunCommand is an OPTIONAL capability, discovered by type assertion.
 
 | Operation | Description |
 | --- | --- |
-| `GetCommandInvocation` |  |
+| `CancelCommand` | CancelCommand cancels the command on the given instances, or on all of |
+| `GetCommandInvocation` | GetCommandInvocation reports one instance's run. pluginName selects a |
+| `ListCommandInvocations` | ListCommandInvocations returns the matching invocations, newest command |
+| `ListCommands` | ListCommands returns the matching commands, newest first. |
 | `SendCommand` |  |
 
 ### ServiceSettings
