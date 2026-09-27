@@ -48,7 +48,7 @@ func TestServiceAgentLifecycle(t *testing.T) {
 		t.Fatalf("got status %q, want %q", prepared.Status, driver.AgentPrepared)
 	}
 
-	agents, err := svc.ListAgents(ctx)
+	agents, _, err := svc.ListAgents(ctx, driver.Page{})
 	if err != nil {
 		t.Fatalf("ListAgents: %v", err)
 	}
@@ -74,6 +74,7 @@ func TestServiceKnowledgeBaseLifecycle(t *testing.T) {
 		Name:                       "svc-kb",
 		RoleArn:                    "arn:aws:iam::123456789012:role/r",
 		KnowledgeBaseConfiguration: []byte(`{"type":"VECTOR"}`),
+		StorageConfiguration:       []byte(`{"type":"OPENSEARCH_SERVERLESS"}`),
 	})
 	if err != nil {
 		t.Fatalf("CreateKnowledgeBase: %v", err)
@@ -88,12 +89,52 @@ func TestServiceKnowledgeBaseLifecycle(t *testing.T) {
 		t.Fatalf("got name %q, want svc-kb", got.Name)
 	}
 
-	list, err := svc.ListKnowledgeBases(ctx)
+	list, _, err := svc.ListKnowledgeBases(ctx, driver.Page{})
 	if err != nil {
 		t.Fatalf("ListKnowledgeBases: %v", err)
 	}
 
 	if len(list) != 1 {
 		t.Fatalf("got %d knowledge bases, want 1", len(list))
+	}
+}
+
+func TestServiceTagging(t *testing.T) {
+	svc := newService()
+	ctx := context.Background()
+
+	prompt, err := svc.CreatePrompt(ctx, driver.PromptConfig{Name: "p", Tags: map[string]string{"a": "1"}})
+	if err != nil {
+		t.Fatalf("CreatePrompt: %v", err)
+	}
+
+	if err = svc.TagResource(ctx, prompt.ARN, map[string]string{"b": "2"}); err != nil {
+		t.Fatalf("TagResource: %v", err)
+	}
+
+	if err = svc.UntagResource(ctx, prompt.ARN, []string{"a"}); err != nil {
+		t.Fatalf("UntagResource: %v", err)
+	}
+
+	tags, err := svc.ListTagsForResource(ctx, prompt.ARN)
+	if err != nil {
+		t.Fatalf("ListTagsForResource: %v", err)
+	}
+
+	if len(tags) != 1 || tags["b"] != "2" {
+		t.Fatalf("tags = %v, want map[b:2]", tags)
+	}
+
+	two := int32(2)
+
+	for range 3 {
+		if _, err = svc.CreateFlow(ctx, driver.FlowConfig{Name: "f", ExecutionRoleArn: "arn:aws:iam::123456789012:role/r"}); err != nil {
+			t.Fatalf("CreateFlow: %v", err)
+		}
+	}
+
+	flows, next, err := svc.ListFlows(ctx, driver.Page{MaxResults: &two})
+	if err != nil || len(flows) != 2 || next == "" {
+		t.Fatalf("ListFlows = %d items, next %q, err %v", len(flows), next, err)
 	}
 }

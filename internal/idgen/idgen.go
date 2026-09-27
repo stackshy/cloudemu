@@ -111,6 +111,7 @@ func GenerateID(prefix string) string {
 const (
 	base32Upper   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567"
 	lowerAlphaNum = "abcdefghijklmnopqrstuvwxyz0123456789"
+	upperAlphaNum = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
 	hexLower      = "0123456789abcdef"
 )
 
@@ -172,6 +173,15 @@ const bedrockProfileIDLen = 12
 // BedrockInferenceProfileID returns a 12-character lowercase-alphanumeric id,
 // the shape Bedrock mints for an application inference profile.
 func BedrockInferenceProfileID() string { return randString(bedrockProfileIDLen, lowerAlphaNum) }
+
+// bedrockAgentIDLen is the length of every Bedrock Agents resource id.
+const bedrockAgentIDLen = 10
+
+// BedrockAgentResourceID returns a 10-character uppercase-alphanumeric id, the
+// shape Bedrock Agents mints for agents, aliases, knowledge bases, data sources,
+// ingestion jobs, flows and prompts. Their ARNs embed it and the tagging API's
+// ARN pattern requires exactly this shape.
+func BedrockAgentResourceID() string { return randString(bedrockAgentIDLen, upperAlphaNum) }
 
 // ARN generates an AWS ARN.
 func ARN(partition, service, region, accountID, resource string) string {

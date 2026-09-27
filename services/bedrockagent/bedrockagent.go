@@ -122,14 +122,9 @@ func (b *BedrockAgent) GetAgent(ctx context.Context, agentID string) (*driver.Ag
 	return out.(*driver.Agent), nil
 }
 
-// ListAgents lists all agents.
-func (b *BedrockAgent) ListAgents(ctx context.Context) ([]driver.Agent, error) {
-	out, err := b.do(ctx, "ListAgents", nil, func() (any, error) { return b.driver.ListAgents(ctx) })
-	if err != nil {
-		return nil, err
-	}
-
-	return out.([]driver.Agent), nil
+// ListAgents lists one page of agents.
+func (b *BedrockAgent) ListAgents(ctx context.Context, page driver.Page) ([]driver.Agent, string, error) {
+	return listCall(ctx, b, "ListAgents", page, func() ([]driver.Agent, string, error) { return b.driver.ListAgents(ctx, page) })
 }
 
 // UpdateAgent updates an agent's mutable fields.
@@ -196,14 +191,11 @@ func (b *BedrockAgent) GetKnowledgeBase(ctx context.Context, id string) (*driver
 	return out.(*driver.KnowledgeBase), nil
 }
 
-// ListKnowledgeBases lists all knowledge bases.
-func (b *BedrockAgent) ListKnowledgeBases(ctx context.Context) ([]driver.KnowledgeBase, error) {
-	out, err := b.do(ctx, "ListKnowledgeBases", nil, func() (any, error) { return b.driver.ListKnowledgeBases(ctx) })
-	if err != nil {
-		return nil, err
-	}
-
-	return out.([]driver.KnowledgeBase), nil
+// ListKnowledgeBases lists one page of knowledge bases.
+func (b *BedrockAgent) ListKnowledgeBases(ctx context.Context, page driver.Page) ([]driver.KnowledgeBase, string, error) {
+	return listCall(ctx, b, "ListKnowledgeBases", page, func() ([]driver.KnowledgeBase, string, error) {
+		return b.driver.ListKnowledgeBases(ctx, page)
+	})
 }
 
 // UpdateKnowledgeBase updates a knowledge base's mutable fields.
@@ -250,14 +242,11 @@ func (b *BedrockAgent) GetDataSource(ctx context.Context, kbID, dsID string) (*d
 	return out.(*driver.DataSource), nil
 }
 
-// ListDataSources lists all data sources under a knowledge base.
-func (b *BedrockAgent) ListDataSources(ctx context.Context, kbID string) ([]driver.DataSource, error) {
-	out, err := b.do(ctx, "ListDataSources", kbID, func() (any, error) { return b.driver.ListDataSources(ctx, kbID) })
-	if err != nil {
-		return nil, err
-	}
-
-	return out.([]driver.DataSource), nil
+// ListDataSources lists one page of the data sources under a knowledge base.
+func (b *BedrockAgent) ListDataSources(ctx context.Context, kbID string, page driver.Page) ([]driver.DataSource, string, error) {
+	return listCall(ctx, b, "ListDataSources", kbID, func() ([]driver.DataSource, string, error) {
+		return b.driver.ListDataSources(ctx, kbID, page)
+	})
 }
 
 // UpdateDataSource updates a data source's mutable fields.
@@ -316,14 +305,9 @@ func (b *BedrockAgent) GetFlow(ctx context.Context, id string) (*driver.Flow, er
 	return out.(*driver.Flow), nil
 }
 
-// ListFlows lists all flows.
-func (b *BedrockAgent) ListFlows(ctx context.Context) ([]driver.Flow, error) {
-	out, err := b.do(ctx, "ListFlows", nil, func() (any, error) { return b.driver.ListFlows(ctx) })
-	if err != nil {
-		return nil, err
-	}
-
-	return out.([]driver.Flow), nil
+// ListFlows lists one page of flows.
+func (b *BedrockAgent) ListFlows(ctx context.Context, page driver.Page) ([]driver.Flow, string, error) {
+	return listCall(ctx, b, "ListFlows", page, func() ([]driver.Flow, string, error) { return b.driver.ListFlows(ctx, page) })
 }
 
 // UpdateFlow updates a flow's mutable fields.
@@ -380,14 +364,9 @@ func (b *BedrockAgent) GetPrompt(ctx context.Context, id string) (*driver.Prompt
 	return out.(*driver.Prompt), nil
 }
 
-// ListPrompts lists all prompts.
-func (b *BedrockAgent) ListPrompts(ctx context.Context) ([]driver.Prompt, error) {
-	out, err := b.do(ctx, "ListPrompts", nil, func() (any, error) { return b.driver.ListPrompts(ctx) })
-	if err != nil {
-		return nil, err
-	}
-
-	return out.([]driver.Prompt), nil
+// ListPrompts lists one page of prompts.
+func (b *BedrockAgent) ListPrompts(ctx context.Context, page driver.Page) ([]driver.Prompt, string, error) {
+	return listCall(ctx, b, "ListPrompts", page, func() ([]driver.Prompt, string, error) { return b.driver.ListPrompts(ctx, page) })
 }
 
 // UpdatePrompt updates a prompt's mutable fields.
@@ -410,4 +389,61 @@ func (b *BedrockAgent) DeletePrompt(ctx context.Context, id string) (string, err
 	}
 
 	return out.(string), nil
+}
+
+// TagResource merges tags onto the resource named by resourceARN.
+func (b *BedrockAgent) TagResource(ctx context.Context, resourceARN string, tags map[string]string) error {
+	_, err := b.do(ctx, "TagResource", resourceARN, func() (any, error) {
+		return nil, b.driver.TagResource(ctx, resourceARN, tags)
+	})
+
+	return err
+}
+
+// UntagResource removes tag keys from the resource named by resourceARN.
+func (b *BedrockAgent) UntagResource(ctx context.Context, resourceARN string, tagKeys []string) error {
+	_, err := b.do(ctx, "UntagResource", resourceARN, func() (any, error) {
+		return nil, b.driver.UntagResource(ctx, resourceARN, tagKeys)
+	})
+
+	return err
+}
+
+// ListTagsForResource returns the tags on the resource named by resourceARN.
+func (b *BedrockAgent) ListTagsForResource(ctx context.Context, resourceARN string) (map[string]string, error) {
+	out, err := b.do(ctx, "ListTagsForResource", resourceARN, func() (any, error) {
+		return b.driver.ListTagsForResource(ctx, resourceARN)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(map[string]string), nil
+}
+
+// listPage carries one page of a List call through do().
+type listPage[T any] struct {
+	items []T
+	next  string
+}
+
+// listCall runs a paged List driver call through do() and unpacks its page.
+func listCall[T any](ctx context.Context, b *BedrockAgent, op string, input any,
+	fn func() ([]T, string, error),
+) (items []T, nextToken string, err error) {
+	out, err := b.do(ctx, op, input, func() (any, error) {
+		got, next, ferr := fn()
+		if ferr != nil {
+			return nil, ferr
+		}
+
+		return listPage[T]{items: got, next: next}, nil
+	})
+	if err != nil {
+		return nil, "", err
+	}
+
+	p := out.(listPage[T])
+
+	return p.items, p.next, nil
 }

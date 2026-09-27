@@ -1127,6 +1127,24 @@ func New(d Drivers) *server.Server {
 		srv.Register(apigatewayv2srv.New(d.APIGatewayV2))
 	}
 
+	// bedrock-agent-runtime (InvokeAgent / Retrieve / RetrieveAndGenerate) shares
+	// the /agents and /knowledgebases roots with the bedrock-agent control plane,
+	// but matches only the runtime suffixes (/text, /retrieve) and
+	// /retrieveAndGenerate. It MUST register before the control-plane handler so
+	// its more specific Matches wins for those paths, and both before S3.
+	if d.BedrockAgentRuntime != nil {
+		srv.Register(bedrockagentruntime.New(d.BedrockAgentRuntime))
+	}
+
+	// bedrock-agent control plane: agents, knowledge bases, data sources, flows,
+	// prompts. REST/JSON rooted at /agents, /knowledgebases, /flows, /prompts,
+	// plus the shared /tags/{resourceArn} path for bedrock-agent ARNs only. It
+	// registers before EKS, whose Matches claims every /tags request, and
+	// before S3's permissive REST fallback.
+	if d.BedrockAgent != nil {
+		srv.Register(bedrockagent.New(d.BedrockAgent))
+	}
+
 	// before S3 because S3 is the permissive REST fallback that would
 	// otherwise claim the same path. EKS's Matches predicate is rooted
 	// at /clusters specifically so it doesn't shadow other REST URLs.
@@ -1140,22 +1158,6 @@ func New(d Drivers) *server.Server {
 	// REST fallback that would otherwise claim those paths.
 	if d.Bedrock != nil {
 		srv.Register(bedrock.New(d.Bedrock))
-	}
-
-	// bedrock-agent-runtime (InvokeAgent / Retrieve / RetrieveAndGenerate) shares
-	// the /agents and /knowledgebases roots with the bedrock-agent control plane,
-	// but matches only the runtime suffixes (/text, /retrieve) and
-	// /retrieveAndGenerate. It MUST register before the control-plane handler so
-	// its more specific Matches wins for those paths, and both before S3.
-	if d.BedrockAgentRuntime != nil {
-		srv.Register(bedrockagentruntime.New(d.BedrockAgentRuntime))
-	}
-
-	// bedrock-agent control plane: agents, knowledge bases, data sources, flows,
-	// prompts. REST/JSON rooted at /agents, /knowledgebases, /flows, /prompts;
-	// registered before S3's permissive REST fallback.
-	if d.BedrockAgent != nil {
-		srv.Register(bedrockagent.New(d.BedrockAgent))
 	}
 
 	// SageMaker control plane matches the X-Amz-Target prefix "SageMaker."

@@ -58,6 +58,7 @@ func (h *Handler) createFlow(w http.ResponseWriter, r *http.Request) {
 		Description:              in.Description,
 		CustomerEncryptionKeyArn: in.CustomerEncryptionKeyArn,
 		Definition:               in.Definition,
+		Tags:                     in.Tags,
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -80,7 +81,12 @@ func (h *Handler) getFlow(w http.ResponseWriter, r *http.Request, id string) {
 }
 
 func (h *Handler) listFlows(w http.ResponseWriter, r *http.Request) {
-	flows, err := h.agent.ListFlows(r.Context())
+	page, ok := queryPage(w, r)
+	if !ok {
+		return
+	}
+
+	flows, next, err := h.agent.ListFlows(r.Context(), page)
 	if err != nil {
 		writeErr(w, err)
 
@@ -92,7 +98,7 @@ func (h *Handler) listFlows(w http.ResponseWriter, r *http.Request) {
 		out = append(out, toFlowSummaryJSON(&flows[i]))
 	}
 
-	writeJSON(w, listFlowsResponse{FlowSummaries: out})
+	writeJSON(w, listFlowsResponse{FlowSummaries: out, NextToken: next})
 }
 
 //nolint:dupl // structurally similar to updatePrompt but operates on a distinct resource type.

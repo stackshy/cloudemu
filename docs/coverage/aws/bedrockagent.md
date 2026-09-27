@@ -3,7 +3,7 @@
 
 AWS's `bedrockagent` service · portable interface `driver.BedrockAgent` · [AWS index](./README.md)
 
-## Operations (29)
+## Operations (32)
 
 | Operation | Description |
 | --- | --- |
@@ -28,9 +28,12 @@ AWS's `bedrockagent` service · portable interface `driver.BedrockAgent` · [AWS
 | `ListFlows` |  |
 | `ListKnowledgeBases` |  |
 | `ListPrompts` |  |
+| `ListTagsForResource` |  |
 | `PrepareAgent` |  |
 | `PrepareFlow` |  |
 | `StartIngestionJob` |  |
+| `TagResource` |  |
+| `UntagResource` |  |
 | `UpdateAgent` |  |
 | `UpdateDataSource` |  |
 | `UpdateFlow` |  |

@@ -36,6 +36,9 @@
 //	GET    /prompts/{id}/                               GetPrompt
 //	PUT    /prompts/{id}/                               UpdatePrompt
 //	DELETE /prompts/{id}/                               DeletePrompt
+//	POST   /tags/{resourceArn}                          TagResource
+//	DELETE /tags/{resourceArn}?tagKeys=                 UntagResource
+//	GET    /tags/{resourceArn}                          ListTagsForResource
 package bedrockagent
 
 import (
@@ -86,10 +89,14 @@ func New(drv badriver.BedrockAgent) *Handler {
 // here before reaching the S3 catch-all. This is the accepted REST-vs-catch-all
 // tradeoff; callers needing those exact bucket names should use
 // virtual-host-style addressing.
+//
+// The shared /tags/{resourceArn} path is claimed only for bedrock-agent ARNs
+// (see ownsTagsPath), so other services' tag requests fall through.
 func (*Handler) Matches(r *http.Request) bool {
 	p := r.URL.Path
 
-	return underPrefix(p, prefixAgents) ||
+	return ownsTagsPath(p) ||
+		underPrefix(p, prefixAgents) ||
 		underPrefix(p, prefixKB) ||
 		underPrefix(p, prefixFlows) ||
 		underPrefix(p, prefixPrompts)
@@ -107,6 +114,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	p := r.URL.Path
 
 	switch {
+	case ownsTagsPath(p):
+		h.serveTags(w, r)
 	case underPrefix(p, prefixAgents):
 		h.serveAgents(w, r, segments(p, prefixAgents))
 	case underPrefix(p, prefixKB):

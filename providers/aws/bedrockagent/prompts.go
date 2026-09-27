@@ -12,11 +12,15 @@ import (
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) CreatePrompt(_ context.Context, cfg driver.PromptConfig) (*driver.Prompt, error) {
-	if cfg.Name == "" {
-		return nil, errors.New(errors.InvalidArgument, "name is required")
+	if err := validatePrompt(cfg); err != nil {
+		return nil, err
 	}
 
-	id := idgen.GenerateID("PROMPT")
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
+	id := newID(m.prompts)
 	now := m.now()
 	prompt := &driver.Prompt{
 		ID:                       id,
@@ -31,6 +35,7 @@ func (m *Mock) CreatePrompt(_ context.Context, cfg driver.PromptConfig) (*driver
 		UpdatedAt:                now,
 	}
 	m.prompts.Set(id, prompt)
+	m.putTags(prompt.ARN, cfg.Tags)
 
 	result := clonePrompt(prompt)
 
@@ -49,8 +54,8 @@ func (m *Mock) GetPrompt(_ context.Context, id string) (*driver.Prompt, error) {
 	return &result, nil
 }
 
-// ListPrompts lists all prompts.
-func (m *Mock) ListPrompts(_ context.Context) ([]driver.Prompt, error) {
+// ListPrompts lists one page of prompts.
+func (m *Mock) ListPrompts(_ context.Context, page driver.Page) ([]driver.Prompt, string, error) {
 	all := m.prompts.SortedValues()
 	out := make([]driver.Prompt, 0, len(all))
 
@@ -58,20 +63,24 @@ func (m *Mock) ListPrompts(_ context.Context) ([]driver.Prompt, error) {
 		out = append(out, clonePrompt(p))
 	}
 
-	return out, nil
+	return paginate(out, page)
 }
 
 // UpdatePrompt updates a prompt's mutable fields.
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) UpdatePrompt(_ context.Context, id string, cfg driver.PromptConfig) (*driver.Prompt, error) {
+	if err := validatePrompt(cfg); err != nil {
+		return nil, err
+	}
+
 	prompt, ok := m.prompts.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "prompt %q not found", id)
 	}
 
 	updated := *prompt
-	updated.Name = orDefault(cfg.Name, prompt.Name)
+	updated.Name = cfg.Name
 	updated.Description = cfg.Description
 	updated.DefaultVariant = orDefault(cfg.DefaultVariant, prompt.DefaultVariant)
 	updated.UpdatedAt = m.now()
@@ -87,15 +96,28 @@ func (m *Mock) UpdatePrompt(_ context.Context, id string, cfg driver.PromptConfi
 	return &result, nil
 }
 
-// DeletePrompt deletes a prompt and returns its identifier.
+// DeletePrompt deletes a prompt and its tags and returns its identifier.
 func (m *Mock) DeletePrompt(_ context.Context, id string) (string, error) {
-	if !m.prompts.Has(id) {
+	prompt, ok := m.prompts.Get(id)
+	if !ok {
 		return "", errors.Newf(errors.NotFound, "prompt %q not found", id)
 	}
 
 	m.prompts.Delete(id)
+	m.dropTags(prompt.ARN)
 
 	return id, nil
+}
+
+// validatePrompt checks the member CreatePrompt and UpdatePrompt require.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
+func validatePrompt(cfg driver.PromptConfig) error {
+	var v violations
+
+	v.required("name", cfg.Name == "")
+
+	return v.err()
 }
 
 // clonePrompt returns a value copy whose Variants do not alias the stored

@@ -4,7 +4,6 @@ import (
 	"context"
 
 	"github.com/stackshy/cloudemu/v2/errors"
-	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 )
 
@@ -13,18 +12,15 @@ import (
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) CreateDataSource(_ context.Context, cfg driver.DataSourceConfig) (*driver.DataSource, error) {
-	switch {
-	case cfg.Name == "":
-		return nil, errors.New(errors.InvalidArgument, "name is required")
-	case len(cfg.DataSourceConfiguration) == 0:
-		return nil, errors.New(errors.InvalidArgument, "dataSourceConfiguration is required")
+	if err := validateDataSource(cfg); err != nil {
+		return nil, err
 	}
 
 	if !m.knowledge.Has(cfg.KnowledgeBaseID) {
 		return nil, errors.Newf(errors.NotFound, "knowledge base %q not found", cfg.KnowledgeBaseID)
 	}
 
-	id := idgen.GenerateID("DS")
+	id := newID(m.dataSource)
 	now := m.now()
 	ds := &driver.DataSource{
 		ID:                      id,
@@ -56,8 +52,12 @@ func (m *Mock) GetDataSource(_ context.Context, kbID, dsID string) (*driver.Data
 	return &result, nil
 }
 
-// ListDataSources lists all data sources under a knowledge base.
-func (m *Mock) ListDataSources(_ context.Context, kbID string) ([]driver.DataSource, error) {
+// ListDataSources lists one page of the data sources under a knowledge base.
+func (m *Mock) ListDataSources(_ context.Context, kbID string, page driver.Page) ([]driver.DataSource, string, error) {
+	if !m.knowledge.Has(kbID) {
+		return nil, "", errors.Newf(errors.NotFound, "knowledge base %q not found", kbID)
+	}
+
 	all := m.dataSource.SortedValues()
 	out := make([]driver.DataSource, 0, len(all))
 
@@ -67,27 +67,28 @@ func (m *Mock) ListDataSources(_ context.Context, kbID string) ([]driver.DataSou
 		}
 	}
 
-	return out, nil
+	return paginate(out, page)
 }
 
 // UpdateDataSource updates a data source's mutable fields.
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) UpdateDataSource(_ context.Context, cfg driver.DataSourceConfig, dsID string) (*driver.DataSource, error) {
+	if err := validateDataSource(cfg); err != nil {
+		return nil, err
+	}
+
 	ds := m.findDataSource(cfg.KnowledgeBaseID, dsID)
 	if ds == nil {
 		return nil, errors.Newf(errors.NotFound, "data source %q not found", dsID)
 	}
 
 	updated := *ds
-	updated.Name = orDefault(cfg.Name, ds.Name)
+	updated.Name = cfg.Name
 	updated.Description = cfg.Description
 	updated.DataDeletionPolicy = orDefault(cfg.DataDeletionPolicy, ds.DataDeletionPolicy)
 	updated.UpdatedAt = m.now()
-
-	if len(cfg.DataSourceConfiguration) != 0 {
-		updated.DataSourceConfiguration = copyRaw(cfg.DataSourceConfiguration)
-	}
+	updated.DataSourceConfiguration = copyRaw(cfg.DataSourceConfiguration)
 
 	m.dataSource.Set(dsID, &updated)
 
@@ -115,7 +116,7 @@ func (m *Mock) StartIngestionJob(_ context.Context, kbID, dsID, description stri
 		return nil, errors.Newf(errors.NotFound, "data source %q not found", dsID)
 	}
 
-	id := idgen.GenerateID("JOB")
+	id := newID(m.jobs)
 	now := m.now()
 	job := &driver.IngestionJob{
 		ID:              id,
@@ -131,6 +132,19 @@ func (m *Mock) StartIngestionJob(_ context.Context, kbID, dsID, description stri
 	result := *job
 
 	return &result, nil
+}
+
+// validateDataSource checks the members CreateDataSource and UpdateDataSource
+// require.
+//
+//nolint:gocritic // cfg matches the driver interface signature.
+func validateDataSource(cfg driver.DataSourceConfig) error {
+	var v violations
+
+	v.required("name", cfg.Name == "")
+	v.required("dataSourceConfiguration", isNull(cfg.DataSourceConfiguration))
+
+	return v.err()
 }
 
 // findDataSource returns the data source matching dsID scoped to kbID, or nil.

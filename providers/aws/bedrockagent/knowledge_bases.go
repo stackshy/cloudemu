@@ -12,16 +12,15 @@ import (
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) CreateKnowledgeBase(_ context.Context, cfg driver.KnowledgeBaseConfig) (*driver.KnowledgeBase, error) {
-	switch {
-	case cfg.Name == "":
-		return nil, errors.New(errors.InvalidArgument, "name is required")
-	case cfg.RoleArn == "":
-		return nil, errors.New(errors.InvalidArgument, "roleArn is required")
-	case len(cfg.KnowledgeBaseConfiguration) == 0:
-		return nil, errors.New(errors.InvalidArgument, "knowledgeBaseConfiguration is required")
+	if err := validateKnowledgeBase(cfg); err != nil {
+		return nil, err
 	}
 
-	id := idgen.GenerateID("KB")
+	if err := validateTags(cfg.Tags); err != nil {
+		return nil, err
+	}
+
+	id := newID(m.knowledge)
 	now := m.now()
 	kb := &driver.KnowledgeBase{
 		ID:                         id,
@@ -36,6 +35,7 @@ func (m *Mock) CreateKnowledgeBase(_ context.Context, cfg driver.KnowledgeBaseCo
 		UpdatedAt:                  now,
 	}
 	m.knowledge.Set(id, kb)
+	m.putTags(kb.ARN, cfg.Tags)
 
 	result := cloneKnowledgeBase(kb)
 
@@ -54,8 +54,8 @@ func (m *Mock) GetKnowledgeBase(_ context.Context, id string) (*driver.Knowledge
 	return &result, nil
 }
 
-// ListKnowledgeBases lists all knowledge bases.
-func (m *Mock) ListKnowledgeBases(_ context.Context) ([]driver.KnowledgeBase, error) {
+// ListKnowledgeBases lists one page of knowledge bases.
+func (m *Mock) ListKnowledgeBases(_ context.Context, page driver.Page) ([]driver.KnowledgeBase, string, error) {
 	all := m.knowledge.SortedValues()
 	out := make([]driver.KnowledgeBase, 0, len(all))
 
@@ -63,27 +63,28 @@ func (m *Mock) ListKnowledgeBases(_ context.Context) ([]driver.KnowledgeBase, er
 		out = append(out, cloneKnowledgeBase(kb))
 	}
 
-	return out, nil
+	return paginate(out, page)
 }
 
 // UpdateKnowledgeBase updates a knowledge base's mutable fields.
 //
 //nolint:gocritic // cfg matches the driver interface signature; copied once on entry.
 func (m *Mock) UpdateKnowledgeBase(_ context.Context, id string, cfg driver.KnowledgeBaseConfig) (*driver.KnowledgeBase, error) {
+	if err := validateKnowledgeBase(cfg); err != nil {
+		return nil, err
+	}
+
 	kb, ok := m.knowledge.Get(id)
 	if !ok {
 		return nil, errors.Newf(errors.NotFound, "knowledge base %q not found", id)
 	}
 
 	updated := *kb
-	updated.Name = orDefault(cfg.Name, kb.Name)
-	updated.RoleArn = orDefault(cfg.RoleArn, kb.RoleArn)
+	updated.Name = cfg.Name
+	updated.RoleArn = cfg.RoleArn
 	updated.Description = cfg.Description
 	updated.UpdatedAt = m.now()
-
-	if len(cfg.KnowledgeBaseConfiguration) != 0 {
-		updated.KnowledgeBaseConfiguration = copyRaw(cfg.KnowledgeBaseConfiguration)
-	}
+	updated.KnowledgeBaseConfiguration = copyRaw(cfg.KnowledgeBaseConfiguration)
 
 	if len(cfg.StorageConfiguration) != 0 {
 		updated.StorageConfiguration = copyRaw(cfg.StorageConfiguration)
@@ -96,14 +97,16 @@ func (m *Mock) UpdateKnowledgeBase(_ context.Context, id string, cfg driver.Know
 	return &result, nil
 }
 
-// DeleteKnowledgeBase deletes a knowledge base and, cascading like real AWS,
-// every data source and ingestion job that belongs to it.
+// DeleteKnowledgeBase deletes a knowledge base, its tags and, cascading like
+// real AWS, every data source and ingestion job that belongs to it.
 func (m *Mock) DeleteKnowledgeBase(_ context.Context, id string) (string, error) {
-	if !m.knowledge.Has(id) {
+	kb, ok := m.knowledge.Get(id)
+	if !ok {
 		return "", errors.Newf(errors.NotFound, "knowledge base %q not found", id)
 	}
 
 	m.knowledge.Delete(id)
+	m.dropTags(kb.ARN)
 	m.deleteDataSourcesForKnowledgeBase(id)
 	m.deleteJobsForKnowledgeBase(id)
 

@@ -43,7 +43,7 @@ var restJSONTopLevelPrefixes = map[string][]string{
 
 	// Bare-root REST handlers.
 	"eks":                 {"clusters", "tags"},
-	"bedrockagent":        {"agents", "knowledgebases", "flows", "prompts"},
+	"bedrockagent":        {"agents", "knowledgebases", "flows", "prompts", "tags"},
 	"bedrockagentruntime": {"agents", "knowledgebases"},
 	"sagemakerruntime":    {"endpoints"},
 	"k8s":                 {"k8s"},
@@ -77,7 +77,7 @@ var sharedTopLevelPrefixes = map[string]map[string]bool{
 	// The generic /tags/{ResourceArn} REST surface is shared: each handler
 	// claims it only for ARNs it owns, so tag requests fall through to the
 	// owning service.
-	"tags": {"eks": true, "guardduty": true, "vpclattice": true},
+	"tags": {"eks": true, "guardduty": true, "vpclattice": true, "bedrockagent": true},
 	// bedrock-agent-runtime shares the /agents and /knowledgebases roots with
 	// the bedrock-agent control plane, matching only the runtime suffixes; it
 	// registers first so its more-specific Matches wins.

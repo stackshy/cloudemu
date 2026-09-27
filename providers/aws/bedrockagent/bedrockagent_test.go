@@ -36,12 +36,12 @@ func TestAgentLifecycle(t *testing.T) {
 	assert.Equal(t, driver.AgentPrepared, prepared.Status)
 	assert.NotEmpty(t, prepared.PreparedAt)
 
-	updated, err := m.UpdateAgent(ctx, agent.ID, driver.AgentConfig{Name: "a1-new"})
+	updated, err := m.UpdateAgent(ctx, agent.ID, driver.AgentConfig{Name: "a1-new", FoundationModel: "fm2", ResourceRoleArn: "role"})
 	require.NoError(t, err)
 	assert.Equal(t, "a1-new", updated.Name)
-	assert.Equal(t, "fm", updated.FoundationModel) // preserved
+	assert.Equal(t, "fm2", updated.FoundationModel)
 
-	agents, err := m.ListAgents(ctx)
+	agents, _, err := m.ListAgents(ctx, driver.Page{})
 	require.NoError(t, err)
 	assert.Len(t, agents, 1)
 
@@ -72,6 +72,7 @@ func TestKnowledgeBaseAndDataSource(t *testing.T) {
 		Name:                       "kb1",
 		RoleArn:                    "role",
 		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
+		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS"}`),
 	})
 	require.NoError(t, err)
 	assert.Equal(t, driver.KnowledgeBaseActive, kb.Status)
@@ -89,7 +90,7 @@ func TestKnowledgeBaseAndDataSource(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, driver.IngestionJobComplete, job.Status)
 
-	sources, err := m.ListDataSources(ctx, kb.ID)
+	sources, _, err := m.ListDataSources(ctx, kb.ID, driver.Page{})
 	require.NoError(t, err)
 	assert.Len(t, sources, 1)
 
@@ -108,6 +109,7 @@ func TestDeleteKnowledgeBaseCascade(t *testing.T) {
 		Name:                       "kb1",
 		RoleArn:                    "role",
 		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
+		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS"}`),
 	})
 	require.NoError(t, err)
 
@@ -127,9 +129,8 @@ func TestDeleteKnowledgeBaseCascade(t *testing.T) {
 	_, err = m.GetDataSource(ctx, kb.ID, ds.ID)
 	assert.True(t, cerrors.IsNotFound(err), "data source should be cascade-deleted")
 
-	sources, err := m.ListDataSources(ctx, kb.ID)
-	require.NoError(t, err)
-	assert.Empty(t, sources)
+	_, _, err = m.ListDataSources(ctx, kb.ID, driver.Page{})
+	assert.True(t, cerrors.IsNotFound(err), "listing a deleted knowledge base's data sources is not found")
 
 	assert.False(t, m.jobs.Has(job.ID), "ingestion job should be cascade-deleted")
 }
@@ -142,6 +143,7 @@ func TestDeleteDataSourceCascadesJobs(t *testing.T) {
 		Name:                       "kb1",
 		RoleArn:                    "role",
 		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
+		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS"}`),
 	})
 	require.NoError(t, err)
 
@@ -188,6 +190,7 @@ func TestDataSourceCopyOutImmutable(t *testing.T) {
 		Name:                       "kb1",
 		RoleArn:                    "role",
 		KnowledgeBaseConfiguration: json.RawMessage(`{"type":"VECTOR"}`),
+		StorageConfiguration:       json.RawMessage(`{"type":"OPENSEARCH_SERVERLESS"}`),
 	})
 	require.NoError(t, err)
 
@@ -255,7 +258,7 @@ func TestPromptLifecycle(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "p1-new", updated.Name)
 
-	prompts, err := m.ListPrompts(ctx)
+	prompts, _, err := m.ListPrompts(ctx, driver.Page{})
 	require.NoError(t, err)
 	assert.Len(t, prompts, 1)
 
