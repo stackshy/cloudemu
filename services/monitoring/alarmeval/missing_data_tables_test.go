@@ -55,6 +55,15 @@ func stateOf(out alarmeval.Outcome) string {
 	return out.State
 }
 
+// cwParams is a Maximum > 5 CloudWatch alarm with the evaluation range on.
+func cwParams(evalPeriods, datapointsToAlarm int, treat string) alarmeval.Params {
+	return alarmeval.Params{
+		Period: tablePeriod, EvaluationPeriods: evalPeriods, DatapointsToAlarm: datapointsToAlarm,
+		Stat: "Maximum", ComparisonOperator: "GreaterThanThreshold", Threshold: 5,
+		TreatMissingData: treat, ExtendedRange: true,
+	}
+}
+
 func runMissingDataTable(t *testing.T, datapointsToAlarm int, rows []missingDataRow) {
 	t.Helper()
 
@@ -68,11 +77,7 @@ func runMissingDataTable(t *testing.T, datapointsToAlarm int, rows []missingData
 
 		for treat, want := range cells {
 			t.Run(row.points+"/"+treat, func(t *testing.T) {
-				p := alarmeval.Params{
-					Period: tablePeriod, EvaluationPeriods: 3, DatapointsToAlarm: datapointsToAlarm,
-					Stat: "Maximum", ComparisonOperator: "GreaterThanThreshold", Threshold: 5,
-					TreatMissingData: treat,
-				}
+				p := cwParams(3, datapointsToAlarm, treat)
 
 				got := alarmeval.EvaluateWindow(datumsFor(row.points, now), &p, now)
 				assert.Equal(t, want, stateOf(got))
@@ -110,10 +115,7 @@ func TestMissingDataRecentBreachIsNotPremature(t *testing.T) {
 	now := config.NewFakeClock(time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)).Now()
 
 	for _, points := range []string{"- - - - X", "- - - X -"} {
-		p := alarmeval.Params{
-			Period: tablePeriod, EvaluationPeriods: 3, DatapointsToAlarm: 3,
-			Stat: "Maximum", ComparisonOperator: "GreaterThanThreshold", Threshold: 5,
-		}
+		p := cwParams(3, 3, "")
 
 		got := alarmeval.EvaluateWindow(datumsFor(points, now), &p, now)
 		assert.NotEqual(t, alarmeval.StateAlarm, stateOf(got), points)
@@ -125,10 +127,7 @@ func TestMissingDataRecentBreachIsNotPremature(t *testing.T) {
 func TestMissingDataOutsideRangeIsIgnored(t *testing.T) {
 	now := config.NewFakeClock(time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)).Now()
 
-	p := alarmeval.Params{
-		Period: tablePeriod, EvaluationPeriods: 3, Stat: "Maximum",
-		ComparisonOperator: "GreaterThanThreshold", Threshold: 5,
-	}
+	p := cwParams(3, 0, "")
 
 	got := alarmeval.EvaluateWindow(datumsFor("X X X - - - - -", now), &p, now)
 	assert.Equal(t, alarmeval.StateInsufficientData, got.State)
@@ -141,8 +140,65 @@ func TestMissingDataOutsideRangeIsIgnored(t *testing.T) {
 func TestRecentDatapointsReachBackIntoRange(t *testing.T) {
 	now := config.NewFakeClock(time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)).Now()
 
-	p := alarmeval.Params{Period: tablePeriod, EvaluationPeriods: 3, Stat: "Maximum"}
+	p := cwParams(3, 0, "")
 
 	assert.Equal(t, []float64{9, 9, 9}, alarmeval.RecentDatapoints(datumsFor("0 X X - X", now), &p, now))
 	assert.Equal(t, []float64{9}, alarmeval.RecentDatapoints(datumsFor("- - X - -", now), &p, now))
+}
+
+// Enough breaching points alarm under every policy, before the premature rule
+// can keep an "ignore" alarm's state. An AWS/DynamoDB ThrottledRequests alarm
+// (ignore by default, M=1) must fire on its first breaching point.
+func TestMissingDataEnoughBreachesAlarmUnderIgnore(t *testing.T) {
+	now := config.NewFakeClock(time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)).Now()
+
+	rows := []struct {
+		points string
+		n, m   int
+	}{
+		{"- - - - X", 3, 1},
+		{"- - X - X", 3, 2},
+		{"- - - X X", 3, 2},
+		{"- - - - X X X", 5, 3},
+	}
+
+	for _, row := range rows {
+		for _, treat := range []string{"ignore", "missing"} {
+			p := cwParams(row.n, row.m, treat)
+			got := alarmeval.EvaluateWindow(datumsFor(row.points, now), &p, now)
+			assert.Equal(t, alarmeval.StateAlarm, stateOf(got), "%s N=%d M=%d %s", row.points, row.n, row.m, treat)
+		}
+	}
+
+	ddb := cwParams(3, 1, "")
+	ddb.IgnoreMissingByDefault = true
+	assert.Equal(t, alarmeval.StateAlarm, stateOf(alarmeval.EvaluateWindow(datumsFor("- - - - X", now), &ddb, now)))
+}
+
+// Without ExtendedRange (Azure windowSize, GCP duration) an evaluation sees
+// exactly EvaluationPeriods periods and the premature rule is off.
+func TestMissingDataWithoutExtendedRange(t *testing.T) {
+	now := config.NewFakeClock(time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)).Now()
+	period := tablePeriod * time.Second
+
+	p := cwParams(3, 3, "")
+	p.ExtendedRange = false
+
+	assert.Equal(t, alarmeval.StateOK, alarmeval.EvaluateWindow(datumsFor("- - X - -", now), &p, now).State)
+	assert.Equal(t, alarmeval.StateInsufficientData, alarmeval.EvaluateWindow(datumsFor("X X X - - -", now), &p, now).State)
+	assert.Equal(t, now.Add(-3*period), p.WindowStart(now))
+	assert.Equal(t, now.Add(-3*period), alarmeval.EvaluatedStart(datumsFor("- - X - -", now), &p, now))
+}
+
+// EvaluatedStart is the start of the oldest evaluated period: EvaluationPeriods
+// back, or the oldest real point reached back into the range.
+func TestEvaluatedStart(t *testing.T) {
+	now := config.NewFakeClock(time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)).Now()
+	p := cwParams(3, 0, "")
+	period := tablePeriod * time.Second
+
+	assert.Equal(t, now.Add(-3*period), alarmeval.EvaluatedStart(nil, &p, now))
+	assert.Equal(t, now.Add(-3*period), alarmeval.EvaluatedStart(datumsFor("X X X X X", now), &p, now))
+	assert.Equal(t, now.Add(-4*period), alarmeval.EvaluatedStart(datumsFor("0 X - X X", now), &p, now))
+	assert.Equal(t, now.Add(-5*period), alarmeval.EvaluatedStart(datumsFor("X - - - -", now), &p, now))
 }

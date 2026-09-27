@@ -52,8 +52,7 @@ func TestLazyEvalRuleFallsBackToInsufficientData(t *testing.T) {
 	putErrors(t, m, clk, 10)
 	require.NoError(t, m.CreateAlarm(context.Background(), lazyRule("stale", "")))
 
-	// Past the evaluation range of N+2 periods, so every point is missing.
-	clk.Advance(4 * time.Minute)
+	clk.Advance(2 * time.Minute)
 
 	assert.Equal(t, "INSUFFICIENT_DATA", ruleState(t, m, "stale"))
 
@@ -84,18 +83,21 @@ func TestLazyEvalRuleSetStateReverts(t *testing.T) {
 	assert.False(t, m.Tick(clk.Now()))
 }
 
-// The shared evaluator's premature-alarm rule: one breaching point followed
-// by silence ("- - X - -") alarms a 3 of 3 rule.
-func TestLazyEvalRulePrematureAlarm(t *testing.T) {
+// An Azure alert evaluates only its windowSize aggregation. The CloudWatch
+// evaluation range and premature-alarm rule do not apply, so one old breaching
+// point with silence after it does not fire a 3 of 3 rule.
+func TestLazyEvalRuleNoCloudWatchLookBack(t *testing.T) {
 	m, clk := newTestMock()
-	rule := lazyRule("prem", "")
+	rule := lazyRule("window", "")
 	rule.Stat, rule.EvaluationPeriods, rule.DatapointsToAlarm = "Maximum", 3, 3
 	require.NoError(t, m.CreateAlarm(context.Background(), rule))
 
 	putErrors(t, m, clk, 10)
 	clk.Advance(150 * time.Second)
+	assert.Equal(t, "OK", ruleState(t, m, "window"))
 
-	assert.Equal(t, "ALARM", ruleState(t, m, "prem"))
+	clk.Advance(time.Minute)
+	assert.Equal(t, "INSUFFICIENT_DATA", ruleState(t, m, "window"))
 }
 
 func TestLazyEvalRuleConcurrency(t *testing.T) {

@@ -54,8 +54,7 @@ func TestLazyEvalPolicyFallsBackToInsufficientData(t *testing.T) {
 	putErrors(t, m, clk, 10)
 	require.NoError(t, m.CreateAlarm(context.Background(), lazyPolicy("stale", "")))
 
-	// Past the evaluation range of N+2 periods, so every point is missing.
-	clk.Advance(4 * time.Minute)
+	clk.Advance(2 * time.Minute)
 
 	assert.Equal(t, "INSUFFICIENT_DATA", policyState(t, m, "stale"))
 
@@ -86,18 +85,21 @@ func TestLazyEvalPolicySetStateReverts(t *testing.T) {
 	assert.Equal(t, "INSUFFICIENT_DATA", policyState(t, m, "forced"))
 }
 
-// The shared evaluator's premature-alarm rule: one breaching point followed
-// by silence ("- - X - -") alarms a 3 of 3 policy.
-func TestLazyEvalPolicyPrematureAlarm(t *testing.T) {
+// A GCP condition evaluates only its duration window. The CloudWatch
+// evaluation range and premature-alarm rule do not apply, so one old breaching
+// point with silence after it does not open an incident on a 3 of 3 policy.
+func TestLazyEvalPolicyNoCloudWatchLookBack(t *testing.T) {
 	m, clk := newTestMock()
-	policy := lazyPolicy("prem", "")
+	policy := lazyPolicy("window", "")
 	policy.Stat, policy.EvaluationPeriods, policy.DatapointsToAlarm = "Maximum", 3, 3
 	require.NoError(t, m.CreateAlarm(context.Background(), policy))
 
 	putErrors(t, m, clk, 10)
 	clk.Advance(150 * time.Second)
+	assert.Equal(t, "OK", policyState(t, m, "window"))
 
-	assert.Equal(t, "ALARM", policyState(t, m, "prem"))
+	clk.Advance(time.Minute)
+	assert.Equal(t, "INSUFFICIENT_DATA", policyState(t, m, "window"))
 }
 
 func TestLazyEvalPolicyConcurrency(t *testing.T) {

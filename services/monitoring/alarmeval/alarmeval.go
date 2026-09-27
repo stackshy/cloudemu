@@ -4,10 +4,10 @@
 // forms, and the per-Period M-of-N rule with OK recovery and TreatMissingData
 // handling. Keeping this in one place stops the three providers from drifting.
 //
-// An evaluation looks back over an evaluation range that is longer than
-// EvaluationPeriods, so a few missing recent points do not hide older real
-// ones. The range length is a calibrated approximation, see
-// evaluationRangeExtra.
+// A CloudWatch alarm (Params.ExtendedRange) looks back over an evaluation
+// range that is longer than EvaluationPeriods, so a few missing recent points
+// do not hide older real ones. The range length is a calibrated
+// approximation, see evaluationRangeExtra.
 //
 // Evaluation is lazy and clock based. A provider evaluates an alarm when data
 // arrives, when the alarm is created or updated, and on any read that shows
@@ -132,6 +132,11 @@ type Params struct {
 	// IgnoreMissingByDefault makes an empty TreatMissingData act as "ignore".
 	// AWS sets it for AWS/DynamoDB alarms. An explicit policy still wins.
 	IgnoreMissingByDefault bool
+	// ExtendedRange turns on the CloudWatch evaluation range and the
+	// premature-alarm rule. Only the AWS provider sets it. Azure evaluates just
+	// its windowSize and GCP just its duration, so they look back exactly
+	// EvaluationPeriods.
+	ExtendedRange bool
 	// Band is the anomaly band of a band-operator alarm, bucketed like the
 	// datums. A period with data but no band point counts as missing.
 	Band []BandPoint
@@ -238,13 +243,27 @@ func (p *Params) normalize() (periodDur time.Duration, evalPeriods, datapointsTo
 }
 
 // WindowStart is the earliest timestamp an evaluation of p at now considers, so
-// a provider can pre-filter its stored datums. It is the start of the
-// evaluation range, which reaches back past EvaluationPeriods in case recent
-// points are missing.
+// a provider can pre-filter its stored datums. With ExtendedRange it is the
+// start of the evaluation range, which reaches back past EvaluationPeriods in
+// case recent points are missing.
 func (p *Params) WindowStart(now time.Time) time.Time {
+	periodDur, _, _ := p.normalize()
+
+	return now.Add(-periodDur * time.Duration(p.span()))
+}
+
+// EvaluatedStart is the start of the oldest period an evaluation at now uses.
+// That is EvaluationPeriods back, or further when the evaluation reaches back
+// into the range for older real points.
+func EvaluatedStart(datums []driver.MetricDatum, p *Params, now time.Time) time.Time {
 	periodDur, evalPeriods, _ := p.normalize()
 
-	return now.Add(-periodDur * time.Duration(evaluationRange(evalPeriods)))
+	oldest := evalPeriods - 1
+	if pts := evaluated(p.realPoints(datums, now), evalPeriods); len(pts) > 0 && pts[0].age > oldest {
+		oldest = pts[0].age
+	}
+
+	return now.Add(-periodDur * time.Duration(oldest+1))
 }
 
 // MatchDimensions reports whether a datum belongs to the metric series a query
@@ -316,9 +335,15 @@ func StatOf(datums []driver.MetricDatum, stat string) float64 {
 // of 5 for 3 evaluation periods, so cloudemu always looks back N+2 periods.
 const evaluationRangeExtra = 2
 
-// evaluationRange is the number of periods in the evaluation range.
-func evaluationRange(evalPeriods int) int {
-	return evalPeriods + evaluationRangeExtra
+// span is the number of periods an evaluation looks back over: the
+// evaluation range with ExtendedRange, otherwise EvaluationPeriods.
+func (p *Params) span() int {
+	_, evalPeriods, _ := p.normalize()
+	if p.ExtendedRange {
+		return evalPeriods + evaluationRangeExtra
+	}
+
+	return evalPeriods
 }
 
 // slot is one real datapoint of the evaluation range. age 0 is the most
@@ -332,8 +357,8 @@ type slot struct {
 // realPoints returns the periods of the evaluation range that hold a usable
 // datapoint, newest first.
 func (p *Params) realPoints(datums []driver.MetricDatum, now time.Time) []slot {
-	periodDur, evalPeriods, _ := p.normalize()
-	span := evaluationRange(evalPeriods)
+	periodDur, _, _ := p.normalize()
+	span := p.span()
 	buckets := bucketByPeriod(datums, now, periodDur, span)
 	band := p.bandBuckets(now, periodDur, span)
 
@@ -380,6 +405,9 @@ func (p *Params) treatment() string {
 // the missing data points with the result you specified" and "all real data
 // points in the evaluation range are included". The alarm is in ALARM when at
 // least DatapointsToAlarm of the points breach and OK otherwise.
+//
+// Without ExtendedRange the evaluation sees exactly EvaluationPeriods periods
+// and the premature rule is off.
 func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) Outcome {
 	_, evalPeriods, datapointsToAlarm := p.normalize()
 	points := p.realPoints(datums, now)
@@ -400,7 +428,7 @@ func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) Outco
 	case treat == treatMissingNotBreaching:
 		// Filled points are good, so nothing is missing and the premature
 		// rule does not apply.
-	case premature(points, datapointsToAlarm):
+	case p.prematureApplies(points, breaching, datapointsToAlarm):
 		// "the alarm goes into ALARM state even if missing data points are
 		// treated as missing." With "ignore" the doc tables keep the state.
 		if treat == TreatMissingIgnore {
@@ -411,6 +439,12 @@ func EvaluateWindow(datums []driver.MetricDatum, p *Params, now time.Time) Outco
 	}
 
 	return thresholdOutcome(breaching, datapointsToAlarm)
+}
+
+// prematureApplies reports whether the premature rule decides a CloudWatch
+// evaluation. Enough real breaching points alarm first, whatever the policy.
+func (p *Params) prematureApplies(points []slot, breaching, datapointsToAlarm int) bool {
+	return p.ExtendedRange && breaching < datapointsToAlarm && premature(points, datapointsToAlarm)
 }
 
 // premature is the rule from "Avoiding premature transitions to alarm state":
@@ -503,7 +537,7 @@ func (p *Params) bandBuckets(now time.Time, periodDur time.Duration, span int) [
 // stateReasonData of an anomaly alarm.
 func RecentBand(datums []driver.MetricDatum, p *Params, now time.Time) (lower, upper []float64) {
 	periodDur, evalPeriods, _ := p.normalize()
-	band := p.bandBuckets(now, periodDur, evaluationRange(evalPeriods))
+	band := p.bandBuckets(now, periodDur, p.span())
 
 	lower, upper = []float64{}, []float64{}
 
