@@ -12,11 +12,19 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/bedrockagent/driver"
 )
 
-// Tag constraints from the service model (TagKey / TagValue).
+// Tag constraints from the service model (TagKey, TagValue, TagKeyList).
 const (
 	maxTagKeyLen   = 128
 	maxTagValueLen = 256
+	maxUntagKeys   = 200
 )
+
+// tagCharPattern is the TagKey and TagValue character pattern from the
+// service model, quoted in the validation message.
+const tagCharPattern = `[a-zA-Z0-9\s._:/=+@-]*`
+
+// tagChars enforces tagCharPattern over the whole key or value.
+var tagChars = regexp.MustCompile(`^` + tagCharPattern + `$`)
 
 // arnFields is the number of colon-separated fields in an ARN; the last one
 // is the resource ("agent/ID", "prompt/ID:1", ...).
@@ -48,7 +56,7 @@ func (m *Mock) TagResource(_ context.Context, resourceARN string, tags map[strin
 		return err
 	}
 
-	if err := m.checkTaggable(resourceARN); err != nil {
+	if err := checkTaggableShape(resourceARN); err != nil {
 		return err
 	}
 
@@ -58,6 +66,13 @@ func (m *Mock) TagResource(_ context.Context, resourceARN string, tags map[strin
 
 	m.tagMu.Lock()
 	defer m.tagMu.Unlock()
+
+	// Resolve the resource under tagMu. A delete removes the resource first
+	// and then takes tagMu to drop its tags, so it either lands before this
+	// check (not found) or waits and drops what is written here.
+	if err := m.checkExists(resourceARN); err != nil {
+		return err
+	}
 
 	merged, _ := m.tags.Get(resourceARN)
 	merged = maps.Clone(merged)
@@ -83,12 +98,20 @@ func (m *Mock) UntagResource(_ context.Context, resourceARN string, tagKeys []st
 		return err
 	}
 
-	if err := m.checkTaggable(resourceARN); err != nil {
+	if err := checkTaggableShape(resourceARN); err != nil {
+		return err
+	}
+
+	if err := validateTagKeys(tagKeys); err != nil {
 		return err
 	}
 
 	m.tagMu.Lock()
 	defer m.tagMu.Unlock()
+
+	if err := m.checkExists(resourceARN); err != nil {
+		return err
+	}
 
 	current, ok := m.tags.Get(resourceARN)
 	if !ok {
@@ -114,12 +137,16 @@ func (m *Mock) UntagResource(_ context.Context, resourceARN string, tagKeys []st
 // ListTagsForResource returns a copy of the resource's tags (empty, not nil,
 // when it has none).
 func (m *Mock) ListTagsForResource(_ context.Context, resourceARN string) (map[string]string, error) {
-	if err := m.checkTaggable(resourceARN); err != nil {
+	if err := checkTaggableShape(resourceARN); err != nil {
 		return nil, err
 	}
 
 	m.tagMu.Lock()
 	defer m.tagMu.Unlock()
+
+	if err := m.checkExists(resourceARN); err != nil {
+		return nil, err
+	}
 
 	current, _ := m.tags.Get(resourceARN)
 
@@ -131,17 +158,23 @@ func (m *Mock) ListTagsForResource(_ context.Context, resourceARN string) (map[s
 	return out, nil
 }
 
-// checkTaggable validates the ARN shape and resolves it to a live resource.
-func (m *Mock) checkTaggable(resourceARN string) error {
-	if !taggableARN.MatchString(resourceARN) {
-		var v violations
-
-		v.addf("Value '%s' at 'resourceArn' failed to satisfy constraint: "+
-			"Member must satisfy regular expression pattern: %s", resourceARN, taggableARNPattern)
-
-		return v.err()
+// checkTaggableShape validates the ARN against the taggable-resource pattern.
+func checkTaggableShape(resourceARN string) error {
+	if taggableARN.MatchString(resourceARN) {
+		return nil
 	}
 
+	var v violations
+
+	v.addf("Value '%s' at 'resourceArn' failed to satisfy constraint: "+
+		"Member must satisfy regular expression pattern: %s", resourceARN, taggableARNPattern)
+
+	return v.err()
+}
+
+// checkExists resolves a well-formed ARN to a live resource. Callers hold
+// tagMu so the answer stays true until their tag write lands.
+func (m *Mock) checkExists(resourceARN string) error {
 	if !m.arnExists(resourceARN) {
 		return errors.Newf(errors.NotFound, "resource %q not found", resourceARN)
 	}
@@ -193,7 +226,8 @@ func storedARN[V any](store *memstore.Store[V], ids []string, want int, arnOf fu
 	return arnOf(v)
 }
 
-// validateTags applies the TagKey and TagValue length bounds.
+// validateTags applies the TagKey and TagValue length and character
+// constraints.
 func validateTags(tags map[string]string) error {
 	var v violations
 
@@ -206,9 +240,40 @@ func validateTags(tags map[string]string) error {
 				k, maxTagKeyLen)
 		}
 
+		if !tagChars.MatchString(k) {
+			v.addf("Value '%s' at 'tags' failed to satisfy constraint: Map keys must satisfy constraint: "+
+				"[Member must satisfy regular expression pattern: %s]", k, tagCharPattern)
+		}
+
 		if len(val) > maxTagValueLen {
 			v.addf("Value '%s' at 'tags.%s' failed to satisfy constraint: "+
 				"Member must have length less than or equal to %d", val, k, maxTagValueLen)
+		}
+
+		if !tagChars.MatchString(val) {
+			v.addf("Value '%s' at 'tags.%s' failed to satisfy constraint: "+
+				"Member must satisfy regular expression pattern: %s", val, k, tagCharPattern)
+		}
+	}
+
+	return v.err()
+}
+
+// validateTagKeys applies the TagKeyList size bound and the TagKey
+// constraints to UntagResource's keys.
+func validateTagKeys(keys []string) error {
+	var v violations
+
+	if len(keys) > maxUntagKeys {
+		v.addf("Value '[%s]' at 'tagKeys' failed to satisfy constraint: "+
+			"Member must have length less than or equal to %d", strings.Join(keys, ", "), maxUntagKeys)
+	}
+
+	for _, k := range keys {
+		if k == "" || len(k) > maxTagKeyLen || !tagChars.MatchString(k) {
+			v.addf("Value '%s' at 'tagKeys' failed to satisfy constraint: Member must satisfy constraint: "+
+				"[Member must have length less than or equal to %d, Member must have length greater than or equal to 1, "+
+				"Member must satisfy regular expression pattern: %s]", k, maxTagKeyLen, tagCharPattern)
 		}
 	}
 
@@ -216,6 +281,8 @@ func validateTags(tags map[string]string) error {
 }
 
 // putTags stores the tags a Create call carried. Callers validate them first.
+// A delete that ran between the store write and here leaves no resource, so
+// nothing is written.
 func (m *Mock) putTags(resourceARN string, tags map[string]string) {
 	if len(tags) == 0 {
 		return
@@ -224,10 +291,17 @@ func (m *Mock) putTags(resourceARN string, tags map[string]string) {
 	m.tagMu.Lock()
 	defer m.tagMu.Unlock()
 
+	if !m.arnExists(resourceARN) {
+		return
+	}
+
 	m.tags.Set(resourceARN, maps.Clone(tags))
 }
 
-// dropTags forgets a deleted resource's tags.
+// dropTags forgets a deleted resource's tags. Callers remove the resource
+// from its store first, so a tag write racing the delete either sees it gone
+// or is dropped here. Store locks are held only inside each memstore call,
+// never while waiting on tagMu, so the two cannot invert.
 func (m *Mock) dropTags(resourceARN string) {
 	m.tagMu.Lock()
 	defer m.tagMu.Unlock()
