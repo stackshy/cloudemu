@@ -7,8 +7,11 @@ import (
 	"net/http/httptest"
 	"regexp"
 	"testing"
+	"time"
 
 	"k8s.io/apimachinery/pkg/version"
+
+	"github.com/stackshy/cloudemu/v2/config"
 )
 
 func getServerVersion(t *testing.T, api *APIServer, uid string) version.Info {
@@ -187,5 +190,54 @@ func TestServerVersion_SnapshotRoundTrip(t *testing.T) {
 
 	if got := getServerVersion(t, dst, uid); got != want {
 		t.Errorf("restored /version = %+v, want %+v", got, want)
+	}
+}
+
+// TestServerVersion_ScheduledSwitch checks that SetClusterVersionAt keeps the
+// current /version until the given instant, then reports the new one, and that
+// a snapshot taken mid-switch restores the target version.
+func TestServerVersion_ScheduledSwitch(t *testing.T) {
+	ctx := context.Background()
+	fc := config.NewFakeClock(time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC))
+
+	api := NewAPIServer()
+	uid, _ := api.RegisterCluster()
+	api.SetClusterVersion(uid, DistributionEKS, "1.31.4")
+
+	if !api.SetClusterVersionAt(uid, DistributionEKS, "1.32.1", fc, fc.Now().Add(time.Second)) {
+		t.Fatal("SetClusterVersionAt reported false for a known cluster")
+	}
+
+	if got := getServerVersion(t, api, uid).Minor; got != "31+" {
+		t.Fatalf("before switch minor = %q, want 31+", got)
+	}
+
+	data, err := api.Snapshot(ctx, false)
+	if err != nil {
+		t.Fatalf("Snapshot: %v", err)
+	}
+
+	fc.Advance(time.Second)
+
+	if got := getServerVersion(t, api, uid).Minor; got != "32+" {
+		t.Fatalf("after switch minor = %q, want 32+", got)
+	}
+
+	dst := NewAPIServer()
+	if err := dst.Restore(ctx, data); err != nil {
+		t.Fatalf("Restore: %v", err)
+	}
+
+	if got := getServerVersion(t, dst, uid).Minor; got != "32+" {
+		t.Fatalf("restored minor = %q, want 32+", got)
+	}
+
+	// A later immediate set drops the pending switch.
+	api.SetClusterVersionAt(uid, DistributionEKS, "1.33.0", fc, fc.Now().Add(time.Second))
+	api.SetClusterVersion(uid, DistributionEKS, "1.32.1")
+	fc.Advance(time.Second)
+
+	if got := getServerVersion(t, api, uid).Minor; got != "32+" {
+		t.Fatalf("after overriding set minor = %q, want 32+", got)
 	}
 }

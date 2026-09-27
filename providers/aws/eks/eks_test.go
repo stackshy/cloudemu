@@ -143,7 +143,7 @@ func TestNodegroupLifecycle(t *testing.T) {
 		NodegroupName: "ng1",
 		NodeRole:      "arn:aws:iam::123456789012:role/eks-node",
 		Subnets:       []string{"subnet-1"},
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
 	})
 	requireNoError(t, err)
 	assertEqual(t, "ACTIVE", ng.Status)
@@ -158,7 +158,7 @@ func TestNodegroupLifecycle(t *testing.T) {
 	assertEqual(t, 1, len(names))
 
 	upd, err := m.UpdateNodegroupConfig(ctx, "c1", "ng1", eksdriver.NodegroupConfigUpdate{
-		Scaling: &eksdriver.NodegroupScalingConfig{MinSize: 2, MaxSize: 5, DesiredSize: 3},
+		Scaling: &eksdriver.NodegroupScalingUpdate{MinSize: intPtr(2), MaxSize: intPtr(5), DesiredSize: intPtr(3)},
 	})
 	requireNoError(t, err)
 	assertEqual(t, "Successful", upd.Status)
@@ -199,7 +199,7 @@ func TestNodegroupTaintsAndModifiedAt(t *testing.T) {
 		NodegroupName: "ng1",
 		NodeRole:      "arn:aws:iam::123456789012:role/eks-node",
 		Subnets:       []string{"subnet-1"},
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
 		Taints:        []eksdriver.Taint{{Key: "dedicated", Value: "gpu", Effect: "NO_SCHEDULE"}},
 	})
 	requireNoError(t, err)
@@ -240,7 +240,7 @@ func TestNodegroupLabelMergeAndRemove(t *testing.T) {
 		NodegroupName: "ng1",
 		NodeRole:      "arn:aws:iam::123456789012:role/eks-node",
 		Subnets:       []string{"subnet-1"},
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 2, DesiredSize: 1},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 2, DesiredSize: 1},
 		Labels:        map[string]string{"a": "1", "b": "2"},
 	})
 	requireNoError(t, err)
@@ -271,7 +271,7 @@ func TestNodegroupScalingValidation(t *testing.T) {
 		NodegroupName: "bad",
 		NodeRole:      "arn:aws:iam::123456789012:role/eks-node",
 		Subnets:       []string{"subnet-1"},
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 5, MaxSize: 2, DesiredSize: 1},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 5, MaxSize: 2, DesiredSize: 1},
 	})
 	if err == nil {
 		t.Fatal("expected InvalidArgument for minSize > maxSize")
@@ -290,7 +290,7 @@ func TestCreateNodegroup_Defaults(t *testing.T) {
 		NodegroupName: "ng1",
 		NodeRole:      "arn:aws:iam::123456789012:role/eks-node",
 		Subnets:       []string{"subnet-1"},
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 2, DesiredSize: 1},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 2, DesiredSize: 1},
 	})
 	requireNoError(t, err)
 	assertEqual(t, 20, ng.DiskSize)

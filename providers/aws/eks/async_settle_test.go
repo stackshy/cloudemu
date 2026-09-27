@@ -96,8 +96,8 @@ func TestAsyncSettleClusterCreateUpdate(t *testing.T) {
 		t.Fatalf("update cluster version: %v", err)
 	}
 
-	if updated.Status != "Successful" {
-		t.Fatalf("update record status = %q, want Successful", updated.Status)
+	if updated.Status != updateInProgress {
+		t.Fatalf("update record status = %q, want InProgress", updated.Status)
 	}
 
 	if got := clusterStatus(t, m, "c1"); got != eksdriver.ClusterStatusUpdating {
@@ -133,7 +133,7 @@ func TestAsyncSettleNodegroupCreateUpdate(t *testing.T) {
 	created, err := m.CreateNodegroup(ctx, eksdriver.NodegroupConfig{
 		ClusterName:   "c1",
 		NodegroupName: "ng1",
-		ScalingConfig: eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
+		ScalingConfig: &eksdriver.NodegroupScalingConfig{MinSize: 1, MaxSize: 3, DesiredSize: 2},
 	})
 	if err != nil {
 		t.Fatalf("create nodegroup: %v", err)
@@ -158,15 +158,15 @@ func TestAsyncSettleNodegroupCreateUpdate(t *testing.T) {
 		t.Fatalf("settled status = %q, want %q", got, eksdriver.NodegroupStatusActive)
 	}
 
-	scaling := eksdriver.NodegroupScalingConfig{MinSize: 2, MaxSize: 5, DesiredSize: 4}
+	scaling := eksdriver.NodegroupScalingUpdate{MinSize: intPtr(2), MaxSize: intPtr(5), DesiredSize: intPtr(4)}
 
 	upd, err := m.UpdateNodegroupConfig(ctx, "c1", "ng1", eksdriver.NodegroupConfigUpdate{Scaling: &scaling})
 	if err != nil {
 		t.Fatalf("update nodegroup config: %v", err)
 	}
 
-	if upd.Status != "Successful" {
-		t.Fatalf("update record status = %q, want Successful", upd.Status)
+	if upd.Status != updateInProgress {
+		t.Fatalf("update record status = %q, want InProgress", upd.Status)
 	}
 
 	if got := nodegroupStatus(t, m, "c1", "ng1"); got != eksdriver.NodegroupStatusUpdating {

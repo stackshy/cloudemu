@@ -305,7 +305,16 @@ func (h *Handler) createNodegroup(w http.ResponseWriter, r *http.Request, cluste
 	}
 
 	if body.ScalingConfig != nil {
-		cfg.ScalingConfig = scalingFromJSON(body.ScalingConfig)
+		sc, ok := scalingFromJSON(body.ScalingConfig)
+		if !ok {
+			// EKS takes all three sizes on create, or none of them.
+			writeError(w, http.StatusBadRequest, "InvalidParameterException",
+				"scalingConfig must specify all of minSize, maxSize and desiredSize, or none of them")
+
+			return
+		}
+
+		cfg.ScalingConfig = sc
 	}
 
 	if body.UpdateConfig != nil {
@@ -362,19 +371,7 @@ func (h *Handler) updateNodegroupConfig(w http.ResponseWriter, r *http.Request, 
 	update := eksdriver.NodegroupConfigUpdate{}
 
 	if body.ScalingConfig != nil {
-		// Real EKS applies only the sizes present in the request; the driver
-		// replaces ScalingConfig wholesale, so merge onto the current config
-		// here to avoid zeroing MinSize/MaxSize/DesiredSize that were omitted.
-		cur, err := h.eks.DescribeNodegroup(r.Context(), clusterName, ngName)
-		if err != nil {
-			writeErr(w, err)
-
-			return
-		}
-
-		merged := cur.ScalingConfig
-		mergeScaling(&merged, body.ScalingConfig)
-		update.Scaling = &merged
+		update.Scaling = scalingUpdateFromJSON(body.ScalingConfig)
 	}
 
 	if body.UpdateConfig != nil {
@@ -669,20 +666,24 @@ func launchTemplateToJSON(l *eksdriver.LaunchTemplateSpecification) *launchTempl
 	}
 }
 
-// mergeScaling overlays only the sizes present in s onto dst, leaving omitted
-// fields untouched. This is the partial-update semantics real EKS applies.
-func mergeScaling(dst *eksdriver.NodegroupScalingConfig, s *nodegroupScalingConfigJSON) {
-	if s.MinSize != nil {
-		dst.MinSize = int(*s.MinSize)
+// scalingUpdateFromJSON carries only the sizes present in s; the provider
+// merges them onto the current config.
+func scalingUpdateFromJSON(s *nodegroupScalingConfigJSON) *eksdriver.NodegroupScalingUpdate {
+	return &eksdriver.NodegroupScalingUpdate{
+		MinSize:     optInt(s.MinSize),
+		MaxSize:     optInt(s.MaxSize),
+		DesiredSize: optInt(s.DesiredSize),
+	}
+}
+
+func optInt(v *int32) *int {
+	if v == nil {
+		return nil
 	}
 
-	if s.MaxSize != nil {
-		dst.MaxSize = int(*s.MaxSize)
-	}
+	n := int(*v)
 
-	if s.DesiredSize != nil {
-		dst.DesiredSize = int(*s.DesiredSize)
-	}
+	return &n
 }
 
 // taintsToDriver converts wire taints to driver taints.
@@ -750,22 +751,21 @@ func updateConfigToJSON(u eksdriver.NodegroupUpdateConfig) *nodegroupUpdateConfi
 	}
 }
 
-func scalingFromJSON(s *nodegroupScalingConfigJSON) eksdriver.NodegroupScalingConfig {
-	out := eksdriver.NodegroupScalingConfig{}
-
-	if s.MinSize != nil {
-		out.MinSize = int(*s.MinSize)
+// scalingFromJSON converts a create-time scalingConfig. An empty object means
+// none were given (nil). ok is false when only some of the sizes are set.
+func scalingFromJSON(s *nodegroupScalingConfigJSON) (cfg *eksdriver.NodegroupScalingConfig, ok bool) {
+	switch {
+	case s.MinSize == nil && s.MaxSize == nil && s.DesiredSize == nil:
+		return nil, true
+	case s.MinSize == nil || s.MaxSize == nil || s.DesiredSize == nil:
+		return nil, false
 	}
 
-	if s.MaxSize != nil {
-		out.MaxSize = int(*s.MaxSize)
-	}
-
-	if s.DesiredSize != nil {
-		out.DesiredSize = int(*s.DesiredSize)
-	}
-
-	return out
+	return &eksdriver.NodegroupScalingConfig{
+		MinSize:     int(*s.MinSize),
+		MaxSize:     int(*s.MaxSize),
+		DesiredSize: int(*s.DesiredSize),
+	}, true
 }
 
 func toClusterJSON(c *eksdriver.Cluster) clusterJSON {

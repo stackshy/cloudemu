@@ -38,6 +38,7 @@ var clusterStatePersistedFields = map[string]struct{}{
 	"endpoints":       {}, // typed store (clusterSnapshot.Endpoints)
 	"reg":             {}, // registry store items (clusterSnapshot.Registry)
 	"serverVersion":   {}, // /version body (clusterSnapshot.ServerVersion)
+	"pendingVersion":  {}, // folded into clusterSnapshot.ServerVersion (the target version)
 }
 
 // clusterStateRuntimeFields lists the ClusterState fields deliberately NOT

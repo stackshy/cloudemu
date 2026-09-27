@@ -67,6 +67,9 @@ type ClusterState struct {
 	// set it from the cluster's control-plane version (SetClusterVersion); a
 	// cluster with no cloud parent keeps defaultServerVersion.
 	serverVersion version.Info
+	// pendingVersion, when set, replaces serverVersion once its time comes
+	// (see SetClusterVersionAt).
+	pendingVersion *pendingServerVersion
 
 	// managedNodes turns true the first time a managed node pool (SyncNodePool)
 	// adds a Node. The bootstrap nodes are retired at that point and scheduling
