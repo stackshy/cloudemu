@@ -110,3 +110,19 @@ type endpointListResult struct {
 type origGroupListResult struct {
 	Value []origGroupJSON `json:"value"`
 }
+
+// Grandchild types: origins (under an origin group) and routes (under an
+// endpoint). Their property validation and defaults live in the provider; the
+// wire layer only needs the computed keys it stamps and the reference it
+// resolves.
+const (
+	subTypeOrigins = "origins"
+	subTypeRoutes  = "routes"
+
+	originResourceType = "Microsoft.Cdn/profiles/originGroups/origins"
+	routeResourceType  = "Microsoft.Cdn/profiles/afdEndpoints/routes"
+
+	originGroupNameKey = "originGroupName"
+	originGroupKey     = "originGroup"
+	endpointNameKey    = "endpointName"
+)

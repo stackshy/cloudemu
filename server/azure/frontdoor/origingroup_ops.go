@@ -102,7 +102,8 @@ func (h *Handler) updateOriginGroup(w http.ResponseWriter, r *http.Request, rp *
 
 func (h *Handler) deleteOriginGroup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	if derr := h.fd.DeleteOriginGroup(r.Context(), rp.ResourceGroup, rp.ResourceName, rp.SubResourceName); derr != nil {
-		azurearm.WriteCErr(w, derr)
+		// A route still forwarding to the group is a FailedPrecondition: 400 BadRequest.
+		writeErr(w, derr)
 		return
 	}
 
