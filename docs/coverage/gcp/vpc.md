@@ -65,6 +65,23 @@ GCP's `networking` service · portable interface `driver.Networking` · [GCP ind
 | `UpdateSubnetTags` |  |
 | `UpdateVPCTags` | Tag mutation. Update* merges keys into the resource's existing Tags |
 
+## Optional capabilities
+
+Discovered by type assertion; only some providers implement these.
+
+### GCPAddressStore
+
+GCPAddressStore is the GCP-only reserved-address surface.
+
+| Operation | Description |
+| --- | --- |
+| `AllocateGCPAddressIP` | AllocateGCPAddressIP hands out the next IP of the provider's synthetic |
+| `DeleteGCPAddress` | DeleteGCPAddress removes the address, or returns NotFound. |
+| `GetGCPAddress` | GetGCPAddress returns the address, or NotFound. |
+| `InsertGCPAddress` | InsertGCPAddress stores a new address, returning AlreadyExists when the |
+| `ListGCPAddresses` | ListGCPAddresses returns every address of a project in scope, or in every |
+| `SetGCPAddressLabels` | SetGCPAddressLabels replaces the address's whole label set (an empty set |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._

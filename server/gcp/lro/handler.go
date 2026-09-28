@@ -48,6 +48,7 @@ const (
 // poll replays, and whether Cancel has since been called on it.
 type entry struct {
 	response any
+	metadata any
 	canceled bool
 }
 
@@ -79,6 +80,20 @@ func (r *Registry) Register(name string, response any) {
 	defer r.mu.Unlock()
 
 	r.ops[name] = entry{response: response}
+}
+
+// RegisterWithMetadata is Register for a service whose operations also carry a
+// typed metadata message (an OperationMetadata google.protobuf.Any), which a
+// done poll then replays alongside the response. A nil registry is a no-op.
+func (r *Registry) RegisterWithMetadata(name string, response, metadata any) {
+	if r == nil {
+		return
+	}
+
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	r.ops[name] = entry{response: response, metadata: metadata}
 }
 
 // lookup returns the recorded entry for name and whether it was registered.
@@ -197,7 +212,7 @@ func (h *Handler) serveGet(w http.ResponseWriter, name string) {
 		return
 	}
 
-	writeDone(w, name, e.response, e.canceled)
+	writeDone(w, name, e, e.canceled)
 }
 
 // serveCancel implements Operations.Cancel. Real GCP makes a best-effort
@@ -238,25 +253,29 @@ func writeLegacy(w http.ResponseWriter, name string, cancel bool, method string)
 		return
 	}
 
-	writeDone(w, name, nil, false)
+	writeDone(w, name, entry{}, false)
 }
 
 // writeDone writes a completed operation. It returns a superset that satisfies
 // both operation schemas served here: google.longrunning.Operation reads `done`
 // (artifactregistry, eventarc, memorystore, alloydb) while GKE's
 // container.Operation reads `status`.
-func writeDone(w http.ResponseWriter, name string, response any, canceled bool) {
+func writeDone(w http.ResponseWriter, name string, e entry, canceled bool) {
 	body := map[string]any{
 		"name":   name,
 		"done":   true,
 		"status": "DONE",
 	}
 
+	if e.metadata != nil {
+		body["metadata"] = e.metadata
+	}
+
 	switch {
 	case canceled:
 		body["error"] = map[string]any{"code": canceledCode, "message": "Operation was canceled"}
-	case response != nil:
-		body["response"] = response
+	case e.response != nil:
+		body["response"] = e.response
 	}
 
 	gcprest.WriteJSON(w, http.StatusOK, body)

@@ -9,6 +9,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [AccessContextManager](./accesscontextmanager.md) | `accesscontextmanager` | 17 |
 | [AlloyDB](./alloydb.md) | `relationaldb` | 21 |
 | [ArtifactRegistry](./artifactregistry.md) | `containerregistry` | 15 |
+| [BackupDR](./backupdr.md) | `backupdr` | 6 |
 | [BigQuery](./bigquery.md) | `bigquery` | 12 |
 | [Bigtable](./bigtable.md) | `bigtable` | 38 |
 | [BinaryAuthorization](./binaryauthorization.md) | `binaryauthorization` | 10 |
@@ -44,6 +45,7 @@ Services cloudemu emulates for GCP, by native name. Back to the [cross-provider 
 | [KMS](./kms.md) | (provider-native) | 17 |
 | [LB](./lb.md) | `loadbalancer` | 19 |
 | [LRO](./lro.md) | (provider-native) | 1 |
+| [ManagedKafka](./managedkafka.md) | `managedkafka` | 11 |
 | [Memorystore](./memorystore.md) | `cache` | 17 |
 | [Metastore](./metastore.md) | `metastore` | 6 |
 | [NetworkConnectivity](./networkconnectivity.md) | `networkconnectivity` | 11 |

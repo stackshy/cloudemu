@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/alloydb"
 	apigatewayprov "github.com/stackshy/cloudemu/v2/providers/gcp/apigateway"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/artifactregistry"
+	backupdrprov "github.com/stackshy/cloudemu/v2/providers/gcp/backupdr"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigquery"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/bigtable"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/binaryauthorization"
@@ -41,6 +42,7 @@ import (
 	gkehubprov "github.com/stackshy/cloudemu/v2/providers/gcp/gkehub"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/iam"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/loadbalancer"
+	managedkafkaprov "github.com/stackshy/cloudemu/v2/providers/gcp/managedkafka"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/memorystore"
 	metastoreprov "github.com/stackshy/cloudemu/v2/providers/gcp/metastore"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
@@ -120,6 +122,8 @@ type Provider struct {
 	Metastore            *metastoreprov.Mock
 	VPCAccess            *vpcaccessprov.Mock
 	CloudIDS             *cloudidsprov.Mock
+	ManagedKafka         *managedkafkaprov.Mock
+	BackupDR             *backupdrprov.Mock
 	SecureSourceManager  *securesourcemanagerprov.Mock
 	NetworkConnectivity  *networkconnectivity.Mock
 	Composer             *composer.Mock
@@ -190,6 +194,8 @@ func New(opts ...config.Option) *Provider {
 		Metastore:            metastoreprov.New(o),
 		VPCAccess:            vpcaccessprov.New(o),
 		CloudIDS:             cloudidsprov.New(o),
+		ManagedKafka:         managedkafkaprov.New(o),
+		BackupDR:             backupdrprov.New(o),
 		SecureSourceManager:  securesourcemanagerprov.New(o),
 		NetworkConnectivity:  networkconnectivity.New(o),
 		Composer:             composer.New(o),

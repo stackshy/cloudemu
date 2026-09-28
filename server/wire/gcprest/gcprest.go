@@ -224,6 +224,7 @@ const (
 	codeNotFound           = "NOT_FOUND"
 	codeAlreadyExists      = "ALREADY_EXISTS"
 	codeFailedPrecondition = "FAILED_PRECONDITION"
+	codeAborted            = "ABORTED"
 	codePermissionDenied   = "PERMISSION_DENIED"
 	codeResourceExhausted  = "RESOURCE_EXHAUSTED"
 	codeUnimplemented      = "UNIMPLEMENTED"
@@ -263,6 +264,8 @@ func camelReasonToCode(reason string) string {
 	case "conditionNotMet", "failedPrecondition", "resourceInUseByAnotherResource",
 		"containerNotEmpty", "cnameResourceRecordSetConflict":
 		return codeFailedPrecondition
+	case "aborted":
+		return codeAborted
 	case "forbidden":
 		return codePermissionDenied
 	case "rateLimitExceeded":
@@ -287,7 +290,8 @@ func isCanonicalCode(s string) bool {
 	//nolint:misspell // google.rpc.Code enum name is CANCELLED (two Ls)
 	case "OK", "CANCELLED", "UNKNOWN", codeInvalidArgument, "DEADLINE_EXCEEDED",
 		codeNotFound, codeAlreadyExists, codePermissionDenied, codeResourceExhausted,
-		codeFailedPrecondition, "ABORTED", "OUT_OF_RANGE", codeUnimplemented,
+		codeFailedPrecondition, codeAborted, "OUT_OF_RANGE", codeUnimplemented,
+
 		codeInternal, codeUnavailable, "DATA_LOSS", "UNAUTHENTICATED":
 		return true
 	default:

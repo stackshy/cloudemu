@@ -321,6 +321,62 @@ type CapacityProviderStrategyItem struct {
 	Weight           int
 }
 
+// ManagedScaling is the managed-scaling block of an Auto Scaling group
+// capacity provider. Nil integer pointers mean "not set".
+type ManagedScaling struct {
+	Status                 string
+	TargetCapacity         *int
+	MinimumScalingStepSize *int
+	MaximumScalingStepSize *int
+	InstanceWarmupPeriod   *int
+}
+
+// AutoScalingGroupProvider is the Auto Scaling group backing an
+// EC2_AUTOSCALING capacity provider. On update AutoScalingGroupARN is ignored
+// (the group cannot be changed) and empty fields leave the stored value alone.
+type AutoScalingGroupProvider struct {
+	AutoScalingGroupARN          string
+	ManagedScaling               *ManagedScaling
+	ManagedTerminationProtection string
+	ManagedDraining              string
+}
+
+// CapacityProvider is an ECS capacity provider. The predefined FARGATE and
+// FARGATE_SPOT providers are reported with Type FARGATE / FARGATE_SPOT and
+// cannot be tagged. ManagedInstancesProvider is stored and echoed verbatim as
+// raw JSON; the emulator does not launch managed instances from it.
+type CapacityProvider struct {
+	ARN                      string
+	Name                     string
+	Status                   string
+	Type                     string
+	Cluster                  string
+	UpdateStatus             string
+	UpdateStatusReason       string
+	AutoScalingGroupProvider *AutoScalingGroupProvider
+	ManagedInstancesProvider json.RawMessage
+	Tags                     []Tag
+}
+
+// CreateCapacityProviderInput describes a capacity provider to create. Exactly
+// one of AutoScalingGroupProvider and ManagedInstancesProvider must be set.
+type CreateCapacityProviderInput struct {
+	Name                     string
+	Cluster                  string
+	AutoScalingGroupProvider *AutoScalingGroupProvider
+	ManagedInstancesProvider json.RawMessage
+	Tags                     []Tag
+}
+
+// UpdateCapacityProviderInput describes changes to an existing capacity
+// provider. Nil blocks leave the stored configuration unchanged.
+type UpdateCapacityProviderInput struct {
+	Name                     string
+	Cluster                  string
+	AutoScalingGroupProvider *AutoScalingGroupProvider
+	ManagedInstancesProvider json.RawMessage
+}
+
 // Task is a running or stopped ECS task.
 type Task struct {
 	ARN                  string
@@ -467,6 +523,7 @@ type ContainerInstance struct {
 	RegisteredMemory  int
 	RemainingCPU      int
 	RemainingMemory   int
+	Tags              []Tag
 }
 
 // Failure describes a resource that could not be resolved in a batch
@@ -579,6 +636,7 @@ type RegisterContainerInstanceInput struct {
 	InstanceIdentityDocument string
 	TotalResources           []Resource
 	Attributes               []Attribute
+	Tags                     []Tag
 }
 
 // UpdateClusterInput describes mutations to a cluster's settings and
@@ -649,6 +707,11 @@ type ECS interface {
 	TagResource(ctx context.Context, resourceARN string, tags []Tag) error
 	UntagResource(ctx context.Context, resourceARN string, tagKeys []string) error
 	ListTagsForResource(ctx context.Context, resourceARN string) ([]Tag, error)
+
+	CreateCapacityProvider(ctx context.Context, in CreateCapacityProviderInput) (*CapacityProvider, error)
+	DescribeCapacityProviders(ctx context.Context, cluster string, ids []string) ([]CapacityProvider, []Failure, error)
+	UpdateCapacityProvider(ctx context.Context, in UpdateCapacityProviderInput) (*CapacityProvider, error)
+	DeleteCapacityProvider(ctx context.Context, cluster, capacityProvider string) (*CapacityProvider, error)
 
 	PutAccountSetting(ctx context.Context, name, value string) (*AccountSetting, error)
 	PutAccountSettingDefault(ctx context.Context, name, value string) (*AccountSetting, error)

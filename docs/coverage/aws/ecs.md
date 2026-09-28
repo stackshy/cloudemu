@@ -3,18 +3,21 @@
 
 AWS's `ecs` service · portable interface `driver.ECS` · [AWS index](./README.md)
 
-## Operations (37)
+## Operations (41)
 
 | Operation | Description |
 | --- | --- |
+| `CreateCapacityProvider` |  |
 | `CreateCluster` |  |
 | `CreateService` |  |
 | `DeleteAccountSetting` |  |
 | `DeleteAttributes` |  |
+| `DeleteCapacityProvider` |  |
 | `DeleteCluster` |  |
 | `DeleteService` |  |
 | `DeregisterContainerInstance` |  |
 | `DeregisterTaskDefinition` |  |
+| `DescribeCapacityProviders` |  |
 | `DescribeClusters` |  |
 | `DescribeContainerInstances` |  |
 | `DescribeServices` |  |
@@ -40,6 +43,7 @@ AWS's `ecs` service · portable interface `driver.ECS` · [AWS index](./README.m
 | `StopTask` |  |
 | `TagResource` |  |
 | `UntagResource` |  |
+| `UpdateCapacityProvider` |  |
 | `UpdateCluster` |  |
 | `UpdateClusterSettings` |  |
 | `UpdateContainerInstancesState` |  |

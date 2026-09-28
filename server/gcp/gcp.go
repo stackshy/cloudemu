@@ -17,6 +17,7 @@ import (
 	alloydbsrv "github.com/stackshy/cloudemu/v2/server/gcp/alloydb"
 	apigatewaysrv "github.com/stackshy/cloudemu/v2/server/gcp/apigateway"
 	"github.com/stackshy/cloudemu/v2/server/gcp/artifactregistry"
+	backupdrsrv "github.com/stackshy/cloudemu/v2/server/gcp/backupdr"
 	bigqueryserver "github.com/stackshy/cloudemu/v2/server/gcp/bigquery"
 	bigtableserver "github.com/stackshy/cloudemu/v2/server/gcp/bigtable"
 	binauthzsrv "github.com/stackshy/cloudemu/v2/server/gcp/binaryauthorization"
@@ -51,6 +52,7 @@ import (
 	kmssrv "github.com/stackshy/cloudemu/v2/server/gcp/kms"
 	lbsrv "github.com/stackshy/cloudemu/v2/server/gcp/loadbalancer"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	managedkafkasrv "github.com/stackshy/cloudemu/v2/server/gcp/managedkafka"
 	memorystoresrv "github.com/stackshy/cloudemu/v2/server/gcp/memorystore"
 	metastoresrv "github.com/stackshy/cloudemu/v2/server/gcp/metastore"
 	"github.com/stackshy/cloudemu/v2/server/gcp/monitoring"
@@ -71,6 +73,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/accesscontextmanager/driver"
 	agdriver "github.com/stackshy/cloudemu/v2/services/apigatewaygcp/driver"
+	backupdrdriver "github.com/stackshy/cloudemu/v2/services/backupdr/driver"
 	bqdriver "github.com/stackshy/cloudemu/v2/services/bigquery/driver"
 	btdriver "github.com/stackshy/cloudemu/v2/services/bigtable/driver"
 	badriver "github.com/stackshy/cloudemu/v2/services/binaryauthorization/driver"
@@ -98,6 +101,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 	logdriver "github.com/stackshy/cloudemu/v2/services/logging/driver"
+	mkdriver "github.com/stackshy/cloudemu/v2/services/managedkafka/driver"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 	metastoredriver "github.com/stackshy/cloudemu/v2/services/metastore/driver"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
@@ -238,6 +242,20 @@ type Drivers struct {
 	// /v1/projects/ handler, and its location-scoped operation polls are owned by
 	// the shared LRO poller.
 	CloudIDS cloudidsdriver.CloudIDs
+	// ManagedKafka serves the managedkafka.googleapis.com v1 Managed Service for
+	// Apache Kafka cluster + topic control plane against the managedkafka driver.
+	// Its /v1/projects/{p}/locations/{l}/clusters[/…] paths are identical to
+	// GKE's and AlloyDB's, so the handler registers ahead of both and claims only
+	// genuinely-Kafka traffic (content+ownership); its location-scoped operation
+	// polls are owned by the shared LRO poller.
+	ManagedKafka mkdriver.ManagedKafka
+	// BackupDR serves the backupdr.googleapis.com v1 Backup and DR backup vault
+	// control plane against the backupdr driver. Its paths live under
+	// /v1/projects/{p}/locations/{l}/backupVaults[/…]; the handler's Matches
+	// narrows on the backupVaults resource segment, so it is disjoint from every
+	// other /v1/projects/ handler, and its location-scoped operation polls are
+	// owned by the shared LRO poller.
+	BackupDR backupdrdriver.BackupDR
 	// SecureSourceManager serves the securesourcemanager.googleapis.com v1
 	// instance + repository control plane against the securesourcemanager driver.
 	// Its paths live under /v1/projects/{p}/locations/{l}/{instances|repositories}
@@ -381,6 +399,30 @@ func New(d Drivers) *server.Server {
 
 	srv := server.New()
 
+	// Managed Kafka shares the exact /v1/projects/{p}/locations/{l}/clusters[/…]
+	// grammar with GKE and AlloyDB (all greedy on that collection), so it
+	// registers AHEAD of both and its Matches claims only genuinely-Kafka traffic,
+	// routed by ownership against whichever of GKE / AlloyDB is enabled: a
+	// Kafka-shaped create, an item it owns, a list only where the sibling owns no
+	// cluster, or the Kafka-only clusters/{c}/topics sub-collection. Everything
+	// else falls through. Its registry is wired below, once the shared LRO
+	// poller exists, which also makes it yield location operation polls to that
+	// poller.
+	var kafkaH *managedkafkasrv.Handler
+
+	if d.ManagedKafka != nil {
+		kafkaH = managedkafkasrv.New(d.ManagedKafka)
+
+		switch {
+		case d.GKE != nil:
+			kafkaH.SetClusterSibling(gkeClusterSibling{m: d.GKE})
+		case d.AlloyDB != nil:
+			kafkaH.SetClusterSibling(alloyDBClusterSibling{db: d.AlloyDB})
+		}
+
+		srv.Register(kafkaH)
+	}
+
 	// GKE registers ahead of the shared LRO poller because it answers a richer
 	// operation shape (operationType/targetLink/selfLink/zone/timestamps) for
 	// its OWN operations. Its Matches claims a named operation poll only when
@@ -408,6 +450,10 @@ func New(d Drivers) *server.Server {
 	// never created (as real GCP does).
 	opsReg := lro.NewRegistry()
 	srv.Register(lro.New(opsReg))
+
+	if kafkaH != nil {
+		kafkaH.SetOperationRegistry(opsReg)
+	}
 
 	// Shared compute-operation registry. The compute handler's /operations route
 	// serves every compute#operation poll (its own, plus the networks and load-
@@ -449,6 +495,12 @@ func New(d Drivers) *server.Server {
 	if d.LB != nil {
 		lbH := lbsrv.New(d.LB)
 		lbH.SetOperationRegistry(computeOps)
+
+		if d.Storage != nil {
+			// backendBuckets reject a bucketName naming no existing GCS bucket.
+			lbH.SetBucketLister(d.Storage)
+		}
+
 		srv.Register(lbH)
 	}
 
@@ -706,6 +758,18 @@ func New(d Drivers) *server.Server {
 		cloudidsH := cloudidssrv.New(d.CloudIDS)
 		cloudidsH.SetOperationRegistry(opsReg)
 		srv.Register(cloudidsH)
+	}
+
+	// BackupDR matches /v1/projects/{p}/locations/{l}/backupVaults[/…]. Its
+	// backupVaults resource-segment guard is disjoint from every other
+	// /v1/projects/ handler, so registration order among them is unconstrained;
+	// registered after the shared LRO poller (which owns its operation polls, and
+	// which the handler's Matches yields to) and before Firestore's permissive
+	// prefix.
+	if d.BackupDR != nil {
+		backupdrH := backupdrsrv.New(d.BackupDR)
+		backupdrH.SetOperationRegistry(opsReg)
+		srv.Register(backupdrH)
 	}
 
 	// Data Fusion (datafusion.googleapis.com) shares the EXACT same instances path

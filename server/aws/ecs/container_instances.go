@@ -32,6 +32,7 @@ func (h *Handler) registerContainerInstance(w http.ResponseWriter, r *http.Reque
 		InstanceIdentityDocument string          `json:"instanceIdentityDocument"`
 		TotalResources           []wireResource  `json:"totalResources"`
 		Attributes               []wireAttribute `json:"attributes"`
+		Tags                     []wireTag       `json:"tags"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -43,6 +44,7 @@ func (h *Handler) registerContainerInstance(w http.ResponseWriter, r *http.Reque
 		InstanceIdentityDocument: req.InstanceIdentityDocument,
 		TotalResources:           toResources(req.TotalResources),
 		Attributes:               toAttributes(req.Attributes),
+		Tags:                     toTags(req.Tags),
 	})
 	if err != nil {
 		writeErr(w, err)
@@ -137,6 +139,7 @@ func (h *Handler) describeContainerInstances(w http.ResponseWriter, r *http.Requ
 	var req struct {
 		ContainerInstances []string `json:"containerInstances"`
 		Cluster            string   `json:"cluster"`
+		Include            []string `json:"include"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -150,9 +153,18 @@ func (h *Handler) describeContainerInstances(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
+	// Tags are only returned when the caller opts in via include=TAGS.
+	wantTags := includes(req.Include, "TAGS")
+
 	out := make([]wireContainerInstance, 0, len(instances))
+
 	for i := range instances {
-		out = append(out, instanceToWire(&instances[i]))
+		wci := instanceToWire(&instances[i])
+		if !wantTags {
+			wci.Tags = nil
+		}
+
+		out = append(out, wci)
 	}
 
 	wire.WriteJSON(w, map[string]any{"containerInstances": out, "failures": fromFailures(failures)})

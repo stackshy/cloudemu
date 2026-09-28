@@ -100,6 +100,7 @@ const (
 	azureTypeStreamAnl  = "microsoft.streamanalytics/streamingjobs"
 	azureTypeRecovery   = "microsoft.recoveryservices/vaults"
 	azureTypeIoTHub     = "microsoft.devices/iothubs"
+	azureTypeAPIM       = "microsoft.apimanagement/service"
 	azureTypeLogicWf    = "microsoft.logic/workflows"
 )
 
@@ -146,6 +147,7 @@ const (
 	portableStreamAnl    = "streamanalytics"
 	portableRecovery     = "recoveryservices"
 	portableIoTHub       = "iothub"
+	portableAPIM         = "apimanagement"
 	portableLogic        = "logic"
 )
 
@@ -447,6 +449,7 @@ var azureToPortableType = map[string]portableResourceType{ //nolint:gochecknoglo
 	azureTypeStreamAnl:  {portableStreamAnl, "StreamingJob"},
 	azureTypeRecovery:   {portableRecovery, "Vault"},
 	azureTypeIoTHub:     {portableIoTHub, "IotHub"},
+	azureTypeAPIM:       {portableAPIM, "Service"},
 	azureTypeLogicWf:    {portableLogic, "Workflow"},
 }
 

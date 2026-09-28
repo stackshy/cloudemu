@@ -136,7 +136,8 @@ func (h *Handler) listTaskDefinitions(w http.ResponseWriter, r *http.Request) {
 
 func (h *Handler) describeTaskDefinition(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		TaskDefinition string `json:"taskDefinition"`
+		TaskDefinition string   `json:"taskDefinition"`
+		Include        []string `json:"include"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -150,7 +151,14 @@ func (h *Handler) describeTaskDefinition(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	wire.WriteJSON(w, map[string]any{"taskDefinition": taskDefToWire(td), "tags": fromTags(td.Tags)})
+	resp := map[string]any{"taskDefinition": taskDefToWire(td)}
+
+	// Tags are only returned when the caller opts in via include=TAGS.
+	if includes(req.Include, "TAGS") {
+		resp["tags"] = fromTags(td.Tags)
+	}
+
+	wire.WriteJSON(w, resp)
 }
 
 func (h *Handler) deregisterTaskDefinition(w http.ResponseWriter, r *http.Request) {

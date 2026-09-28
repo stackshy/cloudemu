@@ -1140,8 +1140,9 @@ func collectSecurityGroups(instances []computedriver.Instance) []string {
 }
 
 // securityGroupNames resolves security-group ids to their names via the
-// networking driver. It returns an empty map when no networking driver is wired
-// or the lookup fails, so name resolution is best-effort (ids still render).
+// networking driver. Unknown ids (and every id, when no networking driver is
+// wired) are absent from the map, so name resolution is best-effort and the
+// ids still render.
 func (h *Handler) securityGroupNames(ctx context.Context, ids []string) map[string]string {
 	names := make(map[string]string)
 	if h.vpc == nil || len(ids) == 0 {
@@ -1150,7 +1151,15 @@ func (h *Handler) securityGroupNames(ctx context.Context, ids []string) map[stri
 
 	groups, err := h.vpc.DescribeSecurityGroups(ctx, ids)
 	if err != nil {
-		return names
+		// The batch lookup fails as a whole when any id is unknown; resolve
+		// one at a time so a dangling id does not strip the others' names.
+		groups = nil
+
+		for _, id := range ids {
+			if one, oneErr := h.vpc.DescribeSecurityGroups(ctx, []string{id}); oneErr == nil {
+				groups = append(groups, one...)
+			}
+		}
 	}
 
 	for i := range groups {

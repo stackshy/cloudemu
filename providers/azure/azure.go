@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/acr"
 	"github.com/stackshy/cloudemu/v2/providers/azure/ai"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/apimanagement"
 	"github.com/stackshy/cloudemu/v2/providers/azure/appconfiguration"
 	"github.com/stackshy/cloudemu/v2/providers/azure/applicationgateway"
 	"github.com/stackshy/cloudemu/v2/providers/azure/bastion"
@@ -209,6 +210,7 @@ type Provider struct {
 	IoTHub             *iothub.Mock
 	Logic              *logic.Mock
 	HealthcareApis     *healthcareapis.Mock
+	APIManagement      *apimanagement.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -292,6 +294,7 @@ func New(opts ...config.Option) *Provider {
 		IoTHub:             iothub.New(o),
 		Logic:              logic.New(o),
 		HealthcareApis:     healthcareapis.New(o),
+		APIManagement:      apimanagement.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -347,6 +350,7 @@ func New(opts ...config.Option) *Provider {
 				iotHubDiscovery{p.IoTHub},
 				logicWorkflowDiscovery{p.Logic},
 				healthcareApisDiscovery{p.HealthcareApis},
+				apiManagementDiscovery{p.APIManagement},
 			},
 		},
 	)

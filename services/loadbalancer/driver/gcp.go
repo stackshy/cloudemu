@@ -48,3 +48,33 @@ type GCPBackendServicePatcher interface {
 	// service exists.
 	PatchGCPBackendService(ctx context.Context, name string, mutate func(*TargetGroupInfo)) error
 }
+
+// GCPBackendBucketCollection is the Collection a Cloud CDN backend bucket is
+// stored under; backend buckets are always global.
+const GCPBackendBucketCollection = "backendBuckets"
+
+// GCPBackendBucketStore is an OPTIONAL, type-asserted capability implemented
+// only by the GCP load-balancer provider. It persists Cloud CDN backend buckets
+// (compute.backendBuckets): a global load-balancer backend that serves a Cloud
+// Storage bucket. Records are GCPResource values (Collection
+// GCPBackendBucketCollection, Scope "global") living alongside the other
+// opaque GCP resources, so they snapshot and restore with them. Non-GCP
+// providers do not implement it.
+type GCPBackendBucketStore interface {
+	// InsertGCPBackendBucket stores res, returning AlreadyExists when a backend
+	// bucket with the same name already exists.
+	InsertGCPBackendBucket(ctx context.Context, res GCPResource) error
+	// GetGCPBackendBucket returns the named backend bucket, or NotFound.
+	GetGCPBackendBucket(ctx context.Context, name string) (*GCPResource, error)
+	// ListGCPBackendBuckets returns every backend bucket.
+	ListGCPBackendBuckets(ctx context.Context) ([]GCPResource, error)
+	// UpdateGCPBackendBucket applies mutate to the named backend bucket under
+	// the store lock (compute backendBuckets.patch / update /
+	// setEdgeSecurityPolicy). When mutate returns an error the stored record is
+	// left unchanged and that error is returned; mutate must therefore replace
+	// Body rather than edit the stored map in place. Returns NotFound when absent.
+	UpdateGCPBackendBucket(ctx context.Context, name string, mutate func(*GCPResource) error) error
+	// DeleteGCPBackendBucket removes the named backend bucket, returning
+	// NotFound when absent.
+	DeleteGCPBackendBucket(ctx context.Context, name string) error
+}

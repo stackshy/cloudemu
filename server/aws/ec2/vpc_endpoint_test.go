@@ -175,3 +175,84 @@ func TestDescribeVpcEndpointsUnknownIDNotFound(t *testing.T) {
 		t.Fatalf("error = %v, want InvalidVpcEndpointId.NotFound", err)
 	}
 }
+
+// assertEndpointGroups fails unless groups is exactly one SecurityGroupIdentifier
+// carrying wantID and wantName.
+func assertEndpointGroups(t *testing.T, label string, groups []ec2types.SecurityGroupIdentifier, wantID, wantName string) {
+	t.Helper()
+
+	if len(groups) != 1 {
+		t.Fatalf("%s: Groups = %+v, want exactly [%s]", label, groups, wantID)
+	}
+
+	if got := aws.ToString(groups[0].GroupId); got != wantID {
+		t.Errorf("%s: Groups[0].GroupId = %q, want %q", label, got, wantID)
+	}
+
+	if got := aws.ToString(groups[0].GroupName); got != wantName {
+		t.Errorf("%s: Groups[0].GroupName = %q, want %q", label, got, wantName)
+	}
+}
+
+// TestVPCEndpointGroupsAreSecurityGroupIdentifiers pins that VpcEndpoint.Groups
+// decodes as SecurityGroupIdentifier (groupId + groupName) through the real SDK,
+// and that ModifyVpcEndpoint Add/RemoveSecurityGroupId edits the stored set.
+func TestVPCEndpointGroupsAreSecurityGroupIdentifiers(t *testing.T) {
+	ctx := context.Background()
+	client := newEC2(t)
+
+	vpc, err := client.CreateVpc(ctx, &ec2.CreateVpcInput{CidrBlock: aws.String("10.0.0.0/16")})
+	if err != nil {
+		t.Fatalf("CreateVpc: %v", err)
+	}
+	vpcID := aws.ToString(vpc.Vpc.VpcId)
+
+	subnet, err := client.CreateSubnet(ctx, &ec2.CreateSubnetInput{
+		VpcId: aws.String(vpcID), CidrBlock: aws.String("10.0.1.0/24"),
+	})
+	if err != nil {
+		t.Fatalf("CreateSubnet: %v", err)
+	}
+
+	sgIDs := make([]string, 0, 2)
+	for _, name := range []string{"ep-sg-one", "ep-sg-two"} {
+		sg, sgErr := client.CreateSecurityGroup(ctx, &ec2.CreateSecurityGroupInput{
+			GroupName: aws.String(name), Description: aws.String(name), VpcId: aws.String(vpcID),
+		})
+		if sgErr != nil {
+			t.Fatalf("CreateSecurityGroup(%s): %v", name, sgErr)
+		}
+		sgIDs = append(sgIDs, aws.ToString(sg.GroupId))
+	}
+
+	create, err := client.CreateVpcEndpoint(ctx, &ec2.CreateVpcEndpointInput{
+		VpcId:            aws.String(vpcID),
+		ServiceName:      aws.String("com.amazonaws.us-east-1.ssm"),
+		VpcEndpointType:  ec2types.VpcEndpointTypeInterface,
+		SubnetIds:        []string{aws.ToString(subnet.Subnet.SubnetId)},
+		SecurityGroupIds: []string{sgIDs[0]},
+	})
+	if err != nil {
+		t.Fatalf("CreateVpcEndpoint: %v", err)
+	}
+	assertEndpointGroups(t, "CreateVpcEndpoint", create.VpcEndpoint.Groups, sgIDs[0], "ep-sg-one")
+
+	epID := aws.ToString(create.VpcEndpoint.VpcEndpointId)
+
+	if _, err := client.ModifyVpcEndpoint(ctx, &ec2.ModifyVpcEndpointInput{
+		VpcEndpointId:          aws.String(epID),
+		AddSecurityGroupIds:    []string{sgIDs[1]},
+		RemoveSecurityGroupIds: []string{sgIDs[0]},
+	}); err != nil {
+		t.Fatalf("ModifyVpcEndpoint: %v", err)
+	}
+
+	desc, err := client.DescribeVpcEndpoints(ctx, &ec2.DescribeVpcEndpointsInput{VpcEndpointIds: []string{epID}})
+	if err != nil {
+		t.Fatalf("DescribeVpcEndpoints: %v", err)
+	}
+	if len(desc.VpcEndpoints) != 1 {
+		t.Fatalf("DescribeVpcEndpoints = %d endpoints, want 1", len(desc.VpcEndpoints))
+	}
+	assertEndpointGroups(t, "DescribeVpcEndpoints after modify", desc.VpcEndpoints[0].Groups, sgIDs[1], "ep-sg-two")
+}

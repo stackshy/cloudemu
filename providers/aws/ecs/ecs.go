@@ -41,18 +41,19 @@ const (
 
 // Mock is an in-memory mock implementation of Amazon ECS.
 type Mock struct {
-	clusters   *memstore.Store[*driver.Cluster]
-	taskDefs   *memstore.Store[*driver.TaskDefinition] // keyed by "family:revision"
-	tasks      *memstore.Store[*driver.Task]           // keyed by task ARN
-	services   *memstore.Store[*driver.Service]        // keyed by "cluster/name"
-	instances  *memstore.Store[*driver.ContainerInstance]
-	tags       *memstore.Store[[]driver.Tag]           // keyed by resource ARN
-	settings   *memstore.Store[*driver.AccountSetting] // keyed by setting name
-	attributes *memstore.Store[*driver.Attribute]      // keyed by targetId + "\x00" + name
-	opts       *config.Options
-	regMu      sync.Mutex // serializes task-definition revision allocation
-	placeMu    sync.Mutex // serializes container-instance capacity reserve/release
-	clusterMu  sync.Mutex // serializes CreateCluster name-reuse compare-and-set
+	clusters          *memstore.Store[*driver.Cluster]
+	taskDefs          *memstore.Store[*driver.TaskDefinition] // keyed by "family:revision"
+	tasks             *memstore.Store[*driver.Task]           // keyed by task ARN
+	services          *memstore.Store[*driver.Service]        // keyed by "cluster/name"
+	instances         *memstore.Store[*driver.ContainerInstance]
+	tags              *memstore.Store[[]driver.Tag]             // keyed by resource ARN
+	settings          *memstore.Store[*driver.AccountSetting]   // keyed by setting name
+	attributes        *memstore.Store[*driver.Attribute]        // keyed by targetId + "\x00" + name
+	capacityProviders *memstore.Store[*driver.CapacityProvider] // keyed by name; excludes the predefined FARGATE/FARGATE_SPOT
+	opts              *config.Options
+	regMu             sync.Mutex // serializes task-definition revision allocation
+	placeMu           sync.Mutex // serializes container-instance capacity reserve/release
+	clusterMu         sync.Mutex // serializes CreateCluster name-reuse compare-and-set
 
 	// reconcileLock serializes reconcileServiceAfterStop per service (see
 	// service_reconcile_lock.go), closing the concurrent-StopTask over-launch
@@ -108,18 +109,19 @@ func (m *Mock) SetManagedInstanceLauncher(l ManagedInstanceLauncher) {
 // New creates a new ECS mock with the given configuration options.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		clusters:      memstore.New[*driver.Cluster](),
-		taskDefs:      memstore.New[*driver.TaskDefinition](),
-		tasks:         memstore.New[*driver.Task](),
-		services:      memstore.New[*driver.Service](),
-		instances:     memstore.New[*driver.ContainerInstance](),
-		tags:          memstore.New[[]driver.Tag](),
-		settings:      memstore.New[*driver.AccountSetting](),
-		attributes:    memstore.New[*driver.Attribute](),
-		engineHandles: memstore.New[string](),
-		taskSettle:    settle.NewSet(),
-		reconcileLock: newServiceReconcileLock(),
-		opts:          opts,
+		clusters:          memstore.New[*driver.Cluster](),
+		taskDefs:          memstore.New[*driver.TaskDefinition](),
+		tasks:             memstore.New[*driver.Task](),
+		services:          memstore.New[*driver.Service](),
+		instances:         memstore.New[*driver.ContainerInstance](),
+		tags:              memstore.New[[]driver.Tag](),
+		settings:          memstore.New[*driver.AccountSetting](),
+		attributes:        memstore.New[*driver.Attribute](),
+		capacityProviders: memstore.New[*driver.CapacityProvider](),
+		engineHandles:     memstore.New[string](),
+		taskSettle:        settle.NewSet(),
+		reconcileLock:     newServiceReconcileLock(),
+		opts:              opts,
 	}
 }
 

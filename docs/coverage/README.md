@@ -18,6 +18,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `apigateway` | [APIGateway](./aws/apigateway.md) | - | - | - | 50 |
 | `apigatewaygcp` | - | - | [APIGateway](./gcp/apigateway.md) | - | 16 |
 | `apigatewayv2` | [APIGatewayV2](./aws/apigatewayv2.md) | - | - | - | 28 |
+| `apimanagement` | - | [APIManagement](./azure/apimanagement.md) | - | - | 30 |
 | `appconfiguration` | - | [AppConfiguration](./azure/appconfiguration.md) | - | - | 9 |
 | `appflow` | [AppFlow](./aws/appflow.md) | - | - | - | 14 |
 | `appinsights` | - | [Appinsights](./azure/appinsights.md) | - | - | 6 |
@@ -30,6 +31,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `azurefirewall` | - | [Firewall](./azure/firewall.md) | - | - | 8 |
 | `azuresearch` | - | [Search](./azure/search.md) | - | - | 53 |
 | `backup` | [Backup](./aws/backup.md) | - | - | - | 25 |
+| `backupdr` | - | - | [BackupDR](./gcp/backupdr.md) | - | 6 |
 | `bastion` | - | [Bastion](./azure/bastion.md) | - | - | 4 |
 | `batch` | [Batch](./aws/batch.md) | - | - | - | 14 |
 | `batch-azure` | - | [Batch](./azure/batch.md) | - | - | 17 |
@@ -78,7 +80,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `digitaltwins` | - | [DigitalTwins](./azure/digitaltwins.md) | - | - | 8 |
 | `disks` | - | [Disks](./azure/disks.md) | - | - | 7 |
 | `dns` | [Route53](./aws/route53.md) | [DNS](./azure/dns.md) | [CloudDNS](./gcp/clouddns.md) | - | 16 |
-| `ecs` | [ECS](./aws/ecs.md) | - | - | - | 37 |
+| `ecs` | [ECS](./aws/ecs.md) | - | - | - | 41 |
 | `efs` | [EFS](./aws/efs.md) | - | - | - | 27 |
 | `eks` | [EKS](./aws/eks.md) | - | - | - | 40 |
 | `elasticsan` | - | [ElasticSan](./azure/elasticsan.md) | - | - | 8 |
@@ -119,6 +121,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `managedcassandra` | - | [ManagedCassandra](./azure/managedcassandra.md) | - | - | 15 |
 | `managedgrafana` | - | [ManagedGrafana](./azure/managedgrafana.md) | - | - | 8 |
 | `managedidentity` | - | [ManagedIdentity](./azure/managedidentity.md) | - | - | 8 |
+| `managedkafka` | - | - | [ManagedKafka](./gcp/managedkafka.md) | - | 11 |
 | `managedlustre` | - | [ManagedLustre](./azure/managedlustre.md) | - | - | 12 |
 | `memorydb` | [MemoryDB](./aws/memorydb.md) | - | - | - | 33 |
 | `messagequeue` | [SQS](./aws/sqs.md) | [QueueStorage](./azure/queuestorage.md) | [PubSub](./gcp/pubsub.md) | - | 14 |

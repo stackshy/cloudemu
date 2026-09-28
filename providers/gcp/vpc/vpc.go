@@ -3,6 +3,7 @@ package vpc
 
 import (
 	"context"
+	"sync/atomic"
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/config"
@@ -62,7 +63,11 @@ type Mock struct {
 	eips           *memstore.Store[*eipData]
 	rtAssocs       *memstore.Store[*rtAssocData]
 	endpoints      *memstore.Store[*driver.VPCEndpoint]
-	opts           *config.Options
+	// addresses holds compute reserved addresses (driver.GCPAddressStore),
+	// keyed project/scope/name; addressIPSeq is the synthetic IP allocator.
+	addresses    *memstore.Store[*driver.GCPAddress]
+	addressIPSeq atomic.Uint32
+	opts         *config.Options
 }
 
 // New creates a new GCP VPC mock.
@@ -80,6 +85,7 @@ func New(opts *config.Options) *Mock {
 		eips:           memstore.New[*eipData](),
 		rtAssocs:       memstore.New[*rtAssocData](),
 		endpoints:      memstore.New[*driver.VPCEndpoint](),
+		addresses:      memstore.New[*driver.GCPAddress](),
 		opts:           opts,
 	}
 }
