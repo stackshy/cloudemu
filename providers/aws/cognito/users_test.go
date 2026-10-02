@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"testing"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -153,8 +154,12 @@ func TestPasswordIsStoredHashed(t *testing.T) {
 		t.Fatalf("password not hashed: %+v", rec)
 	}
 
-	if digest(rec.PasswordSalt, "Temp0rary!pw") != rec.PasswordHash {
-		t.Fatal("stored digest does not match the password")
+	if !strings.HasPrefix(rec.PasswordHash, pbkdf2Prefix) {
+		t.Fatalf("hash %q is not in the PBKDF2 format", rec.PasswordHash)
+	}
+
+	if !verifyPassword(rec.PasswordSalt, rec.PasswordHash, "Temp0rary!pw") {
+		t.Fatal("stored hash does not match the password")
 	}
 }
 
