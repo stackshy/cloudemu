@@ -5,10 +5,12 @@
 package tagsatscope
 
 import (
+	"context"
 	"maps"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Mock is the tag-set store keyed by the normalized scope.
@@ -41,6 +43,19 @@ func (m *Mock) Set(scope string, tags map[string]string) {
 // Delete clears the tag set at scope.
 func (m *Mock) Delete(scope string) {
 	m.store.Delete(scope)
+}
+
+// PurgeResourceGroup drops the tag set of the resource group and of every
+// resource inside it, so a resource-group delete leaves no tags behind for a
+// later group or resource of the same name.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	for _, k := range m.store.Keys() {
+		if scope.IDInResourceGroup(k, subscription, resourceGroup) {
+			m.store.Delete(k)
+		}
+	}
+
+	return nil
 }
 
 // EvictTree clears the tag set at the ARM id and at every scope nested under

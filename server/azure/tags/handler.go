@@ -15,6 +15,7 @@
 package tags
 
 import (
+	"context"
 	"net/http"
 	"strings"
 	"sync"
@@ -51,6 +52,15 @@ func New(store *tagsatscope.Mock) *Handler {
 	}
 
 	return &Handler{store: store}
+}
+
+// PurgeResourceGroup drops the tag sets at and under subscription/
+// resourceGroup, backing the resource-group cascade delete.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	return h.store.PurgeResourceGroup(ctx, subscription, resourceGroup)
 }
 
 // Matches reports whether r targets a tags-at-scope URL. The suffix is matched

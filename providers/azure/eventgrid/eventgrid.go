@@ -292,6 +292,19 @@ func (m *Mock) DeleteEventBus(_ context.Context, name string) error {
 	return nil
 }
 
+// PurgeResourceGroup deletes every custom topic, with its event subscriptions,
+// created in subscription/resourceGroup. It backs the ARM resource-group delete
+// cascade; an unscoped topic is never selected.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	for name, bd := range m.buses.All() {
+		if bd.info.Scope.InResourceGroup(subscription, resourceGroup) {
+			m.buses.Delete(name)
+		}
+	}
+
+	return nil
+}
+
 // GetEventBus retrieves information about an Event Grid topic.
 func (m *Mock) GetEventBus(_ context.Context, name string) (*driver.EventBusInfo, error) {
 	bd, ok := m.buses.Get(name)

@@ -1,6 +1,9 @@
 package monitor
 
-import "sync"
+import (
+	"strings"
+	"sync"
+)
 
 // armResource is a stored microsoft.insights ARM resource (metric alert, action
 // group, activity-log alert). The full request body is retained: location,
@@ -120,4 +123,22 @@ func (s *resourceStore) all(subscription, resourceGroup, kind string) map[string
 	}
 
 	return out
+}
+
+// purgeGroup removes every resource stored under subscription/resourceGroup,
+// matched case-insensitively, and returns the removed keys.
+func (s *resourceStore) purgeGroup(subscription, resourceGroup string) []resourceKey {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	var removed []resourceKey
+
+	for k := range s.m {
+		if strings.EqualFold(k.subscription, subscription) && strings.EqualFold(k.resourceGroup, resourceGroup) {
+			delete(s.m, k)
+			removed = append(removed, k)
+		}
+	}
+
+	return removed
 }

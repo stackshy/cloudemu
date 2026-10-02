@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/databricks/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 // Compile-time checks that Mock implements both Databricks interfaces.
@@ -168,6 +169,40 @@ func (m *Mock) GetWorkspace(_ context.Context, resourceGroup, name string) (*dri
 func (m *Mock) DeleteWorkspace(_ context.Context, resourceGroup, name string) error {
 	if !m.workspaces.Delete(key(resourceGroup, name)) {
 		return errors.Newf(errors.NotFound, "workspace %q not found", name)
+	}
+
+	return nil
+}
+
+// PurgeResourceGroup deletes every workspace, with its private endpoint
+// connections and VNet peerings, and every access connector created in
+// subscription/resourceGroup. It backs the ARM resource-group delete cascade.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	for k, ws := range m.workspaces.All() {
+		if !(scope.Scope{Subscription: ws.Subscription, ResourceGroup: ws.ResourceGroup}).InResourceGroup(subscription, resourceGroup) {
+			continue
+		}
+
+		m.workspaces.Delete(k)
+
+		prefix := k + "/"
+		for _, ck := range m.privateEndpoints.Keys() {
+			if strings.HasPrefix(ck, prefix) {
+				m.privateEndpoints.Delete(ck)
+			}
+		}
+
+		for _, ck := range m.vnetPeerings.Keys() {
+			if strings.HasPrefix(ck, prefix) {
+				m.vnetPeerings.Delete(ck)
+			}
+		}
+	}
+
+	for k, ac := range m.accessConnectors.All() {
+		if (scope.Scope{Subscription: ac.Subscription, ResourceGroup: ac.ResourceGroup}).InResourceGroup(subscription, resourceGroup) {
+			m.accessConnectors.Delete(k)
+		}
 	}
 
 	return nil

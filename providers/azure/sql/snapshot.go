@@ -117,5 +117,7 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		}
 	}
 
+	m.migrateManagedInstanceScopes()
+
 	return nil
 }
