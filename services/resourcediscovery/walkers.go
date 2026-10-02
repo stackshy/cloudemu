@@ -776,9 +776,18 @@ func (e *Engine) walkStorage(ctx context.Context) ([]Resource, error) {
 		return nil, fmt.Errorf("walkStorage: %w", err)
 	}
 
-	out := make([]Resource, 0, len(buckets))
+	out, accounts, err := e.walkStorageAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
 
 	for _, b := range buckets {
+		// A legacy default-namespace container that shares an account's name
+		// is reported once, as the account.
+		if accounts[b.Name] {
+			continue
+		}
+
 		tags, tagErr := e.drivers.Storage.GetBucketTagging(ctx, b.Name)
 		if tagErr != nil {
 			// NotFound means the bucket was deleted between ListBuckets and
@@ -811,6 +820,50 @@ func (e *Engine) walkStorage(ctx context.Context) ([]Resource, error) {
 	}
 
 	return out, nil
+}
+
+// walkStorageAccounts emits one row per storage account for a driver that
+// models accounts as their own resource (Azure), and returns the set of
+// account names. Other drivers contribute nothing.
+func (e *Engine) walkStorageAccounts(ctx context.Context) ([]Resource, map[string]bool, error) {
+	lister, ok := e.drivers.Storage.(storagedriver.AzureStorageAccounts)
+	if !ok {
+		return nil, nil, nil
+	}
+
+	accounts, err := lister.ListStorageAccounts(ctx)
+	if err != nil {
+		return nil, nil, fmt.Errorf("walkStorage accounts: %w", err)
+	}
+
+	out := make([]Resource, 0, len(accounts))
+	names := make(map[string]bool, len(accounts))
+
+	for i := range accounts {
+		a := &accounts[i]
+		names[a.Name] = true
+
+		res := Resource{
+			Provider: e.provider, Service: ServiceStorage, Type: TypeBucket,
+			ID:     a.Name,
+			ARN:    e.storageBucketARN(a.Name, a.ResourceGroup),
+			Region: e.region, Tags: map[string]string{},
+		}
+
+		if attrer, ok := e.drivers.Storage.(storagedriver.BucketAttributes); ok {
+			if attrs, aErr := attrer.BucketAttributes(ctx, a.Name); aErr == nil && len(attrs.Tags) > 0 {
+				res.Tags = copyTags(attrs.Tags)
+			}
+		}
+
+		if err := e.applyStorageAttrs(ctx, &res, a.Name); err != nil {
+			return nil, nil, err
+		}
+
+		out = append(out, res)
+	}
+
+	return out, names, nil
 }
 
 // applyStorageAttrs folds a bucket's optional storage-account attributes onto
