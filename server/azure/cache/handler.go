@@ -25,6 +25,7 @@
 package cache
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -44,6 +45,12 @@ type Handler struct {
 // New returns an Azure Cache handler backed by c.
 func New(c cachedriver.Cache) *Handler {
 	return &Handler{cache: c}
+}
+
+// PurgeResourceGroup deletes every Redis cache in the resource group, backing
+// the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.cache, subscription, resourceGroup)
 }
 
 // Matches claims ARM URLs targeting Microsoft.Cache/redis. The provider name is

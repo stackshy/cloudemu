@@ -21,6 +21,7 @@
 package sql
 
 import (
+	"context"
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -71,6 +72,12 @@ type Handler struct {
 // New returns an Azure SQL handler backed by db.
 func New(db rdsdriver.RelationalDB) *Handler {
 	return &Handler{db: db}
+}
+
+// PurgeResourceGroup deletes every logical server in the resource group, with
+// its databases and child resources, backing the resource-group cascade.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	return azurearm.PurgeVia(ctx, h.db, subscription, resourceGroup)
 }
 
 // Matches returns true for ARM Microsoft.Sql server and managed-instance paths.

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	stderrors "errors"
 	"fmt"
 	"maps"
 	"path"
@@ -195,6 +196,23 @@ func (m *Mock) DeleteCache(ctx context.Context, name string) error {
 	m.caches.Delete(name)
 
 	return nil
+}
+
+// PurgeResourceGroup deletes every cache recorded under the resource group,
+// tearing down any engine backing it. It backs the ARM resource-group delete
+// cascade. An unscoped cache is never selected.
+func (m *Mock) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	var errs []error
+
+	for _, name := range m.caches.Keys() {
+		if cd, ok := m.caches.Get(name); ok && cd.info.Scope.InResourceGroup(subscription, resourceGroup) {
+			if err := m.DeleteCache(ctx, name); err != nil && !errors.IsNotFound(err) {
+				errs = append(errs, err)
+			}
+		}
+	}
+
+	return stderrors.Join(errs...)
 }
 
 // GetCache retrieves information about an Azure Cache for Redis instance.

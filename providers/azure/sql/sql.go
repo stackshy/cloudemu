@@ -626,14 +626,38 @@ func (m *Mock) DeleteCluster(_ context.Context, id string) error {
 		return cerrors.Newf(cerrors.NotFound, "Azure SQL server %q not found", id)
 	}
 
+	m.deleteClusterLocked(id, &cluster)
+
+	return nil
+}
+
+// PurgeResourceGroup deletes every logical server recorded under the resource
+// group, cascading to its databases, firewall and vnet rules, elastic pools,
+// failover groups, AAD admin, TDE and retention policies and connection
+// policy. It backs the ARM resource-group delete cascade. An unscoped server is
+// never selected. Managed instances record no scope and are not covered.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for _, id := range m.clusters.Keys() {
+		if cluster, ok := m.clusters.Get(id); ok && cluster.Scope.InResourceGroup(subscription, resourceGroup) {
+			m.deleteClusterLocked(id, &cluster)
+		}
+	}
+
+	return nil
+}
+
+// deleteClusterLocked removes a server and everything under it. The caller
+// holds the write lock.
+func (m *Mock) deleteClusterLocked(id string, cluster *rdsdriver.Cluster) {
 	for _, member := range cluster.Members {
 		m.instances.Delete(instanceKey(id, member))
 	}
 
 	m.clusters.Delete(id)
 	m.deleteChildren(id)
-
-	return nil
 }
 
 // deleteByPrefix removes every entry of store whose key starts with prefix.

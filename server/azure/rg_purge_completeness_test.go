@@ -25,6 +25,8 @@ type exemption struct {
 
 const (
 	vmPurger     = "server/azure/virtualmachines.Handler"
+	cosmosPurger = "server/azure/cosmosaccount.Handler"
+	cosmosChild  = "SQL and Mongo databases are children of the account"
 	noARMState   = "serves no resource-group-scoped ARM state"
 	dataPlane    = "data plane of a resource whose control plane owns the purge"
 	databricksDP = "Databricks workspace data plane; no resource-group-scoped ARM state"
@@ -51,6 +53,8 @@ var rgPurgeExempt = map[string]exemption{
 	"server/azure/images.Handler":                       {Reason: "shares the compute driver", PurgedBy: vmPurger},
 	"server/azure/sshpublickeys.Handler":                {Reason: "shares the compute driver", PurgedBy: vmPurger},
 	"server/azure/cosmosdb.Handler":                     {Reason: dataPlane},
+	"server/azure/cosmosdb.ARMHandler":                  {Reason: cosmosChild, PurgedBy: cosmosPurger},
+	"server/azure/cosmosdb.MongoARMHandler":             {Reason: cosmosChild, PurgedBy: cosmosPurger},
 	"server/azure/eventgrid.PublishHandler":             {Reason: "event publish data plane"},
 	"server/azure/notificationhubs.RegistrationHandler": {Reason: "device registration data plane"},
 	"server/azure/kusto.DataPlaneHandler":               {Reason: "query data plane is a separate instance (deferred, plan A.9)"},
@@ -90,21 +94,6 @@ var rgPurgeExempt = map[string]exemption{
 //
 //nolint:gochecknoglobals // test fixture table
 var pendingPurger = map[string]string{
-	"server/azure/cosmosdb.ARMHandler":         "AZRM-02 (A2, via cosmosaccount)",
-	"server/azure/cosmosdb.MongoARMHandler":    "AZRM-02 (A2, via cosmosaccount)",
-	"server/azure/cosmosaccount.Handler":       "AZRM-02 (A2)",
-	"server/azure/managedcassandra.Handler":    "AZRM-02 (A2)",
-	"server/azure/cosmospostgresql.Handler":    "AZRM-02 (A2)",
-	"server/azure/keyvault.VaultARMHandler":    "AZRM-02 (A2)",
-	"server/azure/servicebus.Handler":          "AZRM-02 (A2)",
-	"server/azure/eventhub.Handler":            "AZRM-02 (A2)",
-	"server/azure/sql.Handler":                 "AZRM-02 (A2)",
-	"server/azure/cache.Handler":               "AZRM-02 (A2)",
-	"server/azure/loganalytics.Handler":        "AZRM-02 (A2)",
-	"server/azure/mysqlflex.Handler":           "AZRM-02 (A2)",
-	"server/azure/postgresflex.Handler":        "AZRM-02 (A2)",
-	"server/azure/search.ControlHandler":       "AZRM-02 (A2)",
-	"server/azure/functions.Handler":           "AZRM-02 (A3)",
 	"server/azure/monitor.Handler":             "AZRM-02 (A3)",
 	"server/azure/eventgrid.Handler":           "AZRM-02 (A3)",
 	"server/azure/notificationhubs.Handler":    "AZRM-02 (A3)",
@@ -236,6 +225,8 @@ func TestPurgeDriversImplementNarrowInterfaces(t *testing.T) {
 
 	for name, drv := range map[string]any{
 		"DNS": d.DNS, "ACR": d.ACR, "AKS": d.AKS, "ContainerInstances": d.ContainerInstances,
+		"KeyVault": d.KeyVault, "SQL": d.SQL, "Cache": d.Cache, "Functions": d.Functions,
+		"MySQLFlex": d.MySQLFlex, "PostgresFlex": d.PostgresFlex, "SearchControl": d.SearchControl,
 	} {
 		if _, ok := drv.(resourcegroups.ResourceGroupPurger); !ok {
 			t.Errorf("Drivers.%s (%T) has no PurgeResourceGroup(ctx, sub, rg) error method", name, drv)

@@ -12,6 +12,7 @@ package mysqlflex
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"sync"
 
@@ -429,6 +430,26 @@ func (m *Mock) DeleteInstance(ctx context.Context, id string) error {
 // through the ARM handler can never remove another scope's server.
 func (m *Mock) DeleteInstanceInScope(ctx context.Context, id string, filter scope.Scope) error {
 	return m.deleteInstanceScoped(ctx, id, filter)
+}
+
+// PurgeResourceGroup deletes every server recorded under the resource group,
+// with its databases, firewall rules and configurations. It backs the ARM
+// resource-group delete cascade. An unscoped server is never selected.
+func (m *Mock) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	var errs []error
+
+	for _, id := range m.instances.Keys() {
+		inst, ok := m.instances.Get(id)
+		if !ok || !inst.Scope.InResourceGroup(subscription, resourceGroup) {
+			continue
+		}
+
+		if err := m.deleteInstanceScoped(ctx, id, inst.Scope); err != nil && !cerrors.IsNotFound(err) {
+			errs = append(errs, err)
+		}
+	}
+
+	return errors.Join(errs...)
 }
 
 // deleteInstanceScoped performs the get-check-delete under a single lock
