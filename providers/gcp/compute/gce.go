@@ -102,22 +102,23 @@ type asgData struct {
 
 // Mock is an in-memory mock implementation of Google Compute Engine.
 type Mock struct {
-	instances    *memstore.Store[*instanceData]
-	asgs         *memstore.Store[*asgData]
-	spotRequests *memstore.Store[*driver.SpotInstanceRequest]
-	templates    *memstore.Store[*driver.LaunchTemplate]
-	volumes      *memstore.Store[*driver.VolumeInfo]
-	snapshots    *memstore.Store[*driver.SnapshotInfo]
-	images       *memstore.Store[*driver.ImageInfo]
-	keyPairs     *memstore.Store[*driver.KeyPairInfo]
-	migs         *memstore.Store[InstanceGroupManager]
-	sm           *statemachine.Machine
-	opts         *config.Options
-	ipCounter    atomic.Int64
-	volCounter   atomic.Int64
-	snapCounter  atomic.Int64
-	imgCounter   atomic.Int64
-	monitoring   mondriver.Monitoring
+	instances     *memstore.Store[*instanceData]
+	asgs          *memstore.Store[*asgData]
+	spotRequests  *memstore.Store[*driver.SpotInstanceRequest]
+	templates     *memstore.Store[*driver.LaunchTemplate]
+	volumes       *memstore.Store[*driver.VolumeInfo]
+	snapshots     *memstore.Store[*driver.SnapshotInfo]
+	images        *memstore.Store[*driver.ImageInfo]
+	keyPairs      *memstore.Store[*driver.KeyPairInfo]
+	migs          *memstore.Store[InstanceGroupManager]
+	instTemplates *memstore.Store[InstanceTemplate]
+	sm            *statemachine.Machine
+	opts          *config.Options
+	ipCounter     atomic.Int64
+	volCounter    atomic.Int64
+	snapCounter   atomic.Int64
+	imgCounter    atomic.Int64
+	monitoring    mondriver.Monitoring
 }
 
 // SetMonitoring sets the monitoring backend for auto-metric generation.
@@ -237,17 +238,18 @@ func (m *Mock) emitLifecycleMetrics(ctx context.Context, instanceID, zone string
 // New creates a new GCE mock.
 func New(opts *config.Options) *Mock {
 	return &Mock{
-		instances:    memstore.New[*instanceData](),
-		asgs:         memstore.New[*asgData](),
-		spotRequests: memstore.New[*driver.SpotInstanceRequest](),
-		templates:    memstore.New[*driver.LaunchTemplate](),
-		volumes:      memstore.New[*driver.VolumeInfo](),
-		snapshots:    memstore.New[*driver.SnapshotInfo](),
-		images:       memstore.New[*driver.ImageInfo](),
-		keyPairs:     memstore.New[*driver.KeyPairInfo](),
-		migs:         memstore.New[InstanceGroupManager](),
-		sm:           statemachine.New(compute.VMTransitions()),
-		opts:         opts,
+		instances:     memstore.New[*instanceData](),
+		asgs:          memstore.New[*asgData](),
+		spotRequests:  memstore.New[*driver.SpotInstanceRequest](),
+		templates:     memstore.New[*driver.LaunchTemplate](),
+		volumes:       memstore.New[*driver.VolumeInfo](),
+		snapshots:     memstore.New[*driver.SnapshotInfo](),
+		images:        memstore.New[*driver.ImageInfo](),
+		keyPairs:      memstore.New[*driver.KeyPairInfo](),
+		migs:          memstore.New[InstanceGroupManager](),
+		instTemplates: memstore.New[InstanceTemplate](),
+		sm:            statemachine.New(compute.VMTransitions()),
+		opts:          opts,
 	}
 }
 
