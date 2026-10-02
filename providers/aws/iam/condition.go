@@ -41,9 +41,31 @@ func (c ConditionContext) get(key string) (string, bool) {
 // single key the listed values combine with OR (a negative operator requires
 // that none match). An empty condition block is vacuously true.
 func evaluateConditions(conds map[string]map[string]any, cctx ConditionContext) bool {
+	return evaluateConditionsWith(conds, cctx, absentKeyIAM)
+}
+
+// absentKey says how a condition key missing from the request context is
+// treated.
+type absentKey int
+
+const (
+	// absentKeyIAM is real IAM: a plain operator fails, its ...IfExists form
+	// passes, and Null tests for presence.
+	absentKeyIAM absentKey = iota
+	// absentKeyMatches treats every missing key as satisfied, whatever the
+	// operator. Used for Deny statements when the resource is unknown.
+	absentKeyMatches
+	// absentKeyFails treats every missing key as unsatisfied, whatever the
+	// operator. Used for Allow statements when the resource is unknown.
+	absentKeyFails
+)
+
+// evaluateConditionsWith is evaluateConditions with an explicit rule for keys
+// the request context does not carry.
+func evaluateConditionsWith(conds map[string]map[string]any, cctx ConditionContext, absent absentKey) bool {
 	for rawOp, keyVals := range conds {
 		for key, raw := range keyVals {
-			if !evaluateConditionKey(rawOp, key, toStringSlice(raw), cctx) {
+			if !evaluateConditionKey(rawOp, key, toStringSlice(raw), cctx, absent) {
 				return false
 			}
 		}
@@ -56,11 +78,16 @@ func evaluateConditions(conds map[string]map[string]any, cctx ConditionContext) 
 // policy-supplied values. It resolves the request value from the context,
 // applies the ...IfExists rule for an absent key, and dispatches to the operator
 // family. The Null operator is handled first because it is defined in terms of
-// key presence, not the key's value.
-func evaluateConditionKey(rawOp, key string, values []string, cctx ConditionContext) bool {
+// key presence, not the key's value. A non-IAM absent rule overrides all of
+// that for a missing key.
+func evaluateConditionKey(rawOp, key string, values []string, cctx ConditionContext, absent absentKey) bool {
 	base, ifExists := splitIfExists(rawOp)
 
 	ctxVal, present := cctx.get(key)
+
+	if !present && absent != absentKeyIAM {
+		return absent == absentKeyMatches
+	}
 
 	if strings.EqualFold(base, "Null") {
 		return evalNull(present, values)
