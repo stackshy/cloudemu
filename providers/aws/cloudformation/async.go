@@ -180,9 +180,7 @@ func (m *Mock) settleAt(ctx context.Context, now time.Time) bool {
 	changed := false
 
 	for _, sd := range m.sortedStacks() {
-		if op := sd.takeDue(now); op != nil {
-			m.complete(ctx, sd, op)
-
+		if m.settleStack(ctx, sd, now) {
 			changed = true
 		}
 	}
@@ -190,7 +188,35 @@ func (m *Mock) settleAt(ctx context.Context, now time.Time) bool {
 	return changed
 }
 
-// takeDue removes and returns the stack's pending phase once it is due.
+// settleStack runs the stack's pending phase once it is due. It holds
+// opMu and keeps the stack busy until the phase has returned, so an
+// operation that starts meanwhile, such as a DeleteStack, waits for it or
+// is refused instead of interleaving with it.
+func (m *Mock) settleStack(ctx context.Context, sd *stackData, now time.Time) bool {
+	sd.opMu.Lock()
+	defer sd.opMu.Unlock()
+
+	op := sd.takeDue(now)
+	if op == nil {
+		return false
+	}
+
+	defer sd.setBusy(false)
+
+	m.complete(ctx, sd, op)
+
+	return true
+}
+
+func (sd *stackData) setBusy(busy bool) {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	sd.busy = busy
+}
+
+// takeDue removes and returns the stack's pending phase once it is due. The
+// stack stays busy until the caller clears it.
 func (sd *stackData) takeDue(now time.Time) *pendingOp {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
@@ -201,6 +227,7 @@ func (sd *stackData) takeDue(now time.Time) *pendingOp {
 
 	op := sd.pending
 	sd.pending = nil
+	sd.busy = true
 
 	return op
 }
@@ -293,6 +320,9 @@ func (m *Mock) CancelUpdateStack(ctx context.Context, in *cfn.CancelUpdateStackI
 		return err
 	}
 
+	sd.opMu.Lock()
+	defer sd.opMu.Unlock()
+
 	op := m.takeCancellable(sd, in.ClientRequestToken)
 	if op == nil {
 		return cerrors.New(cerrors.InvalidArgument, msgCancelBadStatus)
@@ -320,7 +350,14 @@ func (m *Mock) takeCancellable(sd *stackData, token string) *pendingOp {
 	sd.pending = nil
 	sd.recordToken(token, actionCancelUpdateStack)
 
-	now := m.clock.Now()
+	sd.dropUnarrivedEvents(m.clock.Now())
+
+	return op
+}
+
+// dropUnarrivedEvents forgets the events stamped after now, the part of an
+// operation a cancel stopped before. The caller holds sd.mu.
+func (sd *stackData) dropUnarrivedEvents(now time.Time) {
 	kept := sd.stack.Events[:0]
 
 	for i := range sd.stack.Events {
@@ -330,8 +367,6 @@ func (m *Mock) takeCancellable(sd *stackData, token string) *pendingOp {
 	}
 
 	sd.stack.Events = kept
-
-	return op
 }
 
 // markCancelled fails the resources a cancel caught in progress.
@@ -366,17 +401,4 @@ func (m *Mock) markCancelled(sd *stackData) {
 			m.emitResourceEvent(sd, id, e.PhysicalID, e.ResourceType, cfn.ResourceUpdateFailed, reasonResourceCancelled)
 		}
 	}
-}
-
-// checkNotBusy refuses to delete a stack while one of its operations is
-// still running under AsyncSettle.
-func checkNotBusy(sd *stackData) error {
-	sd.mu.RLock()
-	defer sd.mu.RUnlock()
-
-	if sd.pending != nil {
-		return cerrors.Newf(cerrors.InvalidArgument, msgDeleteInProgress, sd.stack.Name, sd.stack.Status)
-	}
-
-	return nil
 }

@@ -240,7 +240,7 @@ func (m *Mock) beginOperation(sd *stackData, allowed func(string) bool, status, 
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
-	if !allowed(sd.stack.Status) || sd.pending != nil {
+	if !allowed(sd.stack.Status) || sd.pending != nil || sd.busy {
 		return cerrors.Newf(cerrors.InvalidArgument, msgStackCannotUpdate, sd.stack.ID, sd.stack.Status)
 	}
 

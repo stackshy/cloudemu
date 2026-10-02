@@ -42,8 +42,9 @@ const (
 // in RetainResources, or use DeletionMode FORCE_DELETE_STACK to keep every
 // one that still fails. A stack whose exports another stack imports ends
 // DELETE_FAILED without deleting anything. Termination protection refuses
-// the call. Deleting an absent or already deleted stack is a successful
-// no-op, as in CloudFormation.
+// the call. Deleting an absent, deleted or deleting stack is a successful
+// no-op, as in CloudFormation. Under AsyncSettle a delete cancels a create
+// still in progress, and any other operation in progress refuses it.
 func (m *Mock) DeleteStack(ctx context.Context, in *cfn.DeleteStackInput) error {
 	modes := []string{cfn.DeletionModeStandard, cfn.DeletionModeForceDelete}
 	if in.DeletionMode != "" && !slices.Contains(modes, in.DeletionMode) {
@@ -61,7 +62,13 @@ func (m *Mock) DeleteStack(ctx context.Context, in *cfn.DeleteStackInput) error 
 		return err
 	}
 
-	if err := checkNotBusy(sd); err != nil {
+	// The start of a delete and the last phase of an asynchronous operation
+	// run one at a time, so a delete never lands inside a phase that is
+	// still finishing.
+	sd.opMu.Lock()
+	defer sd.opMu.Unlock()
+
+	if noop, err := deleteGate(sd); noop || err != nil {
 		return err
 	}
 
@@ -69,6 +76,8 @@ func (m *Mock) DeleteStack(ctx context.Context, in *cfn.DeleteStackInput) error 
 	if err != nil {
 		return err
 	}
+
+	m.cancelCreate(sd)
 
 	m.exportMu.Lock()
 	reason := m.exportInUse(sd)
@@ -85,6 +94,47 @@ func (m *Mock) DeleteStack(ctx context.Context, in *cfn.DeleteStackInput) error 
 	})
 
 	return nil
+}
+
+// deleteGate decides what DeleteStack does with the stack's current status.
+// A stack already being deleted is a successful no-op. A create in progress
+// is stopped by the delete. Any other operation in progress, such as an
+// update or a rollback, refuses the delete.
+func deleteGate(sd *stackData) (noop bool, err error) {
+	sd.mu.RLock()
+	defer sd.mu.RUnlock()
+
+	switch st := sd.stack.Status; {
+	case st == cfn.StatusDeleteInProgress || st == cfn.StatusDeleteComplete:
+		return true, nil
+	case st == cfn.StatusCreateInProgress || st == cfn.StatusReviewInProgress:
+		return false, nil
+	case strings.HasSuffix(st, "_IN_PROGRESS") || sd.busy:
+		return false, cerrors.Newf(cerrors.InvalidArgument, msgDeleteInProgress, sd.stack.Name, st)
+	}
+
+	return false, nil
+}
+
+// cancelCreate stops a create still in progress under AsyncSettle before
+// the delete starts. The create's events that have not arrived are dropped
+// and the resources it was still creating fail with the AWS reason for a
+// stopped creation. The teardown then deletes every resource the create made.
+func (m *Mock) cancelCreate(sd *stackData) {
+	sd.mu.Lock()
+
+	op := sd.pending
+	if op == nil || op.Kind != opCreate || sd.stack.Status != cfn.StatusCreateInProgress {
+		sd.mu.Unlock()
+		return
+	}
+
+	sd.pending = nil
+	sd.dropUnarrivedEvents(m.clock.Now())
+	sd.mu.Unlock()
+
+	m.markCancelled(sd)
+	sd.finishChangeSet(op.ChangeSetID, false)
 }
 
 // checkDeletable refuses a protected stack, and RetainResources on a stack

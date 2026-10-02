@@ -78,6 +78,10 @@ type stackData struct {
 	// pending is the last phase of an operation that runs under
 	// AsyncSettle. It completes once the settle window has passed.
 	pending *pendingOp
+	// busy is set while a pending phase runs, and opMu serializes that
+	// phase with the start of a DeleteStack or CancelUpdateStack.
+	busy bool
+	opMu sync.Mutex
 	// cursor is when the next event of an asynchronous operation is
 	// stamped, so its events arrive one after another. Zero stamps events
 	// with the current time.
