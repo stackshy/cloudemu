@@ -25,9 +25,7 @@ func (h *Handler) serveBlobService(w http.ResponseWriter, r *http.Request, rp *a
 		return
 	}
 
-	if !h.bucketExists(r.Context(), rp.ResourceName) {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
-			"storage account "+rp.ResourceName+" not found")
+	if _, ok := h.lookup(w, r, rp); !ok {
 		return
 	}
 
