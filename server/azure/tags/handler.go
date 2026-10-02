@@ -6,7 +6,7 @@
 // The tag set is addressed by an opaque {scope} prefix: a subscription
 // (subscriptions/{sub}) or any resource id, followed by the fixed suffix
 // /providers/Microsoft.Resources/tags/default. The handler owns its own
-// tag sets live in the persisted providers/azure/scopetags store keyed by that
+// tag sets live in the persisted providers/azure/tagsatscope store keyed by that
 // scope; there is no driver, because tags-at-scope is a universal ARM overlay
 // rather than a per-service resource.
 //
@@ -19,7 +19,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/stackshy/cloudemu/v2/providers/azure/scopetags"
+	"github.com/stackshy/cloudemu/v2/providers/azure/tagsatscope"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
@@ -40,14 +40,14 @@ const (
 // tag-set store, one set per scope. mu keeps a PATCH read-modify-write atomic.
 type Handler struct {
 	mu    sync.Mutex
-	store *scopetags.Mock
+	store *tagsatscope.Mock
 }
 
 // New returns a tags-at-scope handler over store. A nil store gives the handler
 // a private one.
-func New(store *scopetags.Mock) *Handler {
+func New(store *tagsatscope.Mock) *Handler {
 	if store == nil {
-		store = scopetags.New()
+		store = tagsatscope.New()
 	}
 
 	return &Handler{store: store}

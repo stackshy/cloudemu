@@ -13,7 +13,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	aiprov "github.com/stackshy/cloudemu/v2/providers/azure/insightscomponents"
 	lockprov "github.com/stackshy/cloudemu/v2/providers/azure/managementlocks"
-	"github.com/stackshy/cloudemu/v2/providers/azure/scopetags"
+	"github.com/stackshy/cloudemu/v2/providers/azure/tagsatscope"
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/azure/aad"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
@@ -194,7 +194,7 @@ type Drivers struct {
 	// gives that handler a private, unpersisted one.
 	AppInsights     *aiprov.Mock
 	ManagementLocks *lockprov.Mock
-	ScopeTags       *scopetags.Mock
+	ScopeTags       *tagsatscope.Mock
 	// DevCenter serves Microsoft.DevCenter/devcenters.
 	DevCenter devcentersrv.Store
 	// Purview serves Microsoft.Purview/accounts.

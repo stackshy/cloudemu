@@ -58,7 +58,6 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/purview"
 	"github.com/stackshy/cloudemu/v2/providers/azure/recoveryservices"
 	"github.com/stackshy/cloudemu/v2/providers/azure/redisenterprise"
-	"github.com/stackshy/cloudemu/v2/providers/azure/scopetags"
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/providers/azure/signalr"
@@ -66,6 +65,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/sqlvirtualmachine"
 	"github.com/stackshy/cloudemu/v2/providers/azure/streamanalytics"
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
+	"github.com/stackshy/cloudemu/v2/providers/azure/tagsatscope"
 	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
 	"github.com/stackshy/cloudemu/v2/providers/azure/webpubsub"
@@ -201,7 +201,7 @@ type Provider struct {
 	ManagedGrafana     *managedgrafana.Mock
 	AppInsights        *insightscomponents.Mock
 	ManagementLocks    *managementlocks.Mock
-	ScopeTags          *scopetags.Mock
+	ScopeTags          *tagsatscope.Mock
 	DevCenter          *devcenter.Mock
 	Purview            *purview.Mock
 	ChaosStudio        *chaosstudio.Mock
@@ -288,7 +288,7 @@ func New(opts ...config.Option) *Provider {
 		ManagedGrafana:     managedgrafana.New(o),
 		AppInsights:        insightscomponents.New(),
 		ManagementLocks:    managementlocks.New(),
-		ScopeTags:          scopetags.New(),
+		ScopeTags:          tagsatscope.New(),
 		DevCenter:          devcenter.New(o),
 		Purview:            purview.New(o),
 		ChaosStudio:        chaosstudio.New(o),

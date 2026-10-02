@@ -1,8 +1,8 @@
-// Package scopetags holds the Azure Tags resource-provider tag sets
+// Package tagsatscope holds the Azure Tags resource-provider tag sets
 // (Microsoft.Resources/tags/default), one per scope, in a persisted store so
 // serve --persist keeps them across a restart. The ARM wire handler in
 // server/azure/tags owns the Merge/Replace/Delete semantics.
-package scopetags
+package tagsatscope
 
 import (
 	"maps"

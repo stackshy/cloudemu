@@ -1,4 +1,4 @@
-package scopetags
+package tagsatscope
 
 import (
 	"context"
@@ -14,7 +14,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	data, err := m.store.Snapshot()
 	if err != nil {
-		return nil, fmt.Errorf("scopetags: snapshot store: %w", err)
+		return nil, fmt.Errorf("tagsatscope: snapshot store: %w", err)
 	}
 
 	return data, nil
@@ -27,7 +27,7 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	}
 
 	if err := m.store.LoadSnapshot(data); err != nil {
-		return fmt.Errorf("scopetags: restore store: %w", err)
+		return fmt.Errorf("tagsatscope: restore store: %w", err)
 	}
 
 	return nil
