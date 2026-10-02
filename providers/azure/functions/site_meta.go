@@ -214,12 +214,17 @@ func (m *Mock) UpsertSiteMeta(_ context.Context, in SiteMeta) (*SiteMeta, error)
 		existing.ServerFarmID = in.ServerFarmID
 		existing.HTTPSOnly = in.HTTPSOnly
 		existing.Reserved = in.Reserved
-		existing.LinuxFxVersion = in.LinuxFxVersion
-		existing.AlwaysOn = cloneBoolPtr(in.AlwaysOn)
-		existing.FtpsState = in.FtpsState
-		existing.MinTLSVersion = in.MinTLSVersion
 		existing.AppSettings = maps.Clone(in.AppSettings)
-		existing.SiteConfig = slices.Clone(in.SiteConfig)
+
+		// A nil in.SiteConfig means the PUT omitted siteConfig, so the web
+		// config set earlier (by a site PUT or config/web) is kept, as ARM does.
+		if in.SiteConfig != nil {
+			existing.LinuxFxVersion = in.LinuxFxVersion
+			existing.AlwaysOn = cloneBoolPtr(in.AlwaysOn)
+			existing.FtpsState = in.FtpsState
+			existing.MinTLSVersion = in.MinTLSVersion
+			existing.SiteConfig = slices.Clone(in.SiteConfig)
+		}
 
 		// An empty in.Kind means the request omitted kind, so the existing kind
 		// is preserved rather than reverting to the create-time default.

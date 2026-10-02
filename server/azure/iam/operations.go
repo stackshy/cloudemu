@@ -465,7 +465,7 @@ type roleAssignmentFilter struct {
 func parseRoleAssignmentFilter(raw string) roleAssignmentFilter {
 	var filter roleAssignmentFilter
 
-	for _, clause := range strings.Split(raw, " and ") {
+	for _, clause := range splitODataAnd(raw) {
 		clause = strings.TrimSpace(clause)
 
 		switch {
@@ -491,7 +491,7 @@ type roleDefinitionFilter struct {
 func parseRoleDefinitionFilter(raw string) roleDefinitionFilter {
 	var filter roleDefinitionFilter
 
-	for _, clause := range strings.Split(raw, " and ") {
+	for _, clause := range splitODataAnd(raw) {
 		clause = strings.TrimSpace(clause)
 		lower := strings.ToLower(clause)
 
@@ -514,10 +514,43 @@ func (f roleDefinitionFilter) matches(props *roleDefinitionProperties) bool {
 	return f.roleType == "" || strings.EqualFold(f.roleType, props.Type)
 }
 
+// splitODataAnd splits a $filter on its "and" combinators, ignoring any
+// " and " inside a single-quoted string literal (a role name such as
+// 'Reader and Data Access'). An escaped quote (two single quotes) inside a
+// literal toggles the quote state twice, so escapes need no special case.
+func splitODataAnd(raw string) []string {
+	const sep = " and "
+
+	var (
+		clauses []string
+		start   int
+		quoted  bool
+	)
+
+	for i := 0; i < len(raw); i++ {
+		switch {
+		case raw[i] == '\'':
+			quoted = !quoted
+		case !quoted && i+len(sep) <= len(raw) && strings.EqualFold(raw[i:i+len(sep)], sep):
+			clauses = append(clauses, raw[start:i])
+			start = i + len(sep)
+			i += len(sep) - 1
+		}
+	}
+
+	return append(clauses, raw[start:])
+}
+
 // trimODataString strips the single or double quotes an OData string literal
-// ('...' or "...") is wrapped in.
+// ('...' or "...") is wrapped in and unescapes each pair of single quotes
+// inside a single-quoted literal to one.
 func trimODataString(s string) string {
-	return strings.Trim(strings.TrimSpace(s), `'"`)
+	s = strings.TrimSpace(s)
+	if len(s) >= 2 && s[0] == '\'' && s[len(s)-1] == '\'' {
+		return strings.ReplaceAll(s[1:len(s)-1], "''", "'")
+	}
+
+	return strings.Trim(s, `'"`)
 }
 
 // scopeAssignmentMatches reports whether a stored assignment's scope is

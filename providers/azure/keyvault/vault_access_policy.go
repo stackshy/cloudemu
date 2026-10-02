@@ -58,12 +58,18 @@ func (m *Mock) UpdateVaultAccessPolicies(_ context.Context, name string, kind dr
 		return nil, errors.Newf(errors.InvalidArgument, "unknown access policy update kind %q", kind)
 	}
 
-	var out []driver.KVAccessPolicy
+	var (
+		out      []driver.KVAccessPolicy
+		applyErr error
+	)
 
 	found := m.armVaults.Update(name, func(stored *driver.KVVaultInfo) *driver.KVVaultInfo {
 		clone := cloneVaultInfo(stored)
 		for i := range entries {
-			clone.Properties.AccessPolicies = applyAccessPolicy(clone.Properties.AccessPolicies, kind, &entries[i])
+			clone.Properties.AccessPolicies, applyErr = applyAccessPolicy(clone.Properties.AccessPolicies, kind, &entries[i])
+			if applyErr != nil {
+				return stored
+			}
 		}
 
 		out = copyAccessPolicies(clone.Properties.AccessPolicies)
@@ -74,6 +80,10 @@ func (m *Mock) UpdateVaultAccessPolicies(_ context.Context, name string, kind dr
 		return nil, errors.Newf(errors.NotFound, "vault %q not found", name)
 	}
 
+	if applyErr != nil {
+		return nil, applyErr
+	}
+
 	if out == nil {
 		out = []driver.KVAccessPolicy{}
 	}
@@ -81,12 +91,15 @@ func (m *Mock) UpdateVaultAccessPolicies(_ context.Context, name string, kind dr
 	return out, nil
 }
 
-// applyAccessPolicy applies one entry to list. add unions permissions,
-// replace overwrites them (both append when no entry matches), and remove
-// subtracts them and drops an entry left with no permissions.
+// applyAccessPolicy applies one entry to list. add unions permissions and
+// appends a new principal; replace overwrites the permissions of an existing
+// principal and is NotFound for an absent one; remove subtracts permissions,
+// drops an entry left with none, and drops the whole entry when the request
+// names no permissions (removal by identity, as az keyvault delete-policy
+// sends it).
 func applyAccessPolicy(list []driver.KVAccessPolicy, kind driver.KVAccessPolicyUpdateKind,
 	entry *driver.KVAccessPolicy,
-) []driver.KVAccessPolicy {
+) ([]driver.KVAccessPolicy, error) {
 	idx := -1
 
 	for i := range list {
@@ -97,11 +110,16 @@ func applyAccessPolicy(list []driver.KVAccessPolicy, kind driver.KVAccessPolicyU
 	}
 
 	if idx < 0 {
-		if kind == driver.KVAccessPolicyRemove {
-			return list
+		switch kind {
+		case driver.KVAccessPolicyRemove:
+			return list, nil
+		case driver.KVAccessPolicyReplace:
+			return nil, errors.Newf(errors.NotFound,
+				"no access policy for object %q to replace", entry.ObjectID)
+		case driver.KVAccessPolicyAdd: // appends the new principal below
 		}
 
-		return append(list, copyAccessPolicies([]driver.KVAccessPolicy{*entry})...)
+		return append(list, copyAccessPolicies([]driver.KVAccessPolicy{*entry})...), nil
 	}
 
 	p := &list[idx].Permissions
@@ -114,15 +132,23 @@ func applyAccessPolicy(list []driver.KVAccessPolicy, kind driver.KVAccessPolicyU
 	case driver.KVAccessPolicyReplace:
 		*p = copyAccessPolicies([]driver.KVAccessPolicy{*entry})[0].Permissions
 	case driver.KVAccessPolicyRemove:
+		if permissionCount(e) == 0 {
+			return append(list[:idx], list[idx+1:]...), nil
+		}
+
 		p.Keys, p.Secrets = minusFold(p.Keys, e.Keys), minusFold(p.Secrets, e.Secrets)
 		p.Certificates, p.Storage = minusFold(p.Certificates, e.Certificates), minusFold(p.Storage, e.Storage)
 
-		if len(p.Keys)+len(p.Secrets)+len(p.Certificates)+len(p.Storage) == 0 {
-			return append(list[:idx], list[idx+1:]...)
+		if permissionCount(p) == 0 {
+			return append(list[:idx], list[idx+1:]...), nil
 		}
 	}
 
-	return list
+	return list, nil
+}
+
+func permissionCount(p *driver.KVAccessPermissions) int {
+	return len(p.Keys) + len(p.Secrets) + len(p.Certificates) + len(p.Storage)
 }
 
 func sameIdentity(a, b *driver.KVAccessPolicy) bool {

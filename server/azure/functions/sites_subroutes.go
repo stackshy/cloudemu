@@ -184,20 +184,6 @@ func siteID(rp azurearm.ResourcePath) string {
 	return azurearm.BuildResourceID(rp.Subscription, rp.ResourceGroup, providerName, resourceType, rp.ResourceName)
 }
 
-// appSettingsSlice renders a settings map as ARM name/value pairs.
-func appSettingsSlice(settings map[string]string) []nameValue {
-	if len(settings) == 0 {
-		return nil
-	}
-
-	out := make([]nameValue, 0, len(settings))
-	for k, v := range settings {
-		out = append(out, nameValue{Name: k, Value: v})
-	}
-
-	return out
-}
-
 // nonNilMap returns m, or an empty map so the JSON encodes {} rather than null.
 func nonNilMap(m map[string]string) map[string]string {
 	if m == nil {

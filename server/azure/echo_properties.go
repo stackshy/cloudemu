@@ -104,16 +104,24 @@ func (o *propertyOverlay) evictTree(id string) {
 // paths (which begin with /subscriptions/) so the storage/table/queue
 // data-plane handlers (which return XML or binary) are never buffered or
 // rewritten. Non-JSON responses, error responses, and responses without a
-// top-level id/properties pair pass through untouched.
-func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay) http.Handler {
-	return &overlayHandler{next: next, overlay: overlay}
+// top-level id/properties pair pass through untouched. A successful DELETE also
+// clears the tags-at-scope sets of the deleted resource and everything under
+// it, so a resource recreated with the same id starts without stale tags.
+func echoUnmodeledProperties(next http.Handler, overlay *propertyOverlay, scopeTags treeEvicter) http.Handler {
+	return &overlayHandler{next: next, overlay: overlay, scopeTags: scopeTags}
+}
+
+// treeEvicter drops every entry at or under an ARM id.
+type treeEvicter interface {
+	EvictTree(id string)
 }
 
 // overlayHandler is the handler echoUnmodeledProperties returns: next wrapped
 // by the unmodeled-property overlay.
 type overlayHandler struct {
-	next    http.Handler
-	overlay *propertyOverlay
+	next      http.Handler
+	overlay   *propertyOverlay
+	scopeTags treeEvicter
 }
 
 func (h *overlayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -128,7 +136,12 @@ func (h *overlayHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.next.ServeHTTP(rec, r)
 
 	if r.Method == http.MethodDelete && rec.status >= 200 && rec.status < 300 {
-		h.overlay.evictTree(deletedIDFromPath(r.URL.Path))
+		id := deletedIDFromPath(r.URL.Path)
+		h.overlay.evictTree(id)
+
+		if h.scopeTags != nil && id != "" {
+			h.scopeTags.EvictTree(id)
+		}
 	}
 
 	if !rec.rewrite(w, r, reqProps, h.overlay) {
