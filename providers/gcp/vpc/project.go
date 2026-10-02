@@ -19,7 +19,7 @@ func (m *Mock) project(ctx context.Context) string {
 
 // stampProject returns a copy of tags with the owning project set.
 func stampProject(tags map[string]string, project string) map[string]string {
-	out := make(map[string]string, len(tags)+1)
+	out := make(map[string]string, len(tags))
 	for k, v := range tags {
 		out[k] = v
 	}

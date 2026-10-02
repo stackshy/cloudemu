@@ -302,7 +302,7 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	for i := 0; i < count; i++ {
 		id := idgen.GCPID(project, "instances", idgen.GenerateID("gce-"))
 
-		tags := make(map[string]string, len(cfg.Tags)+1)
+		tags := make(map[string]string, len(cfg.Tags))
 
 		for k, v := range cfg.Tags {
 			tags[k] = v
