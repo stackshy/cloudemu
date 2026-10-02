@@ -223,17 +223,20 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 // snapshot into an account record. Older snapshots modeled an account as the
 // container of the same name and recorded no subscription, so the account gets
 // Subscription "" (it matches any caller) and the old container stays where it
-// is, as a default-namespace container, with no data loss.
+// is, as a default-namespace container, with no data loss. The account is
+// marked Legacy so deleting it also deletes that container. The reserved
+// default account name is never migrated.
 func (m *Mock) migrateLegacyAccounts() {
 	for name := range m.bucketAttrs.All() {
 		attrs, _ := m.bucketAttrs.Get(name)
-		if attrs.ResourceGroup == "" || m.accounts.Has(name) {
+		if attrs.ResourceGroup == "" || isDefaultAccount(name) || m.accounts.Has(name) {
 			continue
 		}
 
 		ref := driver.StorageAccountRef{Name: name, ResourceGroup: attrs.ResourceGroup}
 		if ctr, ok := m.containers.Get(name); ok {
 			ref.CreatedAt = ctr.CreatedAt
+			ref.Legacy = true
 		}
 
 		m.accounts.Set(name, ref)

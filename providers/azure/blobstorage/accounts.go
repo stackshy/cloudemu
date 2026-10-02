@@ -25,6 +25,12 @@ func (m *Mock) CreateStorageAccount(_ context.Context, a driver.StorageAccountRe
 		return false, cerrors.New(cerrors.InvalidArgument, "storage account name cannot be empty")
 	}
 
+	// The default account owns the default namespace (the bare data-plane
+	// host and every portable Bucket call), so its name is never available.
+	if isDefaultAccount(a.Name) {
+		return false, &driver.AccountExistsError{Name: a.Name}
+	}
+
 	m.accountMu.Lock()
 	defer m.accountMu.Unlock()
 
@@ -89,18 +95,23 @@ func (m *Mock) ListStorageAccounts(_ context.Context) ([]driver.StorageAccountRe
 // properties, encryption and attributes. The match on container keys is
 // bounded by the trailing slash, so deleting "pg" never touches "pg2/...".
 // A default-namespace container that merely shares the account's name is not
-// the account's data and survives. The one exception is the default account
-// itself, whose containers are the bare keys.
+// the account's data and survives, unless the account was migrated from an
+// older snapshot (Legacy), where that container is where its data lives.
 func (m *Mock) DeleteStorageAccount(ctx context.Context, name string) error {
 	m.accountMu.Lock()
 	defer m.accountMu.Unlock()
 
-	if !m.accounts.Has(name) {
+	ref, ok := m.accounts.Get(name)
+	if !ok {
 		return cerrors.Newf(cerrors.NotFound, "storage account %q not found", name)
 	}
 
 	for _, key := range m.accountContainerKeys(name) {
 		m.dropContainer(ctx, key)
+	}
+
+	if ref.Legacy {
+		m.dropContainer(ctx, name)
 	}
 
 	m.accountKeys.Delete(name)

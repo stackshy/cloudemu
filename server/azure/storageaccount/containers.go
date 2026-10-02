@@ -163,8 +163,7 @@ func (h *Handler) lookupForContainers(
 // container's public access and metadata.
 func (h *Handler) putContainer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, account, name string) {
 	if !storagedriver.ValidAzureContainerName(name) {
-		azurearm.WriteError(w, http.StatusBadRequest, "ContainerOperationFailure",
-			"The specified resource name contains invalid characters.")
+		azurearm.WriteError(w, http.StatusBadRequest, "ContainerOperationFailure", containerNameError(name))
 
 		return
 	}
@@ -363,6 +362,19 @@ func containerEtag(name, createdAt string, props *armContainerProperties) string
 }
 
 // writeContainerErr maps a missing container to the real 404 ContainerNotFound.
+// containerNameError returns the real storage RP message for an invalid
+// container name: a name of the wrong length is reported apart from one with
+// characters outside the container name alphabet.
+func containerNameError(name string) string {
+	const minLen, maxLen = 3, 63
+
+	if len(name) < minLen || len(name) > maxLen {
+		return "The specified resource name length is not within the permissible limits."
+	}
+
+	return "The specified resource name contains invalid characters."
+}
+
 func writeContainerErr(w http.ResponseWriter, err error) {
 	if cerrors.IsNotFound(err) {
 		azurearm.WriteError(w, http.StatusNotFound, "ContainerNotFound", "The specified container does not exist.")

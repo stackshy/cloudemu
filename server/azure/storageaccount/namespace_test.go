@@ -380,6 +380,11 @@ func TestBlobContainersLifecycle(t *testing.T) {
 	status, body := e.raw(http.MethodPut, base+"Bad_Name?api-version=2023-05-01", `{}`)
 	assert.Equal(t, http.StatusBadRequest, status)
 	assert.Contains(t, body, "ContainerOperationFailure")
+	assert.Contains(t, body, "contains invalid characters")
+
+	status, body = e.raw(http.MethodPut, base+"c1?api-version=2023-05-01", `{}`)
+	assert.Equal(t, http.StatusBadRequest, status)
+	assert.Contains(t, body, "length is not within the permissible limits")
 
 	status, _ = e.raw(http.MethodPut, base+"again?api-version=2023-05-01", `{}`)
 	assert.Equal(t, http.StatusCreated, status)
@@ -432,4 +437,114 @@ func TestLegacySnapshotKeepsWorking(t *testing.T) {
 	status, body := e.raw(http.MethodGet, "/legacyacct/c/blob.txt", "")
 	assert.Equal(t, http.StatusOK, status)
 	assert.Equal(t, "legacy", body)
+
+	// The old same-named container is where a migrated account's data lives,
+	// so deleting the account deletes it.
+	_, err = e.accounts("00000000-0000-0000-0000-0000000000ab").Delete(ctx, "r1", "legacyacct", nil)
+	require.NoError(t, err)
+
+	status, _ = e.raw(http.MethodGet, "/legacyacct/c/blob.txt", "")
+	assert.Equal(t, http.StatusNotFound, status)
+
+	_, err = fresh.BlobStorage.GetObject(ctx, "legacyacct", "c/blob.txt")
+	assert.Error(t, err)
+}
+
+// TestPathStyleBlobDataPlaneForARMAccount drives the azblob IP-endpoint style
+// (https://host:port/{account}/...) against an ARM-created account: the
+// leading segment is peeled as the account, and the containers it reaches are
+// the account's ARM containers.
+func TestPathStyleBlobDataPlaneForARMAccount(t *testing.T) {
+	ctx := context.Background()
+	e := newNSEnv(t)
+	e.mustCreateAccount("sub-1", "pr1", "regacct")
+
+	steps := []struct {
+		method, path, body string
+		want               int
+		wantBody           string
+	}{
+		{http.MethodPut, "/regacct/ctr1?restype=container", "", http.StatusCreated, ""},
+		{http.MethodGet, "/regacct/ctr1?restype=container", "", http.StatusOK, ""},
+		{http.MethodPut, "/regacct/ctr1/b.txt", "hello", http.StatusCreated, ""},
+		{http.MethodGet, "/regacct/ctr1/b.txt", "", http.StatusOK, "hello"},
+		{http.MethodGet, "/regacct/?comp=list", "", http.StatusOK, "<Name>ctr1</Name>"},
+		// azblob's List Containers sends no trailing slash.
+		{http.MethodGet, "/regacct?comp=list", "", http.StatusOK, "<Name>ctr1</Name>"},
+		{http.MethodGet, "/regacct/ctr1?restype=container&comp=list", "", http.StatusOK, "<Name>b.txt</Name>"},
+		// The default namespace does not see the account's container.
+		{http.MethodGet, "/ctr1?restype=container", "", http.StatusNotFound, ""},
+	}
+
+	for _, s := range steps {
+		status, body := e.raw(s.method, s.path, s.body)
+		require.Equal(t, s.want, status, "%s %s: %s", s.method, s.path, body)
+
+		if s.wantBody != "" {
+			assert.Contains(t, body, s.wantBody, "%s %s", s.method, s.path)
+		}
+	}
+
+	cc := e.containers("sub-1")
+
+	_, err := cc.Get(ctx, "pr1", "regacct", "ctr1", nil)
+	require.NoError(t, err, "the path-style container is the account's ARM container")
+
+	_, err = cc.Create(ctx, "pr1", "regacct", "armmade", armstorage.BlobContainer{}, nil)
+	require.NoError(t, err)
+
+	status, body := e.raw(http.MethodGet, "/regacct/?comp=list", "")
+	require.Equal(t, http.StatusOK, status)
+	assert.Contains(t, body, "<Name>armmade</Name>", "an ARM container is reachable path style")
+
+	status, body = e.raw(http.MethodGet, "/?comp=list", "")
+	require.Equal(t, http.StatusOK, status)
+	assert.NotContains(t, body, "<Name>ctr1</Name>")
+}
+
+// TestPathStylePeelRule pins the conditions under which the leading segment
+// is not an account: a segment that names no account, a path that ends at the
+// segment, and an account shadowed by a default container of the same name.
+func TestPathStylePeelRule(t *testing.T) {
+	ctx := context.Background()
+	e := newNSEnv(t)
+	e.mustCreateAccount("sub-1", "pr1", "peelacct")
+
+	status, body := e.raw(http.MethodPut, "/zz9/c?restype=container", "")
+	require.Equal(t, http.StatusNotFound, status, "zz9 is no account: a blob op on missing container zz9: %s", body)
+
+	status, _ = e.raw(http.MethodPut, "/peelacct?restype=container", "")
+	require.Equal(t, http.StatusCreated, status, "no trailing segment: a default-namespace container create")
+
+	status, _ = e.raw(http.MethodPut, "/peelacct/c/b.txt", "legacy")
+	require.Equal(t, http.StatusCreated, status)
+
+	_, err := e.cloud.BlobStorage.GetObject(ctx, "peelacct", "c/b.txt")
+	require.NoError(t, err, "a same-named default container wins over the account")
+}
+
+// TestAccountTailWithStorageAccountsResourceGroup: a resource group literally
+// named "storageaccounts" must not be read as the resource type.
+func TestAccountTailWithStorageAccountsResourceGroup(t *testing.T) {
+	ctx := context.Background()
+	e := newNSEnv(t)
+	e.mustCreateAccount("sub-1", "storageaccounts", "rgnacct")
+
+	status, body := e.raw(http.MethodGet, "/subscriptions/sub-1/resourceGroups/storageaccounts/providers/"+
+		"Microsoft.Storage/storageAccounts/rgnacct/blobServices/default?api-version=2023-05-01", "")
+	require.Equal(t, http.StatusOK, status, body)
+
+	_, err := e.containers("sub-1").Create(ctx, "storageaccounts", "rgnacct", "data", armstorage.BlobContainer{}, nil)
+	require.NoError(t, err)
+}
+
+// TestDefaultAccountNameReserved: the default account owns the default
+// namespace, so an ARM account cannot take its name.
+func TestDefaultAccountNameReserved(t *testing.T) {
+	e := newNSEnv(t)
+
+	_, err := e.createAccount("sub-1", "x1", storagedriver.AzureDefaultStorageAccount)
+	code, status := armErrorCode(t, err)
+	assert.Equal(t, http.StatusConflict, status)
+	assert.Equal(t, "StorageAccountAlreadyTaken", code)
 }

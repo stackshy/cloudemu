@@ -223,27 +223,28 @@ func TestPurgeResourceGroupMatchesGroupExactly(t *testing.T) {
 	}
 }
 
-// TestDeleteDefaultAccountTargetsBareContainers documents the default-account
-// edge: an ARM account named after the default namespace owns the bare keys.
-func TestDeleteDefaultAccountTargetsBareContainers(t *testing.T) {
+// TestDefaultAccountNameIsReserved: the default account owns the default
+// namespace, so no caller can register an account of that name, and a purge
+// of any resource group leaves the bare containers alone.
+func TestDefaultAccountNameIsReserved(t *testing.T) {
 	ctx := context.Background()
 	m := newTestMock()
 
-	mustCreateAccount(t, m, AccountName, "sub", "rg")
+	_, err := m.CreateStorageAccount(ctx, driver.StorageAccountRef{
+		Name: AccountName, Subscription: "sub", ResourceGroup: "rg",
+	})
+	if !cerrors.IsAlreadyExists(err) {
+		t.Fatalf("CreateStorageAccount(%s) = %v, want AlreadyExists", AccountName, err)
+	}
+
 	mustPutContainerBlob(t, m, "bare", "x")
-	mustCreateAccount(t, m, "other", "sub", "rg")
-	mustPutContainerBlob(t, m, "other/ctr", "y")
 
-	if err := m.DeleteStorageAccount(ctx, AccountName); err != nil {
-		t.Fatalf("DeleteStorageAccount: %v", err)
+	if err := m.PurgeResourceGroup(ctx, "sub", "rg"); err != nil {
+		t.Fatalf("PurgeResourceGroup: %v", err)
 	}
 
-	if hasContainer(m, "bare") {
-		t.Fatal("bare container survived the default account's delete")
-	}
-
-	if !hasContainer(m, "other/ctr") {
-		t.Fatal("another account's container was deleted")
+	if !hasContainer(m, "bare") {
+		t.Fatal("a purge deleted a default-namespace container")
 	}
 }
 
@@ -316,6 +317,14 @@ func TestRestoreMigratesLegacyAccounts(t *testing.T) {
 
 	if !bytes.Equal(first, second) {
 		t.Fatalf("snapshot round-trip not byte-stable:\n%s\n%s", first, second)
+	}
+
+	if err := again.DeleteStorageAccount(ctx, "legacyacct"); err != nil {
+		t.Fatalf("DeleteStorageAccount: %v", err)
+	}
+
+	if hasContainer(again, "legacyacct") {
+		t.Fatal("a migrated account's delete left its legacy container behind")
 	}
 }
 

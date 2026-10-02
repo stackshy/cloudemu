@@ -257,14 +257,21 @@ func (h *Handler) serveBlobServiceRoute(w http.ResponseWriter, r *http.Request, 
 	}
 }
 
-// accountTail returns the path segments after …/storageAccounts/{name}, read
-// from the raw URL because azurearm.ParsePath keeps only the first three.
+// accountTail returns the path segments after
+// providers/Microsoft.Storage/storageAccounts/{name}, read from the raw URL
+// because azurearm.ParsePath keeps only the first three. The match is anchored
+// on the provider segment so a resource group literally named
+// "storageAccounts" is not mistaken for the resource type.
 func accountTail(urlPath string) []string {
 	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
 
-	for i := 0; i+1 < len(parts); i++ {
-		if strings.EqualFold(parts[i], resourceType) {
-			return parts[i+2:]
+	const anchor = 3 // providers, Microsoft.Storage, storageAccounts
+
+	for i := 0; i+anchor < len(parts); i++ {
+		if strings.EqualFold(parts[i], "providers") &&
+			strings.EqualFold(parts[i+1], "Microsoft.Storage") &&
+			strings.EqualFold(parts[i+2], resourceType) {
+			return parts[i+anchor+1:]
 		}
 	}
 
@@ -816,7 +823,10 @@ func writeCreateError(w http.ResponseWriter, err error, name, subscription strin
 		return
 	}
 
-	if exists.Subscription != "" && subscription != "" && !strings.EqualFold(exists.Subscription, subscription) {
+	// An owner with no resource group is the reserved default account, which
+	// no caller owns.
+	if exists.ResourceGroup == "" ||
+		(exists.Subscription != "" && subscription != "" && !strings.EqualFold(exists.Subscription, subscription)) {
 		azurearm.WriteError(w, http.StatusConflict, "StorageAccountAlreadyTaken",
 			"The storage account named "+name+" is already taken.")
 
@@ -829,6 +839,10 @@ func writeCreateError(w http.ResponseWriter, err error, name, subscription strin
 
 // accountNameTaken reports whether a storage account of that name exists.
 func (h *Handler) accountNameTaken(ctx context.Context, name string) bool {
+	if name == storagedriver.AzureDefaultStorageAccount {
+		return true
+	}
+
 	if h.accounts == nil {
 		return false
 	}

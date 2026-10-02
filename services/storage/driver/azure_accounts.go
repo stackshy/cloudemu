@@ -15,12 +15,15 @@ const AzureDefaultStorageAccount = "cloudemu"
 // StorageAccountRef is an Azure storage account as its own resource, separate
 // from the blob containers it holds. Subscription is empty for accounts
 // migrated from an older snapshot, which recorded none; an empty subscription
-// matches any caller.
+// matches any caller. Legacy marks a migrated account whose data still lives in
+// the default-namespace container of the same name (the older model), so
+// deleting the account deletes that container too.
 type StorageAccountRef struct {
 	Name          string
 	Subscription  string
 	ResourceGroup string
 	CreatedAt     string
+	Legacy        bool
 }
 
 // AccountExistsError reports that a storage account name is already owned.

@@ -12,8 +12,9 @@ import (
 // account level (container == "") and GET
 // /{container}?restype=container&comp=blobs&where=… scoped to one container. It
 // parses the tag-query in ?where, matches live blobs by their index tags, and
-// returns each match with its container, name, and tag set.
-func (h *Handler) findBlobsByTags(w http.ResponseWriter, r *http.Request, container string) {
+// returns each match with its container, name, and tag set. Only the blobs of
+// account ("" for the default account) are searched.
+func (h *Handler) findBlobsByTags(w http.ResponseWriter, r *http.Request, account, container string) {
 	page, ok := h.bucket.(storagedriver.AzureFindBlobsByTags)
 	if !ok {
 		writeError(w, http.StatusNotImplemented, "NotImplemented", "find blobs by tags is not supported")
@@ -32,8 +33,8 @@ func (h *Handler) findBlobsByTags(w http.ResponseWriter, r *http.Request, contai
 	// A container-scoped request wins; an account-scoped one may still be narrowed
 	// by an @container term in the query.
 	scope := container
-	if scope == "" {
-		scope = whereContainer
+	if scope == "" && whereContainer != "" {
+		scope = storagedriver.AzureContainerKey(account, whereContainer)
 	}
 
 	blobs, err := page.FindBlobsByTags(r.Context(), scope, match)
@@ -44,8 +45,13 @@ func (h *Handler) findBlobsByTags(w http.ResponseWriter, r *http.Request, contai
 
 	out := filterBlobsXML{ServiceEndpoint: serviceEndpoint(r), Where: where}
 	for _, b := range blobs {
+		owner, name := storagedriver.SplitAzureContainerKey(b.Container)
+		if owner != account {
+			continue
+		}
+
 		out.Blobs.Blobs = append(out.Blobs.Blobs, filterBlobXML{
-			Name: b.Name, ContainerName: b.Container, Tags: tagSetXML(b.Tags),
+			Name: b.Name, ContainerName: name, Tags: tagSetXML(b.Tags),
 		})
 	}
 
