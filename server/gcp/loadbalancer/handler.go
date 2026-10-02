@@ -189,9 +189,21 @@ func (h *Handler) routeForwardingRules(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	if r.Method == http.MethodPost && rp.Action == actionSetLabels {
+		h.setForwardingRuleLabels(w, r, rp)
+		return
+	}
+
+	if rp.Action != "" {
+		gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getForwardingRule(w, r, rp)
+	case http.MethodPatch:
+		h.patchForwardingRule(w, r, rp)
 	case http.MethodDelete:
 		h.deleteForwardingRule(w, r, rp)
 	default:

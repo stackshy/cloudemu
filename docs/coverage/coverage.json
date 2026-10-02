@@ -9960,6 +9960,15 @@
         ]
       },
       {
+        "name": "GCPForwardingRulePatcher",
+        "doc": "GCPForwardingRulePatcher is an OPTIONAL, type-asserted capability implemented",
+        "operations": [
+          {
+            "name": "PatchGCPForwardingRule"
+          }
+        ]
+      },
+      {
         "name": "GCPServiceAttachmentStore",
         "doc": "GCPServiceAttachmentStore is an OPTIONAL, type-asserted capability",
         "operations": [

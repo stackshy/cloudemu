@@ -46,6 +46,11 @@ type backendServiceRequest struct {
 	ConnectionDraining  *connectionDraining `json:"connectionDraining,omitempty"`
 	CdnPolicy           *cdnPolicy          `json:"cdnPolicy,omitempty"`
 	EnableCDN           *bool               `json:"enableCDN,omitempty"`
+	// Fingerprint is the optimistic-concurrency token on patch/update. Insert
+	// ignores it, since Terraform may send one in the create body.
+	Fingerprint string `json:"fingerprint,omitempty"`
+	// Network is immutable (ForceNew in Terraform), so only insert stores it.
+	Network string `json:"network,omitempty"`
 }
 
 type backendServiceResponse struct {
@@ -67,6 +72,8 @@ type backendServiceResponse struct {
 	Fingerprint         string              `json:"fingerprint,omitempty"`
 	CreationTimestamp   string              `json:"creationTimestamp,omitempty"`
 	SelfLink            string              `json:"selfLink"`
+	Region              string              `json:"region,omitempty"`
+	Network             string              `json:"network,omitempty"`
 }
 
 // resourceGroupReference is the getHealth request body: the instance-group (or
@@ -111,6 +118,13 @@ type forwardingRuleRequest struct {
 	LoadBalancingScheme string `json:"loadBalancingScheme,omitempty"`
 	Network             string `json:"network,omitempty"`
 	Subnetwork          string `json:"subnetwork,omitempty"`
+
+	AllPorts          *bool             `json:"allPorts,omitempty"`
+	Ports             []string          `json:"ports,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	IPVersion         string            `json:"ipVersion,omitempty"`
+	NetworkTier       string            `json:"networkTier,omitempty"`
+	AllowGlobalAccess *bool             `json:"allowGlobalAccess,omitempty"`
 }
 
 type forwardingRuleResponse struct {
@@ -130,6 +144,16 @@ type forwardingRuleResponse struct {
 	PscConnectionID     string `json:"pscConnectionId,omitempty"`
 	CreationTimestamp   string `json:"creationTimestamp,omitempty"`
 	SelfLink            string `json:"selfLink"`
+
+	Region            string            `json:"region,omitempty"`
+	AllPorts          *bool             `json:"allPorts,omitempty"`
+	Ports             []string          `json:"ports,omitempty"`
+	Labels            map[string]string `json:"labels,omitempty"`
+	LabelFingerprint  string            `json:"labelFingerprint"`
+	Fingerprint       string            `json:"fingerprint,omitempty"`
+	IPVersion         string            `json:"ipVersion,omitempty"`
+	NetworkTier       string            `json:"networkTier,omitempty"`
+	AllowGlobalAccess *bool             `json:"allowGlobalAccess,omitempty"`
 }
 
 type forwardingRuleListResponse struct {

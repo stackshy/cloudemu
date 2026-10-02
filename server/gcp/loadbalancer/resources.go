@@ -342,9 +342,10 @@ func gcpResourceJSON(res *lbdriver.GCPResource, rp gcprest.ResourcePath, host st
 	return out
 }
 
-// healthCheckInUse returns the name of a same-scope backend service whose
-// healthChecks[] references the health check being deleted, or "" when none
-// does.
+// healthCheckInUse returns the name of a backend service whose healthChecks[]
+// references the health check being deleted, or "" when none does. Refs are
+// matched on the scope they name, so a regional backend service using a global
+// check pins it, and a same-named check in another scope does not.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) healthCheckInUse(ctx context.Context, rp gcprest.ResourcePath) string {
@@ -356,17 +357,13 @@ func (h *Handler) healthCheckInUse(ctx context.Context, rp gcprest.ResourcePath)
 	scope := scopeKeyOf(rp)
 
 	for i := range tgs {
-		if tgs[i].Tags[bsScopeTag] != scope {
-			continue
-		}
-
 		refs := tgs[i].Tags[bsHealthChecksTag]
 		if refs == "" {
 			continue
 		}
 
 		for _, ref := range strings.Split(refs, ",") {
-			if lastPathSegment(ref) == rp.ResourceName {
+			if lastPathSegment(ref) == rp.ResourceName && hcRefScope(ref, tgs[i].Tags[bsScopeTag]) == scope {
 				return displayName(tgs[i].Tags, bsNameTag, tgs[i].Name)
 			}
 		}
