@@ -22,6 +22,7 @@ type migBackend interface {
 	AllInstanceGroupManagersGCP() []gcecompute.InstanceGroupManager
 	DeleteInstanceGroupManagerGCP(zone, name string) error
 	ResizeInstanceGroupManagerGCP(zone, name string, size int) error
+	PatchInstanceGroupManagerGCP(scope, name string, patched gcecompute.InstanceGroupManager) error
 }
 
 // migRequest mirrors the subset of compute#instanceGroupManager we accept on
@@ -140,9 +141,87 @@ func (h *Handler) serveInstanceGroupManagersRoute(w http.ResponseWriter, r *http
 		h.getMIG(w, r, rp, backend)
 	case http.MethodDelete:
 		h.deleteMIG(w, r, rp, backend)
+	case http.MethodPatch:
+		h.patchMIG(w, r, rp, backend)
 	default:
 		writeNotImplemented(w, r.Method+" "+r.URL.Path)
 	}
+}
+
+// patchMIG handles PATCH .../instanceGroupManagers/{name}, the Terraform update
+// path. The body is a JSON merge patch over the stored group: a field present
+// replaces the stored one, null clears it. targetSize keeps the current value
+// (which a resize may have changed) unless the patch sets it.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) patchMIG(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, backend migBackend) {
+	var patch map[string]json.RawMessage
+	if !gcprest.DecodeJSON(w, r, &patch) {
+		return
+	}
+
+	igm, ok := backend.GetInstanceGroupManagerGCP(rp.ScopeName, rp.ResourceName)
+	if !ok {
+		gcprest.WriteError(w, http.StatusNotFound, "notFound",
+			"The resource 'instanceGroupManagers/"+rp.ResourceName+"' was not found")
+
+		return
+	}
+
+	spec, err := mergePatch(igm.Spec, patch)
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+
+	var req migRequest
+	if err := json.Unmarshal(spec, &req); err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
+		return
+	}
+
+	if _, set := patch["targetSize"]; set {
+		igm.TargetSize = int(req.TargetSize)
+	}
+
+	if req.BaseInstanceName != "" {
+		igm.BaseInstanceName = req.BaseInstanceName
+	}
+
+	if t := req.template(); t != "" {
+		igm.InstanceTemplate = lastSegment(t)
+	}
+
+	igm.Spec = spec
+
+	if err := backend.PatchInstanceGroupManagerGCP(rp.ScopeName, rp.ResourceName, igm); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	op := h.ops.RecordDone(hostFromRequest(r), rp.Project, rp.Scope, rp.ScopeName,
+		"instanceGroupManagers", rp.ResourceName, "patch")
+
+	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// mergePatch applies a top-level JSON merge patch to the stored spec: present
+// fields replace, null fields are removed.
+func mergePatch(spec json.RawMessage, patch map[string]json.RawMessage) (json.RawMessage, error) {
+	merged := map[string]json.RawMessage{}
+	if len(spec) > 0 {
+		_ = json.Unmarshal(spec, &merged)
+	}
+
+	for k, v := range patch {
+		if string(v) == "null" {
+			delete(merged, k)
+		} else {
+			merged[k] = v
+		}
+	}
+
+	return json.Marshal(merged)
 }
 
 // serveMIGAction routes the POST MIG verbs. resize is the real zonal-MIG method

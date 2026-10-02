@@ -138,6 +138,32 @@ func (m *Mock) DeleteInstanceGroupManagerGCP(zone, name string) error {
 	return nil
 }
 
+// PatchInstanceGroupManagerGCP applies an update (instanceGroupManagers.patch)
+// to the group's targetSize, base name, template and stored spec. Returns
+// NotFound when the group does not exist.
+//
+//nolint:gocritic // hugeParam: value struct is the natural record shape here.
+func (m *Mock) PatchInstanceGroupManagerGCP(scope, name string, patched InstanceGroupManager) error {
+	if patched.TargetSize < 0 {
+		return cerrors.New(cerrors.InvalidArgument, "targetSize must be >= 0")
+	}
+
+	updated := m.migs.Update(migKey(scope, name), func(igm InstanceGroupManager) InstanceGroupManager {
+		igm.TargetSize = patched.TargetSize
+		igm.BaseInstanceName = patched.BaseInstanceName
+		igm.InstanceTemplate = patched.InstanceTemplate
+		igm.Spec = append(json.RawMessage(nil), patched.Spec...)
+
+		return igm
+	})
+
+	if !updated {
+		return cerrors.Newf(cerrors.NotFound, "instance group manager %q not found in %q", name, scope)
+	}
+
+	return nil
+}
+
 // ResizeInstanceGroupManagerGCP sets a MIG's targetSize (instanceGroupManagers.
 // resize / setTargetSize). Returns NotFound when the group does not exist.
 func (m *Mock) ResizeInstanceGroupManagerGCP(zone, name string, size int) error {

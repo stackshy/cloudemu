@@ -203,3 +203,160 @@ func TestSDKInstanceTemplateAndRegionalMIG(t *testing.T) {
 		t.Fatal("template Get after delete: want 404")
 	}
 }
+
+// TestSDKPatchMIG proves instanceGroupManagers.patch (the Terraform update
+// path) updates targetSize and the version's template on zonal and regional
+// groups, and the template in-use check follows the new template.
+func TestSDKPatchMIG(t *testing.T) {
+	ts := newGCPTestServer(t)
+	ctx := context.Background()
+	opts := []option.ClientOption{option.WithEndpoint(ts.URL), option.WithoutAuthentication(), option.WithHTTPClient(ts.Client())}
+
+	tmpl, err := gcpcompute.NewInstanceTemplatesRESTClient(ctx, opts...)
+	if err != nil {
+		t.Fatalf("NewInstanceTemplatesRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = tmpl.Close() })
+
+	links := map[string]string{}
+
+	for _, name := range []string{"old", "new"} {
+		op, err := tmpl.Insert(ctx, &computepb.InsertInstanceTemplateRequest{
+			Project: testProject,
+			InstanceTemplateResource: &computepb.InstanceTemplate{
+				Name: ptrStr(name), Properties: &computepb.InstanceProperties{MachineType: ptrStr("e2-small")},
+			},
+		})
+		if err != nil {
+			t.Fatalf("template Insert: %v", err)
+		}
+
+		if err := op.Wait(ctx); err != nil {
+			t.Fatalf("Wait: %v", err)
+		}
+
+		got, err := tmpl.Get(ctx, &computepb.GetInstanceTemplateRequest{Project: testProject, InstanceTemplate: name})
+		if err != nil {
+			t.Fatalf("template Get: %v", err)
+		}
+
+		links[name] = got.GetSelfLink()
+	}
+
+	regional, err := gcpcompute.NewRegionInstanceGroupManagersRESTClient(ctx, opts...)
+	if err != nil {
+		t.Fatalf("NewRegionInstanceGroupManagersRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = regional.Close() })
+
+	zonal, err := gcpcompute.NewInstanceGroupManagersRESTClient(ctx, opts...)
+	if err != nil {
+		t.Fatalf("NewInstanceGroupManagersRESTClient: %v", err)
+	}
+
+	t.Cleanup(func() { _ = zonal.Close() })
+
+	mig := func(size int32, tmplLink string) *computepb.InstanceGroupManager {
+		return &computepb.InstanceGroupManager{
+			Name: ptrStr("m"), BaseInstanceName: ptrStr("web"), TargetSize: ptrInt32(size),
+			Versions: []*computepb.InstanceGroupManagerVersion{{Name: ptrStr("primary"), InstanceTemplate: ptrStr(tmplLink)}},
+		}
+	}
+
+	type ops struct {
+		insert func() error
+		patch  func(*computepb.InstanceGroupManager) error
+		get    func() (*computepb.InstanceGroupManager, error)
+	}
+
+	wait := func(op *gcpcompute.Operation, err error) error {
+		if err != nil {
+			return err
+		}
+
+		return op.Wait(ctx)
+	}
+
+	cases := map[string]ops{
+		"regional": {
+			insert: func() error {
+				op, err := regional.Insert(ctx, &computepb.InsertRegionInstanceGroupManagerRequest{
+					Project: testProject, Region: "us-central1", InstanceGroupManagerResource: mig(2, links["old"]),
+				})
+				return wait(op, err)
+			},
+			patch: func(body *computepb.InstanceGroupManager) error {
+				op, err := regional.Patch(ctx, &computepb.PatchRegionInstanceGroupManagerRequest{
+					Project: testProject, Region: "us-central1", InstanceGroupManager: "m", InstanceGroupManagerResource: body,
+				})
+				return wait(op, err)
+			},
+			get: func() (*computepb.InstanceGroupManager, error) {
+				return regional.Get(ctx, &computepb.GetRegionInstanceGroupManagerRequest{
+					Project: testProject, Region: "us-central1", InstanceGroupManager: "m",
+				})
+			},
+		},
+		"zonal": {
+			insert: func() error {
+				op, err := zonal.Insert(ctx, &computepb.InsertInstanceGroupManagerRequest{
+					Project: testProject, Zone: testZone, InstanceGroupManagerResource: mig(2, links["old"]),
+				})
+				return wait(op, err)
+			},
+			patch: func(body *computepb.InstanceGroupManager) error {
+				op, err := zonal.Patch(ctx, &computepb.PatchInstanceGroupManagerRequest{
+					Project: testProject, Zone: testZone, InstanceGroupManager: "m", InstanceGroupManagerResource: body,
+				})
+				return wait(op, err)
+			},
+			get: func() (*computepb.InstanceGroupManager, error) {
+				return zonal.Get(ctx, &computepb.GetInstanceGroupManagerRequest{
+					Project: testProject, Zone: testZone, InstanceGroupManager: "m",
+				})
+			},
+		},
+	}
+
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			if err := c.insert(); err != nil {
+				t.Fatalf("insert: %v", err)
+			}
+
+			if err := c.patch(&computepb.InstanceGroupManager{TargetSize: ptrInt32(3)}); err != nil {
+				t.Fatalf("patch targetSize: %v", err)
+			}
+
+			got, err := c.get()
+			if err != nil || got.GetTargetSize() != 3 || got.GetVersions()[0].GetInstanceTemplate() != links["old"] {
+				t.Fatalf("after size patch: err=%v size=%d versions=%v", err, got.GetTargetSize(), got.GetVersions())
+			}
+
+			body := mig(3, links["new"])
+			body.TargetSize = nil
+
+			if err := c.patch(body); err != nil {
+				t.Fatalf("patch template: %v", err)
+			}
+
+			got, err = c.get()
+			if err != nil || got.GetTargetSize() != 3 || got.GetVersions()[0].GetInstanceTemplate() != links["new"] ||
+				got.GetBaseInstanceName() != "web" {
+				t.Fatalf("after template patch: err=%v size=%d base=%q versions=%v",
+					err, got.GetTargetSize(), got.GetBaseInstanceName(), got.GetVersions())
+			}
+		})
+	}
+
+	// Both groups now run "new", so "old" is free and "new" is in use.
+	if _, err := tmpl.Delete(ctx, &computepb.DeleteInstanceTemplateRequest{Project: testProject, InstanceTemplate: "old"}); err != nil {
+		t.Fatalf("delete old template: %v", err)
+	}
+
+	if _, err := tmpl.Delete(ctx, &computepb.DeleteInstanceTemplateRequest{Project: testProject, InstanceTemplate: "new"}); err == nil {
+		t.Fatal("delete template in use after patch: want 400")
+	}
+}
