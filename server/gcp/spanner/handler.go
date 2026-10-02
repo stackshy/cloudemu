@@ -47,7 +47,9 @@ import (
 	"google.golang.org/api/googleapi"
 	sp "google.golang.org/api/spanner/v1"
 
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	spdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
 )
@@ -85,10 +87,16 @@ type Handler struct {
 	// shared turns on the rules for a server that also mounts Cloud SQL; see
 	// shared.go.
 	shared bool
+
+	iam gcpiam.Store
 }
 
 // New returns a Spanner admin handler backed by db.
-func New(db spdriver.Spanner) *Handler { return &Handler{db: db} }
+func New(db spdriver.Spanner) *Handler { return &Handler{db: db, iam: resourceiam.New()} }
+
+// SetIAMStore makes the handler keep instance and database policies in s, the
+// store shared with the other GCP handlers.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
 
 // trimParts splits the path below the /v1/projects/ prefix into its segments.
 func trimParts(urlPath string) []string {

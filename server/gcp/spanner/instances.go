@@ -7,6 +7,7 @@ import (
 
 	sp "google.golang.org/api/spanner/v1"
 
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	spdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
 )
@@ -86,6 +87,17 @@ func (h *Handler) listInstances(w http.ResponseWriter, r *http.Request, project 
 }
 
 func (h *Handler) serveInstanceItem(w http.ResponseWriter, r *http.Request, name string) {
+	if inst, verb := gcpiam.SplitVerb(name); verb != "" {
+		if _, err := h.db.GetInstance(r.Context(), inst); err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
+
+		gcpiam.Serve(w, r, verb, inst, h.iam)
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getInstance(w, r, name)
@@ -137,6 +149,9 @@ func (h *Handler) deleteInstance(w http.ResponseWriter, r *http.Request, name st
 		gcprest.WriteCErr(w, err)
 		return
 	}
+
+	// Drops the instance policy and every database policy below it.
+	h.iam.Delete(name)
 
 	gcprest.WriteJSON(w, http.StatusOK, struct{}{})
 }

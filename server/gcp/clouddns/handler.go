@@ -24,6 +24,8 @@ import (
 	"sync"
 	"sync/atomic"
 
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	dnsdriver "github.com/stackshy/cloudemu/v2/services/dns/driver"
 )
@@ -67,11 +69,22 @@ type Handler struct {
 	// guards the change-log slice: holding this lock across a call that
 	// (via recordChange) also takes mu would self-deadlock.
 	applyMu sync.Mutex
+
+	iam gcpiam.Store
 }
 
 // New returns a Cloud DNS handler backed by d.
 func New(d dnsdriver.DNS) *Handler {
-	return &Handler{dns: d, changes: make(map[string][]changeJSON)}
+	return &Handler{dns: d, changes: make(map[string][]changeJSON), iam: resourceiam.New()}
+}
+
+// SetIAMStore makes the handler keep managed zone policies in s, the store
+// shared with the other GCP handlers.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
+
+// zoneResource is the IAM resource name of the route's managed zone.
+func zoneResource(rt route) string {
+	return "projects/" + rt.project + "/managedZones/" + rt.zone
 }
 
 type route struct {
@@ -162,6 +175,18 @@ func (h *Handler) serveZoneCollection(w http.ResponseWriter, r *http.Request, rt
 
 // serveZone dispatches /managedZones/{z} resource requests.
 func (h *Handler) serveZone(w http.ResponseWriter, r *http.Request, rt route) {
+	if zone, verb := gcpiam.SplitVerb(rt.zone); verb != "" {
+		rt.zone = zone
+		if _, err := h.resolveZoneID(r.Context(), rt.project, rt.zone); err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
+
+		gcpiam.Serve(w, r, verb, zoneResource(rt), h.iam)
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getZone(w, r, rt)

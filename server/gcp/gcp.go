@@ -12,6 +12,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/config"
 	gkeprov "github.com/stackshy/cloudemu/v2/providers/gcp/gke"
 	gcpmon "github.com/stackshy/cloudemu/v2/providers/gcp/monitoring"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/server"
 	acmsrv "github.com/stackshy/cloudemu/v2/server/gcp/accesscontextmanager"
 	alloydbsrv "github.com/stackshy/cloudemu/v2/server/gcp/alloydb"
@@ -71,6 +72,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/gcp/vpc"
 	vpcaccesssrv "github.com/stackshy/cloudemu/v2/server/gcp/vpcaccess"
 	workflowssrv "github.com/stackshy/cloudemu/v2/server/gcp/workflows"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	acmdriver "github.com/stackshy/cloudemu/v2/services/accesscontextmanager/driver"
 	agdriver "github.com/stackshy/cloudemu/v2/services/apigatewaygcp/driver"
@@ -154,6 +156,9 @@ type Drivers struct {
 	// Matches disambiguates by content and instance ownership, and it registers
 	// ahead of Cloud SQL (see New).
 	Spanner spannerdriver.Spanner
+	// ResourceIAM keeps the resource policies the BigQuery, Spanner and Cloud
+	// DNS handlers serve. Nil gets a fresh in-memory store.
+	ResourceIAM gcpiam.Store
 	// Dataproc serves the dataproc.googleapis.com v1 cluster control plane against
 	// the dataproc driver. Its paths live under /v1/projects/{p}/regions/{r}/
 	// {clusters|operations}; the handler's Matches narrows on the regions keyword
@@ -395,6 +400,11 @@ func New(d Drivers) *server.Server {
 	// than one service serves (see sharedpath). Any other path is untouched.
 	srv.SetPreDispatch(sharedpath.Rewrite)
 
+	iamStore := d.ResourceIAM
+	if iamStore == nil {
+		iamStore = resourceiam.New()
+	}
+
 	// Managed Kafka shares the exact /v1/projects/{p}/locations/{l}/clusters[/…]
 	// grammar with GKE and AlloyDB (all greedy on that collection), so it
 	// registers AHEAD of both and its Matches claims only genuinely-Kafka traffic,
@@ -592,7 +602,9 @@ func New(d Drivers) *server.Server {
 	// /compute/v1/, and /dns/v1/, so registration order relative to every other
 	// handler is unconstrained.
 	if d.BigQuery != nil {
-		srv.Register(bigqueryserver.New(d.BigQuery))
+		bqH := bigqueryserver.New(d.BigQuery)
+		bqH.SetIAMStore(iamStore)
+		srv.Register(bqH)
 	}
 
 	// Spanner shares the /v1/projects/{p}/instances URL space with Cloud SQL, so
@@ -602,6 +614,7 @@ func New(d Drivers) *server.Server {
 	// through to Cloud SQL below.
 	if d.Spanner != nil {
 		spannerH := spannersrv.New(d.Spanner)
+		spannerH.SetIAMStore(iamStore)
 		if d.CloudSQL != nil {
 			spannerH.SetSharedPath()
 		}
@@ -981,7 +994,9 @@ func New(d Drivers) *server.Server {
 	// unconstrained relative to Firestore and the rest. Registered before the
 	// GCS fallback for consistency with the other handlers.
 	if d.CloudDNS != nil {
-		srv.Register(clouddns.New(d.CloudDNS))
+		dnsH := clouddns.New(d.CloudDNS)
+		dnsH.SetIAMStore(iamStore)
+		srv.Register(dnsH)
 	}
 
 	// Cloud Logging matches /v2/entries:{write,list} and /v2/projects/{p}/logs,

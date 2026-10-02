@@ -96,6 +96,7 @@ type snapState struct {
 	labels     map[string]string
 	createTime time.Time
 	expireTime time.Time
+	iam        *iamPolicy
 }
 
 // Handler serves Pub/Sub v1 REST requests. Topic existence + labels are backed
