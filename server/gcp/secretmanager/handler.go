@@ -37,6 +37,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
@@ -148,6 +149,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound", "unrecognized Secret Manager path")
 		return
 	}
+
+	r = r.WithContext(projectctx.WithProject(r.Context(), rt.project))
 
 	switch {
 	case rt.secret == "":

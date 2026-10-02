@@ -40,6 +40,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
@@ -173,6 +174,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalidArgument", "malformed IAM v1 path")
 		return
 	}
+
+	r = r.WithContext(projectctx.WithProject(r.Context(), rt.project))
 
 	switch rt.kind {
 	case serviceAccountsSeg:

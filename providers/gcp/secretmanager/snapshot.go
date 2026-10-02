@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
@@ -45,22 +46,32 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	return json.Marshal(snap)
 }
 
-// Restore rebuilds every secret under its original name with its metadata and
-// version history intact.
+// Restore rebuilds every secret under its original key with its metadata and
+// version history intact. A key with no project part comes from a snapshot
+// taken before project scoping and is adopted into the default project.
 func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	var snap secretsSnapshot
 	if err := json.Unmarshal(data, &snap); err != nil {
 		return fmt.Errorf("secretmanager: parse snapshot: %w", err)
 	}
 
-	for name, ss := range snap.Secrets {
-		m.secrets.Set(name, &secretData{
+	adopted := 0
+
+	for key, ss := range snap.Secrets {
+		if _, _, ok := projectctx.Split(key); !ok {
+			key = projectctx.Key(m.opts.ProjectID, key)
+			adopted++
+		}
+
+		m.secrets.Set(key, &secretData{
 			info:       ss.Info,
 			versions:   ss.Versions,
 			verCounter: ss.VerCounter,
 			iam:        ss.IAM,
 		})
 	}
+
+	projectctx.WarnAdopted("secretmanager", adopted, m.opts.ProjectID)
 
 	return nil
 }

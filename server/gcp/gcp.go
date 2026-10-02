@@ -559,7 +559,7 @@ func New(d Drivers) *server.Server {
 	var pubsubHandler *pubsub.Handler
 
 	if d.PubSub != nil {
-		pubsubHandler = pubsub.New(d.PubSub)
+		pubsubHandler = pubsub.New(d.PubSub, d.ProjectID)
 		// PubSub -> Cloud Functions: a publish invokes every function whose
 		// eventTrigger targets the topic (gen1 resource / gen2 pubsubTopic),
 		// mirroring the AWS S3/DynamoDB -> Lambda event-delivery wiring. Push

@@ -237,7 +237,7 @@ func TestGen2FunctionDoesNotFireAfterDelete(t *testing.T) {
 func TestGen2PubsubTriggerRecursionBounded(t *testing.T) {
 	cloud := cloudemu.NewGCP()
 
-	psHandler := pubsub.New(cloud.PubSub)
+	psHandler := pubsub.New(cloud.PubSub, "")
 	cfHandler := cloudfunctions.New(cloud.CloudFunctions)
 	psHandler.SetFunctionInvoker(cfHandler)
 

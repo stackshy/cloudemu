@@ -36,7 +36,7 @@ func (h *Handler) getIamPolicy(w http.ResponseWriter, r *http.Request, resType, 
 	}
 
 	h.mu.RLock()
-	pol := h.loadPolicy(resType, name)
+	pol := h.loadPolicy(resType, h.key(r, name))
 	h.mu.RUnlock()
 
 	if pol == nil {
@@ -70,7 +70,8 @@ func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, resType, 
 	// CompareAndSetBucketIAMPolicy for bucket IAM (#1014).
 	h.mu.Lock()
 
-	currentEtag := policyEtag(h.loadPolicy(resType, name))
+	key := h.key(r, name)
+	currentEtag := policyEtag(h.loadPolicy(resType, key))
 	if req.Policy.Etag != "" && req.Policy.Etag != currentEtag {
 		h.mu.Unlock()
 		writeError(w, http.StatusConflict, reasonAborted,
@@ -81,7 +82,7 @@ func (h *Handler) setIamPolicy(w http.ResponseWriter, r *http.Request, resType, 
 	}
 
 	pol.Etag = nextIAMEtag(currentEtag)
-	h.storePolicy(resType, name, &pol)
+	h.storePolicy(resType, key, &pol)
 
 	h.mu.Unlock()
 
@@ -106,13 +107,13 @@ func (h *Handler) resourceExists(r *http.Request, resType, name string) bool {
 		return err == nil
 	case resSubscriptions:
 		h.mu.RLock()
-		_, ok := h.subs[name]
+		_, ok := h.subs[h.key(r, name)]
 		h.mu.RUnlock()
 
 		return ok
 	case resSnapshots:
 		h.mu.RLock()
-		_, ok := h.snapshots[name]
+		_, ok := h.snapshots[h.key(r, name)]
 		h.mu.RUnlock()
 
 		return ok
@@ -121,7 +122,7 @@ func (h *Handler) resourceExists(r *http.Request, resType, name string) bool {
 	}
 }
 
-// loadPolicy returns the stored policy for a resource, or nil. The caller holds h.mu.
+// loadPolicy returns the stored policy for the resource with store key name, or nil. The caller holds h.mu.
 func (h *Handler) loadPolicy(resType, name string) *iamPolicy {
 	switch resType {
 	case resTopics:
@@ -137,7 +138,7 @@ func (h *Handler) loadPolicy(resType, name string) *iamPolicy {
 	return nil
 }
 
-// storePolicy persists a resource's policy. The caller holds h.mu.
+// storePolicy persists the policy of the resource with store key name. The caller holds h.mu.
 func (h *Handler) storePolicy(resType, name string, pol *iamPolicy) {
 	switch resType {
 	case resTopics:

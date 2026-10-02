@@ -3,10 +3,12 @@ package pubsub
 import (
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	mqdriver "github.com/stackshy/cloudemu/v2/services/messagequeue/driver"
 )
 
@@ -74,7 +76,7 @@ type lease struct {
 // verbatim) plus independent delivery cursor over its topic's message log.
 type subState struct {
 	cfg        subscription
-	topic      string // topic short-name whose log backs this subscription
+	topic      string // projectctx key of the topic whose log backs this subscription
 	createTime time.Time
 
 	acked            map[int]bool      // message indices already acknowledged
@@ -89,7 +91,7 @@ type subState struct {
 
 // snapState captures a subscription's ack cursor for later seek/replay.
 type snapState struct {
-	topic      string
+	topic      string // projectctx key of the snapshotted topic
 	acked      map[int]bool
 	labels     map[string]string
 	createTime time.Time
@@ -102,6 +104,10 @@ type snapState struct {
 // semantics do not map onto the shared SQS-style driver.
 type Handler struct {
 	mq mqdriver.MessageQueue
+
+	// defaultProject owns requests and cross-service publishes that name no
+	// project. Every map below is keyed by projectctx.Key(project, name).
+	defaultProject string
 
 	mu        sync.RWMutex
 	topics    map[string]*topicState
@@ -118,15 +124,51 @@ type Handler struct {
 	ackCounter atomic.Uint64
 }
 
-// New returns a Pub/Sub handler backed by mq.
-func New(mq mqdriver.MessageQueue) *Handler {
+// New returns a Pub/Sub handler backed by mq. defaultProject owns calls that
+// name no project.
+func New(mq mqdriver.MessageQueue, defaultProject string) *Handler {
 	return &Handler{
-		mq:            mq,
-		topics:        make(map[string]*topicState),
-		subs:          make(map[string]*subState),
-		snapshots:     make(map[string]*snapState),
-		pushDeliverer: newHTTPPushDeliverer(),
+		mq:             mq,
+		defaultProject: defaultProject,
+		topics:         make(map[string]*topicState),
+		subs:           make(map[string]*subState),
+		snapshots:      make(map[string]*snapState),
+		pushDeliverer:  newHTTPPushDeliverer(),
 	}
+}
+
+// keyFor is the store key of name in project, or in the default project when
+// project is empty.
+func (h *Handler) keyFor(project, name string) string {
+	if project == "" {
+		project = h.defaultProject
+	}
+
+	return projectctx.Key(project, name)
+}
+
+// key is the store key of name in the project the request addressed.
+func (h *Handler) key(r *http.Request, name string) string {
+	return h.keyFor(projectctx.ProjectOr(r.Context(), h.defaultProject), name)
+}
+
+// refKeyIn is the store key of a resource reference. A full name such as
+// "projects/{p}/topics/{t}" resolves in its own project, which is how a
+// subscription reaches a topic in another project; a short name resolves in
+// project.
+func (h *Handler) refKeyIn(project, ref string) string {
+	if p := projectctx.FromPath(ref); p != "" {
+		project = p
+	}
+
+	return h.keyFor(project, shortName(ref))
+}
+
+// inProject reports whether a store key belongs to project.
+func inProject(key, project string) bool {
+	p, _, _ := projectctx.Split(key)
+
+	return p == project
 }
 
 // topicLog returns the message log for a topic, creating it on first use. The
@@ -154,18 +196,18 @@ func (h *Handler) appendMessageLocked(topicName string, msg *storedMessage) stri
 // newSub registers a subscription that starts fresh: all messages already on
 // the topic are treated as consumed, so it only receives future publishes
 // (matching real Pub/Sub, where a new subscription has no backlog).
-func (h *Handler) newSub(name, topicShort string, cfg *subscription, filter filterExpr) {
+func (h *Handler) newSub(key, topicKey string, cfg *subscription, filter filterExpr) {
 	acked := make(map[int]bool)
 
-	if ts, ok := h.topics[topicShort]; ok {
+	if ts, ok := h.topics[topicKey]; ok {
 		for i := range ts.messages {
 			acked[i] = true
 		}
 	}
 
-	h.subs[name] = &subState{
+	h.subs[key] = &subState{
 		cfg:              *cfg,
-		topic:            topicShort,
+		topic:            topicKey,
 		createTime:       time.Now().UTC(),
 		acked:            acked,
 		outstanding:      make(map[string]*lease),
@@ -319,7 +361,7 @@ func effectiveAckDeadline(sub *subState) int {
 // when the message was dead-lettered (and must not be delivered on the source).
 // The caller holds h.mu.
 func (h *Handler) routeToDeadLetter(sub *subState, idx, attempts int) bool {
-	dlqTopic, maxAttempts, ok := parseDeadLetter(sub.cfg.DeadLetterPolicy)
+	dlqRef, maxAttempts, ok := parseDeadLetter(sub.cfg.DeadLetterPolicy)
 	if !ok || attempts <= maxAttempts {
 		return false
 	}
@@ -330,7 +372,8 @@ func (h *Handler) routeToDeadLetter(sub *subState, idx, attempts int) bool {
 	}
 
 	msg := src.messages[idx]
-	h.appendMessageLocked(dlqTopic, &storedMessage{
+	subProject, _, _ := projectctx.Split(sub.topic)
+	h.appendMessageLocked(h.refKeyIn(subProject, dlqRef), &storedMessage{
 		body:        msg.body,
 		attributes:  msg.attributes,
 		orderingKey: msg.orderingKey,
@@ -340,9 +383,9 @@ func (h *Handler) routeToDeadLetter(sub *subState, idx, attempts int) bool {
 	return true
 }
 
-// parseDeadLetter extracts the dead-letter topic short-name and effective
+// parseDeadLetter extracts the dead-letter topic reference and effective
 // max-delivery-attempts from a subscription's deadLetterPolicy raw JSON.
-func parseDeadLetter(raw json.RawMessage) (topicShort string, maxAttempts int, ok bool) {
+func parseDeadLetter(raw json.RawMessage) (topicRef string, maxAttempts int, ok bool) {
 	if len(raw) == 0 {
 		return "", 0, false
 	}
@@ -357,7 +400,7 @@ func parseDeadLetter(raw json.RawMessage) (topicShort string, maxAttempts int, o
 		maxAttempts = defaultMaxDeliveryAttempts
 	}
 
-	return shortName(p.DeadLetterTopic), maxAttempts, true
+	return p.DeadLetterTopic, maxAttempts, true
 }
 
 // sweepExpired drops leases whose deadline has passed, making those messages
