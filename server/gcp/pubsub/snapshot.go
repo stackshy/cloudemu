@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 )
 
 const snapshotTTL = 7 * 24 * time.Hour
@@ -19,7 +20,7 @@ func (h *Handler) serveSnapshot(w http.ResponseWriter, r *http.Request, project,
 	case http.MethodGet:
 		h.getSnapshot(w, project, name)
 	case http.MethodDelete:
-		h.deleteSnapshot(w, name)
+		h.deleteSnapshot(w, project, name)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, reasonMethodNotAllowed, "method not allowed")
 	}
@@ -32,10 +33,11 @@ func (h *Handler) createSnapshot(w http.ResponseWriter, r *http.Request, project
 	}
 
 	subShort := shortName(body.Subscription)
+	key := h.keyFor(project, name)
 
 	h.mu.Lock()
 
-	sub, ok := h.subs[subShort]
+	sub, ok := h.subs[h.refKeyIn(project, body.Subscription)]
 	if !ok {
 		h.mu.Unlock()
 		writeError(w, http.StatusNotFound, reasonNotFound, "subscription "+subShort+" not found")
@@ -43,7 +45,7 @@ func (h *Handler) createSnapshot(w http.ResponseWriter, r *http.Request, project
 		return
 	}
 
-	if _, exists := h.snapshots[name]; exists {
+	if _, exists := h.snapshots[key]; exists {
 		h.mu.Unlock()
 		writeError(w, http.StatusConflict, reasonAlreadyExists, "snapshot "+name+" already exists")
 
@@ -57,7 +59,7 @@ func (h *Handler) createSnapshot(w http.ResponseWriter, r *http.Request, project
 		createTime: time.Now().UTC(),
 		expireTime: time.Now().UTC().Add(snapshotTTL),
 	}
-	h.snapshots[name] = snap
+	h.snapshots[key] = snap
 	h.mu.Unlock()
 
 	writeJSON(w, http.StatusOK, snapshotJSON(project, name, snap))
@@ -65,7 +67,7 @@ func (h *Handler) createSnapshot(w http.ResponseWriter, r *http.Request, project
 
 func (h *Handler) getSnapshot(w http.ResponseWriter, project, name string) {
 	h.mu.RLock()
-	snap, ok := h.snapshots[name]
+	snap, ok := h.snapshots[h.keyFor(project, name)]
 	h.mu.RUnlock()
 
 	if !ok {
@@ -76,10 +78,12 @@ func (h *Handler) getSnapshot(w http.ResponseWriter, project, name string) {
 	writeJSON(w, http.StatusOK, snapshotJSON(project, name, snap))
 }
 
-func (h *Handler) deleteSnapshot(w http.ResponseWriter, name string) {
+func (h *Handler) deleteSnapshot(w http.ResponseWriter, project, name string) {
+	key := h.keyFor(project, name)
+
 	h.mu.Lock()
-	_, ok := h.snapshots[name]
-	delete(h.snapshots, name)
+	_, ok := h.snapshots[key]
+	delete(h.snapshots, key)
 	h.mu.Unlock()
 
 	if !ok {
@@ -94,8 +98,10 @@ func (h *Handler) listSnapshots(w http.ResponseWriter, r *http.Request, project 
 	h.mu.RLock()
 	items := make([]snapshot, 0, len(h.snapshots))
 
-	for snapName, snap := range h.snapshots {
-		items = append(items, snapshotJSON(project, snapName, snap))
+	for key, snap := range h.snapshots {
+		if p, snapName, _ := projectctx.Split(key); p == project {
+			items = append(items, snapshotJSON(project, snapName, snap))
+		}
 	}
 	h.mu.RUnlock()
 
@@ -113,9 +119,12 @@ func (h *Handler) listTopicSnapshots(w http.ResponseWriter, project, topicShort 
 	h.mu.RLock()
 	names := make([]string, 0)
 
-	for snapName, snap := range h.snapshots {
-		if snap.topic == topicShort {
-			names = append(names, snapshotName(project, snapName))
+	topicKey := h.keyFor(project, topicShort)
+
+	for key, snap := range h.snapshots {
+		if snap.topic == topicKey {
+			snapProject, snapName, _ := projectctx.Split(key)
+			names = append(names, snapshotName(snapProject, snapName))
 		}
 	}
 	h.mu.RUnlock()
@@ -136,7 +145,7 @@ func (h *Handler) seek(w http.ResponseWriter, r *http.Request, name string) {
 		return
 	}
 
-	status, reason, msg := h.applySeek(name, req)
+	status, reason, msg := h.applySeek(r, name, req)
 	if status != http.StatusOK {
 		writeError(w, status, reason, msg)
 		return
@@ -146,18 +155,18 @@ func (h *Handler) seek(w http.ResponseWriter, r *http.Request, name string) {
 }
 
 // applySeek mutates the subscription's ack cursor and reports the HTTP outcome.
-func (h *Handler) applySeek(name string, req seekRequest) (status int, reason, msg string) {
+func (h *Handler) applySeek(r *http.Request, name string, req seekRequest) (status int, reason, msg string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	sub, ok := h.subs[name]
+	sub, ok := h.subs[h.key(r, name)]
 	if !ok {
 		return http.StatusNotFound, reasonNotFound, "subscription " + name + " not found"
 	}
 
 	switch {
 	case req.Snapshot != "":
-		snap, sok := h.snapshots[shortName(req.Snapshot)]
+		snap, sok := h.snapshots[h.refKeyIn(projectctx.ProjectOr(r.Context(), h.defaultProject), req.Snapshot)]
 		if !sok {
 			return http.StatusNotFound, reasonNotFound, "snapshot not found"
 		}
@@ -196,9 +205,11 @@ func (h *Handler) ackedBefore(topicShort string, t time.Time) map[int]bool {
 }
 
 func snapshotJSON(project, name string, snap *snapState) snapshot {
+	topicProject, topicShort, _ := projectctx.Split(snap.topic)
+
 	return snapshot{
 		Name:       snapshotName(project, name),
-		Topic:      topicName(project, snap.topic),
+		Topic:      topicName(topicProject, topicShort),
 		ExpireTime: snap.expireTime.Format(time.RFC3339Nano),
 		Labels:     snap.labels,
 	}

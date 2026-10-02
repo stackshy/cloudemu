@@ -12,6 +12,7 @@ import (
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/idgen"
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
@@ -177,13 +178,22 @@ func (m *Mock) ListUsers(_ context.Context) ([]driver.UserInfo, error) {
 	return result, nil
 }
 
+// roleKey is the store key of custom role name in the request project. Role
+// ids are unique per project, as in real GCP.
+func (m *Mock) roleKey(ctx context.Context, name string) string {
+	return projectctx.Key(projectctx.ProjectOr(ctx, m.opts.ProjectID), name)
+}
+
 // CreateRole creates a new IAM custom role.
-func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.RoleInfo, error) {
+//
+//nolint:gocritic // hugeParam: interface method signature cannot be changed.
+func (m *Mock) CreateRole(ctx context.Context, cfg driver.RoleConfig) (*driver.RoleInfo, error) {
 	if cfg.Name == "" {
 		return nil, cerrors.Newf(cerrors.InvalidArgument, "role name is required")
 	}
 
-	if m.roles.Has(cfg.Name) {
+	key := m.roleKey(ctx, cfg.Name)
+	if m.roles.Has(key) {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "role %q already exists", cfg.Name)
 	}
 
@@ -193,7 +203,7 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 	}
 
 	id := idgen.GenerateID("role-")
-	arn := idgen.GCPID(m.opts.ProjectID, "roles", cfg.Name)
+	arn := idgen.GCPID(projectctx.ProjectOr(ctx, m.opts.ProjectID), "roles", cfg.Name)
 
 	tags := copyTags(cfg.Tags)
 
@@ -205,7 +215,7 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 		AssumeRolePolicyDoc: cfg.AssumeRolePolicyDoc,
 		Tags:                tags,
 	}
-	m.roles.Set(cfg.Name, r)
+	m.roles.Set(key, r)
 
 	info := toRoleInfo(r)
 
@@ -213,21 +223,22 @@ func (m *Mock) CreateRole(_ context.Context, cfg driver.RoleConfig) (*driver.Rol
 }
 
 // DeleteRole deletes the IAM custom role with the given name.
-func (m *Mock) DeleteRole(_ context.Context, name string) error {
-	if !m.roles.Delete(name) {
+func (m *Mock) DeleteRole(ctx context.Context, name string) error {
+	key := m.roleKey(ctx, name)
+	if !m.roles.Delete(key) {
 		return cerrors.Newf(cerrors.NotFound, "role %q not found", name)
 	}
 
 	m.mu.Lock()
-	delete(m.rolePolicies, name)
+	delete(m.rolePolicies, key)
 	m.mu.Unlock()
 
 	return nil
 }
 
 // GetRole returns the IAM custom role with the given name.
-func (m *Mock) GetRole(_ context.Context, name string) (*driver.RoleInfo, error) {
-	r, ok := m.roles.Get(name)
+func (m *Mock) GetRole(ctx context.Context, name string) (*driver.RoleInfo, error) {
+	r, ok := m.roles.Get(m.roleKey(ctx, name))
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "role %q not found", name)
 	}
@@ -237,12 +248,19 @@ func (m *Mock) GetRole(_ context.Context, name string) (*driver.RoleInfo, error)
 	return &info, nil
 }
 
-// ListRoles returns all IAM custom roles.
-func (m *Mock) ListRoles(_ context.Context) ([]driver.RoleInfo, error) {
+// ListRoles returns the custom roles of the request project, or of every
+// project under projectctx.AllProjects.
+func (m *Mock) ListRoles(ctx context.Context) ([]driver.RoleInfo, error) {
 	all := m.roles.All()
 	result := make([]driver.RoleInfo, 0, len(all))
+	project := projectctx.ProjectOr(ctx, m.opts.ProjectID)
+	every := projectctx.IsAllProjects(ctx)
 
-	for _, r := range all {
+	for key, r := range all {
+		if p, _, _ := projectctx.Split(key); !every && p != project {
+			continue
+		}
+
 		result = append(result, toRoleInfo(r))
 	}
 
@@ -540,20 +558,21 @@ func (m *Mock) DetachUserPolicy(_ context.Context, userName, policyARN string) e
 }
 
 // AttachRolePolicy binds a policy to a custom role.
-func (m *Mock) AttachRolePolicy(_ context.Context, roleName, policyARN string) error {
-	return m.attachPolicy(m.roles, roleName, policyARN, m.rolePolicies, "role")
+func (m *Mock) AttachRolePolicy(ctx context.Context, roleName, policyARN string) error {
+	return m.attachPolicy(m.roles, m.roleKey(ctx, roleName), policyARN, m.rolePolicies, "role")
 }
 
 // DetachRolePolicy removes a policy binding from a custom role.
-func (m *Mock) DetachRolePolicy(_ context.Context, roleName, policyARN string) error {
-	if !m.roles.Has(roleName) {
+func (m *Mock) DetachRolePolicy(ctx context.Context, roleName, policyARN string) error {
+	key := m.roleKey(ctx, roleName)
+	if !m.roles.Has(key) {
 		return cerrors.Newf(cerrors.NotFound, "role %q not found", roleName)
 	}
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	policies, ok := m.rolePolicies[roleName]
+	policies, ok := m.rolePolicies[key]
 	if !ok || !policies[policyARN] {
 		return cerrors.Newf(cerrors.NotFound, "policy %q is not attached to role %q", policyARN, roleName)
 	}
@@ -583,15 +602,16 @@ func (m *Mock) ListAttachedUserPolicies(_ context.Context, userName string) ([]s
 }
 
 // ListAttachedRolePolicies returns the resource names of policies attached to the given role.
-func (m *Mock) ListAttachedRolePolicies(_ context.Context, roleName string) ([]string, error) {
-	if !m.roles.Has(roleName) {
+func (m *Mock) ListAttachedRolePolicies(ctx context.Context, roleName string) ([]string, error) {
+	key := m.roleKey(ctx, roleName)
+	if !m.roles.Has(key) {
 		return nil, cerrors.Newf(cerrors.NotFound, "role %q not found", roleName)
 	}
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	policies := m.rolePolicies[roleName]
+	policies := m.rolePolicies[key]
 	result := make([]string, 0, len(policies))
 
 	for arn := range policies {
@@ -708,7 +728,7 @@ func evaluatePolicy(doc, action, resource string) (allow, deny bool) {
 	return allow, deny
 }
 
-func (m *Mock) collectPolicyARNs(principal string) map[string]bool {
+func (m *Mock) collectPolicyARNs(principal, roleKey string) map[string]bool {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
@@ -718,7 +738,7 @@ func (m *Mock) collectPolicyARNs(principal string) map[string]bool {
 		policyARNs[arn] = true
 	}
 
-	for arn := range m.rolePolicies[principal] {
+	for arn := range m.rolePolicies[roleKey] {
 		policyARNs[arn] = true
 	}
 
@@ -727,8 +747,8 @@ func (m *Mock) collectPolicyARNs(principal string) map[string]bool {
 
 // CheckPermission evaluates attached policies to determine if a principal is allowed
 // to perform the given action on the given resource. Explicit Deny wins over Allow.
-func (m *Mock) CheckPermission(_ context.Context, principal, action, resource string) (bool, error) {
-	policyARNs := m.collectPolicyARNs(principal)
+func (m *Mock) CheckPermission(ctx context.Context, principal, action, resource string) (bool, error) {
+	policyARNs := m.collectPolicyARNs(principal, m.roleKey(ctx, principal))
 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -1091,7 +1111,7 @@ func (m *Mock) ListInstanceProfiles(
 
 // AddRoleToInstanceProfile associates a role with a service account binding.
 func (m *Mock) AddRoleToInstanceProfile(
-	_ context.Context, profileName, roleName string,
+	ctx context.Context, profileName, roleName string,
 ) error {
 	p, ok := m.instanceProfiles.Get(profileName)
 	if !ok {
@@ -1101,7 +1121,7 @@ func (m *Mock) AddRoleToInstanceProfile(
 		)
 	}
 
-	if !m.roles.Has(roleName) {
+	if !m.roles.Has(m.roleKey(ctx, roleName)) {
 		return cerrors.Newf(
 			cerrors.NotFound, "role %q not found", roleName,
 		)

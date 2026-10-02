@@ -120,6 +120,14 @@ opts := []option.ClientOption{
 client, _ := gcpcompute.NewInstancesRESTClient(ctx, opts...)
 ```
 
+GCP resources are scoped to the project in the request path, as in real GCP, so
+the same name can exist in two projects. Pub/Sub, Secret Manager and IAM custom
+roles are scoped this way today. Resources created through the Go API,
+`--init-dir` seeds, and project-less state restored from an older snapshot
+belong to the configured project (`config.WithProjectID`, or `--project-id` on
+`cloudemu serve`, default `cloudemu-local`). Set it to the project your
+provider or SDK uses.
+
 ## Quick start (Databricks)
 
 The Azure server also speaks the `databricks-sdk-go` `WorkspaceClient` wire protocol. Wire the same `*databricks.Mock` into both `Databricks` (ARM workspace control plane) and `DatabricksDataPlane` (the `/api/2.x` workspace data plane).

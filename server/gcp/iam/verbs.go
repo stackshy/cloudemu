@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	iamdriver "github.com/stackshy/cloudemu/v2/services/iam/driver"
 )
 
@@ -141,7 +142,13 @@ func (h *Handler) heldPermissions(r *http.Request, email string) map[string]bool
 		// Custom roles are "projects/{p}/roles/{id}". Resolve their perms.
 		id := roleName[strings.LastIndex(roleName, "/")+1:]
 
-		dr, err := h.iam.GetRole(r.Context(), id)
+		// A custom role resolves in the project its name carries.
+		ctx := r.Context()
+		if p := projectctx.FromPath(roleName); p != "" {
+			ctx = projectctx.WithProject(ctx, p)
+		}
+
+		dr, err := h.iam.GetRole(ctx, id)
 		if err != nil {
 			continue
 		}
