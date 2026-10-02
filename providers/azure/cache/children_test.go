@@ -222,3 +222,38 @@ func TestChildWritesNotLostUnderConcurrency(t *testing.T) {
 		t.Fatalf("rules = %d, want %d", len(rules), n)
 	}
 }
+
+func TestFirewallRuleNamesCaseInsensitive(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestMock()
+	mustCreate(t, m, "c1")
+
+	first := driver.FirewallRule{Name: "AllowAll", StartIP: "10.0.0.1", EndIP: "10.0.0.2"}
+	if _, err := m.PutFirewallRule(ctx, "c1", first); err != nil {
+		t.Fatal(err)
+	}
+
+	second := driver.FirewallRule{Name: "allowall", StartIP: "10.0.0.3", EndIP: "10.0.0.4"}
+
+	created, err := m.PutFirewallRule(ctx, "c1", second)
+	if err != nil || created {
+		t.Fatalf("replace under other casing: created=%v err=%v, want replace", created, err)
+	}
+
+	rule, err := m.GetFirewallRule(ctx, "c1", "ALLOWALL")
+	if err != nil || rule.Name != "AllowAll" || rule.StartIP != "10.0.0.3" {
+		t.Fatalf("get = %+v, %v", rule, err)
+	}
+
+	if rules, _ := m.ListFirewallRules(ctx, "c1"); len(rules) != 1 {
+		t.Fatalf("list = %d rules, want 1", len(rules))
+	}
+
+	if existed, err := m.DeleteFirewallRule(ctx, "c1", "allowALL"); err != nil || !existed {
+		t.Fatalf("delete existed=%v err=%v", existed, err)
+	}
+
+	if rules, _ := m.ListFirewallRules(ctx, "c1"); len(rules) != 0 {
+		t.Fatalf("list after delete = %d rules, want 0", len(rules))
+	}
+}

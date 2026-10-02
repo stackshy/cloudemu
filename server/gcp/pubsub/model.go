@@ -3,6 +3,7 @@ package pubsub
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"sync/atomic"
@@ -142,8 +143,11 @@ func New(mq mqdriver.MessageQueue, defaultProject string) *Handler {
 
 	if a, ok := mq.(wireAttacher); ok {
 		// Attach fails only on a corrupt pending snapshot; the handler then
-		// starts empty, the same as before persistence covered it.
-		_ = a.AttachWireState(h)
+		// starts empty, the same as before persistence covered it, and the
+		// failure is logged so the lost state is visible.
+		if err := a.AttachWireState(h); err != nil {
+			log.Printf("pubsub: restoring persisted wire state failed, starting empty: %v", err)
+		}
 	}
 
 	return h

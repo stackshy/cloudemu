@@ -723,7 +723,12 @@ func New(d Drivers) http.Handler {
 	// /providers/Microsoft.Resources/tags/default is disjoint from the
 	// resource-group paths above and the Microsoft.ResourceGraph/generic-resources
 	// listings, so registration order is unconstrained.
-	srv.Register(tagssrv.New(d.ScopeTags))
+	scopeTags := d.ScopeTags
+	if scopeTags == nil {
+		scopeTags = tagsatscope.New()
+	}
+
+	srv.Register(tagssrv.New(scopeTags))
 
 	// microsoft.insights extension resources (metrics, metricDefinitions,
 	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim
@@ -1286,7 +1291,7 @@ func New(d Drivers) http.Handler {
 	// Every handler is registered now, so collect the resource-group purgers.
 	rgHandler.SetPurgers(resourcegroups.CollectPurgers(srv.Handlers()))
 
-	return echoUnmodeledProperties(srv, newPropertyOverlay(d.PropertyOverlay))
+	return echoUnmodeledProperties(srv, newPropertyOverlay(d.PropertyOverlay), scopeTags)
 }
 
 // registerDatabricksDataPlane registers the Databricks workspace data-plane
