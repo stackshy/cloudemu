@@ -17144,6 +17144,44 @@
         ]
       },
       {
+        "name": "AzureStorageAccounts",
+        "doc": "AzureStorageAccounts is an OPTIONAL Azure-only capability, discovered by type",
+        "operations": [
+          {
+            "name": "ContainerEncryptionScope"
+          },
+          {
+            "name": "CreateStorageAccount",
+            "doc": "CreateStorageAccount registers the account. It reports created=false and"
+          },
+          {
+            "name": "DeleteStorageAccount",
+            "doc": "DeleteStorageAccount removes the account and all of its data: containers"
+          },
+          {
+            "name": "ForceDeleteContainer",
+            "doc": "ForceDeleteContainer deletes a container together with its blobs, the"
+          },
+          {
+            "name": "GetStorageAccount"
+          },
+          {
+            "name": "ListAccountContainers",
+            "doc": "ListAccountContainers lists the containers of one account by bare name."
+          },
+          {
+            "name": "ListStorageAccounts"
+          },
+          {
+            "name": "PurgeResourceGroup",
+            "doc": "PurgeResourceGroup deletes every account recorded under sub/rg."
+          },
+          {
+            "name": "SetContainerEncryptionScope"
+          }
+        ]
+      },
+      {
         "name": "AzureVersionedBlob",
         "doc": "AzureVersionedBlob is an OPTIONAL Azure-specific capability, discovered by",
         "operations": [

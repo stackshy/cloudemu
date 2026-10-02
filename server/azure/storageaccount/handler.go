@@ -4,10 +4,12 @@
 // AccountsClient clients configured with a custom endpoint hit this handler the
 // same way they hit management.azure.com.
 //
-// This is the management-plane counterpart to the blob data-plane handler: an
-// account name maps to a driver bucket, and the account's SKU / kind /
-// access-tier cost attributes are stored via the driver's optional
-// BucketAttributes capability so a discovery + cost consumer can price it.
+// This is the management-plane counterpart to the blob data-plane handler. A
+// storage account is its own resource (the driver's AzureStorageAccounts
+// capability), recorded with its subscription and resource group, and owns
+// its blob containers. The account's SKU / kind / access-tier cost attributes
+// are stored via the driver's optional BucketAttributes capability so a
+// discovery + cost consumer can price it.
 //
 // Coverage:
 //
@@ -17,6 +19,8 @@
 //	DELETE .../providers/Microsoft.Storage/storageAccounts/{name} : delete
 //	GET/PUT .../storageAccounts/{name}/blobServices/default : blob service properties
 //	                                       (versioning/soft-delete/change-feed/CORS)
+//	PUT/GET/PATCH/DELETE .../blobServices/default/containers/{c} : blob containers
+//	GET    .../blobServices/default/containers : list containers
 //
 // Create is a long-running operation in real Azure; the emulator completes it
 // synchronously by returning 200 with the resource body inline so the SDK's LRO
@@ -25,6 +29,7 @@ package storageaccount
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
@@ -66,6 +71,13 @@ const (
 	// identityNone is the managed-identity type that clears the identity block;
 	// emulatorTenantID is the single Azure AD directory every emulated resource
 	// reports (shared with the ACR/AKS/VM handlers).
+	// Depths of the path tail after …/storageAccounts/{name}: blobServices and
+	// blobServices/default are the service properties, then the container
+	// collection and a single container.
+	blobServicePropsDepth = 2
+	containerListDepth    = 3
+	containerItemDepth    = 4
+
 	identityNone     = "None"
 	systemAssigned   = "SystemAssigned"
 	emulatorTenantID = "11111111-1111-1111-1111-111111111111"
@@ -88,6 +100,8 @@ type attrBackend interface {
 // storage bucket driver.
 type Handler struct {
 	bucket     storagedriver.Bucket
+	accounts   storagedriver.AzureStorageAccounts    // nil when the driver doesn't model accounts
+	containers containerBackend                      // nil when the driver doesn't expose container properties
 	attrs      attrBackend                           // nil when the driver doesn't expose account attributes
 	keys       storagedriver.StorageAccountKeys      // nil when the driver doesn't expose access keys
 	blobSvc    storagedriver.BlobServiceConfig       // nil when the driver doesn't expose blob service properties
@@ -97,6 +111,14 @@ type Handler struct {
 // New returns a storage-account handler backed by b.
 func New(b storagedriver.Bucket) *Handler {
 	h := &Handler{bucket: b}
+	if a, ok := b.(storagedriver.AzureStorageAccounts); ok {
+		h.accounts = a
+	}
+
+	if c, ok := b.(containerBackend); ok {
+		h.containers = c
+	}
+
 	if a, ok := b.(attrBackend); ok {
 		h.attrs = a
 	}
@@ -184,10 +206,8 @@ func (h *Handler) serveNonAccountRoute(w http.ResponseWriter, r *http.Request, r
 		return true
 	}
 
-	// GET/PUT .../storageAccounts/{name}/blobServices/default:
-	// BlobServicesClient GetServiceProperties/SetServiceProperties.
-	if strings.EqualFold(rp.SubResource, "blobServices") {
-		h.serveBlobServiceRoute(w, r, rp)
+	if route, ok := h.subResourceRoutes()[strings.ToLower(rp.SubResource)]; ok {
+		route(w, r, rp)
 		return true
 	}
 
@@ -201,31 +221,59 @@ func (h *Handler) serveNonAccountRoute(w http.ResponseWriter, r *http.Request, r
 	return false
 }
 
-// serveBlobServiceRoute serves .../storageAccounts/{name}/blobServices/default,
-// the BlobServicesClient GetServiceProperties/SetServiceProperties
-// sub-resource: a distinct resource from the account itself that must never
-// fall through to createOrUpdate, which would silently wipe the account's
-// SKU/properties on every "enable versioning" call. A path that continues
-// past .../default (e.g. .../blobServices/default/containers/{name}, the ARM
-// BlobContainers sub-resource) is not this resource and must not be silently
-// treated as a blob-service-properties write: that would fake success on an
-// unimplemented resource instead of reporting it as missing.
-func (h *Handler) serveBlobServiceRoute(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if rp.SubResourceAction != "" {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
-			"the sub-resource '"+rp.SubResourceAction+"' is not supported")
+// subResourceRoutes maps a lower-cased account sub-resource segment
+// (…/storageAccounts/{name}/{segment}/…) to its handler. A segment with no row
+// falls through to the POST actions or the account switch.
+func (h *Handler) subResourceRoutes() map[string]func(http.ResponseWriter, *http.Request, *azurearm.ResourcePath) {
+	return map[string]func(http.ResponseWriter, *http.Request, *azurearm.ResourcePath){
+		"blobservices": h.serveBlobServiceRoute,
+	}
+}
 
-		return
+// serveBlobServiceRoute serves the blobServices sub-resource tree:
+//
+//	…/blobServices/default                     : blob service properties
+//	…/blobServices/default/containers          : container list
+//	…/blobServices/default/containers/{name}   : one container
+//
+// The blob service properties are a distinct resource from the account itself
+// and must never fall through to createOrUpdate, which would silently wipe the
+// account's SKU/properties on every "enable versioning" call. Any other tail
+// (for example a container's lease or legalHold action) is not modeled and
+// fails closed with 404 rather than faking success.
+func (h *Handler) serveBlobServiceRoute(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
+	tail := accountTail(r.URL.Path)
+
+	switch {
+	case len(tail) <= blobServicePropsDepth:
+		h.serveBlobService(w, r, rp)
+	case strings.EqualFold(tail[2], "containers") && len(tail) == containerListDepth:
+		h.serveContainerCollection(w, r, rp)
+	case strings.EqualFold(tail[2], "containers") && len(tail) == containerItemDepth:
+		h.serveContainer(w, r, rp, tail[3])
+	default:
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+			"the sub-resource '"+strings.Join(tail[2:], "/")+"' is not supported")
+	}
+}
+
+// accountTail returns the path segments after …/storageAccounts/{name}, read
+// from the raw URL because azurearm.ParsePath keeps only the first three.
+func accountTail(urlPath string) []string {
+	parts := strings.Split(strings.Trim(urlPath, "/"), "/")
+
+	for i := 0; i+1 < len(parts); i++ {
+		if strings.EqualFold(parts[i], resourceType) {
+			return parts[i+2:]
+		}
 	}
 
-	h.serveBlobService(w, r, rp)
+	return nil
 }
 
 // serveAction routes the POST action sub-resources (listKeys, regenerateKey).
 func (h *Handler) serveAction(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if !h.bucketExists(r.Context(), rp.ResourceName) {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
-			"storage account "+rp.ResourceName+" not found")
+	if _, ok := h.lookup(w, r, rp); !ok {
 		return
 	}
 
@@ -301,7 +349,7 @@ func (h *Handler) checkNameAvailability(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	if h.bucketExists(r.Context(), body.Name) {
+	if h.accountNameTaken(r.Context(), body.Name) {
 		azurearm.WriteJSON(w, http.StatusOK, armCheckNameAvailabilityResult{
 			NameAvailable: false, Reason: "AlreadyExists",
 			Message: "The storage account named " + body.Name + " is already taken.",
@@ -351,32 +399,41 @@ func toARMKeyList(keys []storagedriver.AccountKey) armKeyList {
 }
 
 // serveCollection lists storage accounts at the subscription or resource-group
-// scope (GET …/storageAccounts). Real Azure returns every account in scope in a
-// {"value":[…]} envelope; the emulator is single-estate, so it lists every
-// stored account under the requested scope.
+// scope (GET …/storageAccounts) in a {"value":[…]} envelope. A resource-group
+// list returns only that group's accounts; a subscription list returns the
+// subscription's accounts, each with its own resource group in its id. Blob
+// containers are never listed here.
 func (h *Handler) serveCollection(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	if r.Method != http.MethodGet {
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 		return
 	}
 
-	buckets, err := h.bucket.ListBuckets(r.Context())
+	if !h.requireAccounts(w) {
+		return
+	}
+
+	accounts, err := h.accounts.ListStorageAccounts(r.Context())
 	if err != nil {
 		azurearm.WriteCErr(w, err)
 		return
 	}
 
-	out := make([]armAccount, 0, len(buckets))
+	out := make([]armAccount, 0, len(accounts))
 
-	for i := range buckets {
-		scope := *rp
-		scope.ResourceName = buckets[i].Name
-		// A subscription-scoped list carries no resource group; the mock doesn't
-		// track which group a bucket was created under, so stamp the default
-		// group rather than emitting an id with an empty "resourceGroups//".
-		if scope.ResourceGroup == "" {
-			scope.ResourceGroup = "default"
+	for i := range accounts {
+		a := &accounts[i]
+		if !subscriptionMatches(a.Subscription, rp.Subscription) {
+			continue
 		}
+
+		if rp.ResourceGroup != "" && !strings.EqualFold(a.ResourceGroup, rp.ResourceGroup) {
+			continue
+		}
+
+		scope := *rp
+		scope.ResourceName = a.Name
+		scope.ResourceGroup = a.ResourceGroup
 
 		out = append(out, h.toARMAccount(r.Context(), &scope))
 	}
@@ -397,10 +454,17 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 		return
 	}
 
-	// Upsert: an existing account (bucket) re-applies its cost attributes rather
-	// than erroring, matching real Azure's create-or-update semantics.
-	if err := h.bucket.CreateBucket(r.Context(), name); err != nil && !cerrors.IsAlreadyExists(err) {
-		azurearm.WriteCErr(w, err)
+	if !h.requireAccounts(w) {
+		return
+	}
+
+	// Create-or-update: the same name in the same resource group re-applies the
+	// account's attributes. A name owned elsewhere fails like real Azure, where
+	// account names are globally unique.
+	if _, err := h.accounts.CreateStorageAccount(r.Context(), storagedriver.StorageAccountRef{
+		Name: name, Subscription: rp.Subscription, ResourceGroup: rp.ResourceGroup,
+	}); err != nil {
+		writeCreateError(w, err, name, rp.Subscription)
 		return
 	}
 
@@ -447,9 +511,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp *azu
 }
 
 func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if !h.bucketExists(r.Context(), rp.ResourceName) {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
-			"storage account "+rp.ResourceName+" not found")
+	if _, ok := h.lookup(w, r, rp); !ok {
 		return
 	}
 
@@ -463,9 +525,7 @@ func (h *Handler) get(w http.ResponseWriter, r *http.Request, rp *azurearm.Resou
 // UpdateBucketAttributes rather than a read-then-write pair, so a concurrent
 // PATCH never loses an update.
 func (h *Handler) update(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if !h.bucketExists(r.Context(), rp.ResourceName) {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
-			"storage account "+rp.ResourceName+" not found")
+	if _, ok := h.lookup(w, r, rp); !ok {
 		return
 	}
 
@@ -649,9 +709,34 @@ func armIdentityFor(attrs *storagedriver.AccountAttributes) *armIdentity {
 	return out
 }
 
+// deleteAccount serves DELETE …/storageAccounts/{name}. Real Azure answers
+// 200 when it deleted the account and 204 when there was nothing to delete;
+// an account in another resource group does not exist from the caller's
+// group, so it is a 204 too and is left alone.
 func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
-	if err := h.bucket.DeleteBucket(r.Context(), rp.ResourceName); err != nil && !cerrors.IsNotFound(err) {
+	if !h.requireAccounts(w) {
+		return
+	}
+
+	a, err := h.accounts.GetStorageAccount(r.Context(), rp.ResourceName)
+	if cerrors.IsNotFound(err) || (err == nil && !inScope(&a, rp)) {
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if err != nil {
 		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if err := h.accounts.DeleteStorageAccount(r.Context(), rp.ResourceName); err != nil {
+		if cerrors.IsNotFound(err) {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+
+		azurearm.WriteCErr(w, err)
+
 		return
 	}
 
@@ -659,70 +744,98 @@ func (h *Handler) deleteAccount(w http.ResponseWriter, r *http.Request, rp *azur
 }
 
 // PurgeResourceGroup deletes every storage account created under the given
-// resource group, backing the resource-group cascade delete. Accounts record
-// their group via AccountAttributes.ResourceGroup on create-or-update; a driver
-// with no attribute capability tracks no group, so nothing matches (safe). A
-// per-account delete failure is returned but does not stop the sweep; an
-// already-gone account is not an error. The subscription is unused (the
-// emulator is single-estate).
-func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
-	if h.attrs == nil {
+// resource group, with all of their containers and data, backing the
+// resource-group cascade delete. A driver that does not model accounts holds
+// none, so nothing matches.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	if h.accounts == nil {
 		return nil
 	}
 
-	buckets, err := h.bucket.ListBuckets(ctx)
-	if err != nil {
-		return err
-	}
-
-	var firstErr error
-
-	for i := range buckets {
-		if pErr := h.purgeAccountIfInGroup(ctx, buckets[i].Name, resourceGroup); pErr != nil && firstErr == nil {
-			firstErr = pErr
-		}
-	}
-
-	return firstErr
+	return h.accounts.PurgeResourceGroup(ctx, subscription, resourceGroup)
 }
 
-// purgeAccountIfInGroup deletes one storage account when it belongs to rg, and
-// is a no-op otherwise. An account that vanished between listing and deletion is
-// not an error (the desired end state already holds).
-func (h *Handler) purgeAccountIfInGroup(ctx context.Context, name, rg string) error {
-	attrs, err := h.attrs.BucketAttributes(ctx, name)
-	if err != nil {
-		if cerrors.IsNotFound(err) {
-			return nil
-		}
-
-		return err
+// requireAccounts writes 501 and reports false when the driver does not model
+// storage accounts.
+func (h *Handler) requireAccounts(w http.ResponseWriter) bool {
+	if h.accounts != nil {
+		return true
 	}
 
-	if !strings.EqualFold(attrs.ResourceGroup, rg) {
-		return nil
-	}
+	azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "storage accounts not supported")
 
-	if err := h.bucket.DeleteBucket(ctx, name); err != nil && !cerrors.IsNotFound(err) {
-		return err
-	}
-
-	return nil
+	return false
 }
 
-func (h *Handler) bucketExists(ctx context.Context, name string) bool {
-	buckets, err := h.bucket.ListBuckets(ctx)
-	if err != nil {
+// lookup returns the account the request addresses. An account that does not
+// exist, or exists in another resource group or subscription, is answered with
+// the real 404 ResourceNotFound and ok=false.
+func (h *Handler) lookup(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) (storagedriver.StorageAccountRef, bool) {
+	if !h.requireAccounts(w) {
+		return storagedriver.StorageAccountRef{}, false
+	}
+
+	a, err := h.accounts.GetStorageAccount(r.Context(), rp.ResourceName)
+	if err != nil && !cerrors.IsNotFound(err) {
+		azurearm.WriteCErr(w, err)
+		return storagedriver.StorageAccountRef{}, false
+	}
+
+	if err != nil || !inScope(&a, rp) {
+		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound",
+			"The Resource '"+providerName+"/"+resourceType+"/"+rp.ResourceName+
+				"' under resource group '"+rp.ResourceGroup+"' was not found.")
+
+		return storagedriver.StorageAccountRef{}, false
+	}
+
+	return a, true
+}
+
+// inScope reports whether account a lives in the request's subscription and
+// resource group.
+func inScope(a *storagedriver.StorageAccountRef, rp *azurearm.ResourcePath) bool {
+	return strings.EqualFold(a.ResourceGroup, rp.ResourceGroup) && subscriptionMatches(a.Subscription, rp.Subscription)
+}
+
+// subscriptionMatches reports whether an account recorded under recorded
+// belongs to the caller's subscription. An account with no recorded
+// subscription (migrated from an older snapshot) matches any caller.
+func subscriptionMatches(recorded, caller string) bool {
+	return recorded == "" || strings.EqualFold(recorded, caller)
+}
+
+// writeCreateError maps a CreateStorageAccount failure to the real ARM error.
+// A name owned by another subscription is StorageAccountAlreadyTaken; a name
+// owned by another resource group of the same subscription is
+// StorageAccountInAnotherResourceGroup.
+func writeCreateError(w http.ResponseWriter, err error, name, subscription string) {
+	var exists *storagedriver.AccountExistsError
+	if !errors.As(err, &exists) {
+		azurearm.WriteCErr(w, err)
+		return
+	}
+
+	if exists.Subscription != "" && subscription != "" && !strings.EqualFold(exists.Subscription, subscription) {
+		azurearm.WriteError(w, http.StatusConflict, "StorageAccountAlreadyTaken",
+			"The storage account named "+name+" is already taken.")
+
+		return
+	}
+
+	azurearm.WriteError(w, http.StatusConflict, "StorageAccountInAnotherResourceGroup",
+		"The account "+name+" is already in another resource group in this subscription.")
+}
+
+// accountNameTaken reports whether a storage account of that name exists.
+func (h *Handler) accountNameTaken(ctx context.Context, name string) bool {
+	if h.accounts == nil {
 		return false
 	}
 
-	for _, b := range buckets {
-		if b.Name == name {
-			return true
-		}
-	}
+	_, err := h.accounts.GetStorageAccount(ctx, name)
 
-	return false
+	return err == nil
 }
 
 // toARMAccount renders the ARM storage-account wire shape, reading the stored
@@ -916,23 +1029,21 @@ func defaultEncryption() *armEncryption {
 	}
 }
 
-// accountCreatedAt returns the account's creation timestamp from the backing
-// bucket, falling back to a stable default when unavailable.
+// accountCreatedAt returns the account's creation timestamp, falling back to
+// a stable default when unavailable.
 func (h *Handler) accountCreatedAt(ctx context.Context, name string) string {
 	const fallback = "2020-01-01T00:00:00.0000000Z"
 
-	buckets, err := h.bucket.ListBuckets(ctx)
-	if err != nil {
+	if h.accounts == nil {
 		return fallback
 	}
 
-	for _, b := range buckets {
-		if b.Name == name && b.CreatedAt != "" {
-			return b.CreatedAt
-		}
+	a, err := h.accounts.GetStorageAccount(ctx, name)
+	if err != nil || a.CreatedAt == "" {
+		return fallback
 	}
 
-	return fallback
+	return a.CreatedAt
 }
 
 // strOr returns v when non-empty, else the real-Azure default def.

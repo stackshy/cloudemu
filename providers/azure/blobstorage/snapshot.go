@@ -24,27 +24,34 @@ type blobSnapshot struct {
 	AccountKeys       json.RawMessage               `json:"accountKeys,omitempty"`
 	BlobServiceProps  json.RawMessage               `json:"blobServiceProps,omitempty"`
 	AccountEncryption json.RawMessage               `json:"accountEncryption,omitempty"`
+	// Accounts is the storage-account store. A snapshot written before
+	// accounts were their own resource has no such key; Restore then migrates
+	// every attributed account (see migrateLegacyAccounts).
+	Accounts json.RawMessage `json:"accounts,omitempty"`
 }
 
 type containerSnapshot struct {
-	Name           string                         `json:"name"`
-	Region         string                         `json:"region,omitempty"`
-	CreatedAt      string                         `json:"createdAt,omitempty"`
-	Versioning     bool                           `json:"versioning,omitempty"`
-	Lifecycle      *driver.LifecycleConfig        `json:"lifecycle,omitempty"`
-	Policy         *driver.BucketPolicy           `json:"policy,omitempty"`
-	CORS           *driver.CORSConfig             `json:"cors,omitempty"`
-	Encryption     *driver.EncryptionConfig       `json:"encryption,omitempty"`
-	Tags           map[string]string              `json:"tags,omitempty"`
-	Metadata       map[string]string              `json:"metadata,omitempty"`
-	PublicAccess   string                         `json:"publicAccess,omitempty"`
-	AccessPolicies []driver.SignedIdentifier      `json:"accessPolicies,omitempty"`
-	SnapshotSeq    int                            `json:"snapshotSeq,omitempty"`
-	VersionSeq     int                            `json:"versionSeq,omitempty"`
-	Objects        map[string]*blobObjectSnapshot `json:"objects,omitempty"`
-	Snapshots      map[string]*blobObjectSnapshot `json:"snapshots,omitempty"`
-	Versions       map[string]*blobObjectSnapshot `json:"versions,omitempty"`
-	SoftDeleted    map[string]*blobObjectSnapshot `json:"softDeleted,omitempty"`
+	Name           string                    `json:"name"`
+	Region         string                    `json:"region,omitempty"`
+	CreatedAt      string                    `json:"createdAt,omitempty"`
+	Versioning     bool                      `json:"versioning,omitempty"`
+	Lifecycle      *driver.LifecycleConfig   `json:"lifecycle,omitempty"`
+	Policy         *driver.BucketPolicy      `json:"policy,omitempty"`
+	CORS           *driver.CORSConfig        `json:"cors,omitempty"`
+	Encryption     *driver.EncryptionConfig  `json:"encryption,omitempty"`
+	Tags           map[string]string         `json:"tags,omitempty"`
+	Metadata       map[string]string         `json:"metadata,omitempty"`
+	PublicAccess   string                    `json:"publicAccess,omitempty"`
+	AccessPolicies []driver.SignedIdentifier `json:"accessPolicies,omitempty"`
+	// EncryptionScope is the ARM container encryption scope setting, nil when
+	// unset.
+	EncryptionScope *driver.ContainerEncryptionScope `json:"encryptionScope,omitempty"`
+	SnapshotSeq     int                              `json:"snapshotSeq,omitempty"`
+	VersionSeq      int                              `json:"versionSeq,omitempty"`
+	Objects         map[string]*blobObjectSnapshot   `json:"objects,omitempty"`
+	Snapshots       map[string]*blobObjectSnapshot   `json:"snapshots,omitempty"`
+	Versions        map[string]*blobObjectSnapshot   `json:"versions,omitempty"`
+	SoftDeleted     map[string]*blobObjectSnapshot   `json:"softDeleted,omitempty"`
 }
 
 // blobObjectSnapshot mirrors blobObject, promoting its meaningful unexported
@@ -107,6 +114,7 @@ func (m *Mock) snapshotAccountStores(snap *blobSnapshot) error {
 		{&snap.AccountKeys, m.accountKeys.Snapshot},
 		{&snap.BlobServiceProps, m.blobServiceProps.Snapshot},
 		{&snap.AccountEncryption, m.accountEncryption.Snapshot},
+		{&snap.Accounts, m.accounts.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -136,6 +144,11 @@ func snapshotContainer(c *containerMeta, includeAssets bool) *containerSnapshot 
 	c.mu.Lock()
 	cs.SnapshotSeq = c.snapshotSeq
 	cs.VersionSeq = c.versionSeq
+
+	if c.encryptionScope != (driver.ContainerEncryptionScope{}) {
+		scope := c.encryptionScope
+		cs.EncryptionScope = &scope
+	}
 	c.mu.Unlock()
 
 	for key, obj := range c.objects.All() {
@@ -195,7 +208,36 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		m.containers.Set(name, restoreContainer(cs))
 	}
 
-	return m.restoreAccountStores(&snap)
+	if err := m.restoreAccountStores(&snap); err != nil {
+		return err
+	}
+
+	if len(snap.Accounts) == 0 {
+		m.migrateLegacyAccounts()
+	}
+
+	return nil
+}
+
+// migrateLegacyAccounts turns every attributed storage account of an older
+// snapshot into an account record. Older snapshots modeled an account as the
+// container of the same name and recorded no subscription, so the account gets
+// Subscription "" (it matches any caller) and the old container stays where it
+// is, as a default-namespace container, with no data loss.
+func (m *Mock) migrateLegacyAccounts() {
+	for name := range m.bucketAttrs.All() {
+		attrs, _ := m.bucketAttrs.Get(name)
+		if attrs.ResourceGroup == "" || m.accounts.Has(name) {
+			continue
+		}
+
+		ref := driver.StorageAccountRef{Name: name, ResourceGroup: attrs.ResourceGroup}
+		if ctr, ok := m.containers.Get(name); ok {
+			ref.CreatedAt = ctr.CreatedAt
+		}
+
+		m.accounts.Set(name, ref)
+	}
 }
 
 func (m *Mock) restoreAccountStores(snap *blobSnapshot) error {
@@ -207,6 +249,7 @@ func (m *Mock) restoreAccountStores(snap *blobSnapshot) error {
 		{snap.AccountKeys, m.accountKeys.LoadSnapshot},
 		{snap.BlobServiceProps, m.blobServiceProps.LoadSnapshot},
 		{snap.AccountEncryption, m.accountEncryption.LoadSnapshot},
+		{snap.Accounts, m.accounts.LoadSnapshot},
 	}
 
 	for _, l := range loads {
@@ -237,6 +280,10 @@ func restoreContainer(cs *containerSnapshot) *containerMeta {
 		softDeleted: memstore.New[*blobObject](),
 		snapshotSeq: cs.SnapshotSeq,
 		versionSeq:  cs.VersionSeq,
+	}
+
+	if cs.EncryptionScope != nil {
+		c.encryptionScope = *cs.EncryptionScope
 	}
 
 	for key, os := range cs.Objects {

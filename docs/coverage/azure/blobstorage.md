@@ -125,6 +125,22 @@ AzureSoftDeleteBlob is an OPTIONAL Azure-specific capability, discovered by
 | `SoftDeleteEnabled` | SoftDeleteEnabled reports whether soft delete is currently in effect for |
 | `UndeleteBlob` | UndeleteBlob restores a soft-deleted blob to active (PUT ?comp=undelete). |
 
+### AzureStorageAccounts
+
+AzureStorageAccounts is an OPTIONAL Azure-only capability, discovered by type
+
+| Operation | Description |
+| --- | --- |
+| `ContainerEncryptionScope` |  |
+| `CreateStorageAccount` | CreateStorageAccount registers the account. It reports created=false and |
+| `DeleteStorageAccount` | DeleteStorageAccount removes the account and all of its data: containers |
+| `ForceDeleteContainer` | ForceDeleteContainer deletes a container together with its blobs, the |
+| `GetStorageAccount` |  |
+| `ListAccountContainers` | ListAccountContainers lists the containers of one account by bare name. |
+| `ListStorageAccounts` |  |
+| `PurgeResourceGroup` | PurgeResourceGroup deletes every account recorded under sub/rg. |
+| `SetContainerEncryptionScope` |  |
+
 ### AzureVersionedBlob
 
 AzureVersionedBlob is an OPTIONAL Azure-specific capability, discovered by
