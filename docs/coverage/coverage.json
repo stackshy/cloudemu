@@ -12930,11 +12930,33 @@
         ]
       },
       {
+        "name": "ManagedNodes",
+        "doc": "ManagedNodes is an OPTIONAL capability, discovered by type assertion. Every",
+        "operations": [
+          {
+            "name": "DescribeInstanceInformation"
+          }
+        ]
+      },
+      {
         "name": "RunCommand",
         "doc": "RunCommand is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
           {
-            "name": "GetCommandInvocation"
+            "name": "CancelCommand",
+            "doc": "CancelCommand cancels the command on the given instances, or on all of"
+          },
+          {
+            "name": "GetCommandInvocation",
+            "doc": "GetCommandInvocation reports one instance's run. pluginName selects a"
+          },
+          {
+            "name": "ListCommandInvocations",
+            "doc": "ListCommandInvocations returns the matching invocations, newest command"
+          },
+          {
+            "name": "ListCommands",
+            "doc": "ListCommands returns the matching commands, newest first."
           },
           {
             "name": "SendCommand"

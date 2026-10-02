@@ -34,6 +34,11 @@ type contentMeta struct {
 	parameters    []ssmdriver.DocumentParameter
 	platformTypes []string
 	hash          string
+	// paramSpecs holds the declared parameters with the constraints
+	// SendCommand checks, keyed by name.
+	paramSpecs map[string]paramSpec
+	// steps lists the plugins a Command document runs, in order.
+	steps []commandStep
 }
 
 // supportedSchemas lists the schemaVersion values each document type accepts.
@@ -80,6 +85,8 @@ func parseContent(content, format, docType string) (*contentMeta, error) {
 
 	meta.description, _ = root["description"].(string)
 	meta.parameters = documentParameters(root["parameters"])
+	meta.paramSpecs = parameterSpecs(root["parameters"])
+	meta.steps = documentSteps(root)
 	meta.platformTypes = platformTypes(root, docType)
 
 	return meta, nil

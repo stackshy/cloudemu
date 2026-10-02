@@ -112,6 +112,7 @@ func TestRunCommandRegistersEveryTargetInstance(t *testing.T) {
 	sent, err := c.SendCommand(ctx, &awsssm.SendCommandInput{
 		InstanceIds:  ids,
 		DocumentName: aws.String("AWS-RunShellScript"),
+		Parameters:   map[string][]string{"commands": {"echo hi"}},
 	})
 	if err != nil {
 		t.Fatalf("SendCommand: %v", err)
@@ -183,6 +184,7 @@ func TestSendCommandTagTargets(t *testing.T) {
 
 	sent, err := c.SendCommand(ctx, &awsssm.SendCommandInput{
 		DocumentName: aws.String("AWS-RunShellScript"),
+		Parameters:   map[string][]string{"commands": {"echo hi"}},
 		Targets: []ssmtypes.Target{{
 			Key: aws.String("tag:Name"), Values: []string{"web"},
 		}},
@@ -224,6 +226,7 @@ func TestSendCommandTagTargetsNoMatch(t *testing.T) {
 
 	sent, err := c.SendCommand(ctx, &awsssm.SendCommandInput{
 		DocumentName: aws.String("AWS-RunShellScript"),
+		Parameters:   map[string][]string{"commands": {"echo hi"}},
 		Targets: []ssmtypes.Target{{
 			Key: aws.String("tag:Name"), Values: []string{"nonexistent"},
 		}},
@@ -251,6 +254,7 @@ func TestSendCommandUnsupportedTargetKeyMatchesNothing(t *testing.T) {
 
 	sent, err := c.SendCommand(ctx, &awsssm.SendCommandInput{
 		DocumentName: aws.String("AWS-RunShellScript"),
+		Parameters:   map[string][]string{"commands": {"echo hi"}},
 		Targets: []ssmtypes.Target{{
 			Key: aws.String("resource-groups:Name"), Values: []string{"my-group"},
 		}},
@@ -282,8 +286,9 @@ func TestSendCommandRejectsUnknownInstance(t *testing.T) {
 	c, _ := newRunCommandClient(t)
 
 	_, err := c.SendCommand(context.Background(), &awsssm.SendCommandInput{
-		InstanceIds:  []string{"i-doesnotexist"},
+		InstanceIds:  []string{"i-0000000000000dead"},
 		DocumentName: aws.String("AWS-RunShellScript"),
+		Parameters:   map[string][]string{"commands": {"echo hi"}},
 	})
 	if err == nil {
 		t.Fatal("SendCommand to an unknown instance should fail")
