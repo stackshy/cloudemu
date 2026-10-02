@@ -38,3 +38,29 @@ func TestPurgeResourceGroup(t *testing.T) {
 		t.Errorf("registry in cas10 was purged with cas1: %v", err)
 	}
 }
+
+// TestPurgeResourceGroupStaysInSubscription: a same-named group in another
+// subscription keeps its registries.
+func TestPurgeResourceGroupStaysInSubscription(t *testing.T) {
+	ctx := context.Background()
+	m, _ := newTestMock()
+
+	for _, sub := range []string{"sub-a", "sub-b"} {
+		cfg := driver.AzureRegistryConfig{Subscription: sub, Location: "eastus"}
+		if _, _, err := m.CreateOrUpdateRegistry(ctx, "shared", "reg"+sub[len(sub)-1:], cfg); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := m.PurgeResourceGroup(ctx, "SUB-A", "Shared"); err != nil {
+		t.Fatalf("PurgeResourceGroup: %v", err)
+	}
+
+	if _, err := m.GetRegistry(ctx, "shared", "rega"); err == nil {
+		t.Error("registry in sub-a survived its group's purge")
+	}
+
+	if _, err := m.GetRegistry(ctx, "shared", "regb"); err != nil {
+		t.Errorf("registry in sub-b was purged with sub-a's group: %v", err)
+	}
+}

@@ -15,6 +15,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/apimanagement"
 	"github.com/stackshy/cloudemu/v2/providers/azure/appconfiguration"
 	"github.com/stackshy/cloudemu/v2/providers/azure/applicationgateway"
+	"github.com/stackshy/cloudemu/v2/providers/azure/armoverlay"
 	"github.com/stackshy/cloudemu/v2/providers/azure/bastion"
 	"github.com/stackshy/cloudemu/v2/providers/azure/batch"
 	"github.com/stackshy/cloudemu/v2/providers/azure/blobstorage"
@@ -56,6 +57,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/purview"
 	"github.com/stackshy/cloudemu/v2/providers/azure/recoveryservices"
 	"github.com/stackshy/cloudemu/v2/providers/azure/redisenterprise"
+	"github.com/stackshy/cloudemu/v2/providers/azure/rgstore"
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/providers/azure/signalr"
@@ -211,6 +213,8 @@ type Provider struct {
 	Logic              *logic.Mock
 	HealthcareApis     *healthcareapis.Mock
 	APIManagement      *apimanagement.Mock
+	ResourceGroups     *rgstore.Mock
+	PropertyOverlay    *armoverlay.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -295,6 +299,8 @@ func New(opts ...config.Option) *Provider {
 		Logic:              logic.New(o),
 		HealthcareApis:     healthcareapis.New(o),
 		APIManagement:      apimanagement.New(o),
+		ResourceGroups:     rgstore.New(o),
+		PropertyOverlay:    armoverlay.New(o),
 		SubscriptionID:     o.AccountID,
 		Region:             o.Region,
 		EnforceAuth:        o.EnforceAuth,
@@ -354,9 +360,46 @@ func New(opts ...config.Option) *Provider {
 			},
 		},
 	)
+	p.ResourceGroups.SetRebuildSource(p.inventoryGroups)
 	p.engineClosers = o.EngineClosers()
 
 	return p
+}
+
+// inventoryGroups lists the resource group of every resource in the
+// cross-service inventory, read off its ARM id, with the resource's location.
+// It lets a snapshot written before resource groups were persisted rebuild
+// them on restore.
+func (p *Provider) inventoryGroups(ctx context.Context) ([]rgstore.GroupRef, error) {
+	all, err := p.ResourceDiscovery.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	refs := make([]rgstore.GroupRef, 0, len(all))
+
+	for i := range all {
+		if sub, rg, ok := armGroupOf(all[i].ARN); ok {
+			refs = append(refs, rgstore.GroupRef{Subscription: sub, Name: rg, Location: all[i].Region})
+		}
+	}
+
+	return refs, nil
+}
+
+// armGroupOf splits /subscriptions/{sub}/resourceGroups/{rg}/... into its
+// subscription and resource group, matching the segment names
+// case-insensitively.
+func armGroupOf(id string) (sub, rg string, ok bool) {
+	const minParts = 4
+
+	parts := strings.Split(strings.Trim(id, "/"), "/")
+	if len(parts) < minParts || !strings.EqualFold(parts[0], "subscriptions") ||
+		!strings.EqualFold(parts[2], "resourceGroups") || parts[1] == "" || parts[3] == "" {
+		return "", "", false
+	}
+
+	return parts[1], parts[3], true
 }
 
 // wireCrossService connects the inter-service dependencies (auto-metrics, log

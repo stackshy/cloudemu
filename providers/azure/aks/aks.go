@@ -25,6 +25,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/kubernetes"
 	mondriver "github.com/stackshy/cloudemu/v2/services/monitoring/driver"
+	"github.com/stackshy/cloudemu/v2/services/scope"
 )
 
 const (
@@ -65,8 +66,11 @@ const (
 
 // ManagedCluster is the in-memory representation of an AKS cluster.
 type ManagedCluster struct {
-	Name              string
-	ResourceGroup     string
+	Name          string
+	ResourceGroup string
+	// Subscription is the subscription the cluster was created in. Empty on a
+	// cluster restored from an older snapshot.
+	Subscription      string
 	Location          string
 	KubernetesVersion string
 	DNSPrefix         string
@@ -456,6 +460,7 @@ func (m *Mock) CreateOrUpdateCluster(_ context.Context, input ClusterInput) (*Ma
 		cluster = ManagedCluster{
 			Name:          input.Name,
 			ResourceGroup: input.ResourceGroup,
+			Subscription:  input.Subscription,
 			CreatedAt:     now,
 		}
 	}
@@ -866,16 +871,16 @@ func (m *Mock) DeleteCluster(_ context.Context, rg, name string) error {
 // PurgeResourceGroup deletes every managed cluster in the resource group, with
 // its agent pools, maintenance configurations and Kubernetes data-plane state.
 // It backs the ARM resource-group delete cascade, so it bypasses the
-// last-system-pool guard the same way a cluster delete does. Clusters record
-// only their resource group (the emulator is single-estate), matched
-// case-insensitively.
-func (m *Mock) PurgeResourceGroup(_ context.Context, _, resourceGroup string) error {
+// last-system-pool guard the same way a cluster delete does. A cluster
+// matches on its subscription and resource group, case-insensitively, so a
+// same-named group in another subscription keeps its clusters.
+func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
 	//nolint:gocritic // map values are large structs; the copy is read-only here.
 	for _, c := range m.clusters.All() {
-		if strings.EqualFold(c.ResourceGroup, resourceGroup) {
+		if (scope.Scope{Subscription: c.Subscription, ResourceGroup: c.ResourceGroup}).InResourceGroup(subscription, resourceGroup) {
 			_ = m.deleteClusterLocked(c.ResourceGroup, c.Name)
 		}
 	}

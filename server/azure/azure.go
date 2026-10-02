@@ -296,6 +296,13 @@ type Drivers struct {
 	// kubeconfig issued by any provider's control plane (EKS/AKS/GKE) reaches
 	// the same backend. Leave nil to disable Kubernetes data-plane support.
 	K8sAPI *kubernetes.APIServer
+	// ResourceGroups stores ARM resource groups. Leave nil for a private
+	// in-memory store that is not part of any snapshot.
+	ResourceGroups resourcegroups.Store
+	// PropertyOverlay stores the request properties echoed back although no
+	// handler models them. Leave nil for a private in-memory store that is not
+	// part of any snapshot.
+	PropertyOverlay PropertyStore
 	// ResourceDiscovery is the cross-service inventory engine. Required to
 	// serve Azure Resource Graph (armresourcegraph) requests. Leave nil to
 	// omit the handler. SubscriptionID is needed for the subscription-scoping
@@ -698,7 +705,7 @@ func New(d Drivers) http.Handler {
 	// discovery engine (nil-safe) lets exportTemplate enumerate that membership;
 	// the purgers (collected once every handler is registered) cascade a group
 	// delete into its resources.
-	rgHandler := resourcegroups.New(d.ResourceDiscovery)
+	rgHandler := resourcegroups.NewWithStore(d.ResourceGroups, d.ResourceDiscovery)
 	srv.Register(rgHandler)
 
 	// Tags resource provider (Microsoft.Resources/tags/default). Self-contained
@@ -1270,7 +1277,7 @@ func New(d Drivers) http.Handler {
 	// Every handler is registered now, so collect the resource-group purgers.
 	rgHandler.SetPurgers(resourcegroups.CollectPurgers(srv.Handlers()))
 
-	return echoUnmodeledProperties(srv, newPropertyOverlay())
+	return echoUnmodeledProperties(srv, newPropertyOverlay(d.PropertyOverlay))
 }
 
 // registerDatabricksDataPlane registers the Databricks workspace data-plane
