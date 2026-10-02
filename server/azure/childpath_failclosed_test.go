@@ -234,6 +234,9 @@ func childPathRows() []childPathRow {
 		{pkg: "vnet", parent: cpRes("Microsoft.Network/privateEndpoints", "pe1")},
 		{pkg: "vnet", parent: cpRes("Microsoft.Network/privateLinkServices", "pls1")},
 		{pkg: "ai", parent: cpRes("Microsoft.MachineLearningServices/registries", "mlr1")},
+		{pkg: "storageaccount", parent: cpRes("Microsoft.Storage/storageAccounts", "stcp1"), setup: put(
+			cpRes("Microsoft.Storage/storageAccounts", "stcp1"),
+			`{"location":"westus","kind":"StorageV2","sku":{"name":"Standard_GRS"},"tags":{"k":"v"},"properties":{}}`)},
 
 		// D rows: the guard protects a child below its parent.
 		{pkg: "sql", child: true, parent: sqlSrv + "/databases/db1",

@@ -135,6 +135,28 @@ type BlobServiceConfig interface {
 	BlobServiceProperties(ctx context.Context, account string) (BlobServiceProperties, error)
 }
 
+// AccountSetting is one stored account-level settings document, such as the
+// fileServices/default properties or the managementPolicies/default policy.
+// Properties is the ARM properties object kept verbatim.
+type AccountSetting struct {
+	Properties   []byte
+	LastModified time.Time
+}
+
+// AccountServiceSettings is an OPTIONAL Azure-specific capability, discovered
+// by type assertion, that keeps the account-level settings documents of a
+// storage account (queueServices, tableServices, fileServices and
+// managementPolicies), keyed by account and kind. S3/GCS don't implement it.
+type AccountServiceSettings interface {
+	// SetAccountSetting replaces the account's kind document and stamps its
+	// LastModified time.
+	SetAccountSetting(ctx context.Context, account, kind string, props []byte) (AccountSetting, error)
+	// AccountSetting returns the stored document, and false when none is set.
+	AccountSetting(ctx context.Context, account, kind string) (AccountSetting, bool, error)
+	// DeleteAccountSetting removes the document and reports whether it existed.
+	DeleteAccountSetting(ctx context.Context, account, kind string) (bool, error)
+}
+
 // AccountKey is one access key of an Azure storage account (Microsoft.Storage
 // ListKeys / RegenerateKey). Value is a base64-encoded secret.
 type AccountKey struct {

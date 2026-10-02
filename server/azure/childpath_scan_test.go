@@ -19,10 +19,7 @@ const failClosedReason = "rejects unrouted child paths already"
 // package, so a new resource type added to a package that already has a row
 // is not caught here; the reviewer checks that the row table gained it.
 func childPathNoChildren() map[string]string {
-	noChildren := map[string]string{
-		"storageaccount": "guarded together with the fileServices read every azurerm_storage_account " +
-			"refresh depends on (W1 PR-C)",
-	}
+	noChildren := map[string]string{}
 
 	for _, pkg := range []string{
 		"apimanagement", "appconfiguration", "applicationgateway", "bastion", "batch", "cache",
