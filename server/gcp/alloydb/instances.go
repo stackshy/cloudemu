@@ -72,6 +72,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, p *allo
 		ID:               r.URL.Query().Get("instanceId"),
 		InstanceType:     body.InstanceType,
 		AvailabilityType: body.AvailabilityType,
+		Tags:             body.Labels,
 	}
 
 	if body.MachineConfig != nil {

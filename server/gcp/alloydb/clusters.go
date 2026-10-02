@@ -50,6 +50,11 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *alloy
 		Tags:            body.Labels,
 	}
 
+	// networkConfig.network supersedes the deprecated top-level network.
+	if body.NetworkConfig != nil && body.NetworkConfig.Network != "" {
+		cfg.Network = body.NetworkConfig.Network
+	}
+
 	if body.InitialUser != nil {
 		cfg.InitialUser = body.InitialUser.User
 		cfg.InitialPassword = body.InitialUser.Password

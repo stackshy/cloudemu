@@ -389,15 +389,6 @@ type Drivers struct {
 //
 //nolint:gocritic,gocyclo,gocognit,funlen // Drivers is all interface fields; one if-per-driver, grows with the bundle.
 func New(d Drivers) *server.Server {
-	// AlloyDB and GKE claim the same /v1/projects/{p}/locations/{l}/clusters
-	// paths, so enabling both would silently shadow one. Fail fast rather than
-	// route ambiguously. Use DriversFromWithAlloyDB to enable AlloyDB in place
-	// of GKE.
-	if d.AlloyDB != nil && d.GKE != nil {
-		panic("gcp server: AlloyDB and GKE share REST paths and cannot both be enabled; " +
-			"use DriversFromWithAlloyDB to enable AlloyDB in place of GKE")
-	}
-
 	srv := server.New()
 
 	// An opt-in /<api>.googleapis.com/ path alias names the API for paths more
@@ -419,6 +410,8 @@ func New(d Drivers) *server.Server {
 		kafkaH = managedkafkasrv.New(d.ManagedKafka)
 
 		switch {
+		case d.GKE != nil && d.AlloyDB != nil:
+			kafkaH.SetClusterSibling(kafkaSibling{gke: gkeClusterSibling{m: d.GKE}, alloy: alloyDBClusterSibling{db: d.AlloyDB}})
 		case d.GKE != nil:
 			kafkaH.SetClusterSibling(gkeClusterSibling{m: d.GKE})
 		case d.AlloyDB != nil:
@@ -441,6 +434,10 @@ func New(d Drivers) *server.Server {
 		// 0→N drift. Nil compute driver leaves node pools without MIG URLs.
 		if reg, ok := d.Compute.(gke.InstanceGroupManagerRegistrar); ok {
 			gkeH.SetInstanceGroupManagers(reg)
+		}
+
+		if d.AlloyDB != nil {
+			gkeH.SetAlloyDBOwner(alloyDBClusterSibling{db: d.AlloyDB})
 		}
 
 		srv.Register(gkeH)
@@ -877,12 +874,18 @@ func New(d Drivers) *server.Server {
 	}
 
 	// AlloyDB matches /v1/projects/{p}/locations/{l}/{clusters|backups|
-	// operations}/.... The cluster/operations paths are identical to GKE's, so
-	// the two are mutually exclusive on one server. Registered before GKE so an
-	// AlloyDB-configured server (GKE nil) works; DriversFrom leaves AlloyDB nil.
+	// operations}/.... The clusters paths are identical to GKE's. With both
+	// mounted, GKE (registered earlier) keeps lists and GKE-owned items, and
+	// AlloyDB claims its unique shapes, hinted requests and the items it alone
+	// owns (see alloydb/shared.go and gke/shared.go).
 	if d.AlloyDB != nil {
 		alloyH := alloydbsrv.New(d.AlloyDB)
 		alloyH.SetOperationRegistry(opsReg)
+
+		if d.GKE != nil {
+			alloyH.SetSharedPath(gkeNamer{m: d.GKE})
+		}
+
 		srv.Register(alloyH)
 	}
 
