@@ -46,6 +46,7 @@ import (
 
 const (
 	pathPrefix         = "/v1/projects/"
+	orgPathPrefix      = "/v1/organizations/"
 	serviceAccountsSeg = "serviceAccounts"
 	rolesSeg           = "roles"
 	keysSeg            = "keys"
@@ -105,6 +106,11 @@ func New(drv iamdriver.IAM) *Handler {
 // specific handlers (compute, networks, gcs, …) ahead of this one. There's
 // no other IAM handler in the GCP namespace that this would shadow.
 func (*Handler) Matches(r *http.Request) bool {
+	if tail, ok := strings.CutPrefix(r.URL.Path, orgPathPrefix); ok {
+		parts := strings.SplitN(tail, "/", 3) //nolint:mnd // {o}/roles[/…]
+		return len(parts) >= 2 && stripVerb(parts[1]) == rolesSeg
+	}
+
 	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
 		return false
 	}
@@ -133,7 +139,11 @@ type route struct {
 // parseRoute splits the URL after /v1/projects/. Returns ok=false if the
 // shape doesn't match what the IAM v1 SDK emits.
 func parseRoute(urlPath string) (route, bool) {
-	tail := strings.TrimPrefix(urlPath, pathPrefix)
+	tail, org := strings.CutPrefix(urlPath, orgPathPrefix)
+	if !org {
+		tail = strings.TrimPrefix(urlPath, pathPrefix)
+	}
+
 	tail = strings.TrimRight(tail, "/")
 
 	// GCP one-off methods are POSTs to "…/{resource}:method". Split the trailing
@@ -151,6 +161,16 @@ func parseRoute(urlPath string) (route, bool) {
 	}
 
 	r := route{project: parts[0], kind: parts[1], verb: verb}
+
+	// Organization custom roles live in their own scope; an organization has
+	// no service accounts.
+	if org {
+		if r.kind != rolesSeg {
+			return route{}, false
+		}
+
+		r.project = orgScope(parts[0])
+	}
 
 	if len(parts) >= 3 { //nolint:mnd // optional resource name segment
 		r.name = parts[2]
@@ -327,4 +347,41 @@ func (h *Handler) routeRoleVerb(w http.ResponseWriter, r *http.Request, rt *rout
 	}
 
 	writeError(w, http.StatusNotFound, "notFound", "unknown method: "+rt.verb)
+}
+
+// orgScopePrefix marks the role scope of an organization. A colon never occurs
+// in a project id, so an organization scope cannot collide with a project.
+const orgScopePrefix = "organizations:"
+
+// orgScope is the role scope of organization org.
+func orgScope(org string) string { return orgScopePrefix + org }
+
+// roleParent is the resource-name parent of a role scope: "organizations/{o}"
+// for an organization scope, else "projects/{p}".
+func roleParent(scope string) string {
+	if org, ok := strings.CutPrefix(scope, orgScopePrefix); ok {
+		return "organizations/" + org
+	}
+
+	return "projects/" + scope
+}
+
+// roleScopeOf returns the scope a custom role name ("projects/{p}/roles/{id}"
+// or "organizations/{o}/roles/{id}") lives in, or "" for any other name.
+func roleScopeOf(roleName string) string {
+	if rest, ok := strings.CutPrefix(roleName, "organizations/"); ok {
+		if org, _, found := strings.Cut(rest, "/"); found && org != "" {
+			return orgScope(org)
+		}
+
+		return ""
+	}
+
+	return projectctx.FromPath(roleName)
+}
+
+// stripVerb drops a trailing ":method" from a path segment.
+func stripVerb(seg string) string {
+	name, _, _ := strings.Cut(seg, ":")
+	return name
 }

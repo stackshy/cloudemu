@@ -48,11 +48,16 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *alloy
 		DatabaseVersion: body.DatabaseVersion,
 		Network:         body.Network,
 		Tags:            body.Labels,
+		Location:        p.location,
 	}
 
 	// networkConfig.network supersedes the deprecated top-level network.
-	if body.NetworkConfig != nil && body.NetworkConfig.Network != "" {
-		cfg.Network = body.NetworkConfig.Network
+	if body.NetworkConfig != nil {
+		if body.NetworkConfig.Network != "" {
+			cfg.Network = body.NetworkConfig.Network
+		}
+
+		cfg.AllocatedIPRange = body.NetworkConfig.AllocatedIpRange
 	}
 
 	if body.InitialUser != nil {
@@ -75,6 +80,7 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *alloy
 	}
 
 	info, _ := adb.AlloyDBClusterInfo(r.Context(), c.ID)
+	p.clusterID = c.ID // the operation targets the created cluster
 	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-cluster", clusterTypeURL, h.toWireCluster(c, info)))
 }
 
@@ -226,6 +232,7 @@ func (h *Handler) createSecondaryCluster(w http.ResponseWriter, r *http.Request,
 		ID:             r.URL.Query().Get("clusterId"),
 		PrimaryCluster: primary,
 		Tags:           body.Labels,
+		Location:       p.location,
 	})
 	if err != nil {
 		writeCErr(w, err)
@@ -233,6 +240,7 @@ func (h *Handler) createSecondaryCluster(w http.ResponseWriter, r *http.Request,
 	}
 
 	info, _ := adb.AlloyDBClusterInfo(r.Context(), c.ID)
+	p.clusterID = c.ID
 	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-secondary", clusterTypeURL, h.toWireCluster(c, info)))
 }
 
@@ -263,5 +271,6 @@ func (h *Handler) restoreCluster(w http.ResponseWriter, r *http.Request, p *allo
 	}
 
 	info, _ := adb.AlloyDBClusterInfo(r.Context(), c.ID)
+	p.clusterID = c.ID
 	writeJSON(w, http.StatusOK, h.doneOperation(p, "restore-cluster", clusterTypeURL, h.toWireCluster(c, info)))
 }

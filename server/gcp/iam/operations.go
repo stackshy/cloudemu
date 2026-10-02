@@ -550,7 +550,7 @@ func roleEtag(project, roleID string) string {
 // is the canonical resource path.
 func toRoleJSON(project, roleID string, props *roleProps) role {
 	return role{
-		Name:                "projects/" + project + "/roles/" + roleID,
+		Name:                roleParent(project) + "/roles/" + roleID,
 		Title:               props.Title,
 		Description:         props.Description,
 		IncludedPermissions: props.IncludedPermissions,

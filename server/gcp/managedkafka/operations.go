@@ -30,7 +30,9 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, rt *rout
 	id := r.URL.Query().Get(clusterIDParam)
 
 	if h.poller == nil {
-		if probe := probeBody(r); !isKafkaBody(probe) {
+		// An empty body names no other service's cluster; it falls through to
+		// the driver's validation (400), as on real Managed Kafka.
+		if probe := probeBody(r); len(probe) > 0 && !isKafkaBody(probe) {
 			writeIDTaken(w, rt, foreignCreateID(r, probe), "a Managed Kafka")
 			return
 		}
