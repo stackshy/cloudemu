@@ -89,6 +89,48 @@ provider "google" {
 }
 ```
 
+### Shared REST paths and the API alias
+
+Some GCP services serve identical REST paths on different hosts. GKE and Managed
+Kafka both serve `/v1/projects/{p}/locations/{l}/clusters`, and Filestore,
+Memorystore for Redis, Data Fusion and Secure Source Manager all serve
+`.../locations/{l}/instances`. On a single port CloudEmu tells them apart by
+the body, the path shape and which service owns the id. A collection list in a
+location where two of them own resources cannot be told apart that way.
+
+To name the API explicitly, put its googleapis host as the first path segment of
+the endpoint. CloudEmu strips that segment before routing. Always end the
+endpoint with the version segment the provider expects (`/v1/`), as with any
+custom endpoint:
+
+```hcl
+provider "google" {
+  container_custom_endpoint     = "http://localhost:4569/container.googleapis.com/v1/"
+  managed_kafka_custom_endpoint = "http://localhost:4569/managedkafka.googleapis.com/v1/"
+  filestore_custom_endpoint     = "http://localhost:4569/file.googleapis.com/v1/"
+  redis_custom_endpoint         = "http://localhost:4569/redis.googleapis.com/v1/"
+}
+```
+
+Go clients take the same form without the version, which they append:
+`option.WithEndpoint("http://localhost:4569/managedkafka.googleapis.com")`.
+A `Host: <api>.googleapis.com` header (from a proxy, `/etc/hosts` or
+`curl -H`) works the same way.
+
+| Alias host | Shared path it disambiguates |
+|---|---|
+| `container.googleapis.com`, `managedkafka.googleapis.com` | `locations/{l}/clusters` |
+| `file.googleapis.com`, `redis.googleapis.com`, `datafusion.googleapis.com`, `securesourcemanager.googleapis.com` | `locations/{l}/instances` |
+| `securesourcemanager.googleapis.com`, `artifactregistry.googleapis.com` | `locations/{l}/repositories` |
+
+Any other `*.googleapis.com` first segment is stripped and otherwise ignored, so
+`http://localhost:4569/storage.googleapis.com/storage/v1/` is the same as
+`http://localhost:4569/storage/v1/`. Without the alias, a list in a location
+where two services own resources goes to the first registered owner (GKE for
+clusters). URLs CloudEmu returns in responses, such as an operation `selfLink`,
+do not carry the alias; clients poll operations by name, so this does not affect
+them.
+
 Azure: the `azurerm` provider has no per-service endpoint override. It reads
 every endpoint from an Azure metadata document and gets a bearer token from an
 AAD OAuth2 endpoint. CloudEmu serves both. Set `ARM_METADATA_HOSTNAME` to the

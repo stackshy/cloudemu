@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	cachedriver "github.com/stackshy/cloudemu/v2/services/cache/driver"
 )
@@ -128,7 +129,7 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return true
+	return !sharedpath.Yield(r, sharedpath.Redis, sharedpath.File, sharedpath.SecureSourceManager, sharedpath.DataFusion)
 }
 
 // ServeHTTP routes on the parsed path and method.
