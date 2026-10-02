@@ -23,12 +23,15 @@ const (
 // discoverer prices on are modeled: the SKU (VM size / tier / instance count)
 // and the per-VM profile (Spot priority, hybrid-benefit license, OS type).
 type ScaleSet struct {
-	Name     string
-	ID       string
-	Location string
-	SKUName  string
-	SKUTier  string
-	Capacity int
+	Name string
+	ID   string
+	// Subscription is the subscription the scale set was created in. Empty for
+	// one created through the portable API or restored from an older snapshot.
+	Subscription string
+	Location     string
+	SKUName      string
+	SKUTier      string
+	Capacity     int
 	// CapacityZero must be set true when Capacity==0 is an explicit
 	// scale-in-to-zero request rather than an omitted field. Without it,
 	// CreateScaleSet cannot tell "capacity not specified" (default to 1)

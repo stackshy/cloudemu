@@ -772,11 +772,11 @@ type AzureVMDeleter interface {
 }
 
 // AzureResourceGroupPurger is an optional Azure-only capability that tears down
-// every compute resource recorded under a resource group: VMs, scale sets,
-// managed disks, snapshots, images and SSH public keys. It backs the ARM
-// resource-group delete cascade.
+// every compute resource recorded under a resource group of a subscription:
+// VMs, scale sets, managed disks, snapshots, images and SSH public keys. It
+// backs the ARM resource-group delete cascade.
 type AzureResourceGroupPurger interface {
-	PurgeComputeResourceGroup(ctx context.Context, resourceGroup string) error
+	PurgeComputeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
 }
 
 // AzureVMController is an optional Azure-only capability supporting the ARM

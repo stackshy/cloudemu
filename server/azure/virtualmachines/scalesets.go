@@ -137,6 +137,7 @@ func createScaleSet(w http.ResponseWriter, r *http.Request, rp azurearm.Resource
 		Location:      req.Location,
 		Tags:          req.Tags,
 		ResourceGroup: rp.ResourceGroup,
+		Subscription:  rp.Subscription,
 	}
 
 	if req.SKU != nil {

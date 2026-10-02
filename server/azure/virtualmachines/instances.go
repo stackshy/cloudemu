@@ -28,6 +28,7 @@ const armNameTag = "cloudemu:azureName"
 const (
 	diskARMNameTag      = "cloudemu:azureDiskName"
 	diskRGTag           = "cloudemu:azureRG"
+	subTag              = "cloudemu:azureSub" // the subscription a resource was created in
 	diskCreateOptionTag = "cloudemu:createOption"
 )
 
@@ -109,7 +110,7 @@ func (h *Handler) createOrUpdate(w http.ResponseWriter, r *http.Request, rp azur
 		SubnetID:          firstNicID(req.Properties.NetworkProfile),
 		KeyName:           computerName(req.Properties.OSProfile),
 		UserData:          decodeCustomData(customData(req.Properties.OSProfile)),
-		Tags:              mergeTags(req.Tags, rp.ResourceName),
+		Tags:              mergeTags(req.Tags, rp.ResourceName, rp.Subscription),
 		Priority:          req.Properties.Priority,
 		LicenseType:       req.Properties.LicenseType,
 		OSType:            osTypeFromStorage(req.Properties.StorageProfile),
@@ -430,7 +431,7 @@ func (h *Handler) attachImplicitDataDisk(
 	vol, err := h.compute.CreateVolume(ctx, computedriver.VolumeConfig{
 		Size:       d.DiskSizeGB,
 		VolumeType: managedDiskStorageType(d.ManagedDisk),
-		Tags:       diskMaterializeTags(name, rp.ResourceGroup, d.CreateOption),
+		Tags:       diskMaterializeTags(name, rp.ResourceGroup, rp.Subscription, d.CreateOption),
 	})
 	if err != nil {
 		return err
@@ -512,11 +513,15 @@ func managedDiskStorageType(m *managedDiskParameters) string {
 // diskMaterializeTags builds the cloudemu-internal tag set that lets the disks
 // wire handler render a materialized OS/data disk as a Microsoft.Compute/disks
 // resource: its ARM name, resource group, and createOption.
-func diskMaterializeTags(name, resourceGroup, createOption string) map[string]string {
+func diskMaterializeTags(name, resourceGroup, subscription, createOption string) map[string]string {
 	tags := map[string]string{diskARMNameTag: name}
 
 	if resourceGroup != "" {
 		tags[diskRGTag] = resourceGroup
+	}
+
+	if subscription != "" {
+		tags[subTag] = subscription
 	}
 
 	if createOption != "" {
@@ -594,7 +599,7 @@ func (h *Handler) resolveOrCreateOSDisk(
 	vol, err := h.compute.CreateVolume(ctx, computedriver.VolumeConfig{
 		Size:       od.DiskSizeGB,
 		VolumeType: managedDiskStorageType(od.ManagedDisk),
-		Tags:       diskMaterializeTags(name, rp.ResourceGroup, createOption),
+		Tags:       diskMaterializeTags(name, rp.ResourceGroup, rp.Subscription, createOption),
 	})
 	if err != nil {
 		return "", err
@@ -852,17 +857,17 @@ func (*Handler) PurgePhase() int { return resourcegroups.PhaseCompute }
 // PurgeResourceGroup backs the resource-group cascade delete: it forwards to
 // the compute driver's PurgeComputeResourceGroup, which removes every VM, scale
 // set, managed disk, snapshot, image and SSH public key recorded under the
-// group. Real Azure's group delete removes every managed disk in the group
-// regardless of a VM's attachment-scoped deleteOption. The subscription is
-// unused (the emulator is single-estate). A driver without the capability is
-// reported as an error rather than silently skipped.
-func (h *Handler) PurgeResourceGroup(ctx context.Context, _, resourceGroup string) error {
+// group in the subscription. Real Azure's group delete removes every managed
+// disk in the group regardless of a VM's attachment-scoped deleteOption. A
+// driver without the capability is reported as an error rather than silently
+// skipped.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
 	p, ok := h.compute.(computedriver.AzureResourceGroupPurger)
 	if !ok {
 		return cerrors.Newf(cerrors.Unimplemented, "compute driver %T cannot purge a resource group", h.compute)
 	}
 
-	return p.PurgeComputeResourceGroup(ctx, resourceGroup)
+	return p.PurgeComputeResourceGroup(ctx, subscription, resourceGroup)
 }
 
 // start handles POST virtualMachines/{name}/start.
@@ -1362,7 +1367,7 @@ func osTypeFromStorage(s *storageProfile) string {
 	return s.OSDisk.OSType
 }
 
-func mergeTags(in map[string]string, armName string) map[string]string {
+func mergeTags(in map[string]string, armName, subscription string) map[string]string {
 	out := make(map[string]string, len(in)+1)
 
 	for k, v := range in {
@@ -1370,6 +1375,10 @@ func mergeTags(in map[string]string, armName string) map[string]string {
 	}
 
 	out[armNameTag] = armName
+
+	if subscription != "" {
+		out[subTag] = subscription
+	}
 
 	return out
 }
@@ -1496,7 +1505,7 @@ func stripInternalTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag {
+		if k == armNameTag || k == subTag {
 			continue
 		}
 

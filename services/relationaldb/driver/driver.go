@@ -155,10 +155,24 @@ type InstanceConfig struct {
 	// "use the default" (true) rather than false; Cloud SQL-only, ignored by
 	// AWS RDS / Redshift.
 	GCPStorageAutoResize *bool
-	Tags                 map[string]string
+	// AzureFlex carries the Azure Flexible Server storage and backup toggles;
+	// an empty field means "use the service default". Other engines ignore it.
+	AzureFlex AzureFlexOptions
+	Tags      map[string]string
 	// Scope records where the resource lives (Azure subscription/resource
 	// group). Zero for AWS/GCP and unscoped portable callers.
 	Scope scope.Scope
+}
+
+// AzureFlexOptions are the Azure Database for MySQL Flexible Server
+// EnableStatusEnum toggles ("Enabled"/"Disabled") under properties.storage
+// (autoGrow, autoIoScaling, logOnDisk) and properties.backup
+// (geoRedundantBackup).
+type AzureFlexOptions struct {
+	StorageAutoGrow      string `json:"storageAutoGrow,omitempty"`
+	StorageAutoIOScaling string `json:"storageAutoIoScaling,omitempty"`
+	StorageLogOnDisk     string `json:"storageLogOnDisk,omitempty"`
+	GeoRedundantBackup   string `json:"geoRedundantBackup,omitempty"`
 }
 
 // Instance describes a managed database instance.
@@ -245,6 +259,9 @@ type Instance struct {
 	// read. It is resolved to a concrete value on create (defaulting to true),
 	// so a Get always reports it. False/unused for AWS RDS / Redshift.
 	GCPStorageAutoResize bool
+	// AzureFlex echoes the Azure Flexible Server storage and backup toggles,
+	// resolved to concrete values on create. Zero for other engines.
+	AzureFlex AzureFlexOptions
 	// Scope records where the resource lives (Azure subscription/resource
 	// group), echoed from the InstanceConfig it was created with. Zero for
 	// AWS/GCP and unscoped portable callers: Scope.Matches treats a zero
@@ -348,7 +365,10 @@ type ModifyInstanceInput struct {
 	// GCPStorageAutoResize updates the Cloud SQL settings.storageAutoResize flag; a
 	// nil pointer means "no change". Cloud SQL-only; RDS/Redshift ignore it.
 	GCPStorageAutoResize *bool
-	Tags                 map[string]string
+	// AzureFlex updates the Azure Flexible Server storage and backup toggles;
+	// an empty field means "no change". Other engines ignore it.
+	AzureFlex AzureFlexOptions
+	Tags      map[string]string
 	// ApplyImmediately controls when the deferrable changes above take effect
 	// (AWS RDS ModifyDBInstance ApplyImmediately, default false). When true the
 	// target fields are updated on the instance now and PendingModifiedValues is

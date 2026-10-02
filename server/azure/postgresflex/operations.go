@@ -116,10 +116,6 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 	cfg := instanceFromBody(&body, rp)
 	cfg.ID = rp.ResourceName
 
-	// ARM PUT of a new resource returns 201 Created; an in-place update of an
-	// existing one returns 200.
-	status := http.StatusCreated
-
 	inst, err := h.db.CreateInstance(r.Context(), cfg)
 	if err != nil {
 		if !cerrors.IsAlreadyExists(err) {
@@ -131,11 +127,9 @@ func (h *Handler) createOrUpdateServer(w http.ResponseWriter, r *http.Request, r
 		if inst, ok = h.upsertOnNameCollision(w, r, rp, &body); !ok {
 			return
 		}
-
-		status = http.StatusOK
 	}
 
-	azurearm.WriteJSON(w, status, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
+	writeAccepted(w, r, rp, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
 }
 
 // upsertOnNameCollision resolves a PUT whose server name is already taken.
@@ -217,7 +211,7 @@ func (h *Handler) restoreServer(w http.ResponseWriter, r *http.Request, rp *azur
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
+	writeAccepted(w, r, rp, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
 }
 
 func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -240,7 +234,7 @@ func (h *Handler) updateServer(w http.ResponseWriter, r *http.Request, rp *azure
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
+	writeAccepted(w, r, rp, toARMServer(inst, rp.Subscription, rp.ResourceGroup))
 }
 
 // getServer handles GET on a single server (Servers.Get). The driver keys
@@ -275,7 +269,7 @@ func (h *Handler) deleteServer(w http.ResponseWriter, r *http.Request, rp *azure
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	writeAccepted(w, r, rp, nil)
 }
 
 // listServers handles GET on the collection (Servers.ListByResourceGroup /
@@ -322,7 +316,7 @@ func (h *Handler) startServer(w http.ResponseWriter, r *http.Request, rp *azurea
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	writeAccepted(w, r, rp, nil)
 }
 
 func (h *Handler) stopServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -335,7 +329,7 @@ func (h *Handler) stopServer(w http.ResponseWriter, r *http.Request, rp *azurear
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	writeAccepted(w, r, rp, nil)
 }
 
 func (h *Handler) restartServer(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
@@ -348,5 +342,5 @@ func (h *Handler) restartServer(w http.ResponseWriter, r *http.Request, rp *azur
 		return
 	}
 
-	w.WriteHeader(http.StatusOK)
+	writeAccepted(w, r, rp, nil)
 }

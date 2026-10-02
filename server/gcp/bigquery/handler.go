@@ -20,6 +20,7 @@
 //	PATCH  /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}       : Patch table (merge)
 //	PUT    /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}       : Update table (replace)
 //	DELETE /bigquery/v2/projects/{p}/datasets/{d}/tables/{t}       : Delete table
+//	POST   /bigquery/v2/projects/{p}/datasets/{d}[/tables/{t}]:{getIamPolicy|setIamPolicy|testIamPermissions}
 //
 // Query job execution, streaming inserts, ML models, routines, and data
 // transfer are out of scope; a view's SQL round-trips as metadata but is never
@@ -30,6 +31,8 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpiam"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	"github.com/stackshy/cloudemu/v2/services/bigquery/driver"
 )
@@ -54,13 +57,18 @@ const (
 
 // Handler serves bigquery.googleapis.com v2 dataset + table requests.
 type Handler struct {
-	bq driver.BigQuery
+	bq  driver.BigQuery
+	iam gcpiam.Store
 }
 
 // New returns a BigQuery handler backed by bq.
 func New(bq driver.BigQuery) *Handler {
-	return &Handler{bq: bq}
+	return &Handler{bq: bq, iam: resourceiam.New()}
 }
+
+// SetIAMStore makes the handler keep dataset and table policies in s, the
+// store shared with the other GCP handlers.
+func (h *Handler) SetIAMStore(s gcpiam.Store) { h.iam = s }
 
 // route is a parsed BigQuery v2 path.
 type route struct {
@@ -155,6 +163,18 @@ func (h *Handler) serveDatasetCollection(w http.ResponseWriter, r *http.Request,
 
 // serveDataset dispatches /datasets/{d} resource requests.
 func (h *Handler) serveDataset(w http.ResponseWriter, r *http.Request, rt route) {
+	if ds, verb := gcpiam.SplitVerb(rt.dataset); verb != "" {
+		rt.dataset = ds
+		if _, err := h.bq.GetDataset(r.Context(), rt.project, rt.dataset); err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
+
+		gcpiam.Serve(w, r, verb, datasetResource(rt), h.iam)
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getDataset(w, r, rt)
@@ -183,6 +203,18 @@ func (h *Handler) serveTableCollection(w http.ResponseWriter, r *http.Request, r
 
 // serveTable dispatches /tables/{t} resource requests.
 func (h *Handler) serveTable(w http.ResponseWriter, r *http.Request, rt route) {
+	if tbl, verb := gcpiam.SplitVerb(rt.table); verb != "" {
+		rt.table = tbl
+		if _, err := h.bq.GetTable(r.Context(), rt.project, rt.dataset, rt.table); err != nil {
+			gcprest.WriteCErr(w, err)
+			return
+		}
+
+		gcpiam.Serve(w, r, verb, tableResource(rt), h.iam)
+
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.getTable(w, r, rt)
@@ -220,4 +252,14 @@ func datasetSelfLink(host, project, datasetID string) string {
 // tableSelfLink builds a table's selfLink.
 func tableSelfLink(host, project, datasetID, tableID string) string {
 	return datasetSelfLink(host, project, datasetID) + "/tables/" + tableID
+}
+
+// datasetResource is the IAM resource name of the route's dataset.
+func datasetResource(rt route) string {
+	return "projects/" + rt.project + "/datasets/" + rt.dataset
+}
+
+// tableResource is the IAM resource name of the route's table.
+func tableResource(rt route) string {
+	return datasetResource(rt) + "/tables/" + rt.table
 }

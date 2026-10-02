@@ -118,6 +118,7 @@ func instanceConfigFromBody(body *armServer, rp *azurearm.ResourcePath) rdsdrive
 	cfg.MasterUserPassword = body.Properties.AdministratorLoginPassword
 	cfg.EngineVersion = body.Properties.Version
 	cfg.AvailabilityZone = body.Properties.AvailabilityZone
+	cfg.AzureFlex = flexOptionsFromBody(body.Properties)
 
 	if body.Properties.Storage != nil {
 		cfg.AllocatedStorage = body.Properties.Storage.StorageSizeGB
@@ -179,6 +180,7 @@ func modifyInputFromBody(body *armServer) rdsdriver.ModifyInstanceInput {
 
 	if body.Properties != nil {
 		input.EngineVersion = body.Properties.Version
+		input.AzureFlex = flexOptionsFromBody(body.Properties)
 
 		if body.Properties.Storage != nil && body.Properties.Storage.StorageSizeGB > 0 {
 			input.AllocatedStorage = body.Properties.Storage.StorageSizeGB

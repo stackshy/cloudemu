@@ -16,6 +16,7 @@ const (
 	resourceType    = "images"
 	armNameTag      = "cloudemu:azureImageName"
 	rgTag           = "cloudemu:azureRG"
+	subTag          = "cloudemu:azureSub" // the subscription a resource was created in
 	sourceVMTag     = "cloudemu:sourceVM"
 	osTypeTag       = "cloudemu:osType"
 	defaultLocation = "eastus"
@@ -193,7 +194,8 @@ func (h *Handler) updateTags(w http.ResponseWriter, r *http.Request, rp azurearm
 	name := tagOr(img.Tags, armNameTag, img.Name)
 	tags := mergeTags(
 		withoutReservedTags(req.Tags),
-		name, tagOr(img.Tags, rgTag, ""), tagOr(img.Tags, sourceVMTag, ""), tagOr(img.Tags, osTypeTag, ""),
+		name, tagOr(img.Tags, rgTag, ""), tagOr(img.Tags, subTag, ""),
+		tagOr(img.Tags, sourceVMTag, ""), tagOr(img.Tags, osTypeTag, ""),
 	)
 
 	updated, err := updater.UpdateImageTags(r.Context(), img.ID, tags)
@@ -301,7 +303,7 @@ func (h *Handler) buildImageConfig(ctx context.Context, rp azurearm.ResourcePath
 			InstanceID: driverInstanceID,
 			Name:       rp.ResourceName,
 			Tags: mergeTags(
-				req.Tags, rp.ResourceName, rp.ResourceGroup,
+				req.Tags, rp.ResourceName, rp.ResourceGroup, rp.Subscription,
 				submittedVM, h.sourceOSType(ctx, driverInstanceID),
 			),
 		}, nil
@@ -335,7 +337,7 @@ func (h *Handler) diskImageConfig(ctx context.Context, rp azurearm.ResourcePath,
 		OSType:     osTypeOr(osDisk.OSType),
 		OSState:    osStateOr(osDisk.OSState),
 		DiskSizeGB: diskSizeOr(vol.Size, osDisk.DiskSizeGB),
-		Tags:       mergeTags(req.Tags, rp.ResourceName, rp.ResourceGroup, "", ""),
+		Tags:       mergeTags(req.Tags, rp.ResourceName, rp.ResourceGroup, rp.Subscription, "", ""),
 	}, nil
 }
 
@@ -531,7 +533,7 @@ func osTypeOr(osType string) string {
 // inserts (name, resource group, source VM, OS type).
 const imgExtraSlots = 4
 
-func mergeTags(in map[string]string, name, resourceGroup, sourceVM, osType string) map[string]string {
+func mergeTags(in map[string]string, name, resourceGroup, subscription, sourceVM, osType string) map[string]string {
 	out := make(map[string]string, len(in)+imgExtraSlots)
 
 	for k, v := range in {
@@ -542,6 +544,10 @@ func mergeTags(in map[string]string, name, resourceGroup, sourceVM, osType strin
 
 	if resourceGroup != "" {
 		out[rgTag] = resourceGroup
+	}
+
+	if subscription != "" {
+		out[subTag] = subscription
 	}
 
 	if sourceVM != "" {
@@ -592,7 +598,7 @@ func stripInternalTags(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
 
 	for k, v := range in {
-		if k == armNameTag || k == rgTag || k == sourceVMTag || k == osTypeTag {
+		if k == armNameTag || k == rgTag || k == subTag || k == sourceVMTag || k == osTypeTag {
 			continue
 		}
 

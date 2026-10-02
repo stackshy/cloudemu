@@ -39,6 +39,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
 )
 
@@ -111,7 +112,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 // ServeHTTP routes the request based on path shape and query params.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	account, path := h.resolveAccount(r, r.URL.Path, r.URL.Query())
+	account, path := h.resolveAccount(r, r.Host, r.URL.Path, r.URL.Query())
 	container, blob := parseBlobPath(path)
 	q := r.URL.Query()
 
@@ -152,10 +153,20 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // azblob's List Containers "GET /{account}?comp=list". So
 // "PUT /{name}?restype=container" stays a default-namespace container create.
 // Otherwise the request belongs to the default account ("").
-func (h *Handler) resolveAccount(r *http.Request, path string, q url.Values) (account, rest string) {
+//
+// A virtual-host request (host {account}.blob.core.windows.net[:port]) names
+// the account in the host, so the whole path is the container and blob. The
+// host account is used only when it is an existing ARM storage account; the
+// default account "cloudemu" maps to the default namespace, and an unknown
+// account falls through to the path rules above, as before.
+func (h *Handler) resolveAccount(r *http.Request, host, path string, q url.Values) (account, rest string) {
 	accounts, ok := h.bucket.(storagedriver.AzureStorageAccounts)
 	if !ok {
 		return "", path
+	}
+
+	if acct, ok := vhostAccount(r, accounts, host); ok {
+		return acct, path
 	}
 
 	trimmed := strings.TrimPrefix(path, "/")
@@ -185,6 +196,28 @@ func (h *Handler) resolveAccount(r *http.Request, path string, q url.Values) (ac
 	}
 
 	return name, rest
+}
+
+// vhostAccount resolves the account of a virtual-host blob request. ok is
+// true when host is {account}.blob.{suffix} and the account is the default
+// account (mapped to the default namespace, "") or an existing ARM storage
+// account. Any other host, including an unknown account, leaves resolution to
+// the path rules.
+func vhostAccount(r *http.Request, accounts storagedriver.AzureStorageAccounts, host string) (string, bool) {
+	acct, svc, ok := azurearm.StorageHost(host)
+	if !ok || svc != "blob" {
+		return "", false
+	}
+
+	if acct == storagedriver.AzureDefaultStorageAccount {
+		return "", true
+	}
+
+	if _, err := accounts.GetStorageAccount(r.Context(), acct); err != nil {
+		return "", false
+	}
+
+	return acct, true
 }
 
 // parseBlobPath splits "/container/key/with/slashes" into ("container",
@@ -1470,7 +1503,7 @@ func (h *Handler) extractCopySource(r *http.Request, src string) (container, blo
 		return "", ""
 	}
 
-	account, path := h.resolveAccount(r, u.Path, u.Query())
+	account, path := h.resolveAccount(r, u.Host, u.Path, u.Query())
 	container, blob = parseBlobPath(path)
 
 	if container == "" {
