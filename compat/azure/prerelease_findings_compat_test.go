@@ -376,11 +376,6 @@ func TestPreReleaseCreateReturns201(t *testing.T) {
 				`"properties":{"administratorLogin":"adm","administratorLoginPassword":"P@ssw0rd!23","version":"8.0.21"}}`,
 		},
 		{
-			name: "postgresFlex", provider: "Microsoft.DBforPostgreSQL", resType: "flexibleServers", resName: "pg201",
-			body: `{"location":"eastus","sku":{"name":"Standard_B1ms","tier":"Burstable"},` +
-				`"properties":{"administratorLogin":"adm","administratorLoginPassword":"P@ssw0rd!23","version":"14"}}`,
-		},
-		{
 			name: "sqlServers", provider: "Microsoft.Sql", resType: "servers", resName: "sql201",
 			body: `{"location":"eastus","properties":{"administratorLogin":"adm","administratorLoginPassword":"P@ssw0rd!23"}}`,
 		},
@@ -408,5 +403,41 @@ func TestPreReleaseCreateReturns201(t *testing.T) {
 				t.Errorf("re-PUT update: status %d, want 200", status)
 			}
 		})
+	}
+}
+
+// TestPreReleasePostgresFlexCreateReturns202 pins the Postgres Flexible Server
+// exception to the 201/200 rule: the 2025-08-01 API azurerm uses lists 202 as
+// the only success code for a server PUT (create or update), with an
+// Azure-AsyncOperation URL the poller follows.
+func TestPreReleasePostgresFlexCreateReturns202(t *testing.T) {
+	sess := bootPreRel(t)
+
+	path := rgScoped("Microsoft.DBforPostgreSQL", "flexibleServers", "pg202")
+	body := `{"location":"eastus","sku":{"name":"Standard_B1ms","tier":"Burstable"},` +
+		`"properties":{"administratorLogin":"adm","administratorLoginPassword":"P@ssw0rd!23","version":"14"}}`
+
+	for _, step := range []string{"first create", "re-PUT update"} {
+		req, err := http.NewRequest(http.MethodPut, sess.Endpoint()+path+apiVer, bytes.NewReader([]byte(body)))
+		if err != nil {
+			t.Fatalf("%s: new request: %v", step, err)
+		}
+
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := sess.Transport().Do(req)
+		if err != nil {
+			t.Fatalf("%s: %v", step, err)
+		}
+
+		resp.Body.Close()
+
+		if resp.StatusCode != http.StatusAccepted {
+			t.Errorf("%s: status %d, want 202", step, resp.StatusCode)
+		}
+
+		if resp.Header.Get("Azure-AsyncOperation") == "" {
+			t.Errorf("%s: missing Azure-AsyncOperation header", step)
+		}
 	}
 }
