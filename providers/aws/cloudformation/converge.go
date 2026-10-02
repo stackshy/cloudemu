@@ -114,7 +114,7 @@ func (m *Mock) converge(
 
 	var retained []replacement
 	if len(failures) == 0 && o.cleanRetained {
-		retained = sd.drainRetained()
+		retained = sd.pendingRetained()
 	}
 
 	m.cleanup(ctx, sd, t, &o, append(retained, replaced...))
@@ -470,9 +470,7 @@ func (*Mock) record(
 func (m *Mock) cleanup(
 	ctx context.Context, sd *stackData, t *cfn.Template, o *convergeOpts, replaced []replacement,
 ) {
-	for i := len(replaced) - 1; i >= 0; i-- {
-		m.dropReplaced(ctx, sd, &replaced[i])
-	}
+	m.dropAllReplaced(ctx, sd, replaced)
 
 	flag := sd.retainExceptOnCreate()
 
@@ -500,15 +498,29 @@ func (m *Mock) cleanup(
 	}
 }
 
+// dropAllReplaced deletes the old resources of replacements, newest first.
+// Each stays recorded as retained until its delete succeeds, so one that a
+// failed or interrupted cleanup did not get to is deleted by a later update
+// or by DeleteStack instead of being orphaned.
+func (m *Mock) dropAllReplaced(ctx context.Context, sd *stackData, replaced []replacement) {
+	sd.trackRetained(replaced)
+
+	for i := len(replaced) - 1; i >= 0; i-- {
+		if m.dropReplaced(ctx, sd, &replaced[i]) == nil {
+			sd.untrackRetained(&replaced[i])
+		}
+	}
+}
+
 // dropReplaced deletes the old resource of a replacement, or with
 // UpdateReplacePolicy Retain leaves it in place outside the stack.
-func (m *Mock) dropReplaced(ctx context.Context, sd *stackData, r *replacement) {
+func (m *Mock) dropReplaced(ctx context.Context, sd *stackData, r *replacement) error {
 	if r.policy == cfn.PolicyValueRetain {
 		m.emitResourceEvent(sd, r.id, r.old.resolved.RefValue, r.old.typ, cfn.ResourceDeleteSkipped, "")
-		return
+		return nil
 	}
 
-	_ = m.deletePhysical(ctx, sd, r.id, &r.old)
+	return m.deletePhysical(ctx, sd, r.id, &r.old)
 }
 
 // skipDelete removes a resource from the stack without deleting it.
@@ -535,12 +547,7 @@ type teardownOpts struct {
 // being deleted. It returns the resources that failed to delete, which stay
 // in the stack as DELETE_FAILED.
 func (m *Mock) teardown(ctx context.Context, sd *stackData, o teardownOpts) []applyFailure {
-	defer func() {
-		retained := sd.drainRetained()
-		for i := len(retained) - 1; i >= 0; i-- {
-			m.dropReplaced(ctx, sd, &retained[i])
-		}
-	}()
+	defer func() { m.dropAllReplaced(ctx, sd, sd.pendingRetained()) }()
 
 	sd.mu.RLock()
 	order := append([]string(nil), sd.provisionOrder...)

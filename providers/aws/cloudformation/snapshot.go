@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"slices"
 
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	cfn "github.com/stackshy/cloudemu/v2/services/cloudformation"
@@ -49,14 +50,14 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 		sd.opMu.Lock()
 		sd.mu.RLock()
 		snap.Stacks[name] = &stackSnapshot{
-			Stack:          sd.stack,
+			Stack:          cloneStack(&sd.stack),
 			ProvisionOrder: append([]string(nil), sd.provisionOrder...),
 			Resolved:       cloneResolved(sd.resolved),
 			DeleteIDs:      cloneStringMap(sd.deleteIDs),
 			Props:          cloneProps(sd.props),
 			RollbackFailed: append([]string(nil), sd.rollbackFailed...),
 			ChangeSets:     cloneChangeSets(sd.changeSets),
-			Retained:       append([]retainedResource(nil), sd.retained...),
+			Retained:       slices.Clone(sd.retained),
 			Imports:        append([]string(nil), sd.imports...),
 			Policies:       maps.Clone(sd.policies),
 			StackPolicy:    sd.stackPolicy,
@@ -121,14 +122,33 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 	return nil
 }
 
-// clonePending copies the pending phase for a snapshot. Its slices are
-// never mutated in place, so sharing them is safe.
+// cloneStack copies a stack with fresh slices and maps, so a snapshot
+// encoded after the locks are released never reads state an operation
+// is filtering in place.
+func cloneStack(s *cfn.Stack) cfn.Stack {
+	out := *s
+	out.Parameters = slices.Clone(s.Parameters)
+	out.Outputs = slices.Clone(s.Outputs)
+	out.Resources = slices.Clone(s.Resources)
+	out.Events = slices.Clone(s.Events)
+	out.Capabilities = slices.Clone(s.Capabilities)
+	out.NotificationARNs = slices.Clone(s.NotificationARNs)
+	out.Tags = maps.Clone(s.Tags)
+
+	return out
+}
+
+// clonePending copies the pending phase for a snapshot, with fresh slices.
 func clonePending(op *pendingOp) *pendingOp {
 	if op == nil {
 		return nil
 	}
 
 	out := *op
+	out.Replaced = slices.Clone(op.Replaced)
+	out.Imports = slices.Clone(op.Imports)
+	out.Skip = slices.Clone(op.Skip)
+	out.Retain = slices.Clone(op.Retain)
 
 	return &out
 }

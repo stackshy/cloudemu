@@ -602,6 +602,9 @@ func (m *Mock) ExecuteChangeSet(ctx context.Context, in *cfn.ExecuteChangeSetInp
 		return terr
 	}
 
+	sd.opMu.Lock()
+	defer sd.opMu.Unlock()
+
 	sd.mu.RLock()
 	retried := in.ClientRequestToken != "" && rec.ExecuteToken == in.ClientRequestToken
 	err = executable(rec)

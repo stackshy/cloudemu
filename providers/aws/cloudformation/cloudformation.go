@@ -167,10 +167,11 @@ func (sd *stackData) retain(replaced []replacement) {
 	}
 }
 
-// drainRetained forgets the retained old resources and returns the ones to
-// delete. A retained resource whose physical id a live resource of the
-// stack now holds again is dropped, not deleted.
-func (sd *stackData) drainRetained() []replacement {
+// pendingRetained returns the retained old resources a cleanup deletes. A
+// retained resource whose physical id a live resource of the stack now holds
+// again is forgotten, not deleted. The others stay recorded until their
+// delete succeeds, so a cleanup that stops halfway loses none of them.
+func (sd *stackData) pendingRetained() []replacement {
 	sd.mu.Lock()
 	defer sd.mu.Unlock()
 
@@ -179,17 +180,56 @@ func (sd *stackData) drainRetained() []replacement {
 		live[rr.RefValue] = true
 	}
 
-	var out []replacement
+	var (
+		out  []replacement
+		kept []retainedResource
+	)
 
 	for i := range sd.retained {
 		if !live[sd.retained[i].Resolved.RefValue] {
+			kept = append(kept, sd.retained[i])
 			out = append(out, sd.retained[i].replacement())
 		}
 	}
 
-	sd.retained = nil
+	sd.retained = kept
 
 	return out
+}
+
+// trackRetained records the old resources of replacements as retained
+// before a cleanup deletes them. One already recorded is not added again.
+func (sd *stackData) trackRetained(replaced []replacement) {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	for i := range replaced {
+		if sd.retainedIndex(&replaced[i]) < 0 {
+			sd.retained = append(sd.retained, toRetained(replaced[i:i+1])...)
+		}
+	}
+}
+
+// untrackRetained forgets the old resource of r once it is gone.
+func (sd *stackData) untrackRetained(r *replacement) {
+	sd.mu.Lock()
+	defer sd.mu.Unlock()
+
+	if i := sd.retainedIndex(r); i >= 0 {
+		sd.retained = append(sd.retained[:i:i], sd.retained[i+1:]...)
+	}
+}
+
+// retainedIndex finds r among the retained resources. The caller holds
+// sd.mu.
+func (sd *stackData) retainedIndex(r *replacement) int {
+	for i := range sd.retained {
+		if sd.retained[i].LogicalID == r.id && sd.retained[i].Resolved.RefValue == r.old.resolved.RefValue {
+			return i
+		}
+	}
+
+	return -1
 }
 
 // takeRetained removes and returns the retained old resource of id whose

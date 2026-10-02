@@ -118,13 +118,22 @@ func TestPanicWhileSettlingFailsTheStack(t *testing.T) {
 		t.Fatalf("reason = %q", st.StatusReason)
 	}
 
+	// The old "a" the interrupted cleanup did not delete is still tracked.
+	// The next update and the delete leave nothing behind.
 	p.armed.Store(false)
+
+	_, err = m.UpdateStack(ctx, &cfn.UpdateStackInput{StackName: "s", TemplateBody: slowTemplate("a3")})
+	requireNoError(t, err)
+	fc.Advance(settled)
+	m.Tick(fc.Now())
+	assertEqual(t, stackStatus(t, m, "s").Status, cfn.StatusUpdateComplete, "next update")
+
 	requireNoError(t, m.DeleteStack(ctx, &cfn.DeleteStackInput{StackName: "s"}))
 	fc.Advance(settled)
 	m.Tick(fc.Now())
 
-	if live, _ := p.state(); live["a2"] != 0 {
-		t.Fatalf("a2 should be deleted: %v", live)
+	if live, _ := p.state(); len(live) != 0 {
+		t.Fatalf("resources orphaned after the delete: %v", live)
 	}
 }
 

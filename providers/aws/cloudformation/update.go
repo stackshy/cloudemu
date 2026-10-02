@@ -91,6 +91,11 @@ func (m *Mock) UpdateStack(ctx context.Context, in *cfn.UpdateStackInput) (*cfn.
 		return &out, nil
 	}
 
+	// The whole apply holds opMu, so a delete, a snapshot or a settling
+	// phase of the stack never runs in the middle of it.
+	sd.opMu.Lock()
+	defer sd.opMu.Unlock()
+
 	if uerr := checkUpdatable(sd); uerr != nil {
 		return nil, uerr
 	}
@@ -217,7 +222,7 @@ func (m *Mock) cleanupUpdate(ctx context.Context, sd *stackData, op *pendingOp) 
 	}
 
 	m.emitStackEvent(sd, cfn.StatusUpdateCompleteCleanupInProgress, "")
-	m.cleanup(ctx, sd, t, &convergeOpts{}, append(sd.drainRetained(), replacements(op.Replaced)...))
+	m.cleanup(ctx, sd, t, &convergeOpts{}, append(sd.pendingRetained(), replacements(op.Replaced)...))
 }
 
 // checkUpdatable rejects an update of a stack in a state that does not allow
@@ -637,6 +642,9 @@ func (m *Mock) ContinueUpdateRollback(ctx context.Context, in *cfn.ContinueUpdat
 	if retry, terr := sd.checkToken(in.ClientRequestToken, actionContinueUpdateRollback); terr != nil || retry {
 		return terr
 	}
+
+	sd.opMu.Lock()
+	defer sd.opMu.Unlock()
 
 	if _, err = sd.skipSet(in.ResourcesToSkip); err != nil {
 		return err

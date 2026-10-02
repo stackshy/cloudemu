@@ -29,6 +29,9 @@ func (m *Mock) RollbackStack(ctx context.Context, in *cfn.RollbackStackInput) (s
 		return id, err
 	}
 
+	sd.opMu.Lock()
+	defer sd.opMu.Unlock()
+
 	op := &pendingOp{Kind: opRollbackCreate}
 	next := cfn.StatusRollbackInProgress
 

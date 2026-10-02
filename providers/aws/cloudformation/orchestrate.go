@@ -97,6 +97,10 @@ func (m *Mock) CreateStack(ctx context.Context, in *cfn.CreateStackInput) (*cfn.
 	sd.recordToken(in.ClientRequestToken, actionCreateStack)
 	m.startCursor(sd)
 
+	// Held until the create is done or pending, before the stack is visible.
+	sd.opMu.Lock()
+	defer sd.opMu.Unlock()
+
 	if !m.claimStackSlot(in.StackName, sd) {
 		return nil, cerrors.Newf(cerrors.AlreadyExists, "Stack [%s] already exists", in.StackName)
 	}
