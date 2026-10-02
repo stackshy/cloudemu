@@ -26,6 +26,7 @@ const (
 		`"gcpConfig":{"accessConfig":{"networkConfigs":[{"subnet":"projects/demo/regions/us-central1/subnetworks/s"}]}}}`
 	goldenFilestoreBody = `{"tier":"BASIC_HDD","fileShares":[{"name":"s","capacityGb":"1024"}],"networks":[{"network":"default"}]}`
 	goldenRedisBody     = `{"tier":"BASIC","memorySizeGb":1}`
+	goldenAlloyBody     = `{"networkConfig":{"network":"projects/demo/global/networks/default"}}`
 )
 
 type goldenRow struct {
@@ -48,6 +49,7 @@ func goldenSeed(t *testing.T, srv *server.Server) {
 		{http.MethodPost, goldenLoc + "/clusters", `{"cluster":{"name":"c1","initialNodeCount":1}}`},
 		{http.MethodPost, goldenLoc + "/clusters?clusterId=k3", goldenKafkaBody},
 		{http.MethodPost, goldenWest + "/clusters?clusterId=k2", westKafka},
+		{http.MethodPost, goldenLoc + "/clusters?clusterId=a1", goldenAlloyBody},
 		{http.MethodPost, goldenLoc + "/instances?instanceId=f1", goldenFilestoreBody},
 		{http.MethodPost, goldenLoc + "/instances?instanceId=r1", goldenRedisBody},
 		{http.MethodPost, goldenLoc + "/instances?instanceId=d1", `{"type":"BASIC"}`},
@@ -84,18 +86,18 @@ func goldenRows() []goldenRow {
 		{s, g, "/v1/projects/demo/locations/-/clusters", "", "", "*gke.Handler"},
 		{e, p, goldenLoc + "/clusters", "", `{"cluster":{"name":"g9"}}`, "*gke.Handler"},
 		{e, p, goldenLoc + "/clusters?clusterId=k9", "", goldenKafkaBody, "*managedkafka.Handler"},
-		{e, p, goldenLoc + "/clusters?clusterId=a9", "", `{"networkConfig":{"network":"projects/demo/global/networks/default"}}`, "*gke.Handler"},
+		{e, p, goldenLoc + "/clusters?clusterId=a9", "", `{"networkConfig":{"network":"projects/demo/global/networks/default"}}`, "*alloydb.Handler"},
 		{s, p, goldenLoc + "/clusters?clusterId=k3", "", `{}`, "*managedkafka.Handler"},
-		{e, p, goldenLoc + "/clusters:restore", "", `{}`, "*gke.Handler"},
-		{e, p, goldenLoc + "/clusters:createsecondary", "", `{}`, "*gke.Handler"},
+		{e, p, goldenLoc + "/clusters:restore", "", `{}`, "*alloydb.Handler"},
+		{e, p, goldenLoc + "/clusters:createsecondary", "", `{}`, "*alloydb.Handler"},
 		{s, g, goldenLoc + "/clusters/c1", "", "", "*gke.Handler"},
 		{s, g, goldenLoc + "/clusters/k3", "", "", "*managedkafka.Handler"},
 		{s, g, goldenLoc + "/clusters/nope", "", "", "*gke.Handler"},
 		{s, g, goldenWest + "/clusters/k2", "", "", "*managedkafka.Handler"},
 		{s, u, goldenLoc + "/clusters/k3", "", `{"labels":{"a":"b"}}`, "*managedkafka.Handler"},
-		{s, u, goldenLoc + "/clusters/c1", "", `{"labels":{"a":"b"}}`, "*gke.Handler"},
+		{s, u, goldenLoc + "/clusters/c1", "", `{"labels":{"a":"b"}}`, "*alloydb.Handler"},
 		{s, u, goldenLoc + "/clusters/nope?updateMask=labels", "", `{"labels":{"a":"b"}}`, "*managedkafka.Handler"},
-		{s, u, goldenLoc + "/clusters/nope:upgrade", "", `{}`, "*gke.Handler"},
+		{s, u, goldenLoc + "/clusters/nope:upgrade", "", `{}`, "*alloydb.Handler"},
 		{s, http.MethodPut, goldenLoc + "/clusters/c1", "", `{"update":{}}`, "*gke.Handler"},
 		{s, d, goldenLoc + "/clusters/c1", "", "", "*gke.Handler"},
 		{s, d, goldenLoc + "/clusters/k3", "", "", "*managedkafka.Handler"},
@@ -108,14 +110,14 @@ func goldenRows() []goldenRow {
 		{s, g, goldenLoc + "/clusters/c1/nodePools/np1:fetchNodePoolUpgradeInfo", "", "", "*gke.Handler"},
 		{s, g, goldenLoc + "/clusters/c1/jwks", "", "", "*gke.Handler"},
 		{s, g, goldenLoc + "/clusters/c1/.well-known/openid-configuration", "", "", "*gke.Handler"},
-		{s, g, goldenLoc + "/clusters/c1/bogus", "", "", "*gke.Handler"},
+		{s, g, goldenLoc + "/clusters/c1/bogus", "", "", "*firestore.Handler"},
 		{s, g, goldenLoc + "/clusters/k3/topics", "", "", "*managedkafka.Handler"},
 		{s, g, goldenLoc + "/clusters/k3/topics/t1", "", "", "*managedkafka.Handler"},
-		{s, g, goldenLoc + "/clusters/k3/consumerGroups", "", "", "*gke.Handler"},
-		{s, g, goldenLoc + "/clusters/k3/acls", "", "", "*gke.Handler"},
-		{s, g, goldenLoc + "/clusters/a1/instances", "", "", "*gke.Handler"},
-		{s, g, goldenLoc + "/clusters/a1/users", "", "", "*gke.Handler"},
-		{e, g, goldenLoc + "/backups", "", "", "*firestore.Handler"},
+		{s, g, goldenLoc + "/clusters/k3/consumerGroups", "", "", "*firestore.Handler"},
+		{s, g, goldenLoc + "/clusters/k3/acls", "", "", "*firestore.Handler"},
+		{s, g, goldenLoc + "/clusters/a1/instances", "", "", "*alloydb.Handler"},
+		{s, g, goldenLoc + "/clusters/a1/users", "", "", "*alloydb.Handler"},
+		{e, g, goldenLoc + "/backups", "", "", "*alloydb.Handler"},
 		{e, g, goldenLoc + "/supportedDatabaseFlags", "", "", "*firestore.Handler"},
 		{e, g, goldenLoc + "/serverConfig", "", "", "*gke.Handler"},
 		{e, g, goldenLoc + "/operations", "", "", "*gke.Handler"},
@@ -125,6 +127,28 @@ func goldenRows() []goldenRow {
 		{e, g, "/v1/projects/demo/aggregated/usableSubnetworks", "", "", "*firestore.Handler"},
 		{e, g, "/v1beta1/projects/demo/locations/us-central1/clusters", "", "", "<nil>"},
 		{e, g, "/v1beta/projects/demo/locations/us-central1/clusters", "", "", "<nil>"},
+
+		// AlloyDB beside GKE and Managed Kafka.
+		{s, g, goldenLoc + "/clusters/a1", "", "", "*alloydb.Handler"},
+		{s, d, goldenLoc + "/clusters/a1", "", "", "*alloydb.Handler"},
+		{s, p, goldenLoc + "/clusters/a1:promote", "", `{}`, "*alloydb.Handler"},
+		{s, g, "/v1/projects/demo/locations/us-east1/clusters/a1", "", "", "*alloydb.Handler"},
+		{s, g, goldenLoc + "/clusters/a1/instances/i1", "", "", "*alloydb.Handler"},
+		{s, p, goldenLoc + "/clusters/a1/instances?instanceId=i1", "", `{"instanceType":"PRIMARY"}`, "*alloydb.Handler"},
+		{s, g, goldenLoc + "/clusters/a1/nodePools", "", "", "*alloydb.Handler"},
+		{s, p, goldenLoc + "/clusters?clusterId=c1", "", goldenAlloyBody, "*gke.Handler"},
+		{s, p, "/v1/projects/demo/locations/us-east1/clusters?clusterId=c1", "", goldenAlloyBody, "*gke.Handler"}, // F2
+		{s, p, goldenLoc + "/clusters", "", `{"cluster":{"name":"a1"}}`, "*gke.Handler"},
+		{s, p, goldenLoc + "/clusters?clusterId=a1", "", goldenAlloyBody, "*alloydb.Handler"},
+		{s, p, goldenLoc + "/clusters?clusterId=a1", "", goldenKafkaBody, "*managedkafka.Handler"},           // N2
+		{s, u, goldenLoc + "/clusters/a1?updateMask=labels", "", `{"labels":{"a":"b"}}`, "*alloydb.Handler"}, // F1
+		{s, u, goldenLoc + "/clusters/a1:upgrade", "", `{}`, "*alloydb.Handler"},
+		{s, g, goldenLoc + "/clusters/c1/jwks", "", "", "*gke.Handler"},
+		{s, g, goldenLoc + "/backups/b1", "", "", "*alloydb.Handler"},
+		{e, p, goldenLoc + "/clusters:restoreFromCloudSQL", "", `{}`, "*alloydb.Handler"},
+		{s, g, "/container.googleapis.com" + goldenLoc + "/clusters/a1", "", "", "*gke.Handler"},
+		{s, g, "/alloydb.googleapis.com" + goldenLoc + "/clusters/c1", "", "", "*alloydb.Handler"},
+		{s, g, "/managedkafka.googleapis.com" + goldenLoc + "/clusters/a1", "", "", "*managedkafka.Handler"},
 
 		// instances group: Data Fusion, Secure Source Manager, Filestore, Memorystore.
 		{e, g, goldenLoc + "/instances", "", "", "*memorystore.Handler"},
@@ -240,7 +264,7 @@ func goldenRows() []goldenRow {
 		{s, g, "/container.googleapis.com" + goldenLoc + "/clusters/k3", "", "", "*gke.Handler"},
 		{s, g, "/managedkafka.googleapis.com" + goldenLoc + "/clusters/c1", "", "", "*managedkafka.Handler"},
 		{s, g, "/managedkafka.googleapis.com" + goldenLoc + "/clusters/k3/consumerGroups", "", "", "*firestore.Handler"},
-		{s, g, "/alloydb.googleapis.com" + goldenLoc + "/clusters", "", "", "*firestore.Handler"},
+		{s, g, "/alloydb.googleapis.com" + goldenLoc + "/clusters", "", "", "*alloydb.Handler"},
 		{s, g, goldenLoc + "/clusters", "us-central1-aiplatform.googleapis.com", "", "*gke.Handler"},
 		{s, g, goldenLoc + "/clusters", "www.googleapis.com", "", "*gke.Handler"},
 		{e, g, "/managedkafka.googleapis.com" + goldenLoc + "/operations/nope", "", "", "*lro.Handler"},

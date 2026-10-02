@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	rdsdriver "github.com/stackshy/cloudemu/v2/services/relationaldb/driver"
 )
 
@@ -67,6 +68,9 @@ type Handler struct {
 	// names 404). Nil in a standalone package server, where this handler serves
 	// its own /operations/ poll.
 	ops *lro.Registry
+
+	// gke (optional) is GKE's name view when both are mounted; see shared.go.
+	gke GKENamer
 }
 
 // New returns an AlloyDB handler backed by db.
@@ -101,11 +105,15 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	switch collectionOf(parts[idxCollection]) {
+	if sharedpath.Yield(r, sharedpath.AlloyDB, sharedpath.Container, sharedpath.ManagedKafka) {
+		return false
+	}
+
+	switch coll := collectionOf(parts[idxCollection]); coll {
 	case collectionOperations:
 		return h.ops == nil
 	case collectionClusters, collectionBackups:
-		return true
+		return h.matchesShared(r, coll)
 	default:
 		return false
 	}

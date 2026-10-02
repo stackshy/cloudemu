@@ -17,6 +17,10 @@ func (h *Handler) createCluster(w http.ResponseWriter, r *http.Request, p *gkePa
 		return
 	}
 
+	if h.sharedCreateConflict(w, r, p, body.Cluster.Name) {
+		return
+	}
+
 	in := gke.CreateClusterInput{
 		Name:              body.Cluster.Name,
 		Location:          p.location,

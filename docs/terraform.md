@@ -119,13 +119,23 @@ A `Host: <api>.googleapis.com` header (from a proxy, `/etc/hosts` or
 
 | Alias host | Shared path it disambiguates |
 |---|---|
-| `container.googleapis.com`, `managedkafka.googleapis.com` | `locations/{l}/clusters` |
+| `container.googleapis.com`, `alloydb.googleapis.com`, `managedkafka.googleapis.com` | `locations/{l}/clusters` |
 | `file.googleapis.com`, `redis.googleapis.com`, `datafusion.googleapis.com`, `securesourcemanager.googleapis.com` | `locations/{l}/instances` |
 | `securesourcemanager.googleapis.com`, `artifactregistry.googleapis.com` | `locations/{l}/repositories` |
 
 Any other `*.googleapis.com` first segment is stripped and otherwise ignored, so
 `http://localhost:4569/storage.googleapis.com/storage/v1/` is the same as
-`http://localhost:4569/storage/v1/`. Without the alias, a list in a location
+`http://localhost:4569/storage/v1/`.
+
+AlloyDB creates, reads, updates and deletes work without the alias, so a plain
+`alloydb_custom_endpoint = "http://localhost:4569/v1/"` serves Terraform. An
+AlloyDB *list* (a data source, `gcloud`, or an SDK `ListClusters`) needs the
+alias, since unhinted cluster lists are GKE's. GKE and AlloyDB clusters cannot
+share a name, in any location; the second create gets 409 `ALREADY_EXISTS`.
+Managed Kafka and AlloyDB may reuse a cluster id; unhinted item calls then reach
+Managed Kafka. Use the alias to address the AlloyDB cluster.
+
+Without the alias, a list in a location
 where two services own resources goes to the first registered owner (GKE for
 clusters). URLs CloudEmu returns in responses, such as an operation `selfLink`,
 do not carry the alias; clients poll operations by name, so this does not affect

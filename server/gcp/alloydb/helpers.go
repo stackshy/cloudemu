@@ -119,6 +119,10 @@ func (*Handler) toWireCluster(c *rdsdriver.Cluster, info *rdsdriver.AlloyDBClust
 		},
 	}
 
+	if info.Network != "" {
+		out.NetworkConfig = &alloydb.NetworkConfig{Network: info.Network}
+	}
+
 	if info.PrimaryCluster != "" {
 		out.SecondaryConfig = &alloydb.SecondaryConfig{PrimaryClusterName: info.PrimaryCluster}
 	}
@@ -137,20 +141,29 @@ func formatTime(t time.Time) string {
 }
 
 func (*Handler) toWireInstance(inst *rdsdriver.Instance, info *rdsdriver.AlloyDBInstanceInfo) *alloydb.Instance {
-	return &alloydb.Instance{
+	out := &alloydb.Instance{
 		Name:             inst.ARN,
 		DisplayName:      inst.ID,
 		InstanceType:     info.InstanceType,
 		AvailabilityType: info.AvailabilityType,
 		IpAddress:        info.IPAddress,
-		GceZone:          info.GceZone,
 		State:            alloyDBState(inst.State),
 		Uid:              inst.ID,
+		Labels:           inst.Tags,
 		CreateTime:       formatTime(info.CreateTime),
 		UpdateTime:       formatTime(info.UpdateTime),
 		MachineConfig:    &alloydb.MachineConfig{CpuCount: int64(info.CPUCount)},
 	}
+
+	// gceZone applies only to a ZONAL instance; a REGIONAL one has none.
+	if info.AvailabilityType == availabilityZonal {
+		out.GceZone = info.GceZone
+	}
+
+	return out
 }
+
+const availabilityZonal = "ZONAL"
 
 // alloyDBState maps the relationaldb driver's lifecycle state to AlloyDB's
 // wire state enum, so a just-created or stopped resource reports its real

@@ -285,7 +285,7 @@ func (h *Handler) serveV2Collection(w http.ResponseWriter, r *http.Request, p v2
 
 func (h *Handler) createV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 	var body gen2Function
-	if !decodeJSON(w, r, &body) {
+	if !decodeJSON(w, r, &body, gen2FunctionEnums) {
 		return
 	}
 
@@ -370,7 +370,7 @@ func (h *Handler) listV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 
 func (h *Handler) patchV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 	var body gen2Function
-	if !decodeJSON(w, r, &body) {
+	if !decodeJSON(w, r, &body, gen2FunctionEnums) {
 		return
 	}
 
@@ -427,7 +427,7 @@ func (h *Handler) deleteV2(w http.ResponseWriter, r *http.Request, p v2Path) {
 	// it. Best-effort: a missing driver entry is not an error.
 	_ = h.fn.DeleteFunction(r.Context(), p.name)
 
-	op := h.mintV2Operation(p, nil)
+	op := h.mintV2Operation(p, emptyResponse())
 	writeJSON(w, http.StatusOK, op)
 }
 
@@ -687,7 +687,7 @@ func resourceAsResponseV2(fn *gen2Function) map[string]any {
 	}
 
 	out := map[string]any{
-		"@type": "type.googleapis.com/google.cloud.functions.v2.Function",
+		anyTypeKey: "type.googleapis.com/google.cloud.functions.v2.Function",
 	}
 
 	var fields map[string]any

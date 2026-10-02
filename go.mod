@@ -7,11 +7,15 @@ require (
 	cloud.google.com/go/backupdr v1.16.0
 	cloud.google.com/go/bigtable v1.42.0
 	cloud.google.com/go/compute v1.60.0
+	cloud.google.com/go/dataplex v1.28.0
 	cloud.google.com/go/eventarc v1.18.0
 	cloud.google.com/go/firestore v1.22.0
+	cloud.google.com/go/functions v1.19.7
 	cloud.google.com/go/iam v1.11.0
 	cloud.google.com/go/longrunning v1.2.0
 	cloud.google.com/go/managedkafka v1.0.0
+	cloud.google.com/go/orchestration v1.11.10
+	cloud.google.com/go/redis v1.18.3
 	cloud.google.com/go/secretmanager v1.16.0
 	cloud.google.com/go/storage v1.62.1
 	github.com/Azure/azure-kusto-go v0.16.1

@@ -23,6 +23,11 @@ import (
 
 	"cloud.google.com/go/artifactregistry/apiv1/artifactregistrypb"
 	"cloud.google.com/go/backupdr/apiv1/backupdrpb"
+	"cloud.google.com/go/dataplex/apiv1/dataplexpb"
+	functionsv1pb "cloud.google.com/go/functions/apiv1/functionspb"
+	functionsv2pb "cloud.google.com/go/functions/apiv2/functionspb"
+	"cloud.google.com/go/orchestration/airflow/service/apiv1/servicepb"
+	"cloud.google.com/go/redis/apiv1/redispb"
 	"google.golang.org/protobuf/reflect/protoreflect"
 )
 
@@ -57,6 +62,37 @@ func specs() []spec {
 			Package: "backupdr",
 			Tables: []table{
 				{Var: "vaultEnums", Root: (&backupdrpb.BackupVault{}).ProtoReflect().Descriptor()},
+			},
+		},
+		{
+			Dir:     "server/gcp/cloudfunctions",
+			Package: "cloudfunctions",
+			Tables: []table{
+				{Var: "gen1FunctionEnums", Root: (&functionsv1pb.CloudFunction{}).ProtoReflect().Descriptor()},
+				{Var: "gen2FunctionEnums", Root: (&functionsv2pb.Function{}).ProtoReflect().Descriptor()},
+			},
+		},
+		{
+			Dir:     "server/gcp/composer",
+			Package: "composer",
+			Tables: []table{
+				{Var: "environmentEnums", Root: (&servicepb.Environment{}).ProtoReflect().Descriptor()},
+			},
+		},
+		{
+			Dir:     "server/gcp/dataplex",
+			Package: "dataplex",
+			Tables: []table{
+				{Var: "lakeEnums", Root: (&dataplexpb.Lake{}).ProtoReflect().Descriptor()},
+				{Var: "zoneEnums", Root: (&dataplexpb.Zone{}).ProtoReflect().Descriptor()},
+				{Var: "assetEnums", Root: (&dataplexpb.Asset{}).ProtoReflect().Descriptor()},
+			},
+		},
+		{
+			Dir:     "server/gcp/memorystore",
+			Package: "memorystore",
+			Tables: []table{
+				{Var: "instanceEnums", Root: (&redispb.Instance{}).ProtoReflect().Descriptor()},
 			},
 		},
 	}
