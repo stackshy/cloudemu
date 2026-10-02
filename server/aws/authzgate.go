@@ -251,9 +251,9 @@ func (g *gateConfig) evaluateChecks(
 
 		switch {
 		case d == awsauthz.ExplicitDeny:
-			return nil, denyMessage(p, c.Action, c.Resource, true)
+			return nil, denyMessage(p, c.Action, messageResource(c), true)
 		case d == awsauthz.ImplicitDeny && c.Mode == awsauthz.Required:
-			return nil, denyMessage(p, c.Action, c.Resource, false)
+			return nil, denyMessage(p, c.Action, messageResource(c), false)
 		}
 
 		if c.Mode == awsauthz.ResourcePolicy {
@@ -262,6 +262,15 @@ func (g *gateConfig) evaluateChecks(
 	}
 
 	return decisions, ""
+}
+
+// messageResource is the resource a deny message names for c.
+func messageResource(c awsauthz.Check) string {
+	if c.MessageResource != "" {
+		return c.MessageResource
+	}
+
+	return c.Resource
 }
 
 // evaluateServiceWide allows the caller only when its policies grant every

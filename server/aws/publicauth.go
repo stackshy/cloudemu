@@ -20,7 +20,13 @@ import (
 // read, so the lookup and the real dispatch see identical input. A form body
 // or query string that does not parse returns ok=false: handlers that parse
 // forms could otherwise disagree about what the request is, so callers treat
-// it as fail-closed. The returned probe's body is reset for the next reader.
+// it as fail-closed.
+//
+// The probe's body is left exactly as the Matches calls left it, because the
+// real request's body will be in that same state when the handler serves it.
+// A Resolver reading the probe therefore sees the bytes dispatch sees. That
+// holds only if every Matches that peeks at the body puts it back whole (see
+// wire.PeekBody); TestMatchesLeaveBodyIntact checks it for every handler.
 func probeRoute(
 	r *http.Request, body []byte, match func(*http.Request) server.Handler,
 ) (probe *http.Request, h server.Handler, ok bool) {
@@ -39,8 +45,6 @@ func probeRoute(
 	probe.Body = io.NopCloser(bytes.NewReader(body))
 
 	h = match(probe)
-
-	probe.Body = io.NopCloser(bytes.NewReader(body))
 
 	return probe, h, true
 }

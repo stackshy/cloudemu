@@ -351,7 +351,7 @@ func alreadyExistsCode(err error) string {
 
 // IAMService returns the IAM service prefix of the operations this handler
 // serves.
-func (*Handler) IAMService() string { return "redshift" }
+func (*Handler) IAMService() string { return scopeRedshift }
 
 // IAMChecks names the IAM action of a request from the form Action that
 // ServeHTTP dispatches on. An Action the handler does not know is authorized

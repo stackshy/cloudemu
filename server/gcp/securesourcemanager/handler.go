@@ -59,14 +59,13 @@
 package securesourcemanager
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	ssmdriver "github.com/stackshy/cloudemu/v2/services/securesourcemanager/driver"
 )
@@ -263,9 +262,7 @@ func bodyHasInstanceRef(r *http.Request) bool {
 		return false
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxProbeBytes))
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(raw))
+	raw, err := wire.PeekBody(r, maxProbeBytes)
 
 	if err != nil {
 		return false
@@ -327,9 +324,7 @@ func bodyLooksLikeSSMInstance(r *http.Request) bool {
 		return true
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxProbeBytes))
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(raw))
+	raw, err := wire.PeekBody(r, maxProbeBytes)
 
 	if err != nil {
 		return false

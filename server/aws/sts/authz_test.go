@@ -22,6 +22,12 @@ func TestIAMChecks(t *testing.T) {
 
 	h := New("123456789012", "us-east-1", cloud.IAM)
 	role := "arn:aws:iam::123456789012:role/team/deploy"
+	other := "arn:aws:iam::999999999999:role/other/deploy"
+	missing := "arn:aws:iam::123456789012:role/missing"
+
+	assume := func(action, resource, requested string) []awsauthz.Check {
+		return []awsauthz.Check{{Action: action, Resource: resource, MessageResource: requested}}
+	}
 
 	cases := []struct {
 		body  string
@@ -30,13 +36,14 @@ func TestIAMChecks(t *testing.T) {
 	}{
 		{"Action=GetCallerIdentity", []awsauthz.Check{}, true},
 		{"Action=GetSessionToken", []awsauthz.Check{{Action: "sts:GetSessionToken", Resource: "*", Mode: awsauthz.DenyOnly}}, true},
-		{"Action=AssumeRole&RoleArn=" + role, awsauthz.Single("sts:AssumeRole", role), true},
+		{"Action=AssumeRole&RoleArn=" + role, assume("sts:AssumeRole", role, role), true},
 		// The operation assumes the role by its last path segment, so the
 		// resource is the stored ARN, whatever path or account was sent.
-		{"Action=AssumeRole&RoleArn=arn:aws:iam::999999999999:role/other/deploy", awsauthz.Single("sts:AssumeRole", role), true},
-		{"Action=AssumeRole&RoleArn=arn:aws:iam::123456789012:role/missing", awsauthz.Single("sts:AssumeRole", ""), true},
-		{"Action=AssumeRoleWithWebIdentity&RoleArn=" + role, awsauthz.Single("sts:AssumeRoleWithWebIdentity", role), true},
-		{"Action=AssumeRoleWithSAML&RoleArn=" + role, awsauthz.Single("sts:AssumeRoleWithSAML", role), true},
+		// A deny still names the RoleArn as sent.
+		{"Action=AssumeRole&RoleArn=" + other, assume("sts:AssumeRole", role, other), true},
+		{"Action=AssumeRole&RoleArn=" + missing, assume("sts:AssumeRole", "", missing), true},
+		{"Action=AssumeRoleWithWebIdentity&RoleArn=" + role, assume("sts:AssumeRoleWithWebIdentity", role, role), true},
+		{"Action=AssumeRoleWithSAML&RoleArn=" + role, assume("sts:AssumeRoleWithSAML", role, role), true},
 		{"Action=GetFederationToken&Name=bob", awsauthz.Single("sts:GetFederationToken",
 			"arn:aws:sts::123456789012:federated-user/bob"), true},
 		{"Action=GetAccessKeyInfo", awsauthz.Single("sts:GetAccessKeyInfo", "*"), true},

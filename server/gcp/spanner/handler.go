@@ -38,14 +38,13 @@
 package spanner
 
 import (
-	"bytes"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 
 	sp "google.golang.org/api/spanner/v1"
 
+	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	spdriver "github.com/stackshy/cloudemu/v2/services/spanner/driver"
 )
@@ -144,9 +143,7 @@ func bodyLooksLikeSpanner(r *http.Request) bool {
 		return false
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(raw))
+	raw, err := wire.PeekBody(r, maxBodyBytes)
 
 	if err != nil {
 		return false

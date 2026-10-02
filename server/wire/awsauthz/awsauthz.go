@@ -42,6 +42,11 @@ type Check struct {
 	// conservatively: never more permissive than any concrete resource.
 	Resource string
 	Mode     CheckMode
+	// MessageResource, when set, is the resource a deny message names instead
+	// of Resource. AWS names the resource the caller asked for, so a handler
+	// that evaluates a resolved ARN keeps the message free of anything the
+	// caller did not send (such as whether that resource exists).
+	MessageResource string
 }
 
 // Scope is the account, region and partition the server runs in. It is

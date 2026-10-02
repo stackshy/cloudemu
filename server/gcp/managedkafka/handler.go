@@ -50,15 +50,14 @@
 package managedkafka
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"slices"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/wire"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	mkdriver "github.com/stackshy/cloudemu/v2/services/managedkafka/driver"
 )
@@ -281,9 +280,7 @@ func probeBody(r *http.Request) map[string]json.RawMessage {
 		return nil
 	}
 
-	raw, err := io.ReadAll(io.LimitReader(r.Body, maxProbeBytes))
-	_ = r.Body.Close()
-	r.Body = io.NopCloser(bytes.NewReader(raw))
+	raw, err := wire.PeekBody(r, maxProbeBytes)
 
 	if err != nil {
 		return nil

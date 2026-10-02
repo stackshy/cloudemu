@@ -24,7 +24,7 @@ import (
 // sreq is one signed request in the authorization matrix.
 type sreq struct {
 	method, path, ctype, body, service, host string
-	header                             map[string]string
+	header                                   map[string]string
 }
 
 func doSigned(t *testing.T, ts *httptest.Server, creds aws.Credentials, rq sreq) (int, string) {
@@ -276,7 +276,7 @@ func TestAuthzMatrixProtocolMixing(t *testing.T) {
 
 	t.Run("cbor PutMetricData with ?Action=DescribeAlarms", func(t *testing.T) {
 		status, body := doSigned(t, ts, describer, sreq{
-			path: "/service/GraniteServiceVersion20100801/operation/PutMetricData?Action=DescribeAlarms",
+			path:  "/service/GraniteServiceVersion20100801/operation/PutMetricData?Action=DescribeAlarms",
 			ctype: "application/cbor", body: string(payload), service: "monitoring",
 			header: map[string]string{"Smithy-Protocol": "rpc-v2-cbor"},
 		})
@@ -469,6 +469,30 @@ func TestAuthzMatrixSTS(t *testing.T) {
 		}
 	})
 
+	t.Run("the deny message does not reveal whether the role exists", func(t *testing.T) {
+		if _, err := cloud.IAM.CreateRole(ctx, iamdriver.RoleConfig{
+			Name: "pathed", Path: "/team/", AssumeRolePolicyDoc: trust,
+		}); err != nil {
+			t.Fatalf("CreateRole: %v", err)
+		}
+
+		send := func(name string) string {
+			_, body := doSigned(t, ts, dyn, form("sts", "Action=AssumeRole&Version=2011-06-15&RoleSessionName=s"+
+				"&RoleArn=arn:aws:iam::"+defaultTestAccount+":role/"+name))
+
+			return body[strings.Index(body, "<Message>"):strings.Index(body, "</Message>")]
+		}
+
+		existing, missing := send("pathed"), send("absent")
+		if strings.ReplaceAll(missing, "role/absent", "role/pathed") != existing {
+			t.Fatalf("messages differ:\n existing: %s\n missing:  %s", existing, missing)
+		}
+
+		if !strings.Contains(existing, "on resource: arn:aws:iam::"+defaultTestAccount+":role/pathed because") {
+			t.Fatalf("the message must name the RoleArn as sent: %s", existing)
+		}
+	})
+
 	t.Run("GetCallerIdentity needs no permission", func(t *testing.T) {
 		status, body := doSigned(t, ts, dyn, form("sts", "Action=GetCallerIdentity&Version=2011-06-15"))
 		if status != http.StatusOK {
@@ -516,5 +540,34 @@ func TestAuthzMatrixBootstrap(t *testing.T) {
 				t.Fatalf("unmapped JSON-RPC target: status %d, want 403", status)
 			}
 		})
+	}
+}
+
+// TestAuthzMatrixTruncatingPeek covers a Matches that peeks at the body. The
+// gate must authorize the bytes dispatch reads: Kinesis Video peeks at
+// /TagResource bodies, and if it handed back only the first 64 KiB, EC2
+// would run the query-string CreateVpc while the gate authorized the
+// body's DescribeVpcs.
+func TestAuthzMatrixTruncatingPeek(t *testing.T) {
+	ts, cloud := matrixServer(t, func(d *Drivers) { d.SavingsPlans = false })
+	viewer := userWithPolicy(t, cloud, "vpcviewer", allow("ec2:DescribeVpcs"))
+
+	before, err := cloud.VPC.DescribeVPCs(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("DescribeVPCs: %v", err)
+	}
+
+	status, body := doSigned(t, ts, viewer, sreq{
+		path: "/TagResource?Action=CreateVpc&CidrBlock=10.9.0.0/16", ctype: "Application/x-www-form-urlencoded",
+		body: "Pad=" + strings.Repeat("a", 70000) + "&Action=DescribeVpcs", service: "ec2",
+	})
+
+	after, err := cloud.VPC.DescribeVPCs(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("DescribeVPCs: %v", err)
+	}
+
+	if len(after) != len(before) {
+		t.Fatalf("a VPC was created (%d -> %d); response %d %.200s", len(before), len(after), status, body)
 	}
 }

@@ -23,7 +23,8 @@ type roleGetter interface {
 //     assumed. The role is resolved the way the operation resolves it (by the
 //     last path segment of RoleArn), and its stored ARN is the resource, so a
 //     RoleArn with a different path or account cannot borrow another role's
-//     grant. An unknown role leaves the resource unknown.
+//     grant. An unknown role leaves the resource unknown. A deny names the
+//     RoleArn as sent, like AWS, so it does not reveal whether the role exists.
 //   - GetFederationToken needs sts:GetFederationToken on the federated user.
 //   - GetAccessKeyInfo and DecodeAuthorizationMessage take no resource.
 func (h *Handler) IAMChecks(r *http.Request, _ awsauthz.Scope) ([]awsauthz.Check, bool) {
@@ -40,7 +41,7 @@ func (h *Handler) IAMChecks(r *http.Request, _ awsauthz.Scope) ([]awsauthz.Check
 	case actionGetSessionToken:
 		return []awsauthz.Check{{Action: action, Resource: "*", Mode: awsauthz.DenyOnly}}, true
 	case actionAssumeRole, actionAssumeRoleWithWebIdentity, actionAssumeRoleWithSAML:
-		return awsauthz.Single(action, h.assumedRoleARN(r)), true
+		return []awsauthz.Check{{Action: action, Resource: h.assumedRoleARN(r), MessageResource: r.Form.Get("RoleArn")}}, true
 	case actionGetFederationToken:
 		return awsauthz.Single(action, "arn:aws:sts::"+h.accountID+":federated-user/"+r.Form.Get("Name")), true
 	case actionGetAccessKeyInfo, actionDecodeAuthorizationMessage:
