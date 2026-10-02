@@ -110,16 +110,25 @@ func (m *Mock) PatchGCPForwardingRule(_ context.Context, name string, mutate fun
 }
 
 // PatchGCPBackendService applies mutate to the target group named name, holding
-// the store lock across the read-modify-write. Returns NotFound when no backend
-// service with that name exists.
+// the store lock across the read-modify-write. mutate works on a copy with its
+// own Tags map, so readers holding the stored map never see it change. Returns
+// NotFound when no backend service with that name exists.
 func (m *Mock) PatchGCPBackendService(_ context.Context, name string, mutate func(*driver.TargetGroupInfo)) error {
 	// CreateTargetGroup keys the store by GCPID(project, "backendServices", name),
 	// so the ARN is derivable from the name without scanning.
 	arn := idgen.GCPID(m.opts.ProjectID, "backendServices", name)
 
 	updated := m.tgs.Update(arn, func(tg driver.TargetGroupInfo) driver.TargetGroupInfo {
-		mutate(&tg)
-		return tg
+		next := tg
+		next.Tags = make(map[string]string, len(tg.Tags))
+
+		for k, v := range tg.Tags {
+			next.Tags[k] = v
+		}
+
+		mutate(&next)
+
+		return next
 	})
 	if !updated {
 		return cerrors.Newf(cerrors.NotFound, "backend service %q not found", name)

@@ -95,13 +95,7 @@ func (h *Handler) patchBackendService(w http.ResponseWriter, r *http.Request, rp
 		return
 	}
 
-	if err := h.validateHealthCheckRefs(r.Context(), rp, h.storedBSScheme(r.Context(), rp, req.LoadBalancingScheme),
-		req.HealthChecks); err != nil {
-		gcprest.WriteCErr(w, err)
-		return
-	}
-
-	if err := h.validateBackendRefs(r.Context(), req.Backends); err != nil {
+	if err := h.validateBackendServicePatch(r.Context(), rp, &req); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -109,33 +103,19 @@ func (h *Handler) patchBackendService(w http.ResponseWriter, r *http.Request, rp
 	stale := false
 
 	err := patcher.PatchGCPBackendService(r.Context(), scopedDriverName(rp, rp.ResourceName), func(tg *lbdriver.TargetGroupInfo) {
-		name := displayName(tg.Tags, bsNameTag, tg.Name)
-		if req.Fingerprint != "" && req.Fingerprint != generationFingerprint(name, tg.Tags, bsGenerationTag) {
-			stale = true
-			return
-		}
-
-		if req.Protocol != "" {
-			tg.Protocol = req.Protocol
-		}
-
-		if req.Port != 0 {
-			tg.Port = req.Port
-		}
-
-		if tg.Tags == nil {
-			tg.Tags = map[string]string{}
-		}
-
-		mergeBackendServiceTags(tg.Tags, &req)
-		bumpGeneration(tg.Tags, bsGenerationTag)
+		stale = applyBackendServicePatch(tg, &req)
 	})
-	if err != nil {
+
+	switch {
+	case cerrors.IsNotFound(err):
+		// The provider names the scope-qualified store key; answer with the
+		// client-facing name, as GET does.
+		gcprest.WriteCErr(w, cerrors.Newf(cerrors.NotFound, "backend service %q not found", rp.ResourceName))
+		return
+	case err != nil:
 		gcprest.WriteCErr(w, err)
 		return
-	}
-
-	if stale {
+	case stale:
 		writeConditionNotMet(w, "Fingerprint either invalid or resource has changed")
 		return
 	}
@@ -144,6 +124,44 @@ func (h *Handler) patchBackendService(w http.ResponseWriter, r *http.Request, rp
 		resourceBackendServices, rp.ResourceName, "patch")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// validateBackendServicePatch checks the health check and backend references a
+// backend-service patch carries, judging health check scope by the stored scheme.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) validateBackendServicePatch(ctx context.Context, rp gcprest.ResourcePath, req *backendServiceRequest) error {
+	if err := h.validateHealthCheckRefs(ctx, rp, h.storedBSScheme(ctx, rp, req.LoadBalancingScheme),
+		req.HealthChecks); err != nil {
+		return err
+	}
+
+	return h.validateBackendRefs(ctx, req.Backends)
+}
+
+// applyBackendServicePatch merges req onto tg and bumps its generation. It
+// reports true, leaving tg untouched, when req carries a stale fingerprint.
+func applyBackendServicePatch(tg *lbdriver.TargetGroupInfo, req *backendServiceRequest) bool {
+	if req.Fingerprint != "" && req.Fingerprint != generationFingerprint(tg.Name, tg.Tags, bsGenerationTag) {
+		return true
+	}
+
+	if req.Protocol != "" {
+		tg.Protocol = req.Protocol
+	}
+
+	if req.Port != 0 {
+		tg.Port = req.Port
+	}
+
+	if tg.Tags == nil {
+		tg.Tags = map[string]string{}
+	}
+
+	mergeBackendServiceTags(tg.Tags, req)
+	bumpGeneration(tg.Tags, bsGenerationTag)
+
+	return false
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -347,12 +365,7 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	if err := validateForwardingRulePorts(&req); err != nil {
-		gcprest.WriteCErr(w, err)
-		return
-	}
-
-	if err := h.validateForwardingRuleTarget(r.Context(), rp, &req); err != nil {
+	if err := h.validateForwardingRuleInsert(r.Context(), rp, &req); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -391,32 +404,44 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	// A forwarding rule that references a backend service becomes a listener
-	// linking the load balancer to that target group. A dangling reference to a
-	// non-existent backend service is an error (as in real GCP), and a failed
-	// link must not be swallowed into a phantom success.
-	if bsName := backendServiceName(req.BackendService); bsName != "" {
-		tg, ferr := h.findTGByName(r.Context(), rp, bsName)
-		if ferr != nil {
-			gcprest.WriteCErr(w, ferr)
-			return
-		}
-
-		if _, lerr := h.lb.CreateListener(r.Context(), lbdriver.ListenerConfig{
-			LBARN:          lb.ARN,
-			Protocol:       req.IPProtocol,
-			Port:           firstPort(req.PortRange),
-			TargetGroupARN: tg.ARN,
-		}); lerr != nil {
-			gcprest.WriteCErr(w, lerr)
-			return
-		}
+	if err := h.linkForwardingRuleBackend(r.Context(), rp, &req, lb.ARN); err != nil {
+		gcprest.WriteCErr(w, err)
+		return
 	}
 
 	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
 		resourceForwardingRules, req.Name, "insert")
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
+}
+
+// linkForwardingRuleBackend turns a rule's backendService reference into a
+// listener linking the load balancer to that target group. A dangling reference
+// to a non-existent backend service is an error (as in real GCP), and a failed
+// link must not be swallowed into a phantom success.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) linkForwardingRuleBackend(ctx context.Context, rp gcprest.ResourcePath,
+	req *forwardingRuleRequest, lbARN string,
+) error {
+	bsName := backendServiceName(req.BackendService)
+	if bsName == "" {
+		return nil
+	}
+
+	tg, err := h.findTGByName(ctx, rp, bsName)
+	if err != nil {
+		return err
+	}
+
+	_, err = h.lb.CreateListener(ctx, lbdriver.ListenerConfig{
+		LBARN:          lbARN,
+		Protocol:       req.IPProtocol,
+		Port:           firstPort(req.PortRange),
+		TargetGroupARN: tg.ARN,
+	})
+
+	return err
 }
 
 //nolint:gocritic // rp is a request-scoped value
@@ -569,7 +594,7 @@ func toBackendServiceResponse(tg *lbdriver.TargetGroupInfo, rp gcprest.ResourceP
 	resp.CreationTimestamp = tg.Tags[bsCreationTag]
 	// Real GCP always returns a fingerprint and changes it on every mutation, so
 	// a patch carrying a stale one can be rejected.
-	resp.Fingerprint = generationFingerprint(name, tg.Tags, bsGenerationTag)
+	resp.Fingerprint = generationFingerprint(tg.Name, tg.Tags, bsGenerationTag)
 
 	if rp.Scope == gcprest.ScopeRegions {
 		resp.Region = regionLink(host, rp.Project, rp.ScopeName)

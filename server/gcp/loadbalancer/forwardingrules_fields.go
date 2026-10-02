@@ -111,7 +111,7 @@ func applyForwardingRuleExtras(out *forwardingRuleResponse, lb *lbdriver.LBInfo,
 	out.IPVersion = lb.Tags[frIPVersionTag]
 	out.NetworkTier = tagOrDefault(lb.Tags, frNetworkTierTag, defaultNetworkTier)
 	out.LabelFingerprint = labelFingerprint(out.Labels)
-	out.Fingerprint = generationFingerprint(out.Name, lb.Tags, frGenerationTag)
+	out.Fingerprint = generationFingerprint(lb.Name, lb.Tags, frGenerationTag)
 }
 
 // usesPortList reports whether the rule forwards allPorts or an explicit ports
@@ -173,15 +173,18 @@ func bumpGeneration(tags map[string]string, key string) {
 	tags[key] = strconv.Itoa(generationOf(tags, key) + 1)
 }
 
-// generationFingerprint changes on every mutation. Generation 0 keeps the
-// name-only value so records written before the counter existed read the same.
-func generationFingerprint(name string, tags map[string]string, key string) string {
+// generationFingerprint changes on every mutation. driverName is the
+// scope-qualified store key, so a global and a regional resource of the same
+// name never share a fingerprint. Global keys are the plain name, and
+// generation 0 hashes the key alone, so global records written before the
+// counter existed read the same.
+func generationFingerprint(driverName string, tags map[string]string, key string) string {
 	gen := generationOf(tags, key)
 	if gen == 0 {
-		return fingerprintOf(name)
+		return fingerprintOf(driverName)
 	}
 
-	return fingerprintOf(name + ":" + strconv.Itoa(gen))
+	return fingerprintOf(driverName + ":" + strconv.Itoa(gen))
 }
 
 // writeConditionNotMet answers a stale fingerprint with GCP's 412.
@@ -205,13 +208,13 @@ func (h *Handler) setForwardingRuleLabels(w http.ResponseWriter, r *http.Request
 
 	h.mutateForwardingRule(w, r, rp, actionSetLabels,
 		"Labels fingerprint either invalid or resource labels have changed",
-		func(lb *lbdriver.LBInfo) error {
+		func(lb *lbdriver.LBInfo) (bool, error) {
 			var cur map[string]string
 
 			decodeJSONTag(lb.Tags, frLabelsTag, &cur)
 
 			if req.LabelFingerprint != "" && req.LabelFingerprint != labelFingerprint(cur) {
-				return errStaleFingerprint
+				return false, errStaleFingerprint
 			}
 
 			delete(lb.Tags, frLabelsTag)
@@ -220,7 +223,7 @@ func (h *Handler) setForwardingRuleLabels(w http.ResponseWriter, r *http.Request
 				encodeJSONTag(lb.Tags, frLabelsTag, req.Labels)
 			}
 
-			return nil
+			return true, nil
 		})
 }
 
@@ -237,34 +240,48 @@ func (h *Handler) patchForwardingRule(w http.ResponseWriter, r *http.Request, rp
 
 	h.mutateForwardingRule(w, r, rp, "patch",
 		"Fingerprint either invalid or resource has changed",
-		func(lb *lbdriver.LBInfo) error {
-			name := displayName(lb.Tags, frNameTag, lb.Name)
-			if req.Fingerprint != "" && req.Fingerprint != generationFingerprint(name, lb.Tags, frGenerationTag) {
-				return errStaleFingerprint
+		func(lb *lbdriver.LBInfo) (bool, error) {
+			if req.Fingerprint != "" && req.Fingerprint != generationFingerprint(lb.Name, lb.Tags, frGenerationTag) {
+				return false, errStaleFingerprint
 			}
 
+			changed := false
+
 			if req.AllowGlobalAccess != nil {
-				lb.Tags[frAllowGlobalAccessTag] = strconv.FormatBool(*req.AllowGlobalAccess)
+				changed = setTagIfChanged(lb.Tags, frAllowGlobalAccessTag, strconv.FormatBool(*req.AllowGlobalAccess)) || changed
 			}
 
 			if req.NetworkTier != "" {
-				lb.Tags[frNetworkTierTag] = req.NetworkTier
+				changed = setTagIfChanged(lb.Tags, frNetworkTierTag, req.NetworkTier) || changed
 			}
 
 			if req.Description != "" {
-				lb.Tags[frDescriptionTag] = req.Description
+				changed = setTagIfChanged(lb.Tags, frDescriptionTag, req.Description) || changed
 			}
 
-			return nil
+			return changed, nil
 		})
 }
 
+// setTagIfChanged stores value under key and reports whether it differed.
+func setTagIfChanged(tags map[string]string, key, value string) bool {
+	if tags[key] == value {
+		return false
+	}
+
+	tags[key] = value
+
+	return true
+}
+
 // mutateForwardingRule applies mutate to the rule through the provider, bumps
-// its generation and answers with a DONE operation of type opType.
+// its generation when mutate reports a change, and answers with a DONE
+// operation of type opType. A patch that changes nothing (for example one that
+// carries only immutable fields) leaves the fingerprint as it was.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) mutateForwardingRule(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath,
-	opType, staleMsg string, mutate func(*lbdriver.LBInfo) error,
+	opType, staleMsg string, mutate func(*lbdriver.LBInfo) (bool, error),
 ) {
 	patcher, ok := h.lb.(lbdriver.GCPForwardingRulePatcher)
 	if !ok {
@@ -273,11 +290,14 @@ func (h *Handler) mutateForwardingRule(w http.ResponseWriter, r *http.Request, r
 	}
 
 	err := patcher.PatchGCPForwardingRule(r.Context(), scopedDriverName(rp, rp.ResourceName), func(lb *lbdriver.LBInfo) error {
-		if err := mutate(lb); err != nil {
+		changed, err := mutate(lb)
+		if err != nil {
 			return err
 		}
 
-		bumpGeneration(lb.Tags, frGenerationTag)
+		if changed {
+			bumpGeneration(lb.Tags, frGenerationTag)
+		}
 
 		return nil
 	})
@@ -285,6 +305,11 @@ func (h *Handler) mutateForwardingRule(w http.ResponseWriter, r *http.Request, r
 	switch {
 	case errors.Is(err, errStaleFingerprint):
 		writeConditionNotMet(w, staleMsg)
+		return
+	case cerrors.IsNotFound(err):
+		// The provider names the scope-qualified store key; answer with the
+		// client-facing name, as GET does.
+		gcprest.WriteCErr(w, cerrors.Newf(cerrors.NotFound, "forwarding rule %q not found", rp.ResourceName))
 		return
 	case err != nil:
 		gcprest.WriteCErr(w, err)
