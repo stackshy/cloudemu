@@ -5,6 +5,10 @@ package cloudemu
 // a new service into a provider.
 //go:generate go run ./internal/coveragegen
 
+// Regenerate the GCP numeric-enum tables (server/gcp/*/enums_gen.go) from the
+// proto descriptors.
+//go:generate go run ./internal/gcpenumgen
+
 import (
 	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/providers/aws"
