@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
+	gcecompute "github.com/stackshy/cloudemu/v2/providers/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -526,10 +528,33 @@ func mergeDiskTags(in map[string]string, name, sourceImage string) map[string]st
 	out[gcpDiskNameTag] = name
 
 	if sourceImage != "" {
-		out[gcpDiskSourceImageTag] = sourceImage
+		out[gcpDiskSourceImageTag] = canonicalSourceImage(sourceImage)
 	}
 
 	return out
+}
+
+// canonicalSourceImage resolves a public image reference (by name or by
+// family) to the image's full URL, the form real GCE stores as a disk's
+// sourceImage. Terraform's image diff suppression matches a configured
+// "debian-cloud/debian-12" only against that form. Any other reference is
+// kept as given.
+func canonicalSourceImage(ref string) string {
+	project := projectctx.FromPath(ref)
+	if !gcecompute.IsPublicImageProject(project) {
+		return ref
+	}
+
+	img, ok := gcecompute.GetPublicImage(project, lastSegment(ref))
+	if strings.Contains(ref, "/global/images/family/") {
+		img, ok = gcecompute.PublicImageFromFamily(project, lastSegment(ref))
+	}
+
+	if !ok {
+		return ref
+	}
+
+	return "https://www.googleapis.com/compute/v1/projects/" + project + "/global/images/" + img.Name
 }
 
 // conflictIfExists writes a 409 alreadyExists (or the underlying error) and

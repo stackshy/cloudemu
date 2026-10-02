@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	gcecompute "github.com/stackshy/cloudemu/v2/providers/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
@@ -116,6 +117,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "malformed path")
 		return
 	}
+
+	r = r.WithContext(projectctx.WithProject(r.Context(), rp.Project))
 
 	if rp.Scope == gcprest.ScopeAggregated {
 		h.serveAggregated(w, r, rp)
@@ -438,7 +441,7 @@ func (h *Handler) serveOperations(w http.ResponseWriter, r *http.Request, rp gcp
 		return
 	}
 
-	if !h.ops.Has(rp.Scope, rp.ScopeName, rp.ResourceName) {
+	if !h.ops.Has(rp.Project, rp.Scope, rp.ScopeName, rp.ResourceName) {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound",
 			"The resource 'operations/"+rp.ResourceName+"' was not found")
 
