@@ -49,6 +49,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/gcp/networkconnectivity"
 	privatecaprov "github.com/stackshy/cloudemu/v2/providers/gcp/privateca"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/pubsub"
+	"github.com/stackshy/cloudemu/v2/providers/gcp/resourceiam"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/scheduler"
 	"github.com/stackshy/cloudemu/v2/providers/gcp/secretmanager"
 	securesourcemanagerprov "github.com/stackshy/cloudemu/v2/providers/gcp/securesourcemanager"
@@ -139,6 +140,9 @@ type Provider struct {
 	GKEBackup            *gkebackupprov.Mock
 	GKEHub               *gkehubprov.Mock
 	DataFusion           *datafusionprov.Mock
+	// ResourceIAM holds the getIamPolicy/setIamPolicy policies of resources
+	// with no IAM model of their own (BigQuery, Spanner, Cloud DNS, ...).
+	ResourceIAM *resourceiam.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -211,6 +215,7 @@ func New(opts ...config.Option) *Provider {
 		GKEBackup:            gkebackupprov.New(o),
 		GKEHub:               gkehubprov.New(o),
 		DataFusion:           datafusionprov.New(o),
+		ResourceIAM:          resourceiam.New(),
 		ProjectID:            o.ProjectID,
 		Region:               o.Region,
 		Clock:                o.Clock,

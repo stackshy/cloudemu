@@ -13,7 +13,12 @@ const snapshotTTL = 7 * 24 * time.Hour
 
 // ---------- Snapshots ----------
 
-func (h *Handler) serveSnapshot(w http.ResponseWriter, r *http.Request, project, name, _ string) {
+func (h *Handler) serveSnapshot(w http.ResponseWriter, r *http.Request, project, name, action string) {
+	if action != "" {
+		h.serveIam(w, r, resSnapshots, name, action)
+		return
+	}
+
 	switch r.Method {
 	case http.MethodPut:
 		h.createSnapshot(w, r, project, name)
