@@ -20,7 +20,7 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // intentionally not captured.
 type pubsubSnapshot struct {
 	Queues map[string]*queueSnapshot `json:"queues,omitempty"`
-	Wire   json.RawMessage            `json:"wire,omitempty"`
+	Wire   json.RawMessage           `json:"wire,omitempty"`
 }
 
 // queueSnapshot mirrors queueData, promoting its unexported attribute fields,
