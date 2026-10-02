@@ -830,6 +830,38 @@ func (m *Mock) DeleteCluster(_ context.Context, rg, name string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
+	return m.deleteClusterLocked(rg, name)
+}
+
+// PurgeResourceGroup deletes every managed cluster in the resource group, with
+// its agent pools, maintenance configurations and Kubernetes data-plane state.
+// It backs the ARM resource-group delete cascade, so it bypasses the
+// last-system-pool guard the same way a cluster delete does. Clusters record
+// only their resource group (the emulator is single-estate), matched
+// case-insensitively.
+func (m *Mock) PurgeResourceGroup(_ context.Context, _, resourceGroup string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	//nolint:gocritic // map values are large structs; the copy is read-only here.
+	for _, c := range m.clusters.All() {
+		if strings.EqualFold(c.ResourceGroup, resourceGroup) {
+			_ = m.deleteClusterLocked(c.ResourceGroup, c.Name)
+		}
+	}
+
+	return nil
+}
+
+// Compile-time check for the resource-group purge the ARM wire handler reaches
+// by type assertion.
+var _ interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+} = (*Mock)(nil)
+
+// deleteClusterLocked removes a managed cluster and all its sub-resources. The
+// caller holds m.mu.
+func (m *Mock) deleteClusterLocked(rg, name string) error {
 	key := clusterKey(rg, name)
 	if !m.clusters.Has(key) {
 		return cerrors.Newf(cerrors.NotFound, "managed cluster %q not found in resource group %q", name, rg)

@@ -28,6 +28,7 @@ import (
 	"sync"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
 )
@@ -764,6 +765,11 @@ func (h *Handler) deleteVNet(w http.ResponseWriter, r *http.Request, rp azurearm
 
 	writeAcceptedAsync(w, r, rp.Subscription, "vnet-delete-"+rp.ResourceName, nil)
 }
+
+// PurgePhase orders this purger in the resource-group cascade: virtual networks
+// release the public IPs and subnets every consumer references, so they go
+// last.
+func (*Handler) PurgePhase() int { return resourcegroups.PhaseNetwork }
 
 // PurgeResourceGroup deletes every Microsoft.Network resource this handler owns
 // in the given resource group: network interfaces, NAT gateways, public IPs,

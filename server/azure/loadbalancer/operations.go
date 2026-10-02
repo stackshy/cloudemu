@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	lbdriver "github.com/stackshy/cloudemu/v2/services/loadbalancer/driver"
 )
@@ -137,6 +138,11 @@ func (h *Handler) deleteLoadBalancer(w http.ResponseWriter, r *http.Request, rp 
 
 	w.WriteHeader(http.StatusOK)
 }
+
+// PurgePhase orders this purger in the resource-group cascade: load balancers
+// reference public IPs and subnets, so they go before the virtual network
+// purge.
+func (*Handler) PurgePhase() int { return resourcegroups.PhaseNetworkConsumers }
 
 // PurgeResourceGroup deletes every load balancer stored under the given resource
 // group, backing the resource-group cascade delete: an RG is a pure container,

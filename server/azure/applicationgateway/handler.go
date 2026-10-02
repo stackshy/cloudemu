@@ -44,6 +44,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	agdriver "github.com/stackshy/cloudemu/v2/services/applicationgateway/driver"
 )
@@ -120,6 +121,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		writeMethodNotAllowed(w)
 	}
 }
+
+// PurgePhase orders this purger in the resource-group cascade: application
+// gateways reference public IPs and subnets, so they go before the virtual
+// network purge.
+func (*Handler) PurgePhase() int { return resourcegroups.PhaseNetworkConsumers }
 
 // PurgeResourceGroup deletes every application gateway stored under the given
 // resource group, backing the resource-group cascade delete. Gateways are stored

@@ -7,7 +7,7 @@ Services cloudemu emulates for Azure, by native name. Back to the [cross-provide
 | --- | --- | --- |
 | [ACR](./acr.md) | `containerregistry` | 15 |
 | [AI](./ai.md) | `azureai` | 92 |
-| [AKS](./aks.md) | (provider-native) | 18 |
+| [AKS](./aks.md) | (provider-native) | 19 |
 | [APIManagement](./apimanagement.md) | (provider-native) | 30 |
 | [Aad](./aad.md) | (provider-native) | 2 |
 | [AppConfiguration](./appconfiguration.md) | (provider-native) | 9 |
