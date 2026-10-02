@@ -25,10 +25,24 @@ type KVAccessPermissions struct {
 // KVAccessPolicy is one entry of a vault's classic access-policy list, granting
 // a principal (ObjectID under TenantID) the listed object permissions.
 type KVAccessPolicy struct {
-	TenantID    string
-	ObjectID    string
-	Permissions KVAccessPermissions
+	TenantID string
+	ObjectID string
+	// ApplicationID is the optional compound-identity application; with
+	// TenantID and ObjectID it identifies the entry.
+	ApplicationID string
+	Permissions   KVAccessPermissions
 }
+
+// KVAccessPolicyUpdateKind is the operation of a vaults/{v}/accessPolicies/
+// {kind} update (Vaults.UpdateAccessPolicy).
+type KVAccessPolicyUpdateKind string
+
+// Access-policy update kinds.
+const (
+	KVAccessPolicyAdd     KVAccessPolicyUpdateKind = "add"
+	KVAccessPolicyReplace KVAccessPolicyUpdateKind = "replace"
+	KVAccessPolicyRemove  KVAccessPolicyUpdateKind = "remove"
+)
 
 // KVVaultProperties are the ARM vault properties (Microsoft.KeyVault/vaults).
 // Pointer bools distinguish "unset" (nil, omitted from the response) from an
@@ -87,4 +101,13 @@ type KeyVaultVaults interface {
 	ListVaults(ctx context.Context, filter scope.Scope) ([]KVVaultInfo, error)
 	// DeleteVault removes a vault by name.
 	DeleteVault(ctx context.Context, name string) error
+	// UpdateVault atomically applies mutate to a copy of the stored vault
+	// (ARM PATCH). The server-side property defaults are re-applied; if
+	// mutate returns an error the vault is unchanged.
+	UpdateVault(ctx context.Context, name string, mutate func(*KVVaultInfo) error) (*KVVaultInfo, error)
+	// UpdateVaultAccessPolicies atomically adds, replaces or removes access
+	// policy entries and returns the vault's resulting list. Entries match on
+	// (TenantID, ObjectID, ApplicationID); nothing else on the vault changes.
+	UpdateVaultAccessPolicies(ctx context.Context, name string, kind KVAccessPolicyUpdateKind,
+		entries []KVAccessPolicy) ([]KVAccessPolicy, error)
 }

@@ -140,6 +140,8 @@ func (h *Handler) serveServerChild(w http.ResponseWriter, r *http.Request, rp *a
 		h.serveFailoverGroup(w, r, rp)
 	case subAdministrators:
 		h.serveAADAdmin(w, r, rp)
+	case subConnectionPolicies:
+		h.serveConnectionPolicy(w, r, rp)
 	case subRestorableDropped:
 		// cloudemu keeps no dropped databases, so the list is empty.
 		azurearm.ServeDeferredChild(w, r, rp)

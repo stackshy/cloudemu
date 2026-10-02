@@ -90,15 +90,15 @@ func TestDeferredChildrenNeverReachTheParent(t *testing.T) {
 		{"AZKV-01", kv, put(kv, `{"location":"westus","tags":{"k":"v"},"properties":{`+
 			`"tenantId":"00000000-0000-0000-0000-000000000001","sku":{"family":"A","name":"premium"},"accessPolicies":[]}}`),
 			[]cpExpect{
-				{http.MethodPut, "/accessPolicies/add", http.StatusNotImplemented, "NotImplemented"},
-				{http.MethodDelete, "/accessPolicies/add", http.StatusNotImplemented, ""},
+				{http.MethodPut, "/accessPolicies/add", http.StatusOK, `"name":"add"`},
+				{http.MethodDelete, "/accessPolicies/add", http.StatusMethodNotAllowed, ""},
 				{http.MethodPut, "/secrets/s1", http.StatusNotImplemented, ""},
 				{http.MethodGet, "/secrets", http.StatusOK, `"value":[]`},
 				{http.MethodGet, "/secrets/s1", http.StatusNotFound, "ResourceNotFound"},
 			}},
 		{"AZKV-02", mi, put(mi, cpTagged), []cpExpect{
-			{http.MethodPut, "/federatedIdentityCredentials/f1", http.StatusNotImplemented, ""},
-			{http.MethodDelete, "/federatedIdentityCredentials/f1", http.StatusNotImplemented, ""},
+			{http.MethodPut, "/federatedIdentityCredentials/f1", http.StatusBadRequest, "BadRequest"},
+			{http.MethodDelete, "/federatedIdentityCredentials/f1", http.StatusNoContent, ""},
 			{http.MethodGet, "/federatedIdentityCredentials", http.StatusOK, `"value":[]`},
 		}},
 		{"AZOBS-01", ai, put(ai, `{"location":"westus","kind":"web","tags":{"k":"v"},`+
@@ -121,8 +121,8 @@ func TestDeferredChildrenNeverReachTheParent(t *testing.T) {
 		{"AZDB-01", db, chain(put(sqlSrv, `{"location":"westus","properties":{"administratorLogin":"a",`+
 			`"administratorLoginPassword":"P@ssw0rd1234!","version":"12.0"}}`),
 			put(db, `{"location":"westus","properties":{}}`)), []cpExpect{
-			{http.MethodDelete, "/backupShortTermRetentionPolicies/default", http.StatusNotImplemented, ""},
-			{http.MethodPut, "/backupShortTermRetentionPolicies/default", http.StatusNotImplemented, ""},
+			{http.MethodDelete, "/backupShortTermRetentionPolicies/default", http.StatusMethodNotAllowed, ""},
+			{http.MethodPut, "/backupShortTermRetentionPolicies/default", http.StatusOK, `"retentionDays":7`},
 			{http.MethodGet, "/backupShortTermRetentionPolicies/default", http.StatusOK, `"retentionDays":7`},
 			{http.MethodGet, "/backupLongTermRetentionPolicies/default", http.StatusOK, `"weeklyRetention":"PT0S"`},
 			{http.MethodGet, "/securityAlertPolicies/Default", http.StatusOK, `"state":"Disabled"`},
@@ -141,8 +141,8 @@ func TestDeferredChildrenNeverReachTheParent(t *testing.T) {
 		{"connectionPolicies", sqlSrv, put(sqlSrv, `{"location":"westus","properties":{"administratorLogin":"a",`+
 			`"administratorLoginPassword":"P@ssw0rd1234!","version":"12.0"}}`), []cpExpect{
 			{http.MethodGet, "/connectionPolicies/default", http.StatusOK, `"connectionType":"Default"`},
-			{http.MethodPut, "/connectionPolicies/default", http.StatusNotImplemented, ""},
-			{http.MethodGet, "/connectionPolicies", http.StatusOK, `"value":[]`},
+			{http.MethodPut, "/connectionPolicies/default", http.StatusBadRequest, ""},
+			{http.MethodGet, "/connectionPolicies", http.StatusOK, `"connectionType":"Default"`},
 			{http.MethodGet, "/restorableDroppedDatabases", http.StatusOK, `"value":[]`},
 			{http.MethodGet, "/sqlVulnerabilityAssessments/default", http.StatusOK, `"state":"Disabled"`},
 			{http.MethodGet, "/connectionPolicies/other", http.StatusNotFound, ""},

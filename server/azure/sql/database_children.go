@@ -31,23 +31,29 @@ func (h *Handler) serveDatabaseChild(w http.ResponseWriter, r *http.Request, rp 
 		return
 	}
 
-	if rp.SubResourceAction == subTDE {
-		h.serveTDE(w, r, rp)
-		return
-	}
+	child := rp.SubResourceAction
 
-	// cloudemu has no geo-replication, so a database has no replication links.
-	if strings.EqualFold(rp.SubResourceAction, "replicationLinks") {
+	switch {
+	case child == subTDE:
+		h.serveTDE(w, r, rp)
+	case strings.EqualFold(child, subSTR), strings.EqualFold(child, subLTR):
+		h.serveRetention(w, r, rp)
+	case strings.EqualFold(child, "replicationLinks"):
+		// cloudemu has no geo-replication, so a database has no links.
 		kind := azurearm.DeferredCollection
 		if rp.Rest != "" {
 			kind = azurearm.DeferredItem
 		}
 
 		azurearm.ServeDeferred(w, r, rp, kind, nil)
-
-		return
+	default:
+		h.serveDatabaseSingleton(w, r, rp)
 	}
+}
 
+// serveDatabaseSingleton answers the always-present database singletons
+// cloudemu does not model: reads return the documented default.
+func (h *Handler) serveDatabaseSingleton(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath) {
 	name, props, ok := databaseSingleton(rp.SubResourceAction)
 	if !ok {
 		azurearm.WriteUnknownType(w, r, rp)
@@ -109,12 +115,12 @@ func (h *Handler) getDatabaseSingleton(
 
 // writeSingleton writes a singleton child envelope whose id is the request path.
 func writeSingleton(w http.ResponseWriter, r *http.Request, rp *azurearm.ResourcePath, name string, props map[string]any) {
-	azurearm.WriteJSON(w, http.StatusOK, map[string]any{
-		"id":         strings.TrimSuffix(r.URL.Path, "/"),
-		"name":       name,
-		"type":       providerName + "/" + rp.NestedType(),
-		"properties": props,
-	})
+	azurearm.WriteJSON(w, http.StatusOK, singletonEnvelope(strings.TrimSuffix(r.URL.Path, "/"), name, rp, props))
+}
+
+// singletonEnvelope is the ARM envelope of a database or server singleton.
+func singletonEnvelope(id, name string, rp *azurearm.ResourcePath, props any) map[string]any {
+	return map[string]any{"id": id, "name": name, "type": providerName + "/" + rp.NestedType(), "properties": props}
 }
 
 // databaseSingleton returns the fixed name and default properties of an
@@ -132,29 +138,22 @@ func databaseSingleton(childType string) (name string, props map[string]any, ok 
 		return singletonDefault, map[string]any{propState: stateDisabled}, true
 	case "ledgerdigestuploads":
 		return tdeName, map[string]any{propState: stateDisabled}, true
-	case "backupshorttermretentionpolicies":
-		return singletonDefault, map[string]any{
-			propRetentionDays: defaultSTRRetentionDays, "diffBackupIntervalInHours": defaultSTRDiffInterval,
-		}, true
-	case "backuplongtermretentionpolicies":
-		return singletonDefault, map[string]any{
-			"weeklyRetention": zeroDuration, "monthlyRetention": zeroDuration,
-			"yearlyRetention": zeroDuration, "weekOfYear": 1,
-		}, true
 	default:
 		return "", nil, false
 	}
 }
 
-// subRestorableDropped lists the server's dropped databases.
-const subRestorableDropped = "restorableDroppedDatabases"
+// subRestorableDropped lists the server's dropped databases;
+// subConnectionPolicies is the server's connection-type singleton.
+const (
+	subRestorableDropped  = "restorableDroppedDatabases"
+	subConnectionPolicies = "connectionPolicies"
+)
 
 // serverSingletonProps returns the default properties of an always-present
 // server child (all named "default") cloudemu does not model.
 func serverSingletonProps(childType string) (map[string]any, bool) {
 	switch strings.ToLower(childType) {
-	case "connectionpolicies":
-		return map[string]any{"connectionType": singletonDefaultTitle}, true
 	case "sqlvulnerabilityassessments":
 		return map[string]any{propState: stateDisabled}, true
 	default:

@@ -10542,7 +10542,13 @@
         "name": "CreateOrUpdate"
       },
       {
+        "name": "CreateOrUpdateFIC"
+      },
+      {
         "name": "Delete"
+      },
+      {
+        "name": "DeleteFIC"
       },
       {
         "name": "DiscoverIdentities"
@@ -10551,10 +10557,16 @@
         "name": "Get"
       },
       {
+        "name": "GetFIC"
+      },
+      {
         "name": "ListByResourceGroup"
       },
       {
         "name": "ListBySubscription"
+      },
+      {
+        "name": "ListFICs"
       },
       {
         "name": "PurgeResourceGroup"
@@ -13769,6 +13781,24 @@
         ]
       },
       {
+        "name": "DatabaseRetentionPolicies",
+        "doc": "DatabaseRetentionPolicies is an OPTIONAL Azure SQL capability, discovered by",
+        "operations": [
+          {
+            "name": "GetLongTermRetention"
+          },
+          {
+            "name": "GetShortTermRetention"
+          },
+          {
+            "name": "SetLongTermRetention"
+          },
+          {
+            "name": "SetShortTermRetention"
+          }
+        ]
+      },
+      {
         "name": "DatabaseUpdater",
         "doc": "DatabaseUpdater is an OPTIONAL capability for updating a logical database's",
         "operations": [
@@ -14065,6 +14095,18 @@
         "operations": [
           {
             "name": "DeleteInstanceInScope"
+          }
+        ]
+      },
+      {
+        "name": "ServerConnectionPolicies",
+        "doc": "ServerConnectionPolicies is an OPTIONAL Azure SQL capability: a server's",
+        "operations": [
+          {
+            "name": "GetConnectionPolicy"
+          },
+          {
+            "name": "SetConnectionPolicy"
           }
         ]
       },
@@ -15860,6 +15902,14 @@
           {
             "name": "ListVaults",
             "doc": "ListVaults returns the vaults visible under the given scope filter (a zero"
+          },
+          {
+            "name": "UpdateVault",
+            "doc": "UpdateVault atomically applies mutate to a copy of the stored vault"
+          },
+          {
+            "name": "UpdateVaultAccessPolicies",
+            "doc": "UpdateVaultAccessPolicies atomically adds, replaces or removes access"
           }
         ]
       }

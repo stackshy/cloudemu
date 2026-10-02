@@ -120,7 +120,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `lro` | - | - | [LRO](./gcp/lro.md) | - | 1 |
 | `managedcassandra` | - | [ManagedCassandra](./azure/managedcassandra.md) | - | - | 15 |
 | `managedgrafana` | - | [ManagedGrafana](./azure/managedgrafana.md) | - | - | 8 |
-| `managedidentity` | - | [ManagedIdentity](./azure/managedidentity.md) | - | - | 8 |
+| `managedidentity` | - | [ManagedIdentity](./azure/managedidentity.md) | - | - | 12 |
 | `managedkafka` | - | - | [ManagedKafka](./gcp/managedkafka.md) | - | 11 |
 | `managedlustre` | - | [ManagedLustre](./azure/managedlustre.md) | - | - | 12 |
 | `memorydb` | [MemoryDB](./aws/memorydb.md) | - | - | - | 33 |
