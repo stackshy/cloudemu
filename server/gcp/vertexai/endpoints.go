@@ -67,7 +67,7 @@ func (h *Handler) serveEndpoints(w http.ResponseWriter, r *http.Request, p *vPat
 		case http.MethodGet:
 			h.listEndpoints(w, r, p.location)
 		case http.MethodPost:
-			h.createEndpoint(w, r, p.location)
+			h.createEndpoint(w, r, p.project, p.location)
 		default:
 			methodNotAllowed(w)
 		}
@@ -112,7 +112,7 @@ func (h *Handler) endpointAction(w http.ResponseWriter, r *http.Request, p *vPat
 	}
 }
 
-func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request, location string) {
+func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request, project, location string) {
 	var req struct {
 		DisplayName string            `json:"displayName"`
 		Description string            `json:"description"`
@@ -125,7 +125,7 @@ func (h *Handler) createEndpoint(w http.ResponseWriter, r *http.Request, locatio
 	}
 
 	op, ep, err := h.svc.CreateEndpoint(r.Context(), driver.EndpointConfig{
-		Location: location, EndpointID: r.URL.Query().Get("endpointId"),
+		Project: project, Location: location, EndpointID: r.URL.Query().Get("endpointId"),
 		DisplayName: req.DisplayName, Description: req.Description, Labels: req.Labels, Network: req.Network,
 	})
 	if err != nil {

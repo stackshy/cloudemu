@@ -4,6 +4,7 @@ import "context"
 
 // EndpointConfig describes an endpoint to create.
 type EndpointConfig struct {
+	Project     string // project from the request path; the provider's own project when empty
 	Location    string
 	EndpointID  string // client-chosen numeric id (endpointId query param); server-assigned when empty
 	DisplayName string

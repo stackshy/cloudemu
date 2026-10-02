@@ -278,8 +278,10 @@ func (h *Handler) routeFirewalls(w http.ResponseWriter, r *http.Request, rp gcpr
 	switch r.Method {
 	case http.MethodGet:
 		h.getFirewall(w, r, rp)
-	case http.MethodPatch, http.MethodPut:
+	case http.MethodPatch:
 		h.patchFirewall(w, r, rp)
+	case http.MethodPut:
+		h.updateFirewall(w, r, rp)
 	case http.MethodDelete:
 		h.deleteFirewall(w, r, rp)
 	default:
@@ -914,20 +916,7 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	// GCP stamps defaults a minimal firewall omits; populate them at insert so
-	// the resource reads back with a concrete direction/priority.
-	if req.Direction == "" {
-		req.Direction = defaultFirewallDirection
-	}
-
-	// Priority 0 is a valid GCP value (highest precedence), so distinguish an
-	// omitted priority (nil) from an explicit 0: only the former defaults to
-	// 1000. Forcing 0→1000 would silently alter rule precedence and drive a
-	// perpetual terraform diff.
-	if req.Priority == nil {
-		p := defaultFirewallPriority
-		req.Priority = &p
-	}
+	applyFirewallDefaults(&req)
 
 	// Firewalls map onto driver SecurityGroups; the driver requires a VPC ID.
 	// A supplied network must exist. Real GCP rejects a firewall insert that
@@ -967,7 +956,7 @@ func (h *Handler) insertFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 
 	cfg := netdriver.SecurityGroupConfig{
 		Name:        req.Name,
-		Description: req.Description,
+		Description: derefStr(req.Description),
 		VPCID:       vpcID,
 		Tags:        tags,
 	}
@@ -1053,12 +1042,61 @@ func (h *Handler) deleteFirewall(w http.ResponseWriter, r *http.Request, rp gcpr
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
 
+// applyFirewallDefaults stamps the defaults GCP fills in when a firewall body
+// omits them, so the resource reads back with a concrete direction/priority.
+// Priority 0 is a valid GCP value (highest precedence), so only an omitted
+// priority (nil) defaults to 1000; forcing 0 to 1000 would alter rule
+// precedence and drive a perpetual terraform diff.
+func applyFirewallDefaults(req *firewallRequest) {
+	if req.Direction == "" {
+		req.Direction = defaultFirewallDirection
+	}
+
+	if req.Priority == nil {
+		p := defaultFirewallPriority
+		req.Priority = &p
+	}
+}
+
 // patchFirewall applies GCP merge-patch semantics to the stored firewall spec:
 // only fields present in the patch body overwrite the existing rule, so a
 // caller adjusting one field (e.g. allowed) keeps everything else intact.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) patchFirewall(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	h.writeFirewall(w, r, rp, "patch", mergeFirewallPatch)
+}
+
+// updateFirewall implements firewalls.update (PUT): the body replaces the whole
+// rule, so fields it omits fall back to their GCP defaults rather than keeping
+// the old values. The network is immutable and is kept when the body omits it.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) updateFirewall(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	h.writeFirewall(w, r, rp, "update", replaceFirewallSpec)
+}
+
+// replaceFirewallSpec overwrites spec with the full PUT body.
+func replaceFirewallSpec(spec *firewallSpec, req *firewallRequest) {
+	network := spec.Network
+
+	applyFirewallDefaults(req)
+
+	*spec = specFromFirewallRequest(req)
+	if spec.Network == "" {
+		spec.Network = network
+	}
+
+	desc := derefStr(req.Description)
+	spec.Description = &desc
+}
+
+// writeFirewall loads the named firewall's stored spec, lets apply rewrite it
+// from the request body, and persists the result.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) writeFirewall(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath,
+	opType string, apply func(spec *firewallSpec, req *firewallRequest)) {
 	f, err := findFirewallByName(r.Context(), h.net, rp.ResourceName)
 	if err != nil {
 		gcprest.WriteCErr(w, err)
@@ -1072,7 +1110,14 @@ func (h *Handler) patchFirewall(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 
 	spec, _ := unmarshalFirewallSpec(f.Tags[firewallSpecTag])
-	mergeFirewallPatch(&spec, &req)
+	if spec.Description == nil {
+		// Rules stored before the description moved into the spec keep it on
+		// the security group; seed the spec so a merge patch preserves it.
+		desc := f.Description
+		spec.Description = &desc
+	}
+
+	apply(&spec, &req)
 
 	b, mErr := json.Marshal(spec)
 	if mErr != nil {
@@ -1087,7 +1132,7 @@ func (h *Handler) patchFirewall(w http.ResponseWriter, r *http.Request, rp gcpre
 	}
 
 	op := h.ops.RecordDone(hostOf(r), rp.Project, gcprest.ScopeGlobal, "",
-		"firewalls", rp.ResourceName, "patch")
+		"firewalls", rp.ResourceName, opType)
 
 	gcprest.WriteJSON(w, http.StatusOK, op)
 }
@@ -1102,6 +1147,11 @@ func mergeFirewallPatch(spec *firewallSpec, req *firewallRequest) {
 
 // mergeFirewallScalars merges the scalar and single-value firewall fields.
 func mergeFirewallScalars(spec *firewallSpec, req *firewallRequest) {
+	if req.Description != nil {
+		desc := *req.Description
+		spec.Description = &desc
+	}
+
 	if req.Network != "" {
 		spec.Network = req.Network
 	}
@@ -1497,6 +1547,10 @@ func toFirewallResponse(info *netdriver.SecurityGroupInfo, rp gcprest.ResourcePa
 	}
 
 	if spec, ok := unmarshalFirewallSpec(info.Tags[firewallSpecTag]); ok {
+		if spec.Description != nil {
+			resp.Description = *spec.Description
+		}
+
 		resp.Network = spec.Network
 		resp.Priority = spec.Priority
 		resp.Direction = spec.Direction
@@ -1531,6 +1585,9 @@ type firewallSpec struct {
 	TargetServiceAccounts []string           `json:"targetServiceAccounts,omitempty"`
 	LogConfig             *firewallLogConfig `json:"logConfig,omitempty"`
 	Disabled              *bool              `json:"disabled,omitempty"`
+	// Description is set once a patch or update has written it; nil means the
+	// rule's insert-time description on the security group is current.
+	Description *string `json:"description,omitempty"`
 }
 
 func marshalFirewallSpec(req *firewallRequest) string {
@@ -1574,6 +1631,15 @@ func unmarshalFirewallSpec(s string) (firewallSpec, bool) {
 	}
 
 	return spec, true
+}
+
+// derefStr returns the pointed-to string, or "" when the pointer is nil.
+func derefStr(p *string) string {
+	if p == nil {
+		return ""
+	}
+
+	return *p
 }
 
 // derefInt returns the pointed-to int, or 0 when the pointer is nil.
