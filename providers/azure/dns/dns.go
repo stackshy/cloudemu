@@ -21,6 +21,12 @@ import (
 // Compile-time check that Mock implements driver.DNS.
 var _ driver.DNS = (*Mock)(nil)
 
+// Compile-time check for the resource-group purge the ARM wire handler reaches
+// by type assertion.
+var _ interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+} = (*Mock)(nil)
+
 // Mock is an in-memory mock implementation of the Azure DNS service.
 type Mock struct {
 	zones        *memstore.Store[driver.ZoneInfo]
@@ -131,6 +137,20 @@ func (m *Mock) DeleteZone(_ context.Context, id string) error {
 	for key, rec := range all {
 		if rec.ZoneID == id {
 			m.records.Delete(key)
+		}
+	}
+
+	return nil
+}
+
+// PurgeResourceGroup deletes every zone, and its record sets, recorded under
+// the given subscription and resource group. It backs the ARM resource-group
+// delete cascade. An unscoped zone (created through the portable API) is never
+// selected.
+func (m *Mock) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	for _, id := range m.zones.Keys() {
+		if z, ok := m.zones.Get(id); ok && z.Scope.InResourceGroup(subscription, resourceGroup) {
+			_ = m.DeleteZone(ctx, id)
 		}
 	}
 

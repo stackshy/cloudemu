@@ -762,6 +762,23 @@ type IamInstanceProfileAssociator interface {
 	) (*IamInstanceProfileAssociation, error)
 }
 
+// AzureVMDeleter is an optional Azure-only capability that removes VMs
+// outright. Azure has no terminated state: a deleted VM is gone, so it must not
+// stay listed the way a terminated EC2 instance does. The teardown (disk
+// deleteOption cascade, NIC detach, engine deprovision) matches
+// TerminateInstances.
+type AzureVMDeleter interface {
+	DeleteInstances(ctx context.Context, instanceIDs []string) error
+}
+
+// AzureResourceGroupPurger is an optional Azure-only capability that tears down
+// every compute resource recorded under a resource group: VMs, scale sets,
+// managed disks, snapshots, images and SSH public keys. It backs the ARM
+// resource-group delete cascade.
+type AzureResourceGroupPurger interface {
+	PurgeComputeResourceGroup(ctx context.Context, resourceGroup string) error
+}
+
 // AzureVMController is an optional Azure-only capability supporting the ARM
 // virtualMachines operations that have no AWS/GCP equivalent: the PowerOff vs
 // Deallocate distinction (PowerOff stops the guest but keeps the VM allocated;

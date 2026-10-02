@@ -13,7 +13,7 @@ code does not implement. Machine-readable: [`coverage.json`](./coverage.json).
 | `aad` | - | [Aad](./azure/aad.md) | - | - | 2 |
 | `accesscontextmanager` | - | - | [AccessContextManager](./gcp/accesscontextmanager.md) | - | 17 |
 | `acm` | [ACM](./aws/acm.md) | - | - | - | 17 |
-| `aks` | - | [AKS](./azure/aks.md) | - | - | 18 |
+| `aks` | - | [AKS](./azure/aks.md) | - | - | 19 |
 | `aoss` | [AOSS](./aws/aoss.md) | - | - | - | 18 |
 | `apigateway` | [APIGateway](./aws/apigateway.md) | - | - | - | 50 |
 | `apigatewaygcp` | - | - | [APIGateway](./gcp/apigateway.md) | - | 16 |

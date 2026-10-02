@@ -41,6 +41,7 @@ import (
 	"net/http"
 	"strings"
 
+	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/providers/azure/aks"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
@@ -84,6 +85,25 @@ type Handler struct {
 // New returns an AKS handler backed by be.
 func New(be Backend) *Handler {
 	return &Handler{be: be}
+}
+
+// rgPurger is the optional capability *aks.Mock exposes for the
+// resource-group delete cascade.
+type rgPurger interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+}
+
+// PurgeResourceGroup deletes every managed cluster, with its agent pools and
+// maintenance configurations, in the resource group, backing the
+// resource-group cascade delete. A backend without the capability is reported
+// as an error rather than silently skipped.
+func (h *Handler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	p, ok := h.be.(rgPurger)
+	if !ok {
+		return cerrors.Newf(cerrors.Unimplemented, "aks backend %T cannot purge a resource group", h.be)
+	}
+
+	return p.PurgeResourceGroup(ctx, subscription, resourceGroup)
 }
 
 // Matches returns true for ARM Microsoft.ContainerService managedClusters
