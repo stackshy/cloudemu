@@ -34,6 +34,7 @@ import (
 
 	"github.com/stackshy/cloudemu/v2/config"
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	dbdriver "github.com/stackshy/cloudemu/v2/services/database/driver"
 	"github.com/stackshy/cloudemu/v2/services/database/driver/cosmossql"
 )
@@ -300,6 +301,12 @@ func (h *Handler) isAccount(name string) bool {
 // root probe (GET / or GET /{account}), the /dbs/... resource tree, and the
 // /offers throughput resource, each optionally under a /{account} prefix.
 func (h *Handler) Matches(r *http.Request) bool {
+	// A storage account host is never a Cosmos request, so a blob container
+	// named "dbs" stays with the storage handlers.
+	if azurearm.IsStorageHost(r.Host) {
+		return false
+	}
+
 	account, rest := h.splitAccount(r.URL.Path)
 
 	// A bare "/{account}" carrying a query string is more likely a blob

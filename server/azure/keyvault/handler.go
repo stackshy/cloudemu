@@ -33,6 +33,7 @@ import (
 	"strings"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	secretsdriver "github.com/stackshy/cloudemu/v2/services/secrets/driver"
 )
 
@@ -254,7 +255,7 @@ func vaultScope(r *http.Request) (vault, kvPath string, ok bool) {
 
 	// A storage account host is never a Key Vault request, so a blob, file or
 	// queue path such as /data/keys/app.pem stays with the storage handlers.
-	if isStorageHost(host) {
+	if azurearm.IsStorageHost(host) {
 		return "", "", false
 	}
 
@@ -270,38 +271,6 @@ func vaultScope(r *http.Request) (vault, kvPath string, ok bool) {
 	}
 
 	return seg, "/" + rest, true
-}
-
-// storageServices are the Azure Storage data-plane service labels that sit
-// between the account name and the storage DNS suffix, as in
-// {account}.blob.core.windows.net.
-//
-//nolint:gochecknoglobals // read-only lookup set, not mutable state
-var storageServices = map[string]bool{"blob": true, "queue": true, "table": true, "file": true, "dfs": true}
-
-// storageSuffixes are the Azure Storage DNS suffixes across the public, China
-// and US Gov clouds.
-//
-//nolint:gochecknoglobals // read-only lookup table, not mutable state
-var storageSuffixes = []string{".core.windows.net", ".core.chinacloudapi.cn", ".core.usgovcloudapi.net"}
-
-// isStorageHost reports whether host is an {account}.{service}.{suffix}
-// storage account endpoint, matched case-insensitively.
-func isStorageHost(host string) bool {
-	host = strings.ToLower(host)
-
-	for _, suffix := range storageSuffixes {
-		prefix, found := strings.CutSuffix(host, suffix)
-		if !found {
-			continue
-		}
-
-		dot := strings.LastIndexByte(prefix, '.')
-
-		return dot > 0 && storageServices[prefix[dot+1:]]
-	}
-
-	return false
 }
 
 // firstSegment returns the first '/'-separated segment of path.
