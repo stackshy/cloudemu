@@ -261,6 +261,8 @@ func (h *Handler) backendServiceSignedURLKey(w http.ResponseWriter, r *http.Requ
 		} else {
 			encodeJSONTag(tg.Tags, bsSignedURLKeysTag, next)
 		}
+
+		bumpGeneration(tg.Tags, bsGenerationTag)
 	})
 	if err == nil {
 		err = changeErr

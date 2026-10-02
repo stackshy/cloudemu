@@ -242,6 +242,20 @@ func invalidRefErr(field, ref, noun string) error {
 		"Invalid value for field 'resource.%s': '%s'. The referenced %s resource cannot be found.", field, ref, noun)
 }
 
+// validateForwardingRuleInsert runs the port and target checks a forwarding
+// rule insert must pass.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) validateForwardingRuleInsert(ctx context.Context, rp gcprest.ResourcePath,
+	req *forwardingRuleRequest,
+) error {
+	if err := validateForwardingRulePorts(req); err != nil {
+		return err
+	}
+
+	return h.validateForwardingRuleTarget(ctx, rp, req)
+}
+
 // validateForwardingRuleTarget rejects a forwarding rule whose target names a
 // target-proxy or target-pool resource that does not exist in the same scope.
 // Only the collections this handler implements are recognized; a reference to

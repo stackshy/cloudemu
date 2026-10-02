@@ -63,6 +63,14 @@ GCPComputeResourceStore is an OPTIONAL, type-asserted capability implemented
 | `PutGCPResource` | PutGCPResource stores res, returning AlreadyExists when a resource with |
 | `UpdateGCPResource` | UpdateGCPResource applies mutate to the stored resource in place under the |
 
+### GCPForwardingRulePatcher
+
+GCPForwardingRulePatcher is an OPTIONAL, type-asserted capability implemented
+
+| Operation | Description |
+| --- | --- |
+| `PatchGCPForwardingRule` |  |
+
 ### GCPServiceAttachmentStore
 
 GCPServiceAttachmentStore is an OPTIONAL, type-asserted capability
