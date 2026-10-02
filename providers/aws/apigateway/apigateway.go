@@ -59,6 +59,8 @@ type apiData struct {
 	deployments map[string]*driver.Deployment
 	trees       map[string]map[string]*driver.Resource
 	stages      map[string]*driver.Stage
+	docParts    map[string]*driver.DocumentationPart
+	docVersions map[string]*docVersion
 }
 
 // Mock is an in-memory implementation of Amazon API Gateway.
@@ -74,11 +76,21 @@ type Mock struct {
 	// monitoring, when wired via SetMonitoring, receives the AWS/ApiGateway
 	// request metrics real API Gateway publishes for data-plane traffic.
 	monitoring mondriver.Monitoring
+
+	// regionMu guards the region-scoped resources that live outside any REST
+	// API: client certificates and the account settings. Lock order is regionMu
+	// before any apiData.mu, so a certificate delete can scan stages safely.
+	regionMu sync.RWMutex
+	certs    map[string]*driver.ClientCertificate
+	account  driver.Account
 }
 
 // New creates a new API Gateway mock.
 func New(opts *config.Options) *Mock {
-	return &Mock{apis: memstore.New[*apiData](), opts: opts}
+	return &Mock{
+		apis: memstore.New[*apiData](), opts: opts,
+		certs: map[string]*driver.ClientCertificate{}, account: defaultAccount(),
+	}
 }
 
 // SetLambdaInvoker wires the Lambda backend so an AWS_PROXY integration invokes
@@ -88,8 +100,11 @@ func (m *Mock) SetLambdaInvoker(i LambdaInvoker) { m.lambda = i }
 func (m *Mock) now() int64 { return m.opts.Clock.Now().UTC().Unix() }
 
 // genID returns a random 10-character lowercase-alphanumeric id.
-func genID() string {
-	b := make([]byte, idLen)
+func genID() string { return randomID(idLen) }
+
+// randomID returns n random lowercase-alphanumeric characters.
+func randomID(n int) string {
+	b := make([]byte, n)
 	_, _ = rand.Read(b)
 
 	for i := range b {
@@ -141,6 +156,8 @@ func (m *Mock) CreateRestAPI(_ context.Context, in *driver.CreateRestAPIInput) (
 		deployments: map[string]*driver.Deployment{},
 		trees:       map[string]map[string]*driver.Resource{},
 		stages:      map[string]*driver.Stage{},
+		docParts:    map[string]*driver.DocumentationPart{},
+		docVersions: map[string]*docVersion{},
 	})
 
 	out := copyAPI(&api)

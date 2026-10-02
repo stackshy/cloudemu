@@ -31,6 +31,8 @@ var resourceKind = map[string]string{
 	resourceHealthChecks:         "compute#healthCheck",
 	resourceTargetPools:          "compute#targetPool",
 	resourceURLMaps:              "compute#urlMap",
+	resourceBackendBuckets:       "compute#backendBucket",
+	resourceServiceAttachments:   "compute#serviceAttachment",
 	resourceTargetHTTPProxies:    "compute#targetHttpProxy",
 	resourceTargetHTTPSProxies:   "compute#targetHttpsProxy",
 	resourceSslCertificates:      "compute#sslCertificate",
@@ -70,6 +72,11 @@ func (h *Handler) routeGCPResource(w http.ResponseWriter, r *http.Request, rp gc
 			gcprest.WriteError(w, http.StatusMethodNotAllowed, "methodNotAllowed", "method not allowed")
 		}
 
+		return
+	}
+
+	if r.Method == http.MethodPost && rp.ResourceType == resourceURLMaps && rp.Action == actionInvalidateCache {
+		h.invalidateURLMapCache(w, r, rp)
 		return
 	}
 
@@ -215,6 +222,14 @@ func (h *Handler) listGCPResource(w http.ResponseWriter, r *http.Request, rp gcp
 		return
 	}
 
+	writeGCPResourceList(w, r, rp, items)
+}
+
+// writeGCPResourceList filters (name), sorts, paginates (maxResults/pageToken)
+// and writes a compute#…List envelope over items of rp's collection.
+//
+//nolint:gocritic // rp is a request-scoped value
+func writeGCPResourceList(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, items []lbdriver.GCPResource) {
 	filter := r.URL.Query().Get("filter")
 
 	matched := make([]lbdriver.GCPResource, 0, len(items))
@@ -291,7 +306,9 @@ func (h *Handler) deleteGCPResource(w http.ResponseWriter, r *http.Request, rp g
 //
 //nolint:gocritic // rp is a request-scoped value
 func gcpResourceJSON(res *lbdriver.GCPResource, rp gcprest.ResourcePath, host string) map[string]any {
-	out := make(map[string]any, len(res.Body)+internalFieldCount)
+	// Size hint from the body alone: adding to a caller-sized length is an
+	// unchecked addition, and the map grows for the few server-injected members.
+	out := make(map[string]any, len(res.Body))
 
 	for k, v := range res.Body {
 		// Reserved internal members (e.g. instance-group membership) are stored in
@@ -324,11 +341,6 @@ func gcpResourceJSON(res *lbdriver.GCPResource, rp gcprest.ResourcePath, host st
 
 	return out
 }
-
-// internalFieldCount is the number of server-injected members gcpResourceJSON
-// adds on top of the stored body (kind, id, name, creationTimestamp, selfLink,
-// region/zone, size).
-const internalFieldCount = 7
 
 // healthCheckInUse returns the name of a same-scope backend service whose
 // healthChecks[] references the health check being deleted, or "" when none

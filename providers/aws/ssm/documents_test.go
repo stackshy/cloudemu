@@ -419,14 +419,19 @@ func TestSendCommandResolvesDocument(t *testing.T) {
 	ctx := context.Background()
 	m := newMock()
 	send := func(doc string) error {
-		_, err := m.SendCommand(ctx, ssmdriver.CommandConfig{InstanceIDs: []string{"i-0123"}, DocumentName: doc})
+		_, err := m.SendCommand(ctx, ssmdriver.CommandConfig{InstanceIDs: []string{"i-0123456789abcdef0"}, DocumentName: doc})
 		return err
 	}
 
 	wantException(t, send("No-Such-Doc"), "InvalidDocument")
 	wantException(t, send("AWS-StopEC2Instance"), "InvalidDocument")
 
-	if err := send("AWS-RunShellScript"); err != nil {
+	wantException(t, send("AWS-RunShellScript"), "InvalidParameters")
+
+	if _, err := m.SendCommand(ctx, ssmdriver.CommandConfig{
+		InstanceIDs: []string{"i-0123456789abcdef0"}, DocumentName: "AWS-RunShellScript",
+		Parameters: map[string][]string{"commands": {"uptime"}},
+	}); err != nil {
 		t.Fatalf("send AWS-RunShellScript: %v", err)
 	}
 

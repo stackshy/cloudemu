@@ -16,6 +16,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
 	azureaiserver "github.com/stackshy/cloudemu/v2/server/azure/ai"
 	aksserver "github.com/stackshy/cloudemu/v2/server/azure/aks"
+	apimanagementsrv "github.com/stackshy/cloudemu/v2/server/azure/apimanagement"
 	appconfigsrv "github.com/stackshy/cloudemu/v2/server/azure/appconfiguration"
 	appinsightssrv "github.com/stackshy/cloudemu/v2/server/azure/appinsights"
 	appgatewaysrv "github.com/stackshy/cloudemu/v2/server/azure/applicationgateway"
@@ -220,6 +221,10 @@ type Drivers struct {
 	// IoTHub serves Microsoft.Devices/IotHubs plus its listkeys /
 	// getKeysForKeyName actions and the nested event-hub consumer groups.
 	IoTHub iothubsrv.Store
+	// APIManagement serves Microsoft.ApiManagement: the service control plane,
+	// its soft-deleted services, checkNameAvailability and the child resources
+	// around a service's create, refresh and destroy.
+	APIManagement apimanagementsrv.Store
 	// Logic serves Microsoft.Logic/workflows (Consumption Logic Apps) plus the
 	// enable / disable actions.
 	Logic logicsrv.Store
@@ -642,6 +647,15 @@ func New(d Drivers) http.Handler {
 	if d.IoTHub != nil {
 		iotHubHandler = iothubsrv.New(d.IoTHub)
 		rgPurgers = append(rgPurgers, iotHubHandler)
+	}
+
+	// API Management: a resource-group-scoped resource, so its handler joins the
+	// purge cascade. Deleting the group tears down every API Management service.
+	// Registered further below.
+	var apiManagementHandler *apimanagementsrv.Handler
+	if d.APIManagement != nil {
+		apiManagementHandler = apimanagementsrv.New(d.APIManagement)
+		rgPurgers = append(rgPurgers, apiManagementHandler)
 	}
 
 	// Logic Apps workflows: a resource-group-scoped resource, so its handler joins
@@ -1125,6 +1139,14 @@ func New(d Drivers) http.Handler {
 	// every other Azure handler, so registration order is unconstrained.
 	if iotHubHandler != nil {
 		srv.Register(iotHubHandler)
+	}
+
+	// API Management claims Microsoft.ApiManagement (service, deletedservices,
+	// locations/{l}/deletedservices, checkNameAvailability): a distinct ARM
+	// provider name from every other Azure handler, so registration order is
+	// unconstrained.
+	if apiManagementHandler != nil {
+		srv.Register(apiManagementHandler)
 	}
 
 	// Logic Apps claims Microsoft.Logic/workflows (and only its enable / disable

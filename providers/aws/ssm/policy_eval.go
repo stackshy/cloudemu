@@ -30,8 +30,11 @@ type policyNotice struct {
 // deleted and each action publishes a "Parameter Store Policy Action" event.
 // It reports whether anything changed. It has the Tickable signature of the
 // shared scheduler. Reads also evaluate policies, so nothing has to call it.
+// It also writes the S3 output of Run Command invocations that finished.
 func (m *Mock) Tick(now time.Time) bool {
-	return m.evaluateAllPolicies(context.Background(), now)
+	changed := m.evaluateAllPolicies(context.Background(), now)
+
+	return m.flushOutputs(context.Background(), now) || changed
 }
 
 // evaluateAllPolicies runs the due policies of every parameter.

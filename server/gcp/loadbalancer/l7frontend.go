@@ -318,6 +318,8 @@ func singularOf(collection string) string {
 		return "health_check"
 	case resourceURLMaps:
 		return "url_map"
+	case resourceBackendBuckets:
+		return "backend_bucket"
 	case resourceSslCertificates:
 		return "ssl_certificate"
 	case resourceTargetHTTPProxies:

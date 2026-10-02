@@ -2,6 +2,7 @@ package ssm_test
 
 import (
 	"context"
+	stderrors "errors"
 	"strings"
 	"testing"
 
@@ -17,16 +18,29 @@ func TestSendCommandAcceptsAWSOwnedNames(t *testing.T) {
 		"arn:aws:ssm:us-east-1::document/AWS-RunInspecChecks",
 	}
 
+	// A catalog document checks its required parameters; a name the catalog
+	// lacks is accepted as it stands. Either way the name resolves.
 	for _, doc := range names {
-		if _, err := m.SendCommand(context.Background(), ssmdriver.CommandConfig{
-			InstanceIDs: []string{"i-0123"}, DocumentName: doc,
-		}); err != nil {
+		_, err := m.SendCommand(context.Background(), ssmdriver.CommandConfig{
+			InstanceIDs: []string{"i-0123456789abcdef0"}, DocumentName: doc,
+		})
+
+		if err == nil {
+			continue
+		}
+
+		var ex interface{ SSMException() (string, int) }
+		if !stderrors.As(err, &ex) {
+			t.Fatalf("SendCommand %s: %v", doc, err)
+		}
+
+		if name, _ := ex.SSMException(); name != "InvalidParameters" {
 			t.Errorf("SendCommand %s: %v", doc, err)
 		}
 	}
 
 	_, err := m.SendCommand(context.Background(), ssmdriver.CommandConfig{
-		InstanceIDs: []string{"i-0123"}, DocumentName: "my-missing-doc",
+		InstanceIDs: []string{"i-0123456789abcdef0"}, DocumentName: "my-missing-doc",
 	})
 	wantException(t, err, "InvalidDocument")
 

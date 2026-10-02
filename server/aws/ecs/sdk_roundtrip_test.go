@@ -890,9 +890,23 @@ func TestSDKRunTaskTagsRoundtrip(t *testing.T) {
 		t.Fatalf("RunTask response tags = %+v, want [env=prod]", run.Tasks[0].Tags)
 	}
 
+	// ECS returns a task's tags only when the caller opts in via include=TAGS.
+	bare, err := client.DescribeTasks(ctx, &awsecs.DescribeTasksInput{
+		Cluster: aws.String("prod"),
+		Tasks:   []string{taskArn},
+	})
+	if err != nil {
+		t.Fatalf("DescribeTasks without include: %v", err)
+	}
+
+	if len(bare.Tasks) != 1 || len(bare.Tasks[0].Tags) != 0 {
+		t.Fatalf("DescribeTasks without include tags = %+v, want none", bare.Tasks)
+	}
+
 	desc, err := client.DescribeTasks(ctx, &awsecs.DescribeTasksInput{
 		Cluster: aws.String("prod"),
 		Tasks:   []string{taskArn},
+		Include: []ecstypes.TaskField{ecstypes.TaskFieldTags},
 	})
 	if err != nil {
 		t.Fatalf("DescribeTasks: %v", err)

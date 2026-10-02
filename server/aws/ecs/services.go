@@ -188,6 +188,7 @@ func (h *Handler) describeServices(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Services []string `json:"services"`
 		Cluster  string   `json:"cluster"`
+		Include  []string `json:"include"`
 	}
 
 	if !wire.DecodeJSON(w, r, &req) {
@@ -201,9 +202,18 @@ func (h *Handler) describeServices(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Tags are only returned when the caller opts in via include=TAGS.
+	wantTags := includes(req.Include, "TAGS")
+
 	out := make([]wireService, 0, len(services))
+
 	for i := range services {
-		out = append(out, serviceToWire(&services[i]))
+		ws := serviceToWire(&services[i])
+		if !wantTags {
+			ws.Tags = nil
+		}
+
+		out = append(out, ws)
 	}
 
 	wire.WriteJSON(w, map[string]any{"services": out, "failures": fromFailures(failures)})

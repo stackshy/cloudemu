@@ -7,7 +7,7 @@ package loadbalancer
 // l7frontend.go so no create/update in the chain can point at a resource that
 // isn't there:
 //
-//	urlMap.defaultService / pathMatchers[].defaultService / pathRules[].service → backendService
+//	urlMap.defaultService / pathMatchers[].defaultService / pathRules[].service → backendService / backendBucket
 //	targetHttp(s)Proxy.urlMap                                                   → urlMap
 //	targetHttpsProxy.sslCertificates[]                                          → sslCertificate
 //	forwardingRule.target                                                      → targetHttp(s)Proxy / targetPool
@@ -80,29 +80,31 @@ func collectRefs(v any, fields map[string]bool, out *[]namedRef) {
 
 // validateURLMapServiceRefs rejects a url-map body whose defaultService, or any
 // nested pathMatchers[].defaultService / pathRules[].service, names a backend
-// service that does not exist in the same scope. The same fields can also
-// legitimately name a backendBuckets/{name} self-link (standard CDN/static-
-// content routing, e.g. google_compute_backend_bucket.self_link). Backend
-// buckets have no driver model here, so any ref that doesn't resolve to the
-// backendServices collection is left unvalidated rather than falsely rejected,
-// mirroring targetCollectionFor's allowlist for forwarding-rule targets.
+// service or backend bucket that does not exist. The same fields name either
+// collection: a backendBuckets/{name} self-link (Cloud CDN / static-content
+// routing, e.g. google_compute_backend_bucket.self_link) must resolve to an
+// existing global backend bucket; a bare name or backendServices reference must
+// resolve to a backend service in the url-map's scope. A reference to any other
+// collection is left unvalidated, mirroring targetCollectionFor's allowlist for
+// forwarding-rule targets.
 //
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) validateURLMapServiceRefs(ctx context.Context, rp gcprest.ResourcePath, body map[string]any) error {
 	var refs []namedRef
 
-	collectRefs(body, map[string]bool{"service": true, "defaultService": true}, &refs)
+	collectRefs(body, urlMapServiceFields, &refs)
 
 	for _, ref := range refs {
-		if !isBackendServiceRef(ref.value) {
-			continue
+		var err error
+
+		switch {
+		case isBackendBucketRef(ref.value):
+			err = h.requireBackendBucket(ctx, ref)
+		case isBackendServiceRef(ref.value):
+			err = h.requireBackendService(ctx, rp, ref)
 		}
 
-		if _, err := h.findTGByName(ctx, rp, backendServiceName(ref.value)); err != nil {
-			if cerrors.IsNotFound(err) {
-				return invalidRefErr(ref.field, ref.value, "backend service")
-			}
-
+		if err != nil {
 			return err
 		}
 	}
@@ -110,11 +112,41 @@ func (h *Handler) validateURLMapServiceRefs(ctx context.Context, rp gcprest.Reso
 	return nil
 }
 
+// requireBackendService rejects a url-map reference naming a backend service
+// that does not exist in the url-map's scope.
+//
+//nolint:gocritic // rp is a request-scoped value
+func (h *Handler) requireBackendService(ctx context.Context, rp gcprest.ResourcePath, ref namedRef) error {
+	_, err := h.findTGByName(ctx, rp, backendServiceName(ref.value))
+	if cerrors.IsNotFound(err) {
+		return invalidRefErr(ref.field, ref.value, "backend service")
+	}
+
+	return err
+}
+
+// requireBackendBucket rejects a url-map reference naming a backend bucket that
+// does not exist. Backend buckets are global. A driver without the
+// backend-bucket capability leaves the reference unvalidated.
+func (h *Handler) requireBackendBucket(ctx context.Context, ref namedRef) error {
+	store, ok := h.backendBucketStore()
+	if !ok {
+		return nil
+	}
+
+	_, err := store.GetGCPBackendBucket(ctx, lastPathSegment(ref.value))
+	if cerrors.IsNotFound(err) {
+		return invalidRefErr(ref.field, ref.value, "backend bucket")
+	}
+
+	return err
+}
+
 // isBackendServiceRef reports whether ref names the backendServices
 // collection: either a bare name (no path separators, the common case for a
 // same-scope reference) or a self-link/relative path containing
-// "/backendServices/". Anything else (e.g. a backendBuckets self-link) is left
-// unvalidated.
+// "/backendServices/". A backendBuckets self-link is matched first by
+// isBackendBucketRef; any other collection is left unvalidated.
 func isBackendServiceRef(ref string) bool {
 	return !strings.Contains(ref, "/") || strings.Contains(ref, "/backendServices/")
 }
@@ -217,9 +249,22 @@ func invalidRefErr(field, ref, noun string) error {
 // unvalidated rather than falsely rejected.
 //
 //nolint:gocritic // rp is a request-scoped value
-func (h *Handler) validateForwardingRuleTarget(ctx context.Context, rp gcprest.ResourcePath, target string) error {
+func (h *Handler) validateForwardingRuleTarget(ctx context.Context, rp gcprest.ResourcePath,
+	req *forwardingRuleRequest,
+) error {
+	target := req.Target
 	if target == "" {
 		return nil
+	}
+
+	// A PSC consumer rule has its own field rules (validatePSCTarget);
+	// targetCollectionFor does not recognize a PSC target.
+	if err := validatePSCTarget(rp, req); err != nil {
+		return err
+	}
+
+	if err := h.validateAttachmentTarget(ctx, rp, target); err != nil {
+		return err
 	}
 
 	collection := targetCollectionFor(target)

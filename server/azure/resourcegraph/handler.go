@@ -494,6 +494,7 @@ var portableToAzureTypeMap = map[string]string{ //nolint:gochecknoglobals // sta
 	"streamanalytics/StreamingJob":        "microsoft.streamanalytics/streamingjobs",
 	"recoveryservices/Vault":              "microsoft.recoveryservices/vaults",
 	"iothub/IotHub":                       "microsoft.devices/iothubs",
+	"apimanagement/Service":               "microsoft.apimanagement/service",
 	"logic/Workflow":                      "microsoft.logic/workflows",
 }
 

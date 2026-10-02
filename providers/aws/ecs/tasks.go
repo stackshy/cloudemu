@@ -382,6 +382,7 @@ func (m *Mock) overlayStatus(t *driver.Task) {
 // aws-sdk-go-v2 TasksRunning/TasksStopped waiters.
 func (m *Mock) observedTask(t *driver.Task) driver.Task {
 	out := cloneTask(t)
+	out.Tags = m.liveTags(t.ARN, t.Tags)
 	m.overlayStatus(&out)
 
 	return out

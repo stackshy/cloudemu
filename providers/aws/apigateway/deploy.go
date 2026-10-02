@@ -214,9 +214,14 @@ func (m *Mock) CreateStage(_ context.Context, restAPIID string, in driver.Create
 		return nil, cerrors.New(cerrors.AlreadyExists, msgStageExists)
 	}
 
+	if _, ok := ad.docVersions[in.DocumentationVersion]; in.DocumentationVersion != "" && !ok {
+		return nil, cerrors.New(cerrors.NotFound, msgDocVersionNotFound)
+	}
+
 	st := &driver.Stage{
 		StageName: in.StageName, RestAPIID: restAPIID, DeploymentID: in.DeploymentID,
 		Description: in.Description, CreatedDate: m.now(), Variables: copyStrMap(in.Variables),
+		DocumentationVersion: in.DocumentationVersion,
 	}
 	ad.stages[in.StageName] = st
 

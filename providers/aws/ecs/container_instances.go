@@ -117,9 +117,12 @@ func (m *Mock) RegisterContainerInstance(
 	}
 
 	ci := m.newInstance(in.Cluster, ec2ID, cpu, memory)
+	ci.Tags = copyTags(in.Tags)
 	m.instances.Set(ci.ARN, ci)
+	m.recordTags(ci.ARN, in.Tags)
 
 	out := *ci
+	out.Tags = copyTags(ci.Tags)
 
 	return &out, nil
 }
@@ -338,7 +341,9 @@ func (m *Mock) DescribeContainerInstances(_ context.Context, _ string, ids []str
 
 	for _, id := range ids {
 		if ci, ok := m.resolveInstance(id); ok {
-			found = append(found, *ci)
+			out := *ci
+			out.Tags = m.liveTags(ci.ARN, ci.Tags)
+			found = append(found, out)
 			continue
 		}
 

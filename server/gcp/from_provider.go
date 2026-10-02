@@ -35,6 +35,8 @@ func DriversFrom(p *gcpprovider.Provider) Drivers {
 		Metastore:            p.Metastore,
 		VPCAccess:            p.VPCAccess,
 		CloudIDS:             p.CloudIDS,
+		ManagedKafka:         p.ManagedKafka,
+		BackupDR:             p.BackupDR,
 		SecureSourceManager:  p.SecureSourceManager,
 		NetworkConnectivity:  p.NetworkConnectivity,
 		Composer:             p.Composer,

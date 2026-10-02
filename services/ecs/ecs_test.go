@@ -188,3 +188,43 @@ func TestWrapperWave4bFlow(t *testing.T) {
 	// The wrapper records every proxied call.
 	assert.Equal(t, 1, rec.CallCountFor("ecs", "TagResource"))
 }
+
+func TestWrapperCapacityProviderFlow(t *testing.T) {
+	e, _, rec := newWrapper(t)
+	ctx := context.Background()
+
+	cp, err := e.CreateCapacityProvider(ctx, driver.CreateCapacityProviderInput{
+		Name:                     "asg",
+		AutoScalingGroupProvider: &driver.AutoScalingGroupProvider{AutoScalingGroupARN: "asg-name"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "EC2_AUTOSCALING", cp.Type)
+
+	found, failures, err := e.DescribeCapacityProviders(ctx, "", []string{"asg", "ghost"})
+	require.NoError(t, err)
+	assert.Len(t, found, 1)
+	assert.Len(t, failures, 1)
+
+	updated, err := e.UpdateCapacityProvider(ctx, driver.UpdateCapacityProviderInput{
+		Name:                     "asg",
+		AutoScalingGroupProvider: &driver.AutoScalingGroupProvider{ManagedDraining: "ENABLED"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "ENABLED", updated.AutoScalingGroupProvider.ManagedDraining)
+
+	deleted, err := e.DeleteCapacityProvider(ctx, "", "asg")
+	require.NoError(t, err)
+	assert.Equal(t, "INACTIVE", deleted.Status)
+
+	// Errors propagate through every wrapper.
+	_, err = e.CreateCapacityProvider(ctx, driver.CreateCapacityProviderInput{Name: "bad"})
+	require.Error(t, err)
+	_, err = e.UpdateCapacityProvider(ctx, driver.UpdateCapacityProviderInput{Name: "ghost"})
+	require.Error(t, err)
+	_, err = e.DeleteCapacityProvider(ctx, "", "ghost")
+	require.Error(t, err)
+
+	for _, op := range []string{"CreateCapacityProvider", "DescribeCapacityProviders", "UpdateCapacityProvider", "DeleteCapacityProvider"} {
+		assert.Positive(t, rec.CallCountFor("ecs", op), op)
+	}
+}

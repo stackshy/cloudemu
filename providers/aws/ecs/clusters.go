@@ -93,6 +93,7 @@ func (m *Mock) DescribeClusters(ctx context.Context, ids []string) ([]driver.Clu
 // resource counts computed from the task, service, and instance stores.
 func (m *Mock) describeCluster(c *driver.Cluster) driver.Cluster {
 	out := cloneCluster(c)
+	out.Tags = m.liveTags(c.ARN, c.Tags)
 	out.ActiveServicesCount, out.RunningTasksCount, out.PendingTasksCount, out.RegisteredContainerInstancesCount =
 		m.clusterCounts(c.Name)
 

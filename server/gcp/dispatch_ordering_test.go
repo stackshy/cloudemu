@@ -49,6 +49,7 @@ func TestSpecificHandlersWinBeforeFirestore(t *testing.T) {
 	}{
 		{"pubsub_topics_before_firestore", "/v1/projects/demo/topics", "topics"},
 		{"cloudfunctions_before_firestore", "/v1/projects/demo/locations/us-central1/functions", "functions"},
+		{"backupdr_vaults_before_firestore", "/v1/projects/demo/locations/us-central1/backupVaults", "backupVaults"},
 		{"iam_serviceaccounts_before_firestore", "/v1/projects/demo/serviceAccounts", "accounts"},
 		{"secretmanager_before_firestore", "/v1/projects/demo/secrets", "secrets"},
 	}

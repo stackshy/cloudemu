@@ -518,3 +518,57 @@ func (e *ECS) ExecuteCommand(ctx context.Context, in driver.ExecuteCommandInput)
 
 	return out.(*driver.ExecuteCommandResult), nil
 }
+
+// CreateCapacityProvider creates an Auto Scaling group or Managed Instances capacity provider.
+//
+//nolint:gocritic // in is passed by value to mirror the driver.ECS interface; the copy is cheap for a mock.
+func (e *ECS) CreateCapacityProvider(ctx context.Context, in driver.CreateCapacityProviderInput) (
+	*driver.CapacityProvider, error,
+) {
+	out, err := e.do(ctx, "CreateCapacityProvider", in, func() (any, error) {
+		return e.driver.CreateCapacityProvider(ctx, in)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.CapacityProvider), nil
+}
+
+// DescribeCapacityProviders resolves capacity providers by name or ARN (all of
+// them, including FARGATE and FARGATE_SPOT, when ids is empty).
+func (e *ECS) DescribeCapacityProviders(ctx context.Context, cluster string, ids []string) (
+	[]driver.CapacityProvider, []driver.Failure, error,
+) {
+	return doBatch(ctx, e, "DescribeCapacityProviders", ids, func() ([]driver.CapacityProvider, []driver.Failure, error) {
+		return e.driver.DescribeCapacityProviders(ctx, cluster, ids)
+	})
+}
+
+// UpdateCapacityProvider modifies a capacity provider's scaling configuration.
+func (e *ECS) UpdateCapacityProvider(ctx context.Context, in driver.UpdateCapacityProviderInput) (
+	*driver.CapacityProvider, error,
+) {
+	out, err := e.do(ctx, "UpdateCapacityProvider", in, func() (any, error) {
+		return e.driver.UpdateCapacityProvider(ctx, in)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.CapacityProvider), nil
+}
+
+// DeleteCapacityProvider deletes a capacity provider that no cluster uses.
+func (e *ECS) DeleteCapacityProvider(ctx context.Context, cluster, capacityProvider string) (
+	*driver.CapacityProvider, error,
+) {
+	out, err := e.do(ctx, "DeleteCapacityProvider", capacityProvider, func() (any, error) {
+		return e.driver.DeleteCapacityProvider(ctx, cluster, capacityProvider)
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	return out.(*driver.CapacityProvider), nil
+}

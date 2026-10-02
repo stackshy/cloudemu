@@ -25,6 +25,11 @@ const (
 
 	deployControllerECS = "ECS"
 
+	// propagateTags values (NONE, the default, needs no constant: anything
+	// else propagates nothing).
+	propagateService        = "SERVICE"
+	propagateTaskDefinition = "TASK_DEFINITION"
+
 	// Rolling-update deployment defaults ECS applies when the caller omits a
 	// deploymentConfiguration on a service using the ECS (rolling update)
 	// deployment controller. A REPLICA service defaults to 200/100, a DAEMON
@@ -123,9 +128,12 @@ func (m *Mock) CreateService(ctx context.Context, in driver.CreateServiceInput) 
 
 	var events pendingTaskEvents
 
+	// Record the service's tags before its first tasks launch: propagateTags
+	// SERVICE reads them from the tag store, and a re-created service reuses
+	// its predecessor's ARN, whose stale entry must not leak into its tasks.
+	m.recordTags(svc.ARN, in.Tags)
 	m.convergeNewService(ctx, svc, td, &events)
 	m.services.Set(serviceKey(cluster, svc.Name), svc)
-	m.recordTags(svc.ARN, in.Tags)
 	m.publish(ctx, &events)
 	m.emitServiceSteadyState(ctx, svc)
 
@@ -322,8 +330,9 @@ func (m *Mock) converge(
 }
 
 // serviceTaskSpec builds the placement spec for a service's tasks: group links
-// the task to the service and startedBy carries the deployment id.
-func (*Mock) serviceTaskSpec(svc *driver.Service, td *driver.TaskDefinition, deploymentID string) taskSpec {
+// the task to the service and startedBy carries the deployment id. The task's
+// tags are the ones the service propagates (see propagatedTaskTags).
+func (m *Mock) serviceTaskSpec(svc *driver.Service, td *driver.TaskDefinition, deploymentID string) taskSpec {
 	return taskSpec{
 		cluster:         clusterNameFromARN(svc.ClusterARN),
 		clusterARN:      svc.ClusterARN,
@@ -333,7 +342,24 @@ func (*Mock) serviceTaskSpec(svc *driver.Service, td *driver.TaskDefinition, dep
 		startedBy:       deploymentID,
 		platformVersion: svc.PlatformVersion,
 		netCfg:          svc.NetworkConfiguration,
-		tags:            svc.Tags,
+		tags:            m.propagatedTaskTags(svc, td),
+	}
+}
+
+// propagatedTaskTags returns the tags a service stamps on a task it launches,
+// per its propagateTags setting, read when the task is launched: SERVICE copies
+// the service's current tags, TASK_DEFINITION the task definition's current
+// tags, and NONE (the default, also an empty value) copies nothing. Both reads
+// go through the ARN-keyed tag store, so a TagResource/UntagResource on the
+// source before a new deployment is reflected in the new tasks.
+func (m *Mock) propagatedTaskTags(svc *driver.Service, td *driver.TaskDefinition) []driver.Tag {
+	switch svc.PropagateTags {
+	case propagateService:
+		return m.liveTags(svc.ARN, svc.Tags)
+	case propagateTaskDefinition:
+		return m.liveTags(td.ARN, td.Tags)
+	default:
+		return nil
 	}
 }
 
@@ -762,7 +788,9 @@ func (m *Mock) DescribeServices(ctx context.Context, cluster string, ids []strin
 
 	for _, id := range ids {
 		if s, ok := m.resolveService(want, id); ok {
-			found = append(found, cloneService(s))
+			out := cloneService(s)
+			out.Tags = m.liveTags(s.ARN, s.Tags)
+			found = append(found, out)
 			continue
 		}
 

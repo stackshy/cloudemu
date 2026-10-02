@@ -62,6 +62,9 @@ type Handler struct {
 	// resolves a real operation and 404s a bogus one. Nil in a package-level
 	// server (every operation poll answered DONE, legacy behavior).
 	ops *gcprest.OperationRegistry
+	// buckets, when set, lets backendBuckets reject a bucketName that names no
+	// existing Cloud Storage bucket.
+	buckets BucketLister
 }
 
 // New returns a GCP load balancer handler backed by lb.
@@ -75,6 +78,7 @@ func New(lb lbdriver.LoadBalancer) *Handler {
 func (h *Handler) SetOperationRegistry(reg *gcprest.OperationRegistry) { h.ops = reg }
 
 // Matches returns true for the load-balancing resource types: backendServices,
+// backendBuckets (Cloud CDN),
 // forwardingRules, healthChecks, targetPools, urlMaps, the L7 front-end chain
 // (targetHttpProxies, targetHttpsProxies, sslCertificates) and instanceGroups /
 // regionInstanceGroups. Disjoint from the compute (instances/operations/disks/…)
@@ -94,7 +98,7 @@ func (*Handler) Matches(r *http.Request) bool {
 	}
 
 	switch rp.ResourceType {
-	case resourceBackendServices, resourceForwardingRules,
+	case resourceBackendServices, resourceForwardingRules, resourceBackendBuckets, resourceServiceAttachments,
 		resourceHealthChecks, resourceTargetPools, resourceURLMaps,
 		resourceTargetHTTPProxies, resourceTargetHTTPSProxies, resourceSslCertificates,
 		resourceInstanceGroups, resourceRegionInstanceGroups:
@@ -117,6 +121,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.routeBackendServices(w, r, rp)
 	case resourceForwardingRules:
 		h.routeForwardingRules(w, r, rp)
+	case resourceBackendBuckets:
+		h.routeBackendBuckets(w, r, rp)
+	case resourceServiceAttachments:
+		h.routeServiceAttachments(w, r, rp)
 	case resourceHealthChecks, resourceTargetPools, resourceURLMaps:
 		h.routeGCPResource(w, r, rp)
 	case resourceTargetHTTPProxies, resourceTargetHTTPSProxies, resourceSslCertificates,
@@ -146,6 +154,11 @@ func (h *Handler) routeBackendServices(w http.ResponseWriter, r *http.Request, r
 	// resource-level verbs below.
 	if r.Method == http.MethodPost && rp.Action == actionGetHealth {
 		h.getBackendServiceHealth(w, r, rp)
+		return
+	}
+
+	if r.Method == http.MethodPost && isSignedURLKeyAction(rp.Action) {
+		h.backendServiceSignedURLKey(w, r, rp)
 		return
 	}
 

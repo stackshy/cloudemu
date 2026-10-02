@@ -241,6 +241,7 @@ func (m *Mock) DescribeTaskDefinition(_ context.Context, id string) (*driver.Tas
 	}
 
 	out := cloneTaskDef(td)
+	out.Tags = m.liveTags(td.ARN, td.Tags)
 
 	return &out, nil
 }

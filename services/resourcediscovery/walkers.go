@@ -111,6 +111,9 @@ const (
 	// ServiceIoTHub buckets Azure IoT Hub resources
 	// (Microsoft.Devices/IotHubs).
 	ServiceIoTHub = "iothub"
+	// ServiceAPIManagement buckets Azure API Management resources
+	// (Microsoft.ApiManagement/service).
+	ServiceAPIManagement = "apimanagement"
 	// ServiceLogic buckets Azure Logic Apps resources
 	// (Microsoft.Logic/workflows).
 	ServiceLogic = "logic"
@@ -268,6 +271,11 @@ const TypeRecoveryVault = "Vault"
 // TypeIoTHub is the portable type for an Azure IoT Hub
 // (Microsoft.Devices/IotHubs). Azure-only, so it lives in its own line.
 const TypeIoTHub = "IotHub"
+
+// TypeAPIManagementService is the portable type for an Azure API Management
+// service (Microsoft.ApiManagement/service). Azure-only, so it lives in its own
+// line.
+const TypeAPIManagementService = "Service"
 
 // TypeLogicWorkflow is the portable type for an Azure Logic Apps (Consumption)
 // workflow (Microsoft.Logic/workflows). Azure-only, so it lives in its own line.

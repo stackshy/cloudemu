@@ -447,6 +447,8 @@ func newProvider(o *config.Options, shared *GlobalServices) *Provider {
 	p.SecretsManager.SetKMSCrypto(kmsCrypto)
 	p.SSM.SetKMSCrypto(kmsCrypto)
 	p.SSM.SetInstanceResolver(p.EC2)
+	// Run Command writes invocation output to the command's OutputS3BucketName.
+	p.SSM.SetOutputStore(p.S3)
 	// ECS-registered container instances surface as managed EC2 instances, so
 	// #159 (ECS) composes with #300 (EC2 managed-resource visibility).
 	p.ECS.SetManagedInstanceLauncher(p.EC2)

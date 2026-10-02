@@ -58,6 +58,7 @@ func DriversFrom(p *azureprovider.Provider) Drivers {
 		StreamAnalytics:    p.StreamAnalytics,
 		RecoveryServices:   p.RecoveryServices,
 		IoTHub:             p.IoTHub,
+		APIManagement:      p.APIManagement,
 		Logic:              p.Logic,
 		SQLVirtualMachine:  p.SQLVirtualMachine,
 		ContainerApps:      p.ContainerApps,

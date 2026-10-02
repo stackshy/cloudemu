@@ -126,7 +126,7 @@ func New(n netdriver.Networking, compute instanceLister) *Handler {
 		net:       n,
 		compute:   compute,
 		routers:   newRouterStore(),
-		addresses: newAddressStore(),
+		addresses: newAddressStore(n),
 		routes:    newRouteStore(),
 	}
 }

@@ -270,6 +270,13 @@
         "name": "CreateDeployment"
       },
       {
+        "name": "CreateDocumentationPart"
+      },
+      {
+        "name": "CreateDocumentationVersion",
+        "doc": "CreateDocumentationVersion snapshots the API's current documentation"
+      },
+      {
         "name": "CreateResource"
       },
       {
@@ -279,8 +286,19 @@
         "name": "CreateStage"
       },
       {
+        "name": "DeleteClientCertificate",
+        "doc": "DeleteClientCertificate removes a certificate. It fails while a stage"
+      },
+      {
         "name": "DeleteDeployment",
         "doc": "DeleteDeployment removes a deployment. It fails with a FailedPrecondition"
+      },
+      {
+        "name": "DeleteDocumentationPart"
+      },
+      {
+        "name": "DeleteDocumentationVersion",
+        "doc": "DeleteDocumentationVersion removes a version. It fails while a stage"
       },
       {
         "name": "DeleteIntegration"
@@ -299,10 +317,35 @@
         "name": "DeleteStage"
       },
       {
+        "name": "GenerateClientCertificate",
+        "doc": "GenerateClientCertificate creates a self-signed client certificate valid"
+      },
+      {
+        "name": "GetAccount"
+      },
+      {
+        "name": "GetClientCertificate"
+      },
+      {
+        "name": "GetClientCertificates"
+      },
+      {
         "name": "GetDeployment"
       },
       {
         "name": "GetDeployments"
+      },
+      {
+        "name": "GetDocumentationPart"
+      },
+      {
+        "name": "GetDocumentationParts"
+      },
+      {
+        "name": "GetDocumentationVersion"
+      },
+      {
+        "name": "GetDocumentationVersions"
       },
       {
         "name": "GetIntegration"
@@ -329,6 +372,12 @@
         "name": "GetStages"
       },
       {
+        "name": "GetTags"
+      },
+      {
+        "name": "ImportDocumentationParts"
+      },
+      {
         "name": "InvokeRoute",
         "doc": "InvokeRoute routes req through the tree its stage's deployment captured."
       },
@@ -339,8 +388,31 @@
         "name": "PutMethod"
       },
       {
+        "name": "TagResource",
+        "doc": "TagResource, UntagResource and GetTags manage tags on a REST API or client"
+      },
+      {
+        "name": "UntagResource"
+      },
+      {
+        "name": "UpdateAccount",
+        "doc": "UpdateAccount applies a patchOperations document (/cloudwatchRoleArn"
+      },
+      {
+        "name": "UpdateClientCertificate",
+        "doc": "UpdateClientCertificate applies a patchOperations document (only"
+      },
+      {
         "name": "UpdateDeployment",
         "doc": "UpdateDeployment applies a patchOperations document to a deployment"
+      },
+      {
+        "name": "UpdateDocumentationPart",
+        "doc": "UpdateDocumentationPart applies a patchOperations document (only"
+      },
+      {
+        "name": "UpdateDocumentationVersion",
+        "doc": "UpdateDocumentationVersion applies a patchOperations document (only"
       },
       {
         "name": "UpdateIntegration",
@@ -516,6 +588,105 @@
     ],
     "providers": {
       "aws": "APIGatewayV2"
+    }
+  },
+  {
+    "service": "apimanagement",
+    "interface": "provider-native",
+    "operations": [
+      {
+        "name": "ARMID"
+      },
+      {
+        "name": "CheckNameAvailability"
+      },
+      {
+        "name": "CreateOrUpdateService"
+      },
+      {
+        "name": "DelegationValidationKey"
+      },
+      {
+        "name": "DeleteAPI"
+      },
+      {
+        "name": "DeletePolicy"
+      },
+      {
+        "name": "DeleteProduct"
+      },
+      {
+        "name": "DeleteService"
+      },
+      {
+        "name": "DeleteServiceIfMatch"
+      },
+      {
+        "name": "DiscoverServices"
+      },
+      {
+        "name": "Endpoints"
+      },
+      {
+        "name": "GetAPI"
+      },
+      {
+        "name": "GetDeletedService"
+      },
+      {
+        "name": "GetPolicy"
+      },
+      {
+        "name": "GetPortalSetting"
+      },
+      {
+        "name": "GetProduct"
+      },
+      {
+        "name": "GetService"
+      },
+      {
+        "name": "GetTenantAccess"
+      },
+      {
+        "name": "ListAPIs"
+      },
+      {
+        "name": "ListDeletedServices"
+      },
+      {
+        "name": "ListProducts"
+      },
+      {
+        "name": "ListServicesByResourceGroup"
+      },
+      {
+        "name": "ListServicesBySubscription"
+      },
+      {
+        "name": "PurgeDeletedService"
+      },
+      {
+        "name": "PurgeResourceGroup"
+      },
+      {
+        "name": "PutPolicy"
+      },
+      {
+        "name": "PutPortalSetting"
+      },
+      {
+        "name": "RegionalGatewayURL"
+      },
+      {
+        "name": "UpdateService"
+      },
+      {
+        "name": "UpdateTenantAccess"
+      }
+    ],
+    "providers": {
+      "azure": "APIManagement"
     }
   },
   {
@@ -2095,6 +2266,39 @@
     ],
     "providers": {
       "aws": "Backup"
+    }
+  },
+  {
+    "service": "backupdr",
+    "interface": "BackupDR",
+    "operations": [
+      {
+        "name": "CreateBackupVault",
+        "doc": "CreateBackupVault creates a vault; the retention duration is required."
+      },
+      {
+        "name": "DeleteBackupVault",
+        "doc": "DeleteBackupVault deletes a vault, honoring force, allowMissing and etag."
+      },
+      {
+        "name": "GetBackupVault",
+        "doc": "GetBackupVault returns one vault by identity."
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation resolves a (done) long-running operation by name, for a"
+      },
+      {
+        "name": "ListBackupVaults",
+        "doc": "ListBackupVaults lists a project's vaults in a location (\"-\" for every location)."
+      },
+      {
+        "name": "UpdateBackupVault",
+        "doc": "UpdateBackupVault applies a field-masked update and rotates the etag."
+      }
+    ],
+    "providers": {
+      "gcp": "BackupDR"
     }
   },
   {
@@ -6085,6 +6289,9 @@
     "interface": "ECS",
     "operations": [
       {
+        "name": "CreateCapacityProvider"
+      },
+      {
         "name": "CreateCluster"
       },
       {
@@ -6097,6 +6304,9 @@
         "name": "DeleteAttributes"
       },
       {
+        "name": "DeleteCapacityProvider"
+      },
+      {
         "name": "DeleteCluster"
       },
       {
@@ -6107,6 +6317,9 @@
       },
       {
         "name": "DeregisterTaskDefinition"
+      },
+      {
+        "name": "DescribeCapacityProviders"
       },
       {
         "name": "DescribeClusters"
@@ -6182,6 +6395,9 @@
       },
       {
         "name": "UntagResource"
+      },
+      {
+        "name": "UpdateCapacityProvider"
       },
       {
         "name": "UpdateCluster"
@@ -9712,6 +9928,32 @@
         ]
       },
       {
+        "name": "GCPBackendBucketStore",
+        "doc": "GCPBackendBucketStore is an OPTIONAL, type-asserted capability implemented",
+        "operations": [
+          {
+            "name": "DeleteGCPBackendBucket",
+            "doc": "DeleteGCPBackendBucket removes the named backend bucket, returning"
+          },
+          {
+            "name": "GetGCPBackendBucket",
+            "doc": "GetGCPBackendBucket returns the named backend bucket, or NotFound."
+          },
+          {
+            "name": "InsertGCPBackendBucket",
+            "doc": "InsertGCPBackendBucket stores res, returning AlreadyExists when a backend"
+          },
+          {
+            "name": "ListGCPBackendBuckets",
+            "doc": "ListGCPBackendBuckets returns every backend bucket."
+          },
+          {
+            "name": "UpdateGCPBackendBucket",
+            "doc": "UpdateGCPBackendBucket applies mutate to the named backend bucket under"
+          }
+        ]
+      },
+      {
         "name": "GCPBackendServicePatcher",
         "doc": "GCPBackendServicePatcher is an OPTIONAL, type-asserted capability implemented",
         "operations": [
@@ -9744,6 +9986,44 @@
           {
             "name": "UpdateGCPResource",
             "doc": "UpdateGCPResource applies mutate to the stored resource in place under the"
+          }
+        ]
+      },
+      {
+        "name": "GCPServiceAttachmentStore",
+        "doc": "GCPServiceAttachmentStore is an OPTIONAL, type-asserted capability",
+        "operations": [
+          {
+            "name": "ConnectGCPServiceAttachment",
+            "doc": "ConnectGCPServiceAttachment records a consumer endpoint on the attachment"
+          },
+          {
+            "name": "DeleteGCPServiceAttachment",
+            "doc": "DeleteGCPServiceAttachment removes the attachment, or returns NotFound."
+          },
+          {
+            "name": "DisconnectGCPServiceAttachment",
+            "doc": "DisconnectGCPServiceAttachment removes a consumer endpoint (by"
+          },
+          {
+            "name": "GCPPSCConnectionStatus",
+            "doc": "GCPPSCConnectionStatus returns the current status of a consumer"
+          },
+          {
+            "name": "GetGCPServiceAttachment",
+            "doc": "GetGCPServiceAttachment returns the attachment, or NotFound."
+          },
+          {
+            "name": "InsertGCPServiceAttachment",
+            "doc": "InsertGCPServiceAttachment validates and stores a new attachment,"
+          },
+          {
+            "name": "ListGCPServiceAttachments",
+            "doc": "ListGCPServiceAttachments returns every attachment in a region."
+          },
+          {
+            "name": "UpdateGCPServiceAttachment",
+            "doc": "UpdateGCPServiceAttachment applies mutate under the store lock, keeps the"
           }
         ]
       },
@@ -10282,6 +10562,52 @@
     ],
     "providers": {
       "azure": "ManagedIdentity"
+    }
+  },
+  {
+    "service": "managedkafka",
+    "interface": "ManagedKafka",
+    "operations": [
+      {
+        "name": "CreateCluster"
+      },
+      {
+        "name": "CreateTopic"
+      },
+      {
+        "name": "DeleteCluster",
+        "doc": "DeleteCluster removes the cluster and every topic under it."
+      },
+      {
+        "name": "DeleteTopic"
+      },
+      {
+        "name": "GetCluster"
+      },
+      {
+        "name": "GetOperation",
+        "doc": "GetOperation returns an operation this driver created; unknown is NOT_FOUND."
+      },
+      {
+        "name": "GetTopic"
+      },
+      {
+        "name": "ListClusters"
+      },
+      {
+        "name": "ListTopics"
+      },
+      {
+        "name": "UpdateCluster",
+        "doc": "UpdateCluster applies the fields of c named by mask (field-mask paths"
+      },
+      {
+        "name": "UpdateTopic",
+        "doc": "UpdateTopic applies the fields of t named by mask (\"*\" means every mutable"
+      }
+    ],
+    "providers": {
+      "gcp": "ManagedKafka"
     }
   },
   {
@@ -11484,6 +11810,36 @@
         ]
       },
       {
+        "name": "GCPAddressStore",
+        "doc": "GCPAddressStore is the GCP-only reserved-address surface.",
+        "operations": [
+          {
+            "name": "AllocateGCPAddressIP",
+            "doc": "AllocateGCPAddressIP hands out the next IP of the provider's synthetic"
+          },
+          {
+            "name": "DeleteGCPAddress",
+            "doc": "DeleteGCPAddress removes the address, or returns NotFound."
+          },
+          {
+            "name": "GetGCPAddress",
+            "doc": "GetGCPAddress returns the address, or NotFound."
+          },
+          {
+            "name": "InsertGCPAddress",
+            "doc": "InsertGCPAddress stores a new address, returning AlreadyExists when the"
+          },
+          {
+            "name": "ListGCPAddresses",
+            "doc": "ListGCPAddresses returns every address of a project in scope, or in every"
+          },
+          {
+            "name": "SetGCPAddressLabels",
+            "doc": "SetGCPAddressLabels replaces the address's whole label set (an empty set"
+          }
+        ]
+      },
+      {
         "name": "IPAM",
         "doc": "IPAM is an OPTIONAL AWS capability (type-asserted on the vpc driver).",
         "operations": [
@@ -12616,11 +12972,33 @@
         ]
       },
       {
+        "name": "ManagedNodes",
+        "doc": "ManagedNodes is an OPTIONAL capability, discovered by type assertion. Every",
+        "operations": [
+          {
+            "name": "DescribeInstanceInformation"
+          }
+        ]
+      },
+      {
         "name": "RunCommand",
         "doc": "RunCommand is an OPTIONAL capability, discovered by type assertion.",
         "operations": [
           {
-            "name": "GetCommandInvocation"
+            "name": "CancelCommand",
+            "doc": "CancelCommand cancels the command on the given instances, or on all of"
+          },
+          {
+            "name": "GetCommandInvocation",
+            "doc": "GetCommandInvocation reports one instance's run. pluginName selects a"
+          },
+          {
+            "name": "ListCommandInvocations",
+            "doc": "ListCommandInvocations returns the matching invocations, newest command"
+          },
+          {
+            "name": "ListCommands",
+            "doc": "ListCommands returns the matching commands, newest first."
           },
           {
             "name": "SendCommand"

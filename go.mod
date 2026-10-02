@@ -4,12 +4,14 @@ go 1.25.0
 
 require (
 	cloud.google.com/go/artifactregistry v1.20.0
+	cloud.google.com/go/backupdr v1.16.0
 	cloud.google.com/go/bigtable v1.42.0
 	cloud.google.com/go/compute v1.60.0
 	cloud.google.com/go/eventarc v1.18.0
 	cloud.google.com/go/firestore v1.22.0
-	cloud.google.com/go/iam v1.7.0
-	cloud.google.com/go/longrunning v0.9.0
+	cloud.google.com/go/iam v1.11.0
+	cloud.google.com/go/longrunning v1.2.0
+	cloud.google.com/go/managedkafka v1.0.0
 	cloud.google.com/go/secretmanager v1.16.0
 	cloud.google.com/go/storage v1.62.1
 	github.com/Azure/azure-kusto-go v0.16.1
@@ -18,6 +20,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/containers/azcontainerregistry v0.2.3
 	github.com/Azure/azure-sdk-for-go/sdk/data/azcosmos v1.4.2
 	github.com/Azure/azure-sdk-for-go/sdk/data/aztables v1.4.1
+	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/apimanagement/armapimanagement/v3 v3.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2 v2.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v3 v3.0.0
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/authorization/armauthorization/v3 v3.0.0-beta.3

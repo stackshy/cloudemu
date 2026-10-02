@@ -29,6 +29,9 @@ import (
 
 const (
 	controlPrefix    = "/restapis"
+	certsPrefix      = "/clientcertificates"
+	accountPath      = "/account"
+	tagsPrefix       = "/tags/"
 	userRequestMark  = "_user_request_"
 	executeAPIMarker = ".execute-api."
 	contentTypeJSON  = "application/json"
@@ -40,6 +43,7 @@ const (
 	subResources   = "resources"
 	subDeployments = "deployments"
 	subStages      = "stages"
+	subDocs        = "documentation"
 )
 
 // Control-plane path segment counts (after the /restapis prefix is stripped).
@@ -47,6 +51,7 @@ const (
 	segsAPI         = 1 // {id}
 	segsAPISub      = 2 // {id}/{resources|deployments|stages}
 	segsAPISubItem  = 3 // {id}/{resources|stages}/{item}
+	segsDocItem     = 4 // {id}/documentation/{parts|versions}/{item}
 	segsMethod      = 5 // {id}/resources/{rid}/methods/{httpMethod}
 	segsIntegration = 6 // {id}/resources/{rid}/methods/{httpMethod}/integration
 )
@@ -66,7 +71,10 @@ func New(d driver.APIGateway) *Handler {
 // an S3 bucket literally named "restapis" would be shadowed (documented, and not
 // a real bucket name).
 func (*Handler) Matches(r *http.Request) bool {
-	return strings.HasPrefix(r.URL.Path, controlPrefix) || strings.Contains(r.Host, executeAPIMarker)
+	p := r.URL.Path
+
+	return strings.HasPrefix(p, controlPrefix) || strings.Contains(r.Host, executeAPIMarker) ||
+		p == certsPrefix || strings.HasPrefix(p, certsPrefix+"/") || p == accountPath || ownsTagsPath(p)
 }
 
 // ServeHTTP dispatches to the data plane (execute-api host or a _user_request_
@@ -77,6 +85,12 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.serveHostDataPlane(w, r)
 	case isPathDataPlane(r):
 		h.servePathDataPlane(w, r)
+	case r.URL.Path == accountPath:
+		h.serveAccount(w, r)
+	case r.URL.Path == certsPrefix || strings.HasPrefix(r.URL.Path, certsPrefix+"/"):
+		h.serveClientCertificates(w, r, strings.Trim(strings.TrimPrefix(r.URL.Path, certsPrefix), "/"))
+	case strings.HasPrefix(r.URL.Path, tagsPrefix):
+		h.serveTags(w, r, strings.TrimPrefix(r.URL.Path, tagsPrefix))
 	default:
 		h.serveControlPlane(w, r)
 	}
@@ -117,6 +131,8 @@ func (h *Handler) serveControlPlane(w http.ResponseWriter, r *http.Request) {
 		h.serveAPISub(w, r, segs[0], segs[1])
 	case segsAPISubItem:
 		h.serveAPISubItem(w, r, segs)
+	case segsDocItem:
+		h.serveDocItem(w, r, segs)
 	case segsMethod:
 		h.serveMethod(w, r, segs)
 	case segsIntegration:
@@ -286,6 +302,8 @@ func (h *Handler) serveAPISubItem(w http.ResponseWriter, r *http.Request, segs [
 		h.serveDeploymentItem(w, r, id, item)
 	case subStages:
 		h.serveStageItem(w, r, id, item)
+	case subDocs:
+		h.serveDocCollection(w, r, id, item)
 	default:
 		writeError(w, http.StatusNotFound, "NotFoundException", "unsupported API Gateway path")
 	}
@@ -564,6 +582,7 @@ func (h *Handler) createStage(w http.ResponseWriter, r *http.Request, id string)
 	st, err := h.ag.CreateStage(r.Context(), id, driver.CreateStageInput{
 		StageName: req.StageName, DeploymentID: req.DeploymentID,
 		Description: req.Description, Variables: req.Variables,
+		DocumentationVersion: req.DocumentationVersion,
 	})
 	if err != nil {
 		writeErr(w, err)

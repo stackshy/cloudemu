@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/binary"
 	"encoding/json"
+	"math"
 	"net/http"
 	"sort"
 	"strconv"
@@ -327,7 +328,7 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
-	if err := h.validateForwardingRuleTarget(r.Context(), rp, req.Target); err != nil {
+	if err := h.validateForwardingRuleTarget(r.Context(), rp, &req); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -348,6 +349,21 @@ func (h *Handler) insertForwardingRule(w http.ResponseWriter, r *http.Request, r
 	})
 	if err != nil {
 		gcprest.WriteCErr(w, err)
+		return
+	}
+
+	// A service-attachment consumer rule connects to its attachment, which
+	// decides pscConnectionStatus. If the attachment vanished since validation
+	// the rule is not left behind.
+	if err := h.connectPSCEndpoint(r.Context(), rp, hostOf(r), &req, lb); err != nil {
+		_ = h.lb.DeleteLoadBalancer(r.Context(), lb.ARN)
+
+		if cerrors.IsNotFound(err) {
+			err = invalidRefErr("target", req.Target, "serviceAttachment")
+		}
+
+		gcprest.WriteCErr(w, err)
+
 		return
 	}
 
@@ -447,6 +463,8 @@ func (h *Handler) deleteForwardingRule(w http.ResponseWriter, r *http.Request, r
 		return
 	}
 
+	h.disconnectPSCEndpoint(r.Context(), lb)
+
 	op := h.ops.RecordDone(hostOf(r), rp.Project, rp.Scope, rp.ScopeName,
 		resourceForwardingRules, rp.ResourceName, "delete")
 
@@ -542,6 +560,7 @@ func toBackendServiceResponse(tg *lbdriver.TargetGroupInfo, rp gcprest.ResourceP
 	decodeJSONTag(tg.Tags, bsBackendsTag, &resp.Backends)
 	decodeJSONTag(tg.Tags, bsConnDrainTag, &resp.ConnectionDraining)
 	decodeJSONTag(tg.Tags, bsCdnPolicyTag, &resp.CdnPolicy)
+	backendServiceKeyNames(tg.Tags, &resp)
 	resp.EnableCDN = boolTag(tg.Tags, bsEnableCDNTag)
 
 	return resp
@@ -657,7 +676,10 @@ func mergeBackendServiceCDNTags(tags map[string]string, req *backendServiceReque
 	}
 
 	if req.CdnPolicy != nil {
-		encodeJSONTag(tags, bsCdnPolicyTag, req.CdnPolicy)
+		// signedUrlKeyNames is output-only; the names live in bsSignedURLKeysTag.
+		policy := *req.CdnPolicy
+		policy.SignedURLKeyNames = nil
+		encodeJSONTag(tags, bsCdnPolicyTag, &policy)
 	}
 
 	if req.EnableCDN != nil {
@@ -680,9 +702,13 @@ func (h *Handler) toForwardingRuleResponse(ctx context.Context, lb *lbdriver.LBI
 		Target:              lb.Tags[frTargetTag],
 		Description:         lb.Tags[frDescriptionTag],
 		LoadBalancingScheme: forwardingRuleScheme(lb),
+		Network:             lb.Tags[frNetworkTag],
+		Subnetwork:          lb.Tags[frSubnetworkTag],
 		CreationTimestamp:   lb.Tags[frCreationTag],
 		SelfLink:            gcprest.SelfLink(host, rp.Project, rp.Scope, rp.ScopeName, resourceForwardingRules, name),
 	}
+
+	h.applyPSCFields(ctx, &out, lb)
 
 	// A linked listener (a rule referencing a backend service) supersedes the
 	// round-tripped protocol/portRange and adds the backendService self-link.
@@ -930,8 +956,23 @@ func fnvHash(s string) uint64 {
 
 // numericID returns a stable uint64-shaped string derived from a driver ID.
 // GCP wire IDs are uint64 and proto JSON unmarshalling rejects anything else.
+// The value is kept within int64 as well: Terraform's google provider reads
+// every compute id into an int (e.g. forwarding_rule_id), and a full-range
+// uint64 fails that read with "expected type 'int', got unconvertible type
+// 'string'". Real GCP ids never set the top bit.
 func numericID(driverID string) string {
-	return strconv.FormatUint(fnvHash(driverID), 10)
+	return strconv.FormatUint(positiveID(fnvHash(driverID)), 10)
+}
+
+// positiveID masks a hash to a non-zero 63-bit value, so a synthetic numeric
+// id fits both uint64 (the proto type) and int64 (the Terraform schema type).
+func positiveID(h uint64) uint64 {
+	n := h & math.MaxInt64
+	if n == 0 {
+		n = 1
+	}
+
+	return n
 }
 
 // fingerprintOf returns a stable base64 fingerprint for a resource. GCP returns
@@ -955,6 +996,8 @@ const (
 	frDescriptionTag = "cloudemu:gcpFrDescription"
 	frCreationTag    = "cloudemu:gcpFrCreationTimestamp"
 	frTargetTag      = "cloudemu:gcpFrTarget"
+	frNetworkTag     = "cloudemu:gcpFrNetwork"
+	frSubnetworkTag  = "cloudemu:gcpFrSubnetwork"
 	// frNameTag/frScopeTag carry the client-facing name and scope key so a
 	// scope-prefixed driver record re-emits its real name at its real scope.
 	frNameTag  = "cloudemu:gcpFrName"
@@ -992,6 +1035,14 @@ func forwardingRuleTags(req *forwardingRuleRequest) map[string]string {
 		tags[frDescriptionTag] = req.Description
 	}
 
+	if req.Network != "" {
+		tags[frNetworkTag] = req.Network
+	}
+
+	if req.Subnetwork != "" {
+		tags[frSubnetworkTag] = req.Subnetwork
+	}
+
 	return tags
 }
 
@@ -1001,6 +1052,10 @@ func forwardingRuleTags(req *forwardingRuleRequest) map[string]string {
 func forwardingRuleIP(lb *lbdriver.LBInfo) string {
 	if ip := lb.Tags[frIPAddressTag]; ip != "" {
 		return ip
+	}
+
+	if isPSCTarget(lb.Tags[frTargetTag]) {
+		return pscInternalIP(lb)
 	}
 
 	// Derive a deterministic public-looking IPv4 from the LB identity.
@@ -1017,10 +1072,15 @@ func forwardingRuleIP(lb *lbdriver.LBInfo) string {
 
 // forwardingRuleScheme returns the exact GCP loadBalancingScheme, preferring the
 // round-tripped value (EXTERNAL_MANAGED / INTERNAL_MANAGED / …) over the driver
-// scheme's lossy EXTERNAL/INTERNAL collapse.
+// scheme's lossy EXTERNAL/INTERNAL collapse. A Private Service Connect
+// consumer rule sent without a scheme has none, so no default is synthesized.
 func forwardingRuleScheme(lb *lbdriver.LBInfo) string {
 	if s := lb.Tags[frSchemeTag]; s != "" {
 		return s
+	}
+
+	if isPSCTarget(lb.Tags[frTargetTag]) {
+		return ""
 	}
 
 	return schemeToGCP(lb.Scheme)

@@ -8,6 +8,8 @@ cloud.google.com/go/auth v0.22.0 h1:Xp9wAKkLoeaYb5pYZZoQGz4E9sdPxIbzS3gywZE3ciQ=
 cloud.google.com/go/auth v0.22.0/go.mod h1:M9o2Oz+YI2jAfxewJgb1vyI3vceHF+eohmxyzmrl+9s=
 cloud.google.com/go/auth/oauth2adapt v0.2.8 h1:keo8NaayQZ6wimpNSmW5OPc283g65QNIiLpZnkHRbnc=
 cloud.google.com/go/auth/oauth2adapt v0.2.8/go.mod h1:XQ9y31RkqZCcwJWNSx2Xvric3RrU88hAYYbjDWYDL+c=
+cloud.google.com/go/backupdr v1.16.0 h1:K2xLA4ZKu+jmX8V81r2M5X0mXCMXnNMoNwAP1egogLA=
+cloud.google.com/go/backupdr v1.16.0/go.mod h1:VHHb3pxFlkJ28RvyZAEbECG6Sq5JH9JfZIjZqdFTP+U=
 cloud.google.com/go/compute v1.63.0 h1:KsBourH0wajM4RhzwPwRMKbxHVdvzGsk7StvACoWXD8=
 cloud.google.com/go/compute v1.63.0/go.mod h1:Xm6PbsLgBpAg4va77ljbBdpMjzuU+uPp5Ze2dnZq7lw=
 cloud.google.com/go/compute/metadata v0.9.0 h1:pDUj4QMoPejqq20dK0Pg2N4yG9zIkYGdBtwLoEkH9Zs=
@@ -22,6 +24,8 @@ cloud.google.com/go/logging v1.18.0 h1:KhzZq+1cSkPH9YUaKLLhLtQxIHitVayBmk0sGfoM9
 cloud.google.com/go/logging v1.18.0/go.mod h1:ZGKnpBaURITh+g/uom2VhbiFoFWvejcrHPDhxFtU/gI=
 cloud.google.com/go/longrunning v1.2.0 h1:WjYH3YHBGCxGJP9M4dWGHBfXr/cFIjMkNgWcJj7/iMM=
 cloud.google.com/go/longrunning v1.2.0/go.mod h1:5KMQALFGOCtFoi2xSOA1u3H7WKlhmckgiyFw7+LGQp0=
+cloud.google.com/go/managedkafka v1.0.0 h1:wKZdHCPUr3mQDo/9sbPI2+vhXXw9AgC9EfSsZnxbUvY=
+cloud.google.com/go/managedkafka v1.0.0/go.mod h1:Phh9R6RQhGCNq36Uifsi+HHFIOlRFUE8Z3Xl2fYelBo=
 cloud.google.com/go/monitoring v1.29.0 h1:AHhDsFaSax1/4k+qlIDX/SDGe6hggnfXJ9dkgD9qBPY=
 cloud.google.com/go/monitoring v1.29.0/go.mod h1:72NOVjJXHY/HBfoLT0+qlCZBT059+9VXLeAnL2PeeVM=
 cloud.google.com/go/secretmanager v1.20.0 h1:GjE3NoyFXo7ipRPy26PMmg4oRX1Ra8fswH45r16rWV0=
@@ -48,6 +52,8 @@ github.com/Azure/azure-sdk-for-go/sdk/data/aztables v1.4.1 h1:j0hhYS006eJ54vusoa
 github.com/Azure/azure-sdk-for-go/sdk/data/aztables v1.4.1/go.mod h1:AdtInaXmK8eYmbjezRWgLz+Qs46nc9Up9GWGwteWNfw=
 github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0 h1:fhqpLE3UEXi9lPaBRpQ6XuRW0nU7hgg4zlmZZa+a9q4=
 github.com/Azure/azure-sdk-for-go/sdk/internal v1.12.0/go.mod h1:7dCRMLwisfRH3dBupKeNCioWYUZ4SS09Z14H+7i8ZoY=
+github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/apimanagement/armapimanagement/v3 v3.0.0 h1:5aCs3yc/Ftlv/Le+Dr0P+oOuo/clB6fsfFwrm+DbNms=
+github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/apimanagement/armapimanagement/v3 v3.0.0/go.mod h1:4/JvtEOgU0r2lkVz8BImrFd0e7ZNQ74x+3k9swJzSmc=
 github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2 v2.0.0 h1:1PD0CnFSl1m1TCwudP3cIiyTABCWVzHXtYc6Vi5J0JY=
 github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appcontainers/armappcontainers/v2 v2.0.0/go.mod h1:xCGT95xV5ei4ahSgJWy31pPGE3xWfaWpr9uRzwTzsmg=
 github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/appservice/armappservice/v3 v3.0.0 h1:FErSe/vQGefbSuVwBV9JlrRXgG1uOFyW6TCXERX89s4=

@@ -29,6 +29,8 @@ type vpcSnapshot struct {
 	EIPs           json.RawMessage `json:"eips,omitempty"`
 	RTAssocs       json.RawMessage `json:"rtAssocs,omitempty"`
 	Endpoints      json.RawMessage `json:"endpoints,omitempty"`
+	Addresses      json.RawMessage `json:"addresses,omitempty"`
+	AddressIPSeq   uint32          `json:"addressIpSeq,omitempty"`
 }
 
 // Snapshot captures the mock's entire state as JSON. includeAssets is unused:
@@ -60,7 +62,10 @@ func (m *Mock) snapshotStores(snap *vpcSnapshot) error {
 		{&snap.EIPs, m.eips.Snapshot},
 		{&snap.RTAssocs, m.rtAssocs.Snapshot},
 		{&snap.Endpoints, m.endpoints.Snapshot},
+		{&snap.Addresses, m.addresses.Snapshot},
 	}
+
+	snap.AddressIPSeq = m.addressIPSeq.Load()
 
 	for _, d := range dumps {
 		b, err := d.fn()
@@ -104,7 +109,10 @@ func (m *Mock) restoreStores(snap *vpcSnapshot) error {
 		{snap.EIPs, m.eips.LoadSnapshot},
 		{snap.RTAssocs, m.rtAssocs.LoadSnapshot},
 		{snap.Endpoints, m.endpoints.LoadSnapshot},
+		{snap.Addresses, m.addresses.LoadSnapshot},
 	}
+
+	m.addressIPSeq.Store(snap.AddressIPSeq)
 
 	for _, l := range loads {
 		if len(l.src) == 0 {
