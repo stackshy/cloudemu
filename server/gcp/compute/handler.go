@@ -22,6 +22,7 @@ import (
 	"net/http"
 	"strings"
 
+	gcecompute "github.com/stackshy/cloudemu/v2/providers/gcp/compute"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -86,7 +87,7 @@ func (*Handler) Matches(r *http.Request) bool {
 
 	switch rp.ResourceType {
 	case resourceInstances, resourceOperations, resourceDisks, resourceSnapshots,
-		resourceImages, resourceMachineTyp, resourceMIGs:
+		resourceImages, resourceMachineTyp, resourceMIGs, resourceTemplates:
 		return true
 	}
 
@@ -180,6 +181,8 @@ func (h *Handler) routeResource(w http.ResponseWriter, r *http.Request, rp gcpre
 		serveMachineTypesRoute(w, r, rp)
 	case resourceMIGs:
 		h.serveInstanceGroupManagersRoute(w, r, rp)
+	case resourceTemplates:
+		h.serveInstanceTemplatesRoute(w, r, rp)
 	default:
 		return false
 	}
@@ -219,6 +222,16 @@ func (h *Handler) serveSnapshotsRoute(w http.ResponseWriter, r *http.Request, rp
 
 //nolint:gocritic,dupl // rp is a request-scoped value; route shape is duplicate-by-design across resource types
 func (h *Handler) serveImagesRoute(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath) {
+	if gcecompute.IsPublicImageProject(rp.Project) {
+		servePublicImages(w, r, rp)
+		return
+	}
+
+	if r.Method == http.MethodGet && rp.ResourceName == imageFamilySegment && rp.Action != "" {
+		h.getImageFromFamily(w, r, rp)
+		return
+	}
+
 	if rp.ResourceName == "" {
 		switch r.Method {
 		case http.MethodPost:

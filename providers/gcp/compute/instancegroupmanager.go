@@ -1,29 +1,45 @@
 package compute
 
 import (
+	"encoding/json"
+
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 )
 
-// InstanceGroupManager is the in-memory record backing a zonal GCE managed
-// instance group (compute#instanceGroupManager). Only the fields the emulator
+// InstanceGroupManager is the in-memory record backing a zonal or regional GCE
+// managed instance group (compute#instanceGroupManager). A regional group sets
+// Region and leaves Zone empty. Only the fields the emulator
 // round-trips are modeled: targetSize is the load-bearing one, since the
 // Terraform google provider derives a GKE node pool's node_count by summing the
 // targetSize of the MIGs its instanceGroupUrls point at. Host-dependent links
 // (selfLink, zone URL, instanceGroup URL) are built by the wire handler from the
-// request host, so they are not stored here.
+// request host, so they are not stored here. Spec keeps the insert body so a
+// read echoes the fields the emulator does not model (versions, policies).
 type InstanceGroupManager struct {
-	Name             string `json:"name"`
-	Zone             string `json:"zone"`
-	TargetSize       int    `json:"targetSize"`
-	BaseInstanceName string `json:"baseInstanceName,omitempty"`
-	InstanceTemplate string `json:"instanceTemplate,omitempty"`
-	CreatedAt        string `json:"createdAt,omitempty"`
+	Name             string          `json:"name"`
+	Zone             string          `json:"zone"`
+	Region           string          `json:"region,omitempty"`
+	Spec             json.RawMessage `json:"spec,omitempty"`
+	TargetSize       int             `json:"targetSize"`
+	BaseInstanceName string          `json:"baseInstanceName,omitempty"`
+	InstanceTemplate string          `json:"instanceTemplate,omitempty"`
+	CreatedAt        string          `json:"createdAt,omitempty"`
 }
 
-// migKey scopes a managed instance group by zone, since MIG names are unique
-// per-zone (the same name in two zones is two distinct groups).
-func migKey(zone, name string) string {
-	return zone + "/" + name
+// migKey scopes a managed instance group by its zone or region, since MIG
+// names are unique per scope (the same name in two zones is two groups). Zone
+// and region names never collide (us-central1-a vs us-central1).
+func migKey(scope, name string) string {
+	return scope + "/" + name
+}
+
+// Scope returns the zone of a zonal group or the region of a regional one.
+func (igm *InstanceGroupManager) Scope() string {
+	if igm.Zone != "" {
+		return igm.Zone
+	}
+
+	return igm.Region
 }
 
 // CreateInstanceGroupManagerGCP registers a zonal MIG, rejecting a duplicate
@@ -36,16 +52,18 @@ func (m *Mock) CreateInstanceGroupManagerGCP(igm InstanceGroupManager) error {
 		return cerrors.New(cerrors.InvalidArgument, "instance group manager name is required")
 	}
 
-	if igm.Zone == "" {
-		return cerrors.New(cerrors.InvalidArgument, "instance group manager zone is required")
+	if igm.Scope() == "" {
+		return cerrors.New(cerrors.InvalidArgument, "instance group manager zone or region is required")
 	}
 
 	if igm.CreatedAt == "" {
 		igm.CreatedAt = m.opts.Clock.Now().UTC().Format(timeFormat)
 	}
 
-	if !m.migs.SetIfAbsent(migKey(igm.Zone, igm.Name), igm) {
-		return cerrors.Newf(cerrors.AlreadyExists, "instance group manager %q already exists in zone %q", igm.Name, igm.Zone)
+	igm.Spec = append(json.RawMessage(nil), igm.Spec...)
+
+	if !m.migs.SetIfAbsent(migKey(igm.Scope(), igm.Name), igm) {
+		return cerrors.Newf(cerrors.AlreadyExists, "instance group manager %q already exists in %q", igm.Name, igm.Scope())
 	}
 
 	return nil
@@ -74,18 +92,24 @@ func (m *Mock) UpsertInstanceGroupManagerGCP(igm InstanceGroupManager) {
 	m.migs.Set(migKey(igm.Zone, igm.Name), igm)
 }
 
-// GetInstanceGroupManagerGCP returns a MIG by zone and name.
-func (m *Mock) GetInstanceGroupManagerGCP(zone, name string) (InstanceGroupManager, bool) {
-	return m.migs.Get(migKey(zone, name))
+// GetInstanceGroupManagerGCP returns a MIG by zone (or region) and name.
+func (m *Mock) GetInstanceGroupManagerGCP(scope, name string) (InstanceGroupManager, bool) {
+	igm, ok := m.migs.Get(migKey(scope, name))
+	if ok {
+		igm.Spec = append(json.RawMessage(nil), igm.Spec...)
+	}
+
+	return igm, ok
 }
 
-// ListInstanceGroupManagersGCP returns every MIG in the given zone.
-func (m *Mock) ListInstanceGroupManagersGCP(zone string) []InstanceGroupManager {
+// ListInstanceGroupManagersGCP returns every MIG in the given zone or region.
+func (m *Mock) ListInstanceGroupManagersGCP(scope string) []InstanceGroupManager {
 	all := m.migs.All()
 	out := make([]InstanceGroupManager, 0, len(all))
 
 	for _, igm := range all {
-		if igm.Zone == zone {
+		if igm.Scope() == scope {
+			igm.Spec = append(json.RawMessage(nil), igm.Spec...)
 			out = append(out, igm)
 		}
 	}

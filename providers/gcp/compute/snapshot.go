@@ -17,16 +17,17 @@ var _ snapshot.Snapshottable = (*Mock)(nil)
 // the driver-typed stores round-trip through the generic memstore helper. The
 // state machine is rebuilt from each restored instance's stored state.
 type gceSnapshot struct {
-	Instances    map[string]*instanceSnapshot `json:"instances,omitempty"`
-	SpotRequests json.RawMessage              `json:"spotRequests,omitempty"`
-	Templates    json.RawMessage              `json:"templates,omitempty"`
-	Volumes      json.RawMessage              `json:"volumes,omitempty"`
-	Snapshots    json.RawMessage              `json:"snapshots,omitempty"`
-	Images       json.RawMessage              `json:"images,omitempty"`
-	KeyPairs     json.RawMessage              `json:"keyPairs,omitempty"`
-	Migs         json.RawMessage              `json:"migs,omitempty"`
-	ASGs         map[string]*asgSnapshot      `json:"asgs,omitempty"`
-	Counters     countersSnapshot             `json:"counters"`
+	Instances     map[string]*instanceSnapshot `json:"instances,omitempty"`
+	SpotRequests  json.RawMessage              `json:"spotRequests,omitempty"`
+	Templates     json.RawMessage              `json:"templates,omitempty"`
+	Volumes       json.RawMessage              `json:"volumes,omitempty"`
+	Snapshots     json.RawMessage              `json:"snapshots,omitempty"`
+	Images        json.RawMessage              `json:"images,omitempty"`
+	KeyPairs      json.RawMessage              `json:"keyPairs,omitempty"`
+	Migs          json.RawMessage              `json:"migs,omitempty"`
+	InstTemplates json.RawMessage              `json:"instanceTemplates,omitempty"`
+	ASGs          map[string]*asgSnapshot      `json:"asgs,omitempty"`
+	Counters      countersSnapshot             `json:"counters"`
 }
 
 type countersSnapshot struct {
@@ -108,6 +109,7 @@ func (m *Mock) snapshotStores(snap *gceSnapshot) error {
 		{&snap.Images, m.images.Snapshot},
 		{&snap.KeyPairs, m.keyPairs.Snapshot},
 		{&snap.Migs, m.migs.Snapshot},
+		{&snap.InstTemplates, m.instTemplates.Snapshot},
 	}
 
 	for _, d := range dumps {
@@ -196,6 +198,7 @@ func (m *Mock) restoreStores(snap *gceSnapshot) error {
 		{snap.Images, m.images.LoadSnapshot},
 		{snap.KeyPairs, m.keyPairs.LoadSnapshot},
 		{snap.Migs, m.migs.LoadSnapshot},
+		{snap.InstTemplates, m.instTemplates.LoadSnapshot},
 	}
 
 	for _, l := range loads {
