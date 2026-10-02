@@ -88,6 +88,10 @@ type Handler struct {
 	// names 404). Nil in a standalone package server, where this handler serves
 	// its own /operations/ poll.
 	ops *lro.Registry
+
+	// shared turns on the rules for a server that also mounts Backup and DR;
+	// see shared.go.
+	shared bool
 }
 
 // New returns a Backup for GKE handler backed by db.
@@ -170,7 +174,7 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return true
+	return !h.yieldsShared(r, rt)
 }
 
 // ServeHTTP routes on the parsed path and method.

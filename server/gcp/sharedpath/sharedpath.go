@@ -169,6 +169,19 @@ func hostLabel(host string) string {
 	return ""
 }
 
+// IsZone reports whether location is a zone such as us-central1-a, as opposed
+// to a region (us-central1) or the "-" wildcard.
+func IsZone(location string) bool {
+	i := strings.LastIndexByte(location, '-')
+	if i <= 0 || len(location)-i != 2 || !strings.Contains(location[:i], "-") {
+		return false
+	}
+
+	c := location[i+1]
+
+	return c >= 'a' && c <= 'z' && location[i-1] >= '0' && location[i-1] <= '9'
+}
+
 func known(label string) bool {
 	switch label {
 	case AlloyDB, Container, ManagedKafka, Spanner, SQLAdmin, AIPlatform, IntrusionDetection,

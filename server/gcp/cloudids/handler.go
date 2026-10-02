@@ -62,6 +62,10 @@ type Handler struct {
 	// 404). Nil in a standalone package server, where this handler serves its own
 	// /operations/ poll.
 	ops *lro.Registry
+
+	// shared turns on the endpoints rules for a server that also mounts
+	// Vertex AI; see shared.go.
+	shared bool
 }
 
 // New returns a Cloud IDS handler backed by db.
@@ -98,6 +102,12 @@ func parseRoute(urlPath string) (route, bool) {
 
 	rt := route{project: parts[1], location: parts[3], resource: rest[0]}
 	if len(rest) == itemParts {
+		// Cloud IDS has no custom verbs, so endpoints/{e}:predict and the
+		// like are another API's.
+		if strings.Contains(rest[1], ":") {
+			return route{}, false
+		}
+
 		rt.name = rest[1]
 	}
 
@@ -120,11 +130,11 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	if rt.resource == operationsSeg && h.ops != nil {
-		return false
+	if rt.resource == operationsSeg {
+		return h.ops == nil
 	}
 
-	return true
+	return h.matchesShared(r, &rt)
 }
 
 // ServeHTTP routes on the parsed path and method.

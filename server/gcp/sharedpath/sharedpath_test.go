@@ -129,3 +129,16 @@ func TestAliasHintWinsOverHost(t *testing.T) {
 		t.Fatalf("API = %q, want %q", got, Redis)
 	}
 }
+
+func TestIsZone(t *testing.T) {
+	cases := map[string]bool{
+		"us-central1-a": true, "europe-west4-c": true,
+		"us-central1": false, "-": false, "global": false, "us-a": false, "": false, "us-central1-ab": false,
+	}
+
+	for loc, want := range cases {
+		if got := IsZone(loc); got != want {
+			t.Errorf("IsZone(%q) = %v, want %v", loc, got, want)
+		}
+	}
+}

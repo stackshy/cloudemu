@@ -54,7 +54,13 @@ type Handler struct {
 	// names 404). Nil in a standalone package server, where this handler serves
 	// its own /operations/ poll.
 	ops *lro.Registry
+
+	// shared leaves zonal locations to Filestore; Redis is regional only.
+	shared bool
 }
+
+// SetSharedPath turns on the rules for a server that also mounts Filestore.
+func (h *Handler) SetSharedPath() { h.shared = true }
 
 // SetOperationRegistry wires the shared LRO poller so created operations are
 // resolvable (with their response) through the full server's operations host.
@@ -125,7 +131,7 @@ func (h *Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	if rt.resource == operationsSeg && h.ops != nil {
+	if (rt.resource == operationsSeg && h.ops != nil) || (h.shared && sharedpath.IsZone(rt.location)) {
 		return false
 	}
 

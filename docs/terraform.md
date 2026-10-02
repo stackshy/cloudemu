@@ -121,7 +121,19 @@ A `Host: <api>.googleapis.com` header (from a proxy, `/etc/hosts` or
 |---|---|
 | `container.googleapis.com`, `alloydb.googleapis.com`, `managedkafka.googleapis.com` | `locations/{l}/clusters` |
 | `file.googleapis.com`, `redis.googleapis.com`, `datafusion.googleapis.com`, `securesourcemanager.googleapis.com` | `locations/{l}/instances` |
-| `securesourcemanager.googleapis.com`, `artifactregistry.googleapis.com` | `locations/{l}/repositories` |
+| `securesourcemanager.googleapis.com`, `artifactregistry.googleapis.com`, `dataform.googleapis.com` | `locations/{l}/repositories` |
+| `ids.googleapis.com`, `us-central1-aiplatform.googleapis.com` (region named literally) | `locations/{l}/endpoints` |
+| `gkebackup.googleapis.com`, `backupdr.googleapis.com` | `locations/{l}/backupPlans` |
+| `spanner.googleapis.com`, `sqladmin.googleapis.com` | `/v1/projects/{p}/instances` |
+
+Without a hint, these pairs are told apart by body, path shape and ownership:
+a Cloud IDS create carries `severity`/`network` and no `displayName`; a
+Filestore create carries a Filestore tier, and zonal locations are Filestore's;
+a Backup and DR plan carries `backupVault`/`backupRules`/`resourceType`; a
+Dataform repository carries Dataform fields and no `format`; and a v1 instance
+list is Spanner's only when it pages with `pageSize` or Spanner owns an
+instance in the project. In a project that has both Spanner and Cloud SQL
+instances, list Cloud SQL through `/sqladmin.googleapis.com/v1/`.
 
 Any other `*.googleapis.com` first segment is stripped and otherwise ignored, so
 `http://localhost:4569/storage.googleapis.com/storage/v1/` is the same as

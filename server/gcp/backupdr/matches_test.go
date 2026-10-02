@@ -32,7 +32,7 @@ func TestMatchesNarrowing(t *testing.T) {
 		{"wildcard location list", "/v1/projects/p/locations/-/backupVaults", true},
 		{"nested dataSources (out of scope)", "/v1/projects/p/locations/us-central1/backupVaults/v/dataSources", false},
 		{"custom verb (out of scope)", "/v1/projects/p/locations/us-central1/backupVaults:fetchUsable", false},
-		{"backupPlans (out of scope)", "/v1/projects/p/locations/us-central1/backupPlans", false},
+		{"backupPlans (claimed, answered 501)", "/v1/projects/p/locations/us-central1/backupPlans", true},
 		{"endpoints space (cloudids)", "/v1/projects/p/locations/us-central1/endpoints/e", false},
 		{"instances space (memorystore/filestore)", "/v1/projects/p/locations/us-central1/instances/i", false},
 		{"bare location", "/v1/projects/p/locations/us-central1", false},
