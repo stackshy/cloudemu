@@ -268,6 +268,10 @@ func (h *Handler) serveChild(w http.ResponseWriter, r *http.Request, sp sbPath) 
 		h.serveTopicTree(w, r, sp)
 	case strings.EqualFold(sp.segs[0], segAuthRules):
 		h.serveAuthRule(w, r, sp)
+	case strings.EqualFold(sp.segs[0], segNetworkRuleSets):
+		h.serveNetworkRuleSet(w, r, sp)
+	case strings.EqualFold(sp.segs[0], segDRConfigs):
+		h.serveDRConfigs(w, r, sp)
 	default:
 		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented",
 			"unsupported sub-resource: "+sp.segs[0])
