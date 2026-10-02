@@ -6,8 +6,9 @@
 // The tag set is addressed by an opaque {scope} prefix: a subscription
 // (subscriptions/{sub}) or any resource id, followed by the fixed suffix
 // /providers/Microsoft.Resources/tags/default. The handler owns its own
-// in-memory store keyed by that scope; there is no driver, because tags-at-scope
-// is a universal ARM overlay rather than a per-service resource.
+// tag sets live in the persisted providers/azure/tagsatscope store keyed by that
+// scope; there is no driver, because tags-at-scope is a universal ARM overlay
+// rather than a per-service resource.
 //
 // Every operation is synchronous and answers HTTP 200, matching the armresources
 // TagsClient, which treats any non-200 as an error (DeleteAtScope included).
@@ -18,6 +19,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/stackshy/cloudemu/v2/providers/azure/tagsatscope"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
@@ -34,16 +36,21 @@ const (
 	opDelete  = "Delete"
 )
 
-// Handler serves Microsoft.Resources/tags/default requests. It is
-// self-contained: the tag sets live in its own store, one per scope.
+// Handler serves Microsoft.Resources/tags/default requests over the provider's
+// tag-set store, one set per scope. mu keeps a PATCH read-modify-write atomic.
 type Handler struct {
-	mu      sync.RWMutex
-	byScope map[string]map[string]string
+	mu    sync.Mutex
+	store *tagsatscope.Mock
 }
 
-// New returns a tags-at-scope handler with an empty store.
-func New() *Handler {
-	return &Handler{byScope: make(map[string]map[string]string)}
+// New returns a tags-at-scope handler over store. A nil store gives the handler
+// a private one.
+func New(store *tagsatscope.Mock) *Handler {
+	if store == nil {
+		store = tagsatscope.New()
+	}
+
+	return &Handler{store: store}
 }
 
 // Matches reports whether r targets a tags-at-scope URL. The suffix is matched
@@ -87,7 +94,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, scope string) {
 	stored := cloneTags(body.Properties.Tags)
 
 	h.mu.Lock()
-	h.byScope[scope] = stored
+	h.store.Set(scope, stored)
 	h.mu.Unlock()
 
 	azurearm.WriteJSON(w, http.StatusOK, response(scope, stored))
@@ -96,9 +103,7 @@ func (h *Handler) put(w http.ResponseWriter, r *http.Request, scope string) {
 // get returns the current tag set at scope (GetAtScope). An unknown scope has an
 // empty set, matching real ARM (there is no "not found" for a scope's tags).
 func (h *Handler) get(w http.ResponseWriter, scope string) {
-	h.mu.RLock()
-	stored := cloneTags(h.byScope[scope])
-	h.mu.RUnlock()
+	stored := h.store.Get(scope)
 
 	azurearm.WriteJSON(w, http.StatusOK, response(scope, stored))
 }
@@ -121,8 +126,8 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request, scope string) {
 	}
 
 	h.mu.Lock()
-	result := applyPatch(h.byScope[scope], op, body.Properties.Tags)
-	h.byScope[scope] = result
+	result := applyPatch(h.store.Get(scope), op, body.Properties.Tags)
+	h.store.Set(scope, result)
 	h.mu.Unlock()
 
 	azurearm.WriteJSON(w, http.StatusOK, response(scope, cloneTags(result)))
@@ -132,7 +137,7 @@ func (h *Handler) patch(w http.ResponseWriter, r *http.Request, scope string) {
 // scope still answers 200.
 func (h *Handler) delete(w http.ResponseWriter, scope string) {
 	h.mu.Lock()
-	delete(h.byScope, scope)
+	h.store.Delete(scope)
 	h.mu.Unlock()
 
 	w.WriteHeader(http.StatusOK)

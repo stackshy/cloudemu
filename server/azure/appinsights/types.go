@@ -3,6 +3,7 @@ package appinsights
 import (
 	"strings"
 
+	aiprov "github.com/stackshy/cloudemu/v2/providers/azure/insightscomponents"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
@@ -131,7 +132,7 @@ func mergePatchProps(stored, patch map[string]any) map[string]any {
 // toResponse renders a stored component, injecting the computed keys from state
 // so InstrumentationKey/AppId/ConnectionString/ApplicationId are stable across
 // every read.
-func toResponse(cs *componentState) componentResponse {
+func toResponse(cs *aiprov.Component) componentResponse {
 	props := make(map[string]any, len(cs.Props)+computedKeyCount)
 	for k, v := range cs.Props {
 		props[k] = v
@@ -158,7 +159,7 @@ func toResponse(cs *componentState) componentResponse {
 
 // connectionString builds the modern Application Insights connection string from
 // the component's stored instrumentation key, region and app id.
-func connectionString(cs *componentState) string {
+func connectionString(cs *aiprov.Component) string {
 	region := regionCode(cs.Location)
 
 	return "InstrumentationKey=" + cs.InstrumentationKey +

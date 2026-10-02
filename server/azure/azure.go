@@ -11,6 +11,9 @@ import (
 	"net/http"
 
 	"github.com/stackshy/cloudemu/v2/config"
+	aiprov "github.com/stackshy/cloudemu/v2/providers/azure/insightscomponents"
+	lockprov "github.com/stackshy/cloudemu/v2/providers/azure/managementlocks"
+	"github.com/stackshy/cloudemu/v2/providers/azure/tagsatscope"
 	"github.com/stackshy/cloudemu/v2/server"
 	"github.com/stackshy/cloudemu/v2/server/azure/aad"
 	"github.com/stackshy/cloudemu/v2/server/azure/acr"
@@ -186,6 +189,12 @@ type Drivers struct {
 	DigitalTwins digitaltwinssrv.Store
 	// ManagedGrafana serves Microsoft.Dashboard/grafana.
 	ManagedGrafana managedgrafanasrv.Store
+	// AppInsights, ManagementLocks and ScopeTags are the persisted stores behind
+	// the always-on components, locks and tags-at-scope handlers. A nil store
+	// gives that handler a private, unpersisted one.
+	AppInsights     *aiprov.Mock
+	ManagementLocks *lockprov.Mock
+	ScopeTags       *tagsatscope.Mock
 	// DevCenter serves Microsoft.DevCenter/devcenters.
 	DevCenter devcentersrv.Store
 	// Purview serves Microsoft.Purview/accounts.
@@ -352,7 +361,7 @@ func New(d Drivers) http.Handler {
 	// Management locks are constructed once and shared: the same instance is
 	// registered as the CRUD handler and handed to the enforcement gate below,
 	// so the gate reads the exact store callers write to.
-	locksHandler := locks.New()
+	locksHandler := locks.New(d.ManagementLocks)
 
 	tenantID := d.TenantID
 	if tenantID == "" {
@@ -691,7 +700,7 @@ func New(d Drivers) http.Handler {
 	// Application Insights components (Microsoft.Insights/components) are
 	// resource-group-scoped, so the (always-on, driverless) handler joins the
 	// purge cascade. Registered further below.
-	appInsightsHandler := appinsightssrv.New()
+	appInsightsHandler := appinsightssrv.New(d.AppInsights)
 
 	// Data Factory (Microsoft.DataFactory/factories) is a resource-group-scoped
 	// resource, so its handler joins the purge cascade. Registered further below.
@@ -714,7 +723,7 @@ func New(d Drivers) http.Handler {
 	// /providers/Microsoft.Resources/tags/default is disjoint from the
 	// resource-group paths above and the Microsoft.ResourceGraph/generic-resources
 	// listings, so registration order is unconstrained.
-	srv.Register(tagssrv.New())
+	srv.Register(tagssrv.New(d.ScopeTags))
 
 	// microsoft.insights extension resources (metrics, metricDefinitions,
 	// diagnosticSettings) hang off an arbitrary resource URI, so they must claim

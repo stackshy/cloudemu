@@ -38,6 +38,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
 	"github.com/stackshy/cloudemu/v2/providers/azure/healthcareapis"
 	"github.com/stackshy/cloudemu/v2/providers/azure/iam"
+	"github.com/stackshy/cloudemu/v2/providers/azure/insightscomponents"
 	"github.com/stackshy/cloudemu/v2/providers/azure/iothub"
 	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadbalancer"
@@ -48,6 +49,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedgrafana"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedidentity"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedlustre"
+	"github.com/stackshy/cloudemu/v2/providers/azure/managementlocks"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mongocluster"
 	"github.com/stackshy/cloudemu/v2/providers/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
@@ -65,6 +67,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/sqlvirtualmachine"
 	"github.com/stackshy/cloudemu/v2/providers/azure/streamanalytics"
 	"github.com/stackshy/cloudemu/v2/providers/azure/tablestorage"
+	"github.com/stackshy/cloudemu/v2/providers/azure/tagsatscope"
 	"github.com/stackshy/cloudemu/v2/providers/azure/virtualmachines"
 	"github.com/stackshy/cloudemu/v2/providers/azure/vnet"
 	"github.com/stackshy/cloudemu/v2/providers/azure/webpubsub"
@@ -198,6 +201,9 @@ type Provider struct {
 	Communication      *communication.Mock
 	DigitalTwins       *digitaltwins.Mock
 	ManagedGrafana     *managedgrafana.Mock
+	AppInsights        *insightscomponents.Mock
+	ManagementLocks    *managementlocks.Mock
+	ScopeTags          *tagsatscope.Mock
 	DevCenter          *devcenter.Mock
 	Purview            *purview.Mock
 	ChaosStudio        *chaosstudio.Mock
@@ -284,6 +290,9 @@ func New(opts ...config.Option) *Provider {
 		Communication:      communication.New(o),
 		DigitalTwins:       digitaltwins.New(o),
 		ManagedGrafana:     managedgrafana.New(o),
+		AppInsights:        insightscomponents.New(),
+		ManagementLocks:    managementlocks.New(),
+		ScopeTags:          tagsatscope.New(),
 		DevCenter:          devcenter.New(o),
 		Purview:            purview.New(o),
 		ChaosStudio:        chaosstudio.New(o),
