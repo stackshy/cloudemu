@@ -49,6 +49,7 @@ func (h *Handler) createBackup(w http.ResponseWriter, r *http.Request, p *alloyP
 		return
 	}
 
+	p.backupID = snap.ID // the operation targets the created backup
 	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-backup", backupTypeURL, toWireBackup(snap, defaultBackupType)))
 }
 

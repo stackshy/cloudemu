@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/internal/snapshot"
 	"github.com/stackshy/cloudemu/v2/services/compute/driver"
 )
@@ -163,6 +164,8 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		return err
 	}
 
+	m.adoptLegacyRecords()
+
 	c := snap.Counters
 	m.ipCounter.Store(c.IP)
 	m.volCounter.Store(c.Vol)
@@ -227,4 +230,54 @@ func (m *Mock) restoreASGs(asgs map[string]*asgSnapshot) error {
 	}
 
 	return nil
+}
+
+// adoptLegacyRecords places instances, disks, images and snapshots restored
+// from a snapshot taken before project scoping in the default project, and
+// logs once how many it adopted.
+func (m *Mock) adoptLegacyRecords() {
+	p := m.opts.ProjectID
+	n := adoptLegacy(m.instances, p, func(d *instanceData) *map[string]string { return &d.Tags })
+	n += adoptLegacy(m.volumes, p, func(v *driver.VolumeInfo) *map[string]string { return &v.Tags })
+	n += adoptLegacy(m.snapshots, p, func(v *driver.SnapshotInfo) *map[string]string { return &v.Tags })
+	n += adoptLegacy(m.images, p, func(v *driver.ImageInfo) *map[string]string { return &v.Tags })
+	n += m.adoptLegacyMIGs()
+
+	projectctx.WarnAdopted("compute", n, p)
+}
+
+// adoptLegacyMIGs rekeys managed instance groups and instance templates
+// restored with no project into the default project.
+func (m *Mock) adoptLegacyMIGs() int {
+	n := 0
+
+	migs := m.migs.All()
+	for key := range migs {
+		igm := migs[key]
+		if igm.Project != "" {
+			continue
+		}
+
+		m.migs.Delete(key)
+
+		igm.Project = m.opts.ProjectID
+		m.migs.Set(migKey(igm.Project, igm.Scope(), igm.Name), igm)
+
+		n++
+	}
+
+	for key, t := range m.instTemplates.All() {
+		if t.Project != "" {
+			continue
+		}
+
+		m.instTemplates.Delete(key)
+
+		t.Project = m.opts.ProjectID
+		m.instTemplates.Set(projectctx.Key(t.Project, t.Name), t)
+
+		n++
+	}
+
+	return n
 }

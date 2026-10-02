@@ -15,7 +15,10 @@ import (
 // paged the Spanner way, or Spanner owns an instance in the project, and an item
 // only when it owns the instance or the path shape exists only on Spanner.
 
-const pageSizeParam = "pageSize" // Cloud SQL pages with maxResults
+const (
+	pageSizeParam   = "pageSize"   // Spanner's page size
+	maxResultsParam = "maxResults" // Cloud SQL's page size
+)
 
 // SetSharedPath turns on the shared instances rules. Off (the default),
 // Spanner claims every instance list, as a standalone server must.
@@ -25,6 +28,11 @@ func (h *Handler) SetSharedPath() { h.shared = true }
 func (h *Handler) matchesSharedList(r *http.Request, project string) bool {
 	if !h.shared || sharedpath.Is(r, sharedpath.Spanner) || r.URL.Query().Has(pageSizeParam) {
 		return true
+	}
+
+	// maxResults is a Cloud SQL list, even when Spanner owns an instance here.
+	if r.URL.Query().Has(maxResultsParam) {
+		return false
 	}
 
 	all, err := h.db.ListInstances(r.Context(), project)
@@ -46,7 +54,7 @@ func spannerOnlySub(r *http.Request, parts []string) bool {
 	}
 
 	switch parts[idxSub] {
-	case segOperations, "backups", "backups:copy", "backupOperations", "databaseOperations",
+	case segOperations, segBackups, "backups:copy", "backupOperations", "databaseOperations",
 		"instancePartitions", "instancePartitionOperations", "databases:restore":
 		return true
 	case segDatabases:

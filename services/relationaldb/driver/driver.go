@@ -1912,6 +1912,11 @@ type AlloyDBClusterConfig struct {
 	ContinuousBackup       bool
 	MaintenanceDay         string // e.g. "SUNDAY"
 	Tags                   map[string]string
+	// Location is the request region the cluster lives in; empty means the
+	// provider's default region.
+	Location string
+	// AllocatedIPRange is networkConfig.allocatedIpRange, echoed back.
+	AllocatedIPRange string
 }
 
 // SecondaryClusterConfig configures a cross-region SECONDARY (read replica)
@@ -1920,6 +1925,7 @@ type SecondaryClusterConfig struct {
 	ID             string
 	PrimaryCluster string // source PRIMARY cluster ID
 	Tags           map[string]string
+	Location       string // request region; empty means the default region
 }
 
 // AlloyDBInstanceConfig carries AlloyDB-specific instance-create fields.
@@ -1930,6 +1936,7 @@ type AlloyDBInstanceConfig struct {
 	CPUCount         int
 	NodeCount        int    // READ_POOL node count
 	AvailabilityType string // "REGIONAL" | "ZONAL"
+	GceZone          string // ZONAL only; empty picks a zone in the cluster's region
 	Tags             map[string]string
 }
 
@@ -1942,6 +1949,7 @@ type AlloyDBClusterInfo struct {
 	ContinuousBackup       bool
 	MaintenanceDay         string
 	PrimaryCluster         string // set for a SECONDARY cluster
+	AllocatedIPRange       string
 	// UID is the server-generated system UID (distinct from the resource id).
 	UID string
 	// DisplayName is the caller-supplied display name, empty when unset.

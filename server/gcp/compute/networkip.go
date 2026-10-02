@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/binary"
 	"net"
+
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 )
 
 // subnetNameTag mirrors the tag the GCP VPC wire handler stamps the
@@ -55,7 +57,8 @@ func firstNetworkIP(nics []networkInterface) string {
 // stored subnet's CIDR, matching by the VPC handler's name tag and, when the
 // reference carries a region, the subnet's region.
 func (h *Handler) subnetCIDR(ctx context.Context, subnetRef, zone string) (string, bool) {
-	subnets, err := h.net.DescribeSubnets(ctx, nil)
+	// A Shared VPC reference names the host project's subnet by URL.
+	subnets, err := h.net.DescribeSubnets(projectctx.WithProject(ctx, projectctx.FromPath(subnetRef)), nil)
 	if err != nil {
 		return "", false
 	}
@@ -79,19 +82,26 @@ func (h *Handler) subnetCIDR(ctx context.Context, subnetRef, zone string) (strin
 }
 
 // usedIPsInSubnet collects the private IPs already assigned to instances in the
-// referenced subnet, so a fresh allocation avoids colliding with them.
+// referenced subnet, so a fresh allocation avoids colliding with them. Every
+// project is scanned, because Shared VPC instances of other projects draw from
+// the same subnet; an instance counts only when its subnet is in the same
+// project as the referenced one.
 func (h *Handler) usedIPsInSubnet(ctx context.Context, subnetRef string) map[string]bool {
 	used := make(map[string]bool)
 
-	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
+	instances, err := h.compute.DescribeInstances(projectctx.AllProjects(ctx), nil, nil)
 	if err != nil {
 		return used
 	}
 
 	name := lastSegment(subnetRef)
+	project := subnetProject(subnetRef, projectctx.ProjectOr(ctx, ""))
 
 	for i := range instances {
-		if instances[i].PrivateIP != "" && lastSegment(instances[i].SubnetID) == name {
+		inst := &instances[i]
+		owner := subnetProject(inst.SubnetID, tagOr(inst.Tags, keyProject, projectctx.ProjectOr(ctx, "")))
+
+		if inst.PrivateIP != "" && lastSegment(inst.SubnetID) == name && owner == project {
 			used[instances[i].PrivateIP] = true
 		}
 	}
@@ -138,4 +148,14 @@ func allocateFromCIDR(cidr string, used map[string]bool) string {
 	}
 
 	return ""
+}
+
+// subnetProject returns the project a subnet reference names, or fallback for
+// a bare name or a relative reference with no project.
+func subnetProject(ref, fallback string) string {
+	if p := projectctx.FromPath(ref); p != "" {
+		return p
+	}
+
+	return fallback
 }

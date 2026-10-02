@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"reflect"
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
@@ -75,24 +76,57 @@ func (h *Handler) serveDatabaseSingleton(w http.ResponseWriter, r *http.Request,
 	}
 }
 
-// restatesDisabled reports whether r is a PUT or PATCH whose properties.state
-// is Disabled, for a singleton whose default state is Disabled.
+// restatesDisabled reports whether r is a PUT or PATCH that only restates
+// the default of a singleton whose default state is Disabled: state is
+// Disabled and every other property is null or equal to its default (azurerm
+// sends emailAccountAdmins=false alongside the state). Any other property (a
+// storageContainerPath, say) is a real write that is not modeled, so it must
+// not be answered with the default and silently dropped.
 func restatesDisabled(r *http.Request, props map[string]any) bool {
 	if (r.Method != http.MethodPut && r.Method != http.MethodPatch) || props[propState] != stateDisabled {
 		return false
 	}
 
 	var body struct {
-		Properties struct {
-			State string `json:"state"`
-		} `json:"properties"`
+		Properties map[string]any `json:"properties"`
 	}
 
 	if err := json.NewDecoder(io.LimitReader(r.Body, azurearm.MaxBodyBytes)).Decode(&body); err != nil {
 		return false
 	}
 
-	return strings.EqualFold(body.Properties.State, stateDisabled)
+	state, _ := body.Properties[propState].(string)
+	if !strings.EqualFold(state, stateDisabled) {
+		return false
+	}
+
+	for key, value := range body.Properties {
+		if key != propState && value != nil && !equalsDefault(value, props[key]) {
+			return false
+		}
+	}
+
+	return true
+}
+
+// equalsDefault reports whether a decoded JSON value equals the default def,
+// comparing both in their JSON form. A property with no default never matches.
+func equalsDefault(value, def any) bool {
+	if def == nil {
+		return false
+	}
+
+	want, err := json.Marshal(def)
+	if err != nil {
+		return false
+	}
+
+	var normalized any
+	if json.Unmarshal(want, &normalized) != nil {
+		return false
+	}
+
+	return reflect.DeepEqual(value, normalized)
 }
 
 // getDatabaseSingleton returns the default singleton of an existing database.

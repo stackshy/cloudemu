@@ -149,8 +149,8 @@ func (*Handler) toWireCluster(c *rdsdriver.Cluster, info *rdsdriver.AlloyDBClust
 		},
 	}
 
-	if info.Network != "" {
-		out.NetworkConfig = &alloydb.NetworkConfig{Network: info.Network}
+	if info.Network != "" || info.AllocatedIPRange != "" {
+		out.NetworkConfig = &alloydb.NetworkConfig{Network: info.Network, AllocatedIpRange: info.AllocatedIPRange}
 	}
 
 	if info.PrimaryCluster != "" {

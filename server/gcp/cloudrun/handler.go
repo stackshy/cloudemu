@@ -49,6 +49,8 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/opmeta"
 	"github.com/stackshy/cloudemu/v2/services/cloudrun/driver"
 )
 
@@ -81,11 +83,27 @@ type Handler struct {
 	// canonical name. CloudEmu does not enforce IAM; the policy is stored so a
 	// set/get (and Terraform's *_iam_member read-back) round-trips.
 	policies map[string]*iamPolicy
+	// ops records every operation this handler mints so a poll replays it and
+	// an unknown name is 404 NOT_FOUND, as real Cloud Run answers.
+	ops *lro.Registry
 }
 
 // New returns a Cloud Run handler backed by cr.
 func New(cr driver.CloudRun) *Handler {
-	return &Handler{cr: cr, policies: make(map[string]*iamPolicy)}
+	return &Handler{cr: cr, policies: make(map[string]*iamPolicy), ops: lro.NewRegistry()}
+}
+
+// SetOperationRegistry records this handler's operations in the server-wide
+// registry instead of its own.
+func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
+
+// writeDoneOp mints a completed operation carrying response, records it so a
+// later Operations.Get returns the same result, and writes it.
+func (h *Handler) writeDoneOp(w http.ResponseWriter, p *crPath, response map[string]any) {
+	name := "projects/" + p.project + "/locations/" + p.location + "/operations/" + opmeta.NewID(time.Now())
+	h.ops.Register(name, response)
+
+	writeJSON(w, http.StatusOK, operation{Name: name, Done: true, Response: response})
 }
 
 // Matches claims Cloud Run v2 job, service and location-operation paths, plus
@@ -199,11 +217,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p *crPath) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{
-		Name:     opName(p, "create-"+name),
-		Done:     true,
-		Response: asResponse(toJobResource(job, p), jobTypeURL),
-	})
+	h.writeDoneOp(w, p, asResponse(toJobResource(job, p), jobTypeURL))
 }
 
 func (h *Handler) updateJob(w http.ResponseWriter, r *http.Request, p *crPath) {
@@ -218,11 +232,7 @@ func (h *Handler) updateJob(w http.ResponseWriter, r *http.Request, p *crPath) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{
-		Name:     opName(p, "update-"+p.name),
-		Done:     true,
-		Response: asResponse(toJobResource(job, p), jobTypeURL),
-	})
+	h.writeDoneOp(w, p, asResponse(toJobResource(job, p), jobTypeURL))
 }
 
 func (h *Handler) getJob(w http.ResponseWriter, r *http.Request, p *crPath) {
@@ -262,11 +272,7 @@ func (h *Handler) deleteJob(w http.ResponseWriter, r *http.Request, p *crPath) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{
-		Name:     opName(p, "delete-"+p.name),
-		Done:     true,
-		Response: asResponse(toJobResource(job, p), jobTypeURL),
-	})
+	h.writeDoneOp(w, p, asResponse(toJobResource(job, p), jobTypeURL))
 }
 
 func (h *Handler) run(w http.ResponseWriter, r *http.Request, p *crPath) {
@@ -281,11 +287,7 @@ func (h *Handler) run(w http.ResponseWriter, r *http.Request, p *crPath) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{
-		Name:     opName(p, "run-"+p.name),
-		Done:     true,
-		Response: asResponse(toExecutionResource(exec, p), execTypeURL),
-	})
+	h.writeDoneOp(w, p, asResponse(toExecutionResource(exec, p), execTypeURL))
 }
 
 func (h *Handler) getExecution(w http.ResponseWriter, r *http.Request, p *crPath) {
@@ -312,18 +314,15 @@ func (h *Handler) listExecutions(w http.ResponseWriter, r *http.Request, p *crPa
 		})
 }
 
-// serveOperation answers GET /v2/…/operations/{op}. Mutations are synchronous
-// in the emulator, so a poll is just a done echo.
-func (*Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *crPath) {
+// serveOperation answers GET /v2/…/operations/{op} with the recorded
+// operation, or 404 for a name this handler never minted.
+func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *crPath) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, operation{
-		Name: "projects/" + p.project + "/locations/" + p.location + "/operations/" + p.name,
-		Done: true,
-	})
+	lro.ServeGet(w, h.ops, "projects/"+p.project+"/locations/"+p.location+"/operations/"+p.name)
 }
 
 // crPath holds the parsed components of a Cloud Run v2 URL.
@@ -430,11 +429,6 @@ func (p *crPath) jobName(id string) string {
 
 func (p *crPath) serviceName(id string) string {
 	return "projects/" + p.project + "/locations/" + p.location + "/services/" + id
-}
-
-func opName(p *crPath, suffix string) string {
-	return "projects/" + p.project + "/locations/" + p.location + "/operations/" +
-		suffix + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
 // paginate resolves pageSize / pageToken query params into the indices of the

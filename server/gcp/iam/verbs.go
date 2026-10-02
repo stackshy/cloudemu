@@ -142,10 +142,10 @@ func (h *Handler) heldPermissions(r *http.Request, email string) map[string]bool
 		// Custom roles are "projects/{p}/roles/{id}". Resolve their perms.
 		id := roleName[strings.LastIndex(roleName, "/")+1:]
 
-		// A custom role resolves in the project its name carries.
+		// A custom role resolves in the project or organization its name carries.
 		ctx := r.Context()
-		if p := projectctx.FromPath(roleName); p != "" {
-			ctx = projectctx.WithProject(ctx, p)
+		if scope := roleScopeOf(roleName); scope != "" {
+			ctx = projectctx.WithProject(ctx, scope)
 		}
 
 		dr, err := h.iam.GetRole(ctx, id)

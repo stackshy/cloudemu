@@ -33,17 +33,17 @@ func TestInstanceTemplatesAndRegionalMIGSurviveSnapshot(t *testing.T) {
 		t.Fatalf("Restore: %v", err)
 	}
 
-	got, ok := restored.GetInstanceTemplateGCP("it1")
+	got, ok := restored.GetInstanceTemplateGCP("", "it1")
 	if !ok || string(got.Spec) != string(spec) {
 		t.Fatalf("template after restore: ok=%v spec=%s", ok, got.Spec)
 	}
 
-	igm, ok := restored.GetInstanceGroupManagerGCP("us-central1", "rmig")
+	igm, ok := restored.GetInstanceGroupManagerGCP("", "us-central1", "rmig")
 	if !ok || igm.Region != "us-central1" || igm.Zone != "" || igm.TargetSize != 2 {
 		t.Fatalf("regional MIG after restore: ok=%v %+v", ok, igm)
 	}
 
-	if err := restored.DeleteInstanceTemplateGCP("it1"); err == nil {
+	if err := restored.DeleteInstanceTemplateGCP("", "it1"); err == nil {
 		t.Fatal("delete template in use: want error")
 	}
 }

@@ -1,6 +1,7 @@
 package compute
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 
@@ -21,7 +22,7 @@ const (
 // imageFamilyLookup is the GCP-local capability resolving a user image family
 // to its newest image.
 type imageFamilyLookup interface {
-	ImageFromFamilyGCP(family string) (computedriver.ImageInfo, bool)
+	ImageFromFamilyGCP(ctx context.Context, family string) (computedriver.ImageInfo, bool)
 }
 
 // getImageFromFamily handles GET .../global/images/family/{family} for the
@@ -35,7 +36,7 @@ func (h *Handler) getImageFromFamily(w http.ResponseWriter, r *http.Request, rp 
 		return
 	}
 
-	img, found := lookup.ImageFromFamilyGCP(rp.Action)
+	img, found := lookup.ImageFromFamilyGCP(r.Context(), rp.Action)
 	if !found {
 		writeImageFamilyNotFound(w, rp)
 		return

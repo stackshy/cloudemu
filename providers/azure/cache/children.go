@@ -136,7 +136,7 @@ func (m *Mock) PutFirewallRule(_ context.Context, cache string, rule driver.Fire
 
 	ok := m.caches.Update(cache, func(cd *cacheData) *cacheData {
 		updated := *cd
-		_, existed := cd.fw[rule.Name]
+		key, existed := firewallRuleKey(cd.fw, rule.Name)
 		created = !existed
 
 		updated.fw = maps.Clone(cd.fw)
@@ -144,7 +144,13 @@ func (m *Mock) PutFirewallRule(_ context.Context, cache string, rule driver.Fire
 			updated.fw = make(map[string]driver.FirewallRule)
 		}
 
-		updated.fw[rule.Name] = rule
+		if existed {
+			// Azure rule names are case-insensitive: a PUT under another
+			// casing replaces the stored rule and keeps its original name.
+			rule.Name = key
+		}
+
+		updated.fw[key] = rule
 
 		return &updated
 	})
@@ -184,12 +190,28 @@ func (m *Mock) GetFirewallRule(_ context.Context, cache, name string) (driver.Fi
 		return driver.FirewallRule{}, cacheNotFound(cache)
 	}
 
-	rule, ok := cd.fw[name]
+	key, ok := firewallRuleKey(cd.fw, name)
 	if !ok {
 		return driver.FirewallRule{}, errors.Newf(errors.NotFound, "firewall rule %q not found", name)
 	}
 
-	return rule, nil
+	return cd.fw[key], nil
+}
+
+// firewallRuleKey returns the stored key matching name case-insensitively,
+// as Azure treats firewall rule names.
+func firewallRuleKey(fw map[string]driver.FirewallRule, name string) (string, bool) {
+	if _, ok := fw[name]; ok {
+		return name, true
+	}
+
+	for key := range fw {
+		if strings.EqualFold(key, name) {
+			return key, true
+		}
+	}
+
+	return name, false
 }
 
 // DeleteFirewallRule removes a firewall rule.
@@ -197,14 +219,16 @@ func (m *Mock) DeleteFirewallRule(_ context.Context, cache, name string) (bool, 
 	var existed bool
 
 	ok := m.caches.Update(cache, func(cd *cacheData) *cacheData {
-		_, existed = cd.fw[name]
+		var key string
+
+		key, existed = firewallRuleKey(cd.fw, name)
 		if !existed {
 			return cd
 		}
 
 		updated := *cd
 		updated.fw = maps.Clone(cd.fw)
-		delete(updated.fw, name)
+		delete(updated.fw, key)
 
 		return &updated
 	})

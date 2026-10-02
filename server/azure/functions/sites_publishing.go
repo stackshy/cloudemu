@@ -162,9 +162,13 @@ func rawSiteConfig(body []byte) json.RawMessage {
 		} `json:"properties"`
 	}
 
-	if json.Unmarshal(body, &req) != nil {
+	if json.Unmarshal(body, &req) != nil || req.Properties.SiteConfig == nil {
 		return nil
 	}
 
-	return sanitizeSiteConfig(req.Properties.SiteConfig)
+	if cfg := sanitizeSiteConfig(req.Properties.SiteConfig); cfg != nil {
+		return cfg
+	}
+
+	return json.RawMessage(emptyObject)
 }

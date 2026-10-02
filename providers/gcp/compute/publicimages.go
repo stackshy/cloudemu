@@ -1,6 +1,7 @@
 package compute
 
 import (
+	"context"
 	"strconv"
 	"strings"
 
@@ -124,17 +125,18 @@ func PublicImageFromFamily(project, family string) (PublicImage, bool) {
 	return best, found
 }
 
-// ImageFromFamilyGCP returns the newest user image whose family is family, as
-// images.getFromFamily does for a project's own images. Ties on the creation
-// timestamp (a fake clock) go to the later-created image.
-func (m *Mock) ImageFromFamilyGCP(family string) (driver.ImageInfo, bool) {
+// ImageFromFamilyGCP returns the newest image of the project ctx addresses
+// whose family is family, as images.getFromFamily does for a project's own
+// images. Ties on the creation timestamp (a fake clock) go to the
+// later-created image.
+func (m *Mock) ImageFromFamilyGCP(ctx context.Context, family string) (driver.ImageInfo, bool) {
 	var (
 		best  driver.ImageInfo
 		found bool
 	)
 
 	for _, img := range m.images.All() {
-		if family == "" || img.Tags[ImageFamilyTag] != family {
+		if family == "" || img.Tags[ImageFamilyTag] != family || !m.visible(ctx, img.Tags) {
 			continue
 		}
 

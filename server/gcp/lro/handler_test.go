@@ -205,3 +205,34 @@ func TestRegisteredOperationReplaysMetadata(t *testing.T) {
 	var nilReg *lro.Registry
 	nilReg.RegisterWithMetadata("x", nil, nil) // a nil registry is a no-op
 }
+
+// TestServeGet: the exported poller replays a registered operation's typed
+// response and 404s a name that was never registered, or any name when the
+// registry is nil.
+func TestServeGet(t *testing.T) {
+	reg := lro.NewRegistry()
+	reg.Register("operations/known", map[string]any{"@type": "t/Resource"})
+
+	tests := []struct {
+		name     string
+		reg      *lro.Registry
+		op       string
+		wantCode int
+		wantBody string
+	}{
+		{name: "known", reg: reg, op: "operations/known", wantCode: http.StatusOK, wantBody: `"response":{"@type":"t/Resource"}`},
+		{name: "unknown", reg: reg, op: "operations/nope", wantCode: http.StatusNotFound, wantBody: "not found"},
+		{name: "nil registry", op: "operations/known", wantCode: http.StatusNotFound, wantBody: "not found"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			lro.ServeGet(w, tt.reg, tt.op)
+
+			if w.Code != tt.wantCode || !strings.Contains(w.Body.String(), tt.wantBody) {
+				t.Fatalf("ServeGet(%s) = %d %s, want %d containing %s", tt.op, w.Code, w.Body, tt.wantCode, tt.wantBody)
+			}
+		})
+	}
+}

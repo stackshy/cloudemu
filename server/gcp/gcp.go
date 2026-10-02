@@ -493,7 +493,9 @@ func New(d Drivers) *server.Server {
 
 	// Service Networking has no driver: a private-services connection is a
 	// record, and nothing in the emulator routes the peering it stands for.
-	srv.Register(servicenetworking.New())
+	snH := servicenetworking.New()
+	snH.SetOperationRegistry(opsReg)
+	srv.Register(snH)
 
 	// Cloud Load Balancing shares the /compute/v1/projects/… URL space with the
 	// compute and networks handlers above but claims a disjoint set of resource
@@ -552,6 +554,7 @@ func New(d Drivers) *server.Server {
 		}
 
 		cfHandler = cloudfunctions.New(d.CloudFunctions, cfOpts...)
+		cfHandler.SetOperationRegistry(opsReg)
 		srv.Register(cfHandler)
 	}
 
@@ -560,7 +563,9 @@ func New(d Drivers) *server.Server {
 	// /v2/projects/{p}/logs paths, so registration order between the two is
 	// unconstrained; registered here alongside the other /v2 handlers.
 	if d.CloudRun != nil {
-		srv.Register(cloudrunsrv.New(d.CloudRun))
+		crH := cloudrunsrv.New(d.CloudRun)
+		crH.SetOperationRegistry(opsReg)
+		srv.Register(crH)
 	}
 
 	// PubSub matches /v1/projects/{p}/{topics|subscriptions}/...; register

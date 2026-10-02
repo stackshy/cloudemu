@@ -408,7 +408,9 @@ func webConfigProps(meta *azfunctions.SiteMeta) map[string]any {
 		out["minTlsVersion"] = meta.MinTLSVersion
 	}
 
-	out["appSettings"] = appSettingsSlice(meta.AppSettings)
+	// Real ARM returns appSettings null on config/web: the values are read
+	// only through config/appsettings/list.
+	out["appSettings"] = nil
 
 	return out
 }

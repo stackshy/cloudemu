@@ -72,6 +72,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, p *allo
 		ID:               r.URL.Query().Get("instanceId"),
 		InstanceType:     body.InstanceType,
 		AvailabilityType: body.AvailabilityType,
+		GceZone:          body.GceZone,
 		Tags:             body.Labels,
 	}
 
@@ -90,6 +91,7 @@ func (h *Handler) createInstance(w http.ResponseWriter, r *http.Request, p *allo
 	}
 
 	info, _ := adb.AlloyDBInstanceInfo(r.Context(), p.clusterID, inst.ID)
+	p.subID = inst.ID // the operation targets the created instance
 	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-instance", instanceTypeURL, h.toWireInstance(inst, info)))
 }
 

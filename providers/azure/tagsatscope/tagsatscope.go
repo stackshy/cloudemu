@@ -7,6 +7,7 @@ package tagsatscope
 import (
 	"context"
 	"maps"
+	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/memstore"
 	"github.com/stackshy/cloudemu/v2/services/scope"
@@ -55,4 +56,23 @@ func (m *Mock) PurgeResourceGroup(_ context.Context, subscription, resourceGroup
 	}
 
 	return nil
+}
+
+// EvictTree clears the tag set at the ARM id and at every scope nested under
+// it, compared case-insensitively and bounded by a slash, so a deleted
+// resource or resource group leaves no stale tags for a same-named successor.
+func (m *Mock) EvictTree(id string) {
+	target := strings.ToLower(strings.Trim(id, "/"))
+	if target == "" {
+		return
+	}
+
+	prefix := target + "/"
+
+	for _, key := range m.store.Keys() {
+		lk := strings.ToLower(strings.Trim(key, "/"))
+		if lk == target || strings.HasPrefix(lk, prefix) {
+			m.store.Delete(key)
+		}
+	}
 }
