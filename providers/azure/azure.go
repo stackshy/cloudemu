@@ -37,6 +37,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/functions"
 	"github.com/stackshy/cloudemu/v2/providers/azure/healthcareapis"
 	"github.com/stackshy/cloudemu/v2/providers/azure/iam"
+	"github.com/stackshy/cloudemu/v2/providers/azure/insightscomponents"
 	"github.com/stackshy/cloudemu/v2/providers/azure/iothub"
 	"github.com/stackshy/cloudemu/v2/providers/azure/keyvault"
 	"github.com/stackshy/cloudemu/v2/providers/azure/loadbalancer"
@@ -47,6 +48,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedgrafana"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedidentity"
 	"github.com/stackshy/cloudemu/v2/providers/azure/managedlustre"
+	"github.com/stackshy/cloudemu/v2/providers/azure/managementlocks"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mongocluster"
 	"github.com/stackshy/cloudemu/v2/providers/azure/monitor"
 	"github.com/stackshy/cloudemu/v2/providers/azure/mysqlflex"
@@ -56,6 +58,7 @@ import (
 	"github.com/stackshy/cloudemu/v2/providers/azure/purview"
 	"github.com/stackshy/cloudemu/v2/providers/azure/recoveryservices"
 	"github.com/stackshy/cloudemu/v2/providers/azure/redisenterprise"
+	"github.com/stackshy/cloudemu/v2/providers/azure/scopetags"
 	"github.com/stackshy/cloudemu/v2/providers/azure/search"
 	"github.com/stackshy/cloudemu/v2/providers/azure/servicebus"
 	"github.com/stackshy/cloudemu/v2/providers/azure/signalr"
@@ -196,21 +199,26 @@ type Provider struct {
 	Communication      *communication.Mock
 	DigitalTwins       *digitaltwins.Mock
 	ManagedGrafana     *managedgrafana.Mock
-	DevCenter          *devcenter.Mock
-	Purview            *purview.Mock
-	ChaosStudio        *chaosstudio.Mock
-	ElasticSan         *elasticsan.Mock
-	ManagedLustre      *managedlustre.Mock
-	AppConfiguration   *appconfiguration.Mock
-	RedisEnterprise    *redisenterprise.Mock
-	MongoCluster       *mongocluster.Mock
-	Batch              *batch.Mock
-	StreamAnalytics    *streamanalytics.Mock
-	RecoveryServices   *recoveryservices.Mock
-	IoTHub             *iothub.Mock
-	Logic              *logic.Mock
-	HealthcareApis     *healthcareapis.Mock
-	APIManagement      *apimanagement.Mock
+	// AppInsights, ManagementLocks and ScopeTags hold the state of ARM handlers
+	// with no driver interface, kept here so persist snapshots them.
+	AppInsights      *insightscomponents.Mock
+	ManagementLocks  *managementlocks.Mock
+	ScopeTags        *scopetags.Mock
+	DevCenter        *devcenter.Mock
+	Purview          *purview.Mock
+	ChaosStudio      *chaosstudio.Mock
+	ElasticSan       *elasticsan.Mock
+	ManagedLustre    *managedlustre.Mock
+	AppConfiguration *appconfiguration.Mock
+	RedisEnterprise  *redisenterprise.Mock
+	MongoCluster     *mongocluster.Mock
+	Batch            *batch.Mock
+	StreamAnalytics  *streamanalytics.Mock
+	RecoveryServices *recoveryservices.Mock
+	IoTHub           *iothub.Mock
+	Logic            *logic.Mock
+	HealthcareApis   *healthcareapis.Mock
+	APIManagement    *apimanagement.Mock
 
 	ResourceDiscovery *resourcediscovery.Engine
 
@@ -280,6 +288,9 @@ func New(opts ...config.Option) *Provider {
 		Communication:      communication.New(o),
 		DigitalTwins:       digitaltwins.New(o),
 		ManagedGrafana:     managedgrafana.New(o),
+		AppInsights:        insightscomponents.New(),
+		ManagementLocks:    managementlocks.New(),
+		ScopeTags:          scopetags.New(),
 		DevCenter:          devcenter.New(o),
 		Purview:            purview.New(o),
 		ChaosStudio:        chaosstudio.New(o),

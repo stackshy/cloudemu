@@ -139,4 +139,48 @@ func TestPubSubHandlerStateSurvivesRestore(t *testing.T) {
 	})
 }
 
-var _ = azureserver.New
+// TestAzureHandlerStateSurvivesRestore covers AZOBS-N5 and the tags/locks
+// handler maps: Application Insights components (with billing features),
+// management locks and tags-at-scope used to live only in the wire handlers.
+// Resource groups are not persisted yet, so the test recreates the group on the
+// restored server before reading.
+func TestAzureHandlerStateSurvivesRestore(t *testing.T) {
+	const (
+		sub    = "/subscriptions/00000000-0000-0000-0000-0000000000ab"
+		rg     = sub + "/resourceGroups/rg1"
+		comp   = rg + "/providers/Microsoft.Insights/components/ai1"
+		lock   = rg + "/providers/Microsoft.Authorization/locks/lk1"
+		tagsAt = sub + "/providers/Microsoft.Resources/tags/default"
+		apiVer = "?api-version=2020-02-02"
+	)
+
+	putRG := wireCall{http.MethodPut, rg + apiVer, `{"location":"eastus"}`}
+
+	src := cloudemu.NewAzure()
+	srcSrv := azureserver.NewFromProvider(src)
+
+	mustWire(t, srcSrv, []wireCall{
+		putRG,
+		{http.MethodPut, comp + apiVer, `{"location":"eastus","kind":"web","tags":{"a":"b"},` +
+			`"properties":{"Application_Type":"web","RetentionInDays":30}}`},
+		{http.MethodPut, comp + "/currentbillingfeatures" + apiVer,
+			`{"CurrentBillingFeatures":["Basic"],"DataVolumeCap":{"Cap":5}}`},
+		{http.MethodPut, lock + apiVer, `{"properties":{"level":"CanNotDelete","notes":"keep"}}`},
+		{http.MethodPut, tagsAt + apiVer, `{"properties":{"tags":{"cost":"42"}}}`},
+	})
+
+	dst := cloudemu.NewAzure()
+	dstSrv := azureserver.NewFromProvider(dst)
+	roundTrip(t, "azure", src.SnapshotServices(), dst.SnapshotServices())
+	mustWire(t, dstSrv, []wireCall{putRG})
+
+	assertSameReads(t, srcSrv, dstSrv, []string{
+		comp + apiVer, comp + "/currentbillingfeatures" + apiVer, rg + "/providers/Microsoft.Insights/components" + apiVer,
+		lock + apiVer, tagsAt + apiVer,
+	})
+
+	// The restored lock still protects its group.
+	if code, body := doWire(t, dstSrv, wireCall{method: http.MethodDelete, path: rg + apiVer}); code != http.StatusConflict {
+		t.Fatalf("DELETE locked group after restore = %d %s, want 409 ScopeLocked", code, body)
+	}
+}
