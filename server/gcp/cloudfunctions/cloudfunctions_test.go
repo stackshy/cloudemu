@@ -101,8 +101,8 @@ func TestCreateGetDeleteRoundTrip(t *testing.T) {
 		t.Fatal("op.Done = false, want true (LRO returns immediately)")
 	}
 
-	if !strings.Contains(op.Name, "operations/create-hello") {
-		t.Fatalf("op name = %q, want contains operations/create-hello", op.Name)
+	if !strings.HasPrefix(op.Name, "operations/") {
+		t.Fatalf("op name = %q, want operations/{id}", op.Name)
 	}
 
 	getResp, err := http.Get(srv.URL + functionsURL() + "/hello")
@@ -249,26 +249,54 @@ func TestCallInvokesHandler(t *testing.T) {
 	}
 }
 
+// TestOperationPoll: a gen1 operation poll replays the operation the create
+// minted, response included, and a name that was never minted is 404, as
+// real Cloud Functions answers.
 func TestOperationPoll(t *testing.T) {
 	cloud := cloudemu.NewGCP()
 	srv := httptest.NewServer(gcpserver.New(gcpserver.Drivers{CloudFunctions: cloud.CloudFunctions}))
 	t.Cleanup(srv.Close)
 
-	resp, err := http.Get(srv.URL + "/v1/operations/some-op-id")
+	createResp, err := http.Post(srv.URL+functionsURL(), "application/json",
+		strings.NewReader(`{"name":"projects/demo-project/locations/us-central1/functions/polled","runtime":"go121"}`))
 	if err != nil {
-		t.Fatalf("op poll: %v", err)
+		t.Fatalf("create: %v", err)
 	}
 
-	defer resp.Body.Close()
+	var created operationShape
 
-	var op operationShape
+	err = json.NewDecoder(createResp.Body).Decode(&created)
+	createResp.Body.Close()
 
-	if err := json.NewDecoder(resp.Body).Decode(&op); err != nil {
-		t.Fatalf("decode: %v", err)
+	if err != nil {
+		t.Fatalf("decode create: %v", err)
 	}
 
-	if !op.Done {
-		t.Fatal("op.Done = false, want true")
+	tests := []struct {
+		name     string
+		op       string
+		wantCode int
+		wantBody string
+	}{
+		{name: "minted op replays the function", op: created.Name, wantCode: http.StatusOK,
+			wantBody: "google.cloud.functions.v1.CloudFunction"},
+		{name: "unknown op is 404", op: "operations/some-op-id", wantCode: http.StatusNotFound},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := http.Get(srv.URL + "/v1/" + tt.op)
+			if err != nil {
+				t.Fatalf("op poll: %v", err)
+			}
+
+			defer resp.Body.Close()
+
+			raw, _ := io.ReadAll(resp.Body)
+			if resp.StatusCode != tt.wantCode || !strings.Contains(string(raw), tt.wantBody) {
+				t.Fatalf("poll %s = %d %s, want %d containing %q", tt.op, resp.StatusCode, raw, tt.wantCode, tt.wantBody)
+			}
+		})
 	}
 }
 

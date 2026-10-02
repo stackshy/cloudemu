@@ -4,6 +4,7 @@
 //	POST /v1/projects/{project}:getIamPolicy
 //	POST /v1/projects/{project}:setIamPolicy
 //	POST /v1/projects/{project}:testIamPermissions
+//	GET  /v1/projects/{project}
 //
 // These are the endpoints Terraform's google_project_iam_member,
 // google_project_iam_binding, google_project_iam_policy and
@@ -32,6 +33,11 @@ const (
 	getIamPolicyVerb       = "getIamPolicy"
 	setIamPolicyVerb       = "setIamPolicy"
 	testIamPermissionsVerb = "testIamPermissions"
+
+	// projectNumber is the number every project reports. GCS reports the same
+	// one on its buckets, so a client that resolves the number (as Terraform's
+	// google_service_networking_connection does) sees a consistent value.
+	projectNumber = "123456789012"
 )
 
 // Handler serves the project-level IAM policy verbs. It owns only the
@@ -58,16 +64,20 @@ func New() *Handler {
 // registered ahead of Firestore, whose permissive prefix would otherwise
 // swallow the colon-suffixed verb.
 func (*Handler) Matches(r *http.Request) bool {
-	if r.Method != http.MethodPost {
-		return false
-	}
-
 	if !strings.HasPrefix(r.URL.Path, pathPrefix) {
 		return false
 	}
 
 	tail := strings.TrimPrefix(r.URL.Path, pathPrefix)
-	if strings.Contains(tail, "/") {
+	if tail == "" || strings.Contains(tail, "/") {
+		return false
+	}
+
+	if r.Method == http.MethodGet {
+		return !strings.Contains(tail, ":")
+	}
+
+	if r.Method != http.MethodPost {
 		return false
 	}
 
@@ -87,6 +97,19 @@ func (*Handler) Matches(r *http.Request) bool {
 // ServeHTTP parses "{project}:{verb}" and dispatches.
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	tail := strings.TrimPrefix(r.URL.Path, pathPrefix)
+
+	if r.Method == http.MethodGet {
+		// projects.get: the emulator accepts every project id, so every one
+		// exists and is ACTIVE.
+		writeJSON(w, map[string]any{
+			"projectId":      tail,
+			"projectNumber":  projectNumber,
+			"name":           tail,
+			"lifecycleState": "ACTIVE",
+		})
+
+		return
+	}
 
 	i := strings.LastIndex(tail, ":")
 	if i < 0 {

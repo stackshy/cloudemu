@@ -17,7 +17,10 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
+	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/opmeta"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 )
 
@@ -27,26 +30,54 @@ const basePrefix = "/v1/services/"
 // connectionsSegment is the sub-collection this handler serves.
 const connectionsSegment = "/connections"
 
+// opPrefix starts every operation path this handler mints. Cloud Functions
+// gen1 also serves /v1/operations/{op}, so the "sn-" id prefix is what lets
+// this handler claim only its own polls.
+const opPrefix = "/v1/operations/sn-"
+
+// connectionTypeURL is the Any type of a create or patch operation's response.
+const connectionTypeURL = "type.googleapis.com/google.cloud.servicenetworking.v1.Connection"
+
+// deleteVerb is the custom method that removes a connection.
+const deleteVerb = ":deleteConnection"
+
 // Handler serves the Service Networking REST surface.
 type Handler struct {
 	mu sync.RWMutex
 	// connections is keyed by the network the caller named, so a delete
 	// removes what a create added rather than clearing everything.
 	connections map[string]json.RawMessage
+	// ops records every operation this handler mints so a poll replays it and
+	// an unknown name is 404 NOT_FOUND.
+	ops *lro.Registry
 }
 
 // New returns a Service Networking handler.
 func New() *Handler {
-	return &Handler{connections: map[string]json.RawMessage{}}
+	return &Handler{connections: map[string]json.RawMessage{}, ops: lro.NewRegistry()}
 }
 
-// Matches claims /v1/services/{service}/connections... requests.
+// SetOperationRegistry records this handler's operations in the server-wide
+// registry instead of its own.
+func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
+
+// Matches claims /v1/services/{service}/connections... requests and GET polls
+// of the operations this handler mints.
 func (*Handler) Matches(r *http.Request) bool {
+	if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, opPrefix) {
+		return true
+	}
+
 	return strings.HasPrefix(r.URL.Path, basePrefix) &&
 		strings.Contains(r.URL.Path, connectionsSegment)
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, opPrefix) {
+		lro.ServeGet(w, h.ops, strings.TrimPrefix(r.URL.Path, "/v1/"))
+		return
+	}
+
 	switch r.Method {
 	case http.MethodGet:
 		h.list(w, r)
@@ -101,11 +132,50 @@ func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
 		body = json.RawMessage(`{}`)
 	}
 
+	key, isDelete := bodyNetwork(r, body)
+
+	if isDelete || strings.HasSuffix(r.URL.Path, deleteVerb) {
+		h.mu.Lock()
+		delete(h.connections, key)
+		h.mu.Unlock()
+
+		h.writeDoneOperation(w, opmeta.Empty())
+
+		return
+	}
+
 	h.mu.Lock()
-	h.connections[network(r)] = body
+	h.connections[key] = body
 	h.mu.Unlock()
 
-	writeDoneOperation(w)
+	h.writeDoneOperation(w, opmeta.Response(body, connectionTypeURL))
+}
+
+// bodyNetwork keys a create, patch or deleteConnection by the network it
+// names: the network query parameter when present, otherwise the body's
+// network (a Connection) or consumerNetwork (a DeleteConnectionRequest), so a
+// later list filtered by that network finds the connection. isDelete reports a
+// DeleteConnectionRequest body: Terraform's google provider, pointed at an
+// overridden endpoint, POSTs it to connections/{name} without the verb, so the
+// body is what identifies the call.
+func bodyNetwork(r *http.Request, body json.RawMessage) (key string, isDelete bool) {
+	var named struct {
+		Network         string `json:"network"`
+		ConsumerNetwork string `json:"consumerNetwork"`
+	}
+
+	_ = json.Unmarshal(body, &named)
+
+	switch {
+	case r.URL.Query().Get("network") != "":
+		return r.URL.Query().Get("network"), named.ConsumerNetwork != ""
+	case named.Network != "":
+		return named.Network, false
+	case named.ConsumerNetwork != "":
+		return named.ConsumerNetwork, true
+	default:
+		return "-", false
+	}
 }
 
 func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
@@ -125,16 +195,21 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
 	delete(h.connections, n)
 	h.mu.Unlock()
 
-	writeDoneOperation(w)
+	h.writeDoneOperation(w, opmeta.Empty())
 }
 
-// writeDoneOperation answers with an already-finished long-running operation.
-// Callers poll until done; there is nothing asynchronous here to wait for.
-func writeDoneOperation(w http.ResponseWriter) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"name": "operations/servicenetworking-done",
-		"done": true,
-	})
+// writeDoneOperation answers with an already-finished long-running operation
+// carrying response, recorded under a unique name so a poll replays it.
+func (h *Handler) writeDoneOperation(w http.ResponseWriter, response json.RawMessage) {
+	name := "operations/sn-" + opmeta.NewID(time.Now())
+	h.ops.Register(name, response)
+
+	op := map[string]any{"name": name, "done": true}
+	if response != nil {
+		op["response"] = response
+	}
+
+	writeJSON(w, http.StatusOK, op)
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

@@ -32,6 +32,8 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
+	"github.com/stackshy/cloudemu/v2/server/gcp/opmeta"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	sdrv "github.com/stackshy/cloudemu/v2/services/serverless/driver"
 	storagedriver "github.com/stackshy/cloudemu/v2/services/storage/driver"
@@ -107,7 +109,7 @@ type Handler struct {
 	// in-process GCS backend. Nil when no GCS backend is wired; an archive deploy
 	// then fails loudly rather than silently falling back to the echo stub.
 	objects ObjectStore
-	// mu guards policies, gen1Meta, gen2 and operations.
+	// mu guards policies, gen1Meta and gen2.
 	mu sync.RWMutex
 	// policies stores the IAM policy set via setIamPolicy, keyed by the function's
 	// canonical resource name. CloudEmu does not enforce IAM; the policy is stored
@@ -124,9 +126,10 @@ type Handler struct {
 	// shape (buildConfig/serviceConfig/eventTrigger, Cloud Run-backed) with no
 	// portable-driver representation. Keyed by canonical resource name.
 	gen2 map[string]*gen2Function
-	// operations caches completed v2 LROs so a client that polls the returned
-	// operation name (Terraform, apiv2 .Wait) sees the same done=true response.
-	operations map[string]operation
+	// ops records every operation this handler mints (gen1 and gen2) so a
+	// poll replays it and an unknown name is 404 NOT_FOUND, as real Cloud
+	// Functions answers.
+	ops *lro.Registry
 }
 
 // Option configures a Handler.
@@ -141,18 +144,31 @@ func WithObjectStore(s ObjectStore) Option {
 // New returns a Cloud Functions handler backed by fn.
 func New(fn sdrv.Serverless, opts ...Option) *Handler {
 	h := &Handler{
-		fn:         fn,
-		uploads:    newUploadStaging(),
-		policies:   make(map[string]*iamPolicy),
-		gen1Meta:   make(map[string]*gen1Meta),
-		gen2:       make(map[string]*gen2Function),
-		operations: make(map[string]operation),
+		fn:       fn,
+		uploads:  newUploadStaging(),
+		policies: make(map[string]*iamPolicy),
+		gen1Meta: make(map[string]*gen1Meta),
+		gen2:     make(map[string]*gen2Function),
+		ops:      lro.NewRegistry(),
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
 
 	return h
+}
+
+// SetOperationRegistry records this handler's operations in the server-wide
+// registry instead of its own.
+func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
+
+// writeGen1Op mints a completed gen1 operation (operations/{id}) carrying
+// response, records it so a later Operations.Get replays it, and writes it.
+func (h *Handler) writeGen1Op(w http.ResponseWriter, response map[string]any) {
+	name := "operations/" + opmeta.NewID(time.Now())
+	h.ops.Register(name, response)
+
+	writeJSON(w, http.StatusOK, operation{Name: name, Done: true, Response: response})
 }
 
 // Matches accepts paths that look like Cloud Functions v1: either an LRO poll
@@ -467,16 +483,15 @@ func newUploadToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-// serveOperation answers GET /v1/operations/{name}. We always return done=true
-// because mutations are synchronous in the mock; a poll is just an echo.
-func (*Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
+// serveOperation answers GET /v1/operations/{name} with the recorded
+// operation, or 404 for a name this handler never minted.
+func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		writeError(w, http.StatusMethodNotAllowed, "METHOD_NOT_ALLOWED", "method not allowed")
 		return
 	}
 
-	opName := strings.TrimPrefix(r.URL.Path, "/v1/")
-	writeJSON(w, http.StatusOK, operation{Name: opName, Done: true})
+	lro.ServeGet(w, h.ops, strings.TrimPrefix(r.URL.Path, "/v1/"))
 }
 
 func (h *Handler) create(w http.ResponseWriter, r *http.Request, p functionPath) {
@@ -535,11 +550,7 @@ func (h *Handler) create(w http.ResponseWriter, r *http.Request, p functionPath)
 
 	resource := h.toCloudFunction(info, p)
 
-	writeJSON(w, http.StatusOK, operation{
-		Name:     "operations/create-" + name + "-" + strconv.FormatInt(time.Now().UnixNano(), 10),
-		Done:     true,
-		Response: resourceAsResponse(resource, "CloudFunction"),
-	})
+	h.writeGen1Op(w, resourceAsResponse(resource, "CloudFunction"))
 }
 
 // applyGen1CreateDefaults fills availableMemoryMb and timeout with the values
@@ -643,11 +654,7 @@ func (h *Handler) update(w http.ResponseWriter, r *http.Request, p functionPath)
 	h.bumpGen1Meta(p.fullName(), &body, p.project, parseUpdateMask(r.URL.Query()))
 
 	resource := h.toCloudFunction(info, p)
-	writeJSON(w, http.StatusOK, operation{
-		Name:     "operations/update-" + p.name,
-		Done:     true,
-		Response: resourceAsResponse(resource, "CloudFunction"),
-	})
+	h.writeGen1Op(w, resourceAsResponse(resource, "CloudFunction"))
 }
 
 func (h *Handler) delete(w http.ResponseWriter, r *http.Request, p functionPath) {
@@ -668,11 +675,7 @@ func (h *Handler) delete(w http.ResponseWriter, r *http.Request, p functionPath)
 	delete(h.policies, key)
 	h.mu.Unlock()
 
-	writeJSON(w, http.StatusOK, operation{
-		Name:     "operations/delete-" + p.name,
-		Done:     true,
-		Response: emptyResponse(),
-	})
+	h.writeGen1Op(w, emptyResponse())
 }
 
 func (h *Handler) serveCall(w http.ResponseWriter, r *http.Request, p functionPath) {

@@ -131,3 +131,53 @@ func TestUpsert_BodyIsCapped(t *testing.T) {
 		t.Errorf("stored %d bytes — the body cap did not apply", len(stored))
 	}
 }
+
+// TestCreateListDelete_KeyedByBodyNetwork: a create names its network only in
+// the body, the list filters by it, and a DeleteConnectionRequest (with or
+// without the :deleteConnection verb in the path) removes it, the sequence
+// Terraform's google_service_networking_connection drives.
+func TestCreateListDelete_KeyedByBodyNetwork(t *testing.T) {
+	t.Parallel()
+
+	const network = "projects/123/global/networks/n1"
+
+	tests := []struct {
+		name       string
+		deletePath string
+	}{
+		{name: "deleteConnection verb", deletePath: connPath + "/servicenetworking-googleapis-com:deleteConnection"},
+		{name: "verb dropped", deletePath: connPath + "/servicenetworking-googleapis-com"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			h := New()
+			serve := func(method, path, body string) string {
+				rec := httptest.NewRecorder()
+				h.ServeHTTP(rec, httptest.NewRequest(method, path, strings.NewReader(body)))
+
+				if rec.Code != http.StatusOK {
+					t.Fatalf("%s %s: got %d", method, path, rec.Code)
+				}
+
+				return rec.Body.String()
+			}
+
+			serve(http.MethodPost, connPath, `{"network":"`+network+`","reservedPeeringRanges":["r1"]}`)
+
+			if got := serve(http.MethodGet, connPath+"?network="+network, ""); !strings.Contains(got, `"r1"`) {
+				t.Fatalf("list after create = %s, want the connection", got)
+			}
+
+			if got := serve(http.MethodPost, tt.deletePath, `{"consumerNetwork":"`+network+`"}`); !strings.Contains(got, "google.protobuf.Empty") {
+				t.Fatalf("delete op = %s, want an Empty response", got)
+			}
+
+			if got := connectionCount(t, h); got != 0 {
+				t.Fatalf("got %d connections after delete, want 0", got)
+			}
+		})
+	}
+}
