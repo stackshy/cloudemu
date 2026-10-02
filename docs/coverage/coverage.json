@@ -3075,6 +3075,40 @@
         ]
       },
       {
+        "name": "RedisChildren",
+        "doc": "RedisChildren is an OPTIONAL capability, discovered by type assertion. Azure",
+        "operations": [
+          {
+            "name": "DeleteFirewallRule",
+            "doc": "DeleteFirewallRule removes a rule and reports whether it existed."
+          },
+          {
+            "name": "DeletePatchSchedule",
+            "doc": "DeletePatchSchedule removes the patch schedule and reports whether one"
+          },
+          {
+            "name": "GetFirewallRule",
+            "doc": "GetFirewallRule returns a rule, NotFound when it does not exist."
+          },
+          {
+            "name": "GetPatchSchedule",
+            "doc": "GetPatchSchedule returns the patch schedule, NotFound when none is set."
+          },
+          {
+            "name": "ListFirewallRules",
+            "doc": "ListFirewallRules returns the cache's rules sorted by name."
+          },
+          {
+            "name": "PutFirewallRule",
+            "doc": "PutFirewallRule creates or replaces a rule. created is true for a new"
+          },
+          {
+            "name": "SetPatchSchedule",
+            "doc": "SetPatchSchedule replaces the cache's patch schedule. created is true"
+          }
+        ]
+      },
+      {
         "name": "ReplicationGroups",
         "doc": "ReplicationGroups is an OPTIONAL capability, discovered by type assertion.",
         "operations": [

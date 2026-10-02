@@ -23,6 +23,7 @@
 //	GET    .../blobServices/default/containers : list containers
 //	GET/PUT .../{queue,table,file}Services/default : service properties
 //	GET/PUT/DELETE .../managementPolicies/default : lifecycle management policy
+//	GET    .../accountMigrations[/default] : redundancy migration status (none)
 //
 // Every other child path is answered without touching the account: child
 // types real Azure has read as empty or not found and their writes are 501,
@@ -276,6 +277,7 @@ func (h *Handler) subResourceRoutes() map[string]func(http.ResponseWriter, *http
 		kindTableServices:    h.serveServiceSettings,
 		kindFileServices:     h.serveServiceSettings,
 		"managementpolicies": h.serveManagementPolicy,
+		"accountmigrations":  h.serveAccountMigrations,
 	}
 }
 

@@ -38,6 +38,20 @@ AccessKeys is an OPTIONAL capability, discovered by type assertion. Azure
 | `ListCacheKeys` | ListCacheKeys returns the cache's current primary and secondary access |
 | `RegenerateCacheKey` | RegenerateCacheKey rotates the requested key ("Primary" or "Secondary") |
 
+### RedisChildren
+
+RedisChildren is an OPTIONAL capability, discovered by type assertion. Azure
+
+| Operation | Description |
+| --- | --- |
+| `DeleteFirewallRule` | DeleteFirewallRule removes a rule and reports whether it existed. |
+| `DeletePatchSchedule` | DeletePatchSchedule removes the patch schedule and reports whether one |
+| `GetFirewallRule` | GetFirewallRule returns a rule, NotFound when it does not exist. |
+| `GetPatchSchedule` | GetPatchSchedule returns the patch schedule, NotFound when none is set. |
+| `ListFirewallRules` | ListFirewallRules returns the cache's rules sorted by name. |
+| `PutFirewallRule` | PutFirewallRule creates or replaces a rule. created is true for a new |
+| `SetPatchSchedule` | SetPatchSchedule replaces the cache's patch schedule. created is true |
+
 ## Not in scope
 
 _Not documented yet. See the [emulator boundary](../../../README.md) for cloudemu-wide non-goals._
