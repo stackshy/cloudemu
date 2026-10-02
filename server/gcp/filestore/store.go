@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"net"
 	"sort"
-	"strconv"
 	"sync"
 	"time"
 
@@ -127,7 +126,6 @@ type store struct {
 	mu        sync.RWMutex
 	clock     config.Clock
 	instances map[string]*instanceModel
-	nextOp    int
 	nextIP    uint32
 }
 
@@ -255,16 +253,6 @@ func (s *store) delete(name string) error {
 	delete(s.instances, name)
 
 	return nil
-}
-
-// newOpID returns a unique operation id for a mutating request.
-func (s *store) newOpID() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.nextOp++
-
-	return "operation-" + strconv.Itoa(s.nextOp)
 }
 
 // assignIPs fills each network's output-only ipAddresses. Callers hold s.mu.

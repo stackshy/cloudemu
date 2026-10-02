@@ -295,16 +295,12 @@ func TestGetOperationRecorded(t *testing.T) {
 	}
 }
 
-func TestGetOperationUnknownIsDone(t *testing.T) {
+func TestGetOperationUnknownIsNotFound(t *testing.T) {
 	m := newMock(t)
 
 	got, err := m.GetOperation(context.Background(), "projects/proj/regions/us-central1/operations/none")
-	if err != nil {
-		t.Fatalf("GetOperation: %v", err)
-	}
-
-	if !got.Done {
-		t.Fatalf("unknown op should report done")
+	if !cerrors.IsNotFound(err) {
+		t.Fatalf("GetOperation unknown: want NotFound, got op=%+v err=%v", got, err)
 	}
 }
 

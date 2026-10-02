@@ -206,3 +206,12 @@ func TestClonedReadsAreIsolated(t *testing.T) {
 		t.Fatal("stored resource aliased a caller copy")
 	}
 }
+
+func TestGetOperationUnknownIsNotFound(t *testing.T) {
+	m := newMock()
+
+	got, err := m.GetOperation(ctx(), "projects/"+project+"/locations/"+global+"/operations/nope")
+	if !cerrors.IsNotFound(err) {
+		t.Fatalf("GetOperation unknown: want NotFound, got op=%+v err=%v", got, err)
+	}
+}

@@ -34,6 +34,7 @@ import (
 	"strings"
 	"sync"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
@@ -67,11 +68,14 @@ type Handler struct {
 	// names 404). Nil in a standalone package server, where this handler serves
 	// its own /operations/ poll.
 	ops *lro.Registry
+
+	// clock stamps operation ids.
+	clock config.Clock
 }
 
 // New returns an Artifact Registry handler backed by reg.
 func New(reg crdriver.ContainerRegistry) *Handler {
-	return &Handler{registry: reg, policies: make(map[string]*iamPolicy)}
+	return &Handler{registry: reg, policies: make(map[string]*iamPolicy), clock: config.RealClock{}}
 }
 
 // SetOperationRegistry wires the shared LRO poller so created operations are

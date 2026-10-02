@@ -233,7 +233,11 @@ func (h *Handler) serveOperation(w http.ResponseWriter, r *http.Request, rt *rou
 		return
 	}
 
-	gcprest.WriteJSON(w, http.StatusOK, operationJSON{Name: op.Name, Done: true})
+	h.mu.RLock()
+	resp := h.responses[op.Name]
+	h.mu.RUnlock()
+
+	gcprest.WriteJSON(w, http.StatusOK, operationJSON{Name: op.Name, Done: true, Response: resp})
 }
 
 // writeResource renders a driver resource as apigateway wire JSON.
@@ -269,6 +273,12 @@ func (h *Handler) writeResourceOperation(
 func (h *Handler) doneOperation(name string, resp json.RawMessage) operationJSON {
 	if h.ops != nil {
 		h.ops.Register(name, resp)
+	}
+
+	if resp != nil {
+		h.mu.Lock()
+		h.responses[name] = resp
+		h.mu.Unlock()
 	}
 
 	return operationJSON{Name: name, Done: true, Response: resp}

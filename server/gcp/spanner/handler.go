@@ -44,6 +44,7 @@ import (
 	"net/http"
 	"strings"
 
+	"google.golang.org/api/googleapi"
 	sp "google.golang.org/api/spanner/v1"
 
 	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
@@ -255,15 +256,31 @@ func instanceName(project, instanceID string) string {
 	return "projects/" + project + "/instances/" + instanceID
 }
 
-// doneOperation builds a completed LRO envelope carrying response as its typed
-// result, so an SDK or Terraform caller observes a terminal operation at once.
+// Spanner Any type URLs a done operation's response carries.
+const (
+	instanceTypeURL = "type.googleapis.com/google.spanner.admin.instance.v1.Instance"
+	databaseTypeURL = "type.googleapis.com/google.spanner.admin.database.v1.Database"
+)
+
+// doneOperation builds a completed LRO envelope carrying response as a typed
+// Any, so an SDK or Terraform caller observes a terminal operation at once and
+// a GAPIC op.Wait() can decode it.
 func doneOperation(name string, response any) *sp.Operation {
 	op := &sp.Operation{Name: name, Done: true}
 
-	if response != nil {
-		if raw, err := json.Marshal(response); err == nil {
-			op.Response = raw
-		}
+	var typeURL string
+
+	switch response.(type) {
+	case *sp.Instance:
+		typeURL = instanceTypeURL
+	case *sp.Database:
+		typeURL = databaseTypeURL
+	default:
+		return op
+	}
+
+	if raw, err := gcprest.TypedAny(response, typeURL); err == nil {
+		op.Response = googleapi.RawMessage(raw)
 	}
 
 	return op

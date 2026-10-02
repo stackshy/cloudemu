@@ -49,7 +49,7 @@ func (h *Handler) createBackup(w http.ResponseWriter, r *http.Request, p *alloyP
 		return
 	}
 
-	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-backup", toWireBackup(snap, defaultBackupType)))
+	writeJSON(w, http.StatusOK, h.doneOperation(p, "create-backup", backupTypeURL, toWireBackup(snap, defaultBackupType)))
 }
 
 func (h *Handler) listBackups(w http.ResponseWriter, r *http.Request, _ *alloyPath) {
@@ -88,7 +88,7 @@ func (h *Handler) deleteBackup(w http.ResponseWriter, r *http.Request, p *alloyP
 		return
 	}
 
-	writeJSON(w, http.StatusOK, h.doneOperation(p, "delete-backup", nil))
+	writeJSON(w, http.StatusOK, h.doneOperation(p, "delete-backup", "", nil))
 }
 
 func (*Handler) serveOperation(w http.ResponseWriter, r *http.Request, p *alloyPath) {

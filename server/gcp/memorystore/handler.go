@@ -31,6 +31,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/server/gcp/lro"
 	"github.com/stackshy/cloudemu/v2/server/gcp/sharedpath"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
@@ -57,6 +58,9 @@ type Handler struct {
 
 	// shared leaves zonal locations to Filestore; Redis is regional only.
 	shared bool
+
+	// clock stamps operation ids.
+	clock config.Clock
 }
 
 // SetSharedPath turns on the rules for a server that also mounts Filestore.
@@ -68,7 +72,7 @@ func (h *Handler) SetOperationRegistry(reg *lro.Registry) { h.ops = reg }
 
 // New returns a Memorystore handler backed by c.
 func New(c cachedriver.Cache) *Handler {
-	return &Handler{cache: c}
+	return &Handler{cache: c, clock: config.RealClock{}}
 }
 
 // route holds the parsed components of a Memorystore v1 path.
