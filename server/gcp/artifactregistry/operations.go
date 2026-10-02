@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	crdriver "github.com/stackshy/cloudemu/v2/services/containerregistry/driver"
 )
@@ -16,7 +17,7 @@ func (h *Handler) createRepository(w http.ResponseWriter, r *http.Request, rt *r
 	repoID := repositoryIDParam(r)
 
 	var body repositoryJSON
-	if !gcprest.DecodeJSON(w, r, &body) {
+	if !gcpenum.DecodeJSON(w, r, &body, repositoryEnums) {
 		return
 	}
 
@@ -303,7 +304,7 @@ func (h *Handler) patchRepository(w http.ResponseWriter, r *http.Request, rt *ro
 	}
 
 	var body repositoryJSON
-	if !gcprest.DecodeJSON(w, r, &body) {
+	if !gcpenum.DecodeJSON(w, r, &body, repositoryEnums) {
 		return
 	}
 
