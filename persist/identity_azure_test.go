@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	cloudemu "github.com/stackshy/cloudemu/v2"
+	"github.com/stackshy/cloudemu/v2/config"
 	"github.com/stackshy/cloudemu/v2/persist"
 	azureiam "github.com/stackshy/cloudemu/v2/providers/azure/iam"
 	azureserver "github.com/stackshy/cloudemu/v2/server/azure"
@@ -287,6 +288,9 @@ func TestResourceGroupsSurviveRestoreAzure(t *testing.T) {
 	}
 }
 
+// anySuccess as armDo's want accepts any 2xx status.
+const anySuccess = 0
+
 // armDo sends one ARM request and returns the response body, failing the test
 // on any status other than want.
 func armDo(t *testing.T, base, method, path, body string, want int) string {
@@ -310,9 +314,74 @@ func armDo(t *testing.T, base, method, path, body string, want int) string {
 		t.Fatalf("read body: %v", err)
 	}
 
-	if resp.StatusCode != want {
+	ok := resp.StatusCode == want || (want == anySuccess && resp.StatusCode >= 200 && resp.StatusCode < 300)
+	if !ok {
 		t.Fatalf("%s %s = %d, want %d: %s", method, path, resp.StatusCode, want, data)
 	}
 
 	return string(data)
+}
+
+// TestResourceGroupsRebuiltFromPreRGSnapshotAzure covers a snapshot written
+// before resource groups were persisted (no resourcegroups entry): restore
+// rebuilds the groups from the restored resources, so the group and the
+// resources inside it answer 200 instead of ResourceGroupNotFound.
+func TestResourceGroupsRebuiltFromPreRGSnapshotAzure(t *testing.T) {
+	ctx := context.Background()
+
+	const (
+		sub  = "00000000-0000-0000-0000-0000000000ab"
+		rg   = "/subscriptions/" + sub + "/resourceGroups/rg1"
+		acct = rg + "/providers/Microsoft.Storage/storageAccounts/stold01?api-version=2023-05-01"
+		vnet = rg + "/providers/Microsoft.Network/virtualNetworks/vnet-old?api-version=2024-05-01"
+	)
+
+	// serve sets the provider account to --azure-subscription; the inventory
+	// reads resource ids under it.
+	src := cloudemu.NewAzure(config.WithAccountID(sub))
+	srcSrv := httptest.NewServer(azureserver.NewFromProvider(src))
+	t.Cleanup(srcSrv.Close)
+
+	armDo(t, srcSrv.URL, http.MethodPut, rg+"?api-version=2021-04-01", `{"location":"westeurope"}`, http.StatusCreated)
+	armDo(t, srcSrv.URL, http.MethodPut, acct,
+		`{"location":"westeurope","kind":"StorageV2","sku":{"name":"Standard_LRS"}}`, anySuccess)
+	armDo(t, srcSrv.URL, http.MethodPut, vnet,
+		`{"location":"westeurope","properties":{"addressSpace":{"addressPrefixes":["10.1.0.0/16"]}}}`, anySuccess)
+
+	snap, err := persist.ExportAll(ctx, map[string]persist.Services{"azure": src.SnapshotServices()}, persist.Options{})
+	if err != nil {
+		t.Fatalf("ExportAll: %v", err)
+	}
+
+	// Drop the entries a snapshot from before this store existed lacks.
+	ps := snap.Providers["azure"]
+	delete(ps.Services, "resourcegroups")
+	delete(ps.Services, "propertyoverlay")
+	snap.Providers["azure"] = ps
+
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatalf("marshal snapshot: %v", err)
+	}
+
+	var got persist.Snapshot
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatalf("unmarshal snapshot: %v", err)
+	}
+
+	dst := cloudemu.NewAzure(config.WithAccountID(sub))
+	if err := persist.RestoreAll(ctx, &got, map[string]persist.Services{"azure": dst.SnapshotServices()}); err != nil {
+		t.Fatalf("RestoreAll: %v", err)
+	}
+
+	dstSrv := httptest.NewServer(azureserver.NewFromProvider(dst))
+	t.Cleanup(dstSrv.Close)
+
+	if body := armDo(t, dstSrv.URL, http.MethodGet, rg+"?api-version=2021-04-01", "", http.StatusOK); !strings.Contains(body,
+		`"location":"westeurope"`) {
+		t.Fatalf("rebuilt group = %s, want location westeurope", body)
+	}
+
+	armDo(t, dstSrv.URL, http.MethodGet, acct, "", http.StatusOK)
+	armDo(t, dstSrv.URL, http.MethodGet, vnet, "", http.StatusOK)
 }

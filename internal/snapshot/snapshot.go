@@ -28,6 +28,14 @@ type Snapshottable interface {
 	Restore(ctx context.Context, data json.RawMessage) error
 }
 
+// MissingRestorer is an optional Snapshottable extension for a service added
+// after older snapshots were written. When a restored snapshot has no entry for
+// the service, RestoreMissing runs once every present service is restored, so
+// the service can rebuild its state from what the others restored.
+type MissingRestorer interface {
+	RestoreMissing(ctx context.Context) error
+}
+
 // Discover reflects over the exported struct fields of p (a provider factory,
 // passed as a pointer to its struct) and returns the ones whose value
 // implements Snapshottable, keyed by a stable service name. The key is the

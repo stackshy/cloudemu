@@ -11,6 +11,7 @@
 package rgstore
 
 import (
+	"context"
 	"encoding/json"
 	"sort"
 	"strings"
@@ -24,6 +25,9 @@ import (
 type Mock struct {
 	mu    sync.RWMutex
 	store *memstore.Store[map[string]any]
+	// source lists the groups restored resources live in; RestoreMissing
+	// reads it. Nil disables the rebuild.
+	source func(ctx context.Context) ([]GroupRef, error)
 }
 
 // New returns an empty resource-group store.

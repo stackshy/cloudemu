@@ -360,9 +360,46 @@ func New(opts ...config.Option) *Provider {
 			},
 		},
 	)
+	p.ResourceGroups.SetRebuildSource(p.inventoryGroups)
 	p.engineClosers = o.EngineClosers()
 
 	return p
+}
+
+// inventoryGroups lists the resource group of every resource in the
+// cross-service inventory, read off its ARM id, with the resource's location.
+// It lets a snapshot written before resource groups were persisted rebuild
+// them on restore.
+func (p *Provider) inventoryGroups(ctx context.Context) ([]rgstore.GroupRef, error) {
+	all, err := p.ResourceDiscovery.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	refs := make([]rgstore.GroupRef, 0, len(all))
+
+	for i := range all {
+		if sub, rg, ok := armGroupOf(all[i].ARN); ok {
+			refs = append(refs, rgstore.GroupRef{Subscription: sub, Name: rg, Location: all[i].Region})
+		}
+	}
+
+	return refs, nil
+}
+
+// armGroupOf splits /subscriptions/{sub}/resourceGroups/{rg}/... into its
+// subscription and resource group, matching the segment names
+// case-insensitively.
+func armGroupOf(id string) (sub, rg string, ok bool) {
+	const minParts = 4
+
+	parts := strings.Split(strings.Trim(id, "/"), "/")
+	if len(parts) < minParts || !strings.EqualFold(parts[0], "subscriptions") ||
+		!strings.EqualFold(parts[2], "resourceGroups") || parts[1] == "" || parts[3] == "" {
+		return "", "", false
+	}
+
+	return parts[1], parts[3], true
 }
 
 // wireCrossService connects the inter-service dependencies (auto-metrics, log
