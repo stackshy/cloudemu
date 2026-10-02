@@ -168,11 +168,13 @@ type correlationFilter struct {
 	Properties       map[string]string `json:"properties,omitempty"`
 }
 
-// authRuleResource is the ARM JSON shape for .../namespaces/authorizationRules.
+// authRuleResource is the ARM JSON shape for an authorization rule at
+// namespace, queue or topic scope.
 type authRuleResource struct {
 	ID         string             `json:"id"`
 	Name       string             `json:"name"`
 	Type       string             `json:"type"`
+	Location   string             `json:"location,omitempty"`
 	Properties authRuleProperties `json:"properties"`
 }
 

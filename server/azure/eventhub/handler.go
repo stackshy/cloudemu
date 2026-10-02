@@ -177,6 +177,8 @@ func (h *Handler) serveChild(w http.ResponseWriter, r *http.Request, ep ehPath) 
 		h.serveEventHubTree(w, r, ep)
 	case eq(ep.segs[0], segAuthRules):
 		h.authRuleDispatch(w, r, ep.segs[1:], func() (authTarget, bool) { return h.nsAuthTargetLocked(ep) })
+	case eq(ep.segs[0], segNetworkRuleSets):
+		h.serveNetworkRuleSet(w, r, ep)
 	default:
 		notImplemented(w)
 	}

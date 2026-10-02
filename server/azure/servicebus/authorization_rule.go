@@ -6,111 +6,262 @@ import (
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 )
 
-// serveAuthRule dispatches .../authorizationRules[/{name}[/{action}]].
-func (h *Handler) serveAuthRule(w http.ResponseWriter, r *http.Request, sp sbPath) {
-	segs := sp.segs
+// maxAuthRulesPerScope is the number of SAS authorization rules Service Bus
+// allows on one namespace, queue or topic.
+const maxAuthRulesPerScope = 12
 
+const (
+	rightListen = "Listen"
+	rightSend   = "Send"
+	rightManage = "Manage"
+)
+
+// authTarget is the resolved holder of a set of authorization rules, at
+// namespace, queue or topic scope. It carries the ARM id prefix, resource type
+// and connection-string parts so one set of handlers serves every scope.
+type authTarget struct {
+	rules      map[string]*authRuleRecord
+	idPrefix   string
+	typeStr    string
+	location   string
+	namespace  string
+	entityPath string // "" at namespace scope; the queue or topic name otherwise
+}
+
+// authResolver resolves the target rule set under h.mu; ok is false when the
+// parent (namespace, queue or topic) does not exist.
+type authResolver func() (authTarget, bool)
+
+func nsIDPrefix(sp sbPath) string {
+	return azurearm.BuildResourceID(sp.sub, sp.rg, providerName, resourceType, sp.namespace)
+}
+
+func (h *Handler) nsAuthTargetLocked(sp sbPath) (authTarget, bool) {
+	ns, ok := h.getNS(sp)
+	if !ok {
+		return authTarget{}, false
+	}
+
+	return authTarget{
+		rules:     ns.AuthRules,
+		idPrefix:  nsIDPrefix(sp),
+		typeStr:   providerName + "/Namespaces/AuthorizationRules",
+		location:  ns.Location,
+		namespace: sp.namespace,
+	}, true
+}
+
+func (h *Handler) queueAuthTargetLocked(sp sbPath, queue string) (authTarget, bool) {
+	ns, ok := h.getNS(sp)
+	if !ok {
+		return authTarget{}, false
+	}
+
+	q, ok := ns.Queues[queue]
+	if !ok {
+		return authTarget{}, false
+	}
+
+	return authTarget{
+		rules:      q.AuthRules,
+		idPrefix:   nsIDPrefix(sp) + "/queues/" + q.Name,
+		typeStr:    providerName + "/Namespaces/Queues/AuthorizationRules",
+		location:   ns.Location,
+		namespace:  sp.namespace,
+		entityPath: q.Name,
+	}, true
+}
+
+func (h *Handler) topicAuthTargetLocked(sp sbPath, topic string) (authTarget, bool) {
+	ns, ok := h.getNS(sp)
+	if !ok {
+		return authTarget{}, false
+	}
+
+	t, ok := ns.Topics[topic]
+	if !ok {
+		return authTarget{}, false
+	}
+
+	return authTarget{
+		rules:      t.AuthRules,
+		idPrefix:   nsIDPrefix(sp) + "/topics/" + t.Name,
+		typeStr:    providerName + "/Namespaces/Topics/AuthorizationRules",
+		location:   ns.Location,
+		namespace:  sp.namespace,
+		entityPath: t.Name,
+	}, true
+}
+
+// serveAuthRule dispatches the namespace-level .../authorizationRules subtree.
+func (h *Handler) serveAuthRule(w http.ResponseWriter, r *http.Request, sp sbPath) {
+	h.authRuleDispatch(w, r, sp.segs[1:], func() (authTarget, bool) {
+		return h.nsAuthTargetLocked(sp)
+	})
+}
+
+// authRuleDispatch routes .../authorizationRules[/{name}[/{action}]]. rest is
+// the path after "authorizationRules"; resolve yields the rule set under lock.
+func (h *Handler) authRuleDispatch(w http.ResponseWriter, r *http.Request, rest []string, resolve authResolver) {
 	switch {
-	case len(segs) == authRuleColl:
-		h.listAuthRules(w, r, sp)
-	case len(segs) == authRuleItem:
-		h.serveAuthRuleItem(w, r, sp, segs[1])
-	case len(segs) == authRuleAction && eq(segs[2], actionKeys):
-		h.listKeys(w, r, sp, segs[1])
-	case len(segs) == authRuleAction && eq(segs[2], actionRegen):
-		h.regenerateKeys(w, r, sp, segs[1])
+	case len(rest) == 0:
+		h.listAuthRules(w, r, resolve)
+	case len(rest) == 1:
+		h.serveAuthRuleItem(w, r, resolve, rest[0])
+	case len(rest) == namePairLen && eq(rest[1], actionKeys):
+		h.listKeys(w, r, resolve, rest[0])
+	case len(rest) == namePairLen && eq(rest[1], actionRegen):
+		h.regenerateKeys(w, r, resolve, rest[0])
 	default:
-		azurearm.WriteError(w, http.StatusNotImplemented, "NotImplemented", "unsupported path")
+		notImplemented(w)
 	}
 }
 
-func (h *Handler) serveAuthRuleItem(w http.ResponseWriter, r *http.Request, sp sbPath, name string) {
+func (h *Handler) serveAuthRuleItem(w http.ResponseWriter, r *http.Request, resolve authResolver, name string) {
 	switch r.Method {
 	case http.MethodPut:
-		h.createAuthRule(w, r, sp, name)
+		h.createAuthRule(w, r, resolve, name)
 	case http.MethodGet:
-		h.getAuthRule(w, sp, name)
+		h.getAuthRule(w, resolve, name)
 	case http.MethodDelete:
-		h.deleteAuthRule(w, sp, name)
+		h.deleteAuthRule(w, resolve, name)
 	default:
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 	}
 }
 
-func (h *Handler) createAuthRule(w http.ResponseWriter, r *http.Request, sp sbPath, name string) {
+// validateRights mirrors Service Bus: rights is a non-empty subset of
+// Listen/Send/Manage, and Manage requires both Listen and Send.
+func validateRights(rights []string) string {
+	if len(rights) == 0 {
+		return "at least one access right is required"
+	}
+
+	have := map[string]bool{}
+
+	for _, r := range rights {
+		switch {
+		case eq(r, rightListen):
+			have[rightListen] = true
+		case eq(r, rightSend):
+			have[rightSend] = true
+		case eq(r, rightManage):
+			have[rightManage] = true
+		default:
+			return "invalid access right: " + r
+		}
+	}
+
+	if have[rightManage] && (!have[rightListen] || !have[rightSend]) {
+		return "Manage right requires Listen and Send rights"
+	}
+
+	return ""
+}
+
+func (h *Handler) createAuthRule(w http.ResponseWriter, r *http.Request, resolve authResolver, name string) {
 	var req createAuthRuleRequest
 	if !decodeBody(w, r, &req) {
 		return
 	}
 
-	h.mu.Lock()
-
-	ns, ok := h.getNS(sp)
-	if !ok {
-		h.mu.Unlock()
-		writeNSNotFound(w, sp.namespace)
-
+	if msg := validateRights(req.Properties.Rights); msg != "" {
+		azurearm.WriteError(w, http.StatusBadRequest, "BadRequest", msg)
 		return
 	}
 
-	rec, existed := ns.AuthRules[name]
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	tgt, ok := resolve()
+	if !ok {
+		writeAuthScopeNotFound(w)
+		return
+	}
+
+	rec, existed := tgt.rules[name]
 	if !existed {
+		if len(tgt.rules) >= maxAuthRulesPerScope {
+			azurearm.WriteError(w, http.StatusBadRequest, "BadRequest",
+				"the maximum number of authorization rules has been reached")
+
+			return
+		}
+
 		rec = &authRuleRecord{Name: name, PrimaryKey: generateKey(), SecondaryKey: generateKey()}
-		ns.AuthRules[name] = rec
+		tgt.rules[name] = rec
 	}
 
 	rec.Rights = append([]string(nil), req.Properties.Rights...)
 
-	resource := toAuthRuleResource(sp, rec)
-	h.mu.Unlock()
-
-	azurearm.WriteJSON(w, http.StatusOK, resource)
+	azurearm.WriteJSON(w, http.StatusOK, toAuthRuleResource(&tgt, rec))
 }
 
-func (h *Handler) getAuthRule(w http.ResponseWriter, sp sbPath, name string) {
+func (h *Handler) getAuthRule(w http.ResponseWriter, resolve authResolver, name string) {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	rec, ok := h.lookupAuthRule(sp, name)
+	tgt, ok := resolve()
 	if !ok {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "authorization rule not found: "+name)
+		writeAuthScopeNotFound(w)
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toAuthRuleResource(sp, rec))
+	rec, ok := tgt.rules[name]
+	if !ok {
+		writeAuthRuleNotFound(w, name)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toAuthRuleResource(&tgt, rec))
 }
 
-func (h *Handler) deleteAuthRule(w http.ResponseWriter, sp sbPath, name string) {
+func (h *Handler) deleteAuthRule(w http.ResponseWriter, resolve authResolver, name string) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	ns, ok := h.getNS(sp)
+	tgt, ok := resolve()
 	if !ok {
-		writeNSNotFound(w, sp.namespace)
+		writeAuthScopeNotFound(w)
 		return
 	}
 
-	if _, ok := ns.AuthRules[name]; !ok {
+	if _, ok := tgt.rules[name]; !ok {
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
 
-	delete(ns.AuthRules, name)
+	delete(tgt.rules, name)
 	w.WriteHeader(http.StatusOK)
 }
 
-func (h *Handler) listAuthRules(w http.ResponseWriter, r *http.Request, sp sbPath) {
-	h.listChildren(w, r, sp, func(ns *namespaceState) []any {
-		out := make([]any, 0, len(ns.AuthRules))
-		for _, n := range sortedKeys(ns.AuthRules) {
-			out = append(out, toAuthRuleResource(sp, ns.AuthRules[n]))
-		}
+func (h *Handler) listAuthRules(w http.ResponseWriter, r *http.Request, resolve authResolver) {
+	if r.Method != http.MethodGet {
+		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
+		return
+	}
 
-		return out
-	})
+	h.mu.RLock()
+
+	tgt, ok := resolve()
+	if !ok {
+		h.mu.RUnlock()
+		writeAuthScopeNotFound(w)
+
+		return
+	}
+
+	out := make([]any, 0, len(tgt.rules))
+	for _, n := range sortedKeys(tgt.rules) {
+		out = append(out, toAuthRuleResource(&tgt, tgt.rules[n]))
+	}
+
+	h.mu.RUnlock()
+
+	azurearm.WriteJSON(w, http.StatusOK, paginate(r, out))
 }
 
-func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request, sp sbPath, name string) {
+func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request, resolve authResolver, name string) {
 	if r.Method != http.MethodPost {
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 		return
@@ -119,16 +270,22 @@ func (h *Handler) listKeys(w http.ResponseWriter, r *http.Request, sp sbPath, na
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 
-	rec, ok := h.lookupAuthRule(sp, name)
+	tgt, ok := resolve()
 	if !ok {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "authorization rule not found: "+name)
+		writeAuthScopeNotFound(w)
 		return
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toAccessKeys(sp.namespace, rec))
+	rec, ok := tgt.rules[name]
+	if !ok {
+		writeAuthRuleNotFound(w, name)
+		return
+	}
+
+	azurearm.WriteJSON(w, http.StatusOK, toAccessKeys(&tgt, rec))
 }
 
-func (h *Handler) regenerateKeys(w http.ResponseWriter, r *http.Request, sp sbPath, name string) {
+func (h *Handler) regenerateKeys(w http.ResponseWriter, r *http.Request, resolve authResolver, name string) {
 	if r.Method != http.MethodPost {
 		azurearm.WriteError(w, http.StatusMethodNotAllowed, "MethodNotAllowed", "method not allowed")
 		return
@@ -139,12 +296,23 @@ func (h *Handler) regenerateKeys(w http.ResponseWriter, r *http.Request, sp sbPa
 		return
 	}
 
+	if !eq(req.KeyType, "PrimaryKey") && !eq(req.KeyType, "SecondaryKey") {
+		azurearm.WriteError(w, http.StatusBadRequest, "BadRequest", "invalid keyType: "+req.KeyType)
+		return
+	}
+
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	rec, ok := h.lookupAuthRule(sp, name)
+	tgt, ok := resolve()
 	if !ok {
-		azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "authorization rule not found: "+name)
+		writeAuthScopeNotFound(w)
+		return
+	}
+
+	rec, ok := tgt.rules[name]
+	if !ok {
+		writeAuthRuleNotFound(w, name)
 		return
 	}
 
@@ -159,42 +327,44 @@ func (h *Handler) regenerateKeys(w http.ResponseWriter, r *http.Request, sp sbPa
 		rec.PrimaryKey = newKey
 	}
 
-	azurearm.WriteJSON(w, http.StatusOK, toAccessKeys(sp.namespace, rec))
+	azurearm.WriteJSON(w, http.StatusOK, toAccessKeys(&tgt, rec))
 }
 
-// lookupAuthRule returns the auth rule; caller must hold h.mu.
-func (h *Handler) lookupAuthRule(sp sbPath, name string) (*authRuleRecord, bool) {
-	ns, ok := h.getNS(sp)
-	if !ok {
-		return nil, false
-	}
-
-	rec, ok := ns.AuthRules[name]
-
-	return rec, ok
+func writeAuthScopeNotFound(w http.ResponseWriter) {
+	azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "authorization rule scope not found")
 }
 
-func toAuthRuleResource(sp sbPath, rec *authRuleRecord) authRuleResource {
+func writeAuthRuleNotFound(w http.ResponseWriter, name string) {
+	azurearm.WriteError(w, http.StatusNotFound, "ResourceNotFound", "authorization rule not found: "+name)
+}
+
+func toAuthRuleResource(tgt *authTarget, rec *authRuleRecord) authRuleResource {
 	return authRuleResource{
-		ID: azurearm.BuildResourceID(sp.sub, sp.rg, providerName, resourceType, sp.namespace) +
-			"/authorizationRules/" + rec.Name,
+		ID:         tgt.idPrefix + "/authorizationRules/" + rec.Name,
 		Name:       rec.Name,
-		Type:       providerName + "/Namespaces/AuthorizationRules",
-		Properties: authRuleProperties{Rights: rec.Rights},
+		Type:       tgt.typeStr,
+		Location:   tgt.location,
+		Properties: authRuleProperties{Rights: append([]string(nil), rec.Rights...)},
 	}
 }
 
-func toAccessKeys(namespace string, rec *authRuleRecord) accessKeys {
+func toAccessKeys(tgt *authTarget, rec *authRuleRecord) accessKeys {
 	return accessKeys{
 		KeyName:                   rec.Name,
 		PrimaryKey:                rec.PrimaryKey,
 		SecondaryKey:              rec.SecondaryKey,
-		PrimaryConnectionString:   connectionString(namespace, rec.Name, rec.PrimaryKey),
-		SecondaryConnectionString: connectionString(namespace, rec.Name, rec.SecondaryKey),
+		PrimaryConnectionString:   connectionString(tgt, rec.Name, rec.PrimaryKey),
+		SecondaryConnectionString: connectionString(tgt, rec.Name, rec.SecondaryKey),
 	}
 }
 
-func connectionString(namespace, ruleName, key string) string {
-	return "Endpoint=sb://" + namespace + sbHost + "/;SharedAccessKeyName=" + ruleName +
+func connectionString(tgt *authTarget, ruleName, key string) string {
+	cs := "Endpoint=sb://" + tgt.namespace + sbHost + "/;SharedAccessKeyName=" + ruleName +
 		";SharedAccessKey=" + key
+
+	if tgt.entityPath != "" {
+		cs += ";EntityPath=" + tgt.entityPath
+	}
+
+	return cs
 }
