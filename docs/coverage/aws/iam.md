@@ -68,6 +68,15 @@ ContextualAuthorizer is an optional capability: an IAM implementation that can
 | --- | --- |
 | `CheckPermissionWithContext` |  |
 
+### PermissionEvaluator
+
+PermissionEvaluator is an optional capability: an IAM implementation that
+
+| Operation | Description |
+| --- | --- |
+| `EvaluatePermission` |  |
+| `EvaluateServiceWide` |  |
+
 ### PolicyInspector
 
 PolicyInspector is an optional capability: an IAM implementation that can

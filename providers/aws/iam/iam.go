@@ -923,19 +923,9 @@ func (m *Mock) CheckPermission(ctx context.Context, principal, action, resource 
 func (m *Mock) CheckPermissionWithContext(
 	_ context.Context, principal, action, resource string, cctx map[string]string,
 ) (bool, error) {
-	entityType := m.principalEntityType(principal)
-	ctxKeys := ConditionContext(cctx)
+	req := evalRequest{action: action, resource: resource, cctx: ConditionContext(cctx)}
 
-	if decide(m.gatherPrincipalDocs(entityType, principal), action, resource, ctxKeys) != decisionAllowed {
-		return false, nil
-	}
-
-	if boundary, ok := m.permissionsBoundaryDoc(entityType, principal); ok &&
-		decide([]string{boundary}, action, resource, ctxKeys) != decisionAllowed {
-		return false, nil
-	}
-
-	return true, nil
+	return m.evaluatePrincipal(principal, req, evalKnownResource) == decisionAllowed, nil
 }
 
 // principalEntityType classifies an IAM principal named by its friendly name as
