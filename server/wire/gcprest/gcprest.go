@@ -14,6 +14,8 @@
 package gcprest
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"net/http"
 	"strconv"
@@ -41,34 +43,35 @@ func NewOperationRegistry() *OperationRegistry {
 	return &OperationRegistry{seen: map[string]struct{}{}}
 }
 
-// opKey scopes an operation name by the URL scope it is polled under, so a
-// zonal, regional, and global operation of the same name stay distinct.
-func opKey(scope, scopeName, name string) string {
-	return scope + "\x00" + scopeName + "\x00" + name
+// opKey scopes an operation name by the project and URL scope it is polled
+// under, so operations of different projects or scopes stay distinct.
+func opKey(project, scope, scopeName, name string) string {
+	return project + "\x00" + scope + "\x00" + scopeName + "\x00" + name
 }
 
-// Record notes that operation name exists at scope/scopeName. Nil-safe: a nil
-// registry is a no-op.
-func (reg *OperationRegistry) Record(scope, scopeName, name string) {
+// Record notes that operation name exists in project at scope/scopeName.
+// Nil-safe: a nil registry is a no-op.
+func (reg *OperationRegistry) Record(project, scope, scopeName, name string) {
 	if reg == nil {
 		return
 	}
 
 	reg.mu.Lock()
-	reg.seen[opKey(scope, scopeName, name)] = struct{}{}
+	reg.seen[opKey(project, scope, scopeName, name)] = struct{}{}
 	reg.mu.Unlock()
 }
 
-// Has reports whether operation name was recorded at scope/scopeName. A nil
-// registry reports true (not enforcing), so a handler without a shared registry
-// keeps answering every operation poll as it did before.
-func (reg *OperationRegistry) Has(scope, scopeName, name string) bool {
+// Has reports whether operation name was recorded in project at
+// scope/scopeName. A nil registry reports true (not enforcing), so a handler
+// without a shared registry keeps answering every operation poll as it did
+// before.
+func (reg *OperationRegistry) Has(project, scope, scopeName, name string) bool {
 	if reg == nil {
 		return true
 	}
 
 	reg.mu.RLock()
-	_, ok := reg.seen[opKey(scope, scopeName, name)]
+	_, ok := reg.seen[opKey(project, scope, scopeName, name)]
 	reg.mu.RUnlock()
 
 	return ok
@@ -82,7 +85,7 @@ func (reg *OperationRegistry) RecordDone(
 	host, project, scope, scopeName, resourceType, name, opType string,
 ) Operation {
 	op := NewDoneOperation(host, project, scope, scopeName, resourceType, name, opType)
-	reg.Record(scope, scopeName, op.Name)
+	reg.Record(project, scope, scopeName, op.Name)
 
 	return op
 }
@@ -389,7 +392,7 @@ type Operation struct {
 // Name instead.
 func NewDoneOperation(host, project, scope, scopeName, resourceType, name, opType string) Operation {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
-	opName := "operation-" + name + "-" + opType
+	opName := newOpName()
 	op := Operation{
 		Kind:          "compute#operation",
 		ID:            strconv.FormatInt(time.Now().UnixNano(), 10),
@@ -413,6 +416,17 @@ func NewDoneOperation(host, project, scope, scopeName, resourceType, name, opTyp
 	}
 
 	return op
+}
+
+// newOpName returns an operation name in real GCE's shape,
+// "operation-<unixMilli>-<8 hex>", so two operations never share a name.
+func newOpName() string {
+	b := make([]byte, 4) //nolint:mnd // 8 hex digits
+	if _, err := rand.Read(b); err != nil {
+		return "operation-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	}
+
+	return "operation-" + strconv.FormatInt(time.Now().UnixMilli(), 10) + "-" + hex.EncodeToString(b)
 }
 
 // DefaultListMax is GCP's default list page size when maxResults is absent.

@@ -297,14 +297,18 @@ func (m *Mock) RunInstances(ctx context.Context, cfg driver.InstanceConfig, coun
 	// none of it).
 	created := make([]*instanceData, 0, count)
 
-	for i := 0; i < count; i++ {
-		id := idgen.GCPID(m.opts.ProjectID, "instances", idgen.GenerateID("gce-"))
+	project := m.project(ctx)
 
-		tags := make(map[string]string, len(cfg.Tags))
+	for i := 0; i < count; i++ {
+		id := idgen.GCPID(project, "instances", idgen.GenerateID("gce-"))
+
+		tags := make(map[string]string, len(cfg.Tags)+1)
 
 		for k, v := range cfg.Tags {
 			tags[k] = v
 		}
+
+		tags[ProjectTag] = project
 
 		sg := make([]string, len(cfg.SecurityGroups))
 		copy(sg, cfg.SecurityGroups)
@@ -563,7 +567,7 @@ func (m *Mock) MutateInstanceGCP(instanceID string, set map[string]string, remov
 }
 
 func (m *Mock) DescribeInstances(
-	_ context.Context, instanceIDs []string, filters []driver.DescribeFilter, _ ...driver.DescribeInstancesOptions,
+	ctx context.Context, instanceIDs []string, filters []driver.DescribeFilter, _ ...driver.DescribeInstancesOptions,
 ) ([]driver.Instance, error) {
 	var candidates []*instanceData
 
@@ -575,7 +579,9 @@ func (m *Mock) DescribeInstances(
 		}
 	} else {
 		for _, inst := range m.instances.All() {
-			candidates = append(candidates, inst)
+			if m.visible(ctx, inst.Tags) {
+				candidates = append(candidates, inst)
+			}
 		}
 	}
 
@@ -673,9 +679,10 @@ func (m *Mock) SetInstanceVPC(instanceID, vpcID string) error {
 }
 
 //nolint:gocritic // hugeParam: interface method signature cannot be changed.
-func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
+func (m *Mock) CreateVolume(ctx context.Context, cfg driver.VolumeConfig) (*driver.VolumeInfo, error) {
+	project := m.project(ctx)
 	id := fmt.Sprintf("projects/%s/zones/%s/disks/disk-%d",
-		m.opts.ProjectID, m.opts.Region, m.volCounter.Add(1))
+		project, m.opts.Region, m.volCounter.Add(1))
 
 	// GCP's disks.insert default type when the caller names none is pd-standard
 	// (not pd-ssd); a raw SDK/gcloud disk or a boot disk with no diskType reads
@@ -689,7 +696,7 @@ func (m *Mock) CreateVolume(_ context.Context, cfg driver.VolumeConfig) (*driver
 		ID: id, Size: cfg.Size, VolumeType: volType, State: stateAvailable,
 		AvailabilityZone: cfg.AvailabilityZone,
 		CreatedAt:        m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:             copyTags(cfg.Tags),
+		Tags:             stampProject(copyTags(cfg.Tags), project),
 		IOPS:             cfg.IOPS,
 		Throughput:       cfg.Throughput,
 		Tier:             cfg.Tier,
@@ -716,8 +723,8 @@ func (m *Mock) DeleteVolume(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *Mock) DescribeVolumes(_ context.Context, ids []string) ([]driver.VolumeInfo, error) {
-	return describeResources(m.volumes, ids), nil
+func (m *Mock) DescribeVolumes(ctx context.Context, ids []string) ([]driver.VolumeInfo, error) {
+	return describeScoped(ctx, m, m.volumes, ids, func(v *driver.VolumeInfo) map[string]string { return v.Tags }), nil
 }
 
 // ResizeVolumeGCP grows the disk to sizeGb (a no-op when already that large).
@@ -805,19 +812,20 @@ func (m *Mock) DetachVolume(_ context.Context, volumeID, _, _ string) error {
 	return opErr
 }
 
-func (m *Mock) CreateSnapshot(_ context.Context, cfg driver.SnapshotConfig) (*driver.SnapshotInfo, error) {
+func (m *Mock) CreateSnapshot(ctx context.Context, cfg driver.SnapshotConfig) (*driver.SnapshotInfo, error) {
 	vol, ok := m.volumes.Get(cfg.VolumeID)
 	if !ok {
 		return nil, cerrors.Newf(cerrors.NotFound, "disk %q not found", cfg.VolumeID)
 	}
 
+	project := m.project(ctx)
 	id := fmt.Sprintf("projects/%s/global/snapshots/snap-%d",
-		m.opts.ProjectID, m.snapCounter.Add(1))
+		project, m.snapCounter.Add(1))
 
 	snap := &driver.SnapshotInfo{
 		ID: id, VolumeID: cfg.VolumeID, State: "completed", Description: cfg.Description,
 		Size: vol.Size, CreatedAt: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags: copyTags(cfg.Tags),
+		Tags: stampProject(copyTags(cfg.Tags), project),
 	}
 	m.snapshots.Set(id, snap)
 
@@ -834,8 +842,8 @@ func (m *Mock) DeleteSnapshot(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *Mock) DescribeSnapshots(_ context.Context, ids []string) ([]driver.SnapshotInfo, error) {
-	return describeResources(m.snapshots, ids), nil
+func (m *Mock) DescribeSnapshots(ctx context.Context, ids []string) ([]driver.SnapshotInfo, error) {
+	return describeScoped(ctx, m, m.snapshots, ids, func(v *driver.SnapshotInfo) map[string]string { return v.Tags }), nil
 }
 
 // SetVolumeLabelsGCP replaces a disk's user labels: set entries are written and
@@ -919,7 +927,7 @@ func mergeTags(src, set map[string]string, remove []string) map[string]string {
 }
 
 //nolint:gocritic // hugeParam: cfg mirrors the driver-interface signature.
-func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
+func (m *Mock) CreateImage(ctx context.Context, cfg driver.ImageConfig) (*driver.ImageInfo, error) {
 	// GCP images are created from a disk, snapshot, or import, not from a
 	// source instance. An empty InstanceID is one of those source-based paths,
 	// so only validate when a specific instance was named (the EC2-style path).
@@ -929,13 +937,14 @@ func (m *Mock) CreateImage(_ context.Context, cfg driver.ImageConfig) (*driver.I
 		}
 	}
 
+	project := m.project(ctx)
 	id := fmt.Sprintf("projects/%s/global/images/img-%d",
-		m.opts.ProjectID, m.imgCounter.Add(1))
+		project, m.imgCounter.Add(1))
 
 	img := &driver.ImageInfo{
 		ID: id, Name: cfg.Name, State: stateAvailable, Description: cfg.Description,
 		CreatedAt: m.opts.Clock.Now().UTC().Format("2006-01-02T15:04:05Z"),
-		Tags:      copyTags(cfg.Tags),
+		Tags:      stampProject(copyTags(cfg.Tags), project),
 	}
 	m.images.Set(id, img)
 
@@ -952,8 +961,8 @@ func (m *Mock) DeregisterImage(_ context.Context, id string) error {
 	return nil
 }
 
-func (m *Mock) DescribeImages(_ context.Context, ids []string) ([]driver.ImageInfo, error) {
-	return describeResources(m.images, ids), nil
+func (m *Mock) DescribeImages(ctx context.Context, ids []string) ([]driver.ImageInfo, error) {
+	return describeScoped(ctx, m, m.images, ids, func(v *driver.ImageInfo) map[string]string { return v.Tags }), nil
 }
 
 // CreateKeyPair creates a new key pair.

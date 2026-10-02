@@ -35,6 +35,7 @@ import (
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
 	"github.com/stackshy/cloudemu/v2/internal/pagination"
+	"github.com/stackshy/cloudemu/v2/internal/projectctx"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	computedriver "github.com/stackshy/cloudemu/v2/services/compute/driver"
 	netdriver "github.com/stackshy/cloudemu/v2/services/networking/driver"
@@ -166,6 +167,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "malformed path")
 		return
 	}
+
+	r = r.WithContext(projectctx.WithProject(r.Context(), rp.Project))
 
 	switch rp.ResourceType {
 	case resourceNetworks:
@@ -1290,20 +1293,24 @@ func (h *Handler) networkInUseMessage(ctx context.Context, vpcID, netName string
 // (server/gcp/compute) so this handler can name an in-subnet instance in the
 // delete-in-use error without importing the compute server package.
 const (
-	instNameTag = "cloudemu:gcpName"
-	instZoneTag = "cloudemu:gcp:zone"
+	instNameTag    = "cloudemu:gcpName"
+	instZoneTag    = "cloudemu:gcp:zone"
+	instProjectTag = "cloudemu:gcp:project"
 )
 
 // instanceInSubnet returns the self-link of the first instance whose
 // networkInterfaces subnet references the given subnet (by name, scoped to the
-// subnet's region), or "" when none. It underpins the delete-in-use guard for
-// subnetworks. A nil compute driver (compute not wired) reports no users.
+// subnet's region and project), or "" when none. It underpins the delete-in-use
+// guard for subnetworks. Instances of every project are scanned, because a
+// Shared VPC service-project VM may use a host-project subnet, but each counts
+// only when its subnet reference resolves to the subnet's own project. A nil
+// compute driver (compute not wired) reports no users.
 func (h *Handler) instanceInSubnet(ctx context.Context, host, project, subnetName, region string) (string, error) {
 	if h.compute == nil {
 		return "", nil
 	}
 
-	instances, err := h.compute.DescribeInstances(ctx, nil, nil)
+	instances, err := h.compute.DescribeInstances(projectctx.AllProjects(ctx), nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -1313,10 +1320,21 @@ func (h *Handler) instanceInSubnet(ctx context.Context, host, project, subnetNam
 			continue
 		}
 
+		instProject := tagOr(instances[i].Tags, instProjectTag, project)
+		refProject := projectctx.FromPath(instances[i].SubnetID)
+
+		if refProject == "" {
+			refProject = instProject
+		}
+
+		if refProject != project {
+			continue
+		}
+
 		name := tagOr(instances[i].Tags, instNameTag, instances[i].ID)
 		zone := tagOr(instances[i].Tags, instZoneTag, "")
 
-		return gcprest.SelfLink(host, project, gcprest.ScopeZones, zone, "instances", name), nil
+		return gcprest.SelfLink(host, instProject, gcprest.ScopeZones, zone, "instances", name), nil
 	}
 
 	return "", nil

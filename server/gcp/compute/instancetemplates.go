@@ -15,9 +15,9 @@ const resourceTemplates = "instanceTemplates"
 // templates, reached by type assertion like migBackend.
 type templateBackend interface {
 	CreateInstanceTemplateGCP(t gcecompute.InstanceTemplate) error
-	GetInstanceTemplateGCP(name string) (gcecompute.InstanceTemplate, bool)
-	ListInstanceTemplatesGCP() []gcecompute.InstanceTemplate
-	DeleteInstanceTemplateGCP(name string) error
+	GetInstanceTemplateGCP(project, name string) (gcecompute.InstanceTemplate, bool)
+	ListInstanceTemplatesGCP(project string) []gcecompute.InstanceTemplate
+	DeleteInstanceTemplateGCP(project, name string) error
 }
 
 // templateResponse holds the computed compute#instanceTemplate fields; the rest
@@ -82,7 +82,7 @@ func (h *Handler) serveInstanceTemplatesRoute(w http.ResponseWriter, r *http.Req
 
 //nolint:gocritic // rp is a request-scoped value
 func getTemplate(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, backend templateBackend) {
-	t, found := findTemplate(backend, rp.ResourceName)
+	t, found := findTemplate(backend, rp.Project, rp.ResourceName)
 	if !found {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound",
 			"The resource 'projects/"+rp.Project+"/global/instanceTemplates/"+rp.ResourceName+"' was not found")
@@ -96,7 +96,7 @@ func getTemplate(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath
 //nolint:gocritic // rp is a request-scoped value
 func listTemplates(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, backend templateBackend) {
 	host := hostFromRequest(r)
-	items := backend.ListInstanceTemplatesGCP()
+	items := backend.ListInstanceTemplatesGCP(rp.Project)
 	out := make([]templateResponse, 0, len(items))
 
 	for i := range items {
@@ -135,7 +135,7 @@ func (h *Handler) insertTemplate(w http.ResponseWriter, r *http.Request, rp gcpr
 		return
 	}
 
-	if err := backend.CreateInstanceTemplateGCP(gcecompute.InstanceTemplate{Name: req.Name, Spec: spec}); err != nil {
+	if err := backend.CreateInstanceTemplateGCP(gcecompute.InstanceTemplate{Project: rp.Project, Name: req.Name, Spec: spec}); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -149,7 +149,7 @@ func (h *Handler) insertTemplate(w http.ResponseWriter, r *http.Request, rp gcpr
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) deleteTemplate(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, backend templateBackend) {
-	if err := backend.DeleteInstanceTemplateGCP(rp.ResourceName); err != nil {
+	if err := backend.DeleteInstanceTemplateGCP(rp.Project, rp.ResourceName); err != nil {
 		if cerrors.IsFailedPrecondition(err) {
 			gcprest.WriteError(w, http.StatusBadRequest, "resourceInUseByAnotherResource", cerrors.Message(err))
 			return
@@ -179,12 +179,12 @@ func templateID(name string) string { return numericID("instanceTemplates/" + na
 
 // findTemplate resolves a template by name or by numeric id, as GCP accepts
 // either in the path.
-func findTemplate(backend templateBackend, nameOrID string) (gcecompute.InstanceTemplate, bool) {
-	if t, ok := backend.GetInstanceTemplateGCP(nameOrID); ok {
+func findTemplate(backend templateBackend, project, nameOrID string) (gcecompute.InstanceTemplate, bool) {
+	if t, ok := backend.GetInstanceTemplateGCP(project, nameOrID); ok {
 		return t, true
 	}
 
-	for _, t := range backend.ListInstanceTemplatesGCP() {
+	for _, t := range backend.ListInstanceTemplatesGCP(project) {
 		if templateID(t.Name) == nameOrID {
 			return t, true
 		}

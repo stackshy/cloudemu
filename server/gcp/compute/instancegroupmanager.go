@@ -17,12 +17,12 @@ import (
 // the volumeResizer / resourceLabelMutator pattern used for disks/images.
 type migBackend interface {
 	CreateInstanceGroupManagerGCP(igm gcecompute.InstanceGroupManager) error
-	GetInstanceGroupManagerGCP(zone, name string) (gcecompute.InstanceGroupManager, bool)
-	ListInstanceGroupManagersGCP(zone string) []gcecompute.InstanceGroupManager
-	AllInstanceGroupManagersGCP() []gcecompute.InstanceGroupManager
-	DeleteInstanceGroupManagerGCP(zone, name string) error
-	ResizeInstanceGroupManagerGCP(zone, name string, size int) error
-	PatchInstanceGroupManagerGCP(scope, name string, patched gcecompute.InstanceGroupManager) error
+	GetInstanceGroupManagerGCP(project, zone, name string) (gcecompute.InstanceGroupManager, bool)
+	ListInstanceGroupManagersGCP(project, zone string) []gcecompute.InstanceGroupManager
+	AllInstanceGroupManagersGCP(project string) []gcecompute.InstanceGroupManager
+	DeleteInstanceGroupManagerGCP(project, zone, name string) error
+	ResizeInstanceGroupManagerGCP(project, zone, name string, size int) error
+	PatchInstanceGroupManagerGCP(project, scope, name string, patched gcecompute.InstanceGroupManager) error
 }
 
 // migRequest mirrors the subset of compute#instanceGroupManager we accept on
@@ -160,7 +160,7 @@ func (h *Handler) patchMIG(w http.ResponseWriter, r *http.Request, rp gcprest.Re
 		return
 	}
 
-	igm, ok := backend.GetInstanceGroupManagerGCP(rp.ScopeName, rp.ResourceName)
+	igm, ok := backend.GetInstanceGroupManagerGCP(rp.Project, rp.ScopeName, rp.ResourceName)
 	if !ok {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound",
 			"The resource 'instanceGroupManagers/"+rp.ResourceName+"' was not found")
@@ -194,7 +194,7 @@ func (h *Handler) patchMIG(w http.ResponseWriter, r *http.Request, rp gcprest.Re
 
 	igm.Spec = spec
 
-	if err := backend.PatchInstanceGroupManagerGCP(rp.ScopeName, rp.ResourceName, igm); err != nil {
+	if err := backend.PatchInstanceGroupManagerGCP(rp.Project, rp.ScopeName, rp.ResourceName, igm); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -269,6 +269,7 @@ func (h *Handler) insertMIG(w http.ResponseWriter, r *http.Request, rp gcprest.R
 	}
 
 	igm := gcecompute.InstanceGroupManager{
+		Project:          rp.Project,
 		Name:             req.Name,
 		TargetSize:       int(req.TargetSize),
 		BaseInstanceName: baseName,
@@ -296,7 +297,7 @@ func (h *Handler) insertMIG(w http.ResponseWriter, r *http.Request, rp gcprest.R
 
 //nolint:gocritic // rp is a request-scoped value
 func (*Handler) getMIG(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, backend migBackend) {
-	igm, ok := backend.GetInstanceGroupManagerGCP(rp.ScopeName, rp.ResourceName)
+	igm, ok := backend.GetInstanceGroupManagerGCP(rp.Project, rp.ScopeName, rp.ResourceName)
 	if !ok {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound",
 			"The resource 'instanceGroupManagers/"+rp.ResourceName+"' was not found")
@@ -309,7 +310,7 @@ func (*Handler) getMIG(w http.ResponseWriter, r *http.Request, rp gcprest.Resour
 
 //nolint:gocritic // rp is a request-scoped value
 func (*Handler) listMIGs(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, backend migBackend) {
-	igms := backend.ListInstanceGroupManagersGCP(rp.ScopeName)
+	igms := backend.ListInstanceGroupManagersGCP(rp.Project, rp.ScopeName)
 	host := hostFromRequest(r)
 	out := make([]migResponse, 0, len(igms))
 
@@ -331,14 +332,14 @@ func (*Handler) listMIGs(w http.ResponseWriter, r *http.Request, rp gcprest.Reso
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) deleteMIG(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, backend migBackend) {
-	if _, ok := backend.GetInstanceGroupManagerGCP(rp.ScopeName, rp.ResourceName); !ok {
+	if _, ok := backend.GetInstanceGroupManagerGCP(rp.Project, rp.ScopeName, rp.ResourceName); !ok {
 		gcprest.WriteError(w, http.StatusNotFound, "notFound",
 			"The resource 'instanceGroupManagers/"+rp.ResourceName+"' was not found")
 
 		return
 	}
 
-	if err := backend.DeleteInstanceGroupManagerGCP(rp.ScopeName, rp.ResourceName); err != nil {
+	if err := backend.DeleteInstanceGroupManagerGCP(rp.Project, rp.ScopeName, rp.ResourceName); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -389,7 +390,7 @@ func (h *Handler) setMIGTargetSize(w http.ResponseWriter, r *http.Request, rp gc
 
 //nolint:gocritic // rp is a request-scoped value
 func (h *Handler) applyMIGResize(w http.ResponseWriter, r *http.Request, rp gcprest.ResourcePath, backend migBackend, size int) {
-	if err := backend.ResizeInstanceGroupManagerGCP(rp.ScopeName, rp.ResourceName, size); err != nil {
+	if err := backend.ResizeInstanceGroupManagerGCP(rp.Project, rp.ScopeName, rp.ResourceName, size); err != nil {
 		gcprest.WriteCErr(w, err)
 		return
 	}
@@ -424,7 +425,7 @@ func (h *Handler) aggregatedListMIGs(w http.ResponseWriter, r *http.Request, rp 
 		return
 	}
 
-	igms := backend.AllInstanceGroupManagersGCP()
+	igms := backend.AllInstanceGroupManagersGCP(rp.Project)
 	host := hostFromRequest(r)
 	items := make(map[string]migScopedList)
 

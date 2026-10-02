@@ -306,8 +306,9 @@ func TestSDKDiskAggregatedListSpansZones(t *testing.T) {
 	}
 }
 
-// TestSDKDiskSourceImageReflected proves disks.get echoes sourceImage and a
-// derived sourceImageId (previously dropped).
+// TestSDKDiskSourceImageReflected proves disks.get reports sourceImage and a
+// derived sourceImageId (previously dropped). A public family reference is
+// stored as the full URL of the image it resolved to, as GCE does.
 func TestSDKDiskSourceImageReflected(t *testing.T) {
 	ts := newGCPServer(t)
 	client := newDisksSDKClient(t, ts)
@@ -328,8 +329,9 @@ func TestSDKDiskSourceImageReflected(t *testing.T) {
 		t.Fatalf("Get: %v", err)
 	}
 
-	if got.GetSourceImage() != srcImage {
-		t.Errorf("sourceImage=%q want %q", got.GetSourceImage(), srcImage)
+	const wantImage = "https://www.googleapis.com/compute/v1/projects/debian-cloud/global/images/debian-12-bookworm-v20250415"
+	if got.GetSourceImage() != wantImage {
+		t.Errorf("sourceImage=%q want %q", got.GetSourceImage(), wantImage)
 	}
 
 	if got.GetSourceImageId() == "" {
