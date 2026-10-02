@@ -29,6 +29,7 @@
 //	PUT/GET/DELETE .../workspaces/{w}/tables/{name}          : TablesClient
 //	PUT/GET/DELETE .../workspaces/{w}/dataExports/{name}     : DataExportsClient
 //	POST   .../workspaces/{w}/sharedKeys                     : SharedKeysClient.GetSharedKeys
+//	GET    .../[resourceGroups/{rg}/]…/deletedWorkspaces     : DeletedWorkspacesClient.List[ByResourceGroup]
 package loganalytics
 
 import (
@@ -44,6 +45,8 @@ const (
 	// typeWorkspaces is the ARM resource type. The subscription-scoped list path
 	// may serialize it lowercase, so matching is case-insensitive.
 	typeWorkspaces = "workspaces"
+	// typeDeletedWorkspaces lists soft-deleted workspaces.
+	typeDeletedWorkspaces = "deletedWorkspaces"
 
 	subSavedSearches = "savedSearches"
 	subTables        = "tables"
@@ -82,7 +85,8 @@ func (*Handler) Matches(r *http.Request) bool {
 		return false
 	}
 
-	return rp.Provider == providerName && isWorkspacesType(rp.ResourceType)
+	return rp.Provider == providerName &&
+		(isWorkspacesType(rp.ResourceType) || strings.EqualFold(rp.ResourceType, typeDeletedWorkspaces))
 }
 
 // ServeHTTP routes on the parsed path shape and method.
@@ -90,6 +94,11 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	rp, ok := azurearm.ParsePath(r.URL.Path)
 	if !ok {
 		azurearm.WriteError(w, http.StatusBadRequest, "InvalidPath", "malformed ARM path")
+		return
+	}
+
+	if strings.EqualFold(rp.ResourceType, typeDeletedWorkspaces) {
+		serveDeletedWorkspaces(w, r, &rp)
 		return
 	}
 

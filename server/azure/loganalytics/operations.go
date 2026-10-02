@@ -36,7 +36,7 @@ func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request
 			return
 		}
 
-		meta := h.meta.upsert(rp.ResourceName, info.ResourceID, req.Location, req.skuName())
+		meta := h.meta.upsert(rp.ResourceName, info.ResourceID, req.Location, req.skuName(), req.settings())
 		azurearm.WriteJSON(w, http.StatusOK, toWorkspaceJSON(info, meta))
 
 		return
@@ -48,7 +48,7 @@ func (h *Handler) createOrUpdateWorkspace(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	meta := h.meta.upsert(rp.ResourceName, info.ResourceID, req.Location, req.skuName())
+	meta := h.meta.upsert(rp.ResourceName, info.ResourceID, req.Location, req.skuName(), req.settings())
 	azurearm.WriteJSON(w, http.StatusCreated, toWorkspaceJSON(info, meta))
 }
 
