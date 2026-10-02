@@ -38,8 +38,11 @@ const opPrefix = "/v1/operations/sn-"
 // connectionTypeURL is the Any type of a create or patch operation's response.
 const connectionTypeURL = "type.googleapis.com/google.cloud.servicenetworking.v1.Connection"
 
-// deleteVerb is the custom method that removes a connection.
+// deleteVerb is an accepted alias suffix on a deleteConnection call.
 const deleteVerb = ":deleteConnection"
+
+// peeringName is the VPC peering every Service Networking connection reports.
+const peeringName = "servicenetworking-googleapis-com"
 
 // Handler serves the Service Networking REST surface.
 type Handler struct {
@@ -132,9 +135,9 @@ func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
 		body = json.RawMessage(`{}`)
 	}
 
-	key, isDelete := bodyNetwork(r, body)
+	key := bodyNetwork(r, body)
 
-	if isDelete || strings.HasSuffix(r.URL.Path, deleteVerb) {
+	if isDeleteConnection(r) {
 		h.mu.Lock()
 		delete(h.connections, key)
 		h.mu.Unlock()
@@ -144,6 +147,8 @@ func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	body = withServiceAndPeering(r, body)
+
 	h.mu.Lock()
 	h.connections[key] = body
 	h.mu.Unlock()
@@ -151,14 +156,31 @@ func (h *Handler) upsert(w http.ResponseWriter, r *http.Request) {
 	h.writeDoneOperation(w, opmeta.Response(body, connectionTypeURL))
 }
 
-// bodyNetwork keys a create, patch or deleteConnection by the network it
-// names: the network query parameter when present, otherwise the body's
-// network (a Connection) or consumerNetwork (a DeleteConnectionRequest), so a
-// later list filtered by that network finds the connection. isDelete reports a
-// DeleteConnectionRequest body: Terraform's google provider, pointed at an
-// overridden endpoint, POSTs it to connections/{name} without the verb, so the
-// body is what identifies the call.
-func bodyNetwork(r *http.Request, body json.RawMessage) (key string, isDelete bool) {
+// isDeleteConnection reports a connections.deleteConnection call: a POST to a
+// single connection, POST /v1/services/{s}/connections/{id}. Real clients send
+// it without a verb, since the API maps it to POST /v1/{name=services/*/connections/*};
+// a trailing :deleteConnection is accepted as an alias. A POST to the
+// collection is a create and a PATCH is an update, whatever their body holds.
+func isDeleteConnection(r *http.Request) bool {
+	if r.Method != http.MethodPost {
+		return false
+	}
+
+	i := strings.Index(r.URL.Path, connectionsSegment+"/")
+	if i < 0 {
+		return false
+	}
+
+	id := strings.TrimSuffix(r.URL.Path[i+len(connectionsSegment)+1:], deleteVerb)
+
+	return id != "" && !strings.Contains(id, "/")
+}
+
+// bodyNetwork picks the network a create, patch or deleteConnection names: the
+// body's network (a Connection) or consumerNetwork (a DeleteConnectionRequest),
+// otherwise the network query parameter, so a later list filtered by that
+// network finds the connection.
+func bodyNetwork(r *http.Request, body json.RawMessage) string {
 	var named struct {
 		Network         string `json:"network"`
 		ConsumerNetwork string `json:"consumerNetwork"`
@@ -167,15 +189,44 @@ func bodyNetwork(r *http.Request, body json.RawMessage) (key string, isDelete bo
 	_ = json.Unmarshal(body, &named)
 
 	switch {
-	case r.URL.Query().Get("network") != "":
-		return r.URL.Query().Get("network"), named.ConsumerNetwork != ""
 	case named.Network != "":
-		return named.Network, false
+		return named.Network
 	case named.ConsumerNetwork != "":
-		return named.ConsumerNetwork, true
+		return named.ConsumerNetwork
 	default:
-		return "-", false
+		return network(r)
 	}
+}
+
+// withServiceAndPeering fills the output-only service and peering fields a
+// real Connection carries, leaving the body unchanged when it is not a JSON
+// object.
+func withServiceAndPeering(r *http.Request, body json.RawMessage) json.RawMessage {
+	var fields map[string]json.RawMessage
+	if json.Unmarshal(body, &fields) != nil || fields == nil {
+		return body
+	}
+
+	service := strings.TrimPrefix(r.URL.Path, basePrefix)
+	if i := strings.Index(service, "/"); i >= 0 {
+		service = service[:i]
+	}
+
+	set := func(k, v string) {
+		if _, ok := fields[k]; !ok {
+			fields[k], _ = json.Marshal(v)
+		}
+	}
+
+	set("service", "services/"+service)
+	set("peering", peeringName)
+
+	out, err := json.Marshal(fields)
+	if err != nil {
+		return body
+	}
+
+	return out
 }
 
 func (h *Handler) remove(w http.ResponseWriter, r *http.Request) {
