@@ -242,6 +242,10 @@ func TestSQLRetentionWire(t *testing.T) {
 		{http.MethodGet, srv + "/connectionPolicies/default", "", http.StatusOK, `"connectionType":"Proxy"`},
 		{http.MethodPut, srv + "/connectionPolicies/default", `{"properties":{"connectionType":"Fast"}}`,
 			http.StatusBadRequest, ""},
+		{http.MethodPut, srv + "/sqlVulnerabilityAssessments/default", `{"properties":{"state":"Disabled"}}`,
+			http.StatusOK, `"state":"Disabled"`},
+		{http.MethodPut, srv + "/sqlVulnerabilityAssessments/default", `{"properties":{"state":"Enabled"}}`,
+			http.StatusNotImplemented, ""},
 	}
 
 	for _, tc := range cases {

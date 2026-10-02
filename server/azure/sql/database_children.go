@@ -174,7 +174,10 @@ func (h *Handler) serveServerSingleton(
 	case !strings.EqualFold(rp.SubResourceName, singletonDefault):
 		azurearm.ServeDeferred(w, r, rp, azurearm.DeferredItem, nil)
 		return
-	case r.Method != http.MethodGet:
+	case r.Method != http.MethodGet && !restatesDisabled(r, props):
+		// Restating the Disabled default (azurerm_mssql_server create sends
+		// one for sqlVulnerabilityAssessments) changes nothing; other writes
+		// are not modeled yet.
 		azurearm.WriteChildNotImplemented(w, rp)
 		return
 	}
