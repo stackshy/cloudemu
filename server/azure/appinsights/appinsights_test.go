@@ -128,8 +128,9 @@ func TestComponentCreateGetRoundTrip(t *testing.T) {
 		},
 	})
 
-	if status != http.StatusCreated {
-		t.Fatalf("create status = %d, want 201", status)
+	// Real ARM and azurerm both expect 200 on component create, never 201.
+	if status != http.StatusOK {
+		t.Fatalf("create status = %d, want 200", status)
 	}
 
 	if created["kind"] != "web" {
@@ -394,4 +395,73 @@ func looksLikeGUID(s string) bool {
 	}
 
 	return s[8] == '-' && s[13] == '-' && s[18] == '-' && s[23] == '-'
+}
+
+// TestBillingFeaturesRoundTrip covers AZOBS-01: currentbillingfeatures reads
+// the azurerm defaults, a PUT is stored and read back, the component itself is
+// untouched, a component re-PUT keeps the billing state, and a missing
+// component is a 404.
+func TestBillingFeaturesRoundTrip(t *testing.T) {
+	ts := newServer(t)
+	compURL := componentURL(ts, "rg-ai", "bill")
+	billURL := strings.Replace(compURL, "/bill?", "/bill/currentbillingfeatures?", 1)
+	comp := map[string]any{
+		"location":   "westus",
+		"kind":       "web",
+		"properties": map[string]any{"Application_Type": "web", "RetentionInDays": 30},
+	}
+
+	if _, status := do(t, ts, http.MethodPut, compURL, comp); status != http.StatusOK {
+		t.Fatalf("create component = %d, want 200", status)
+	}
+
+	capOf := func(b map[string]any) map[string]any {
+		t.Helper()
+
+		c, ok := b["DataVolumeCap"].(map[string]any)
+		if !ok {
+			t.Fatalf("no DataVolumeCap in %v", b)
+		}
+
+		return c
+	}
+
+	got, status := do(t, ts, http.MethodGet, billURL, nil)
+	if status != http.StatusOK || capOf(got)["Cap"] != float64(100) || capOf(got)["StopSendNotificationWhenHitCap"] != false {
+		t.Fatalf("default billing = %d %v, want Cap 100 and notifications on", status, got)
+	}
+
+	put := map[string]any{
+		"CurrentBillingFeatures": []string{"Basic"},
+		"DataVolumeCap":          map[string]any{"Cap": 5, "StopSendNotificationWhenHitCap": true, "ResetTime": 7},
+	}
+	if _, status := do(t, ts, http.MethodPut, billURL, put); status != http.StatusOK {
+		t.Fatalf("PUT billing = %d, want 200", status)
+	}
+
+	// Re-PUT the component, as azurerm does on update, then re-read billing.
+	if _, status := do(t, ts, http.MethodPut, compURL, comp); status != http.StatusOK {
+		t.Fatalf("replace component = %d, want 200", status)
+	}
+
+	got, _ = do(t, ts, http.MethodGet, billURL, nil)
+	c := capOf(got)
+
+	if c["Cap"] != float64(5) || c["StopSendNotificationWhenHitCap"] != true {
+		t.Errorf("stored billing = %v, want Cap 5 and notifications off", got)
+	}
+
+	if c["ResetTime"] != float64(0) || c["WarningThreshold"] != float64(90) {
+		t.Errorf("read-only/default fields = %v, want ResetTime 0 and WarningThreshold 90", c)
+	}
+
+	compGot, _ := do(t, ts, http.MethodGet, compURL, nil)
+	if compGot["location"] != "westus" || props(t, compGot)["RetentionInDays"] != float64(30) {
+		t.Errorf("component changed by billing PUT: %v", compGot)
+	}
+
+	missing := strings.Replace(billURL, "/bill/", "/nope/", 1)
+	if _, status := do(t, ts, http.MethodPut, missing, put); status != http.StatusNotFound {
+		t.Errorf("PUT billing on missing component = %d, want 404", status)
+	}
 }

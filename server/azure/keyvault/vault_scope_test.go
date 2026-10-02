@@ -2,8 +2,10 @@ package keyvault_test
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
@@ -111,5 +113,57 @@ func TestKeyVaultBareHostMultiVaultIsolation(t *testing.T) {
 
 	if got.Value == nil || *got.Value != "from-a" {
 		t.Fatalf("vault-a secret = %v, want from-a (cross-vault contamination)", got.Value)
+	}
+}
+
+// TestKeyVaultDoesNotStealBlobOnAccountHost is the AZKV-03 regression: on a
+// storage account host a blob whose name starts with a Key Vault keyword
+// (keys/, secrets/, certificates/) is served by blob storage, not answered 401
+// by the Key Vault matcher.
+func TestKeyVaultDoesNotStealBlobOnAccountHost(t *testing.T) {
+	cloud := cloudemu.NewAzure()
+	srv := azureserver.New(azureserver.Drivers{
+		KeyVault:    cloud.KeyVault,
+		BlobStorage: cloud.BlobStorage,
+	})
+
+	ts := httptest.NewTLSServer(srv)
+	t.Cleanup(ts.Close)
+
+	send := func(method, path, body string) (int, string) {
+		t.Helper()
+
+		req, err := http.NewRequestWithContext(context.Background(), method, ts.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+
+		req.Host = "acct1.blob.core.windows.net"
+		req.Header.Set("x-ms-blob-type", "BlockBlob")
+
+		resp, err := ts.Client().Do(req)
+		if err != nil {
+			t.Fatalf("%s %s: %v", method, path, err)
+		}
+		defer resp.Body.Close()
+
+		b, _ := io.ReadAll(resp.Body)
+
+		return resp.StatusCode, string(b)
+	}
+
+	if code, body := send(http.MethodPut, "/data?restype=container", ""); code != http.StatusCreated {
+		t.Fatalf("create container = %d %s", code, body)
+	}
+
+	for _, name := range []string{"keys/x", "secrets/x", "certificates/x"} {
+		if code, body := send(http.MethodPut, "/data/"+name, "payload-"+name); code != http.StatusCreated {
+			t.Fatalf("PUT blob %q = %d %s, want 201", name, code, body)
+		}
+
+		code, body := send(http.MethodGet, "/data/"+name, "")
+		if code != http.StatusOK || body != "payload-"+name {
+			t.Fatalf("GET blob %q = %d %q, want 200 payload-%s", name, code, body, name)
+		}
 	}
 }

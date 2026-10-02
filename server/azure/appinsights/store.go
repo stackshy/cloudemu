@@ -35,6 +35,11 @@ type componentState struct {
 	// supplied by the caller with defaults filled in. Computed keys are never
 	// stored here; they live in the dedicated fields above.
 	Props map[string]any
+
+	// Billing is the currentbillingfeatures child as last PUT, nil until the
+	// first write (a read then returns the defaults). It lives and dies with the
+	// component.
+	Billing map[string]any
 }
 
 // store is the concurrency-safe backing map, keyed case-insensitively by the
@@ -60,8 +65,7 @@ func (s *store) get(sub, rg, name string) (*componentState, bool) {
 }
 
 // set stores cs under its (subscription, resourceGroup, name) scope. The caller
-// determines create-vs-update (200 vs 201) from a prior get, so set has no
-// return.
+// determines create-vs-update from a prior get, so set has no return.
 func (s *store) set(cs *componentState) {
 	s.m.Set(key(cs.Subscription, cs.ResourceGroup, cs.Name), cs)
 }
