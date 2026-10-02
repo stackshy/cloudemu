@@ -96,21 +96,24 @@ func (m *Mock) DeleteStack(ctx context.Context, in *cfn.DeleteStackInput) error 
 	return nil
 }
 
-// deleteGate decides what DeleteStack does with the stack's current status.
-// A stack already being deleted is a successful no-op. A create in progress
-// is stopped by the delete. Any other operation in progress, such as an
-// update or a rollback, refuses the delete.
+// deleteGate decides what DeleteStack does while an operation of the stack
+// is still running under AsyncSettle. A delete already running makes the
+// call a successful no-op. A create is stopped by the delete. Any other
+// operation, such as an update or a rollback, refuses it. The gate looks
+// at the running operation, not the status, so a stack is never stranded
+// in a status nothing will move it out of.
 func deleteGate(sd *stackData) (noop bool, err error) {
 	sd.mu.RLock()
 	defer sd.mu.RUnlock()
 
-	switch st := sd.stack.Status; {
-	case st == cfn.StatusDeleteInProgress || st == cfn.StatusDeleteComplete:
+	st := sd.stack.Status
+	running := sd.pending != nil || sd.busy
+
+	switch {
+	case st == cfn.StatusDeleteComplete || running && st == cfn.StatusDeleteInProgress:
 		return true, nil
-	case st == cfn.StatusCreateInProgress || st == cfn.StatusReviewInProgress:
-		return false, nil
-	case strings.HasSuffix(st, "_IN_PROGRESS") || sd.busy:
-		return false, cerrors.Newf(cerrors.InvalidArgument, msgDeleteInProgress, sd.stack.Name, st)
+	case running && (st != cfn.StatusCreateInProgress || sd.busy):
+		return false, cerrors.Newf(cerrors.InvalidArgument, msgDeleteInProgress, sd.stack.ID, st)
 	}
 
 	return false, nil

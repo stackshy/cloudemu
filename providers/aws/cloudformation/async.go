@@ -2,6 +2,7 @@ package cloudformation
 
 import (
 	"context"
+	"fmt"
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
@@ -31,6 +32,7 @@ const (
 	reasonCreateCancelled   = "Resource creation cancelled" //nolint:misspell // the AWS status reason
 	msgCancelBadStatus      = "CancelUpdateStack cannot be called from current stack status"
 	msgDeleteInProgress     = "Stack [%s] cannot be deleted while in status %s"
+	reasonInternalFailure   = "Internal Failure"
 )
 
 // pendingOp is the last phase of a stack operation. Without AsyncSettle it
@@ -119,7 +121,7 @@ func replacements(stored []retainedResource) []replacement {
 // passed.
 func (m *Mock) finish(ctx context.Context, sd *stackData, op *pendingOp) {
 	if m.settleWindow <= 0 {
-		m.complete(ctx, sd, op)
+		m.runPhase(ctx, sd, op)
 		return
 	}
 
@@ -203,9 +205,70 @@ func (m *Mock) settleStack(ctx context.Context, sd *stackData, now time.Time) bo
 
 	defer sd.setBusy(false)
 
-	m.complete(ctx, sd, op)
+	m.runPhase(ctx, sd, op)
 
 	return true
+}
+
+// runPhase runs a last phase. A panic in it, such as from a provisioner,
+// is recovered and fails the stack, so it is never left in an
+// *_IN_PROGRESS status that nothing will finish.
+func (m *Mock) runPhase(ctx context.Context, sd *stackData, op *pendingOp) {
+	defer func() {
+		if r := recover(); r != nil {
+			m.failStranded(sd, fmt.Sprintf("%s: %v", reasonInternalFailure, r))
+		}
+	}()
+
+	m.complete(ctx, sd, op)
+}
+
+// strandedOutcome is the status a stack ends in when the operation behind
+// its *_IN_PROGRESS status can no longer finish. A finished update whose
+// cleanup stopped keeps its outcome, as a cleanup failure does in AWS.
+func strandedOutcome(status string) (string, bool) {
+	switch status {
+	case cfn.StatusCreateInProgress:
+		return cfn.StatusCreateFailed, true
+	case cfn.StatusRollbackInProgress:
+		return cfn.StatusRollbackFailed, true
+	case cfn.StatusUpdateInProgress, cfn.StatusUpdateRollbackInProgress:
+		return cfn.StatusUpdateRollbackFailed, true
+	case cfn.StatusUpdateCompleteCleanupInProgress:
+		return cfn.StatusUpdateComplete, true
+	case cfn.StatusUpdateRollbackCompleteCleanupInProgress:
+		return cfn.StatusUpdateRollbackComplete, true
+	case cfn.StatusDeleteInProgress:
+		return cfn.StatusDeleteFailed, true
+	}
+
+	return "", false
+}
+
+// failStranded moves a stack whose operation stopped to its failure
+// status and records reason.
+func (m *Mock) failStranded(sd *stackData, reason string) {
+	sd.mu.Lock()
+	sd.pending = nil
+	next, ok := strandedOutcome(sd.stack.Status)
+	sd.mu.Unlock()
+
+	if ok {
+		m.emitStackEvent(sd, next, reason)
+	}
+}
+
+// normalizeStranded fixes a restored stack left in an *_IN_PROGRESS status
+// with no operation to finish it, such as one saved by an older snapshot.
+func normalizeStranded(sd *stackData) {
+	if sd.pending != nil {
+		return
+	}
+
+	if next, ok := strandedOutcome(sd.stack.Status); ok {
+		sd.stack.Status = next
+		sd.stack.StatusReason = reasonInternalFailure
+	}
 }
 
 func (sd *stackData) setBusy(busy bool) {

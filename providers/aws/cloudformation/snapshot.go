@@ -39,11 +39,14 @@ type stackSnapshot struct {
 }
 
 // Snapshot captures every stack's state under its own name so a restore
-// preserves stack ids, resource mappings, outputs, and events.
+// preserves stack ids, resource mappings, outputs, and events. Each stack
+// is read under its opMu, so a phase still running is captured before or
+// after it, never halfway.
 func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 	snap := mockSnapshot{Stacks: map[string]*stackSnapshot{}}
 
 	for name, sd := range m.stacks.All() {
+		sd.opMu.Lock()
 		sd.mu.RLock()
 		snap.Stacks[name] = &stackSnapshot{
 			Stack:          sd.stack,
@@ -63,6 +66,7 @@ func (m *Mock) Snapshot(_ context.Context, _ bool) (json.RawMessage, error) {
 			Stable:         sd.stable,
 		}
 		sd.mu.RUnlock()
+		sd.opMu.Unlock()
 	}
 
 	return json.Marshal(snap)
@@ -108,6 +112,8 @@ func (m *Mock) Restore(_ context.Context, data json.RawMessage) error {
 		if sd.props == nil {
 			sd.props = map[string]map[string]any{}
 		}
+
+		normalizeStranded(sd)
 
 		m.stacks.Set(name, sd)
 	}

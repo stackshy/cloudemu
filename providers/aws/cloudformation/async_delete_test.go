@@ -242,7 +242,7 @@ func TestDeleteStackRefusedDuringUpdate(t *testing.T) {
 	requireNoError(t, err)
 
 	err = m.DeleteStack(ctx, &cfn.DeleteStackInput{StackName: "s"})
-	assertValidation(t, err, "Stack [s] cannot be deleted while in status UPDATE_IN_PROGRESS")
+	assertValidation(t, err, "Stack ["+stackStatus(t, m, "s").ID+"] cannot be deleted while in status UPDATE_IN_PROGRESS")
 
 	fc.Advance(settled)
 	requireNoError(t, m.DeleteStack(ctx, &cfn.DeleteStackInput{StackName: "s"}))
