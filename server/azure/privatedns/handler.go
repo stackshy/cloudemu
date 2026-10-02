@@ -37,6 +37,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/stackshy/cloudemu/v2/server/azure/resourcegroups"
 	"github.com/stackshy/cloudemu/v2/server/wire/azurearm"
 	pddriver "github.com/stackshy/cloudemu/v2/services/privatedns/driver"
 )
@@ -189,6 +190,10 @@ func (h *Handler) serveRecordListAll(w http.ResponseWriter, r *http.Request, rp 
 
 	h.listRecordsAll(w, r, rp)
 }
+
+// PurgePhase orders this purger in the resource-group cascade: private DNS
+// zones hold virtual network links, so they go with the network phase.
+func (*Handler) PurgePhase() int { return resourcegroups.PhaseNetwork }
 
 // PurgeResourceGroup deletes every Private DNS zone (cascading to its links and
 // records) stored under the given resource group, backing the resource-group

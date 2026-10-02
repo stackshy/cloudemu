@@ -58,6 +58,15 @@ func (s *Server) Register(h Handler) {
 	s.handlers = append(s.handlers, h)
 }
 
+// Handlers returns the registered handlers in registration order. The slice is
+// a copy, so a caller cannot reorder or replace the server's handlers through it.
+func (s *Server) Handlers() []Handler {
+	out := make([]Handler, len(s.handlers))
+	copy(out, s.handlers)
+
+	return out
+}
+
 // SetObserver installs a post-dispatch hook called with each request a handler
 // served. It is generic and optional; passing nil disables it.
 func (s *Server) SetObserver(fn func(*http.Request)) {
@@ -94,12 +103,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.Error(w, "no handler registered for this request", http.StatusNotImplemented)
-}
-
-// Handlers returns the registered handlers in dispatch order. The slice is a
-// copy, so changing it does not change the server.
-func (s *Server) Handlers() []Handler {
-	return append([]Handler(nil), s.handlers...)
 }
 
 // Match returns the handler that would serve r (the first registered handler

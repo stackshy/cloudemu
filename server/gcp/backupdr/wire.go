@@ -10,6 +10,7 @@ import (
 	"time"
 
 	cerrors "github.com/stackshy/cloudemu/v2/errors"
+	"github.com/stackshy/cloudemu/v2/server/wire/gcpenum"
 	"github.com/stackshy/cloudemu/v2/server/wire/gcprest"
 	bdrdriver "github.com/stackshy/cloudemu/v2/services/backupdr/driver"
 )
@@ -126,6 +127,14 @@ func decodeVault(w http.ResponseWriter, r *http.Request) (*vaultInput, bool) {
 	raw, err := io.ReadAll(io.LimitReader(r.Body, maxBodyBytes))
 	if err != nil {
 		gcprest.WriteError(w, http.StatusBadRequest, "invalid", "reading request body: "+err.Error())
+		return nil, false
+	}
+
+	// The gapic REST client sends enums as numbers; rewrite them to names so
+	// the string fields below decode for every client.
+	raw, err = gcpenum.Normalize(raw, vaultEnums)
+	if err != nil {
+		gcprest.WriteError(w, http.StatusBadRequest, "invalid", err.Error())
 		return nil, false
 	}
 

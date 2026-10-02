@@ -16,6 +16,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 
@@ -46,13 +47,61 @@ const (
 // ResourceGroupPurger deletes every resource one service handler owns in a given
 // resource group. It backs the resource-group cascade delete: an RG is a pure
 // container, so deleting it must delete the resources created under it rather
-// than leaving them as globally addressable orphans. Each per-service ARM
-// handler that stores its resources resource-group-scoped (compute, networking,
-// load balancing, storage today) implements it; a handler that does not is
-// simply not passed to New, so its resource type is not cascaded (a documented,
-// extensible gap).
+// than leaving them as globally addressable orphans. Every registered handler
+// that implements it is collected by CollectPurgers, so a new service joins the
+// cascade by implementing the method; server/azure's completeness test fails
+// for a handler that neither implements it nor has a recorded exemption.
 type ResourceGroupPurger interface {
 	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+}
+
+// PurgePhaser is the optional ordering hook for a ResourceGroupPurger. Purgers
+// run in ascending phase order; a purger without the method runs at
+// PhaseDefault.
+type PurgePhaser interface {
+	PurgePhase() int
+}
+
+// Purge phases. A consumer must be torn down before the resource it holds a
+// reference to, otherwise the dependency guard on the referenced resource
+// blocks its delete.
+const (
+	// PhaseCompute runs first: deleting VMs detaches their NICs and disks.
+	PhaseCompute = 10
+	// PhaseDefault is every purger that declares no phase.
+	PhaseDefault = 50
+	// PhaseNetworkConsumers holds load balancers, application gateways,
+	// firewalls, bastion hosts and Front Door, which reference public IPs and
+	// subnets.
+	PhaseNetworkConsumers = 80
+	// PhaseNetwork runs last: it releases public IPs and deletes virtual
+	// networks, subnets and private DNS zones.
+	PhaseNetwork = 90
+)
+
+// CollectPurgers returns every handler in handlers that implements
+// ResourceGroupPurger, stably sorted by PurgePhase. Ties keep registration
+// order, so the result is deterministic.
+func CollectPurgers[H any](handlers []H) []ResourceGroupPurger {
+	var out []ResourceGroupPurger
+
+	for _, h := range handlers {
+		if p, ok := any(h).(ResourceGroupPurger); ok {
+			out = append(out, p)
+		}
+	}
+
+	sort.SliceStable(out, func(i, j int) bool { return purgePhase(out[i]) < purgePhase(out[j]) })
+
+	return out
+}
+
+func purgePhase(p ResourceGroupPurger) int {
+	if ph, ok := p.(PurgePhaser); ok {
+		return ph.PurgePhase()
+	}
+
+	return PhaseDefault
 }
 
 // Handler serves the resource-group collection and its members.
@@ -80,6 +129,15 @@ type Handler struct {
 // that own resource-group-scoped resources.
 func New(engine *resourcediscovery.Engine, purgers ...ResourceGroupPurger) *Handler {
 	return &Handler{groups: map[string]map[string]map[string]any{}, engine: engine, purgers: purgers}
+}
+
+// SetPurgers replaces the purgers a group delete cascades into. The server
+// calls it once every handler is registered, with CollectPurgers' result.
+func (h *Handler) SetPurgers(purgers []ResourceGroupPurger) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	h.purgers = purgers
 }
 
 // routeKind classifies a resource-group request path.
@@ -328,7 +386,11 @@ func (h *Handler) remove(w http.ResponseWriter, r *http.Request, sub, name strin
 // purger error is swallowed (there is no channel to report it on an async
 // fire-and-forget delete, and a partial teardown must not block the rest).
 func (h *Handler) cascade(ctx context.Context, sub, name string) {
-	for _, p := range h.purgers {
+	h.mu.RLock()
+	purgers := h.purgers
+	h.mu.RUnlock()
+
+	for _, p := range purgers {
 		_ = p.PurgeResourceGroup(ctx, sub, name)
 	}
 }

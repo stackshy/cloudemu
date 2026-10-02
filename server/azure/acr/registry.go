@@ -1,6 +1,7 @@
 package acr
 
 import (
+	"context"
 	"net/http"
 	"sort"
 	"strings"
@@ -21,6 +22,25 @@ type ARMHandler struct {
 // NewARM returns an ARM handler backed by mgr.
 func NewARM(mgr crdriver.AzureRegistryManager) *ARMHandler {
 	return &ARMHandler{mgr: mgr}
+}
+
+// rgPurger is the optional capability the Azure acr.Mock exposes for the
+// resource-group delete cascade.
+type rgPurger interface {
+	PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error
+}
+
+// PurgeResourceGroup deletes every registry, with its webhooks and
+// replications, in the resource group, backing the resource-group cascade
+// delete. A driver without the capability is reported as an error rather than
+// silently skipped.
+func (h *ARMHandler) PurgeResourceGroup(ctx context.Context, subscription, resourceGroup string) error {
+	p, ok := h.mgr.(rgPurger)
+	if !ok {
+		return cerrors.Newf(cerrors.Unimplemented, "registry driver %T cannot purge a resource group", h.mgr)
+	}
+
+	return p.PurgeResourceGroup(ctx, subscription, resourceGroup)
 }
 
 // Matches claims ARM Microsoft.ContainerRegistry/registries paths.
